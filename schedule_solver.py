@@ -59,7 +59,12 @@ This module keeps the draft's shape and re-solves the assignment:
               weight — L-19, D-36), minimum hours, overtime premium, labor
               dollars (each person's own rate; salaried hours cost nothing
               more — P-32), stability, and what the restaurant's scheduling
-              memory holds (signals["learned"] — L-3, D-35). The dimensions
+              memory holds (signals["learned"], as the scorer's learned-
+              patterns measure reads it through schedule_memory.misses:
+              somebody kept off a slot or on it, the role the managers make
+              them, the usual opener or closer, a team on the same shifts,
+              somebody who habitually runs past their shift kept their
+              headroom under the overtime line — L-3, D-35). The dimensions
               only the shape can move (coverage, coverage by the hour, labor
               efficiency, sales per labor hour) are constants to it. The
               final choice between the draft and the solver's answers is
@@ -153,9 +158,11 @@ K_HARD = 0.1              # per busy shift they already have
 K_DAYS_OFF = 25.0         # fewer consecutive days off than the rule, for somebody the draft already had short
 K_DAYS_OFF_NEW = 1000.0   # ...for somebody the draft (after the fix pass) gave their run: never worth it
 K_MIN_HOURS_NEW = 1000.0  # per hour under what the draft kept somebody at toward their minimum: never worth it
-# What the scheduling memory and the edit predictor cost: points of the
-# shift a fact is broken on (schedule_optimizer.LEARNED_SHIFT_POINTS,
-# LIKELY_EDIT_SHIFT_POINTS — the weights the repair loop holds a move to).
+# What the edit predictor costs: points of the shift a row the manager is
+# expected to change is kept on (schedule_optimizer.LIKELY_EDIT_SHIFT_POINTS
+# — the weight the repair loop holds a move to). The scheduling memory is a
+# week-level measure of the score (shift_quality.week_learned), costed at its
+# own weight (Problem.k_miss).
 
 
 def _ordinal(date):
@@ -167,6 +174,13 @@ def _ordinal(date):
 
 def _low(name) -> str:
     return (name or "").strip().lower()
+
+
+def _val(m) -> dict:
+    """A memory's value (schedule_memory.enforced_signals), {} when it is not
+    the dict its kind carries."""
+    v = (m or {}).get("value")
+    return v if isinstance(v, dict) else {}
 
 
 def _where(day: str, part: str) -> str:
@@ -468,21 +482,53 @@ class Problem:
         blended = ot.get("default_rate") or (ot.get("rates") or {}).get("_default")
         self.blended = float(blended) if _num(blended) else (sum(self.rates.values()) / len(self.rates) if self.rates else 0.0)
         self.priced = bool(self.rates or self.person_rates or self.blended)
-        # What the scheduling memory holds, as the repair loop reads it
-        # (schedule_optimizer.learned_items — L-3, D-35), and the edit
-        # predictor's rows (L-15) when the engine passes them.
-        import schedule_optimizer as _opt
-        self.learned = _opt.learned_items(s)
+        # What the scheduling memory holds (schedule_memory.enforced_signals —
+        # L-3, D-35), read as the scorer's learned-patterns measure reads it
+        # (shift_quality.week_learned → schedule_memory.misses, the one
+        # meaning of each kind), and the edit predictor's rows (L-15) when
+        # the engine passes them.
+        self.mem = []
+        for m in s.get("learned") or []:
+            if not isinstance(m, dict) or not m.get("kind") or str(m.get("enforcement") or "soft").lower() == "prompt":
+                continue
+            try:
+                conf = float(m.get("confidence") or 0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            if conf > 0:
+                self.mem.append(dict(m, confidence=conf))
+        # About one person on one slot or one day: off it, in a role, the
+        # role's opener or closer — a cost on the assignment itself.
+        self.mem_person = {}
+        for m in self.mem:
+            if m["kind"] in ("moved_off", "role_change", "opener", "closer") and m.get("person"):
+                self.mem_person.setdefault(self.key(m["person"]), []).append(m)
+        # A team on the same shifts (pair): the people, and the memory's weight.
+        self.mem_pairs = []
+        for m in self.mem:
+            if m["kind"] == "pair":
+                members = {self.key(m.get("person"))} | {self.key(x) for x in (_val(m).get("with") or [])}
+                members.discard("")
+                if len(members) > 1:
+                    self.mem_pairs.append((frozenset(members), m["confidence"]))
+        # Somebody who habitually runs past their shift (ot_risk, L-16): their
+        # overtime line is the line less the headroom they usually run over —
+        # for the caps (never past it beyond the draft) and for the measure.
+        self.headroom = {}
+        for m in self.mem:
+            if m["kind"] != "ot_risk":
+                continue
+            p = self.pidx.get(self.key(m.get("person")))
+            try:
+                head = float(_val(m).get("headroom_hours") or 0)
+            except (TypeError, ValueError):
+                head = 0.0
+            if p is not None and head > 0 and head >= self.headroom.get(p, (0.0, 0.0))[0]:
+                self.headroom[p] = (head, m["confidence"])
         self.likely = {}
         for f in s.get("likely_edits") or []:
             if isinstance(f, dict) and _num(f.get("weight")):
                 self.likely[(self.key(f.get("employee")), f.get("date") or "", f.get("shift_start") or "")] = float(f["weight"])
-        self.overrun = {}
-        for it in self.learned:
-            if it["kind"] == "overrun":
-                p = self.pidx.get(it["person"])
-                if p is not None:
-                    self.overrun[p] = max(self.overrun.get(p, 0.0), it["hours"])
         # Sustained fatigue across the published weeks (SQ-27): the busy
         # shifts this week, and the hours, at which somebody's last weeks
         # make them strained.
@@ -688,13 +734,16 @@ class Problem:
         self.capb = []
         for p, n in enumerate(self.names):
             caps = {}
+            line = self.line[p]
+            if p in self.headroom and not self.salaried[p]:
+                line = max(0.0, line - self.headroom[p][0])
             for b in {u.bucket for u in self.units} | set(draft[p]):
-                cap = min(self.maxh[p], max(self.line[p], draft[p].get(b, 0.0)))
+                cap = min(self.maxh[p], max(line, draft[p].get(b, 0.0)))
                 if c is not None and not self.salaried[p]:
                     tail = c.bucket_tail(b) if b else []
                     has_tail_rows = any(r.get("date") in tail for r in (c.base_rows.get(self.key(n)) or []))
                     if len(tail) >= _rules.TAIL_RESERVE_MIN_DAYS and not has_tail_rows:
-                        cap = min(cap, max(self.line[p] - 0.06, draft[p].get(b, 0.0)))
+                        cap = min(cap, max(line - 0.06, draft[p].get(b, 0.0)))
                 if c is not None and self.key(n) in c.minors:
                     br = _rules.minor_rules(c.minor_bands.get(self.key(n)), c.jurisdiction)
                     wk = br.get("max_weekly_school_week")
@@ -716,7 +765,10 @@ class Problem:
                 shifts[(d, part)] = sq.DEMAND_WEIGHT.get(self.profile(d, u.day, part).demand, 1.0)
         self.shift_dw = shifts
         self.sigma_dw = sum(shifts.values()) or 1.0
-        week_keys = [k for k in sq.WEEK_LEVEL_DIMENSIONS if self.weights.get(k, 0) > 0]
+        # The scheduling memory's measure is on the week only once there is a
+        # memory to hold it to (week_learned withdraws without one).
+        week_keys = [k for k in sq.WEEK_LEVEL_DIMENSIONS if self.weights.get(k, 0) > 0
+                     and (k != "learned" or self.mem)]
         self.week_w = sum(self.weights[k] for k in week_keys)
         dollars = 0.0
         for u in self.units:
@@ -726,9 +778,10 @@ class Problem:
         import schedule_optimizer as _opt
         # week points per dollar, in the solver's units (× the week's demand weight)
         self.per_dollar = (_opt.LABOR_POINTS_PER_PCT * 100.0 / dollars * self.sigma_dw) if dollars > 0 else 0.0
-        # A memory broken on a shift costs LEARNED_SHIFT_POINTS of that shift
-        # (× its demand weight below), the repair loop's own weight.
-        self.k_learned = _opt.LEARNED_SHIFT_POINTS
+        # A broken memory costs LEARNED_MISS_POINTS of the learned-patterns
+        # measure per unit of its weight (shift_quality.week_learned): what
+        # that is in the solver's units.
+        self.k_miss = self.week_unit("learned") * sq.LEARNED_MISS_POINTS if self.mem else 0.0
         self.k_likely = _opt.LIKELY_EDIT_SHIFT_POINTS
         # The items each week-level measure counts, as the draft has them —
         # what one item is worth of the measure.
@@ -1168,9 +1221,11 @@ class Problem:
                     for role, (n, _src) in (reqs or {}).items():
                         f = self.family(role)
                         need[f] = max(need.get(f, 0), int(n or 0))
-                    on_slot = [it for it in self.learned
-                               if it["kind"] in ("on", "avoid", "prefer") and (not it["day"] or it["day"] == u.day)
-                               and (not it["daypart"] or it["daypart"] == part)]
+                    # The memories about who is on this slot at all: somebody
+                    # the managers keep putting on it, one of the people they
+                    # keep putting on the role's slot.
+                    on_slot = [m for m in self.mem if m["kind"] in ("moved_on", "leader_swap")
+                               and m.get("day") == u.day and m.get("daypart") == part]
                     self.groups[k] = {"units": [], "date": date, "part": part, "day": u.day, "kind": "S",
                                       "prof": prof, "dw": sq.DEMAND_WEIGHT.get(prof.demand, 1.0), "rules": rules,
                                       "need": need, "learned": on_slot}
@@ -1180,6 +1235,13 @@ class Problem:
                 g = self.groups.setdefault(k, {"units": [], "date": u.date, "part": part, "day": u.day, "kind": "T",
                                                "dw": self.shift_dw.get((u.date, part), 1.0)})
                 g["units"].append(u.id)
+        # A team the memory keeps on the same shifts (pair): each date any of
+        # them can work, over the units they could be on.
+        if self.mem_pairs:
+            member_p = {self.pidx[k] for ms, _w in self.mem_pairs for k in ms if k in self.pidx}
+            for u in self.units:
+                if u.draft in member_p or (self.dom[u.id] & member_p):
+                    self.groups.setdefault(("L", u.date), {"units": [], "date": u.date, "kind": "L"})["units"].append(u.id)
         # Only groups with something the solver decides are kept: a constant
         # is no help to the search.
         self.groups = {k: g for k, g in self.groups.items() if not all(self.units[i].fixed for i in g["units"])}
@@ -1433,19 +1495,30 @@ class Problem:
             dollars = u.hours * max(0.0, self.rate(p, role) - ref)
             if dollars:
                 out["dollars"] = dollars * self.per_dollar
-        # The scheduling memory (L-3, D-35): off a slot, the role's opener or
-        # closer on one; the edit predictor (L-15).
-        for it in self.learned:
-            if it["day"] and it["day"] != u.day:
+        # The scheduling memory (L-3, D-35), as schedule_memory.misses reads
+        # it: somebody the managers keep taking off this slot (a row's slot is
+        # its first daypart), or keep making another role on it; the role's
+        # usual opener or closer working that day without opening or closing
+        # it. The edit predictor (L-15).
+        mem = 0.0
+        for m in self.mem_person.get(low) or ():
+            kind = m["kind"]
+            if m.get("day") != u.day:
                 continue
-            if it["daypart"] and all(it["daypart"] != x for _d, x in u.parts):
-                continue
-            if it["kind"] == "off" and self.key(it["person"]) == low:
-                out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"] * u.dw
-            elif it["kind"] in ("opener", "closer") and self.key(it["person"]) != low and \
-                    ("opens" if it["kind"] == "opener" else "closes") in u.edges and \
-                    (not it["role"] or self.family(it["role"]) in u.fams):
-                out["learned"] = out.get("learned", 0.0) + self.k_learned * it["weight"] * u.dw
+            if kind in ("moved_off", "role_change"):
+                for r, first in zip(u.rows, u.primary):
+                    if first != m.get("daypart"):
+                        continue
+                    if kind == "moved_off" or " ".join(_low(r.get("role")).split()) != \
+                            " ".join(_low(_val(m).get("role")).split()):
+                        mem += m["confidence"]
+                        break
+            elif kind in ("opener", "closer"):
+                fam = self.family(m.get("role")) if m.get("role") else None
+                if (fam is None or fam in u.fams) and not self.at_edge(u, kind, fam):
+                    mem += m["confidence"]
+        if mem:
+            out["learned"] = mem * self.k_miss
         if self.likely:
             for r in u.rows:
                 w = self.likely.get((low, r.get("date") or "", r.get("shift_start") or ""))
@@ -1476,7 +1549,31 @@ class Problem:
             return self.station_cost(key, assign)
         if g["kind"] == "C":
             return 0.0 if any(assign[i] in g["ok"] for i in g["units"]) else g["cost"]()
+        if g["kind"] == "L":
+            return self.team_cost(key, assign)
         return 0.0
+
+    def team_cost(self, key, assign) -> float:
+        """A team the scheduling memory keeps on the same shifts, split across
+        one date's dayparts (schedule_memory.misses' pair: two or more of them
+        on that date, not all on each daypart any of them is on)."""
+        g = self.groups[key]
+        by_part = {}
+        for i in g["units"]:
+            u = self.units[i]
+            p = assign[i] if not u.fixed else u.draft
+            if p is None:
+                continue
+            k = self.key(self.names[p])
+            for first in u.primary:
+                by_part.setdefault(first, set()).add(k)
+        cost = 0.0
+        for members, w in self.mem_pairs:
+            parts = [ks & members for ks in by_part.values() if ks & members]
+            there = set().union(*parts) if parts else set()
+            if len(there) > 1 and any(len(x) < len(there) for x in parts):
+                cost += w
+        return cost * self.k_miss
 
     def station_cost(self, key, assign) -> float:
         """Kitchen stations (dim_stations): every station this daypart needs
@@ -1667,22 +1764,58 @@ class Problem:
             if clashes or splits or matches:
                 pr = max(0, 100 - 45 * clashes - sq.PAIR_SPLIT_COST * splits)
                 out["pairings"] = self.dim_cost("pairings", 100 - pr, dw)
-        # The scheduling memory on this slot: somebody who is always on it,
-        # two people kept apart or together.
+        # The scheduling memory on this slot (schedule_memory.misses): somebody
+        # the managers keep putting on it, one of the people they keep putting
+        # on the role's slot — read by who has a row whose slot (first
+        # daypart) this is.
         if g.get("learned"):
-            on = {self.key(self.names[p]) for p in people}
-            cost = 0.0
-            for it in g["learned"]:
-                who, other = self.key(it["person"]), self.key(it["other"]) if it["other"] else ""
-                if it["kind"] == "on" and who not in on:
-                    cost += self.k_learned * it["weight"] * dw
-                elif it["kind"] == "avoid" and who in on and other in on:
-                    cost += self.k_learned * it["weight"] * dw
-                elif it["kind"] == "prefer" and (who in on) != (other in on):
-                    cost += self.k_learned * it["weight"] * dw
-            if cost:
-                out["learned"] = cost
+            first_on = {}
+            for i in self._all_units(key):
+                uu = self.units[i]
+                p = assign[i] if not uu.fixed else uu.draft
+                if p is None:
+                    continue
+                for r, first in zip(uu.rows, uu.primary):
+                    if first == part:
+                        first_on.setdefault(p, set()).add(self.family(r.get("role")))
+            if first_on:
+                keys = {p: self.key(self.names[p]) for p in first_on}
+                cost = 0.0
+                for m in g["learned"]:
+                    if m["kind"] == "moved_on":
+                        if self.key(m.get("person")) not in keys.values():
+                            cost += m["confidence"]
+                    else:
+                        fam = self.family(m.get("role")) if m.get("role") else None
+                        mine = [p for p, fams in first_on.items() if fam is None or fam in fams]
+                        names = {self.key(n) for n in (_val(m).get("names") or [])}
+                        if mine and not any(keys[p] in names for p in mine):
+                            cost += m["confidence"]
+                if cost:
+                    out["learned"] = cost * self.k_miss
         return out
+
+    def at_edge(self, u, kind, fam) -> bool:
+        """Whether unit u opens (starts within OPENER_TIE_MINUTES of the first
+        of `fam` in that date) or closes (ends as near the last) its role
+        family's day — schedule_memory's own reading of an opener and a
+        closer, over every row of the family that date, kept ones too."""
+        if not hasattr(self, "_edges_mem"):
+            import schedule_memory as _smem
+            tie = _smem.OPENER_TIE_MINUTES
+            by = {}
+            for v in self.units:
+                for r, sp in zip(v.rows, (_rules._span(x) for x in v.rows)):
+                    if sp:
+                        by.setdefault((v.date, self.family(r.get("role"))), []).append((sp[0], sp[1], v.id))
+            edges = {}
+            for (d, f), items in by.items():
+                first, last = min(t[0] for t in items), max(t[1] for t in items)
+                edges[(d, f, "opener")] = {uid for s0, _e, uid in items if s0 - first <= tie}
+                edges[(d, f, "closer")] = {uid for _s, e0, uid in items if last - e0 <= tie}
+            self._edges_mem = edges
+        fams = [fam] if fam else sorted(u.fams)
+        return any(u.id in self._edges_mem.get((u.date, f, kind), ()) for f in fams)
 
     def dynamic(self, u, p, st) -> float:
         """What p on u adds given what p already carries this week. Never
@@ -1708,10 +1841,9 @@ class Problem:
             if st.total[p] <= band + 1e-9 < st.total[p] + u.hours:
                 c += self.week_unit("preferences") / self.n_pref * 100.0
         # Overtime premium (only ever less than the draft's: the caps hold
-        # anybody's hours under their line past what the draft gave them),
-        # and the hours somebody habitually runs past their shift (L-16).
+        # anybody's hours under their line past what the draft gave them).
         if not self.salaried[p]:
-            line = self.ot_threshold - self.overrun.get(p, 0.0)
+            line = self.ot_threshold
             have = st.hours[p].get(u.bucket, 0.0)
             ot = max(0.0, have + u.hours - line) - max(0.0, have - line)
             if ot > 0:
@@ -1719,6 +1851,17 @@ class Problem:
                 premium = ot * rate * sq.OVERTIME_PREMIUM
                 pay = self.week_dollars or 1.0
                 c += premium * (self.per_dollar + self.week_unit("overtime") * sq.OVERTIME_POINTS * 100.0 / pay)
+        # Somebody who habitually runs past their shift (ot_risk, L-16):
+        # drafted into the headroom under the line, the memory weighs more the
+        # further in (schedule_memory.misses — this week's rows only).
+        if p in self.headroom and self.k_miss:
+            head, w = self.headroom[p]
+            have = st.hours[p].get(u.bucket, 0.0) - float(self.base_hours[p].get(u.bucket, 0.0) or 0.0)
+            start = self.ot_threshold - head
+
+            def into(h):
+                return min(1.0, max(0.0, h - start) / head)
+            c += w * (into(have + u.hours) - into(have)) * self.k_miss
         return c
 
     def _strained(self, p, hards, total) -> bool:
@@ -2503,14 +2646,17 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
             max_seconds=DEFAULT_SECONDS, min_gain=MIN_GAIN) -> dict:
     """Solve the draft's assignment and keep the answer only when it is
     worth more to the owner: Shift Quality higher (each candidate scored
-    with the rows that will not stand and the hard breaches of ITS rows),
-    less the labor dollars it adds and the scheduling memory it breaks —
-    the repair loop's own value — and only when it makes nothing at or
+    with the rows that will not stand and the hard breaches of ITS rows;
+    what it breaks of the scheduling memory is the score's learned-patterns
+    measure), less the labor dollars it adds and the rows it keeps that the
+    manager is expected to change — schedule_optimizer.week_value, the
+    repair loop's own value — and only when it makes nothing at or
     above the budget tier new or worse, compared by breach identity
     (schedule_rules.regressions: a person's legality, the manager every
     minute, the floors and the closer, overtime, minimum hours — schedule
     audit 10/3/26 E-1, P-14), brings back no soft breach a pass repaired,
-    and puts nobody newly past their overtime line.
+    and puts nobody newly past their overtime line (for somebody who
+    habitually runs past their shift, the line less that headroom — L-16).
 
     Returns {applied, rows, before_score, after_score, quality, changes,
     stats, reason}. The input rows are never modified.
@@ -2548,13 +2694,12 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
         out["reason"] = "no rule set"
         return out
     pricing = _opt.pricing_inputs(signals, inputs, constraints)
-    items = _opt.learned_items(signals)
     likely = [f for f in (signals.get("likely_edits") or []) if isinstance(f, dict)]
-    families = signals.get("role_families") or getattr(constraints, "role_families", None)
+    headroom = _opt.ot_headroom(signals, constraints)
     base_dollars = _opt.labor_dollars(base, pricing) if pricing else 0.0
 
     def value(q, rs):
-        return _opt.week_value(q, rs, pricing, base_dollars, items, likely, families)
+        return _opt.week_value(q, rs, pricing, base_dollars, likely)
     # The judge needs about a second per candidate on a big week; the search
     # gets what is left of the budget.
     judge_reserve = min(max_seconds * 0.25, 0.25 + 0.004 * len(base) * JUDGE_CANDIDATES)
@@ -2581,7 +2726,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
         if _soft_repaired(cand, constraints, viols) - before_soft:
             refused += 1
             continue            # nor undoing a repair a pass made
-        if _opt.overtime_created(base, cand, constraints):
+        if _opt.overtime_created(base, cand, constraints, headroom=headroom):
             refused += 1
             continue            # nor an hour of overtime the draft did not have
         q = score(cand, sig)

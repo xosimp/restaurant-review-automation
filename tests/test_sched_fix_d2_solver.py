@@ -261,25 +261,38 @@ def test_a_dearer_person_costs_the_solver_what_they_cost_the_week():
 
 # ── L-3 / D-35: the scheduling memory; L-19 / D-36; L-20; D-44 ───────────────
 
-def test_a_learned_slot_the_manager_keeps_taking_somebody_off_is_held():
-    """'Bob off Tuesday dinner': the solver could put him back, and the
-    manager corrected it again every week."""
-    names = ["Bob", "Cy"]
-    c = cons(names)
-    rows = [row(TUE, "Cy", "4:00pm", "11:00pm")]
-    learned = [{"kind": "moved_off", "key": "slot|bob|Tue|night|off", "person": "Bob", "day": "Tuesday",
-                "daypart": "night", "role": "Server", "value": "off", "confidence": 0.9, "enforcement": "soft",
-                "source": "taken off Tuesday dinner 4 of the last 5 weeks"}]
-    sig = _sig(names, scores={"Bob": 5, "Cy": 2}, learned=learned,
-               typical_headcount={("Tuesday", "night"): {"Server": 1}})
-    prob = ss.Problem(rows, c, signals=sig)
-    u = prob.units[0]
-    assert prob.components_of(u, prob.pidx["bob"]).get("learned", 0) > 0
-    out = ss.improve(rows, {}, signals=sig, constraints=c)
-    assert out["rows"][0]["employee"] == "Cy"
+def _on_slot(rs, name, date, part):
+    return any(r["employee"] == name and r["date"] == date and sq.present_dayparts(r)[0] == part for r in rs)
+
+
+def test_what_the_managers_keep_doing_holds_the_solver_on_a_real_week():
+    """'P14 off Monday dinner', 'P15 on it': on a realistic week the solver,
+    left to the generic reasons, puts P14 on and takes P15 off — and the
+    manager corrected it again every week (L-3, D-35). With the two
+    memories (schedule_memory.enforced_signals' shape) both hold, and the
+    score's learned-patterns measure says nothing is broken."""
+    rows, c, sig = big_week()
+    mon = WEEK[0]
+    learned = [{"kind": "moved_off", "key": "moved_off|p14|Monday|night", "person": "P14", "day": "Monday",
+                "daypart": "night", "role": "server", "value": {"slot": "Monday night"}, "confidence": 0.8,
+                "enforcement": "soft", "source": "taken off Monday dinner 4 of the last 5 weeks"},
+               {"kind": "moved_on", "key": "moved_on|p15|Monday|night", "person": "P15", "day": "Monday",
+                "daypart": "night", "role": "server", "value": {"slot": "Monday night"}, "confidence": 0.8,
+                "enforcement": "soft", "source": "put on Monday dinner 4 of the last 5 weeks"}]
+    assert not _on_slot(rows, "P14", mon, "night") and _on_slot(rows, "P15", mon, "night")
+    free = ss.improve(rows, {}, signals=sig, constraints=c, max_seconds=6)
+    assert _on_slot(free["rows"], "P14", mon, "night") and not _on_slot(free["rows"], "P15", mon, "night")
+    held = ss.improve(rows, {}, signals=dict(sig, learned=learned), constraints=c, max_seconds=6)
+    assert held["applied"]
+    assert not _on_slot(held["rows"], "P14", mon, "night") and _on_slot(held["rows"], "P15", mon, "night")
+    week = {d["key"]: d for d in held["quality"]["week_dimensions"]}
+    assert week["learned"]["score"] == 100 and week["learned"]["facts"]["memories"] == 2
+    # the cost sits on the assignment itself
+    prob = ss.Problem(rows, c, signals=dict(sig, learned=learned))
+    u = next(u for u in prob.units if u.date == mon and u.primary == ["night"] and "server pm" in u.roles)
+    assert prob.components_of(u, prob.pidx["p14"]).get("learned", 0) > 0
     # a memory held in the prompt only is the prompt's
-    prompt_only = [dict(learned[0], enforcement="prompt")]
-    assert ss.Problem(rows, c, signals=dict(sig, learned=prompt_only)).learned == []
+    assert ss.Problem(rows, c, signals=dict(sig, learned=[dict(learned[0], enforcement="prompt")])).mem == []
 
 
 def test_a_slot_somebody_keeps_dropping_costs_the_solver_at_half_weight():

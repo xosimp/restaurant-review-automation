@@ -407,6 +407,10 @@ class ShiftContext:
     # week}, "published": {lower: {week: hours}}, "rates", "default_rate",
     # "rules"} — the overtime forecast's own inputs; {} when not supplied.
     overtime: dict = field(default_factory=dict)
+    # The scheduling memory's active facts (schedule_memory.enforced_signals:
+    # [{kind, key, person, day, daypart, role, value, confidence, enforcement,
+    # source}]) — what week_learned holds the week to (L-3).
+    learned: list = field(default_factory=list)
     # ── what the rule sweep found, and what the restaurant's own record says ──
     # The hard breaches the rule sweep pinned to this shift ([{kind,
     # label}]); any one holds the shift at HARD_BREACH_CAP (SQ-14).
@@ -599,7 +603,7 @@ DIMENSION_LABELS = {
     "pairings": "Pairings", "fatigue": "Fatigue", "fairness": "Fairness",
     "preferences": "Staff preferences", "stability": "Schedule stability",
     "cross_training": "Cross-training", "min_hours": "Minimum hours", "overtime": "Overtime",
-    "stations": "Kitchen stations",
+    "stations": "Kitchen stations", "learned": "Learned patterns",
 }
 
 
@@ -636,6 +640,11 @@ DEFAULT_WEIGHTS = {
     # Every kitchen station a daypart needs held by a cook trained on it
     # (SQ-26). Withdraws for a restaurant that has set no stations.
     "stations": 10,
+    # What the restaurant's scheduling has learned and the week breaks
+    # (week_learned, schedule audit 10/3/26 L-3): judged once for the week;
+    # withdraws until the scheduling memory has an active fact. The
+    # managers' own repeated edits — "an owner's edits never vanish".
+    "learned": 10,
 }
 
 
@@ -3184,6 +3193,112 @@ def week_overtime(contexts: list) -> DimensionResult | None:
     return res
 
 
+# ── What the restaurant's scheduling has learned (L-3, D-35) ───────────────
+
+# Points of the measure one broken memory costs at full confidence: a slot
+# memory at 0.8 is 20 of them — about 1.7 points of a fourteen-shift week at
+# the default weight, several times what a leader on one weekday dinner
+# earns it, so a move or a fill that puts "Bob back on Tuesday dinner" for
+# the generic reasons no longer wins; only a real fix (a shift short, a
+# station nobody can work) still outweighs what the managers keep doing.
+# Floored at 0.
+LEARNED_MISS_POINTS = 25
+_MEALS = {"morning": "lunch", "night": "dinner"}
+
+
+def _learned_line(m: dict, miss: dict) -> str:
+    """One owner-facing sentence for a memory the week breaks."""
+    kind = m.get("kind")
+    v = m.get("value") if isinstance(m.get("value"), dict) else {}
+    who = (m.get("person") or "").strip()
+    day, meal = m.get("day") or "", _MEALS.get(m.get("daypart"), m.get("daypart") or "")
+    slot = " ".join(x for x in (day, meal) if x)
+    role = role_words(v.get("role") or m.get("role") or "") if (v.get("role") or m.get("role")) else "staff"
+    if kind == "moved_off":
+        return f"{who} is on {slot}; your managers keep taking them off it."
+    if kind == "moved_on":
+        return f"{who} is not on {slot}; your managers keep putting them on it."
+    if kind in ("retime_start", "retime_end"):
+        edge = "start" if kind == "retime_start" else "end"
+        return f"{role.capitalize()} shifts on {slot} do not {edge} at {v.get('time')}, where your managers keep setting them."
+    if kind == "role_change":
+        return f"{who} is on {slot} in another role; your managers keep making them {v.get('role')}."
+    if kind == "leader_swap":
+        return f"None of {_names(list(v.get('names') or []))} is on {slot}; your managers keep putting one of them there."
+    if kind == "opener":
+        return f"{who} is on {day} but not opening {role}, which they usually do."
+    if kind == "closer":
+        return f"{who} is on {day} but not closing {role}, which they usually do."
+    if kind == "pair":
+        return f"{who} and {_names(list(v.get('with') or []))} are on different shifts; their shifts together run well."
+    if kind == "end_overrun":
+        return (f"{role.capitalize()} closes on {slot} end before {v.get('padded_end')}; they usually run about "
+                f"{v.get('minutes')} minutes past the scheduled end.")
+    return str(miss.get("text") or "")
+
+
+def week_learned(contexts: list) -> DimensionResult | None:
+    """What this restaurant's scheduling has learned and the week breaks
+    (schedule audit 10/3/26 L-3, D-35): the active memories the passes are
+    held to (signals["learned"], schedule_memory.enforced_signals — somebody
+    the managers keep taking off a slot or putting on one, the role's usual
+    opener or closer, a team whose shifts together run well, somebody who
+    habitually runs past their shift, closes that run late), each broken one
+    costing LEARNED_MISS_POINTS at its weight (schedule_memory.misses — the
+    meaning of every kind lives there, once). Judged once for the week. The
+    patterns reached only the prompt, so a fill, the trim, the solver or the
+    optimizer put back the edit the manager kept making, and the score said
+    nothing. None without an active memory."""
+    if not contexts:
+        return None
+    ctx = contexts[0]
+    # A memory enforced only in the prompt stays there (enforced_signals
+    # hands over none; a caller's list may).
+    learned = [m for m in (ctx.learned or []) if isinstance(m, dict) and m.get("kind")
+               and str(m.get("enforcement") or "soft").lower() != "prompt"]
+    if not learned:
+        return None
+    rows_by_date = {}
+    for c in contexts:
+        if c.date not in rows_by_date:
+            rows_by_date[c.date] = [r for r in (c.day_rows or c.rows) if not c._is_flagged(r)]
+    rows = [r for d in sorted(rows_by_date) for r in rows_by_date[d] if (r.get("employee") or "").strip()]
+    ot = ctx.overtime or {}
+    bucket_of = ot.get("bucket_of") or {}
+    try:
+        line = float(ot.get("line") or 0) or None
+    except (TypeError, ValueError):
+        line = None
+    import schedule_memory as _smem          # pure: the one meaning of each memory
+    found = _smem.misses(rows, learned, families=ctx.role_families or None, line=line,
+                         bucket=(lambda d: bucket_of.get(d, "")) if bucket_of else None)
+    by_key = {m.get("key"): m for m in learned}
+    misses = []
+    for x in found:
+        m = by_key.get(x.get("key")) or {}
+        rs = [rows[i] for i in (x.get("indexes") or []) if 0 <= i < len(rows)]
+        misses.append({"key": x.get("key"), "kind": x.get("kind"), "weight": float(x.get("weight") or 0),
+                       "person": m.get("person"), "day": m.get("day"), "daypart": m.get("daypart"),
+                       "role": m.get("role"), "value": dict(m["value"]) if isinstance(m.get("value"), dict) else {},
+                       "rows": [{"employee": (r.get("employee") or "").strip(), "date": r.get("date") or "",
+                                 "shift_start": r.get("shift_start") or "", "shift_end": r.get("shift_end") or "",
+                                 "role": r.get("role") or "", "daypart": present_dayparts(r)[0]} for r in rs],
+                       "text": _learned_line(m, x) if x.get("kind") != "ot_risk" else str(x.get("text") or "")})
+    lost = sum(x["weight"] for x in misses)
+    score = max(0, int(round(SCORE_MAX - LEARNED_MISS_POINTS * lost)))
+    res = DimensionResult(key="learned", label=DIMENSION_LABELS["learned"], score=score,
+                          weight=DEFAULT_WEIGHTS["learned"],
+                          facts={"memories": len(learned), "broken": len(misses), "misses": misses,
+                                 "strained": sorted({x["person"] for x in misses if x.get("person")}),
+                                 "scope": "week"})
+    for x in sorted(misses, key=lambda x: -x["weight"])[:3]:
+        res.weaknesses.append(x["text"])
+    if not misses:
+        res.strengths.append(f"Keeps all {len(learned)} thing{'s' if len(learned) != 1 else ''} your managers "
+                             "keep doing by hand.")
+    return res
+
+
 # ── Kitchen stations ───────────────────────────────────────────────────────
 
 # Under this share of a daypart's required stations held by a trained cook,
@@ -3258,6 +3373,7 @@ DIMENSIONS = {
     "min_hours": dim_min_hours,
     "overtime": week_overtime,          # a payroll-week fact: judged only for the week
     "stations": dim_stations,
+    "learned": week_learned,            # the scheduling memory: judged only for the week
 }
 
 # Dimensions that are properties of the whole week, judged once per week in
@@ -3271,6 +3387,7 @@ WEEK_LEVEL_DIMENSIONS = {
     "min_hours": week_min_hours,
     "preferences": week_preferences,
     "overtime": week_overtime,
+    "learned": week_learned,
 }
 
 # What the owner sees as a bar: every shift dimension that counts toward the
@@ -4895,6 +5012,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             busy_slots=busy_slots,
             week_start=week_start,
             overtime=signals.get("overtime") or {},
+            learned=list(signals.get("learned") or []),
             managers=managers,
             acting_managers=acting,
             role_families=families,

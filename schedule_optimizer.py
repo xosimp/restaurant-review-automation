@@ -18,14 +18,18 @@ This is a bounded local search over the moves a manager actually makes:
             a rested person for somebody on day seven, a veteran, somebody
             who turns up, the teammate with room instead of overtime)
   swap      two people in one role trade shifts on different dates
+  trade     two people on the same date trade shifts (the other half of the
+            day, the role's opening or closing shift, the role the managers
+            keep giving one of them)
   trim      a shift is shortened, or removed, where a day is over its target
 
-Candidates come from the weak dimensions' own facts, costliest first
-(demand-weighted, capped shifts before everything), from what the
-restaurant's scheduling memory says a move must not undo (signals
-["learned"]), and — once those have nothing left — from the what-if's swaps
-and replacements, so a better arrangement the comparison would report is
-taken here instead (schedule audit 10/3/26 P-33, SQ-19).
+Candidates come first from what the week breaks of the restaurant's
+scheduling memory (the score's learned-patterns measure, shift_quality.
+week_learned over signals["learned"] — L-3, D-35), then from the weak
+dimensions' own facts, costliest first (demand-weighted, capped shifts
+before everything), and — once those have nothing left — from the what-if's
+swaps and replacements, so a better arrangement the comparison would report
+is taken here instead (schedule audit 10/3/26 P-33, SQ-19).
 
 Every candidate is judged by what it does to the WEEK the owner gets:
 
@@ -38,16 +42,20 @@ Every candidate is judged by what it does to the WEEK the owner gets:
               the floors, the closer, overtime or minimum hours may get new
               or worse — P-14, E-1); never a new hour of overtime for anybody
               (the owner's rule: a same-role teammate takes it or nobody
-              does); never a row the manager plan or the owner pinned; the
-              hourly hours budget a ceiling (salaried hours are not spent
-              from it, P-6); the section count.
+              does; somebody who habitually runs past their shift has the
+              line less that headroom — L-16); never a close the memory says
+              runs late ended before it really ends; never a row the manager
+              plan or the owner pinned; the hourly hours budget a ceiling
+              (salaried hours are not spent from it, P-6); the section count.
   scored      by the same shift_quality.score_rows the owner's number comes
               from, with the rows that will not stand and the hard breaches
               of THAT trial (P-28), less what the move costs in labor
               dollars (schedule_economics.priced_cost: each person's own
               rate, the role's, overtime at its premium, salaried people
-              free — P-32) and what it breaks of the scheduling memory (L-3)
-              — so a $25/h add no longer costs the same as a $14/h one.
+              free — P-32) — so a $25/h add no longer costs the same as a
+              $14/h one — and what it keeps of the rows the manager is
+              expected to change (signals["likely_edits"], L-15). What a
+              move breaks of the scheduling memory is in the score itself.
 
 The best improvement is taken and recorded with a sentence saying what
 changed and what it bought. The search stops at the target, when nothing
@@ -94,17 +102,6 @@ LEARNED_WORSE_MAX = 1.5
 # nothing: the search finishes the draft's quality, it never trades the
 # score for a cheaper week (the budget trim and labor efficiency own that).
 LABOR_POINTS_PER_PCT = 0.5
-# What breaking an active memory of the restaurant's scheduling costs
-# (schedule audit 10/3/26 L-3, D-35): points of the SHIFT it is broken on at
-# full confidence — a quarter of that shift — weighed into the week as the
-# shift is (its demand weight over the week's); a memory the owner made a
-# rule ("hard") many times that. The manager taking Bob off Tuesday dinner
-# week after week is stronger evidence than the generic reasons the score
-# would put him back for (a leader on a weekday dinner is worth 7.5 points
-# of it): a move or an answer that puts him back has to buy more than this,
-# and only fixing what is actually broken ever does.
-LEARNED_SHIFT_POINTS = 25.0
-LEARNED_HARD_FACTOR = 6.0
 # A row the edit predictor says the manager will change (schedule_learning.
 # likely_edit_signals, when the engine passes signals["likely_edits"]):
 # points of its shift per unit of its weight for keeping it as it is.
@@ -211,192 +208,73 @@ def labor_dollars(rows: list, pricing: dict) -> float:
 
 # ── what the restaurant's scheduling memory holds (L-3, D-35) ──────────────
 
-_OFF_VALUES = frozenset({"off", "avoid", "never", "not", "no", "remove", "removed", "drop", "false", "0", "apart",
-                         "split"})
-_ON_VALUES = frozenset({"on", "always", "prefer", "keep", "yes", "true", "1", "add", "together", "with"})
-_PARTS = {"morning": "morning", "lunch": "morning", "day": "morning", "am": "morning", "brunch": "morning",
-          "night": "night", "dinner": "night", "evening": "night", "pm": "night"}
-
-
-def _weekday(value) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    if raw[:2] == "20" and len(raw) >= 10:
-        return sq._day_name(raw[:10])
-    low = raw.lower()
-    for d in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"):
-        if low == d.lower() or low == d.lower()[:3]:
-            return d
-    return ""
-
-
-def _pair_names(m: dict) -> list:
-    """The two people a pairing memory is about, wherever its shape put them:
-    a list under people/persons, "a+b" in person, a value dict, or the key
-    ("pair|ana+bo|prefer")."""
-    for k in ("people", "persons", "pair"):
-        v = m.get(k)
-        if isinstance(v, (list, tuple, set, frozenset)) and len(v) >= 2:
-            return sorted(_low(x) for x in v)[:2]
-    val = m.get("value")
-    if isinstance(val, dict):
-        names = [val.get(k) for k in ("a", "b", "with", "other") if val.get(k)]
-        if m.get("person") and len(names) == 1:
-            names = [m["person"]] + names
-        if len(names) >= 2:
-            return sorted(_low(x) for x in names)[:2]
-    for text in (m.get("person"), m.get("key")):
-        for part in str(text or "").split("|"):
-            if "+" in part:
-                bits = [_low(x) for x in part.split("+") if x.strip()]
-                if len(bits) == 2:
-                    return sorted(bits)
-    return []
-
-
-def learned_items(signals: dict) -> list:
-    """signals["learned"] (schedule_memory.enforced_signals: [{kind, key,
-    person, day, daypart, role, value, confidence, enforcement, source}]) as
-    the person-level facts the solver and this search hold: somebody off a
-    slot or on it, the role's opener or closer on a slot, two people kept
-    apart or together, and somebody who habitually runs past their shift.
-    A memory enforced in the prompt only stays there; "soft" (or "soft_cost")
-    is weighed at its confidence, "hard"/"rule" at LEARNED_HARD_FACTOR times
-    that. A memory about the week's shape (a headcount, a start time) is not
-    a person's and is left to the passes that hold those. Each item:
-    {kind: off|on|opener|closer|avoid|prefer|overrun, person, other, day,
-    daypart, role, hours, weight, hard, text}."""
-    out = []
+def ot_headroom(signals: dict, constraints=None) -> dict:
+    """{person key: hours} — somebody the scheduling memory says habitually
+    runs past their shift (schedule_memory's ot_risk, L-16): their overtime
+    line is the line less these hours for every check that no move or
+    answer puts anybody newly past it."""
+    key = constraints.key if (constraints is not None and hasattr(constraints, "key")) else _low
+    out = {}
     for m in (signals or {}).get("learned") or []:
-        if not isinstance(m, dict):
-            continue
-        enforcement = str(m.get("enforcement") or "").strip().lower()
-        if enforcement not in ("soft", "soft_cost", "hard", "rule"):
+        if not isinstance(m, dict) or m.get("kind") != "ot_risk" or not m.get("person"):
             continue
         try:
-            conf = float(m.get("confidence") if m.get("confidence") is not None else 1.0)
+            v = m.get("value") if isinstance(m.get("value"), dict) else {}
+            head = float(v.get("headroom_hours") or 0)
         except (TypeError, ValueError):
-            conf = 1.0
-        conf = max(0.0, min(1.0, conf))
-        if conf <= 0:
-            continue
-        hard = enforcement in ("hard", "rule")
-        weight = conf * (LEARNED_HARD_FACTOR if hard else 1.0)
-        kind = str(m.get("kind") or "").strip().lower()
-        value = m.get("value")
-        v = str(value).strip().lower() if not isinstance(value, (dict, list, tuple)) else ""
-        person, day = _low(m.get("person")), _weekday(m.get("day") or m.get("date"))
-        part = _PARTS.get(str(m.get("daypart") or "").strip().lower(), "")
-        role = str(m.get("role") or "").strip()
-        text = str(m.get("source") or m.get("key") or kind)[:160]
-        base = {"person": person, "other": "", "day": day, "daypart": part, "role": role, "hours": 0.0,
-                "weight": weight, "hard": hard, "text": text}
-        slotish = kind in ("slot", "person_slot", "person_day", "day_slot")
-        if kind in ("moved_off", "slot_off", "person_off", "off", "never_on") or (slotish and v in _OFF_VALUES):
-            if person and day:
-                out.append(dict(base, kind="off"))
-        elif kind in ("moved_on", "slot_on", "person_on", "on", "always_on") or (slotish and v in _ON_VALUES):
-            if person and day:
-                out.append(dict(base, kind="on"))
-        elif kind in ("opener", "opens", "closer", "closes"):
-            if person and day:
-                out.append(dict(base, kind="opener" if kind.startswith("open") else "closer"))
-        elif kind in ("pair", "pairing", "pair_prefer", "pair_avoid", "team", "pair_split"):
-            names = _pair_names(m)
-            if len(names) == 2 and names[0] != names[1]:
-                avoid = kind in ("pair_avoid", "pair_split") or v in _OFF_VALUES
-                out.append(dict(base, kind="avoid" if avoid else "prefer", person=names[0], other=names[1]))
-        elif kind in ("ot_actual", "overtime_habit", "runs_over", "stayed_late", "overrun"):
-            try:
-                hours = float(value.get("hours") if isinstance(value, dict) else value)
-            except (TypeError, ValueError, AttributeError):
-                hours = 0.0
-            if person and hours > 0:
-                out.append(dict(base, kind="overrun", hours=max(0.0, min(8.0, hours))))
+            head = 0.0
+        if head > 0:
+            k = key(m["person"])
+            out[k] = max(out.get(k, 0.0), head)
     return out
 
 
-def week_value(quality: dict, rows: list, pricing=None, base_dollars: float = 0.0, items=None, likely=None,
-               families: dict = None) -> float:
+def memory_misses(quality: dict) -> list:
+    """What the week breaks of the scheduling memory, as its score judged it
+    (shift_quality.week_learned's facts — schedule_memory.misses, the one
+    meaning of every kind): [{key, kind, weight, person, day, daypart, role,
+    value, rows, text}]. The memory is IN the score (the learned-patterns
+    measure), so the search, the solver's judge and every pass that chooses
+    by the score hold it; this is what the moves that put it right read."""
+    for d in (quality or {}).get("week_dimensions") or []:
+        if d.get("key") == "learned":
+            return list((d.get("facts") or {}).get("misses") or [])
+    return []
+
+
+def _overrun_signals(signals: dict) -> list:
+    """The scheduling memory's closes that run late (end_overrun, L-16):
+    schedule_memory.pad_overruns ended them when they really end before the
+    search; no move may shorten one back below it."""
+    return [m for m in (signals or {}).get("learned") or []
+            if isinstance(m, dict) and m.get("kind") == "end_overrun"]
+
+
+def _overrun_weight(rows: list, overruns: list, families: dict = None) -> float:
+    """How far `rows` fall short of the closes the memory says run late
+    (schedule_memory.misses over the end_overrun memories alone)."""
+    if not overruns:
+        return 0.0
+    import schedule_memory as _smem
+    return sum(float(x.get("weight") or 0) for x in _smem.misses(rows, overruns, families=families or None))
+
+
+def week_value(quality: dict, rows: list, pricing=None, base_dollars: float = 0.0, likely=None) -> float:
     """What a week is worth to the owner, in week points: its Shift Quality
-    (objective), less LABOR_POINTS_PER_PCT for each 1% of labor dollars it
-    costs over `base_dollars` (the draft's — a saving earns nothing, P-32),
-    less what it breaks of the scheduling memory and keeps of the rows the
-    manager is expected to change (learned_cost, L-3). The one value the
-    repair loop and the solver's judge both choose by."""
+    (objective — what it breaks of the scheduling memory is in it, the
+    learned-patterns measure, L-3), less LABOR_POINTS_PER_PCT for each 1% of
+    labor dollars it costs over `base_dollars` (the draft's — a saving earns
+    nothing, P-32), less what it keeps of the rows the manager is expected
+    to change (likely_cost, L-15). The one value the repair loop and the
+    solver's judge both choose by."""
     v = objective(quality)
     if pricing and base_dollars > 0:
         over = labor_dollars(rows, pricing) - base_dollars
         if over > 0:
             v -= LABOR_POINTS_PER_PCT * over / base_dollars * 100.0
-    if items or likely:
-        v -= learned_cost(rows, items or [], likely, families, quality=quality)
+    if likely:
+        v -= likely_cost(rows, likely, quality)
     return v
-
-
-def _slots(rows: list) -> dict:
-    """{(weekday, daypart): {date: [rows on the floor for it]}}."""
-    out = {}
-    for r in rows or []:
-        if not (r.get("employee") or "").strip() or not r.get("date"):
-            continue
-        day = sq._day_name(r["date"], r.get("day", ""))
-        for part in sq.present_dayparts(r):
-            out.setdefault((day, part), {}).setdefault(r["date"], []).append(r)
-    return out
-
-
-def learned_breaks(rows: list, items: list, families: dict = None) -> list:
-    """[(item, date, daypart, text)] — each learned fact `rows` break, once
-    per shift it breaks it on."""
-    if not items:
-        return []
-    slots = _slots(rows)
-    out = []
-    for it in items:
-        kind, who = it["kind"], it["person"]
-        if kind == "overrun":
-            continue
-        if kind in ("avoid", "prefer"):
-            for (day, part), by_date in slots.items():
-                for d, rs in by_date.items():
-                    on = {_low(r.get("employee")) for r in rs}
-                    a, b = who in on, it["other"] in on
-                    if kind == "avoid" and a and b:
-                        out.append((it, d, part, f"{it['person'].title()} and {it['other'].title()} are on together"))
-                    elif kind == "prefer" and a != b:
-                        out.append((it, d, part, f"{it['person'].title()} and {it['other'].title()} are split"))
-            continue
-        parts = [it["daypart"]] if it["daypart"] else ["morning", "night"]
-        for part in parts:
-            for d, rs in (slots.get((it["day"], part)) or {}).items():
-                mine = [r for r in rs if _low(r.get("employee")) == who]
-                if kind == "off":
-                    if mine:
-                        out.append((it, d, part, f"{mine[0].get('employee')} is on {it['day']} "
-                                                 f"{'lunch' if part == 'morning' else 'dinner'}"))
-                    continue
-                if kind == "on":
-                    if not mine:
-                        out.append((it, d, part, f"{who.title()} is not on {it['day']} "
-                                                 f"{'lunch' if part == 'morning' else 'dinner'}"))
-                    continue
-                fam = sq.role_family(it["role"], families) if it["role"] else None
-                pool = [r for r in rs if fam is None or sq.role_family(r.get("role"), families) == fam]
-                spans = [(sq._row_span(r), r) for r in pool]
-                spans = [(sp, r) for sp, r in spans if sp]
-                if not spans:
-                    continue
-                if kind == "opener":
-                    edge = min(sp[0] for sp, _r in spans)
-                    at = [r for sp, r in spans if sp[0] == edge]
-                else:
-                    edge = max(sp[1] for sp, _r in spans)
-                    at = [r for sp, r in spans if sp[1] == edge]
-                if not any(_low(r.get("employee")) == who for r in at):
-                    out.append((it, d, part, f"{who.title()} is not the {kind} on {it['day']}"))
-    return out
 
 
 def _demand_shares(rows: list, quality: dict = None):
@@ -414,30 +292,28 @@ def _demand_shares(rows: list, quality: dict = None):
     return dw, (sum(dw.values()) or 1.0)
 
 
-def learned_cost(rows: list, items: list, likely: list = None, families: dict = None, quality: dict = None) -> float:
-    """Week points `rows` give up against the scheduling memory: for each
-    fact broken on a shift, LEARNED_SHIFT_POINTS of that shift at the fact's
-    weight; for each row kept that the edit predictor expects the manager to
-    change, LIKELY_EDIT_SHIFT_POINTS of its shift per unit of its weight —
-    each shift weighed into the week by its demand (the week score is the
-    demand-weighted mean of its shifts)."""
+def likely_cost(rows: list, likely: list = None, quality: dict = None) -> float:
+    """Week points `rows` give up for each row kept that the edit predictor
+    expects the manager to change (signals["likely_edits"], L-15):
+    LIKELY_EDIT_SHIFT_POINTS of its shift per unit of its weight, the shift
+    weighed into the week by its demand (the week score is the demand-
+    weighted mean of its shifts)."""
+    if not likely:
+        return 0.0
     dw, total = _demand_shares(rows, quality)
+    here = {}
+    for r in rows or []:
+        k = (_low(r.get("employee")), r.get("date") or "", r.get("shift_start") or "")
+        here[k] = sq.present_dayparts(r)[0]
     pts = 0.0
-    for it, d, part, _t in learned_breaks(rows, items, families):
-        pts += LEARNED_SHIFT_POINTS * it["weight"] * dw.get((d, part), 1.0) / total
-    if likely:
-        here = {}
-        for r in rows or []:
-            k = (_low(r.get("employee")), r.get("date") or "", r.get("shift_start") or "")
-            here[k] = sq.present_dayparts(r)[0]
-        for f in likely:
-            try:
-                w = float(f.get("weight") or 0)
-            except (TypeError, ValueError):
-                w = 0.0
-            k = (_low(f.get("employee")), f.get("date") or "", f.get("shift_start") or "")
-            if w > 0 and k in here:
-                pts += LIKELY_EDIT_SHIFT_POINTS * w * dw.get((k[1], here[k]), 1.0) / total
+    for f in likely:
+        try:
+            w = float(f.get("weight") or 0)
+        except (TypeError, ValueError):
+            w = 0.0
+        k = (_low(f.get("employee")), f.get("date") or "", f.get("shift_start") or "")
+        if w > 0 and k in here:
+            pts += LIKELY_EDIT_SHIFT_POINTS * w * dw.get((k[1], here[k]), 1.0) / total
     return pts
 
 
@@ -474,7 +350,8 @@ def _week_problems(quality: dict) -> list:
     out = []
     shifts = [s for s in (quality or {}).get("shifts") or [] if s.get("scored")]
     for d in (quality or {}).get("week_dimensions") or []:
-        if d.get("score", 100) >= sq.SCORE_MAX:
+        # The scheduling memory places itself (_learned_problems).
+        if d.get("score", 100) >= sq.SCORE_MAX or d.get("key") == "learned":
             continue
         facts = d.get("facts") or {}
         names = set(facts.get("strained") or [])
@@ -488,23 +365,47 @@ def _week_problems(quality: dict) -> list:
     return out
 
 
-def _learned_problems(rows: list, items: list, quality: dict, families: dict = None) -> list:
-    """(cost, shift, pseudo-dimension) for each shift a learned fact is
-    broken on, so the moves that put it right are tried first (L-3)."""
-    breaks = learned_breaks(rows, items, families)
-    if not breaks:
+def _learned_problems(quality: dict) -> list:
+    """(cost, shift, pseudo-dimension) for each shift a broken memory of the
+    restaurant's scheduling sits on (memory_misses), so the moves that put
+    it right are tried before anything else (L-3): the shift of each row it
+    names; else each shift on its weekday and daypart (somebody the managers
+    keep putting on it, one of the people they put on the role's slot);
+    else each shift the person works (overtime headroom) or, for a team,
+    each shift of the dates it is split on."""
+    misses = memory_misses(quality)
+    if not misses:
         return []
-    shifts = {}
-    for s in (quality or {}).get("shifts") or []:
-        shifts.setdefault(s.get("date"), []).append(s)
+    shifts = [s for s in (quality or {}).get("shifts") or [] if s.get("scored")]
+    at = {(s.get("date"), s.get("daypart")): s for s in shifts}
     out = []
-    for it, d, part, text in breaks:
-        for s in shifts.get(d) or []:
-            if s.get("daypart") != part:
-                continue
-            out.append((150.0 * it["weight"], s, {"key": "learned", "score": 0, "weight": 0,
-                                                    "facts": {"item": it, "text": text}}))
-            break
+    for x in misses:
+        targets = []
+        for r in x.get("rows") or []:
+            s = at.get((r.get("date"), r.get("daypart")))
+            if s is not None and s not in targets:
+                targets.append(s)
+        if not targets:
+            kind = x.get("kind")
+            who = sq.name_key(x.get("person"))
+            if kind in ("moved_on", "leader_swap", "role_change"):
+                targets = [s for s in shifts if s.get("day") == x.get("day") and s.get("daypart") == x.get("daypart")]
+            elif kind == "ot_risk":
+                targets = [s for s in shifts if who in {sq.name_key(n) for n in s.get("people") or []}]
+            elif kind == "pair":
+                team = {who} | {sq.name_key(n) for n in ((x.get("value") or {}).get("with") or [])}
+                by_date = {}
+                for s in shifts:
+                    on = team & {sq.name_key(n) for n in s.get("people") or []}
+                    if on:
+                        by_date.setdefault(s.get("date"), []).append((s, on))
+                for _d, here in by_date.items():
+                    there = set().union(*(on for _s, on in here))
+                    if len(there) > 1 and any(len(on) < len(there) for _s, on in here):
+                        targets += [s for s, _on in here]
+        for s in targets:
+            out.append((150.0 * float(x.get("weight") or 0), s,
+                        {"key": "learned", "score": 0, "weight": 0, "facts": {"miss": x}}))
     return out
 
 
@@ -571,6 +472,20 @@ class _State:
 
     def family(self, role) -> str:
         return sq.role_family(role, self.families)
+
+    def key(self, name) -> str:
+        """One person, one key, as the rules file them (Constraints.key)."""
+        c = self.constraints
+        return c.key(name) if (c is not None and hasattr(c, "key")) else _low(name)
+
+    def name_of(self, key) -> str:
+        """The spelling of the person `key` means on this week's rows, else
+        the roster's."""
+        for r in self.rows:
+            n = (r.get("employee") or "").strip()
+            if n and self.key(n) == key:
+                return n
+        return next((n for n in (self.signals.get("roster") or []) if n and self.key(n) == key), key)
 
     def score_of(self, name, role=None):
         """Their score for this role's family when the owner rated them in it,
@@ -1086,32 +1001,97 @@ def _moves_for(problem, state: _State) -> list:
                                limit=1)
 
     elif key == "learned":
-        it = facts.get("item") or {}
-        who = it.get("person") or ""
-        name = next((n for n in (state.signals.get("roster") or []) if _low(n) == who), who.title())
-        why = f"what the manager keeps doing: {it.get('text') or 'a standing pattern'}"
-        if it.get("kind") == "off":
-            off_shift(name, why, want=lambda n, w=who: _low(n) != w)
-        elif it.get("kind") in ("on", "opener", "closer"):
-            fam = state.family(it.get("role")) if it.get("role") else None
+        # What the restaurant's scheduling memory holds and this shift breaks
+        # (L-3, D-35; the kinds as schedule_memory.misses reads them). The
+        # words on the row and in the list say only that this is how the
+        # managers schedule the shift: staff read the notes.
+        x = facts.get("miss") or {}
+        kind, v = x.get("kind"), x.get("value") or {}
+        who = state.key(x.get("person"))
+        name = state.name_of(who) if who else ""
+        why = f"as your managers usually schedule {where}"
+        fam = state.family(x.get("role")) if x.get("role") else None
+
+        def mine_now():
+            return [i for i, r in enumerate(state.rows) if state.key(r.get("employee")) == who
+                    and r.get("date") == date and part in sq.present_dayparts(r)]
+        if kind == "moved_off":
+            for i in mine_now()[:2]:
+                replace_in(i, lambda n, w=who: state.key(n) != w, why)
+                _swap_moves(state, i, moves, why, want=lambda n, w=who: state.key(n) != w)
+        elif kind in ("moved_on", "leader_swap"):
+            names = {who} if kind == "moved_on" else {state.key(n) for n in (v.get("names") or [])}
+            want = lambda n, ns=frozenset(names): state.key(n) in ns  # noqa: E731
+            fams = {fam} if fam else ({state.family(r) for r in state.pool if name in state.pool[r]} if name else set())
             for i in [i for i in range(len(state.rows)) if state.rows[i].get("date") == date
-                      and part in sq.present_dayparts(state.rows[i])
-                      and (fam is None or state.family(state.rows[i].get("role")) == fam)
-                      and _low(state.rows[i].get("employee")) != who][:3]:
-                replace_in(i, lambda n, w=who: _low(n) == w, why, limit=1)
-                _swap_moves(state, i, moves, why, want=lambda n, w=who: _low(n) == w)
-        elif it.get("kind") == "avoid":
-            for nm in (it.get("person"), it.get("other")):
-                off_shift(next((n for n in (state.signals.get("roster") or []) if _low(n) == nm), nm.title()), why,
-                          want=lambda n, a=it.get("person"), b=it.get("other"): _low(n) not in (a, b))
-        elif it.get("kind") == "prefer":
-            on_here = {_low(n) for n in (shift.get("people") or [])}
-            other = it.get("other") if it.get("person") in on_here else it.get("person")
-            nm = next((n for n in (state.signals.get("roster") or []) if _low(n) == other), None)
-            if nm:
-                for i in [i for i in range(len(state.rows)) if state.rows[i].get("date") == date
-                          and part in sq.present_dayparts(state.rows[i])][:4]:
-                    replace_in(i, lambda n, x=nm: n == x, why, limit=1)
+                      and sq.present_dayparts(state.rows[i])[0] == part
+                      and state.family(state.rows[i].get("role")) in fams
+                      and state.key(state.rows[i].get("employee")) not in names][:3]:
+                replace_in(i, want, why, limit=1)
+                _swap_moves(state, i, moves, why, want=want)
+                # Somebody it wants who is on the other half of that day
+                # trades their shift for this one.
+                for j, r in enumerate(state.rows):
+                    if r.get("date") == date and j != i and want(r.get("employee")) and \
+                            state.family(r.get("role")) == state.family(state.rows[i].get("role")):
+                        moves.append(_trade_move(state, i, j, why))
+        elif kind == "role_change":
+            role = state.family(v.get("role"))
+            for i in mine_now()[:1]:
+                for j in [j for j in state.family_rows(date, role, part) if j != i][:3]:
+                    moves.append(_trade_move(state, i, j, why))
+        elif kind in ("opener", "closer"):
+            spans = [(j, _span(state.rows[j])) for j in state.family_rows(date, fam)] if fam else []
+            spans = [(j, sp) for j, sp in spans if sp[0] is not None]
+            if spans:
+                if kind == "opener":
+                    first = min(sp[0] for _j, sp in spans)
+                    edge = [j for j, sp in spans if sp[0] - first <= 15]
+                else:
+                    last = max(sp[1] for _j, sp in spans)
+                    edge = [j for j, sp in spans if last - sp[1] <= 15]
+                mine = [i for i, r in enumerate(state.rows) if state.key(r.get("employee")) == who
+                        and r.get("date") == date and state.family(r.get("role")) == fam]
+                for i in mine[:1]:
+                    for j in edge[:3]:
+                        moves.append(_trade_move(state, i, j, why))
+        elif kind == "pair":
+            team = {who} | {state.key(n) for n in (v.get("with") or [])}
+            here = [i for i, r in enumerate(state.rows) if r.get("date") == date and state.key(r.get("employee")) in team]
+            parts_of = {i: sq.present_dayparts(state.rows[i])[0] for i in here}
+            for i in here:
+                # one of the team on the other half of the day comes across
+                # into a teammate's half, trading with somebody of their role
+                if parts_of[i] == part:
+                    continue
+                for j in [j for j in state.family_rows(date, state.family(state.rows[i].get("role")), part)
+                          if state.key(state.rows[j].get("employee")) not in team][:3]:
+                    moves.append(_trade_move(state, i, j, why))
+        elif kind == "ot_risk":
+            for i in sorted(mine_now(), key=lambda i: sq._row_hours(state.rows[i]))[:1]:
+                replace_in(i, lambda n, w=who: state.key(n) != w, why)
+        elif kind in ("retime_start", "retime_end", "end_overrun"):
+            target = sq._slot_minutes(v.get("time") if kind != "end_overrun" else v.get("padded_end"))
+            if target is not None:
+                for r in x.get("rows") or []:
+                    i = next((k for k, row in enumerate(state.rows)
+                              if (row.get("employee") or "").strip() == r.get("employee") and row.get("date") == r.get("date")
+                              and row.get("shift_start") == r.get("shift_start")), None)
+                    if i is None:
+                        continue
+                    s, e = _span(state.rows[i])
+                    if s is None:
+                        continue
+                    if kind == "retime_start":
+                        ns, ne = target, e
+                        if ns >= ne:
+                            continue
+                    else:
+                        ne = target + (24 * 60 if target <= s else 0)
+                        ns = s
+                    if abs((ne - ns) - (e - s)) > MAX_EXTEND_MINUTES:
+                        continue
+                    moves.append(_retime_move(state, i, ns, ne, why))
 
     elif key == "training_balance":
         for text in facts.get("isolated_names") or []:
@@ -1287,6 +1267,36 @@ def _remove_move(state, i, why):
             f"({row.get('shift_start')}–{row.get('shift_end')}) off — {why}.", apply)
 
 
+def _trade_move(state, i, j, why):
+    """Two people on the same date trade shifts (the other half of the day,
+    the role's edge, a role the managers keep making one of them): each is
+    legal for the person taking it with both rows moved, the overtime line
+    asked only of the side whose hours go up. None when either row is
+    pinned or a rule refuses it — never without the week's rules."""
+    if i == j or i in state.pinned or j in state.pinned or state.constraints is None:
+        return None
+    a, b = state.rows[i], state.rows[j]
+    na, nb = (a.get("employee") or "").strip(), (b.get("employee") or "").strip()
+    if not na or not nb or state.key(na) == state.key(nb) or a.get("date") != b.get("date"):
+        return None
+    up_b = sq._row_hours(a) > sq._row_hours(b)
+    if not state.legal_for(nb, a, skip={i, j}, overtime=up_b) or \
+            not state.legal_for(na, b, skip={i, j}, overtime=not up_b):
+        return None
+
+    def apply(rows, i=i, j=j, why=why):
+        out = [dict(r) for r in rows]
+        x, y = out[i]["employee"], out[j]["employee"]
+        out[i]["employee"], out[j]["employee"] = y, x
+        _tag(out[i], f"{why} (traded with {x})")
+        _tag(out[j], f"{why} (traded with {y})")
+        return out
+    day = a.get("day") or _day(a.get("date"))
+    return (("trade", min(i, j), max(i, j)),
+            f"{na} and {nb} traded {day} shifts ({a.get('role')} {a.get('shift_start')}–{a.get('shift_end')} and "
+            f"{b.get('role')} {b.get('shift_start')}–{b.get('shift_end')}) — {why}.", apply)
+
+
 def _swap_moves(state, i, moves, why, want=None, limit=3):
     """Trade row i's person with someone in the same role family on another
     date. `want(name)` limits who may come in (a leader, somebody stronger).
@@ -1459,12 +1469,15 @@ def _pinned_rows(rows) -> list:
     return sorted(_rules._sweep_sig(r) + (str(r.get("_pinned")),) for r in rows or [] if r.get("_pinned"))
 
 
-def overtime_created(before_rows, after_rows, c) -> list:
+def overtime_created(before_rows, after_rows, c, headroom: dict = None) -> list:
     """[(name, payroll week, hours)] for everybody `after_rows` puts past
     their overtime line (schedule_rules.overtime_line — a salaried person's
     weekly cap) by more than `before_rows` did: the owner's rule is that a
     draft never runs overtime while a same-role teammate has room, and no
-    quality move is worth an hour of it. [] without Constraints."""
+    quality move is worth an hour of it. `headroom` ({person key: hours},
+    ot_headroom) moves the line in for somebody who habitually runs past
+    their shift (L-16): scheduled to the line, they work overtime. []
+    without Constraints."""
     if c is None:
         return []
     import schedule_rules as _rules
@@ -1489,6 +1502,8 @@ def overtime_created(before_rows, after_rows, c) -> list:
             continue
         base = float((c.base_hours.get(low) or {}).get(bucket, 0.0) or 0.0)
         line = _rules.overtime_line(c, names.get(low, low))
+        if line and headroom and low in headroom and not c.is_salaried(names.get(low, low)):
+            line = max(0.0, line - headroom[low])
         if line and base + hours > line + 0.05:
             out.append((names.get(low, low), bucket, round(base + hours, 2)))
     return out
@@ -1516,9 +1531,11 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     import schedule_rules as _rules
     sweep = _rules.IncrementalSweep(c) if c is not None else None
     pricing = pricing_inputs(signals, inputs, c)
-    items = learned_items(signals)
     likely = [f for f in (signals.get("likely_edits") or []) if isinstance(f, dict)]
     families = signals.get("role_families") or (getattr(c, "role_families", None) if c is not None else None)
+    # The scheduling memory's overtime headroom and late closes (L-16).
+    headroom = ot_headroom(signals, c)
+    overruns = _overrun_signals(signals)
 
     def sweep_of(rs):
         """(violations, breach profile, the scorer's signals) for `rs`: the
@@ -1544,9 +1561,10 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     base_dollars = labor_dollars(current_rows, pricing) if pricing else 0.0
 
     def value(q, rs):
-        """The week's worth: its score less the labor dollars it adds over
-        the draft (P-32) and what it breaks of the scheduling memory (L-3)."""
-        return week_value(q, rs, pricing, base_dollars, items, likely, families)
+        """The week's worth: its score (the scheduling memory's measure in
+        it, L-3) less the labor dollars it adds over the draft (P-32) and the
+        rows it keeps that the manager is expected to change (L-15)."""
+        return week_value(q, rs, pricing, base_dollars, likely)
 
     viols, prof, sig = sweep_of(current_rows)
     out = {"rows": current_rows, "changes": [], "before_score": None, "after_score": None,
@@ -1611,14 +1629,17 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         return all(p <= max(cap, peaks_before.get(d, 0)) for d, p in _server_peaks(rs).items())
     worse_days = learned_worse_days(inputs)
     soft_before = _soft_repaired(viols)
+    overrun_before = _overrun_weight(current_rows, overruns, families)
 
     def legal(trial_rows):
         """(sweep, profile, signals) of a trial that may stand, else None:
         nothing about a person, the manager every minute, the floors and the
         closer, overtime or minimum hours new or worse than the week as it
         stands after the moves already taken (P-14, E-1); no repaired soft
-        breach back; nobody newly past their overtime line; nobody code may
-        not choose newly on a date (P-2)."""
+        breach back; nobody newly past their overtime line (for somebody
+        who habitually runs past their shift, the line less that headroom —
+        L-16); no close the memory says runs late ended earlier than it
+        really ends; nobody code may not choose newly on a date (P-2)."""
         if sweep is None:
             return None, None, signals
         t_viols, t_prof, t_sig = sweep_of(trial_rows)
@@ -1628,7 +1649,9 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
             return None
         if _soft_repaired(t_viols) - soft_before:
             return None
-        if overtime_created(current_rows, trial_rows, c):
+        if overtime_created(current_rows, trial_rows, c, headroom=headroom):
+            return None
+        if overruns and _overrun_weight(trial_rows, overruns, families) > overrun_before + 1e-9:
             return None
         on_before = {(_low(r.get("employee")), r.get("date")) for r in current_rows}
         for r in trial_rows:
@@ -1641,7 +1664,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     evaluations, tabu = 1, set()
     stopped = "no improving move"
     while True:
-        if (current.get("score") or 0) >= target and not (items and learned_breaks(current_rows, items, families)):
+        if (current.get("score") or 0) >= target and not memory_misses(current):
             stopped = "target reached"
             break
         if _time.monotonic() - t0 > max_seconds or evaluations >= max_evaluations:
@@ -1654,7 +1677,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 break
             candidates, seen = [], set()
             if phase == "weak":
-                problems = _learned_problems(current_rows, items, current, families) + _problems(current)[:8]
+                problems = _learned_problems(current) + _problems(current)[:8]
                 for problem in problems:
                     for mv in _moves_for(problem, state):
                         if mv[0] in seen or mv[0] in tabu:
@@ -1720,6 +1743,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 # now stands (P-14): a breach this move fixed may not come back.
                 viols, prof = t_viols, t_prof
                 soft_before = _soft_repaired(viols) if viols is not None else soft_before
+                overrun_before = _overrun_weight(current_rows, overruns, families)
                 cur_val = value(current, current_rows)
                 tabu.add(sig_m)
                 accepted = True
@@ -1793,10 +1817,10 @@ def summary(result: dict, signals: dict = None) -> dict:
         verdict = ("The draft already met the quality target." if result.get("stopped") == "target reached"
                    else "No legal change improved the draft.")
     elif before is not None and after is not None and after < before:
-        # Only a change that keeps to what the managers keep doing (the
-        # scheduling memory) is ever worth points of the score.
-        verdict = (f"Cavnar AI made {len(changes)} change{'s' if len(changes) != 1 else ''} to the draft to keep to "
-                   f"what your managers keep doing; Shift Quality moved from {before} to {after}. "
+        # Only a change where the managers usually change the draft (the edit
+        # predictor, L-15) is ever worth points of the score.
+        verdict = (f"Cavnar AI made {len(changes)} change{'s' if len(changes) != 1 else ''} to the draft where "
+                   f"your managers usually change it; Shift Quality moved from {before} to {after}. "
                    "Each is listed with why.")
     else:
         verdict = (f"Cavnar AI made {len(changes)} change{'s' if len(changes) != 1 else ''} to the draft, "
