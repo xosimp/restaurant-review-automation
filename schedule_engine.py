@@ -667,6 +667,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         result["roster"] = sorted(n for n, _r in roster_pairs)
     result["roster_roles"] = {n: r for n, r in roster_pairs}
     result["dormant"] = _dormant
+    # Each person's usual week (models.usual_pattern: days, dayparts, hours,
+    # starts — D-37), for the review's "regulars with no shift" line.
+    result["prior_pattern"] = _people.get("prior_pattern") or {}
     result["pairs"] = pairs
     result["reliability"] = reliability
     result["learned_patterns"] = learned
@@ -3704,6 +3707,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     f"Left off this draft — no shift in {_staff.DORMANT_WEEKS}+ weeks: "
                     + ", ".join(f"{n} (last {_mdy_gone(d)})" for n, d in _gl[:6]) + ("…" if len(_gl) > 6 else "")
                     + ". Deactivate anyone who has left, or mark them still here on the Team page.")
+            # A regular left with no shift at all (D-37): their usual week,
+            # said beside the name — "Ana (usually ~32h)".
+            _pp = result.get("prior_pattern") or {}
+            _reg = [(n, (_pp.get(n) or {}).get("avg_hours")) for n in _not
+                    if float((_pp.get(n) or {}).get("avg_hours") or 0) >= 16]
+            result["regulars_not_scheduled"] = [{"name": n, "usual_hours": h} for n, h in _reg]
+            if _reg:
+                result["review"]["lines"].append(
+                    f"{len(_reg)} regular{'s' if len(_reg) != 1 else ''} with no shift this week: "
+                    + ", ".join(f"{n} (usually ~{float(h):g}h)" for n, h in _reg[:6]) + ("…" if len(_reg) > 6 else ""))
             if _not:
                 _full = [n for n in _not if (_constraints.employment.get(n.lower()) == "full")]
                 result["review"]["lines"].append(

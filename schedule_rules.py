@@ -40,11 +40,17 @@ DEFAULTS = {
     # on until close every trading day — enforced whenever anyone on the
     # roster is a keyholder (NS5 M8). The owner can switch it off.
     "keyholder_until_close": True,
+    # What "full-time" means when the owner set no minimum for the person
+    # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
+    # the field said nothing): at least this many hours a week. 30 is the
+    # usual US full-time line (the ACA's); 0 or blank turns it off.
+    "full_time_min_hours": 30.0,
 }
 _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "daily_ot_hours": (4, 24),
            "meal_break_after_hours": (2, 12), "minor_max_daily_hours": (1, 12),
            "min_consecutive_days_off": (0, 4), "part_time_days_off": (0, 5),
-           "weekly_hours_ceiling": (10, 80), "max_consecutive_days": (2, 14), "notice_days": (0, 30)}
+           "weekly_hours_ceiling": (10, 80), "max_consecutive_days": (2, 14), "notice_days": (0, 30),
+           "full_time_min_hours": (0, 60)}
 
 # Reasons that mean the person is not really on that shift, so the row must
 # not count as coverage. Everything else in HARD is a cost or a rule breach
@@ -862,6 +868,9 @@ class Constraints:
     linked: dict = field(default_factory=dict)
     # {roster key: the roster's spelling}, deactivated people included.
     display: dict = field(default_factory=dict)
+    # Full-timers whose minimum is the restaurant's full-time line, not one
+    # the owner set for them (D-41) — said so wherever the minimum is.
+    full_time_default: set = field(default_factory=set)
     # Per-person inputs whose name matches nobody on the roster, active or
     # not (D-8): [{"source", "name", "detail"}] — the review names each,
     # so a fact typed under a spelling nobody goes by is never silent.
@@ -1511,6 +1520,15 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss):
         c.hours_limits[key] = (st.get("min_hours"), st.get("max_hours"))
     if st.get("employment_type"):
         c.employment[key] = st["employment_type"]
+    # Full-time with no minimum of their own: the restaurant's full-time
+    # line is their minimum (D-41). Never for a salaried person — their
+    # pay does not follow their hours.
+    ft = c.compliance.get("full_time_min_hours")
+    if st.get("employment_type") == "full" and st.get("min_hours") is None and ft and key not in c.salaried:
+        mx = st.get("max_hours")
+        if mx is None or float(mx) >= float(ft):
+            c.hours_limits[key] = (float(ft), mx)
+            c.full_time_default.add(key)
     if st.get("daypart_availability"):
         c.daypart_avail[key] = dict(st["daypart_availability"])
     if st.get("is_minor") or st.get("minor_age_band"):
@@ -2071,7 +2089,9 @@ def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
         if mn:
             this_week = sum(row_hours(r) for _, r in items)
             if this_week + 0.05 < mn:
-                out.append(_v("under_min_hours", items[0][0], items[0][1], f"{this_week:g}h this week, wants at least {mn:g}h",
+                said = (f"{this_week:g}h this week — full-time, at least {mn:g}h unless you set their own minimum"
+                        if c.key(name) in c.full_time_default else f"{this_week:g}h this week, wants at least {mn:g}h")
+                out.append(_v("under_min_hours", items[0][0], items[0][1], said,
                               severity=round(mn - this_week, 2)))
         # a minor's age band: the day and week caps (school day / school
         # week vs out of school), counted in date order so the shift that
@@ -2706,10 +2726,10 @@ def prompt_block(c: Constraints) -> str:
         lim = c.hours_limits.get(key)
         if lim:
             if lim[0]:
-                bits.append(f"at least {float(lim[0]):g}h")
+                bits.append(f"at least {float(lim[0]):g}h" + (" (full-time)" if key in c.full_time_default else ""))
             if lim[1]:
                 bits.append(f"at most {float(lim[1]):g}h")
-        if c.employment.get(key):
+        if c.employment.get(key) and key not in c.full_time_default:
             bits.append(f"{c.employment[key]}-time")
         dp = c.daypart_avail.get(key) or {}
         offs = [d[:3] for d in DAYS if dp.get(d) == "off"]

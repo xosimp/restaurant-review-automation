@@ -9172,6 +9172,12 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 # cook who moved to nights in June "usually" on mornings in September.
 USUAL_WEEKS = 12
 USUAL_MIN_WEEKS = 2
+# Their usual hours and start times (schedule audit 10/3/26 D-37): the
+# average over the weeks they worked in the last USUAL_HOURS_WEEKS full
+# weeks, said once it rests on USUAL_HOURS_MIN_WEEKS of them — "a 32h-a-week
+# regular can be cut to 12h with no signal".
+USUAL_HOURS_WEEKS = 8
+USUAL_HOURS_MIN_WEEKS = 2
 
 
 def _restaurant_today(restaurant_id):
@@ -9183,16 +9189,45 @@ def _restaurant_today(restaurant_id):
         return _date_rt.today()
 
 
+def _shift_hours_of(sh) -> float:
+    """The hours a shift row stands for: what was worked when the source
+    knows it (a punch's actual), else the scheduled hours, else its span."""
+    for k in ("actual_hours", "scheduled_hours"):
+        try:
+            v = sh.get(k)
+            if v not in (None, ""):
+                v = float(v)
+                if v > 0:
+                    return v
+        except (TypeError, ValueError):
+            continue
+    from schedule_rules import parse_minutes
+    s, e = parse_minutes(sh.get("shift_start") or ""), parse_minutes(sh.get("shift_end") or "")
+    if s is None or e is None:
+        return 0.0
+    return round(((e - s) % (24 * 60)) / 60.0, 2)
+
+
 def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int = USUAL_MIN_WEEKS) -> dict:
-    """{name: {"days": [...], "dayparts": [...], "weeks": n}} from shift rows
-    ({employee, date, shift_start}). Only the `weeks` weeks before `today`
-    are read (a person with no shift in them has no usual pattern), and a
-    weekday or daypart is "usual" when it recurs in `min_weeks` distinct
-    weeks of that window — or in the only week there is, for someone new."""
+    """{name: {"days": [...], "dayparts": [...], "weeks": n, "avg_hours",
+    "hours_weeks", "starts"}} from shift rows ({employee, date, shift_start,
+    hours}). Only the `weeks` weeks before `today` are read (a person with no
+    shift in them has no usual pattern), and a weekday or daypart is "usual"
+    when it recurs in `min_weeks` distinct weeks of that window — or in the
+    only week there is, for someone new.
+
+    Their usual hours and start times too (schedule audit 10/3/26 D-37):
+    `avg_hours` the average a week over the full weeks they worked in the
+    last USUAL_HOURS_WEEKS (the week in progress left out), with
+    `hours_weeks` how many that is — None below USUAL_HOURS_MIN_WEEKS;
+    `starts` {daypart: their usual start ("4:30pm"), the median to the
+    quarter hour} over the same weeks."""
     from datetime import date as _date_up, datetime as _dt_up, timedelta as _td_up
     from shift_quality import daypart_of
     today = today or _date_up.today()
     since = (today - _td_up(weeks=weeks)).isoformat()
+    this_week = (today - _td_up(days=today.weekday())).isoformat()
+    hours_since = (_date_up.fromisoformat(this_week) - _td_up(weeks=USUAL_HOURS_WEEKS)).isoformat()
     tally = {}
     for sh in shifts or []:
         name = (sh.get("employee") or "").strip()
@@ -9208,18 +9243,35 @@ def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int =
             if not sh.get("day"):
                 continue
             wd, wk = sh["day"], "?"
-        t = tally.setdefault(name, {"weeks": set(), "days": {}, "dayparts": {}})
+        t = tally.setdefault(name, {"weeks": set(), "days": {}, "dayparts": {}, "hours": {}, "starts": {}})
         t["weeks"].add(wk)
         t["days"].setdefault(wd, set()).add(wk)
         part = daypart_of(sh.get("shift_start", ""))
         if part != "unknown":
             t["dayparts"].setdefault(part, set()).add(wk)
+        if wk != "?" and hours_since <= day < this_week:
+            t["hours"][wk] = t["hours"].get(wk, 0.0) + _shift_hours_of(sh)
+            if part != "unknown":
+                from schedule_rules import parse_minutes as _pm_up
+                m = _pm_up(sh.get("shift_start") or "")
+                if m is not None:
+                    t["starts"].setdefault(part, []).append(m)
     out = {}
     for n, t in tally.items():
         need = min(min_weeks, len(t["weeks"]))
+        worked = [h for h in t["hours"].values() if h > 0]
+        avg = round(sum(worked) / len(worked), 1) if len(worked) >= USUAL_HOURS_MIN_WEEKS else None
+        starts = {}
+        for part, ms in t["starts"].items():
+            ms = sorted(ms)
+            mid = ms[len(ms) // 2]
+            q = int(round(mid / 15.0) * 15) % (24 * 60)
+            h12 = (q // 60) % 12 or 12
+            starts[part] = f"{h12}:{q % 60:02d}{'am' if q < 12 * 60 else 'pm'}"
         out[n] = {"days": sorted(d for d, w in t["days"].items() if len(w) >= need),
                   "dayparts": sorted(p for p, w in t["dayparts"].items() if len(w) >= need),
-                  "weeks": len(t["weeks"])}
+                  "weeks": len(t["weeks"]), "avg_hours": avg, "hours_weeks": len(worked),
+                  "starts": starts}
     return out
 
 
