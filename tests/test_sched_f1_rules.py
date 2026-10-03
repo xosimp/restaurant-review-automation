@@ -228,11 +228,31 @@ def test_the_last_of_the_role_out_must_be_one_of_its_closers():
     assert v and "Lee is the last Bartender out" in v[0]["detail"]
 
 
+def test_until_the_owner_chooses_the_closer_roles_are_the_ones_the_punches_show_closing():
+    rid = _rid(close_times_json='{"Friday": "2:00am", "Saturday": "2:00am"}')
+    _closer_roster(rid)
+    models.set_capability(rid, "Andrew", attribute="can_close", flag=True)
+    for wk in range(1, 5):
+        for day in (4, 5):
+            d = (date.fromisoformat(WEEK[day]) - timedelta(weeks=wk)).isoformat()
+            _punch(rid, "Sam", "Bartender PM", d, "6:00pm", "2:00am")
+            _punch(rid, "Andrew", "Manager FOH", d, "5:00pm", "2:00am")
+            _punch(rid, "Dee", "Dishwasher", d, "5:00pm", "11:00pm")
+    c = _c(rid)
+    assert c.closer_roles_basis == "history"
+    assert c.closers_by_role == {"bartender": {"sam"}, "manager foh": {"andrew"}}, "a dishwasher never closes here"
+    rows = [_row(4, "Andrew", "Manager FOH", "5:00pm", "2:00am", 9), _row(4, "Sam", "Bartender PM", "6:00pm", "2:00am", 8),
+            _row(4, "Dee", "Dishwasher", "5:00pm", "11:00pm", 6)]
+    assert "keyholder_until_close" not in _kinds(rows, c)
+    assert not sr.close_out_gaps(rows, c)["extended"], "the dishwasher is never kept to 2am"
+
+
 def test_the_owner_chooses_which_roles_have_closers():
     rid = _rid(closer_roles_json='["Bartender"]')
     _closer_roster(rid)
     c = _c(rid)
     assert c.closers_by_role == {"bartender": {"sam"}} and c.closer_flags == {"sam", "dee"}
+    assert c.closer_roles_basis == "yours"
 
 
 def test_a_closer_flag_set_through_view_as_does_not_count_until_adopted():

@@ -182,7 +182,13 @@ def closer_review(restaurant_id, c=None, weeks=CLOSER_WINDOW_WEEKS, today=None) 
     except Exception:
         pending = []
     return {"by_role": by_role, "flagged": flagged, "roster": roster, "share": round(share, 3),
-            "warning": warning, "closer_roles": chosen, "outside_roles": outside, "pending_admin": pending,
+            "warning": warning, "closer_roles": chosen,
+            # Which roles the closer rule holds and why: the owner's choice,
+            # else the roles their punches show on until close, else (no
+            # history) every role somebody is marked to close for.
+            "closer_roles_basis": c.closer_roles_basis,
+            "closer_roles_in_force": [x["role"] for x in by_role],
+            "outside_roles": outside, "pending_admin": pending,
             "suggestions": _closer_suggestions(restaurant_id, c, weeks, today)}
 
 
@@ -580,6 +586,11 @@ def setup_review(c, leader_status=None) -> dict:
     if ms["ask_standing"]:
         items.append({"kind": "standing_missing", "line": True, "text": ms["ask_standing"],
                       "names": ms["missing_standing"]})
+    if c.closers_by_role and c.closer_roles_basis == "history":
+        roles = [_sr._family_label(c, f) for f in sorted(c.closers_by_role)]
+        items.append({"kind": "closer_roles", "line": True, "roles": roles,
+                      "text": f"The closer rule holds for {_and(roles)} — the roles your punches show on until close. "
+                              "Choose the roles that close in Team → Closers."})
     roster = len(c.roster_names or [])
     if roster and len(c.closer_flags) / roster > CLOSER_SHARE_WARN:
         items.append({"kind": "closers_share", "line": True,

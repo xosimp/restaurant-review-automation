@@ -864,6 +864,11 @@ class Constraints:
     # Everyone on the roster marked to close, whatever their role (lower) —
     # the share the closer data-quality warning reads (D-9).
     closer_flags: set = field(default_factory=set)
+    # Which roles have the closer rule, and why: "yours" (the owner chose
+    # them), "history" (the roles the restaurant's own punches show on until
+    # close, until the owner chooses) or "all" (no history yet: every role
+    # somebody is marked to close for).
+    closer_roles_basis: str = "all"
 
     # ── lookups ────────────────────────────────────────────────────────
     def bucket(self, date_str: str) -> str:
@@ -1458,10 +1463,17 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             _person_settings(c, e, expired, _ss, held=held, worked=worked)
         except Exception as exc:
             _input_problem(c, "settings", exc, name=e.get("name"))
-    # Closers, per role (D-9, L-9): each marked to close for their role.
+    # Closers, per role (D-9, L-9): each marked to close for their role, in
+    # the roles the owner chose — until they choose, the roles their own
+    # punches show on until close, so a cook marked to close (47 of 64 were,
+    # at Simple EJ's) is never held to the bar's 2am.
     try:
         from models import get_leader_flags
-        _closers_by_role(c, _people, get_leader_flags(restaurant_id, db_path) or {}, closer_roles(restaurant))
+        chosen, c.closer_roles_basis = closer_roles(restaurant), "yours"
+        if not chosen:
+            chosen = sorted(closing_families(c, _closing_history(restaurant_id, c)))
+            c.closer_roles_basis = "history" if chosen else "all"
+        _closers_by_role(c, _people, get_leader_flags(restaurant_id, db_path) or {}, chosen)
     except Exception as exc:
         _input_problem(c, "closers", exc)
     # An Owner role is salaried-style unless the owner marked them paid by
@@ -1636,6 +1648,48 @@ def _closers_by_role(c, people, flags, chosen):
             if not keep or fam in keep:
                 c.closers_by_role.setdefault(fam, set()).add(key)
     c.keyholders = set().union(*c.closers_by_role.values()) if c.closers_by_role else set()
+
+
+# A role "closes here" when its last person out reached the close (or, with
+# no close on file, the day's last shift) on at least half the days it
+# worked in the last weeks of punches — and on enough days to say so.
+CLOSING_ROLE_WEEKS = 8
+CLOSING_ROLE_SHARE = 0.5
+CLOSING_ROLE_MIN_DAYS = 3
+
+
+def _closing_history(restaurant_id, c) -> list:
+    """The last CLOSING_ROLE_WEEKS weeks of punches before the week."""
+    try:
+        import shift_facts
+        from datetime import date as _d
+        first = _d.fromisoformat(min(c.week_dates)) if c.week_dates else _d.today()
+        return shift_facts.person_rows(restaurant_id, since=(first - timedelta(weeks=CLOSING_ROLE_WEEKS)).isoformat(),
+                                       until=(first - timedelta(days=1)).isoformat()) or []
+    except Exception as exc:
+        _input_problem(c, "closing roles", exc)
+        return []
+
+
+def closing_families(c, rows) -> set:
+    """The role families the restaurant's own punches show on until close
+    (D-9): a closer rule's default reach until the owner chooses the roles."""
+    by_day, fam_day = {}, {}
+    for r in rows or []:
+        d, fam, e = str(r.get("date") or "")[:10], c.family(r.get("role")), end_minutes(r)
+        if not d or not fam or e is None or is_training_role(r.get("role")):
+            continue
+        by_day[d] = max(by_day.get(d, e), e)
+        fam_day[(d, fam)] = max(fam_day.get((d, fam), e), e)
+    worked, closed = {}, {}
+    for (d, fam), e in fam_day.items():
+        close = close_minutes(c, _weekday_of(d))
+        last = close if close is not None else by_day[d]
+        worked[fam] = worked.get(fam, 0) + 1
+        if e >= last - 30:
+            closed[fam] = closed.get(fam, 0) + 1
+    return {f for f, n in worked.items()
+            if n >= CLOSING_ROLE_MIN_DAYS and closed.get(f, 0) >= CLOSING_ROLE_SHARE * n}
 
 
 def _floors_on_job_codes(c):

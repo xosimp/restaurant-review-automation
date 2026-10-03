@@ -2213,7 +2213,8 @@ def _setup_payload(rid) -> dict:
         cr = _setup.closer_review(rid, c=c)
         return {"managers": ms, "managers_line": ms["line"],
                 "closers": {k: cr[k] for k in ("by_role", "flagged", "roster", "share", "warning", "closer_roles",
-                                               "outside_roles", "pending_admin")},
+                                               "closer_roles_basis", "closer_roles_in_force", "outside_roles",
+                                               "pending_admin")},
                 "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules],
                 "owner_rules_unchecked": list(c.owner_rules_unchecked),
                 "close_times_missing": _setup.close_times_missing(c),
