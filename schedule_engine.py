@@ -586,6 +586,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         soft_reqs = _stsig.soft_requirements(restaurant_id, next_week_dates, today=today.date())
     except Exception as _sfx:
         _soft_fail('soft_requirements', _sfx, restaurant_id)
+    # The labor standards (labor_standards, D-25): measured guests per
+    # server-hour and the like, with the owner's own figure over them; an
+    # owner's standard resizes that role's requirement, with its reason.
+    standards_for_week = {}
+    try:
+        import labor_standards as _ls
+        standards_for_week = _ls.for_requirements(restaurant_id, next_week_dates,
+                                                  (staffing or {}).get("typical_headcount") or {}, date_demand,
+                                                  restaurant=restaurant, shifts=shifts)
+    except Exception as _sfx:
+        _soft_fail('labor_standards', _sfx, restaurant_id)
+        standards_for_week = {}
     memory_blk = ""
     try:
         import memory_context as _mc
@@ -674,6 +686,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         splh_hold=(learning.get("splh_objective") or {}).get("hold") or None,
         requirement_adjustments=_asks_as_adjustments(soft_reqs) or None,
         staffing_patterns=staffing,
+        labor_standards=standards_for_week or None,
     )
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["rotation_plan"] = learning["rotation"]
@@ -681,6 +694,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     # Each date's demand number and its reasons (D-23, D-24, D-30) — the
     # Studio and the review say why a day moved.
     result["date_demand"] = date_demand
+    result["labor_standards"] = (standards_for_week or {}).get("standards") or {}
     result["starting_headcount"] = learning["starting_payload"]
     result["holiday_lift"] = holiday
     result["splh_by_daypart"] = splh
@@ -2630,11 +2644,15 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
                 print(f"[schedule] live sales-per-labor-hour objective unavailable: {_ox}")
                 out["splh_objective"] = {"available": False}
             try:
+                import labor_standards as _ls_live
+                _std_live = _ls_live.for_requirements(restaurant_id, dates, patterns.get("typical_headcount") or {},
+                                                      out.get("date_demand") or {}, restaurant=restaurant,
+                                                      needs_only=True)
                 out["requirements"] = _live_requirements(
                     dates, patterns, c, profiles, demand_by_day, out.get("demand_by_date") or {},
                     out.get("role_minimums") or {}, out.get("date_demand") or {},
                     (out.get("splh_objective") or {}).get("hold") or {}, leader_rules,
-                    bool(scores) or bool(out.get("leader_flags")))
+                    bool(scores) or bool(out.get("leader_flags")), (_std_live or {}).get("needs") or {})
                 import schedule_requirements as _req_live
                 out["requirements_by_date"] = _req_live.requirements_map(out["requirements"])
             except Exception as _rqx:
@@ -2646,7 +2664,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
 
 
 def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_date, role_minimums,
-                       date_demand, splh_hold, leader_rules, leadership_known) -> list:
+                       date_demand, splh_hold, leader_rules, leadership_known, standard_needs=None) -> list:
     """SHIFT REQUIREMENTS for a stored week, every role, from the inputs a
     live rescore holds — the draft's own inputs, through the one function
     (schedule_requirements.shift_requirements)."""
@@ -2659,7 +2677,8 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         skip_dates=sorted(c.closed_dates or ()), open_times=c.open_times or None,
         close_times=c.close_times or None, section_cap=int(getattr(c, "section_cap", 0) or 0),
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
-        splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None)
+        splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
+        standard_needs=standard_needs or None)
 
 
 def learned_worse_levers(restaurant_id) -> dict:

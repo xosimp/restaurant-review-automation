@@ -1953,14 +1953,77 @@ def _do_demand_signals_save(u):
     from client_api import log_account_event
     b = _body()
     rows = b.get("rows")
+    source = (b.get("source") or "manual")
+    report = None
     if not isinstance(rows, list):
-        rows = _ds.parse_reservations_csv(b.get("csv") or "")
+        # A reservation system's own booking export imports as it is — one
+        # row per booking, summed per date (schedule audit 10/3/26 D-31);
+        # the two-column "date,covers" paste still reads as before.
+        rows, report = _ds.parse_reservation_export(b.get("csv") or "")
+        if rows is None:
+            rows = _ds.parse_reservations_csv(b.get("csv") or "")
+        else:
+            source = "report"
     if not rows:
-        return {"ok": False, "error": "Send rows (date, kind, label, covers or lift) or a CSV of date,covers."}, 400
-    out = _ds.save(_rid(u), rows, source=(b.get("source") or "manual"), created_by=_who(u))
+        return {"ok": False, "error": "Send rows (date, kind, label, covers or lift), a CSV of date,covers, or your "
+                                      "reservation system's booking export (a date and a party size per booking)."}, 400
+    out = _ds.save(_rid(u), rows, source=source, created_by=_who(u))
     if out["written"]:
-        log_account_event(_rid(u), "demand_signals_saved", current_user=u, detail=f"{out['written']} dates")
+        log_account_event(_rid(u), "demand_signals_saved", current_user=u,
+                          detail=f"{out['written']} dates" + (f" from a booking export ({report['bookings']} bookings)"
+                                                              if report else ""))
+    if report:
+        out["report"] = report
     return {"ok": True, **out}, 200
+
+
+def _do_labor_standards_get(u):
+    """The labor standards (labor_standards.standards): per role family and
+    daypart, guests per server-hour, bar tickets per bartender-hour, tickets
+    per cook-hour — measured from the punches and the ticket archive, with
+    the owner's own figure over it and which it is (schedule audit 10/3/26
+    D-25). Anyone who can see labor sees them; only the owner sets them."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the labor standards.")
+    import labor_standards as _ls
+    std = _ls.standards(_rid(u))
+    return {"ok": True, "standards": std["families"], "can_edit": _principal(u),
+            "families": sorted(_ls.WORK), "units": {f: v[0] for f, v in _ls.WORK.items()}}, 200
+
+
+def _do_labor_standards_set(u):
+    """One family's standard set or cleared — {"family", "lunch"?,
+    "dinner"?, "all"?} or {"family", "remove": true} — read and written
+    against what is stored now, never a whole set sent back over another
+    change (an owner's edits never vanish). The owner's alone: a standard
+    resizes every requirement for that role."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can set the labor standards.")
+    import json as _json
+    import labor_standards as _ls
+    from client_api import log_account_event
+    from models import get_restaurant, update_restaurant
+    b = _body()
+    fam = str(b.get("family") or "").strip().lower()
+    if fam not in _ls.WORK:
+        return {"ok": False, "error": "Pick a role whose work the ticket archive counts: "
+                                      + ", ".join(sorted(_ls.WORK)) + "."}, 400
+    stored = _ls.overrides(get_restaurant(_rid(u)))
+    if _flag(b.get("remove")):
+        stored.pop(fam, None)
+    else:
+        try:
+            one = _ls.clean_overrides({fam: {k: b[k] for k in ("lunch", "dinner", "all") if k in b}})
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        if not one:
+            return {"ok": False, "error": "Send a per-hour figure for lunch, dinner or all."}, 400
+        stored[fam] = dict(stored.get(fam) or {}, **one[fam])
+    update_restaurant(_rid(u), {"labor_standards_json": _json.dumps(stored) if stored else None})
+    log_account_event(_rid(u), "labor_standard_set", current_user=u,
+                      detail=f"{fam}: " + (", ".join(f"{k} {v:g}/h" for k, v in (stored.get(fam) or {}).items())
+                                           or "cleared"))
+    return {"ok": True, "standards": _ls.standards(_rid(u))["families"]}, 200
 
 
 def _do_demand_signal_delete(u, signal_id):
@@ -5915,6 +5978,8 @@ _ROUTES = [
     ("/labor/demand-signals", ["GET"], _do_demand_signals_get, "demand_signals_get"),
     ("/labor/demand-signals", ["POST"], _do_demand_signals_save, "demand_signals_save"),
     ("/labor/demand-signals/<int:signal_id>", ["DELETE"], _do_demand_signal_delete, "demand_signal_delete"),
+    ("/labor/labor-standards", ["GET"], _do_labor_standards_get, "labor_standards_get"),
+    ("/labor/labor-standards", ["POST"], _do_labor_standards_set, "labor_standards_set"),
     ("/labor/event-follows/<int:series_id>", ["POST"], _do_event_follow_set, "event_follow_set"),
     ("/labor/event-dismissals", ["GET"], _do_event_dismissals_get, "event_dismissals_get"),
     ("/labor/event-dismissals/<int:event_id>/restore", ["POST"], _do_event_dismissal_restore,
