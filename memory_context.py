@@ -124,6 +124,7 @@ PROVIDERS = {
     "events":       ("event_memory:memory_lines", 60),        # how events, weather, campaigns moved sales here
     "market":       ("event_memory:market_lines", 65),        # competitors opening/closing/moving, own rating (INVENTORY-6)
     "people":       ("people:memory_lines", 70),              # attendance, standing patterns, notes (staffing)
+    "schedule_memory": ("schedule_memory:memory_lines", 72),  # what the scheduling learned (schedule audit 10/3/26 L-29)
     "marketing":    ("marketing:memory_lines", 80),           # what worked in marketing, the owner's voice
     "conversation": ("owner_memory:conversation_lines", 90),  # Ask only: the rolling chat summary
 }
@@ -140,7 +141,13 @@ SURFACE_SECTIONS = {
     # "conversation": that is per chat and per turn, so it rides on
     # "ask_conversation" below, outside the snapshot the viewer's other
     # chats share.
-    "ask": ("owner_rules", "constraints", "goals", "last_claim", "what_worked", "events", "market", "people", "marketing"),
+    # "schedule_memory" (schedule audit 10/3/26 L-29): what the scheduling
+    # has learned — habits, openers, teams, overtime — for the questions
+    # about why the draft does what it does. Not on "schedule" itself: the
+    # generation reads the memory through schedule_memory.prompt_lines, in
+    # its own learned budget, and a second copy would pay twice.
+    "ask": ("owner_rules", "constraints", "goals", "last_claim", "what_worked", "events", "market", "people", "marketing",
+            "schedule_memory"),
     # Ask, per turn: the chat's rolling summary, what its last answer read,
     # and the questions this login keeps asking — the first context block.
     "ask_conversation": ("conversation",),
@@ -148,7 +155,8 @@ SURFACE_SECTIONS = {
     # once its link ended — the schedule's verdict for that weekday
     # (link_memory, CROSSMODULE-12).
     "schedule": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people", "links"),
-    "labor_read": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
+    "labor_read": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people",
+                   "schedule_memory"),
     "food_read": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked"),
     "review_read": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked", "market"),
     # "links" (re-audit 9/29/26, CROSSMODULE-9): the links joining these
@@ -188,7 +196,8 @@ DEFAULT_BUDGET_CHARS = 2400
 # conversation carry the most weight: they are the memory the owner would
 # otherwise have to repeat.
 SECTION_SHARES = {"owner_rules": 3, "constraints": 3, "goals": 2, "last_claim": 2, "decisions": 3, "what_worked": 2,
-                  "events": 2, "market": 2, "people": 2, "marketing": 2, "conversation": 3, "links": 2}
+                  "events": 2, "market": 2, "people": 2, "marketing": 2, "conversation": 3, "links": 2,
+                  "schedule_memory": 2}
 DEFAULT_SHARE = 2
 
 # The owner's rules are taken before any share, up to this many lines,
@@ -221,6 +230,8 @@ SECTION_TITLES = {
     "market": ("WHAT THE LOCAL MARKET AND THIS RESTAURANT'S PUBLIC RATING HAVE DONE (Google's public listings as "
                "Cavnar AI's competitor check saw them — what happened, never why)"),
     "people": "THE PEOPLE",
+    "schedule_memory": ("WHAT THE SCHEDULING HAS LEARNED HERE (from the manager's own edits, the punches and the "
+                        "shifts' outcomes, each with how sure — why the draft does what it does)"),
     "marketing": "MARKETING MEMORY",
     "links": ("WHAT TWO MODULES KEEP POINTING AT TOGETHER (found by Cavnar AI's cross-module read, with how long "
               "each has stood — a co-occurrence, never a proven cause)"),

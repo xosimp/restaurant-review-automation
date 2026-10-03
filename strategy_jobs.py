@@ -1118,19 +1118,24 @@ def _recent_schedule(conn, restaurant_id):
         (restaurant_id, f"-{AUTO_DRAFT_RECENT_DAYS} days")).fetchone() is not None
 
 
-# Read by nothing since the weekly job records schedule_learning.
-# calibrate_weights' suggestion (re-audit A-26). Kept, not deleted:
-# candidate for future cleanup after additional verification.
-CALIBRATION_MIN_WEEKS = 8
-CALIBRATION_STEP = 2
-CALIBRATION_MAX_WEIGHT = 30
+# A suggestion this strong waits for nobody to open the intel screen
+# (schedule audit 10/3/26 L-14): the largest fitted effect behind a weight it
+# moves, or behind a floor or bar it moves, is surfaced in the action queue
+# (action_queue — "Shift Quality calibration has a strong suggestion"). The
+# owner still applies it; nothing is applied on its own.
+CALIBRATION_STRONG_EVIDENCE = 0.2
 
 
 def run_quality_calibration(db_path=DB_PATH):
-    """Weekly: record the Shift Quality weight suggestion for each Labor
-    restaurant, once per new published week, as a capability change
-    (quality_weights_suggested, shown in the change history) — nothing is
-    written to the weights until the owner applies it.
+    """Weekly: record the Shift Quality suggestion for each Labor restaurant,
+    once per new published week, as capability changes — the weights
+    (quality_weights_suggested) and, since SQ-22, each profile's floors and
+    bar (quality_profiles_suggested), shown in the change history — and
+    into the scheduling memory's log (`calibration_suggested`, with its
+    evidence), which the action queue reads to put a STRONG suggestion
+    (CALIBRATION_STRONG_EVIDENCE) in front of the owner (L-14: the loop
+    closed only if somebody opened the right screen). Nothing is written to
+    the weights, floors or bars until the owner applies it.
 
     ONE algorithm: the suggestion is schedule_learning.calibrate_weights,
     exactly what "Apply" (strategy_routes._do_calibration_apply) writes.
@@ -1148,14 +1153,15 @@ def run_quality_calibration(db_path=DB_PATH):
         if not getattr(r, "module_labor", 0):
             return
         cal = _sl.calibrate_weights(r.id, db_path=db_path)
-        if not cal.get("ready") or not cal.get("suggested_weights"):
+        if not cal.get("ready") or not (cal.get("suggested_weights") or cal.get("suggested_profiles")):
             return
         current = get_quality_weights(r.id) or {}
         merged = dict(_sq.DEFAULT_WEIGHTS)
         merged.update(current)
         after = dict(merged)
-        after.update({k: float(v) for k, v in cal["suggested_weights"].items()})
-        if all(abs(float(after[k]) - float(merged.get(k, 0) or 0)) < 0.05 for k in after):
+        after.update({k: float(v) for k, v in (cal.get("suggested_weights") or {}).items()})
+        weights_move = any(abs(float(after[k]) - float(merged.get(k, 0) or 0)) >= 0.05 for k in after)
+        if not weights_move and not cal.get("suggested_profiles"):
             return                                 # nothing to suggest
         # Once per new published week: the same evidence read again next
         # week is not a new suggestion.
@@ -1174,9 +1180,32 @@ def run_quality_calibration(db_path=DB_PATH):
             return
         # Suggested, never applied: "Apply" is one tap and writes these same
         # numbers (_do_calibration_apply over calibrate_weights).
-        record_capability_change(r.id, "quality_weights_suggested", subject="weights",
-                                 before=_j.dumps(current), after=_j.dumps(after),
-                                 changed_by="Cavnar AI (calibration)")
+        if weights_move:
+            record_capability_change(r.id, "quality_weights_suggested", subject="weights",
+                                     before=_j.dumps(current), after=_j.dumps(after),
+                                     changed_by="Cavnar AI (calibration)")
+        if cal.get("suggested_profiles"):
+            prof = cal.get("profiles") or {}
+            before_p = {k: {"min_quality": ((prof.get(k) or {}).get("bar") or {}).get("current"),
+                            "floors": {d: e.get("current") for d, e in ((prof.get(k) or {}).get("floors") or {}).items()
+                                       if d in ((cal["suggested_profiles"].get(k) or {}).get("floors") or {})}}
+                        for k in cal["suggested_profiles"]}
+            record_capability_change(r.id, "quality_profiles_suggested", subject="profiles",
+                                     before=_j.dumps(before_p), after=_j.dumps(cal["suggested_profiles"]),
+                                     changed_by="Cavnar AI (calibration)")
+        # How strong it is, kept where the action queue reads it: the largest
+        # fitted effect behind a weight that moves, and whether a floor or a
+        # bar moves (its own evidence floor is 0.5 SD, past which it is strong).
+        dims = cal.get("dimensions") or {}
+        evidence = max((abs(float(dims[k].get("evidence") or 0)) for k in (cal.get("moving") or []) if k in dims),
+                       default=0.0)
+        import schedule_memory as _smem_cal
+        _smem_cal.observe(r.id, "calibration_suggested", week_start=newest, value={
+            "evidence": round(evidence, 3), "moving": list(cal.get("moving") or []),
+            "profiles": sorted(cal.get("suggested_profiles") or {}),
+            "strong": evidence >= CALIBRATION_STRONG_EVIDENCE or bool(cal.get("suggested_profiles"))},
+            origin="system", phase="as_run", authority="system", source="calibration",
+            db_path=None if db_path == DB_PATH else db_path, fact_key=f"calibration_suggested|{newest}")
         changed["n"] += 1
 
     attempted, failed, hit = _bounded_each("quality_calibration", _one, db_path)
@@ -1446,7 +1475,14 @@ def run_labor_reminders(db_path=DB_PATH):
 
 def run_schedule_outcomes(db_path=DB_PATH):
     """Monday: record what each published week actually did, by daypart
-    (schedule_intel.record_outcomes), for every Labor restaurant."""
+    (schedule_intel.record_outcomes — the punches beside the plan, L-12),
+    score each ended week as it ran beside its planned score
+    (record_as_run_quality, L-29), and read every recommendation the manager
+    carried out against the night or the week as it ran
+    (measure_recommendations_as_run, L-34) as well as the watched nights'
+    issue share (measure_accepted_recommendations), for every Labor
+    restaurant. A failing step is captured and counts the restaurant as
+    failed; the steps after it still run."""
     import schedule_intel
     import scheduler as _sched
     # Bounded and resumable (SCHED-27): a wall-clock bound and a cursor, so a
@@ -1463,13 +1499,26 @@ def run_schedule_outcomes(db_path=DB_PATH):
             tally["attempted"] += 1
         try:
             written["n"] += schedule_intel.record_outcomes(rid, db_path=db_path).get("written", 0)
-            # Then read each accepted recommendation against the night it was
-            # about (rec_ledger outcome), now that the night is recorded.
-            schedule_intel.measure_accepted_recommendations(rid, db_path=db_path)
         except Exception:
             with lock:
                 tally["failed"] += 1
             raise
+        broke = False
+        # The ended weeks as they ran, then each carried-out recommendation
+        # read against them (rec_ledger outcome), now that the nights are
+        # recorded — each on its own, a failure captured and counted.
+        for step, fn in (("as_run_quality", schedule_intel.record_as_run_quality),
+                         ("as_run_recommendations", schedule_intel.measure_recommendations_as_run),
+                         ("accepted_recommendations", schedule_intel.measure_accepted_recommendations)):
+            try:
+                fn(rid, db_path=db_path)
+            except Exception as e:
+                import ops
+                ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={rid} {step}")
+                broke = True
+        if broke:
+            with lock:
+                tally["failed"] += 1
 
     _done, ran_out = _sched.resumable_sweep(OUTCOMES_CURSOR_KEY, sorted(by_id), _one, OUTCOMES_MAX_SECONDS,
                                             workers=1, job="schedule_outcomes")
@@ -1479,6 +1528,52 @@ def run_schedule_outcomes(db_path=DB_PATH):
 
 OUTCOMES_CURSOR_KEY = "schedule_outcomes_cursor"
 OUTCOMES_MAX_SECONDS = 20 * 60
+
+
+def run_schedule_memory(db_path=DB_PATH):
+    """6am, after people_nightly has kept the standing patterns and last
+    night's attendance current: every Labor restaurant's scheduling memory
+    rebuilt from its sources (schedule_memory.consolidate — the manager's
+    habits, openers and sections, overtime and late closes, teams, the
+    owner's redos, and the other learners' facts, each with its evidence,
+    confidence, decay and status; schedule audit 10/3/26 L-29). Bounded and
+    resumable (resumable_sweep, a cursor in job_cursors). A learner that
+    fails is captured and leaves its facts as they were; a restaurant whose
+    learner failed counts as failed. Sends nothing."""
+    import schedule_memory
+    import scheduler as _sched
+    by_id = {r.id: r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)}
+    tally = {"attempted": 0, "failed": 0, "skipped": 0, "memories": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
+        with lock:
+            tally["attempted"] += 1
+        try:
+            s = schedule_memory.consolidate(rid, db_path=None if db_path == DB_PATH else db_path)
+        except Exception:
+            with lock:
+                tally["failed"] += 1
+            raise
+        with lock:
+            if s.get("skipped"):
+                tally["skipped"] += 1
+            if s.get("failed"):
+                tally["failed"] += 1
+            tally["memories"] += int(s.get("created") or 0) + int(s.get("updated") or 0)
+
+    _done, ran_out = _sched.resumable_sweep(MEMORY_CURSOR_KEY, sorted(by_id), _one, MEMORY_MAX_SECONDS,
+                                            workers=1, job="schedule_memory")
+    if ran_out:
+        import ops
+        ops.capture(RuntimeError(f"schedule_memory stopped at its {MEMORY_MAX_SECONDS}s bound; the rest lead "
+                                 "the next pass"), job="schedule_memory", context="time_bound")
+    return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"], tally["skipped"],
+                   hit_bound=ran_out, memories=tally["memories"])
+
+
+MEMORY_CURSOR_KEY = "schedule_memory_cursor"
+MEMORY_MAX_SECONDS = 20 * 60
 
 
 def run_people_nightly(db_path=DB_PATH, today=None):

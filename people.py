@@ -948,6 +948,13 @@ NAME_STORES = (
     # name, so these are re-keyed, not just re-pointed (_repoint_patterns).
     {"table": "schedule_standing_patterns", "cols": ("employee",), "fold": "patterns", "no_create": True},
     {"table": "schedule_pattern_dismissals", "cols": ("employee",), "fold": "patterns", "no_create": True},
+    # The scheduling memory and its observation log (schedule_memory,
+    # schedule audit 10/3/26 L-29): re-pointed with the person, deleted with
+    # them on an erase. A memory's key carries their people id where they
+    # have one, so a rename keeps the row; the nightly consolidation rebuilds
+    # what a merge folded.
+    {"table": "schedule_observations", "cols": ("person",), "no_create": True},
+    {"table": "schedule_memory", "cols": ("person",), "no_create": True},
     # The staff app (employee audit fix round, 10/2/26). Each is keyed by the
     # name (or by the login, which a rename leaves alone) and carries no
     # person_id; a rename re-points the name, an erase deletes the rows. An

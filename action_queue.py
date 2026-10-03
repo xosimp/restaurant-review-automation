@@ -151,6 +151,31 @@ def _may(viewer, permission):
     return has_permission(viewer, permission)
 
 
+def _principal_view(viewer) -> bool:
+    """The account holder's view (None = the owner's full view, the
+    scheduler or a test): personnel figures and the scorer's settings are
+    theirs to act on."""
+    if viewer is None:
+        return True
+    try:
+        from permissions import is_principal
+        return bool(is_principal(viewer))
+    except Exception:
+        return False
+
+
+def _calibration_applied_since(restaurant_id, suggestion, db_path=DB_PATH) -> bool:
+    """Whether the owner applied a calibration after this suggestion."""
+    at = str((suggestion or {}).get("updated_at") or (suggestion or {}).get("created_at") or "")
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT MAX(changed_at) AS at FROM capability_changes WHERE restaurant_id=? AND kind IN "
+                           "('quality_weights_applied', 'quality_profiles_applied')", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    return bool(row and row["at"] and str(row["at"]) >= at)
+
+
 def _proposal_visible(viewer, row):
     """A stored proposal is its own login's, or an account holder's to see
     (command_center.reopen's rule), and only while that login may still run
@@ -458,6 +483,38 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                  f"{len(qs)} people on your team may be listed twice — same person?"),
                 "watch", {"label": "Answer", "module": "labor", "nav": "labor/people"},
                 detail=first.get("reason"), module="labor", count=len(qs))
+
+    # ── what the schedule learned that only the account holder can act on
+    # (schedule audit 10/3/26): a STRONG Shift Quality calibration nobody
+    # applied — the weekly job reads it, and the loop from outcomes to the
+    # scorer used to close only if somebody opened the right screen (L-14);
+    # and measured server performance suggesting a rating nobody confirmed
+    # (L-23, D-27 — personnel figures, the account holder's alone).
+    if getattr(restaurant, "module_labor", 0) and _sees(viewer, "labor") and _principal_view(viewer):
+        try:
+            import schedule_memory as _smq
+            sug = _smq.latest(restaurant_id, "calibration_suggested", db_path=db_path)
+            v = (sug or {}).get("value") or {}
+            if v.get("strong") and not _calibration_applied_since(restaurant_id, sug, db_path):
+                moved = len(v.get("moving") or []) + len(v.get("profiles") or [])
+                add("calibration:weights", "calibration",
+                    "Shift Quality calibration has a strong suggestion from your own shifts", "watch",
+                    {"label": "Review and apply", "module": "labor", "nav": "labor/intel"},
+                    detail=(f"{moved} setting{'' if moved == 1 else 's'} would move — read from how your published "
+                            f"shifts actually went"), module="labor")
+        except Exception as e:
+            print(f"[action_queue] calibration suggestion unavailable: {e}")
+        try:
+            import schedule_memory as _smr
+            due = _smr.ratings_waiting(restaurant_id, db_path=db_path)
+            if due:
+                add("ratings:measured", "ratings",
+                    f"{len(due)} server{'' if len(due) == 1 else 's'} measured by the POS — confirm their ratings",
+                    "watch", {"label": "Review", "module": "labor", "nav": "labor/ratings"},
+                    detail=", ".join(due[:3]) + (f" and {len(due) - 3} more" if len(due) > 3 else ""),
+                    module="labor", count=len(due))
+        except Exception as e:
+            print(f"[action_queue] measured ratings unavailable: {e}")
 
     hidden = _snoozed(restaurant_id, today, db_path)
     rank = {"critical": 0, "important": 1, "watch": 2}

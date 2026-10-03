@@ -2250,6 +2250,11 @@ _RETENTION_DAYS = {
     # month keeps last year's same weeks.
     "schedule_rejections": int(os.getenv("RETAIN_SCHED_REJECTIONS_DAYS", "400")),
     "schedule_edit_answers": int(os.getenv("RETAIN_SCHED_EDIT_ANSWERS_DAYS", "400")),
+    # The scheduling memory's observation log (schedule_memory, schedule
+    # audit 10/3/26 L-29): raw and temporary — the compact memory
+    # (schedule_memory, one row per learned fact, kept) is what outlives it,
+    # rebuilt every night while the log still holds its evidence.
+    "schedule_observations": int(os.getenv("RETAIN_SCHED_OBSERVATIONS_DAYS", "400")),
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     # Once-ever markers live in ops_markers, which is never pruned (#157).
@@ -2432,6 +2437,7 @@ _RETENTION_COLUMN = {
     "web_analytics_daily": "day",
     "schedule_model_calls": "created_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
+    "schedule_observations": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2494,8 +2500,10 @@ _RETENTION_FLOOR_DAYS = {
     "push_deliveries": 30, "webhook_deliveries": 14, "alert_log": 90, "email_log": 180,
     "ai_visibility_query_runs": 90, "competitor_snapshots": 365, "ai_visibility_runs": 180,
     "schedule_recommendation_events": 180, "job_period_claims": 35, "alert_holds": 7,
-    # The schedule learners read 24 weeks of redos and answers (L-26, L-35).
-    "schedule_rejections": 168, "schedule_edit_answers": 168,
+    # The schedule learners read 24 weeks of redos and answers (L-26, L-35);
+    # the scheduling memory reads 24 weeks of its log and the weeks scored as
+    # they ran for recommendations accepted up to 180 days ago (L-29, L-34).
+    "schedule_rejections": 168, "schedule_edit_answers": 168, "schedule_observations": 200,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -2529,7 +2537,9 @@ _RETENTION_FLOOR_DAYS = {
     # lookup (a miss re-translates).
     "staff_announcement_recipients": 90, "staff_announcements": 90, "staff_thread_messages": 90,
     "staff_running_late": 30, "shift_offers": 30, "staff_shift_pulse": 90, "staff_briefs": 30,
-    "staff_calendar_links": 30, "shift_sections": 30, "staff_translations": 7,
+    # Floor sections: the scheduling memory learns each server's usual
+    # section from 24 weeks of them (schedule audit 10/3/26 L-22).
+    "staff_calendar_links": 30, "shift_sections": 168, "staff_translations": 7,
 
 
     # Cavnar AI's own reads and claims (M4, ai_reads): the claims' record and
@@ -2618,6 +2628,13 @@ _RETENTION_READERS = {
                           ("schedule_learning.prediction_weeks", "schedule_versions.LEARN_DAYS", None)),
     "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
+    # The scheduling memory (L-29, L-22, L-34): the owner's redos over its
+    # window; each recommendation's week as it ran, for one accepted as far
+    # back as the measurement looks; a server's usual section.
+    "schedule_observations": (("schedule_memory._learn_redos", "schedule_memory.WINDOW_DAYS", None),
+                              ("schedule_intel.measure_recommendations_as_run",
+                               "schedule_intel.AS_RUN_LOOKBACK_DAYS", None)),
+    "shift_sections": (("schedule_memory._learn_sections", "schedule_memory.WINDOW_DAYS", None),),
     "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
     "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
     "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
