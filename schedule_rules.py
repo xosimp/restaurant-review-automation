@@ -2532,12 +2532,14 @@ def _closer_breaches(c, d, day, items, close_at, close_known) -> list:
         mine = [(e, s, i, r) for e, s, i, r in mine if e is not None]
         if not mine:
             continue
-        label = _family_label(c, fam)
-        names = ", ".join(sorted(_display_name(c, k) for k in closers)[:6])
         e_last, _s, i_last, r_last = max(mine, key=lambda t: t[0])
+        # Worded only when there is something to say: the sweep runs on
+        # every trial change a pass makes.
+        label = lambda: _family_label(c, fam)  # noqa: E731
+        names = lambda: ", ".join(sorted(_display_name(c, k) for k in closers)[:6])  # noqa: E731
         if not _closer_rule_runs(c, fam, d):
             out.append(_v("closer_unavailable", i_last, r_last,
-                          f"none of your {label} closers ({names}) can work {day} — the last {label} out closes",
+                          f"none of your {label()} closers ({names()}) can work {day} — the last {label()} out closes",
                           close_role=fam, day_level=True))
             continue
         need = close_at + int((c.close_mins or {}).get(fam, 0) or 0)
@@ -2545,6 +2547,7 @@ def _closer_breaches(c, d, day, items, close_at, close_known) -> list:
         best = max((e for e, _i, _r in on), default=None)
         if best is not None and best >= need - 15 and e_last <= best + 15:
             continue
+        label, names = label(), names()
         start = min((s for _e, s, _i, _r in mine if s is not None), default=need - 60)
         base = best if best is not None else start
         sev = max(need - base, e_last - base, 1)
