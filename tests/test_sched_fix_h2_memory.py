@@ -737,6 +737,22 @@ def test_the_owner_keeps_lets_go_or_makes_a_team_a_rule_and_view_as_changes_noth
     assert item["status_label"] == "A rule" and item["held_in_code"] and item["confidence_pct"].endswith("%")
 
 
+def test_the_owners_keep_applies_a_learning_fact_and_the_next_nights_read_keeps_it():
+    rid = _rid()
+    for w in (2, 1):
+        d = _sat(w)
+        _punch(rid, d, "Ana", "08:55", "16:00", 7, role="Kitchen")
+        _punch(rid, d, "Bo", "10:00", "18:00", 8, role="Kitchen")
+    sm.consolidate(rid)
+    ana = [m for m in _mem(rid, kind="opener") if m["person"] == "Ana"][0]
+    assert ana["status"] == "candidate"                     # two Saturdays: learning, not applied
+    sm.owner_answer(rid, ana["memory_key"], "keep", user=OWNER)
+    sm.consolidate(rid)
+    again = _mem(rid, key=ana["memory_key"])[0]
+    assert (again["status"], again["enforcement"], again["owner_said"]) == ("active", "soft", "keep")
+    assert [s_["kind"] for s_ in sm.enforced_signals(rid, [_sat(-1).isoformat()], ["Ana", "Bo"])] == ["opener"]
+
+
 def test_a_fact_that_cannot_be_a_rule_is_refused_in_words():
     rid = _rid()
     _sql("INSERT INTO schedule_memory (restaurant_id, memory_key, kind, fact_class, person, status, enforcement, "

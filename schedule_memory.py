@@ -58,7 +58,9 @@ What it hands the rest of the pipeline:
   observe(...)              one fact into the log; never raises into the
                             caller's work
   consolidate(rid)          the memory rebuilt from its sources (the nightly
-                            job, run_consolidation — bounded and resumable)
+                            job strategy_jobs.run_schedule_memory — bounded
+                            and resumable; the generation refreshes the
+                            patterns alone before it reads)
   enforced_signals(...)     the active memories that bind this week's
                             passes, [{kind, key, person, day, daypart, role,
                             value, confidence, enforcement, source}] —
@@ -71,9 +73,25 @@ What it hands the rest of the pipeline:
   pad_overruns(...)         the closing rows of a role that measurably runs
                             past its scheduled end, ended when it really ends
                             (L-16), where that is legal
+  memory_view / owner_answer   the owner's screen and say: keep, let go,
+                            make it a rule
+  usual_sections(...)       each server's usual section, for the Studio's
+                            picker to suggest (never assigned by code)
+  memory_lines(req)         the memory_context provider for the labor read
+                            and Ask
   suggested_ratings(...)    measured server performance offered as a rating
                             for the owner to confirm (L-23, D-27) — owner-
                             only, never in any prompt
+
+What it learns (`kind`): the manager's habits migrated whole from the
+standing patterns (moved_off / moved_on, retime_start / retime_end,
+headcount_add / headcount_cut, role_change, leader_swap), who opens and who
+closes each role on each weekday (opener, closer), each server's usual
+section (section), teams (pair — pairs and trios), who keeps running into
+overtime (ot_risk), closes that run past their end (end_overrun), the
+owner's redos and discards (redo_reason), and the other learners' facts held
+here as those learners decide them (staff_avoid / staff_prefer, reliability,
+daypart_outcome, could_hold).
 """
 import json
 import logging
@@ -708,12 +726,10 @@ def _note(e, iso, w, hit, hand=False, person=None, role=None, start=None, week=N
 
 
 def _display(e, field="names") -> str:
+    """The latest spelling of a name (by date), or the most worked role (by
+    count)."""
     d = e.get(field) or {}
-    if not d:
-        return ""
-    if field == "names":
-        return max(d.items(), key=lambda kv: kv[1])[0]
-    return max(d.items(), key=lambda kv: kv[1])[0]
+    return max(d.items(), key=lambda kv: kv[1])[0] if d else ""
 
 
 def _week_of(iso) -> str:
@@ -821,6 +837,7 @@ def _learn_patterns(ctx, patterns=None) -> list:
     else:
         live_all, conflicts = patterns
     dismissed = si.dismissed_patterns(ctx.rid, **kw)
+    ctx._cache["dismissed_patterns"] = dismissed
     # Every column the standing row keeps, carried as it is (the migration
     # loses nothing): the counts and dates the owner's screen and the
     # standing lifecycle read beside the evidence above.
@@ -1527,6 +1544,14 @@ def _settle(m, prev, ctx) -> tuple:
     if m.get("status"):
         return m["status"], m.get("retired_reason")
     hand_new = max(m.get("hand_dates") or [""])
+    if prev and prev.get("owner_said") == "keep" and prev.get("status") != "retired":
+        # The owner's "keep" is a hand confirmation that holds the fact
+        # applied for two half-lives from when they said it — unless the
+        # manager has since reversed it twice by hand.
+        said = str(prev.get("owner_said_at") or "")[:10]
+        if said and ctx.age(said) < 2 * half_life(m["kind"]) and not _reversed(
+                dict(m, hand_dates=list(m.get("hand_dates") or []) + [said])):
+            return ("dormant", None) if (m.get("person") and ctx.away(m["person"])) else ("active", None)
     if prev and prev.get("owner_said") == "let_go":
         if not (m["qualifies_new"] and hand_new > str(prev.get("owner_said_at") or "")[:10]):
             return "retired", "owner"
@@ -1547,8 +1572,6 @@ def _settle(m, prev, ctx) -> tuple:
             return "retired", "decayed"
     if m.get("person") and ctx.away(m["person"]):
         return "dormant", None
-    if prev and prev.get("owner_said") == "keep":
-        return "active", None
     if m["confidence"] >= ACTIVE_CONFIDENCE and m.get("may_activate", True):
         return "active", None
     return "candidate", None
@@ -1616,9 +1639,12 @@ def _write(ctx, produced, kinds_done) -> dict:
         for key, prev in have.items():
             if key in seen or prev["kind"] not in kinds_done or prev["status"] in ("retired", "rule"):
                 continue
+            dismissed = prev["kind"] in PATTERN_KINDS and key.split(":", 1)[-1] in ctx._cache.get(
+                "dismissed_patterns", ())
             conn.execute("UPDATE schedule_memory SET status='retired', enforcement='prompt', retired_reason=?, "
                          "retired_at=?, updated_at=datetime('now') WHERE id=?",
-                         ("gone" if prev["kind"] in _MIRROR_KINDS or prev["kind"] in PATTERN_KINDS else "faded",
+                         ("dismissed" if dismissed else
+                          "gone" if prev["kind"] in _MIRROR_KINDS or prev["kind"] in PATTERN_KINDS else "faded",
                           now, prev["id"]))
             stats["retired"] += 1
         conn.commit()
