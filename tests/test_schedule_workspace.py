@@ -262,3 +262,13 @@ def test_a_person_with_no_hours_reads_no_shifts_not_0h():
     (Will, 10/2/26): a row with no hours this week says so in words."""
     s = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html")).read()
     assert "(q.hrs > 0 ? '<span class=\"hb-num\">' + _schedHrs(q.hrs) + 'h</span>' : 'No shifts')" in s
+
+
+def test_a_double_stacks_from_the_top_so_the_rest_of_the_row_stays_aligned():
+    """A two-shift day made its row taller and every one-shift box in that
+    row centred against it, skewing the row (Will, 10/2/26). Cells and the
+    name column start at the top; the orange day says what it means."""
+    s = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html")).read()
+    assert ".swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:flex-start;" in s
+    assert ".swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:flex-start;" in s
+    assert "The busiest day this week: the most scheduled hours" in s

@@ -9890,12 +9890,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-d.hot b{color:var(--ember)}
 .swg-role{grid-column:1/-1;padding:18px 4px 8px}
 .swg-role .pill{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);border:1px solid var(--sf-ai-line);border-radius:999px;padding:4px 12px}
-.swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
 .swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-top:1px solid var(--hb-line2)}
 .swg-p .n{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swg-p .h{font-size:12px;color:var(--ink3)}
 .swg-p .h.ot{color:var(--hb-bad);font-weight:600}
-.swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:center;gap:4px;position:relative}
+.swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:flex-start;gap:4px;position:relative}
 .swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
 .swg-chip:hover,.swg-chip:focus-visible{transform:translateY(-1px);box-shadow:var(--elev-card);outline:none}
 .swg-chip:focus-visible{box-shadow:0 0 0 2px var(--ember)}
@@ -24282,7 +24282,7 @@ function swRenderGrid() {
     var want = +(_swTargets()[d] || 0), got = dayHrs[d] || 0, st = '';
     if (want && got < want * 0.9) st = '<span class="st short">Short <span class="hb-num">' + _schedHrs(want - got) + 'h</span></span>';
     else if (want && got > want * 1.1) st = '<span class="st over">Over <span class="hb-num">' + _schedHrs(got - want) + 'h</span></span>';
-    h += '<div class="swg-d' + (d === hot && dayHrs[d] ? ' hot' : '') + '"><b>' + _escHtml(_schedDayOf(d).slice(0, 3)) + '</b><span class="dt hb-num">' + _escHtml(mdy(d)) + '</span>'
+    h += '<div class="swg-d' + (d === hot && dayHrs[d] ? ' hot" title="The busiest day this week: the most scheduled hours' : '') + '"><b>' + _escHtml(_schedDayOf(d).slice(0, 3)) + '</b><span class="dt hb-num">' + _escHtml(mdy(d)) + '</span>'
        + '<span class="dh"><span class="hb-num">' + np + '</span> on · <span class="hb-num">' + _schedHrs(got) + 'h</span></span>' + st + _schedHolidayMark(d) + '</div>';
   }
   h += '</div>';
