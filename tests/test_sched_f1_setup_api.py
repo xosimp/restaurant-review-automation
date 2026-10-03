@@ -182,7 +182,7 @@ def test_an_unmeetable_leader_rule_is_said_when_saved():
     rid = _rid()
     _team(rid, [("Sam", "Bartender AM"), ("Lee", "Bartender PM"), ("Bo", "Bartender PM")])
     models.set_capability(rid, "Lee", score=5)
-    rules, errors = setup.clean_leader_rules([{"role": "Bartender AM", "min_score": 5, "count": 1}])
+    rules, errors = setup.clean_leader_rules([{"role": "Bartender AM", "min_score": 5, "count": 1, "junk": "x"}])
     assert not errors and rules == [{"role": "Bartender AM", "min_score": 5, "count": 1}]
     w = setup.leader_rule_warnings(rid, rules)
     assert w and w[0]["text"] == "Only 1 Bartender AM scores 5 or above, so this rule can't be met on 1 of its 7 shifts."
@@ -209,8 +209,7 @@ def test_the_thresholds_save_refuses_a_broken_rule_and_warns_on_an_unmeetable_on
     body = resp.get_json()
     assert status == 200 and body["leader_rule_warnings"] and "Nobody in Bartender AM is rated yet" in \
         body["leader_rule_warnings"][0]
-    assert json.loads(models.get_restaurant(rid).shift_leader_rules_json) == [
-        {"role": "Bartender AM", "min_score": 5, "count": 1}]
+    assert json.loads(models.get_restaurant(rid).shift_leader_rules_json) == [{"role": "Bartender AM", "min_score": 5}]
 
 
 # ── D-13: role families from the job codes ───────────────────────────────

@@ -1482,7 +1482,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         if e["active"] and not (e.get("settings") or {}).get("paid_hourly"):
             key = e["name"].strip().lower()
             mine = [e.get("role")] + sorted((held.get(_ss_key(e["name"])) or {}).keys())
-            if any(is_owner_role(r) for r in mine):
+            if any(is_owner_role(r) for r in mine) and not c.is_salaried(e["name"]):
                 c.salaried.add(" ".join(str(e["name"]).lower().split()))
                 c.salaried_style.add(key)
     c.role_requirements = {str(k).strip().lower(): {cert_key(x) for x in (v or []) if str(x).strip()}
@@ -1581,7 +1581,10 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     # A floor set on a role name the restaurant does not use as a job code
     # ("Server" where the codes are "Server AM" and "Server PM") is held on
     # the code that works that half of the day (D-13, D-14).
-    _floors_on_job_codes(c)
+    try:
+        _floors_on_job_codes(c)
+    except Exception as exc:
+        _input_problem(c, "role floors", exc)
     return c
 
 

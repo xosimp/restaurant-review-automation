@@ -390,7 +390,8 @@ def clean_leader_rules(rules) -> tuple:
         if not 1 <= count <= 10:
             errors.append(f"rule {n}: how many is 1 to 10")
             continue
-        rule["count"] = count
+        if x.get("count") not in (None, ""):
+            rule["count"] = count          # none given reads as 1, as the engine reads it
         attr = str(x.get("attribute") or "").strip() or None
         if attr and (CAPABILITY_ATTRIBUTES.get(attr) or {}).get("kind") != "flag":
             errors.append(f"rule {n}: {attr} is not something a person is marked for")
