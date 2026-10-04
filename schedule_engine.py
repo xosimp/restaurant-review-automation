@@ -2026,6 +2026,23 @@ def _chunk_rules_block(c, people, manager_plan=None) -> str:
     view.role_floors = {r: s for r, s in (c.role_floors or {}).items() if mine(r)}
     view.close_mins = {r: m for r, m in (c.close_mins or {}).items() if mine(r)}
     view.role_requirements = {r: v for r, v in (c.role_requirements or {}).items() if mine(r)}
+    # The closers, trainees and acting managers are people, and the owner's
+    # start, end and arrival rules are roles: a kitchen part was told every
+    # role's closers — the bartenders' and the managers' among them — beside
+    # "do not schedule anyone not on this list" (schedule re-audit 10/4/26
+    # PROMPT-11). Only this part's people, in this part's roles.
+    closers = {}
+    for fam, keys in (c.closers_by_role or {}).items():
+        here = {k for k in (keys or ()) if key(k) in low}
+        if here and (fam in fams or mine(fam)):
+            closers[fam] = here
+    view.closers_by_role = closers
+    view.trainees = {k: t for k, t in (c.trainees or {}).items() if key(k) in low}
+    view.acting_managers = {k: v for k, v in (c.acting_managers or {}).items() if key(k) in low}
+    view.role_times = {k: v for k, v in (getattr(c, "role_times", None) or {}).items() if mine(k[0])}
+    for attr in ("role_windows", "role_caps"):
+        if getattr(c, attr, None):
+            setattr(view, attr, {r: v for r, v in getattr(c, attr).items() if mine(r)})
     if not any(w in r for r in roles for w in _BOH_WORDS):
         view.stations = {}
     return _rules.prompt_block(view, manager_plan=manager_plan)

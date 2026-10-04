@@ -9,7 +9,27 @@ import pytest
 import ai_utils
 import models
 import schedule_rules as sr
-from test_schedule_b2_calls import WEEK, DAYS, db, _restaurant  # noqa: F401  (db is a fixture)
+import sys
+
+import test_schedule_b2_calls  # noqa: F401  (imports every module the generation imports lazily)
+from test_schedule_b2_calls import WEEK, DAYS, _restaurant
+
+
+@pytest.fixture
+def db(db_path, monkeypatch):
+    """Every get_conn — bound copies included — on this test's database, the
+    shift reads left real (the Simple EJ's history is read from it)."""
+    real = models.get_conn
+
+    def conn(*a, **k):
+        return real(db_path)
+    for mod in list(sys.modules.values()):
+        bound = getattr(mod, "get_conn", None) if mod is not None else None
+        if bound is real:
+            monkeypatch.setattr(mod, "get_conn", conn)
+    monkeypatch.setattr(models, "get_conn", conn)
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    return db_path
 
 
 # ── PROMPT-9: a cache read is priced per model ─────────────────────────────
@@ -138,3 +158,32 @@ def test_the_csv_fallback_keeps_a_row_dated_as_the_request_names_it(monkeypatch)
         restaurant_name="EJ", hourly_rate=20.0, labor_target=30.0, roster=[("Ana", "Server")], structured=False)
     lines = [ln for ln in out["schedule_csv"].splitlines()[1:] if ln.strip()]
     assert lines and all(re.match(r"^\d{4}-\d{2}-\d{2},", ln) for ln in lines), lines[:2]
+
+
+# ── a realistic fixture: the Simple EJ's demo, end to end ─────────────────
+
+import demo_seed  # noqa: E402
+import schedule_engine as se  # noqa: E402
+
+
+@pytest.fixture
+def ejs(db, monkeypatch):
+    import datetime as dt
+    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 5))
+    return demo_seed._seed_simple_ejs(db)
+
+
+# ── PROMPT-11: a department call is told its own closers only ─────────────
+
+def test_a_kitchen_part_is_told_only_its_own_closers(ejs, db):
+    import staff_settings
+    c = sr.build_constraints(ejs, WEEK, DAYS, db_path=db)
+    roster = [(e["name"], e["role"]) for e in staff_settings.roster(ejs, db_path=db)]
+    kitchen = [(n, r) for n, r in roster if r in ("Line Cook", "Prep Cook", "Dishwasher")]
+    whole = sr.prompt_block(c)
+    assert "Bartender: Jade F., Marcus R." in whole            # the whole week's rules name them
+    block = se._chunk_rules_block(c, kitchen)
+    line = _line(block, "Closers, by role")
+    assert "Line Cook: Hector L., Vince L." in line
+    for other in ("Bartender", "Manager", "Server", "Jade F.", "Dana S.", "Angela M."):
+        assert other not in line, other
