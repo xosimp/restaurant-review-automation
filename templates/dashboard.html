@@ -35631,7 +35631,7 @@ function sfw1HoursLine(hourly, budget, salaried) {
 // ── The review ────────────────────────────────────────────────────────────
 /* What the week doesn't meet (C2-1): the tone each kind wears. */
 var SFW1_UNMET_TONE = {manager: 'hard', floor: 'hard', owner_rule: 'hard', closer: 'hard', close: 'hard', role_close: 'hard',
-  coverage: 'soft', leadership: 'soft', strength: 'soft', station: 'soft', ask: 'soft',
+  coverage: 'soft', leadership: 'soft', strength: 'soft', station: 'soft', ask: 'soft', role_max: 'soft',
   min_hours: 'neutral', budget: 'neutral', unchecked_rule: 'neutral'};
 function sfw1UnmetTone(kind) { return SFW1_UNMET_TONE[kind] || 'neutral'; }
 /* Grouped under each date ("Fri 10/16/26"), in the server's order; items

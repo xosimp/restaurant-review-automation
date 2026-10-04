@@ -575,7 +575,7 @@ struct ReviewUnmetItem: Codable, Hashable {
     var style: Style {
         switch kind ?? "" {
         case "manager", "floor", "owner_rule", "closer", "close", "role_close": return .hard
-        case "coverage", "leadership", "strength", "station", "ask": return .staffing
+        case "coverage", "leadership", "strength", "station", "ask", "role_max": return .staffing
         case "unchecked_rule": return .unchecked
         default: return .neutral
         }

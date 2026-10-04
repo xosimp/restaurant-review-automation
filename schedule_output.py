@@ -379,7 +379,7 @@ _PART_WORDS = {"morning": "lunch/day", "night": "dinner/night"}
 # around first (schedule_rules' tiers), then targets and asks, then the
 # budget, then what code cannot check.
 _UNMET_RANK = {"manager": 0, "floor": 1, "owner_rule": 1, "closer": 1, "close": 1, "role_close": 1,
-               "coverage": 2, "leadership": 3, "strength": 3, "station": 3, "ask": 4, "min_hours": 5,
+               "role_max": 2, "coverage": 2, "leadership": 3, "strength": 3, "station": 3, "ask": 4, "min_hours": 5,
                "budget": 6, "unchecked_rule": 7}
 
 
@@ -452,6 +452,11 @@ def unmet_items(rows, constraints=None, violations=None, quality=None, soft_requ
         elif kind == "ends_before_role_close":
             out.append(_item("role_close", f"{v.get('role') or 'The role'} on past close",
                              detail[:1].upper() + detail[1:], d, "night"))
+        elif kind == "over_role_max":
+            # The most of a role on at once by the owner's hours & shift
+            # rules (schedule re-audit 10/4/26 PROMPT-1).
+            out.append(_item("role_max", f"Your {_role_label(v, v.get('floor_role') or '')} maximum",
+                             detail[:1].upper() + detail[1:], d, over=v.get("severity")))
     c = constraints
     if c is not None:
         hours = {}

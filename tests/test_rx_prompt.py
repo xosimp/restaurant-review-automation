@@ -526,6 +526,9 @@ def test_too_many_of_a_role_on_at_once_is_flagged_and_the_sweeps_agree(ejs, db):
     assert len(cap) == 1 and not cap[0]["hard"] and "6 Server on at once" in cap[0]["detail"]
     assert sr.IncrementalSweep(c).violations(rows) == viols
     assert sr.IncrementalSweep(c).violations(rows[:5] + rows[6:]) == sr.violations(rows[:5] + rows[6:], c)
+    # The owner reads it in what the week doesn't meet.
+    items = so.unmet_items(rows, violations=viols)
+    assert [i["what"] for i in items if i["kind"] == "role_max"] == ["Your Server maximum"]
 
 
 def test_the_review_names_every_line_it_could_not_read(ejs, db):
