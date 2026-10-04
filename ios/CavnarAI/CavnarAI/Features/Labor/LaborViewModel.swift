@@ -301,12 +301,18 @@ struct QualityDimension: Codable, Identifiable, Equatable {
     let customerFacing: Bool?
     // Present on the week-level roll-up rather than on a single shift.
     let shifts: Int?
+    /// The score under which this dimension caps the shift (SQ-28: "caps
+    /// under 70"); nil or 0 never caps.
+    var floor: Double? = nil
+    /// The raw numbers behind the verdict — read only for the lines the
+    /// sentences don't carry (stations, mentors, who was not judged…).
+    var facts: AnyCodableValue? = nil
 
     var id: String { key }
     var isCustomerFacing: Bool { customerFacing ?? true }
 
     enum CodingKeys: String, CodingKey {
-        case key, label, score, weight, strengths, weaknesses, shifts
+        case key, label, score, weight, strengths, weaknesses, shifts, floor, facts
         case customerFacing = "customer_facing"
     }
 }
@@ -321,6 +327,8 @@ struct QualityWeekDimension: Codable, Identifiable, Equatable {
     let share: Double?
     let strengths: [String]?
     let weaknesses: [String]?
+    /// The numbers behind the measure (overtime's people and premium).
+    var facts: AnyCodableValue? = nil
 
     var id: String { key }
 
@@ -449,6 +457,10 @@ struct QualityShift: Codable, Identifiable, Equatable {
     // Who is on this shift and why each of them, from the engine. Absent
     // on a server that predates the explanation.
     let assignments: [AssignmentExplanation]?
+    /// What holds the shift at its number — the capping dimension, the hard
+    /// rules, or a daypart nobody was written onto (SQ-8).
+    var heldBy: QualityHeldBy? = nil
+    var noShiftWritten: Bool? = nil
 
     var id: String { "\(date)-\(daypart)" }
 
@@ -466,6 +478,8 @@ struct QualityShift: Codable, Identifiable, Equatable {
         case blindSpots = "blind_spots"
         case nothingSpecific = "nothing_specific"
         case failed, assignments
+        case heldBy = "held_by"
+        case noShiftWritten = "no_shift_written"
     }
 }
 
@@ -488,6 +502,15 @@ struct QualityConfidence: Codable, Equatable {
     let level: String
     let reasons: [String]
     let summary: String
+    /// The deduction that cost the most, to name beside the percentage.
+    var topReason: String? = nil
+    /// Every deduction with the points it cost, biggest first.
+    var breakdown: HomeLenientList<QualityConfidenceDeduction>? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case score, level, reasons, summary, breakdown
+        case topReason = "top_reason"
+    }
 
     var label: String { level.prefix(1).uppercased() + level.dropFirst() }
 
@@ -542,12 +565,17 @@ struct QualityBelowProfile: Codable, Identifiable, Equatable {
     let score: Int
     let minQuality: Int
     let label: String
+    /// Why it is under the bar, in the engine's words (SQ-8).
+    var reason: String? = nil
+    /// The daypart runs but nobody was written onto it.
+    var noShiftWritten: Bool? = nil
 
     var id: String { "\(date)-\(daypart)" }
 
     enum CodingKeys: String, CodingKey {
-        case date, day, daypart, score, label
+        case date, day, daypart, score, label, reason
         case minQuality = "min_quality"
+        case noShiftWritten = "no_shift_written"
     }
 }
 
@@ -634,7 +662,9 @@ struct ScheduleQuality: Codable, Equatable {
     /// words — the same rule the server files them under.
     static func recommendationKind(_ text: String) -> String {
         let t = text.trimmingCharacters(in: .whitespaces)
-        if t.hasPrefix("Fill the gap") { return "coverage" }
+        if t.hasPrefix("Fill the gap") || t.hasPrefix("Cover the gap") { return "coverage" }
+        if t.hasPrefix("Fix the rule") { return "rules" }
+        if t.hasPrefix("Put a stronger") { return "strength" }
         if t.hasPrefix("Move somebody") { return "leadership" }
         if t.hasPrefix("Pair ") { return "strength" }
         if t.hasPrefix("Trim about") { return "hours" }
@@ -656,9 +686,11 @@ struct RecommendationItem: Codable, Equatable {
     let key: String?
     var recKey: String? = nil
     var confidence: TrustConfidence? = nil
+    /// Points the week gains when this is fully done (SQ-28) — "up to +N".
+    var points: Double? = nil
 
     enum CodingKeys: String, CodingKey {
-        case text, kind, key, confidence
+        case text, kind, key, confidence, points
         case recKey = "rec_key"
         case confidenceDetail = "confidence_detail"
     }
@@ -676,6 +708,7 @@ struct RecommendationItem: Codable, Equatable {
         let detail = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidenceDetail)) ?? nil
         let plain = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)) ?? nil
         confidence = detail ?? plain
+        points = c.sfDouble(.points)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -685,6 +718,7 @@ struct RecommendationItem: Codable, Equatable {
         try c.encodeIfPresent(key, forKey: .key)
         try c.encodeIfPresent(recKey, forKey: .recKey)
         try c.encodeIfPresent(confidence, forKey: .confidence)
+        try c.encodeIfPresent(points, forKey: .points)
     }
 
     /// The key a Why? tap is logged under.
@@ -770,11 +804,15 @@ struct TrimmedShift: Codable, Identifiable, Equatable {
     let shiftEnd: String?
     let hours: Double?
     let reason: String?
+    /// "cut" when the shift was ended early (`to` is the new end) rather
+    /// than removed.
+    var kind: String? = nil
+    var to: String? = nil
 
     var id: String { "\(date ?? "")-\(employee ?? "")-\(shiftStart ?? "")" }
 
     enum CodingKeys: String, CodingKey {
-        case date, day, employee, role, hours, reason
+        case date, day, employee, role, hours, reason, kind, to
         case shiftStart = "shift_start"
         case shiftEnd = "shift_end"
     }
@@ -813,9 +851,15 @@ struct DemandDataThrough: Codable, Equatable {
     let date: String?
     let daysAgo: Int?
     let blind: Bool?
+    /// The banner's sentence (D-33): how current the sales are.
+    var line: String? = nil
+    /// Generation refuses a week this stale, with `message` saying why.
+    var blocked: Bool? = nil
+    var stale: Bool? = nil
+    var message: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case date, blind
+        case date, blind, line, blocked, stale, message
         case daysAgo = "days_ago"
     }
 }
@@ -2959,7 +3003,7 @@ final class LaborViewModel {
     // there is no separate Save / Discard bar here.
 
     /// "4:00pm" — the engine's and the web editor's time form.
-    static func shiftTimeText(minutes: Int) -> String {
+    nonisolated static func shiftTimeText(minutes: Int) -> String {
         let m = ((minutes % 1440) + 1440) % 1440
         let h = m / 60, mi = m % 60
         let h12 = h % 12 == 0 ? 12 : h % 12
@@ -2967,7 +3011,7 @@ final class LaborViewModel {
     }
 
     /// Minutes from midnight for "4:00pm", "4pm" or "16:00"; nil otherwise.
-    static func shiftMinutes(_ text: String?) -> Int? {
+    nonisolated static func shiftMinutes(_ text: String?) -> Int? {
         let t = (text ?? "").lowercased().replacingOccurrences(of: " ", with: "")
         guard !t.isEmpty else { return nil }
         let suffix = t.hasSuffix("am") ? "am" : (t.hasSuffix("pm") ? "pm" : "")
@@ -2983,7 +3027,7 @@ final class LaborViewModel {
 
     /// Hours between two times, past midnight when the end is earlier —
     /// "6" or "6.5", as the web's _schedHoursBetween writes them.
-    static func shiftHours(_ start: String, _ end: String) -> String? {
+    nonisolated static func shiftHours(_ start: String, _ end: String) -> String? {
         guard let a = shiftMinutes(start), let b = shiftMinutes(end) else { return nil }
         var d = b - a
         if d <= 0 { d += 1440 }
@@ -3058,7 +3102,7 @@ final class LaborViewModel {
     }
 
     /// "Monday" for an ISO date — the row's day, as the server derives it.
-    static func weekdayName(_ iso: String) -> String? {
+    nonisolated static func weekdayName(_ iso: String) -> String? {
         let f = DateFormatter()
         f.calendar = Calendar(identifier: .gregorian)
         f.locale = Locale(identifier: "en_US_POSIX")
