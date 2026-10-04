@@ -552,6 +552,12 @@ def owner_rule_preview(restaurant_id, text, c=None) -> dict:
     except Exception:
         pass
     rule = _sr.parse_owner_rule(text, roles, c.role_families)
+    if rule is not None and rule.get("unclear"):
+        # Read back as a rule Cavnar AI couldn't read, and why — never a
+        # guess held as a floor (schedule re-audit 10/4/26 RULES-8).
+        return {"checked": False, "reads_as": None, "unclear": rule["unclear"],
+                "text": f"Cavnar AI couldn't read this rule — {rule['unclear']}. Until then a draft is asked to "
+                        "follow it and the review reminds you to check the week against it."}
     if rule is None:
         # A rule about two people ("keep Ana and Ben apart") is held too —
         # apply_owner_rules reads it into the pairings (D-38) — and was said

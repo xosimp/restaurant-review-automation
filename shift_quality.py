@@ -4468,12 +4468,35 @@ def present_dayparts(row: dict) -> list:
     return [p for _o, _pr, p in covered]
 
 
+def touched_dayparts(row: dict) -> list:
+    """The dayparts a row reaches into at all — each whose core service
+    window it overlaps by any minute, the start's daypart first — for a
+    block on a half of the day (part-day time off, morning-only or
+    night-only availability). present_dayparts' hour of presence is right
+    for counting coverage and wrong for a block: a 10:30am-6:25pm shift ran
+    55 minutes into an approved dinner off, and 1:35-10pm into the lunch of
+    somebody available for dinner only, and neither was flagged (schedule
+    re-audit 10/4/26 RULES-11). A row touching neither core window is its
+    start's daypart."""
+    primary = daypart_of(row.get("shift_start", ""))
+    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
+    if s is None or e is None or primary == "unknown":
+        return [primary]
+    if e <= s:
+        e += 24 * 60
+    hit = [part for part, (lo, hi) in CORE_WINDOWS.items() if min(e, hi) - max(s, lo) > 0]
+    if not hit:
+        return [primary]
+    return sorted(hit, key=lambda p: p != primary)
+
+
 def works_daypart_ok(row: dict, choice: str) -> bool:
     """Whether a row fits somebody's morning-only / night-only availability:
-    every daypart the shift is on the floor for must be the one they chose."""
+    every daypart the shift reaches into (touched_dayparts — the sweep's
+    test, RULES-11) must be the one they chose."""
     if choice not in ("morning", "night"):
         return True
-    parts = [p for p in present_dayparts(row) if p != "unknown"]
+    parts = [p for p in touched_dayparts(row) if p != "unknown"]
     return all(p == choice for p in parts)
 
 

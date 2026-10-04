@@ -1008,11 +1008,14 @@ class Constraints:
     # People in training (D-16): {lower: {"target_role", "trainer", "from",
     # "until"}} — training_row() says which of their rows are training.
     trainees: dict = field(default_factory=dict)
-    # A salaried person's weekly cap when they set none of their own (E-17:
-    # the gap filler loaded a salaried owner to 66h against an 84h cap).
-    # build_constraints sets restaurants.salaried_cap, else
-    # SALARIED_CAP_DEFAULT (55); None (a Constraints built by hand) keeps
-    # SALARIED_HOURS_CAP.
+    # The owner's weekly cap for a salaried person with none of their own
+    # (restaurants.salaried_cap), or None when the owner set none. Only a
+    # cap the owner set is a hard maximum: unset, code holds its own
+    # additions to SALARIED_CAP_DEFAULT (salaried_limit) and the owner may
+    # schedule them to SALARIED_HOURS_MAX (max_hours). build_constraints
+    # stored the 55h default here, so it became a hard maximum every week
+    # and the rebalance moved an owner's own hours onto paid staff "inside
+    # the 55h you set" (schedule re-audit 10/4/26 RULES-5).
     salaried_cap: float = None
     # People on the roster who have not worked in weeks (E-3, D-17):
     # {lower: last worked iso date}. Still on the roster — a row the owner
@@ -1139,7 +1142,14 @@ class Constraints:
             return float(lim[1])
         if self.salaried_cap:
             return float(self.salaried_cap)
-        return SALARIED_HOURS_CAP
+        return SALARIED_CAP_DEFAULT
+
+    def salaried_cap_set(self, name: str) -> bool:
+        """Whether the owner set the salaried person's weekly limit — their
+        own maximum or the restaurant's salaried cap — so it may be called
+        theirs ("the 50h you set"); the 55h default is not (RULES-5)."""
+        lim = self.hours_limits.get(self.key(name))
+        return bool((lim and lim[1]) or self.salaried_cap)
 
     def max_hours(self, name: str) -> float:
         """The weekly hours a person may not pass — the sweep's hard
@@ -1286,8 +1296,9 @@ class Constraints:
         if not key:
             return False, "no name"
         d = row.get("date", "")
-        from shift_quality import present_dayparts as _present
-        for part in (_present(row) or [daypart_of(row.get("shift_start", ""))]):
+        # Any minute in a blocked half of the day is in it (RULES-11).
+        from shift_quality import touched_dayparts as _touched
+        for part in (_touched(row) or [daypart_of(row.get("shift_start", ""))]):
             ok, why = self.can_work(name, d, part)
             if not ok:
                 return False, why
@@ -1547,8 +1558,23 @@ def closer_roles(restaurant) -> list:
     return [" ".join(str(x).split()) for x in (raw if isinstance(raw, list) else []) if str(x or "").strip()]
 
 
+def salaried_cap_set(restaurant):
+    """The weekly cap the owner set for a salaried person with no limit of
+    their own (restaurants.salaried_cap, within SALARIED_CAP_BOUNDS), or
+    None when they set none — Constraints.salaried_cap (RULES-5)."""
+    try:
+        v = float(getattr(restaurant, "salaried_cap", None))
+    except (TypeError, ValueError):
+        return None
+    if v != v:
+        return None
+    lo, hi = SALARIED_CAP_BOUNDS
+    return min(max(v, lo), hi)
+
+
 def salaried_cap(restaurant) -> float:
-    """The weekly cap for a salaried person with no limit of their own."""
+    """The weekly cap for a salaried person with no limit of their own, as
+    the settings screen shows it: the owner's, else SALARIED_CAP_DEFAULT."""
     try:
         v = float(getattr(restaurant, "salaried_cap", None))
     except (TypeError, ValueError):
@@ -1728,7 +1754,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     c.role_floors = role_floors(restaurant)
     # The owner's role families and the salaried weekly cap (F1: D-13, E-12).
     c.role_families = role_families(restaurant)
-    c.salaried_cap = salaried_cap(restaurant)
+    c.salaried_cap = salaried_cap_set(restaurant)
     try:
         import kitchen_stations as _ks
         c.stations = _ks.normalise(getattr(restaurant, "kitchen_stations_json", None))
@@ -2479,19 +2505,90 @@ _RULE_DAYPARTS = {"lunch": "morning", "brunch": "morning", "morning": "morning",
 _RULE_MAX = 10
 
 
+_DAY_TOKENS = {
+    **{d.lower(): (d,) for d in DAYS}, **{d.lower() + "s": (d,) for d in DAYS},
+    "mon": ("Monday",), "tue": ("Tuesday",), "tues": ("Tuesday",), "wed": ("Wednesday",), "weds": ("Wednesday",),
+    "thu": ("Thursday",), "thur": ("Thursday",), "thurs": ("Thursday",), "fri": ("Friday",),
+    "sat": ("Saturday",), "sun": ("Sunday",),
+    "weekend": ("Saturday", "Sunday"), "weekends": ("Saturday", "Sunday"),
+    "weekday": tuple(DAYS[:5]), "weekdays": tuple(DAYS[:5]),
+}
+_RANGE_WORDS = frozenset({"-", "\u2013", "\u2014", "to", "through", "thru", "until", "till"})
+_LIST_WORDS = frozenset({",", "and", "or", "&", "/", "on", "the", "for", "nor"})
+# Words that take days OUT of a rule: "except Mondays", "every day but
+# Sunday", "other than Tuesday" (RULES-8: they were read as the only days).
+_EXCEPT_WORDS = (("other", "than"), ("apart", "from"), ("not", "on"), ("except",), ("excluding",), ("but",),
+                 ("besides",))
+
+
+def _rule_days_read(low: str) -> tuple:
+    """(days, unclear): the weekdays a rule's words name — a tuple, or None
+    for every day — and why they could not be read confidently (None when
+    they could). "Mon-Fri" and "Monday through Friday" are ranges; days
+    after "except", "but" or "other than" are taken out ("always 2 servers
+    except Mondays" is every day but Monday). Each used to be read as the
+    days it named: the exception became the only day and a range its two
+    ends (schedule re-audit 10/4/26 RULES-8)."""
+    import re as _re
+    toks = _re.findall(r"[a-z]+|\d+|[-\u2013\u2014,&/]", low)
+    incl, excl, i, unclear = [], [], 0, None
+
+    def _day_run(j):
+        """(days, next index) for the days from token j: a list, or a range."""
+        got = []
+        while j < len(toks):
+            t = toks[j]
+            if t in _DAY_TOKENS:
+                if (j + 2 < len(toks) and toks[j + 1] in _RANGE_WORDS and toks[j + 2] in _DAY_TOKENS
+                        and len(_DAY_TOKENS[t]) == 1 and len(_DAY_TOKENS[toks[j + 2]]) == 1):
+                    a, b = DAYS.index(_DAY_TOKENS[t][0]), DAYS.index(_DAY_TOKENS[toks[j + 2]][0])
+                    got += [DAYS[(a + k) % 7] for k in range((b - a) % 7 + 1)]
+                    j += 3
+                else:
+                    got += list(_DAY_TOKENS[t])
+                    j += 1
+            elif t in _LIST_WORDS and got:
+                j += 1
+            else:
+                break
+        return got, j
+
+    while i < len(toks):
+        hit = next((w for w in _EXCEPT_WORDS if tuple(toks[i:i + len(w)]) == w), None)
+        if hit:
+            j = i + len(hit)
+            while j < len(toks) and toks[j] in ("on", "the", "for", "not"):
+                j += 1
+            got, j2 = _day_run(j)
+            if got:
+                excl += got
+                i = j2
+                continue
+            if (hit != ("but",) and hit != ("not", "on")) or \
+                    (hit == ("but",) and j < len(toks) and toks[j] in ("never", "no", "except", "excluding")):
+                # "except holidays", "other than the patio": not days, and
+                # not to be guessed at.
+                unclear = unclear or f"it makes an exception ({' '.join(hit)} …) that isn't days of the week"
+            i += len(hit)
+            continue
+        if toks[i] in _DAY_TOKENS:
+            got, i = _day_run(i)
+            incl += got
+            continue
+        i += 1
+    if excl:
+        base = [d for d in DAYS if d in incl] if incl else list(DAYS)
+        out = tuple(d for d in base if d not in set(excl))
+        if not out:
+            return None, "its days and its exceptions leave no day"
+        return out, unclear
+    out = tuple(d for d in DAYS if d in incl)
+    return (out or None), unclear
+
+
 def _rule_days(low: str):
     """The weekdays a rule's words name, or None for every day."""
-    import re as _re
-    days = []
-    for d in DAYS:
-        if _re.search(r"\b" + d.lower() + r"s?\b", low) or _re.search(r"\b" + d.lower()[:3] + r"\b", low):
-            days.append(d)
-    if _re.search(r"\bweekends?\b", low):
-        days += ["Saturday", "Sunday"]
-    if _re.search(r"\bweekdays?\b", low):
-        days += ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-    out = [d for d in DAYS if d in days]
-    return tuple(out) or None
+    return _rule_days_read(low)[0]
 
 
 def _rule_daypart(low: str):
@@ -2502,10 +2599,21 @@ def _rule_daypart(low: str):
     return None
 
 
+def _rule_dayparts(low: str) -> set:
+    """Every half of the day a rule's words name."""
+    import re as _re
+    return {part for word, part in _RULE_DAYPARTS.items() if _re.search(r"\b" + word + r"\b", low)}
+
+
+_COUNT_WORDS = r"\d+|one|two|three|four|five|six|seven|eight|nine|ten"
+
+
 def parse_owner_rule(text: str, roles, families=None) -> dict:
     """{"role", "min", "days", "daypart", "text"} for a staffing rule in one
     of the shapes above, naming one of `roles` (the restaurant's own role
-    names, matched case-insensitively, singular or plural), or None. `days`
+    names, matched case-insensitively, singular or plural), or None — or
+    {"role", "unclear": why, "text"} for one in those shapes that could not
+    be read confidently (RULES-8), which the owner is asked about. `days`
     None is every trading day; `daypart` None is anywhere in the day — but a
     rule naming an AM or PM job code keeps to that code's half of the day.
 
@@ -2570,7 +2678,28 @@ def parse_owner_rule(text: str, roles, families=None) -> dict:
         n = 1
     if not n or n < 1:
         return None
-    out = {"role": role, "min": min(int(n), _RULE_MAX), "days": _rule_days(low),
+    # A rule read as one floor must say one thing. Two counts ("2 at
+    # dinner, 1 at lunch", "1 bartender, 2 on weekends"), both halves of
+    # the day, or an exception that isn't days is not guessed at: the
+    # first number and the first daypart became a hard lunch floor of 2
+    # with no dinner floor at all (schedule re-audit 10/4/26 RULES-8). It
+    # goes back to the owner as a rule Cavnar AI couldn't read.
+    days, unclear = _rule_days_read(low)
+    spans = []
+    for r in names:
+        for m_ in _re.finditer(r"\b" + _re.escape(r.lower()) + r"(s|es)?\b", low):
+            spans.append((m_.start(), m_.end(), role_family(r, families)))
+    spans = [x for x in spans if not any(y[0] <= x[0] and x[1] <= y[1] and (y[1] - y[0]) > (x[1] - x[0])
+                                         for y in spans)]
+    if len({f for _a, _b, f in spans}) > 1:
+        unclear = "it names more than one role — write one rule for each"
+    elif len(_re.findall(r"\b(?:" + _COUNT_WORDS + r")\b", low)) > 1:
+        unclear = "it gives more than one number — write one rule for each"
+    elif len(_rule_dayparts(low)) > 1:
+        unclear = "it names both halves of the day — write one rule for lunch and one for dinner"
+    if unclear:
+        return {"role": role, "unclear": unclear, "text": " ".join(str(text).split())}
+    out = {"role": role, "min": min(int(n), _RULE_MAX), "days": days,
            "daypart": _rule_daypart(low) or (role_daypart(role) if fam is None else None),
            "text": " ".join(str(text).split())}
     if fam is not None:
@@ -2648,8 +2777,10 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
                 c.owner_pairs.append(dict(pair, private=private))
             continue
         rule = parse_owner_rule(f.get("fact"), roles, c.role_families)
-        if rule is None:
-            if _is_staffing_rule(f):
+        if rule is None or rule.get("unclear"):
+            # A rule that reads as staffing but not confidently is the
+            # owner's to restate — never a guessed floor (RULES-8).
+            if rule is not None or _is_staffing_rule(f):
                 (c.owner_rules_unchecked_private if private else c.owner_rules_unchecked).append(text)
             continue
         rule["private"] = private
@@ -3039,7 +3170,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
     out = []
     by_person = {}
     seen_slots = set()
-    from shift_quality import present_dayparts as _present
+    from shift_quality import touched_dayparts as _touched
     for i, r in enumerate([] if day_only else (rows or [])):
         name = (r.get("employee") or "").strip()
         # One person, one key: every spelling that is them (people's
@@ -3050,10 +3181,11 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         if not key:
             continue
         by_person.setdefault(c.sweep_key(name), []).append((i, r))
-        # Availability is judged on every daypart the shift covers, not its
-        # start: a "mornings only" person on 2:30-11:30pm was never flagged.
+        # Availability is judged on every daypart the shift reaches into,
+        # not its start (a "mornings only" person on 2:30-11:30pm was never
+        # flagged), by any minute of it, not an hour (RULES-11).
         ok, why = True, ""
-        for part in _present(r):
+        for part in _touched(r):
             ok, why = c.can_work(name, r.get("date", ""), part)
             if not ok:
                 break
@@ -3573,7 +3705,6 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
     them are judged: a day with nobody at all is visibly empty, and a closed
     day has none. A training shift is nobody's coverage (D-16): it counts
     toward no floor, no rule and not toward somebody at close."""
-    from shift_quality import present_dayparts as _present
     out = []
     by_date = {}
     for i, r in enumerate(rows or []):
@@ -4880,20 +5011,22 @@ _SPLIT_JOIN_MIN = 60
 
 
 def overtime_line(c: "Constraints", name: str, line: float = None) -> float:
-    """The most hours in a payroll week code gives a person: the overtime
-    line (40h, labor.OVERTIME_THRESHOLD_HOURS), or their own maximum when
-    the owner set it higher — the owner allowing them overtime up to it,
-    one rule with max_hours (P-12, D-18) — or lower. A salaried person owes
-    no overtime: their line is the salaried cap (Constraints.salaried_limit,
-    E-17)."""
+    """The most hours in a payroll week code gives a person: the legal
+    overtime line (40h, labor.OVERTIME_THRESHOLD_HOURS, or the line passed
+    in), or their own maximum when the owner set it LOWER. An owner's
+    maximum above the line is a ceiling (max_hours), not a line: a cook
+    allowed 45h was drafted to 45h and the rebalance left the five hours of
+    overtime while a same-role teammate had room (schedule re-audit 10/4/26
+    RULES-9; owner, 10/2/26 — a draft never creates overtime a teammate
+    could take). The rebalance moves what is past the line wherever a
+    teammate can take it, and keeps it, up to the maximum, only where
+    nobody can. A salaried person owes no overtime: their line is the
+    salaried cap (Constraints.salaried_limit, E-17)."""
     from labor import OVERTIME_THRESHOLD_HOURS
     if c.is_salaried(name):
         return c.salaried_limit(name)
     ot = float(line or OVERTIME_THRESHOLD_HOURS)
     mx = c.max_hours(name)
-    lim = c.hours_limits.get(c.key(name))
-    if lim and lim[1] and float(lim[1]) > ot:
-        return mx
     return min(mx, ot) if mx else ot
 
 
@@ -4941,8 +5074,15 @@ class _Repair:
     TIER_COVERAGE through it (daily overtime, the payroll reserve) may not
     either; `ignore`: kinds the pass weighs itself instead."""
 
-    def __init__(self, rows, c, upto=TIER_COVERAGE, soft_upto=None, max_sweeps=OT_MAX_SWEEPS, ignore=()):
+    def __init__(self, rows, c, upto=TIER_COVERAGE, soft_upto=None, max_sweeps=OT_MAX_SWEEPS, ignore=(),
+                 tier=None):
         self.c = c
+        # The rank the pass serves (its engine stage's): the soft rules of
+        # every tier above it — the owner's standing rule, the stay after
+        # close — are held as the engine holds the stage (_judge), so a move
+        # that breaks one is refused here, not the whole stage after
+        # (schedule re-audit 10/4/26 RULES-4).
+        self.tier = tier
         self.rows = [dict(r) for r in (rows or [])]
         # Each trial re-sweeps only the people and dates it moved (P-37).
         self.sweep = IncrementalSweep(c)
@@ -4964,6 +5104,9 @@ class _Repair:
         upto = self.upto if upto is None else upto
         soft = self.soft_upto if soft_upto == "same" else soft_upto
         worse = regressions(self.prof, after, upto=upto, hard_only=True)
+        if self.tier is not None and self.tier > TIER_PERSON:
+            worse += [w for w in regressions(self.prof, after, upto=self.tier - 1, hard_only=False)
+                      if w["id"][0] not in HARD]
         if soft is not None and soft > TIER_COVERAGE:
             worse += [w for w in regressions(self.prof, after, upto=soft, hard_only=False)
                       if w["tier"] > TIER_COVERAGE and w["id"][0] not in HARD]
@@ -5135,7 +5278,7 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
     dates) limits which rows may change — a redo of some days keeps the
     owner's others. `kind` is "overtime", or "minor" for a minor's weekly cap."""
     rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
-                  ignore=("payroll_tail_full",))
+                  ignore=("payroll_tail_full",), tier=TIER_OVERTIME)
     moves, trims, left = [], [], []
     display = _display(c, rep.rows, roster_roles)
     fam = _role_families(c, roster_roles)
@@ -5166,7 +5309,11 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
     def _why(e):
         if e["kind"] != "overtime":
             return f"a minor's {e['limit']:g}h week"
-        return f"inside the {e['limit']:g}h you set for them" if e.get("salaried") else "no overtime"
+        if not e.get("salaried"):
+            return "no overtime"
+        # "you set" only for a limit the owner set (RULES-5).
+        return (f"inside the {e['limit']:g}h you set for them" if c.salaried_cap_set(name_of(e["low"]))
+                else f"inside {e['limit']:g}h")
 
     def mine(e):
         idx = [i for i, r in enumerate(rep.rows) if _low(r.get("employee")) == e["low"] and in_period(e, r) and free(r)]
@@ -5487,7 +5634,8 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
     teammate to cover its stretch is the one change held only to the
     person rules. Pinned rows are never touched. Returns {rows, fixes:
     [{index, from, to, kind, reason}], sweeps}."""
-    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps)
+    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
+                  tier=TIER_PERSON)
     fixes = []
     display = _display(c, rep.rows, roster_roles)
     fam = _role_families(c, roster_roles)
@@ -5735,7 +5883,8 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
     {unmanaged_hours, dates, text} or None}. A change is kept only when the
     day's unmanaged minutes fall and nothing about a person's legality or
     coverage gets new or worse (E-1)."""
-    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps)
+    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
+                  tier=TIER_MANAGER)
     extended, added, left = [], [], []
     if not c.managers and not c.acting_managers:
         return {"rows": rep.rows, "extended": extended, "added": added, "left": left, "shortfall": None}
@@ -5963,7 +6112,8 @@ def fill_min_hours(rows: list, c: "Constraints", roster_roles: dict = None, edit
     [{index, employee, hours, kind, reason}], left: [{employee, hours, min,
     short_by, reason}], sweeps}. `hours_budget` (the week's hourly hours) is
     the ceiling for added shifts; without one only transfers are made."""
-    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps)
+    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
+                  tier=TIER_MIN_HOURS)
     moves, added, left = [], [], []
     display = _display(c, rep.rows, roster_roles)
     fam = _role_families(c, roster_roles)
