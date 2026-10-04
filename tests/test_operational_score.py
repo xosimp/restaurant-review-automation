@@ -521,7 +521,9 @@ def test_ios_has_a_rating_control_that_can_clear_a_rating():
 
 def test_ios_mounts_the_two_new_sections():
     swift = _no_comments(_source("ios/CavnarAI/CavnarAI/Features/Labor/LaborView.swift"))
-    assert "TeamStrengthSection(viewModel: viewModel)" in swift
+    # Mounted with the setup store and the roster's roles since the
+    # per-role ratings (schedule audit 10/3/26 D-12, UI wave).
+    assert "TeamStrengthSection(viewModel: viewModel" in swift
     assert "ShiftTargetsSection(viewModel: viewModel)" in swift
     assert "viewModel.loadTeam()" in swift
 

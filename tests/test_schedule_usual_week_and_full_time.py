@@ -49,9 +49,12 @@ def test_the_usual_pattern_carries_their_usual_hours_and_start():
 def test_the_prompt_says_each_regulars_usual_hours():
     pattern = {"Ana": {"days": ["Friday"], "dayparts": ["night"], "avg_hours": 32.0, "starts": {"night": "4:30pm"}},
                "Ben": {"days": ["Monday"], "dayparts": ["morning"], "avg_hours": None}}
-    out = req.usual_pattern_block(pattern, ["Ana", "Ben"])
-    assert "USUAL HOURS" in out and "Ana ~32h (starts 4:30pm)" in out and "Ben ~" not in out
-    assert "USUAL HOURS" in req.usual_pattern_block({"Cy": {"avg_hours": 20.0}}, ["Cy"])
+    # The USUAL column of each person's ROSTER line (C1, PR-33): days,
+    # dayparts, hours a week and start, nobody capped away.
+    import labor
+    usual = {p["name"]: p["usual"] for p in labor._roster_people([("Ana", "Server"), ("Ben", "Server"), ("Cy", "Cook")],
+                                                                 prior_pattern=dict(pattern, Cy={"avg_hours": 20.0}))}
+    assert usual == {"Ana": "Fri nights, ~32h a week, starts 4:30pm", "Ben": "Mon days", "Cy": "~20h a week"}
 
 
 def _ctx(hours_this_week):
@@ -101,7 +104,11 @@ def test_full_time_means_a_minimum_unless_the_owner_set_one(rid):
              "shift_end": "5:00pm", "scheduled_hours": "8"}]
     v = next(v for v in sr.violations(rows, c, person_only=True) if v["kind"] == "under_min_hours")
     assert "full-time, at least 30h" in v["detail"] and not v["hard"]
-    assert "Ana: at least 30h (full-time)" in sr.prompt_block(c)
+    # The full-time minimum is the person's HOURS column (C1, PR-4, PR-33).
+    import labor
+    import schedule_prompt
+    line = schedule_prompt.roster_table(labor._roster_people([("Ana", "Cook")], facts=sr.person_facts(c, ["Ana"])))
+    assert "  Ana | Cook | Cook | any day | 30-40h, full-time minimum |" in line
 
 
 def test_the_owner_can_set_the_full_time_line_or_turn_it_off(rid):

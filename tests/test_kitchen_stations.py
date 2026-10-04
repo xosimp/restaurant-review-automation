@@ -116,8 +116,18 @@ def test_the_prompt_states_the_stations_and_who_is_trained():
     c = sr.Constraints(restaurant_id=1, week_dates=WEEK, week_days=DAYS)
     c.stations = ks.normalise(CFG)
     block = sr.prompt_block(c)
-    assert "KITCHEN STATIONS (Kitchen shifts)" in block and "Ana Ruiz is trained on: Sauté, Grill" in block
-    assert "Fry: 1 trained cook after 3pm, Friday, Saturday" in block
+    assert "KITCHEN STATIONS (Kitchen shifts)" in block and "Fry: 1 trained cook after 3pm, Friday, Saturday" in block
+    # Who holds which station is their ROSTER line's CAN WORK (C1, PR-33);
+    # the station needs are [SOFT] rule lines (PR-5).
+    assert "Ana Ruiz is trained on" not in block and "- [SOFT] Fry: 1 trained cook" in block
+    assert "The stations each cook is trained on are in their ROSTER line." in block
+    import labor
+    import schedule_prompt
+    c.roster_names, c.active = ["Ana Ruiz"], {"ana ruiz"}
+    line = schedule_prompt.roster_table(labor._roster_people([("Ana Ruiz", "Kitchen")],
+                                                             facts=sr.person_facts(c, ["Ana Ruiz"])))
+    assert "stations Sauté/Grill" in line
+    assert any("Ana Ruiz is trained on: Sauté, Grill" in ln for ln in ks.prompt_lines(c.stations))
 
 
 def test_one_edit_changes_one_thing():

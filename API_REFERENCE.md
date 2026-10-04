@@ -1082,3 +1082,15 @@ Each route below exists twice (web `/api/…`, mobile `/mobile/api/…`) through
 - **`GET labor/time-off`** — each request adds `start_time`, `end_time`, `daypart` and `span_label` (`"10/7/26, until 4:00pm"`); `POST labor/time-off/<id>/decide` names only the published shifts inside that part of the day (`conflicts`, `warning`).
 - **`GET/POST labor/rules`** — the rules add `full_time_min_hours` (default 30; 0 turns it off, 0–60): a full-timer's minimum when the owner set none for them (D-41).
 - **The generation review** (`result.review`) adds `unmatched_names: [{source, name, detail, suggestion?}]` — a fact on file (time off, availability, a note, a station skill, a salaried entry, a closer flag) whose name matches nobody on the roster, with a line in `review.lines`; lines for people left off the draft as dormant (`result.dormant: {name: last worked iso}`) and for regulars with no shift (`result.regulars_not_scheduled: [{name, usual_hours}]`). `result.role_scores` and `result.prior_pattern` (each person's usual week: `days`, `dayparts`, `avg_hours`, `hours_weeks`, `starts`) ride along.
+
+## Additive fields for the web setup screens (schedule fix round 10/3/26, UI W2)
+
+Both twins share each body; every field is additive and optional to a client.
+
+- `GET labor/rules` — `salaried_caps` [{name, cap, own}] for the account holder only: each salaried person on the roster and the weekly hours code schedules them for (their own maximum when `own`, else the salaried cap).
+- `GET /account/memory` — `schedule_checks` {fact id: {checked, reads_as, text}} beside each of the account holders' staffing rules (a constraint or preference about labor or the schedule) the login may read, as every draft checks it; `{}` on an archive page or for a login without labor.
+- `POST /account/memory/add` and `schedule_setup.owner_rule_preview` — a rule about two people ("keep Ana and Bo apart") reads back as checked ("Ana and Bo kept apart"); a pairing on some days only stays unchecked.
+- `GET /issues` — each coverage issue carries `cover_gaps` [{employee, role, shift_start, status, covered_by, asked, cover: {name, kind stay|off, how, for, shift_start} | null}] (`issues.cover_gaps`); on an issue about more than one person `askable_covers` (what Home and /i/<token> present) is one cover per open gap, else up to two as before. The /i/<token> page lists each gap with one "Ask … to stay on for / to cover …'s 5:00pm" button.
+- `GET /people/<key>` — `choices.certification_labels`; `attendance` adds `called_out`, `late_shifts`, `late_rate` (None below the floor of clocked shifts).
+- `GET labor/team` — team entries add `recent_roles`; the payload adds `strength_crews` {role: {target, crew, per_person, source, known}} (`schedule_setup.strength_crews_view`, the scorer's own reading); `POST labor/team/thresholds` returns it for the saved targets.
+- `GET labor/profiles` — profiles are built with the calibration's tuning (`tuned` on a built-in it changed) and the payload adds `critical_floors` (the default floor per critical dimension, stations included).

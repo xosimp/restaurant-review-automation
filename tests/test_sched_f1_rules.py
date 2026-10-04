@@ -490,5 +490,5 @@ def test_the_model_is_told_closers_per_role_acting_managers_and_trainees():
               trainee={"target_role": "Bartender", "trainer": "Sam", "until": "12/1/26"})
     block = sr.prompt_block(_c(rid))
     assert "Closers, by role" in block and "Bartender: Sam" in block and "Dishwasher: Dee" in block
-    assert "Standing in as the manager" in block and "10/13/26" in block
-    assert "Ana: training as Bartender until 12/1/26 with Sam" in block
+    assert "Standing in as the manager" in block and "Tue 2026-10-13" in block
+    assert "Ana: training as Bartender until Tue 2026-12-01 with Sam" in block

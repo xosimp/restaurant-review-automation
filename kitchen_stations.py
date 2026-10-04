@@ -235,19 +235,23 @@ def protects(rows, row, cfg) -> bool:
                for p in parts_of(row))
 
 
-def prompt_lines(cfg) -> list:
-    """The station rules as the schedule prompt reads them."""
+def prompt_lines(cfg, people: bool = True) -> list:
+    """The station rules as the schedule prompt reads them. `people` False
+    leaves out who is trained on what: the schedule prompt carries each
+    cook's stations in their ROSTER line (schedule audit 10/3/26 PR-33)."""
     if not cfg:
         return []
     lines = [f"KITCHEN STATIONS ({', '.join(cfg['roles'])} shifts): the stations are "
              f"{', '.join(cfg['stations'])}. A cook can only cover a station they are trained on, "
-             "and each cook covers one station per daypart."]
+             "and each cook covers one station per daypart."
+             + ("" if people else " The stations each cook is trained on are in their ROSTER line.")]
     for n in cfg["needs"]:
         days = ", ".join(n["days"]) if n["days"] else "every day"
         when = {"morning": "before 3pm", "night": "after 3pm", "all": "all day"}[n["daypart"]]
         lines.append(f"- {n['station']}: {n['count']} trained cook{'s' if n['count'] > 1 else ''} {when}, {days}")
-    for person, have in sorted(cfg["skills"].items()):
-        lines.append(f"- {person} is trained on: {', '.join(have)}")
+    if people:
+        for person, have in sorted(cfg["skills"].items()):
+            lines.append(f"- {person} is trained on: {', '.join(have)}")
     return lines
 
 

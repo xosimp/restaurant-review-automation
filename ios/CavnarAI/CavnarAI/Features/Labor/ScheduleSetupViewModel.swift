@@ -28,9 +28,20 @@ struct RosterSettings: Codable, Equatable {
     // limits) or "16-17"; nil for an adult or a minor with no band yet
     // (NS5 H4). Optional so an older backend decodes.
     var minorAgeBand: String?
+    // The owner's per-person scheduling facts (schedule audit 10/3/26 F1):
+    // floor manager yes / no / automatic (nil), an Owner role paid by the
+    // hour, the dates they stand in as the manager, the shifts they always
+    // work, training, and the roles a closer closes for. All absent on an
+    // older server.
+    var floorManager: Bool? = nil
+    var paidHourly: Bool? = nil
+    var actingManager: [ActingRange]? = nil
+    var standingShifts: [StandingShift]? = nil
+    var trainee: TraineeInfo? = nil
+    var closesFor: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case active, certifications, experienced
+        case active, certifications, experienced, trainee
         case minorAgeBand = "minor_age_band"
         case employmentType = "employment_type"
         case minHours = "min_hours"
@@ -40,6 +51,40 @@ struct RosterSettings: Codable, Equatable {
         case timeWindows = "time_windows"
         case preferredDayparts = "preferred_dayparts"
         case desiredHours = "desired_hours"
+        case floorManager = "floor_manager"
+        case paidHourly = "paid_hourly"
+        case actingManager = "acting_manager"
+        case standingShifts = "standing_shifts"
+        case closesFor = "closes_for"
+    }
+}
+
+extension RosterSettings {
+    /// Read field by field: a value of an unexpected shape is that field
+    /// unset, never a roster that fails to load (the newer fields arrive
+    /// from a server this build may not match).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        active = c.setupBool(.active)
+        employmentType = c.setupText(.employmentType)
+        minHours = c.setupDouble(.minHours)
+        maxHours = c.setupDouble(.maxHours)
+        daypartAvailability = (try? c.decodeIfPresent([String: String].self, forKey: .daypartAvailability)) ?? nil
+        isMinor = c.setupBool(.isMinor)
+        timeWindows = (try? c.decodeIfPresent([String: TimeWindow].self, forKey: .timeWindows)) ?? nil
+        certifications = (try? c.decodeIfPresent([String].self, forKey: .certifications)) ?? nil
+        preferredDayparts = (try? c.decodeIfPresent([String].self, forKey: .preferredDayparts)) ?? nil
+        desiredHours = c.setupDouble(.desiredHours)
+        experienced = c.setupBool(.experienced)
+        minorAgeBand = c.setupText(.minorAgeBand)
+        floorManager = c.setupBool(.floorManager)
+        paidHourly = c.setupBool(.paidHourly)
+        actingManager = c.contains(.actingManager) ? c.setupList(ActingRange.self, .actingManager) : nil
+        standingShifts = c.contains(.standingShifts) ? c.setupList(StandingShift.self, .standingShifts) : nil
+        trainee = ((try? c.decodeIfPresent(TraineeInfo.self, forKey: .trainee)) ?? nil).flatMap {
+            $0.targetRole.isEmpty || $0.until.isEmpty ? nil : $0
+        }
+        closesFor = c.contains(.closesFor) ? c.setupTexts(.closesFor) : nil
     }
 }
 
@@ -69,15 +114,64 @@ struct RosterReliability: Codable, Equatable {
     var baseRate: Double? = nil
     var noShowThreshold: Double? = nil
     var unreliable: Bool? = nil
+    /// Lateness and call-outs (schedule audit 10/3/26 G — D-44, L-18): the
+    /// raw call-out count inside `no_shows`, the shifts they were late to,
+    /// the clocked shifts lateness is read over, and the smoothed late rate
+    /// — nil below six clocked shifts, so it reads "—", never 0%. Absent on
+    /// an older server.
+    var calledOut: Int? = nil
+    var late: Int? = nil
+    var lateShifts: Int? = nil
+    var lateRate: Double? = nil
+    var lateRisk: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case shifts, unreliable
+        case shifts, unreliable, late
         case noShowRate = "no_show_rate"
         case shortRate = "short_rate"
         case noShows = "no_shows"
         case rawNoShowRate = "raw_no_show_rate"
         case baseRate = "base_rate"
         case noShowThreshold = "no_show_threshold"
+        case calledOut = "called_out"
+        case lateShifts = "late_shifts"
+        case lateRate = "late_rate"
+        case lateRisk = "late_risk"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        noShowRate = c.setupDouble(.noShowRate)
+        shortRate = c.setupDouble(.shortRate)
+        shifts = c.setupInt(.shifts)
+        noShows = c.setupInt(.noShows)
+        rawNoShowRate = c.setupDouble(.rawNoShowRate)
+        baseRate = c.setupDouble(.baseRate)
+        noShowThreshold = c.setupDouble(.noShowThreshold)
+        unreliable = c.setupBool(.unreliable)
+        calledOut = c.setupInt(.calledOut)
+        late = c.setupInt(.late)
+        lateShifts = c.setupInt(.lateShifts)
+        lateRate = c.setupDouble(.lateRate)
+        lateRisk = c.setupBool(.lateRisk)
+    }
+
+    /// "Missed 2 of 24 · called out 1 time" — the raw counts the record
+    /// says (no-shows and call-outs are both misses; a call-out told the
+    /// restaurant). Nil without a shift count.
+    var missedLine: String? {
+        guard let total = shifts, total > 0 else { return nil }
+        var s = "Missed \(noShows ?? 0) of \(total)"
+        if let n = calledOut, n > 0 { s += " \u{00B7} called out \(n) time\(n == 1 ? "" : "s")" }
+        return s
+    }
+
+    /// "Late to 3 of 18 clocked shifts (17%)" — the rate "—" while it is
+    /// below the six clocked shifts it needs. Nil when nothing was clocked.
+    var lateLine: String? {
+        guard let clocked = lateShifts, clocked > 0 else { return nil }
+        let pct = lateRate.map { "\(Self.pct($0))%" } ?? "\u{2014}"
+        return "Late to \(late ?? 0) of \(clocked) clocked shift\(clocked == 1 ? "" : "s") (\(pct))"
     }
 
     private static func pct(_ rate: Double) -> Int { Int((rate > 1 ? rate : rate * 100).rounded()) }
@@ -113,15 +207,76 @@ struct RosterMember: Codable, Identifiable, Equatable {
     let score: Int?
     let canClose: Bool?
     let reliability: RosterReliability?
+    // Schedule audit 10/3/26 (F1, F2): a closer flag set through support
+    // that waits on the owner; who has stopped working ("Not worked since
+    // 8/14/26 — deactivate?"); every role worked lately, most first (the
+    // role above is the one worked most); a score per role and how old the
+    // newest rating is; and who runs the floor, with why. All absent on an
+    // older server.
+    var canClosePending: Bool? = nil
+    var dormant: Bool? = nil
+    var lastWorkedLabel: String? = nil
+    var dormantText: String? = nil
+    var recentRoles: [String]? = nil
+    var roleScores: [String: Int]? = nil
+    var ratedLabel: String? = nil
+    var ratingDue: Bool? = nil
+    var ratingDueText: String? = nil
+    var floorManager: FloorManagerStatus? = nil
 
     var id: String { name }
     var isActive: Bool { active ?? settings?.active ?? true }
+    var isDormant: Bool { dormant == true && isActive }
+    /// In training now — a "Training" chip on the row.
+    var isTraining: Bool { settings?.trainee != nil }
+    /// "Also: Host, Busser" — the other roles worked lately.
+    var alsoRoles: [String] {
+        (recentRoles ?? []).filter { $0.caseInsensitiveCompare(role ?? "") != .orderedSame }
+    }
 
     enum CodingKeys: String, CodingKey {
-        case name, role, shifts, active, settings, score, reliability
+        case name, role, shifts, active, settings, score, reliability, dormant
         case lastWorked = "last_worked"
         case isManual = "is_manual"
         case canClose = "can_close"
+        case canClosePending = "can_close_pending"
+        case lastWorkedLabel = "last_worked_label"
+        case dormantText = "dormant_text"
+        case recentRoles = "recent_roles"
+        case roleScores = "role_scores"
+        case ratedLabel = "rated_label"
+        case ratingDue = "rating_due"
+        case ratingDueText = "rating_due_text"
+        case floorManager = "floor_manager"
+    }
+}
+
+extension RosterMember {
+    /// Field by field: one odd value is that field unset, never a roster
+    /// that fails to load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        role = c.setupText(.role)
+        shifts = c.setupInt(.shifts)
+        lastWorked = c.setupText(.lastWorked)
+        isManual = c.setupBool(.isManual)
+        active = c.setupBool(.active)
+        settings = (try? c.decodeIfPresent(RosterSettings.self, forKey: .settings)) ?? nil
+        score = c.setupInt(.score)
+        canClose = c.setupBool(.canClose)
+        reliability = (try? c.decodeIfPresent(RosterReliability.self, forKey: .reliability)) ?? nil
+        canClosePending = c.setupBool(.canClosePending)
+        dormant = c.setupBool(.dormant)
+        lastWorkedLabel = c.setupText(.lastWorkedLabel)
+        dormantText = c.setupText(.dormantText)
+        recentRoles = c.contains(.recentRoles) ? c.setupTexts(.recentRoles) : nil
+        roleScores = ((try? c.decodeIfPresent([String: Double].self, forKey: .roleScores)) ?? nil)?
+            .compactMapValues { $0.isFinite ? Int($0.rounded()) : nil }
+        ratedLabel = c.setupText(.ratedLabel)
+        ratingDue = c.setupBool(.ratingDue)
+        ratingDueText = c.setupText(.ratingDueText)
+        floorManager = (try? c.decodeIfPresent(FloorManagerStatus.self, forKey: .floorManager)) ?? nil
     }
 }
 
@@ -141,10 +296,16 @@ struct RosterChoices: Codable, Equatable {
     let daypart: [String]?
     let days: [String]?
     let certifications: [String]?
+    /// How each certificate reads (staff_settings.CERTIFICATION_LABELS):
+    /// "manager" is "Floor manager (can run the shift)", apart from the
+    /// food-safety card (schedule audit 10/3/26 E-15). Absent on an older
+    /// server.
+    var certificationLabels: [String: String]? = nil
 
     enum CodingKeys: String, CodingKey {
         case daypart, days, certifications
         case employmentType = "employment_type"
+        case certificationLabels = "certification_labels"
     }
 }
 
@@ -180,8 +341,47 @@ struct LearnedPattern: Codable, Identifiable, Equatable {
     let key: String
     var active: Bool?
     var dismissed: Bool?
+    /// Its denominator (schedule audit 10/3/26 L-6): the weeks it could
+    /// have been made in, the share it was, and the Wilson bound — and a
+    /// dismissal made through support that counts only once adopted
+    /// (L-10). Absent on an older server.
+    var opportunities: Int? = nil
+    var confidence: Double? = nil
+    var dismissedByAdmin: Bool? = nil
 
     var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, employee, day, daypart, times, text, key, active, dismissed, opportunities, confidence
+        case dismissedByAdmin = "dismissed_by_admin"
+    }
+
+    /// "2 of 3 weeks · 41% confidence" — "—" until two weeks could show it.
+    var evidenceLine: String? {
+        guard let n = times else { return nil }
+        guard let o = opportunities, o > 0 else { return "\(n) \(n == 1 ? "time" : "times")" }
+        var s = "\(n) of \(o) week\(o == 1 ? "" : "s")"
+        if o >= 2, let c = confidence { s += " \u{00B7} \(Int((min(max(c, 0), 1) * 100).rounded()))% confidence" }
+        else { s += " \u{00B7} confidence \u{2014}" }
+        return s
+    }
+}
+
+/// Schedule edits made through Cavnar AI support (view-as) that teach the
+/// draft nothing until the account holder counts them as theirs (L-8).
+struct AdminSavesPending: Decodable, Equatable {
+    var versions: Int = 0
+    var weeks: Int = 0
+    var answers: Int = 0
+
+    enum CodingKeys: String, CodingKey { case versions, weeks, answers }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        versions = c.setupInt(.versions) ?? 0
+        weeks = c.setupInt(.weeks) ?? 0
+        answers = c.setupInt(.answers) ?? 0
+    }
 }
 
 // MARK: - Rules
@@ -469,6 +669,25 @@ struct IntelLedgerEntry: Codable, Equatable {
     let holiday: Int?
     let shifts: Int?
     let weeks: Int?
+    /// How many of those weeks are the time clock's, not a published
+    /// schedule (schedule audit 10/3/26 D-21). Absent on an older server.
+    var fromPunches: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case weekend, closing, holiday, shifts, weeks
+        case fromPunches = "from_punches"
+    }
+}
+
+/// "8 published weeks" / "8 weeks (5 from punches — the time clock, not a
+/// published schedule)" — where the record came from, said (D-21).
+enum RecordWeeksWords {
+    static func say(_ weeks: Int, fromPunches: Int?) -> String {
+        let punched = fromPunches ?? 0
+        guard punched > 0 else { return "\(weeks) published week\(weeks == 1 ? "" : "s")" }
+        return "\(weeks) week\(weeks == 1 ? "" : "s") (\(punched >= weeks ? "all" : String(punched)) from punches "
+            + "\u{2014} the time clock, not a published schedule)"
+    }
 }
 
 /// What somebody keeps dropping and picking up.
@@ -608,6 +827,13 @@ struct EditPredictionSummary: Codable, Equatable {
 struct RotationPlan: Codable, Equatable {
     let weeks: Int?
     let lines: [String]?
+    /// The weeks of record that came from punches (D-21).
+    var fromPunches: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case weeks, lines
+        case fromPunches = "from_punches"
+    }
 }
 
 /// A sales-per-labor-hour target for one daypart across the week.
@@ -659,6 +885,99 @@ struct WeightCalibration: Codable, Equatable {
     let reason: String?
     let dimensions: [String: CalibrationDimension]?
     let note: String?
+    /// Each shift profile's bar and floors read against what its own
+    /// shifts did (schedule audit 10/3/26 SQ-22), which of them move, and
+    /// per outcome the dimensions left out of the fit. Absent on an older
+    /// server; an odd shape is empty, never a failed intel read.
+    var profiles: [String: ProfileCalibration]? = nil
+    var movingProfiles: [String]? = nil
+    var fit: [String: CalibrationFit]? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case ready, reason, dimensions, note, profiles, fit
+        case movingProfiles = "moving_profiles"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ready = c.setupBool(.ready)
+        reason = c.setupText(.reason)
+        dimensions = (try? c.decodeIfPresent([String: CalibrationDimension].self, forKey: .dimensions)) ?? nil
+        note = c.setupText(.note)
+        profiles = (try? c.decodeIfPresent([String: ProfileCalibration].self, forKey: .profiles)) ?? nil
+        movingProfiles = c.contains(.movingProfiles) ? c.setupTexts(.movingProfiles) : nil
+        fit = (try? c.decodeIfPresent([String: CalibrationFit].self, forKey: .fit)) ?? nil
+    }
+
+    /// The dimensions any outcome's fit left out — read better-observed
+    /// ones first, one per ten shifts.
+    var leftOut: [String] {
+        Array(Set((fit ?? [:]).values.flatMap(\.leftOut))).sorted()
+    }
+}
+
+/// One floor's or bar's reading: where it stands, the bounded next step,
+/// and why (schedule_learning._line_reading).
+struct LineReading: Codable, Equatable {
+    var current: Int?
+    var suggested: Int?
+    var shifts: Int?
+    var explanation: String?
+
+    enum CodingKeys: String, CodingKey { case current, suggested, shifts, explanation }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        current = c.setupInt(.current)
+        suggested = c.setupInt(.suggested)
+        shifts = c.setupInt(.shifts)
+        explanation = c.setupText(.explanation)
+    }
+
+    var moves: Bool { current != nil && suggested != nil && current != suggested }
+}
+
+/// A shift profile's calibration: its bar and each critical floor, or why
+/// it is left alone (too few of its own shifts).
+struct ProfileCalibration: Codable, Equatable {
+    var label: String?
+    var shifts: Int?
+    var ready: Bool?
+    var explanation: String?
+    var bar: LineReading?
+    var floors: [String: LineReading]?
+
+    enum CodingKeys: String, CodingKey { case label, shifts, ready, explanation, bar, floors }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = c.setupText(.label)
+        shifts = c.setupInt(.shifts)
+        ready = c.setupBool(.ready)
+        explanation = c.setupText(.explanation)
+        bar = (try? c.decodeIfPresent(LineReading.self, forKey: .bar)) ?? nil
+        floors = (try? c.decodeIfPresent([String: LineReading].self, forKey: .floors)) ?? nil
+    }
+}
+
+/// One outcome's joint fit: its shifts, how many dimensions it carried,
+/// and the ones it left out.
+struct CalibrationFit: Codable, Equatable {
+    var shifts: Int?
+    var dimensions: Int?
+    var leftOut: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case shifts, dimensions
+        case leftOut = "left_out"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        shifts = c.setupInt(.shifts)
+        dimensions = c.setupInt(.dimensions)
+        leftOut = c.setupTexts(.leftOut)
+    }
 }
 
 /// The offer to auto-publish, when the drafts have been going out
@@ -775,6 +1094,39 @@ final class ScheduleSetupViewModel {
     var dayparts: [String] { choices?.daypart ?? ["any", "morning", "night", "off"] }
     var days: [String] { choices?.days ?? LaborDayOfWeek.allNames }
     var certificationChoices: [String] { choices?.certifications ?? ruleCertifications }
+    /// Whether this login is the account holder — the one who sets who runs
+    /// the floor, who stands in as the manager, and an owner's pay
+    /// (`can_edit_owner_facts`, schedule audit 10/3/26 F1).
+    var canEditOwnerFacts = false
+    /// People who stopped working — "Not worked since …" waits on the owner.
+    var dormantRoster: [RosterMember] { roster.filter(\.isDormant) }
+
+    /// A certificate as the owner reads it: the server's label
+    /// ("Floor manager (can run the shift)"), else the key in words.
+    func certificationLabel(_ key: String) -> String {
+        if let label = choices?.certificationLabels?[key] ?? ruleCertificationLabels[key], !label.isEmpty {
+            return label
+        }
+        return key.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    /// The roles a person can be given, trained for or close for: what the
+    /// roster says they work, the roles worked lately, and every role on
+    /// the roster — each once, theirs first.
+    func roleChoices(for name: String? = nil) -> [String] {
+        var out: [String] = []
+        func add(_ r: String?) {
+            guard let r = r?.trimmingCharacters(in: .whitespaces), !r.isEmpty,
+                  !out.contains(where: { $0.caseInsensitiveCompare(r) == .orderedSame }) else { return }
+            out.append(r)
+        }
+        if let name, let m = roster.first(where: { $0.name == name }) {
+            add(m.role)
+            (m.recentRoles ?? []).forEach(add)
+        }
+        activeRoster.compactMap(\.role).sorted().forEach(add)
+        return out
+    }
     private struct PairRecEvent: Encodable {
         let key: String
         let event: String
@@ -821,10 +1173,12 @@ final class ScheduleSetupViewModel {
         let choices: RosterChoices?
         let canEdit: Bool?
         let error: String?
+        var canEditOwnerFacts: Bool? = nil
         enum CodingKeys: String, CodingKey {
             case ok, roster, pairs, choices, error
             case suggestedPairs = "suggested_pairs"
             case canEdit = "can_edit"
+            case canEditOwnerFacts = "can_edit_owner_facts"
         }
     }
 
@@ -839,6 +1193,7 @@ final class ScheduleSetupViewModel {
             suggestedPairs = r.suggestedPairs ?? []
             choices = r.choices
             canEditRoster = r.canEdit ?? true
+            canEditOwnerFacts = r.canEditOwnerFacts ?? false
             rosterError = nil
         } catch is CancellationError {
         } catch let error as APIClient.APIError {
@@ -863,10 +1218,31 @@ final class ScheduleSetupViewModel {
         var experienced: Bool? = nil
         /// "14-15", "16-17", or "" to clear.
         var minorAgeBand: String? = nil
+        // Schedule audit 10/3/26 F1 — the owner's per-person facts. Floor
+        // manager, acting dates and paid-hourly are the account holder's
+        // alone (the route answers 403 to anyone else).
+        var floorManager: FloorManagerChoice? = nil
+        var paidHourly: Bool? = nil
+        var actingManager: [ActingRange]? = nil
+        var standingShifts: [StandingShift]? = nil
+        var trainee: TraineeChange? = nil
+        var closesFor: [String]? = nil
+
+        /// Yes, no, or back to automatic — sent as true, false or "auto".
+        enum FloorManagerChoice: Equatable {
+            case yes, no, automatic
+            var stored: Bool? { self == .yes ? true : (self == .no ? false : nil) }
+        }
+
+        /// In training from now (the facts), or training ended — sent as `{}`.
+        enum TraineeChange: Equatable {
+            case set(TraineeInfo)
+            case end
+        }
 
         enum CodingKeys: String, CodingKey {
             case employeeName = "employee_name"
-            case active, certifications, experienced
+            case active, certifications, experienced, trainee
             case minorAgeBand = "minor_age_band"
             case employmentType = "employment_type"
             case minHours = "min_hours"
@@ -874,7 +1250,14 @@ final class ScheduleSetupViewModel {
             case daypartAvailability = "daypart_availability"
             case isMinor = "is_minor"
             case timeWindows = "time_windows"
+            case floorManager = "floor_manager"
+            case paidHourly = "paid_hourly"
+            case actingManager = "acting_manager"
+            case standingShifts = "standing_shifts"
+            case closesFor = "closes_for"
         }
+
+        private struct Empty: Encodable {}
 
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -889,6 +1272,21 @@ final class ScheduleSetupViewModel {
             try c.encodeIfPresent(certifications, forKey: .certifications)
             try c.encodeIfPresent(experienced, forKey: .experienced)
             try c.encodeIfPresent(minorAgeBand, forKey: .minorAgeBand)
+            switch floorManager {
+            case .yes?: try c.encode(true, forKey: .floorManager)
+            case .no?: try c.encode(false, forKey: .floorManager)
+            case .automatic?: try c.encode("auto", forKey: .floorManager)
+            case nil: break
+            }
+            try c.encodeIfPresent(paidHourly, forKey: .paidHourly)
+            try c.encodeIfPresent(actingManager, forKey: .actingManager)
+            try c.encodeIfPresent(standingShifts, forKey: .standingShifts)
+            switch trainee {
+            case .set(let t)?: try c.encode(t, forKey: .trainee)
+            case .end?: try c.encode(Empty(), forKey: .trainee)
+            case nil: break
+            }
+            try c.encodeIfPresent(closesFor, forKey: .closesFor)
         }
     }
 
@@ -917,6 +1315,14 @@ final class ScheduleSetupViewModel {
         if let v = patch.certifications { settings.certifications = v }
         if let v = patch.experienced { settings.experienced = v }
         if let v = patch.minorAgeBand { settings.minorAgeBand = v.isEmpty ? nil : v; if !v.isEmpty { settings.isMinor = true } }
+        if let v = patch.floorManager { settings.floorManager = v.stored }
+        if let v = patch.paidHourly { settings.paidHourly = v }
+        if let v = patch.actingManager { settings.actingManager = v }
+        if let v = patch.standingShifts { settings.standingShifts = v }
+        if let v = patch.trainee {
+            if case .set(let t) = v { settings.trainee = t } else { settings.trainee = nil }
+        }
+        if let v = patch.closesFor { settings.closesFor = v }
         next.settings = settings
         roster[index] = next
         savingFor = patch.employeeName
@@ -931,6 +1337,13 @@ final class ScheduleSetupViewModel {
                     if let active = saved.active { roster[i].active = active }
                 }
                 Haptic.light()
+                // What the server works out from these — who counts as a
+                // floor manager and why, who is dormant — is re-read, so the
+                // sheet says what the rules will now do.
+                if patch.floorManager != nil || patch.actingManager != nil || patch.standingShifts != nil
+                    || patch.trainee != nil || patch.active != nil || patch.certifications != nil {
+                    await loadRoster()
+                }
                 return true
             }
             rollBack(to: previous)
@@ -1052,6 +1465,12 @@ final class ScheduleSetupViewModel {
     /// Whether this login may change the rules (the account owner).
     var canEditRules = true
     var ruleCertifications: [String] = []
+    /// The certificates in the owner's words, from the rules payload.
+    var ruleCertificationLabels: [String: String] = [:]
+    /// Who runs the floor, the closers, the families, floors from history,
+    /// the labor standards, the salaried list and next week's forecast
+    /// (schedule audit 10/3/26) — one store the setup screens share.
+    let teamSetup = TeamSetupStore()
     var reservationFeed: ReservationFeedStatus?
     var reservationProviders: [CodeLabel] = []
     var isSyncingReservations = false
@@ -1118,6 +1537,11 @@ final class ScheduleSetupViewModel {
         var cutFloorDefault: Int? = nil
         var reservationProvider: String?? = nil
         var reservationApiKey: String?? = nil
+        /// One "stays until close + N min" per role (schedule audit 10/3/26
+        /// D-43) — the server writes it to both close settings.
+        var roleCloseMins: [String: Int]? = nil
+        /// The salaried weekly cap: `.some(nil)` goes back to the default.
+        var salariedCap: Double?? = nil
 
         enum CodingKeys: String, CodingKey {
             case rules, jurisdiction
@@ -1131,6 +1555,8 @@ final class ScheduleSetupViewModel {
             case cutFloorDefault = "cut_floor_default"
             case reservationProvider = "reservation_provider"
             case reservationApiKey = "reservation_api_key"
+            case roleCloseMins = "role_close_mins"
+            case salariedCap = "salaried_cap"
         }
 
         func encode(to encoder: Encoder) throws {
@@ -1149,6 +1575,18 @@ final class ScheduleSetupViewModel {
             try c.encodeIfPresent(cutFloorDefault, forKey: .cutFloorDefault)
             if let p = reservationProvider { try c.encode(p, forKey: .reservationProvider) }
             if let k = reservationApiKey { try c.encode(k, forKey: .reservationApiKey) }
+            try c.encodeIfPresent(roleCloseMins, forKey: .roleCloseMins)
+            if let cap = salariedCap { try c.encode(cap, forKey: .salariedCap) }
+        }
+    }
+
+    /// The rules and what the owner confirms beside them, from one read.
+    private struct RulesEnvelope: Decodable {
+        let rules: RulesResponse
+        let setup: RulesSetupFields
+        init(from decoder: Decoder) throws {
+            rules = try RulesResponse(from: decoder)
+            setup = (try? RulesSetupFields(from: decoder)) ?? RulesSetupFields()
         }
     }
 
@@ -1156,8 +1594,11 @@ final class ScheduleSetupViewModel {
         isLoadingRules = true
         defer { isLoadingRules = false }
         do {
-            let r: RulesResponse = try await client.send("/mobile/api/labor/rules", hapticOnError: false)
+            let envelope: RulesEnvelope = try await client.send("/mobile/api/labor/rules", hapticOnError: false)
+            let r = envelope.rules
             guard r.ok else { rulesError = r.error; return }
+            teamSetup.apply(envelope.setup)
+            ruleCertificationLabels = envelope.setup.certificationLabels
             rules = r.rules ?? [:]
             ruleDefaults = r.defaults ?? [:]
             roleFloors = r.roleFloors ?? [:]
@@ -1272,6 +1713,13 @@ final class ScheduleSetupViewModel {
     var patternConflicts: [PatternConflict] = []
     /// The server's answer to the last "Make it a rule".
     var patternMessage: String?
+    /// Support's (view-as) schedule edits and pattern dismissals waiting on
+    /// the account holder, and whether this login is the one who may count
+    /// them (schedule audit 10/3/26 L-8, L-10).
+    var adminSaves: AdminSavesPending?
+    var adminDismissals = 0
+    var canAdoptPatterns = false
+    var isAdoptingPatterns = false
 
     private struct PatternsResponse: Decodable {
         let ok: Bool
@@ -1280,19 +1728,48 @@ final class ScheduleSetupViewModel {
         let error: String?
         let standing: HomeLenientList<StandingPattern>?
         let conflicts: HomeLenientList<PatternConflict>?
+        var adminSaves: AdminSavesPending? = nil
+        var adminDismissals: Int? = nil
+        var canAdopt: Bool? = nil
         enum CodingKeys: String, CodingKey {
             case ok, patterns, error, standing, conflicts
             case canEdit = "can_edit"
+            case adminSaves = "admin_saves"
+            case adminDismissals = "admin_dismissals"
+            case canAdopt = "can_adopt"
         }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
-            patterns = try? c.decodeIfPresent([LearnedPattern].self, forKey: .patterns)
+            patterns = ((try? c.decodeIfPresent(HomeLenientListDecodable<LearnedPattern>.self, forKey: .patterns)) ?? nil)?.items
             canEdit = try? c.decodeIfPresent(Bool.self, forKey: .canEdit)
             error = try? c.decodeIfPresent(String.self, forKey: .error)
             standing = try? c.decodeIfPresent(HomeLenientList<StandingPattern>.self, forKey: .standing)
             conflicts = try? c.decodeIfPresent(HomeLenientList<PatternConflict>.self, forKey: .conflicts)
+            adminSaves = (try? c.decodeIfPresent(AdminSavesPending.self, forKey: .adminSaves)) ?? nil
+            adminDismissals = c.setupInt(.adminDismissals)
+            canAdopt = c.setupBool(.canAdopt)
         }
+    }
+
+    private struct RuleResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let rule: String?
+        let employee: String?
+        enum CodingKeys: String, CodingKey { case ok, error, rule, employee }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = c.setupBool(.ok) ?? false
+            error = c.setupText(.error)
+            rule = c.setupText(.rule)
+            employee = c.setupText(.employee)
+        }
+    }
+
+    private struct KeepBody: Encodable {
+        let key: String
+        let keep: Bool
     }
 
     private struct RuleBody: Encodable {
@@ -1313,26 +1790,35 @@ final class ScheduleSetupViewModel {
             canEditPatterns = r.canEdit ?? true
             standingPatterns = r.standing?.items ?? []
             patternConflicts = r.conflicts?.items ?? []
+            adminSaves = r.adminSaves
+            adminDismissals = r.adminDismissals ?? 0
+            canAdoptPatterns = r.canAdopt ?? false
         } catch {
             // A secondary list; the roster stands without it.
         }
     }
 
-    /// "Make it a rule": the standing pattern becomes the person's own
-    /// availability, with its author (POST {key, rule: true}). Reloads so
-    /// the pattern reads "now a rule".
+    /// "Make it a rule": a person's pattern becomes their own availability,
+    /// a headcount the manager keeps adding a role floor, a start or end
+    /// time a role time rule — with its author (POST {key, rule: true};
+    /// the two staffing kinds are the account owner's, L-33). Says the
+    /// server's own words for the rule, and reloads so it reads "now a rule".
     func makeRule(_ pattern: StandingPattern) async {
         patternBusyKey = pattern.key
         patternError = nil
         patternMessage = nil
         defer { patternBusyKey = nil }
         do {
-            let r: OKResponse = try await client.send(
+            let r: RuleResponse = try await client.send(
                 "/mobile/api/labor/learned-patterns", method: .post,
                 body: RuleBody(key: pattern.key, rule: true), hapticOnError: false, retryTransient: false)
             if r.ok {
                 Haptic.success()
-                patternMessage = "Now a rule for \(pattern.employee ?? "them") \u{2014} it lives in their availability."
+                if let words = r.rule, !words.isEmpty {
+                    patternMessage = "Now a rule: \(words)"
+                } else {
+                    patternMessage = "Now a rule for \(pattern.employee ?? "them") \u{2014} it lives in their availability."
+                }
                 await loadLearnedPatterns()
             } else {
                 patternError = r.error ?? "Couldn\u{2019}t make that a rule."
@@ -1341,6 +1827,76 @@ final class ScheduleSetupViewModel {
             patternError = error.message
         } catch {
             patternError = "Couldn\u{2019}t make that a rule."
+        }
+    }
+
+    /// A pattern being re-tested, answered: keep it (a hand confirmation,
+    /// the re-test over) or let it go (retired as the owner's word) —
+    /// schedule audit 10/3/26 L-30.
+    func answerStanding(_ pattern: StandingPattern, keep: Bool) async {
+        patternBusyKey = pattern.key
+        patternError = nil
+        patternMessage = nil
+        defer { patternBusyKey = nil }
+        do {
+            let r: OKResponse = try await client.send(
+                "/mobile/api/labor/learned-patterns", method: .post,
+                body: KeepBody(key: pattern.key, keep: keep), hapticOnError: false, retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                patternMessage = keep ? "Kept \u{2014} the draft goes on using it." : "Let go \u{2014} the draft stops using it."
+                await loadLearnedPatterns()
+            } else {
+                patternError = r.error ?? "Couldn\u{2019}t save that."
+            }
+        } catch let error as APIClient.APIError {
+            patternError = error.message
+        } catch {
+            patternError = "Couldn\u{2019}t save that."
+        }
+    }
+
+    private struct AdoptAnswer: Decodable {
+        let ok: Bool
+        let error: String?
+        let adopted: Int?
+        let versions: Int?
+        enum CodingKeys: String, CodingKey { case ok, error, adopted, versions }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = c.setupBool(.ok) ?? false
+            error = c.setupText(.error)
+            adopted = c.setupInt(.adopted)
+            versions = c.setupInt(.versions)
+        }
+    }
+
+    /// "Count as mine": support's pattern dismissals (L-10) or schedule
+    /// edits (L-8) count as the account holder's — signed in as themselves,
+    /// never through view-as (the server refuses that).
+    func adoptPatternWork(saves: Bool) async {
+        isAdoptingPatterns = true
+        patternError = nil
+        patternMessage = nil
+        defer { isAdoptingPatterns = false }
+        let path = saves ? "/mobile/api/labor/schedule/adopt-admin-saves" : "/mobile/api/labor/learned-patterns/adopt"
+        do {
+            let r: AdoptAnswer = try await client.send(path, method: .post, body: EmptyBody(),
+                                                       hapticOnError: false, retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                let n = saves ? (r.versions ?? 0) : (r.adopted ?? 0)
+                patternMessage = saves
+                    ? "Counted as yours \u{2014} \(n) edit\(n == 1 ? "" : "s") now teach the draft."
+                    : "Counted as yours \u{2014} \(n) dismissal\(n == 1 ? "" : "s")."
+                await loadLearnedPatterns()
+            } else {
+                patternError = r.error ?? "Couldn\u{2019}t count those as yours."
+            }
+        } catch let error as APIClient.APIError {
+            patternError = error.message
+        } catch {
+            patternError = "Couldn\u{2019}t count those as yours."
         }
     }
 
@@ -1431,8 +1987,12 @@ final class ScheduleSetupViewModel {
         do {
             let r: OKResponse = try await client.send(
                 "/mobile/api/labor/quality/calibration/apply", method: .post, body: EmptyBody(), hapticOnError: false)
-            calibrationNotice = r.ok ? "Applied — the next score uses these weights." : (r.error ?? "Couldn't apply them.")
-            if r.ok { Haptic.success() }
+            calibrationNotice = r.ok ? "Applied \u{2014} the next score uses these weights, floors and bars."
+                : (r.error ?? "Couldn't apply them.")
+            if r.ok {
+                Haptic.success()
+                await loadIntel()
+            }
         } catch let error as APIClient.APIError {
             calibrationNotice = error.message
         } catch {
@@ -1497,7 +2057,51 @@ final class ScheduleSetupViewModel {
         let skipped: Int?
         let errors: [String]?
         let error: String?
+        /// A reservation system's booking export, read (schedule audit
+        /// 10/3/26 D-31): bookings, covers, what was skipped. Absent for a
+        /// date,covers paste and on an older server.
+        var report: ImportReport? = nil
     }
+
+    /// demand_signals.parse_reservation_export's report.
+    struct ImportReport: Decodable, Equatable {
+        var dates: Int = 0
+        var bookings: Int = 0
+        var covers: Int = 0
+        var skippedStatus: Int = 0
+        var skippedUnreadable: Int = 0
+        var lateCovers: Int = 0
+
+        enum CodingKeys: String, CodingKey {
+            case dates, bookings, covers
+            case skippedStatus = "skipped_status"
+            case skippedUnreadable = "skipped_unreadable"
+            case lateCovers = "late_covers"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            dates = c.setupInt(.dates) ?? 0
+            bookings = c.setupInt(.bookings) ?? 0
+            covers = c.setupInt(.covers) ?? 0
+            skippedStatus = c.setupInt(.skippedStatus) ?? 0
+            skippedUnreadable = c.setupInt(.skippedUnreadable) ?? 0
+            lateCovers = c.setupInt(.lateCovers) ?? 0
+        }
+
+        /// "Read 212 bookings, 640 covers over 14 dates · 9 cancelled or
+        /// no-shows left out · 3 rows unreadable · 48 covers after 10pm".
+        var sentence: String {
+            var s = "Read \(bookings) booking\(bookings == 1 ? "" : "s"), \(covers) covers over \(dates) date\(dates == 1 ? "" : "s")"
+            if skippedStatus > 0 { s += " \u{00B7} \(skippedStatus) cancelled or no-shows left out" }
+            if skippedUnreadable > 0 { s += " \u{00B7} \(skippedUnreadable) row\(skippedUnreadable == 1 ? "" : "s") unreadable" }
+            if lateCovers > 0 { s += " \u{00B7} \(lateCovers) covers late at night" }
+            return s
+        }
+    }
+
+    /// What the last booking-export import read.
+    var importReport: ImportReport?
 
     private static let isoDay: DateFormatter = {
         let f = DateFormatter()
@@ -1547,11 +2151,13 @@ final class ScheduleSetupViewModel {
         isSavingSignal = true
         signalError = nil
         signalOutcome = nil
+        importReport = nil
         defer { isSavingSignal = false }
         do {
             let r: SignalWriteResponse = try await client.send(
                 "/mobile/api/labor/demand-signals", method: .post, body: body)
             guard r.ok else { signalError = r.error ?? "Couldn't save that."; return false }
+            importReport = r.report
             var parts: [String] = []
             parts.append("\(r.written ?? 0) written")
             if let s = r.skipped, s > 0 { parts.append("\(s) skipped") }

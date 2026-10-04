@@ -11,6 +11,7 @@ L-1   published weeks feed the baseline for the people who never punch.
 D-4   salaried punches never count toward the usual crew.
 L-2   borrowing is per role family.
 """
+import schedule_prompt
 import json
 import types
 from datetime import date, timedelta
@@ -114,10 +115,11 @@ def test_the_prompt_names_the_night_last_year_it_reads(monkeypatch):
     labor.generate_optimized_schedule(analysis, [], roster=[("Ana", "Server")], week_start="2026-12-21",
                                       hourly_rate=20.0, labor_target=30.0, yoy_context=yoy,
                                       projected_revenue_override=60000)
-    prompt = captured["messages"][0]["content"]
-    block = prompt.split("Year-over-year data", 1)[1].split("\n\n", 1)[0]
-    assert "last year's Christmas Eve (Wednesday 12/24/25) → $9,900 sales at this year's pace ($9,000 last year)" in block
-    assert "same weekday a week off (Friday 12/19/25" in block
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
+    block = prompt.split("YEAR OVER YEAR", 1)[1].split("\n\n", 1)[0]
+    # Dates in the model's one format, weekday and ISO (C1, PR-20).
+    assert "last year's Christmas Eve (Wed 2025-12-24) → $9,900 sales at this year's pace ($9,000 last year)" in block
+    assert "same weekday a week off (Fri 2025-12-19" in block
     assert "Christmas Day this year, but last year's Christmas Day has no figure on file" in block
     assert "USE THIS" not in prompt and "primary demand projection" not in prompt
     assert "secondary to the week's projection" in block and "10% above" in block

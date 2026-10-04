@@ -112,9 +112,16 @@ COVERS_SHOWN = 2
 
 def askable_covers(issue) -> list:
     """The suggested covers a client shows on a coverage issue: not yet
-    asked, at most COVERS_SHOWN — the same rule both Home clients apply."""
+    asked — on an issue about more than one person the one cover per open
+    gap (issues.cover_gaps, schedule audit 10/3/26 E-31: a mass call-off
+    showed the issue's first two names, whoever they were for), else at most
+    COVERS_SHOWN — the same rule both Home clients apply."""
     if not issue or issue.get("kind") != "coverage" or issue.get("status") == "resolved":
         return []
+    import issues as _issues_gaps
+    gaps = _issues_gaps.cover_gaps(issue)
+    if len(gaps) > 1:
+        return [g["cover"] for g in gaps if g.get("cover")]
     meta = issue.get("meta") or {}
     asked = {str(a.get("name") or "").strip().lower() for a in (meta.get("asked") or []) if isinstance(a, dict)}
     return [c for c in (meta.get("covers") or [])
@@ -158,6 +165,11 @@ def _do_issues_list(u):
     # item on food cost) is not theirs either (memory re-audit PEOPLE-14).
     hide = issues.hidden_modules(u)
     rows = issues.list_issues(_rid(u), status=status, sees_loss=loss, hide_modules=hide)
+    for row in rows:
+        if row.get("kind") == "coverage":
+            # Each gap with its status and the one cover to ask for it (E-31):
+            # Home lists them and offers a button per open gap.
+            row["cover_gaps"] = issues.cover_gaps(row)
     if status == "unresolved":
         # What Home renders from this list: its covers are shown there.
         present_covers(_rid(u), rows[:HOME_ISSUES_SHOWN], "home", user_id=u.get("id"))
@@ -2285,25 +2297,32 @@ def _do_compliance_get(u):
             "salaried_cap": _sr.salaried_cap(r), "salaried_cap_default": _sr.SALARIED_CAP_DEFAULT,
             "salaried_cap_bounds": list(_sr.SALARIED_CAP_BOUNDS),
             "closer_roles": _sr.closer_roles(r),
-            **_setup_payload(_rid(u))}, 200
+            **_setup_payload(_rid(u), principal=_principal(u))}, 200
 
 
-def _setup_payload(rid) -> dict:
+def _setup_payload(rid, principal=False) -> dict:
     """What the rules screen confirms with the owner (schedule audit
     10/3/26 F1): "Managers: …" and who was left out, the closers per role
     with the data-quality warning, each staffing rule as it is checked, and
     trading days with no close time. One read of next week's rules; a
-    failure costs these keys, never the screen."""
+    failure costs these keys, never the screen. The account holder also
+    reads who is salaried and the weekly cap code holds each of them to
+    (`salaried_caps`, E-12/E-17) — who is paid a salary is theirs alone, as
+    on Account → Targets. A staffing rule the owner kept to the account
+    holders (D-38) is read back to an account holder only: its words never
+    travel, and every login that can see labor reads this screen."""
     try:
         import schedule_setup as _setup
         c = _setup._constraints(rid)
         ms = _setup.manager_status(rid, c=c)
         cr = _setup.closer_review(rid, c=c)
         return {"managers": ms, "managers_line": ms["line"],
+                **({"salaried_caps": _setup.salaried_caps(c)} if principal else {}),
                 "closers": {k: cr[k] for k in ("by_role", "flagged", "roster", "share", "warning", "closer_roles",
                                                "closer_roles_basis", "closer_roles_in_force", "outside_roles",
                                                "pending_admin")},
-                "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules],
+                "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules
+                                if principal or not x.get("private")],
                 "owner_rules_unchecked": list(c.owner_rules_unchecked),
                 "close_times_missing": _setup.close_times_missing(c),
                 "role_families": dict(c.role_families)}
@@ -4451,7 +4470,22 @@ def _do_memory_list(u):
         before = int(raw) if raw else None
     except (TypeError, ValueError):
         return {"ok": False, "error": "archive_before must be a number"}, 400
-    return {"ok": True, **owner_memory.account_view(_rid(u), u, archive_before=before)}, 200
+    view = owner_memory.account_view(_rid(u), u, archive_before=before)
+    # Beside each of the account holders' staffing rules this login may
+    # read: how every draft checks it, or that the schedule can't (schedule
+    # audit 10/3/26 D-14, D-38 — an owner-only rule it can't read had no
+    # surface anywhere). {fact id: {checked, reads_as, text}}; read once per
+    # list, never on an archive page, and a failure costs the lines only.
+    checks = {}
+    if before is None and _sees_labor(u):
+        try:
+            import schedule_setup as _setup
+            checks = _setup.staffing_rule_checks(
+                _rid(u), owner_memory.facts_for(_rid(u), viewer=u, kinds=list(owner_memory.RULE_KINDS)))
+        except Exception as e:
+            print(f"[memory] staffing rule checks unavailable for {_rid(u)}: {e!r}")
+            checks = {}
+    return {"ok": True, **view, "schedule_checks": {str(k): v for k, v in checks.items()}}, 200
 
 
 def _do_memory_forget(u):
@@ -6719,6 +6753,9 @@ def issue_page(token):
         issue = issues.by_token(token)
     if not issue:
         abort(404)
-    resp = render_template("issue.html", issue=issue, token=token, done=done)
+    # A coverage issue about several people lists each gap and offers one
+    # cover per open gap (schedule audit 10/3/26 E-31, issues.cover_gaps).
+    gaps = issues.cover_gaps(issue) if issue.get("kind") == "coverage" else []
+    resp = render_template("issue.html", issue=issue, token=token, done=done, gaps=gaps)
     return resp, 200, {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
                        "X-Robots-Tag": "noindex"}

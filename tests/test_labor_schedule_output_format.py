@@ -12,6 +12,7 @@ These tests guard the two things that made that fix work from silently
 regressing: the no-preamble instruction, and a max_tokens ceiling generous
 enough that natural completion (not truncation) is what stops the model.
 """
+import schedule_prompt
 import types
 
 import labor
@@ -42,18 +43,24 @@ def _capture_create_with_retry(monkeypatch):
     return captured
 
 
-def test_prompt_explicitly_forbids_think_blocks_and_preamble(monkeypatch):
-    captured = _capture_create_with_retry(monkeypatch)
-
-    generate_optimized_schedule(
-        _minimal_analysis(), _shifts(),
-        restaurant_name="Test Bistro", hourly_rate=26.0, labor_target=23.0,
-        monthly_revenue_target=365000.0,
-    )
-
-    prompt = captured["messages"][0]["content"]
-    assert "<think>" in prompt  # names the specific failure mode it's blocking
-    assert "DO NOT write any explanation, reasoning, preamble" in prompt
+def test_the_prompt_asks_for_the_answer_alone_and_leaves_reasoning_to_thinking(monkeypatch):
+    """The model reasons in its own thinking blocks (schedule audit 10/3/26
+    PR-6): the "<think>" sentence, "silently" and "slow down internally"
+    are gone, and each output contract asks for the answer and nothing else
+    (PR-14: the CSV wording only when the answer is CSV)."""
+    for structured, ask in ((True, "Write the JSON object and nothing else."),
+                            (False, "with nothing before the CSV")):
+        captured = _capture_create_with_retry(monkeypatch)
+        generate_optimized_schedule(
+            _minimal_analysis(), _shifts(),
+            restaurant_name="Test Bistro", hourly_rate=26.0, labor_target=23.0,
+            monthly_revenue_target=365000.0, structured=structured,
+        )
+        prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
+        assert ask in prompt
+        for gone in ("<think>", "silently", "slow down internally", "DO NOT write any explanation"):
+            assert gone not in prompt, (structured, gone)
+        assert ("date,day,employee,role" in prompt) is (not structured)
 
 
 def test_max_tokens_generous_enough_to_avoid_truncation(monkeypatch):

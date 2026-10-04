@@ -1232,6 +1232,55 @@ def coverage_texts(meta) -> tuple:
     return title[:200], detail[:2000]
 
 
+def _person_key(name) -> str:
+    return " ".join(str(name or "").split()).casefold()
+
+
+def cover_gaps(issue) -> list:
+    """A coverage issue as its gaps: [{"employee", "role", "shift_start",
+    "status", "covered_by", "asked", "cover"}] — each person it is about and
+    where they stand (missing / arrived / covered and by whom / closed), the
+    suggestions already asked for that gap, and for each gap still open the
+    ONE cover to ask next: the first suggestion named for that gap nobody
+    has been asked yet and no other gap is offering (`cover`: {"name",
+    "kind": "stay"|"off", "how", "for", "shift_start"} or None). A
+    mass call-off shows a button per open gap, not the issue's first two
+    names (schedule audit 10/3/26 E-31; Home, the /i/ page and the phone
+    read the same list). A suggestion with no gap of its own (an older
+    shape) may go to any open gap. [] for any other kind of issue."""
+    if not issue or (issue.get("kind") if hasattr(issue, "get") else None) != "coverage":
+        return []
+    meta = _issue_meta(issue)
+    asked = {_person_key(a.get("name")) for a in (meta.get("asked") or []) if isinstance(a, dict)}
+    covers = [c for c in (meta.get("covers") or []) if isinstance(c, dict) and str(c.get("name") or "").strip()]
+    group = is_group_coverage(issue.get("source_key"))
+    resolved = issue.get("status") == "resolved"
+    out, offered = [], set()
+    for p in coverage_people(issue):
+        who, start = p.get("employee"), p.get("shift_start") or ""
+
+        def _mine(c, who=who, start=start):
+            if not group or not c.get("for"):
+                return True
+            return _person_key(c.get("for")) == _person_key(who) and (
+                not c.get("shift_start") or not start or c.get("shift_start") == start)
+        mine = [c for c in covers if _mine(c)]
+        gap = {"employee": who, "role": p.get("role"), "shift_start": start, "status": p.get("status"),
+               "covered_by": p.get("covered_by"),
+               "asked": [c["name"] for c in mine if _person_key(c["name"]) in asked], "cover": None}
+        if not resolved and p.get("status") == "missing":
+            for c in mine:
+                k = _person_key(c["name"])
+                if k in asked or k in offered:
+                    continue
+                offered.add(k)
+                gap["cover"] = {"name": c["name"], "kind": c.get("kind") or "off", "how": c.get("how"),
+                                "for": c.get("for") or who, "shift_start": c.get("shift_start") or start}
+                break
+        out.append(gap)
+    return out
+
+
 def coverage_issues_for(restaurant_id, business_date, db_path=DB_PATH) -> list:
     """Every coverage issue about one business date, oldest first — the
     role issues, and a person-keyed one from before keyed to that date."""

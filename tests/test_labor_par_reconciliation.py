@@ -18,6 +18,7 @@ These tests hold the ceiling semantics in place: under budget is a good
 outcome that needs no correction, and the hours figure may only ever
 remove hours, never add them. Capture style mirrors
 test_labor_weather.py."""
+import schedule_prompt
 import types
 
 import labor
@@ -61,7 +62,7 @@ def test_par_block_is_a_ceiling_not_a_quota(monkeypatch):
         monthly_revenue_target=365000.0,
     )
 
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     assert "PAR HOURS CEILING" in prompt
     assert "This is a ceiling, not a quota" in prompt
     assert "Coming in under it is a good outcome" in prompt
@@ -84,11 +85,11 @@ def test_the_old_priority_ordering_is_still_gone(monkeypatch):
         restaurant_name="Test Bistro", hourly_rate=26.0, labor_target=23.0,
         monthly_revenue_target=365000.0,
     )
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     assert "PRIORITY ORDER: 1) TYPICAL HEADCOUNT per day, 2) per-day YoY targets, 3) total hours target." not in prompt
 
 
-def test_headcount_block_allows_scaling_up_instead_of_hard_cap(monkeypatch):
+def test_headcount_block_is_context_not_a_cap_or_a_lever(monkeypatch):
     captured = _capture_create_with_retry(monkeypatch)
 
     generate_optimized_schedule(
@@ -97,19 +98,22 @@ def test_headcount_block_allows_scaling_up_instead_of_hard_cap(monkeypatch):
         monthly_revenue_target=365000.0,
     )
 
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     assert "TYPICAL HEADCOUNT PER DAY" in prompt
     # The old hard "CRITICAL... Do NOT exceed" ceiling must be gone.
     assert "CRITICAL: these are the actual staff counts" not in prompt
     assert "Do NOT exceed these numbers per role per day" not in prompt
-    # Headcount stays a starting point that an event or a real volume
-    # spike can move — but never the hours ceiling.
-    assert "starting point" in prompt
-    assert "proportionally across roles" in prompt
-    assert "is NOT a reason to go over" in prompt
+    # SHIFT REQUIREMENTS already fold the usual crew, the floors and each
+    # date's demand into the number to schedule to (schedule audit 10/3/26
+    # PR-7): this block is context, with no verb left to scale it again.
+    block = prompt[prompt.index("TYPICAL HEADCOUNT PER DAY"):]
+    block = block[:block.index("\n\n")]
+    assert "Context: SHIFT REQUIREMENTS have already turned these" in block
+    for lever in ("starting point", "proportionally across roles", "scale"):
+        assert lever not in block, lever
 
 
-def test_weekly_hours_bullet_forbids_padding_to_reach_the_figure(monkeypatch):
+def test_the_hours_figures_forbid_padding_to_reach_them(monkeypatch):
     captured = _capture_create_with_retry(monkeypatch)
 
     generate_optimized_schedule(
@@ -118,9 +122,13 @@ def test_weekly_hours_bullet_forbids_padding_to_reach_the_figure(monkeypatch):
         monthly_revenue_target=365000.0,
     )
 
-    prompt = captured["messages"][0]["content"]
-    assert "must not EXCEED" in prompt
-    assert "Landing under it is fine and expected" in prompt
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
+    # One hours anchor (schedule audit 10/3/26 PR-24): the ceiling in the
+    # PAR block, the day's target on its SHIFT REQUIREMENTS rows — the old
+    # "Weekly hours must not EXCEED" bullet restated it a third time.
+    assert "the weekly ceiling only ever removes hours" in prompt
+    assert "Every other hours figure in this request (sales per labor hour, past weeks, peers) is context" in prompt
+    assert "must not EXCEED" not in prompt and "Per-day targets" not in prompt
     assert "more than ~15% under this target" not in prompt
     # Nowhere in the prompt may headcount be justified by an hours gap.
     assert "closing a >15% PAR hours gap" not in prompt
@@ -138,8 +146,8 @@ def test_hours_budget_computed_from_monthly_revenue_target_when_set(monkeypatch)
         monthly_revenue_target=365000.0,
     )
 
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     # weekly = 365000 / (52/12) ≈ 84231 (metrics.WEEKS_PER_MONTH, the one month
     # definition — was / 4.33, NS3 L5); budget% of that ≈ 19373; /26/hr ≈ 745.1h
-    assert "Projected revenue: $84,231" in prompt
+    assert "Projected revenue $84,231" in prompt
     assert "745" in prompt  # hours_budget, allowing for rounding

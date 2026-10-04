@@ -851,8 +851,11 @@ def _plan_rows(pinned_rows, dates=None):
 
 
 def priority_line(pinned_rows, plan=None, dates=None) -> str:
-    """PRIORITIES 1a: the owner's highest staffing rule, with the managers
-    named and what it yields to (PR-1). '' with no manager to name."""
+    """This restaurant's half of PRIORITIES 1a: who the managers are, and
+    how the week covers them — the rule itself is a standing instruction,
+    the same words for every restaurant (schedule_prompt.PRIORITIES, cached
+    — schedule audit 10/3/26 PR-26), so the names live here, at the head
+    of MANAGER COVERAGE. '' with no manager to name."""
     plan = plan or {}
     names = [f"{m['name']} ({m['role']})" if m.get("role") else m["name"] for m in (plan.get("managers") or [])]
     if not names:
@@ -863,21 +866,19 @@ def priority_line(pinned_rows, plan=None, dates=None) -> str:
     rows = _plan_rows(pinned_rows, dates)
     gaps = [u for u in (plan.get("uncovered") or []) if want is None or u["date"] in want]
     ran = bool(rows) or bool(gaps) or any(want is None or d in want for d in (plan.get("windows") or {}))
-    text = (f"A manager or owner on the floor every minute anyone is scheduled (managers: {', '.join(names)}"
-            + (f"; acting managers on their dates: {', '.join(a['name'] for a in plan['acting'])}"
-               if plan.get("acting") else "")
-            + "). The owner's highest staffing rule — somebody is always in charge of the floor. It gives way "
-              "only to a manager's own availability and time off and the legal limits on their hours and rest.")
+    text = (", ".join(names)
+            + (f"; standing in as the manager on their dates: {', '.join(a['name'] for a in plan['acting'])}"
+               if plan.get("acting") else "") + ".")
     if ran:
-        text += (" The MANAGER COVERAGE block below already schedules it: keep those rows exactly, never write "
-                 "a second shift for those managers on those dates, and keep every other shift inside each "
-                 "day's manager window.")
+        text += (" Their shifts are planned in MANAGER COVERAGE below: keep those rows exactly, never write a "
+                 "second shift for those managers on those dates, and keep every other shift inside each date's "
+                 "manager window.")
         if gaps:
-            text += (" Where it names a stretch no manager can legally cover, staff that stretch as usual — the "
-                     "owner is told in the review.")
+            text += (" Where it names a stretch no manager can legally cover, staff that stretch as usual — the owner "
+                     "is told in the review.")
     else:
-        text += (" Overlap the managers' shifts so there is never a gap; if the managers cannot cover a day, "
-                 "cover the longest stretches and name the uncovered minutes in the summary.")
+        text += (" Their shifts were not planned this time: overlap them so there is never a gap; if the managers "
+                 "cannot cover a day, cover the longest stretches — the owner is told the minutes left uncovered.")
     return text
 
 
