@@ -884,6 +884,21 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
     for y in years:
         holidays.update(_holiday_dates(y))
     roster = {str(n).strip().lower(): (n, (r or "").strip()) for n, r in (roster_roles or {}).items() if n}
+    # The closers the owner chose, per role family (schedule re-audit
+    # 10/4/26 PROMPT-2): for a role that has them, the closing queue is
+    # theirs alone — the plan handed closes to whoever had closed least,
+    # beside a [HARD] rule naming the chosen closers, and the fairness score
+    # then rewarded breaking it. Everyone else on until close stays
+    # alongside one of them. A read that fails leaves every role as before.
+    try:
+        import schedule_rules as _sr
+        chosen_closers = _sr.chosen_closers(restaurant_id, db_path=_models_mod.DB_PATH if db_path == DB_PATH
+                                            else db_path) or {}
+        _families = _sr.role_families(_models_mod.get_restaurant(
+            restaurant_id, _models_mod.DB_PATH if db_path == DB_PATH else db_path))
+    except Exception as e:
+        print(f"[schedule_intel] chosen closers unreadable rid={restaurant_id}: {e}")
+        chosen_closers, _families = {}, {}
     people = {}       # lower name -> {display, roles{}, shifts, closes, nights, holidays, by_week{ws: weekend?}}
     week_keys = []
     for ws, week_rows, _src in hist:
@@ -934,6 +949,13 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
         cap = max(1, (len(members) + 3) // 4)
         due = [p["name"] for p in weekend_q if streak[p["name"]] >= ROTATION_WEEKEND_DUE][:cap]
         closers = [p for p in members if p["nights"] or p["closes"]]
+        from shift_quality import role_family as _role_family
+        chosen = {" ".join(k.split()) for k in chosen_closers.get(_role_family(role, _families)) or ()}
+        alongside = []
+        if chosen:
+            alongside = sorted(p["name"] for p in closers if " ".join(p["name"].lower().split()) not in chosen
+                               and p["closes"])
+            closers = [p for p in closers if " ".join(p["name"].lower().split()) in chosen]
         total_s = sum(p["shifts"] for p in closers)
         rate = (sum(p["closes"] for p in closers) / float(total_s)) if total_s else 0.0
         next_close = [p["name"] for p in sorted(closers, key=lambda p: (p["closes"] / float(p["shifts"]), p["closes"], p["name"]))] if rate else []
@@ -955,6 +977,11 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
             "weekend_streak": {p["name"]: streak[p["name"]] for p in weekend_q},
             "next_close": next_close[:ROTATION_SHOW * 2],
             "rest_from_close": rest_names,
+            # The role's closers are the owner's choice: next_close and
+            # rest_from_close are among them alone; `alongside` closed with
+            # them, never as the role's closer.
+            "chosen_closers": bool(chosen),
+            "alongside": alongside[:ROTATION_SHOW * 2],
             "closes": {p["name"]: {"closes": p["closes"], "shifts": p["shifts"]} for p in closers},
             "holiday_work_first": holiday_work[:ROTATION_SHOW * 2],
             "holiday_off_first": holiday_off[:ROTATION_SHOW * 2],
@@ -1015,7 +1042,13 @@ def rotation_block(plan: dict) -> str:
             bits.append("give these people this weekend off where the rules allow — "
                         + ", ".join(f"{n} ({v['weekend_streak'].get(n)} weekends in a row)" for n in v["weekend_due"]))
         if v.get("next_close"):
-            bits.append("hand the week's closes first to " + ", ".join(v["next_close"][:ROTATION_SHOW]))
+            if v.get("chosen_closers"):
+                # Only among the closers the owner chose: the rules block's
+                # closer rule is theirs, and "closes" means that here too.
+                bits.append("of its chosen closers, close first with " + ", ".join(v["next_close"][:ROTATION_SHOW])
+                            + " (anyone else on until close stays alongside one of them)")
+            else:
+                bits.append("hand the week's closes first to " + ", ".join(v["next_close"][:ROTATION_SHOW]))
         if v.get("rest_from_close"):
             bits.append("close " + ", ".join(v["rest_from_close"][:ROTATION_SHOW]) + " less than usual")
         if bits:
@@ -1072,8 +1105,9 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
     from drop requests and claims. Two of the same is a pattern."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT employee_name, replacement_name, date, shift_start, status, kind FROM shift_change_requests "
-                            "WHERE restaurant_id=? AND created_at >= date('now', ?)", (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+        rows = conn.execute("SELECT employee_name, replacement_name, date, shift_start, status, kind, decided_at "
+                            "FROM shift_change_requests WHERE restaurant_id=? AND created_at >= date('now', ?)",
+                            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
     except Exception:
         return {}
     finally:
@@ -1089,8 +1123,15 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
         # A drop the manager DENIED is not a preference the next draft should
         # honour — reading it as "avoids" overrode that decision (SCHED-40).
         # Only a drop that was let go (open, covered) or a swap that went
-        # through says the person does not want that slot.
-        if (r["kind"] or "drop") in ("drop", "swap") and r["status"] in ("open", "covered"):
+        # through says the person does not want that slot — and a drop the
+        # manager let go that nobody claimed before the shift passed
+        # (expired, with its approval's decided_at — shift_requests.decide):
+        # it vanished once the shift passed, so "keeps asking to drop
+        # Sunday nights" formed only when coworkers happened to claim them
+        # (schedule re-audit 10/4/26 LEARN-12).
+        approved = r["status"] in ("open", "covered") or (
+            r["status"] == "expired" and (r["kind"] or "drop") == "drop" and r["decided_at"])
+        if (r["kind"] or "drop") in ("drop", "swap") and approved:
             t = tally.setdefault(r["employee_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
             t["avoid"][slot] = t["avoid"].get(slot, 0) + 1
             t["drops"] += 1
@@ -1994,7 +2035,24 @@ def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH, author
     """Dismiss a learned pattern with whose word it is (`authority`,
     permissions.answer_authority of the login; None from a caller that has
     none, read as before). The restaurant's own word over an admin's
-    replaces it: the owner dismissing what support already dismissed counts."""
+    replaces it: the owner dismissing what support already dismissed counts.
+    A delegate (a manager's login) never dismisses a pattern the owner kept
+    or said "always" to — schedule_versions.OwnerAnswered, in words
+    (schedule re-audit 10/4/26 LEARN-3)."""
+    if authority == "delegate":
+        import schedule_versions as _sv
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT * FROM schedule_standing_patterns WHERE restaurant_id=? AND pattern_key=? "
+                               "AND status IN ('active', 'retest', 'dormant')",
+                               (restaurant_id, str(key)[:200])).fetchone()
+        except Exception as e:                 # no standing table yet: nothing the owner kept
+            print(f"[schedule_intel] standing pattern unreadable rid={restaurant_id}: {e}")
+            row = None
+        finally:
+            conn.close()
+        if row is not None and _sv._owner_kept(dict(row)):
+            raise _sv.OwnerAnswered("The owner kept this one — only the owner can let it go.")
     conn = get_conn(db_path)
     try:
         # The person the key names (its second field), so a rename or merge
@@ -2042,9 +2100,21 @@ def adopt_admin_dismissals(restaurant_id, user, db_path=DB_PATH) -> int:
         conn.close()
 
 
-def restore_pattern(restaurant_id, key: str, db_path=DB_PATH) -> None:
+def restore_pattern(restaurant_id, key: str, db_path=DB_PATH, authority=None) -> None:
+    """Undo a dismissal. A delegate (a manager's login) or an admin through
+    view-as never restores one the owner made — schedule_versions.OwnerAnswered, in words (schedule
+    re-audit 10/4/26 LEARN-3); a dismissal stored before whose it was got
+    recorded reads as the owner's."""
     conn = get_conn(db_path)
     try:
+        if authority in ("delegate", "admin"):
+            row = conn.execute("SELECT authority FROM schedule_pattern_dismissals WHERE restaurant_id=? AND key=?",
+                               (restaurant_id, str(key)[:200])).fetchone()
+            if row is not None and (row["authority"] or "principal") == "principal":
+                import schedule_versions as _sv
+                raise _sv.OwnerAnswered(
+                    "The owner dismissed this one — only the owner can bring it back." if authority == "delegate"
+                    else "An answer through view-as doesn't change what the draft keeps — the owner answers this one.")
         conn.execute("DELETE FROM schedule_pattern_dismissals WHERE restaurant_id=? AND key=?", (restaurant_id, str(key)[:200]))
         conn.commit()
     finally:
@@ -2189,11 +2259,17 @@ def init_schedule_intel(db_path: str = DB_PATH):
     # manager puts it back; last_retest_end / retests; retired_reason
     # (reversed | retest | decayed | owner); source 'learned' | 'owner_said'
     # (the owner's one-tap "always", L-35) and authority — whose word made it.
+    # Whose answer settled it (schedule re-audit 10/4/26 LEARN-3, LEARN-4):
+    # owner_kept_at — when an account holder last kept it (their Keep holds
+    # it applied whatever its confidence, for two half-lives); and
+    # answer_authority — principal | delegate, whose keep or let-go it last
+    # was. A delegate's answer never undoes the owner's.
     _sp2 = {r[1] for r in conn.execute("PRAGMA table_info(schedule_standing_patterns)").fetchall()}
     for _col, _typ in (("opportunities", "INTEGER NOT NULL DEFAULT 0"), ("hits", "INTEGER NOT NULL DEFAULT 0"),
                        ("last_hand", "TEXT"), ("confidence", "REAL"), ("retest_since", "TEXT"),
                        ("last_retest_end", "TEXT"), ("retests", "INTEGER NOT NULL DEFAULT 0"),
-                       ("retired_reason", "TEXT"), ("source", "TEXT"), ("authority", "TEXT")):
+                       ("retired_reason", "TEXT"), ("source", "TEXT"), ("authority", "TEXT"),
+                       ("owner_kept_at", "TEXT"), ("answer_authority", "TEXT")):
         if _col not in _sp2:
             try:
                 conn.execute(f"ALTER TABLE schedule_standing_patterns ADD COLUMN {_col} {_typ}")

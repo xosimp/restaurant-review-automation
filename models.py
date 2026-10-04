@@ -9561,13 +9561,14 @@ def get_shift_leader_rules(restaurant_id: int, db_path: str = DB_PATH) -> list:
 
 
 def leader_rule_daypart(role):
-    """'morning' for a role named "... AM", 'night' for "... PM", else None."""
-    words = str(role or "").strip().lower().split()
-    if words and words[-1] == "am":
-        return "morning"
-    if words and words[-1] == "pm":
-        return "night"
-    return None
+    """'morning' for a role naming the day half ("Server AM", "Server-AM",
+    "AM Server", "Lunch Server"), 'night' for the evening ("Host (PM)",
+    "Dinner Host"), else None: shift_quality.role_daypart, the one reader —
+    this copy read only a last word of exactly "am"/"pm", so the other
+    spellings bound both halves of the day (schedule re-audit 10/4/26
+    RULES-3, SQ-1)."""
+    from shift_quality import role_daypart
+    return role_daypart(role)
 
 
 def get_staff_availability(restaurant_id: int, db_path: str = DB_PATH) -> list:
@@ -10849,11 +10850,24 @@ def backfill_history_hours(db_path: str = DB_PATH, max_seconds: float = 10.0) ->
     return done
 
 
+class DraftChanged(Exception):
+    """The draft a redo was built from changed (or went) while it ran, so
+    the redo is not saved over it (re-audit 10/4/26 PIPE-2). `current_csv`
+    is the draft as it stands now (None: it is gone)."""
+
+    def __init__(self, history_id, current_csv):
+        super().__init__(f"schedule {history_id} changed while it was being redone")
+        self.history_id = history_id
+        self.current_csv = current_csv
+
+
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_scheduled: float, hours_budget: float, labor_target: float,
                            schedule_csv: str, summary: list, quality: dict = None,
                            what_if: dict = None, db_path: str = DB_PATH,
-                           hours_hourly: float = None, hours_salaried: float = None) -> int:
+                           hours_hourly: float = None, hours_salaried: float = None,
+                           review: dict = None, generation_seconds: float = None, weather=None,
+                           economics: dict = None, stage_seconds: dict = None, base: tuple = None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -10864,6 +10878,15 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     (schedule audit 10/3/26 E-7, P-6) — the generation passes the split it
     priced with; without them they are worked out from the rows here
     (history_hours), so no row is saved without them.
+
+    The week, its review (the publish gate reads the partial-week and
+    unstaffable-day lines and the stage failures from it), its timings,
+    weather and economics, and the superseding of the week's other unsent
+    drafts are one write (re-audit 10/4/26 PIPE-7): the review used to be a
+    second commit, and a failed one left a draft in force that published
+    without its blockers. `base` = (history_id, schedule_csv) is the draft a
+    redo was built from, as it read it: when that draft has changed or gone
+    since, nothing is written and DraftChanged is raised (PIPE-2).
     """
     import json as _json_sh
     if hours_hourly is None or hours_salaried is None:
@@ -10874,37 +10897,55 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
         except Exception as e:
             import ops as _ops_hh
             _ops_hh.capture(e, job="schedule_history_hours", context=f"restaurant_id={restaurant_id}")
+    # Serialized before the write opens, so a value JSON cannot carry fails
+    # the save instead of half-writing it.
+    review_json = _json_sh.dumps(review, default=str) if review else None
+    weather_json = _json_sh.dumps(weather, default=str) if weather else None
+    economics_json = _json_sh.dumps(economics, default=str) if economics else None
+    stages_json = _json_sh.dumps(stage_seconds, default=str) if stage_seconds else None
     conn = get_conn(db_path)
-    # The Shift Quality verdict used to live only in the async job result,
-    # which is deleted the first time it is polled — so the headline number
-    # an owner is asked to trust could never be looked at again, and
-    # Schedule History showed past weeks with no score and no trend.
-    _ensure_history_columns(conn)
-    q = quality or {}
-    cur = conn.execute("""
-        INSERT INTO schedule_history
-            (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
-             labor_target, schedule_csv, summary_json, quality_json,
-             quality_score, quality_band, quality_confidence, what_if_json,
-             hours_hourly, hours_salaried)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
-          schedule_csv, _json_sh.dumps(summary or []),
-          _json_sh.dumps(quality) if quality else None,
-          q.get("score"), q.get("band"), (q.get("confidence") or {}).get("level"),
-          _json_sh.dumps(what_if) if what_if else None, hours_hourly, hours_salaried))
-    conn.commit()
-    new_id = cur.lastrowid
-    # Drafts of the same week that were never sent are superseded by this
-    # one, so the history reads as one draft per week, not five.
-    if week_start:
+    try:
+        # The Shift Quality verdict used to live only in the async job result,
+        # which is deleted the first time it is polled — so the headline number
+        # an owner is asked to trust could never be looked at again, and
+        # Schedule History showed past weeks with no score and no trend.
+        _ensure_history_columns(conn)
+        q = quality or {}
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            conn = get_conn(db_path)
-            conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? AND id<>? "
-                         "AND published_at IS NULL AND superseded_by IS NULL", (new_id, restaurant_id, week_start, new_id))
+            if base is not None:
+                now = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                                   (int(base[0]), restaurant_id)).fetchone()
+                if now is None or (now["schedule_csv"] or "") != (base[1] or ""):
+                    raise DraftChanged(int(base[0]), None if now is None else (now["schedule_csv"] or ""))
+            cur = conn.execute("""
+                INSERT INTO schedule_history
+                    (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
+                     labor_target, schedule_csv, summary_json, quality_json,
+                     quality_score, quality_band, quality_confidence, what_if_json,
+                     hours_hourly, hours_salaried, review_json, generation_seconds, weather_json,
+                     economics_json, stage_seconds_json, total_seconds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
+                  schedule_csv, _json_sh.dumps(summary or []),
+                  _json_sh.dumps(quality) if quality else None,
+                  q.get("score"), q.get("band"), (q.get("confidence") or {}).get("level"),
+                  _json_sh.dumps(what_if) if what_if else None, hours_hourly, hours_salaried,
+                  review_json, generation_seconds, weather_json, economics_json, stages_json,
+                  (stage_seconds or {}).get("total")))
+            new_id = cur.lastrowid
+            # Drafts of the same week that were never sent are superseded by
+            # this one, so the history reads as one draft per week, not five.
+            if week_start:
+                conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
+                             "AND id<>? AND published_at IS NULL AND superseded_by IS NULL",
+                             (new_id, restaurant_id, week_start, new_id))
             conn.commit()
-        finally:
-            conn.close()
+        except BaseException:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
     return new_id
 
 

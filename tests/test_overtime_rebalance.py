@@ -62,12 +62,15 @@ def test_nothing_can_absorb_it_so_it_is_named_not_hidden():
     assert out["left"] and out["left"][0]["employee"] == "Vince" and out["left"][0]["hours"] == 48
 
 
-def test_an_owner_who_set_someone_above_forty_keeps_their_overtime():
+def test_an_owner_maximum_above_forty_still_moves_overtime_a_teammate_can_take():
+    # The owner's 48h is a ceiling, not the overtime line: Bea has room, so
+    # Vince's hours past 40 go to her (schedule re-audit 10/4/26 RULES-9 —
+    # this test pinned the overtime staying).
     c = _c(hours_limits={"vince": (None, 48)})
     c.compliance["weekly_hours_ceiling"] = 50
     rows = [_row(i, "Vince") for i in range(6)] + [_row(0, "Bea")]
     out = sr.rebalance_overtime(rows, c, roster_roles={"Vince": "Line Cook", "Bea": "Line Cook"})
-    assert not out["moves"] and not out["trims"] and not out["left"]
+    assert [(m["from"], m["to"]) for m in out["moves"]] == [("Vince", "Bea")] and not out["left"]
 
 
 def test_a_redo_of_some_days_only_touches_those_days():

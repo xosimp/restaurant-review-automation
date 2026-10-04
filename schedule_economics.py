@@ -171,8 +171,90 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
             "total": round(straight + premium, 0), "multiplier": multiplier}
 
 
-def cost_delta(before_rows: list, after_rows: list, role_rates: dict, blended_rate: float, ceiling: float = 40.0) -> dict:
-    """What an edit moves: hours and overtime-priced dollars, before → after."""
+def week_pricing(restaurant_id, constraints=None, blended_rate=None) -> dict:
+    """The one set of inputs a drafted week is priced with — the
+    generation's (schedule_engine _price_week), a reopened week's and the
+    live edit line's — so the saved cost, the reopened cost and an edit's
+    delta agree (schedule re-audit 10/4/26 SQ-6): each person's own rate,
+    else the role's, else the role's typical; overtime from the 40h line
+    (labor.OVERTIME_THRESHOLD_HOURS) per payroll week, with the hours
+    already published in it (`constraints.base_hours`, `.bucket`); daily
+    overtime where it applies; salaried people free (`constraints.salaried`).
+    The edit line used to price a salaried GM's extra shift at the blended
+    rate with overtime, and an hourly person's without their published hours.
+    `constraints` None prices without the week's people facts."""
+    from models import get_role_rates
+    import labor as _lab
+    rates = get_role_rates(restaurant_id) or {}
+    try:
+        ppl, typ = _lab.person_rate_book(restaurant_id)
+    except Exception:
+        ppl, typ = {}, {}
+    c = constraints
+    return {"role_rates": rates, "blended_rate": blended_rate or rates.get("_default"),
+            "person_rates": ppl or {}, "role_typical": typ or {},
+            "ceiling": float(_lab.OVERTIME_THRESHOLD_HOURS),
+            "salaried": set(getattr(c, "salaried", None) or ()) if c is not None else set(),
+            "base_hours": ({n: dict(v) for n, v in (getattr(c, "base_hours", None) or {}).items()}
+                           if c is not None else {}),
+            "bucket": c.bucket if c is not None else None,
+            "daily_ot_hours": (getattr(c, "compliance", None) or {}).get("daily_ot_hours") if c is not None else None}
+
+
+def stored_blended_rate(restaurant_id, history_id):
+    """The blended rate a stored week was priced at (its economics), or None."""
+    import json as _json
+    try:
+        hid = int(history_id)
+    except (TypeError, ValueError):
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT economics_json FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (hid, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    try:
+        econ = _json.loads(row["economics_json"]) if row and row["economics_json"] else {}
+        return float(econ.get("blended_rate") or 0) or None
+    except (TypeError, ValueError):
+        return None
+
+
+def price_week(rows: list, pricing: dict, rounded: bool = True) -> dict:
+    """priced_cost of `rows` with week_pricing's inputs."""
+    p = pricing or {}
+    return priced_cost(rows, p.get("role_rates") or {}, p.get("blended_rate"), ceiling=p.get("ceiling") or 40.0,
+                       base_hours=p.get("base_hours"), bucket=p.get("bucket"), daily_ot_hours=p.get("daily_ot_hours"),
+                       salaried=p.get("salaried"), person_rates=p.get("person_rates"),
+                       role_typical=p.get("role_typical"), rounded=rounded)
+
+
+def _hourly_hours(rows: list, salaried=None) -> float:
+    """Hours on `rows` less the salaried people's (priced_cost's name key)."""
+    sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
+    return sum(_hours(r) for r in rows or []
+               if (r.get("employee") or "").strip() and " ".join((r.get("employee") or "").lower().split()) not in sal)
+
+
+def cost_delta(before_rows: list, after_rows: list, role_rates: dict = None, blended_rate: float = None,
+               ceiling: float = 40.0, pricing: dict = None) -> dict:
+    """What an edit moves: hours and overtime-priced dollars, before → after.
+
+    With `pricing` (week_pricing) the edit is priced exactly as the
+    generation prices the week (SQ-6), and the hours are HOURLY hours — a
+    salaried person's shift costs nothing and spends no budget; their hours
+    move as `salaried_hours_delta`, said apart."""
+    if pricing:
+        a, b = price_week(before_rows, pricing), price_week(after_rows, pricing)
+        sal = pricing.get("salaried") or ()
+        hb, ha = round(_hourly_hours(before_rows, sal), 1), round(_hourly_hours(after_rows, sal), 1)
+        all_b = round(sum(_hours(r) for r in before_rows or []), 1)
+        all_a = round(sum(_hours(r) for r in after_rows or []), 1)
+        return {"hours_before": hb, "hours_after": ha, "hours_delta": round(ha - hb, 1),
+                "salaried_hours_delta": round((all_a - ha) - (all_b - hb), 1), "basis": "hourly",
+                "dollars_before": a["total"], "dollars_after": b["total"],
+                "dollars_delta": round(b["total"] - a["total"], 0), "overtime_hours_after": b["overtime_hours"]}
     a = priced_cost(before_rows, role_rates, blended_rate, ceiling)
     b = priced_cost(after_rows, role_rates, blended_rate, ceiling)
     hb = round(sum(_hours(r) for r in before_rows or []), 1)
@@ -180,6 +262,180 @@ def cost_delta(before_rows: list, after_rows: list, role_rates: dict, blended_ra
     return {"hours_before": hb, "hours_after": ha, "hours_delta": round(ha - hb, 1),
             "dollars_before": a["total"], "dollars_after": b["total"], "dollars_delta": round(b["total"] - a["total"], 0),
             "overtime_hours_after": b["overtime_hours"]}
+
+
+def hours_view(rows: list, c, ceiling: float = None) -> dict:
+    """The Studio hours panel's figures for `rows`, on the hourly basis the
+    PAR and the daily targets are sized on (schedule re-audit 10/4/26 SQ-5):
+    the panel summed every row — salaried managers on the floor every
+    minute included — against the hourly PAR and the hourly daily targets,
+    read every day over target, and listed the salaried managers "over 40h".
+
+    Returns {basis: "hourly", hourly, salaried, by_date: {date: hourly h},
+    salaried_by_date: {date: h}, by_role: {role: hourly h}, role_people:
+    {role: hourly people on the roster}, over: [{name, hours}] (hourly
+    people past `ceiling` in the week drafted — salaried people owe no
+    overtime), ceiling}. Who is salaried is not named: it is the owner's
+    (Account → Targets & pay); every login that sees labor reads this."""
+    import schedule_rules as _rules
+    if ceiling is None:
+        try:
+            ceiling = float(((getattr(c, "compliance", None) or {}).get("weekly_hours_ceiling")) or 40.0)
+        except (TypeError, ValueError):
+            ceiling = 40.0
+    paid_same = c.is_salaried if c is not None else (lambda _n: False)
+    by_date, sal_by_date, by_role, people = {}, {}, {}, {}
+    hourly = salaried = 0.0
+    for r in rows or []:
+        name = (r.get("employee") or "").strip()
+        if not name:
+            continue
+        h = _rules.row_hours(r)
+        d = r.get("date") or ""
+        if paid_same(name):
+            salaried += h
+            sal_by_date[d] = sal_by_date.get(d, 0.0) + h
+            continue
+        hourly += h
+        by_date[d] = by_date.get(d, 0.0) + h
+        role = (r.get("role") or "").strip() or "Other"
+        by_role[role] = by_role.get(role, 0.0) + h
+        people[name] = people.get(name, 0.0) + h
+    role_people = {}
+    for n, role in ((getattr(c, "roster_roles", None) or {}) if c is not None else {}).items():
+        if n and not paid_same(n):
+            k = (role or "").strip() or "Other"
+            role_people[k] = role_people.get(k, 0) + 1
+    over = sorted(({"name": n, "hours": round(h, 1)} for n, h in people.items() if h > ceiling + 0.01),
+                  key=lambda x: (-x["hours"], x["name"]))
+    return {"basis": "hourly", "hourly": round(hourly, 1), "salaried": round(salaried, 1),
+            "by_date": {d: round(v, 2) for d, v in by_date.items()},
+            "salaried_by_date": {d: round(v, 2) for d, v in sal_by_date.items()},
+            "by_role": {k: round(v, 2) for k, v in by_role.items()}, "role_people": role_people,
+            "over": over, "ceiling": ceiling}
+
+
+def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_target=None,
+               labor_budget_dollars=None, week_dates=None, restaurant=None, sees_salaries: bool = None,
+               recent: dict = None) -> dict:
+    """The week's labor % on ONE stated basis, for the Studio's Labor tile,
+    its "Labor % as drafted" and its estimated savings (schedule re-audit
+    10/4/26 SQ-4). `projected_cost` is hourly pay only (salaried people are
+    free in priced_cost); the owner's labor target and the recent labor %
+    are all-in since 9/30/26. Dividing the one by sales and grading it
+    against the other read a week 9 points over target as green, and the
+    "savings" were the salaries left out of the draft.
+
+    For a reader who may see salaries (models.viewer_sees_salaries) the
+    view is ALL-IN: the hourly cost plus the salaried staff's share of the
+    week (models.salaried_week_share — the deduction the hourly budget was
+    sized with, so the two reconcile), against the all-in target and the
+    all-in recent %. For anyone else, with salaried staff on file, it is
+    HOURLY: the hourly cost against the hourly budget's share of sales
+    (labor_budget_dollars / revenue) and the recent hourly %, and says
+    salaries are left out. With nobody salaried the two are one.
+
+    `recent` overrides the recent-labor read ({pct, days, includes_salaries})
+    — for a caller that already has it. Savings are a projection (CLAUDE.md:
+    value delivered is only what was measured): shown only when the recent
+    % is measured on the same basis and above this week's.
+
+    Returns {basis, cost, hourly_cost, salaried_cost (owner only), pct,
+    target_pct, target_basis, recent_pct, recent_days, savings, text} or
+    None without a priced week and a forecast."""
+    try:
+        rev = float(projected_revenue or 0)
+        hourly = float((projected_cost or {}).get("total") or 0)
+    except (TypeError, ValueError):
+        return None
+    if rev <= 0 or not projected_cost:
+        return None
+    import models as _m
+    if restaurant is None:
+        try:
+            restaurant = _m.get_restaurant(restaurant_id)
+        except Exception:
+            restaurant = None
+    if sees_salaries is None:
+        try:
+            sees_salaries = _m.viewer_sees_salaries()
+        except Exception:
+            sees_salaries = False
+    try:
+        anyone_salaried = bool(_m.salaried_staff(restaurant)) if restaurant is not None else False
+    except Exception:
+        anyone_salaried = False
+    sal_cost = None
+    if anyone_salaried and sees_salaries:
+        try:
+            import schedule_rules as _rules
+            share = _m.salaried_week_share(restaurant, week_dates or (),
+                                           _rules.closed_in(restaurant, week_dates or ()))
+            sal_cost = float((share or {}).get("cost") or 0) or None
+        except Exception:
+            sal_cost = None
+    try:
+        tgt = float(labor_target) if labor_target not in (None, "") else None
+    except (TypeError, ValueError):
+        tgt = None
+    if not anyone_salaried or sal_cost is not None:
+        basis = "all_in"
+        cost = hourly + (sal_cost or 0.0)
+        target_pct, target_basis = tgt, "all_in"
+        if anyone_salaried:
+            text = ("All-in: hourly pay as drafted plus the salaried staff's pay for the week — "
+                    "the same basis as your labor target.")
+        else:
+            text = "Nobody is salaried, so hourly pay as drafted is the whole labor cost."
+    else:
+        basis = "hourly"
+        cost = hourly
+        try:
+            lbd = float(labor_budget_dollars or 0)
+        except (TypeError, ValueError):
+            lbd = 0.0
+        target_pct = round(lbd / rev * 100, 1) if lbd > 0 else None
+        target_basis = "hourly"
+        if sees_salaries:
+            # Salaried people on file with no salary entered: their pay is
+            # unknown, so the all-in figure cannot be stated.
+            text = ("Hourly pay only: your salaried staff have no salary on file, so they are left out, and it "
+                    "is judged against the hourly budget's share of forecast sales.")
+        else:
+            text = ("Hourly pay only: salaried staff are left out of this figure, and it is judged against "
+                    "the hourly budget's share of forecast sales.")
+    pct = round(cost / rev * 100, 1)
+    if recent is None:
+        recent = _recent_labor(restaurant_id, all_in=(basis == "all_in" and anyone_salaried))
+    r_pct, r_days = None, None
+    if recent and recent.get("pct"):
+        # The recent % on this week's basis, or not at all.
+        same = bool(recent.get("includes_salaries")) == (basis == "all_in" and anyone_salaried)
+        if same:
+            r_pct, r_days = round(float(recent["pct"]), 1), int(recent.get("days") or 14)
+    savings = round((r_pct - pct) / 100 * rev, 0) if (r_pct is not None and r_pct > pct) else None
+    out = {"basis": basis, "cost": round(cost, 0), "hourly_cost": round(hourly, 0), "pct": pct,
+           "target_pct": target_pct, "target_basis": target_basis, "recent_pct": r_pct, "recent_days": r_days,
+           "savings": savings, "text": text}
+    if sal_cost is not None:
+        out["salaried_cost"] = round(sal_cost, 0)
+    return out
+
+
+def _recent_labor(restaurant_id, all_in: bool) -> dict:
+    """{pct, days, includes_salaries} — the restaurant's measured labor % over
+    the current window (labor.analyse_shifts_for_restaurant), all-in when
+    `all_in`, else hourly; None when it is not measured (no live shifts, or
+    sales missing)."""
+    try:
+        import labor as _lab
+        a = _lab.analyse_shifts_for_restaurant(restaurant_id, with_salaries=all_in)
+    except Exception:
+        return None
+    if not a.get("is_live") or a.get("sales_data_missing") or not a.get("overall_labor_pct"):
+        return None
+    return {"pct": a.get("overall_labor_pct"), "days": a.get("period_days") or 14,
+            "includes_salaries": bool(a.get("includes_salaries"))}
 
 
 # ── weekly revenue from the restaurant's own pattern ──────────────────────
@@ -1619,7 +1875,12 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         groups, day_hours = {}, {}
         for x in live:
             groups.setdefault((x.get("date"), keys[id(x)]), []).append(x)
-            day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
+            # A day's "over" is on its target's basis: hourly hours against
+            # the hourly daily target. Salaried hours ranked the day a
+            # salaried GM works as the most over and cut it while it sat
+            # under target (schedule re-audit 10/4/26 SQ-7).
+            if _paid(x):
+                day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
 
         def _tail_order(r):
             d = r.get("date")
@@ -1672,7 +1933,9 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         day_hours, person_rows, person_hours, crew, by_person_day, last_out = {}, {}, {}, {}, {}, {}
         for x in live:
             low = (x.get("employee") or "").strip().lower()
-            day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
+            if _paid(x):
+                # Hourly hours against the hourly daily target (SQ-7).
+                day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
             person_rows[low] = person_rows.get(low, 0) + 1
             person_hours[low] = person_hours.get(low, 0.0) + _hours(x)
             for part in parts_of[id(x)]:

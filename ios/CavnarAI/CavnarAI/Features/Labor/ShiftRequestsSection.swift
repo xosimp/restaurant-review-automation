@@ -49,6 +49,10 @@ struct ShiftRequestsSection: View {
                         .foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if let warning = viewModel.requestWarning {
+                    HomeMixedText.make(warning, size: 14, color: .cavnarEmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .sheet(item: $choosingFor) { req in

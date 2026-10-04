@@ -503,14 +503,19 @@ class Problem:
         for m in self.mem:
             if m["kind"] in ("moved_off", "role_change", "opener", "closer") and m.get("person"):
                 self.mem_person.setdefault(self.key(m["person"]), []).append(m)
-        # A team on the same shifts (pair): the people, and the memory's weight.
+        # A team on the same shifts (pair "prefer"), or two the owner keeps
+        # apart (pair "avoid" — schedule re-audit 10/4/26 LEARN-1: every
+        # pair was read as "together", so the owner's Keep on a learned
+        # keep-apart made the solver pay to put them on the same shift): the
+        # people, the memory's weight and its polarity. A pair with no
+        # polarity binds nothing (schedule_memory.misses' meaning).
         self.mem_pairs = []
         for m in self.mem:
-            if m["kind"] == "pair":
+            if m["kind"] == "pair" and _val(m).get("kind") in ("prefer", "avoid"):
                 members = {self.key(m.get("person"))} | {self.key(x) for x in (_val(m).get("with") or [])}
                 members.discard("")
                 if len(members) > 1:
-                    self.mem_pairs.append((frozenset(members), m["confidence"]))
+                    self.mem_pairs.append((frozenset(members), m["confidence"], _val(m)["kind"]))
         # Somebody who habitually runs past their shift (ot_risk, L-16): their
         # overtime line is the line less the headroom they usually run over —
         # for the caps (never past it beyond the draft) and for the measure.
@@ -849,14 +854,16 @@ class Problem:
             if not ok:
                 return why
         for r in u.rows:
-            for part in sq.present_dayparts(r):
+            # Any minute in a blocked half of the day (RULES-11), the card as
+            # it stands that date (RULES-14) — the sweep's own tests.
+            for part in sq.touched_dayparts(r):
                 ok, why = c.can_work(name, u.date, part)
                 if not ok:
                     return why
             ok, why = c.window_ok(name, u.date, r.get("shift_start", ""), r.get("shift_end", ""))
             if not ok:
                 return why
-            ok, why = c.cert_ok(name, r.get("role", ""))
+            ok, why = c.cert_ok(name, r.get("role", ""), u.date)
             if not ok:
                 return why
             if not c.holds(name, r.get("role", ""), u.date):
@@ -1252,7 +1259,7 @@ class Problem:
         # A team the memory keeps on the same shifts (pair): each date any of
         # them can work, over the units they could be on.
         if self.mem_pairs:
-            member_p = {self.pidx[k] for ms, _w in self.mem_pairs for k in ms if k in self.pidx}
+            member_p = {self.pidx[k] for ms, _w, _pol in self.mem_pairs for k in ms if k in self.pidx}
             for u in self.units:
                 if u.draft in member_p or (self.dom[u.id] & member_p):
                     self.groups.setdefault(("L", u.date), {"units": [], "date": u.date, "kind": "L"})["units"].append(u.id)
@@ -1369,10 +1376,6 @@ class Problem:
             for r, sp in zip(u.rows, (_rules._span(x) for x in u.rows)):
                 if sp and not (u.draft is not None and c.training_row(r)):
                     by.setdefault((u.date, self.family(r.get("role"))), []).append((sp[1], u.id))
-        ends_all = {}
-        for u in self.units:
-            for sp in u.bspans:
-                ends_all[u.date] = max(ends_all.get(u.date, -1), sp[1])
         for (d, fam), items in by.items():
             closers = (c.closers_by_role or {}).get(fam)
             if not closers or not _rules._closer_rule_runs(c, fam, d):
@@ -1382,10 +1385,9 @@ class Problem:
             # who may work the date.
             ok = {self.pidx[k] for k in closers if k in self.pidx}
             day = sq._day_name(d)
-            close_m = _rules.close_minutes(c, day)
-            close_at = close_m if close_m is not None else ends_all.get(d, -1)
-            need = close_at + int((c.close_mins or {}).get(fam, 0) or 0)
             e_last = max(e for e, _u in items)
+            # The sweep's own target for the role (closer_need, RULES-6).
+            need, _until = _rules.closer_need(c, fam, day, e_last)
             full = max(need - 15, e_last - 15)
             draft_best = max((e for e, uid in items if self.units[uid].draft in ok), default=None)
             members_full = [uid for e, uid in items if e >= full]
@@ -1570,7 +1572,9 @@ class Problem:
     def team_cost(self, key, assign) -> float:
         """A team the scheduling memory keeps on the same shifts, split across
         one date's dayparts (schedule_memory.misses' pair: two or more of them
-        on that date, not all on each daypart any of them is on)."""
+        on that date, not all on each daypart any of them is on); two the
+        owner keeps apart, on the same daypart of one date (a pair "avoid",
+        LEARN-1)."""
         g = self.groups[key]
         by_part = {}
         for i in g["units"]:
@@ -1582,8 +1586,12 @@ class Problem:
             for first in u.primary:
                 by_part.setdefault(first, set()).add(k)
         cost = 0.0
-        for members, w in self.mem_pairs:
+        for members, w, polarity in self.mem_pairs:
             parts = [ks & members for ks in by_part.values() if ks & members]
+            if polarity == "avoid":
+                if any(len(x) > 1 for x in parts):
+                    cost += w
+                continue
             there = set().union(*parts) if parts else set()
             if len(there) > 1 and any(len(x) < len(there) for x in parts):
                 cost += w

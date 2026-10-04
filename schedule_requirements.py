@@ -179,14 +179,26 @@ def busy_shifts(dates: list, profiles: list = None, demand_by_day: dict = None,
     return out
 
 
-def _rule_applies(rule: dict, day: str, part: str, runs: dict = None) -> bool:
+def closing_part(day: str, close_times: dict = None) -> str:
+    """The daypart a date's close falls in: the morning for a close before
+    the 3pm changeover (a breakfast-and-lunch place), else the night."""
+    close_m = _minutes((close_times or {}).get(day))
+    if close_m is not None and 5 * 60 <= close_m <= _sq.DAYPART_CUTOVER:
+        return "morning"
+    return "night"
+
+
+def _rule_applies(rule: dict, day: str, part: str, runs: dict = None, close_times: dict = None) -> bool:
     """Whether a leader rule binds this shift: the scorer's own test
     (shift_quality.leader_rule_applies over shift_quality.role_runs), so a
     rule naming no daypart is asked only where its role works — the table
     used to tell the model to add a bartender to a lunch with no bar
-    (schedule audit 10/3/26 SQ-2). The closing shift is not known before
-    the draft, so it is not ruled out."""
-    return _sq.leader_rule_applies(rule, day, part, is_closing=None, runs=runs)
+    (schedule audit 10/3/26 SQ-2). A closing rule binds the daypart the
+    day's close falls in (closing_part): asked with the closing shift "not
+    known", it was printed on every morning row too — a closing bartender
+    at lunch, the rule said twice a day (schedule re-audit 10/4/26
+    PROMPT-6)."""
+    return _sq.leader_rule_applies(rule, day, part, is_closing=part == closing_part(day, close_times), runs=runs)
 
 
 def _adjust_for(adjustments, d, part, need, typical_raw) -> list:
@@ -362,7 +374,16 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             if section_cap:
                 capped, held = _curve.cap_requirement({v[0]: v[1] for v in need.values()}, section_cap, cap_roles)
                 for k, v in need.items():
+                    # The cap takes the soft ask first: the firm part (what
+                    # the shift needs without the ask) is held to the cap
+                    # too, and only what is left over it is still "asked".
+                    # Lowering `required` alone left the ask whole, so a
+                    # Friday of 4 usual servers under a 4-section cap scored
+                    # firm 3 — full coverage with 3 (schedule re-audit
+                    # 10/4/26 SQ-10).
+                    firm = v[1] - v[4]
                     v[1] = int(capped.get(v[0], v[1]))
+                    v[4] = max(0, v[1] - min(firm, v[1]))
             if roles is not None:
                 need = {k: v for k, v in need.items() if k in roles}
             if not need:
@@ -386,7 +407,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             demand = profile.demand
             leader = []
             for rule in leader_rules or []:
-                if not _rule_applies(rule, day, part, runs):
+                if not _rule_applies(rule, day, part, runs, close_times):
                     continue
                 # A rule for a role the people in this request work, its
                 # AM/PM job codes counted as the role — as the scorer judges

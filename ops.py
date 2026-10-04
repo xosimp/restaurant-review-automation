@@ -956,12 +956,18 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
     status        TEXT NOT NULL,
     result_json   TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    deadline_at   TEXT
+    deadline_at   TEXT,
+    started_at    TEXT,
+    request_json  TEXT
 )"""
-# Added after the table shipped; init_ops adds it to an older database.
+# Added after the table shipped; init_ops adds them to an older database.
 # deadline_at is the job's own wall-clock limit (UTC, SQLite datetime text),
 # when the job set one (set_async_job_deadline; schedule audit 10/3/26 P-22).
-_ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"),)
+# started_at is when it began running — a generation waits for a pool slot
+# first, and its age is counted from here (re-audit 10/4/26 PIPE-9).
+# request_json is what was asked (a schedule's week, days, draft and
+# instruction): a press joins only the same request (UI-8).
+_ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"), ("started_at", "TEXT"), ("request_json", "TEXT"))
 
 # Long enough for the slowest generation plus a client that backgrounds the
 # app mid-poll; short enough that abandoned results don't accumulate.
@@ -1026,6 +1032,52 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
 # whatever its age: never joined, never counted as the one running.
 _NOT_PAST_DEADLINE = ("AND (deadline_at IS NULL OR deadline_at >= datetime('now', '-%d seconds'))"
                       % ASYNC_DEADLINE_GRACE_SECONDS)
+# A job is judged by its own deadline once it has one, and only without one
+# by its age — from when it started running, not from when it queued for a
+# slot (re-audit 10/4/26 PIPE-9: a generation that waited ten minutes for a
+# slot was called dead at 45 minutes from its press, four minutes inside its
+# own deadline, and its paid draft thrown away). A job still queued is aged
+# from its press.
+_YOUNG = "AND (deadline_at IS NOT NULL OR COALESCE(started_at, created_at) >= datetime('now', ?))"
+
+
+class JobBusy(Exception):
+    """A pending job of this kind for this restaurant is doing something
+    else than what was asked (claim_async_job `request` — re-audit 10/4/26
+    UI-8): it is never joined. `request` is what the running job was asked
+    (None when it did not say)."""
+
+    def __init__(self, job_id, request):
+        super().__init__(f"job {job_id} is running another request")
+        self.job_id = job_id
+        self.request = request
+
+
+def _request_text(request):
+    import json
+    return None if request is None else json.dumps(request, sort_keys=True, default=str)
+
+
+def running_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
+    """(job_id, request) of this restaurant's pending job of `kind`, or
+    (None, None) — what it was asked (claim_async_job `request`) included."""
+    import json
+    try:
+        conn = _async_conn()
+        row = conn.execute(
+            "SELECT job_id, request_json FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
+            + _YOUNG + " " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
+            (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
+        conn.close()
+        if not row:
+            return None, None
+        try:
+            req = json.loads(row["request_json"]) if row["request_json"] else None
+        except (TypeError, ValueError):
+            req = None
+        return row["job_id"], req
+    except Exception:
+        return None, None
 
 
 def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
@@ -1039,7 +1091,7 @@ def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
         conn = _async_conn()
         row = conn.execute(
             "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
-            "AND created_at >= datetime('now', ?) " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
+            + _YOUNG + " " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
             (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
         conn.close()
         return row["job_id"] if row else None
@@ -1047,24 +1099,37 @@ def active_job(kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
         return None
 
 
-def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES):
+def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_MINUTES, request=None):
     """(job_id, joined): start `job_id` as this restaurant's one pending job
     of `kind`, or join the one already running — checked and inserted in one
     write transaction. active_job then start_async_job was check-then-insert,
     so two presses at the same instant started two paid generations
-    (SCHED-25 / DATA-23)."""
+    (SCHED-25 / DATA-23).
+
+    With `request` (what is asked, JSON-able) only a job asked exactly that
+    is joined; one asked anything else raises JobBusy and nothing starts
+    (re-audit 10/4/26 UI-8: Generate for one week silently joined a redo of
+    another, and the owner's instruction was lost)."""
+    import json
     conn = _async_conn()
     try:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT job_id FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
-            "AND created_at >= datetime('now', ?) " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
+            "SELECT job_id, request_json FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
+            + _YOUNG + " " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
             (str(kind), restaurant_id, f"-{int(max_age_minutes)} minutes")).fetchone()
         if row:
             conn.rollback()
+            if request is not None and row["request_json"] != _request_text(request):
+                try:
+                    running = json.loads(row["request_json"]) if row["request_json"] else None
+                except (TypeError, ValueError):
+                    running = None
+                raise JobBusy(row["job_id"], running)
             return row["job_id"], True
-        conn.execute("INSERT OR REPLACE INTO async_jobs (job_id, kind, restaurant_id, status, result_json)"
-                     " VALUES (?,?,?, 'pending', NULL)", (str(job_id), str(kind), restaurant_id))
+        conn.execute("INSERT OR REPLACE INTO async_jobs (job_id, kind, restaurant_id, status, result_json, request_json)"
+                     " VALUES (?,?,?, 'pending', NULL, ?)", (str(job_id), str(kind), restaurant_id,
+                                                              _request_text(request)))
         conn.execute("DELETE FROM async_jobs WHERE created_at < datetime('now', ?)", (f"-{_ASYNC_JOB_TTL_HOURS} hours",))
         conn.commit()
         return str(job_id), False
@@ -1137,17 +1202,22 @@ def rewrite_async_result(job_id, result) -> None:
         log.error(f"rewrite_async_result({job_id}) failed: {e}")
 
 
-def set_async_job_deadline(job_id, deadline_ts) -> None:
+def set_async_job_deadline(job_id, deadline_ts, started_ts=None) -> None:
     """Record the wall-clock time (a time.time() value) by which a job will
     have finished or failed (schedule audit 10/3/26 P-22). Past it, plus
-    ASYNC_DEADLINE_GRACE_SECONDS, a poll reports the job dead rather than
-    waiting out JOB_MAX_MINUTES. Raises nothing: a job whose deadline cannot
-    be written still runs, and is judged by JOB_MAX_MINUTES as before."""
+    ASYNC_DEADLINE_GRACE_SECONDS, a poll reports the job dead — judged by
+    that deadline alone, never by JOB_MAX_MINUTES (re-audit 10/4/26 PIPE-9).
+    `started_ts` is when the job began running (kept from its first record).
+    Raises nothing: a job whose deadline cannot be written still runs, and
+    is judged by JOB_MAX_MINUTES as before."""
     from datetime import datetime as _dt, timezone as _tz
     try:
         at = _dt.fromtimestamp(float(deadline_ts), tz=_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+        began = (_dt.fromtimestamp(float(started_ts), tz=_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+                 if started_ts is not None else None)
         conn = _async_conn()
-        conn.execute("UPDATE async_jobs SET deadline_at=? WHERE job_id=? AND status='pending'", (at, str(job_id)))
+        conn.execute("UPDATE async_jobs SET deadline_at=?, started_at=COALESCE(started_at, ?) WHERE job_id=? "
+                     "AND status='pending'", (at, began, str(job_id)))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -1187,7 +1257,7 @@ def read_async_job(job_id, restaurant_id=None):
         conn = _async_conn()
         row = conn.execute(
             "SELECT job_id, restaurant_id, status, result_json, "
-            "created_at < datetime('now', ?) AS overdue, "
+            "(deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) AS overdue, "
             "(deadline_at IS NOT NULL AND deadline_at < datetime('now', ?)) AS past_deadline, "
             "CAST(strftime('%s', deadline_at) AS INTEGER) - CAST(strftime('%s', 'now') AS INTEGER) AS seconds_left "
             "FROM async_jobs WHERE job_id=?",
@@ -1667,7 +1737,7 @@ def _dsr_missing(db_path=None):
 
 # Schedule generation end to end (schedule audit 10/3/26 P-24): each week
 # saves its stage timings and total (schedule_history.total_seconds, written
-# by schedule_engine._annotate_history). The p95 of the last
+# with the draft by models.save_schedule_history). The p95 of the last
 # SCHEDULE_P95_SAMPLE generations in SCHEDULE_P95_DAYS past
 # SCHEDULE_P95_ALERT_SECONDS is a warning the platform check pages once a
 # day — the owner sits waiting on every one, and the clients' wait is 15

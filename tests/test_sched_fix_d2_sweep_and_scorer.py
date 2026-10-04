@@ -112,10 +112,10 @@ def test_the_repair_passes_and_their_trials_never_sweep_the_whole_week_again(mon
     whole = []
     real = sr.violations
 
-    def counted(rs, cc, person_only=False, day_only=False):
+    def counted(rs, cc, person_only=False, day_only=False, **kw):
         if not person_only and not day_only and len(rs or []) > 40:
             whole.append(len(rs))
-        return real(rs, cc, person_only=person_only, day_only=day_only)
+        return real(rs, cc, person_only=person_only, day_only=day_only, **kw)
     monkeypatch.setattr(sr, "violations", counted)
     roles = sig["roster_roles"]
     sr.rebalance_overtime(rows, c, roster_roles=roles)

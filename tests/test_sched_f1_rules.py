@@ -194,7 +194,10 @@ def test_an_owner_role_is_salaried_style_unless_paid_hourly_and_the_cap_defaults
     ss.upsert(rid, "Jim", paid_hourly=True)
     c = _c(rid)
     assert c.is_salaried("Erik") and not c.is_salaried("Jim") and not c.is_salaried("Ann")
-    assert c.salaried_style == {"erik"} and c.salaried_cap == 55.0
+    # Unset is no owner cap (schedule re-audit 10/4/26 RULES-5): code holds
+    # its own additions to the 55h default, the owner may go to 84h.
+    assert c.salaried_style == {"erik"} and c.salaried_cap is None
+    assert c.salaried_limit("Erik") == 55.0 and c.max_hours("Erik") == sr.SALARIED_HOURS_MAX
     assert sr.overtime_line(c, "Erik") > 40, "no overtime line for the owner"
     models.update_restaurant(rid, {"salaried_cap": 50})
     assert _c(rid).salaried_cap == 50.0

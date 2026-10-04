@@ -4188,6 +4188,25 @@ def present_ai_visibility_roadmap(rid, payload, user_id=None):
     return payload
 
 
+def attach_labor_view(rid, result):
+    """A delivered draft's labor % on one stated basis, worked out for the
+    person reading it (schedule re-audit 10/4/26 SQ-4: schedule_economics.
+    labor_view — all-in for the owner, hourly for anyone else; salaries
+    never ride in the stored result). Both status twins call it. Never
+    raises."""
+    if not isinstance(result, dict) or not result.get("projected_cost"):
+        return result
+    try:
+        import schedule_economics as _econ_lv
+        result["labor_view"] = _econ_lv.labor_view(rid, result.get("projected_cost"), result.get("projected_revenue"),
+                                                   labor_target=result.get("labor_target"),
+                                                   labor_budget_dollars=result.get("labor_budget_dollars"),
+                                                   week_dates=result.get("week_dates") or [])
+    except Exception as e:
+        print(f"[schedule] labor view unavailable rid={rid}: {e!r}")
+    return result
+
+
 def present_schedule_result(rid, result, user_id=None):
     """A generated draft's own recommendations, presented when the draft is
     DELIVERED to the person who asked for it (the status poll that returns
@@ -5196,6 +5215,7 @@ def schedule_status(current_user, job_id):
         result["status"] = job["status"]
         if job["status"] == "done":
             present_schedule_result(current_user["restaurant_id"], result, current_user.get("id"))
+            attach_labor_view(current_user["restaurant_id"], result)
         return jsonify(result)
     except Exception as e:
         return jsonify({"ok": False, "status": "error", "error": str(e)}), 500
@@ -10620,7 +10640,11 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         review = json.loads(row["review_json"] or "null") or {}
     except Exception:
         review = {}
-    for line in (review.get("lines") or [])[:6]:
+    # The generation's own lead lines are read whole (re-audit 10/4/26
+    # PIPE-7): with three budget lines and a caveat ahead of it, the
+    # unwritten-day line sat at the edge of the first six.
+    _lead = [x for x in (review.get("lead_lines") or []) if isinstance(x, str)]
+    for line in _lead + [x for x in (review.get("lines") or [])[:6] if isinstance(x, str)]:
         if line.startswith("⚠") and "over the ceiling" not in line:   # the hours check below says it once
             t = line.lstrip("⚠ ").strip()
             add("saved:" + t, t)
@@ -10665,6 +10689,12 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 f"{v['employee']} — {where}: {v['detail']}")
         for v in viols:
             if v["hard"]:
+                continue
+            if v["kind"] in _sr.ROSTER_BLOCKERS:
+                # Nobody counted as a floor manager: the highest rule is
+                # unmet on every shift, so the week waits for the owner to
+                # name who runs the floor (schedule re-audit 10/4/26 RULES-13).
+                add(f"roster:{v['kind']}", v["detail"][:1].upper() + v["detail"][1:])
                 continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             text = f"{v['employee']} — {where}: {v['detail']}"

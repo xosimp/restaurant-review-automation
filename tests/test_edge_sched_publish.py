@@ -76,6 +76,12 @@ def _restaurant(db_path, people=("Ana", "Bob", "Cy"), **cols):
         conn.close()
     for n in people:
         models.add_manual_team_member(rid, n, role="Server", db_path=db_path)
+    # Ana and Bob run the floor: a roster with nobody counted as a floor
+    # manager is itself a publish blocker (schedule re-audit 10/4/26 RULES-13).
+    import staff_settings as _ss_fx
+    for n in ("Ana", "Bob"):
+        if n in people:
+            _ss_fx.upsert(rid, n, floor_manager=True, db_path=db_path)
     return rid
 
 

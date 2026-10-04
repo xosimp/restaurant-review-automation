@@ -395,6 +395,10 @@ def test_the_hours_notes_are_read_into_floors_hours_ceilings_and_stays():
     assert ("Dishwasher", 1, "morning", None) in floors                # "one from 10:00am"
     assert ("Dishwasher", 1, "night", None) in floors                  # "one from 3:00pm to close"
     assert ("Line Cook", 2, "night", None) in floors
+    # Days through the owner-rule parser's own reading (RULES-8): ranges and
+    # a clause's own days ("Sun-Wed one is enough" under "Thu-Sat:").
+    assert ("Line Cook", 3, "night", ("Thursday", "Friday", "Saturday")) in floors
+    assert ("Bartender", 1, "night", ("Monday", "Tuesday", "Wednesday", "Sunday")) in floors
     wins = {(w["role"], w.get("earliest"), w.get("latest"), w.get("before_close")) for w in p["windows"]}
     assert ("Bartender", 15 * 60, None, None) in wins                  # "evening only, no earlier than 3:00pm"
     assert ("Line Cook", 14 * 60, None, None) in wins                  # "first arrives 2:00pm"

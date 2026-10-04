@@ -3730,8 +3730,14 @@ def run_auto_publish_schedules():
                 # meant that once the owner edited the current draft, an
                 # older one they had abandoned was the "newest unedited" and
                 # was queued to staff with "unchanged from the draft".
+                # Edited when the owner edited ANY draft of the week (re-audit
+                # 10/4/26 PIPE-3): a later unedited draft — an auto-draft, a
+                # redo, the quality gate's rewrite — never goes out over the
+                # week the owner took over.
                 row = conn.execute(
-                    "SELECT h.id, h.week_start, h.edited_at FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
+                    "SELECT h.id, h.week_start, COALESCE(h.edited_at, (SELECT MAX(e.edited_at) FROM schedule_history e "
+                    "WHERE e.restaurant_id=h.restaurant_id AND e.week_start=h.week_start)) AS edited_at "
+                    "FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
                     "AND h.superseded_by IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
                     "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
                     "  AND p.week_start=h.week_start AND (p.published_at IS NOT NULL "

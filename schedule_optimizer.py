@@ -160,7 +160,9 @@ def objective(quality: dict) -> float:
         return float(quality["raw_score"])
     num = sum(s["score"] * sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
     den = sum(sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
-    return num / (den or 1.0)
+    mean = num / (den or 1.0)
+    # The week's hard-rule hold, as week_score_raw applies it (SQ-2).
+    return mean * sq.WEEK_HARD_BREACH_CEILING / float(sq.SCORE_MAX) if sq.week_held(scored) else mean
 
 
 # ── labor dollars (P-32) ────────────────────────────────────────────────────
@@ -319,14 +321,28 @@ def likely_cost(rows: list, likely: list = None, quality: dict = None) -> float:
 
 # ── what is weak ───────────────────────────────────────────────────────────
 
+# What a shift holding a hard breach costs ahead of any dimension: a broken
+# hard rule outranks every quality dimension (the tiers), so its moves are
+# tried first (schedule re-audit 10/4/26 SQ-3).
+HARD_RULE_PROBLEM_COST = 200.0
+
+
 def _problems(quality: dict) -> list:
     """(cost, shift, dimension) for every dimension under 100, costliest
-    first. A capping dimension carries the whole shift's shortfall."""
+    first. A capping dimension carries the whole shift's shortfall. A shift
+    held by a hard breach the sweep found is a problem of its own, ahead of
+    everything (SQ-3): it has no dimension, so no move used to name it and
+    the search walked past a manager gap."""
     out = []
     for s in (quality or {}).get("shifts") or []:
         if not s.get("scored"):
             continue
         w = sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0)
+        if s.get("hard_breaches"):
+            out.append(((sq.SCORE_MAX - s["score"]) * w + HARD_RULE_PROBLEM_COST, s,
+                        {"key": sq.HARD_RULES_KEY, "label": sq.HARD_RULES_LABEL, "score": s["score"],
+                         "weight": 0, "weaknesses": list(s["hard_breaches"]),
+                         "facts": {"breaches": list(s["hard_breaches"])}}))
         dims = s.get("dimensions") or []
         total = sum(d["weight"] for d in dims) or 1.0
         for d in dims:
@@ -381,7 +397,10 @@ def _learned_problems(quality: dict) -> list:
     out = []
     for x in misses:
         targets = []
-        for r in x.get("rows") or []:
+        # A miss the score keeps private (the owner's keep-apart — no names
+        # in the shared review, shift_quality.week_learned) names only its
+        # shifts; the move reads the memory itself (_moves_for, LEARN-1).
+        for r in list(x.get("rows") or []) + [{"date": d, "daypart": p} for d, p in x.get("slots") or []]:
             s = at.get((r.get("date"), r.get("daypart")))
             if s is not None and s not in targets:
                 targets.append(s)
@@ -394,12 +413,17 @@ def _learned_problems(quality: dict) -> list:
                 targets = [s for s in shifts if who in {sq.name_key(n) for n in s.get("people") or []}]
             elif kind == "pair":
                 team = {who} | {sq.name_key(n) for n in ((x.get("value") or {}).get("with") or [])}
+                apart = (x.get("value") or {}).get("kind") == "avoid"
                 by_date = {}
                 for s in shifts:
                     on = team & {sq.name_key(n) for n in s.get("people") or []}
                     if on:
                         by_date.setdefault(s.get("date"), []).append((s, on))
                 for _d, here in by_date.items():
+                    if apart:
+                        # Two the owner keeps apart, on the same shift.
+                        targets += [s for s, on in here if len(on) > 1]
+                        continue
                     there = set().union(*(on for _s, on in here))
                     if len(there) > 1 and any(len(on) < len(there) for _s, on in here):
                         targets += [s for s, _on in here]
@@ -468,6 +492,9 @@ class _State:
         self.held = {k: {self.family(x) for x in v} for k, v in held.items()}
         self.roster_roles = {_low(n): self.family(r) for n, r in roster_roles.items() if r}
         self.pinned = {i for i, r in enumerate(rows) if r.get("_pinned")}
+        # The rule sweep's violations of these rows (optimize sets them each
+        # round): the hard-rule moves read a breach's own facts (SQ-3).
+        self.viols = []
         self._without = {}
         self.pricing = pricing_inputs(signals, inputs, constraints)
 
@@ -757,7 +784,10 @@ def _moves_for(problem, state: _State) -> list:
             replace_in(i, want or (lambda n: True), why)
             _swap_moves(state, i, moves, why, want=want)
 
-    if key == "coverage":
+    if key == sq.HARD_RULES_KEY:
+        _hard_rule_moves(state, shift, where, moves, add_person)
+
+    elif key == "coverage":
         for role, n in sorted((facts.get("short") or {}).items(), key=lambda kv: -kv[1]):
             add_person(role, f"{role} was short on {where}")
             # Stretch a same-role shift from the other daypart into this one.
@@ -1050,6 +1080,12 @@ def _moves_for(problem, state: _State) -> list:
         # words on the row and in the list say only that this is how the
         # managers schedule the shift: staff read the notes.
         x = facts.get("miss") or {}
+        if (x.get("value") or {}).get("private"):
+            # The owner's keep-apart, read back from the memory by its key
+            # (the score's copy names nobody — LEARN-1, LEARN-6).
+            m = next((m for m in (state.signals or {}).get("learned") or []
+                      if isinstance(m, dict) and m.get("key") == x.get("key")), None)
+            x = dict(x, person=m.get("person"), value=dict(m.get("value") or {})) if m else {}
         kind, v = x.get("kind"), x.get("value") or {}
         who = state.key(x.get("person"))
         name = state.name_of(who) if who else ""
@@ -1099,7 +1135,23 @@ def _moves_for(problem, state: _State) -> list:
                 for i in mine[:1]:
                     for j in edge[:3]:
                         moves.append(_trade_move(state, i, j, why))
-        elif kind == "pair":
+        elif kind == "pair" and v.get("kind") == "avoid":
+            # Two the owner keeps apart on this shift (LEARN-1): all but one
+            # of them trades with somebody of their role on the other half
+            # of the day, or gives the shift to somebody outside the pair.
+            team = {who} | {state.key(n) for n in (v.get("with") or [])}
+            here = [i for i, r in enumerate(state.rows) if r.get("date") == date
+                    and state.key(r.get("employee")) in team and sq.present_dayparts(r)[0] == part]
+            for i in here[1:]:
+                outside = lambda n, t=frozenset(team): state.key(n) not in t  # noqa: E731
+                replace_in(i, outside, why)
+                _swap_moves(state, i, moves, why, want=outside)
+                for j in [j for j, r in enumerate(state.rows) if r.get("date") == date
+                          and sq.present_dayparts(r)[0] != part
+                          and state.family(r.get("role")) == state.family(state.rows[i].get("role"))
+                          and state.key(r.get("employee")) not in team][:3]:
+                    moves.append(_trade_move(state, i, j, why))
+        elif kind == "pair" and v.get("kind") == "prefer":
             team = {who} | {state.key(n) for n in (v.get("with") or [])}
             here = [i for i, r in enumerate(state.rows) if r.get("date") == date and state.key(r.get("employee")) in team]
             parts_of = {i: sq.present_dayparts(state.rows[i])[0] for i in here}
@@ -1232,6 +1284,88 @@ def _moves_for(problem, state: _State) -> list:
                 if (r.get("employee") or "").strip() == name and r.get("date") == date:
                     _swap_moves(state, i, moves, f"{name} is not usually on {where}")
     return [m for m in moves if m is not None]
+
+
+# The day-level kinds the generation's own repair passes put right; each is
+# offered as one move on the breach's date (SQ-3).
+_MANAGER_KINDS = frozenset({"no_manager", "no_manager_on_duty"})
+_CLOSE_KINDS = frozenset({"keyholder_until_close"})
+_FLOOR_KINDS = frozenset({"coverage_floor", "owner_rule"})
+
+
+def _pass_move(state, date, name, fn, why):
+    """The generation's repair pass `fn` (rows, c, editable=...) -> {rows,
+    ...} run on one date as one candidate move: its own legality (can_add,
+    fillable, regressions) applies, and the search judges the result like
+    any other move. None when it changes nothing."""
+    try:
+        res = fn([dict(r) for r in state.rows], state.constraints, editable={date})
+    except Exception:
+        return None
+    new_rows = res.get("rows") or []
+    if _sig_rows(new_rows) == _sig_rows(state.rows):
+        return None
+    said = [x.get("reason") for x in (res.get("extended") or []) + (res.get("added") or []) + (res.get("fixes") or [])
+            if isinstance(x, dict) and x.get("reason")]
+    desc = " ".join(said[:2]) or f"Changed {_day(date)}'s shifts — {why}."
+
+    def apply(rows, new_rows=new_rows, why=why):
+        return [dict(r) for r in new_rows]
+    return (("rule", name, date), desc, apply)
+
+
+def _sig_rows(rows) -> list:
+    return sorted((_low(r.get("employee")), r.get("date") or "", r.get("role") or "",
+                   r.get("shift_start") or "", r.get("shift_end") or "") for r in rows or [])
+
+
+def _hard_rule_moves(state, shift, where, moves, add_person):
+    """Moves aimed at the hard breaches holding `shift` (SQ-3), from the
+    sweep's own violations of the rows: a manager gap is closed by the
+    generation's manager pass (a manager runs on, or one is added over the
+    stretch); a closer missing by the closer pass; a floor or the owner's
+    staffing rule short by one more of the role; nobody at close by the
+    last shift running on to close; a person's own breach by the person
+    pass. Each is still judged by the search: legal, nothing worse at or
+    above the budget tier, and a better week."""
+    c = state.constraints
+    if c is None:
+        return
+    import schedule_rules as _rules
+    date, part = shift["date"], shift["daypart"]
+    here = [v for v in state.viols or [] if v.get("hard") and v.get("date") == date]
+    kinds = {v.get("kind") for v in here}
+    if kinds & _MANAGER_KINDS:
+        moves.append(_pass_move(state, date, "manager", _rules.cover_manager_gaps,
+                                f"a manager on the floor every minute on {where}"))
+    if kinds & _CLOSE_KINDS:
+        moves.append(_pass_move(state, date, "closer", _rules.close_out_gaps, f"a closer until close on {where}"))
+    for v in here:
+        if v.get("kind") not in _FLOOR_KINDS:
+            continue
+        if v.get("daypart") and v["daypart"] != part:
+            continue
+        fam = v.get("floor_role") or c.family(v.get("role"))
+        roles = sorted({(r.get("role") or "").strip() for r in state.rows
+                        if (r.get("role") or "").strip() and c.family(r.get("role")) == c.family(fam)}) or [fam]
+        for role in roles[:2]:
+            add_person(role, f"{_rules._family_label(c, c.family(fam))} was under your floor on {where}")
+    if "nobody_at_close" in kinds:
+        try:
+            close_m = _rules.close_minutes(c, _day(date))
+        except Exception:
+            close_m = None
+        if close_m is not None:
+            last = sorted((_span(state.rows[i])[1], i) for i in range(len(state.rows))
+                          if state.rows[i].get("date") == date and i not in state.pinned
+                          and _span(state.rows[i])[1] is not None)
+            for e, i in last[-2:][::-1]:
+                s0 = _span(state.rows[i])[0]
+                if close_m > e and close_m - e <= MAX_EXTEND_MINUTES:
+                    moves.append(_retime_move(state, i, s0, close_m, f"somebody on until close on {where}"))
+    if kinds - _MANAGER_KINDS - _CLOSE_KINDS - _FLOOR_KINDS - {"nobody_at_close"}:
+        moves.append(_pass_move(state, date, "person", _rules.fix_person_breaches,
+                                f"a rule about a person on {where}"))
 
 
 def _salaried(state, row) -> bool:
@@ -1675,7 +1809,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     soft_before = _soft_repaired(viols)
     overrun_before = _overrun_weight(current_rows, overruns, families)
 
-    def legal(trial_rows):
+    def legal(trial_rows, rule=False):
         """(sweep, profile, signals) of a trial that may stand, else None:
         nothing about a person, the manager every minute, the floors and the
         closer, overtime or minimum hours new or worse than the week as it
@@ -1683,17 +1817,25 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         breach back; nobody newly past their overtime line (for somebody
         who habitually runs past their shift, the line less that headroom —
         L-16); no close the memory says runs late ended earlier than it
-        really ends; nobody code may not choose newly on a date (P-2)."""
+        really ends; nobody code may not choose newly on a date (P-2).
+
+        `rule`: the move is one of the generation's own repair passes run
+        for a hard breach (SQ-3). It is held as the generation holds it — no
+        person, manager or coverage breach new or worse — and the overtime
+        and lower tiers it may spend are the pass's own call (the manager
+        pass takes overtime only when nobody who manages can cover the
+        stretch inside their hours): a manager on the floor outranks them."""
         if sweep is None:
             return None, None, signals
         t_viols, t_prof, t_sig = sweep_of(trial_rows)
         if t_sig is None:
             return None
-        if _rules.regressions(prof, t_prof, upto=_rules.TIER_BUDGET, hard_only=False):
+        if _rules.regressions(prof, t_prof, upto=_rules.TIER_COVERAGE if rule else _rules.TIER_BUDGET,
+                              hard_only=False):
             return None
-        if _soft_repaired(t_viols) - soft_before:
+        if not rule and _soft_repaired(t_viols) - soft_before:
             return None
-        if overtime_created(current_rows, trial_rows, c, headroom=headroom):
+        if not rule and overtime_created(current_rows, trial_rows, c, headroom=headroom):
             return None
         if overruns and _overrun_weight(trial_rows, overruns, families) > overrun_before + 1e-9:
             return None
@@ -1708,13 +1850,18 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     evaluations, tabu = 1, set()
     stopped = "no improving move"
     while True:
-        if (current.get("score") or 0) >= target and not memory_misses(current):
+        # Never "target reached" with a hard rule broken (SQ-3): the week's
+        # hold (shift_quality.week_held) already keeps the score under any
+        # sane target; a target set at or below the hold still may not stop
+        # the search before the breach's own moves are tried.
+        if (current.get("score") or 0) >= target and not memory_misses(current) and not current.get("held_by"):
             stopped = "target reached"
             break
         if _time.monotonic() - t0 > max_seconds or evaluations >= max_evaluations:
             stopped = "budget spent"
             break
         state = _State(current_rows, signals, inputs, constraints=c)
+        state.viols = viols or []
         accepted = False
         for phase in ("weak", "what_if"):
             if phase == "what_if" and not what_if:
@@ -1744,7 +1891,11 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 except Exception:
                     tabu.add(sig_m)
                     continue
-                if ceiling is not None and _week_hours(trial_rows) > max(ceiling, _week_hours(current_rows)) + 0.01:
+                # The hours budget is the budget tier: a move that puts a hard
+                # rule right (a manager on the floor, a floor met) outranks it
+                # and is not held to it (SQ-3; schedule_rules tiers).
+                if ceiling is not None and sig_m[0] != "rule" and \
+                        _week_hours(trial_rows) > max(ceiling, _week_hours(current_rows)) + 0.01:
                     tabu.add(sig_m)
                     continue
                 if not _servers_ok(trial_rows) or _pinned_rows(trial_rows) != pinned_before:
@@ -1753,7 +1904,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 if only is not None and _kept(trial_rows) != kept_before:
                     tabu.add(sig_m)
                     continue
-                judged = legal(trial_rows)
+                judged = legal(trial_rows, rule=sig_m[0] == "rule")
                 if judged is None:
                     tabu.add(sig_m)
                     continue
