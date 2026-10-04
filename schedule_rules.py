@@ -4792,15 +4792,17 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         lines.append(_rule("shift_too_short", f"No shift shorter than {float(comp['min_shift_hours']):g} hours."))
     # One weekly limit per person — their MAX, which is the code's
     # max_hours (P-12, D-18): the ceiling, or their own maximum when the
-    # owner set it (above the overtime line, that is the owner allowing them
-    # that overtime). The literal 40 the prompt used to state beside a
-    # person's own 45h is gone (schedule audit 10/3/26 PR-3).
+    # owner set it — above the overtime line a ceiling, not their overtime
+    # line (schedule re-audit 10/4/26 RULES-9). The literal 40 the prompt
+    # used to state beside a person's own 45h is gone (PR-3); their ROSTER
+    # line says "OT 40h" beside the maximum.
     _ceiling = float(comp.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"])
     lines.append(_rule("over_max_hours",
                        "Nobody past their weekly maximum in a payroll week"
                        + (" (it starts on " + DAYS[c.week_start_day] + ")" if c.week_start_day else "")
                        + f": MAX in their ROSTER line — the {_ceiling:g}h ceiling, or their own maximum where the owner "
-                         f"set one (above {float(_OT):g}h, that is the owner allowing them that overtime). Hours already "
+                         f"set one (above {float(_OT):g}h it is a ceiling, not their overtime line: past "
+                         f"{float(_OT):g}h only when no teammate in the role has room). Hours already "
                          "published in the same payroll week count toward it",
                        why="the most hours the owner allows anyone"))
     # A payroll week that runs on into next week's days (E-10): next week's
