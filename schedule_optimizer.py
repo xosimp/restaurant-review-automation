@@ -160,7 +160,9 @@ def objective(quality: dict) -> float:
         return float(quality["raw_score"])
     num = sum(s["score"] * sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
     den = sum(sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
-    return num / (den or 1.0)
+    mean = num / (den or 1.0)
+    # The week's hard-rule hold, as week_score_raw applies it (SQ-2).
+    return mean * sq.WEEK_HARD_BREACH_CEILING / float(sq.SCORE_MAX) if sq.week_held(scored) else mean
 
 
 # ── labor dollars (P-32) ────────────────────────────────────────────────────
