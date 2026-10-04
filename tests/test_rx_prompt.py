@@ -245,3 +245,124 @@ def test_a_redo_counts_the_kept_days_in_the_managers_week(ejs, db, calls):
         want = sum(sr.row_hours(r) for r in keep + planned if r.get("employee") == name)
         if want:
             assert f"{name} {round(want, 2):g}h" in line, (name, want, line)
+
+
+# ── PROMPT-3: a call's cost is a fixed part plus a part per row ───────────
+
+THINK = 30000          # the auditor's assumption: adaptive thinking, roughly fixed per call
+WEEK_ROWS = 224        # Simple EJ's week
+
+
+def _record(db, rid, rows, kind, seconds=None, think=THINK):
+    so.record_call(rid, {"model": ai_utils.model_for("schedule")}, rows=rows, model=ai_utils.model_for("schedule"),
+                   contract="schema", stop_reason="end_turn", usage={"output_tokens": think + 30 * rows},
+                   answer_chars=84 * rows, seconds=seconds, call_kind=kind, db_path=db)
+
+
+def test_a_gate_rewrite_no_longer_splits_every_later_week(db):
+    # The auditor's ratchet (work-PROMPT/test_ratchet.py): each week written,
+    # then the gate's 64-row rewrite. The median of tokens a row read the
+    # gate's thinking as a dear row and every week after the first was split
+    # in two (~30k more output tokens a week, a second call on the clock).
+    rid = _restaurant(db)
+    dates = WEEK
+    people = [(f"P{i}", "Server") for i in range(55)]
+    plans = []
+    for _week in range(6):
+        per_call = se.rows_per_call(rid)
+        plan = se._plan_tasks(WEEK_ROWS, dates, people, (), per_call)
+        plans.append(len(plan))
+        for _ in plan:
+            _record(db, rid, int(WEEK_ROWS / len(plan)), "week" if len(plan) == 1 else "slice")
+        _record(db, rid, 64, "gate")
+    assert plans == [1] * 6
+    costs = so.call_costs(rid, model=ai_utils.model_for("schedule"), db_path=db)
+    assert costs["source"] == "fit"
+    assert costs["fixed"] == pytest.approx(THINK, rel=0.01) and costs["per_row"] == pytest.approx(30, rel=0.01)
+    # Measured per call kind (week / slice / redo / gate).
+    assert costs["by_kind"]["week"]["tokens_per_row"] == pytest.approx((THINK + 30 * WEEK_ROWS) / WEEK_ROWS, abs=0.2)
+    assert costs["by_kind"]["gate"]["tokens_per_row"] == pytest.approx((THINK + 30 * 64) / 64, abs=0.2)
+    assert costs["by_kind"]["week"]["calls"] == 6 and costs["by_kind"]["gate"]["calls"] == 6
+
+
+def test_before_the_calls_spread_only_week_and_slice_calls_set_the_row_cost(db):
+    rid = _restaurant(db)
+    _record(db, rid, 64, "gate")
+    _record(db, rid, 32, "redo")
+    costs = so.call_costs(rid, model=ai_utils.model_for("schedule"), db_path=db)
+    assert costs["source"] == "estimate"               # small calls alone say nothing about a week's call
+    assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL
+    _record(db, rid, WEEK_ROWS, "week")
+    costs = so.call_costs(rid, model=ai_utils.model_for("schedule"), db_path=db)
+    assert costs["source"] in ("fit", "comparable")
+    assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL
+
+
+def test_each_call_records_what_it_wrote(ejs, db, calls):
+    import schedule_versions as sv
+    with se.frozen_inputs():
+        first = se._build_schedule_result(ejs)
+        rows = sv.rows_from_csv(first["schedule_csv"])
+        keep = [r for r in rows if r["date"] != "2026-10-09"]
+        se._build_schedule_result(ejs, week_start="2026-10-05", dates=["2026-10-09"], prior_rows=keep)
+        se._build_schedule_result(ejs, week_start="2026-10-05", dates=["2026-10-09"], prior_rows=keep,
+                                  focus=["Friday 2026-10-09 dinner: short"])
+    conn = models.get_conn(db)
+    kinds = [r[0] for r in conn.execute("SELECT call_kind FROM schedule_model_calls WHERE restaurant_id=? "
+                                        "ORDER BY id", (ejs,)).fetchall()]
+    conn.close()
+    assert kinds == ["week", "redo", "gate"]
+
+
+# ── PROMPT-4: a call's time budget carries its thinking ───────────────────
+
+def test_a_one_call_week_is_given_the_time_its_thinking_takes():
+    # At the code's only recorded rate (the old 9,600 tokens in 360 s) a call
+    # that uses its thinking reserve and writes a week needs ~29 minutes; it
+    # was given 360 seconds, inside a 15-minute job.
+    needed = (se.THINKING_TOKENS_RESERVED + 30 * WEEK_ROWS) / (se.ROW_TOKENS_PER_CALL / 360.0)
+    assert se.call_seconds(WEEK_ROWS) >= needed
+    assert se.SCHEDULE_CALL_SECONDS >= se.call_seconds(WEEK_ROWS)
+    clock = se.GenerationClock()
+    clock.plan(1, seconds=se.call_seconds(WEEK_ROWS))
+    assert clock.model_deadline - clock.started >= needed
+    assert clock.deadline - clock.started <= se.SCHEDULE_JOB_MAX_SECONDS
+
+
+def test_measured_seconds_set_a_calls_time(db):
+    rid = _restaurant(db)
+    # 80 output tokens a second, measured: seconds = (30k + 30/row) / 80.
+    for rows in (224, 64, 112):
+        _record(db, rid, rows, "slice", seconds=(THINK + 30 * rows) / 80.0)
+    costs = se.call_cost_model(rid)
+    assert costs["seconds_source"] == "fit"
+    want = (THINK + 30 * WEEK_ROWS) / 80.0
+    assert se.call_seconds(WEEK_ROWS, costs, headroom=False) == pytest.approx(want, rel=0.01)
+    assert se.call_seconds(WEEK_ROWS, costs) == pytest.approx(want * se.CALL_SECONDS_HEADROOM, rel=0.01)
+    by = costs["by_kind"]["slice"]
+    assert by["tokens_per_second"] == pytest.approx(80.0, rel=0.01)
+
+
+# ── PROMPT-8: a breakpoint only where it is read before it expires ────────
+
+def test_cache_breakpoints_follow_what_the_calls_share_and_how_long_they_run():
+    read = ai_utils._cache_read_multiplier("claude-opus-5-5")
+    assert read == 0.05
+    assert sp.cache_ttls(1, 1, 1900, read) == (None, None)          # one call: a write nobody reads
+    assert sp.cache_ttls(3, 3, 100, read) == ("5m", "5m")           # quick calls: five minutes is cheapest
+    assert sp.cache_ttls(3, 3, 1900, read) == ("1h", "1h")          # calls past five minutes: only an hour holds
+    assert sp.cache_ttls(2, 2, 1900, read) == (None, None)          # 2 + 0.05 is dearer than two plain reads
+    assert sp.cache_ttls(4, 2, 1900, read) == ("1h", None)          # departments: their week blocks differ
+    # A one-hour entry never follows a five-minute one.
+    assert sp.cache_ttls(2, 3, 200, read) == ("5m", "5m")
+    t0, t1 = sp.cache_ttls(3, 4, 250, read)
+    assert not (t0 == "5m" and t1 == "1h")
+    content = sp.request_content("a", "b", "c", ttls=("1h", None))
+    assert content[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"} and "cache_control" not in content[1]
+    assert sp.request_content("a", "b", "c")[1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_a_one_call_week_sets_no_breakpoint_nobody_would_read(ejs, db, calls):
+    se._build_schedule_result(ejs)
+    assert len(calls) == 1
+    assert not any("cache_control" in b for b in calls[0]["messages"][0]["content"])

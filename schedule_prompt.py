@@ -9,12 +9,17 @@ The request is one user message in three content blocks, in this order:
      (one text per output contract): how rules are marked, how coverage is
      counted, the defaults used where a restaurant's own data says nothing,
      the notes and times rules, the output, one worked example, and the
-     ranked PRIORITIES. A cache breakpoint closes it.
+     ranked PRIORITIES. A cache breakpoint may close it.
   2. THIS RESTAURANT'S WEEK — the owner's standing rules, the managers'
      fixed shifts, the rules the week is checked against, one ROSTER line
-     per person, and the context. Identical for every call of one generation
-     (its slices, a missing-day retry, the quality gate's rewrite), so a
-     second breakpoint closes it.
+     per person, and the context. Identical for the date slices of one
+     generation (one department's, when it is written by department) and
+     their missing-day retries — not for another department's call (its
+     roster, rules and schema enum are its own) nor the quality gate's
+     rewrite (its manager plan is re-made for its dates). A second
+     breakpoint may close it. Whether each breakpoint is set, and for how
+     long, is cache_ttls: only where the calls sharing the block read it
+     before it expires (schedule re-audit 10/4/26 PROMPT-8).
   3. THIS REQUEST — what this call writes: its dates, what each shift on
      them needs, what the rest of the week already gives each person, and
      anything said to this call alone.
@@ -461,14 +466,77 @@ WEEK_HEAD = "THIS RESTAURANT'S WEEK"
 REQUEST_HEAD = "THIS REQUEST"
 
 
-def request_content(static: str, week: str, request: str) -> list:
+def _marker(ttl):
+    if ttl is None:
+        return None
+    return dict(CACHE_CONTROL, ttl="1h") if ttl == "1h" else dict(CACHE_CONTROL)
+
+
+def request_content(static: str, week: str, request: str, ttls=None) -> list:
     """The user message's content: the three parts as text blocks, a cache
     breakpoint after the standing instructions and after the week (PR-26,
-    P-23) — at most two of the four the API allows. Every call of one
-    generation then shares the first two blocks byte for byte."""
-    return [{"type": "text", "text": static, "cache_control": dict(CACHE_CONTROL)},
-            {"type": "text", "text": week, "cache_control": dict(CACHE_CONTROL)},
-            {"type": "text", "text": request}]
+    P-23) — at most two of the four the API allows. The date slices of one
+    generation and its missing-day retries share the first two blocks byte
+    for byte; a department call shares only the first (its roster and rules
+    are its own), and the quality gate's rewrite only the first (its manager
+    plan is re-made for its dates). `ttls` — (standing, week), each "5m",
+    "1h" or None for no breakpoint (cache_ttls) — defaults to a 5-minute
+    breakpoint on both."""
+    t0, t1 = ttls if ttls is not None else ("5m", "5m")
+    out = []
+    for text, ttl in ((static, t0), (week, t1)):
+        block = {"type": "text", "text": text}
+        if _marker(ttl):
+            block["cache_control"] = _marker(ttl)
+        out.append(block)
+    out.append({"type": "text", "text": request})
+    return out
+
+
+# ── when a cache breakpoint pays (schedule re-audit 10/4/26 PROMPT-8) ──────
+#
+# A cache entry lives CACHE_TTL_SECONDS from the start of the request that
+# wrote or last read it, and a schedule call that thinks runs for minutes:
+# calls started one after another more than five minutes apart each WROTE
+# the 5-minute entry again (1.25x input) and never read it — dearer than no
+# breakpoint at all. A breakpoint is set only where the calls that share the
+# block read it before it expires, at the TTL that costs least:
+#     none:  n x 1        5m: 1.25 + (n-1) x read  (only if gap < 5m)
+#     1h:    2 + (n-1) x read  (only if gap < 1h)
+# n calls sharing the block, `gap` the seconds between their starts (a call's
+# predicted length), `read` the model's cache-read rate (0.05x on Opus 5.5).
+CACHE_WRITE_5M, CACHE_WRITE_1H = 1.25, 2.0
+CACHE_TTL_SECONDS = {"5m": 300, "1h": 3600}
+# Starts closer to the edge than this are not counted on: a call that runs a
+# little long would find the entry gone.
+CACHE_TTL_MARGIN = 0.8
+
+
+def _cheapest_ttl(n: int, gap: float, read: float):
+    if n <= 1:
+        return None
+    best, cost = None, float(n)
+    for ttl, write in (("5m", CACHE_WRITE_5M), ("1h", CACHE_WRITE_1H)):
+        if gap < CACHE_TTL_SECONDS[ttl] * CACHE_TTL_MARGIN:
+            c = write + (n - 1) * read
+            if c < cost - 1e-9:
+                best, cost = ttl, c
+    return best
+
+
+def cache_ttls(static_calls: int, week_calls: int, call_seconds: float, read_rate: float = 0.1) -> tuple:
+    """(standing, week) breakpoint TTLs for a call: "5m", "1h" or None.
+    `static_calls` — how many of the generation's planned calls share the
+    standing instructions (every one); `week_calls` — how many share this
+    call's week block (its own department's date slices); `call_seconds`
+    — the planned length of one call. A one-hour entry must come before a
+    five-minute one in the prompt, so a week block on "1h" puts the standing
+    block on "1h" too."""
+    t0 = _cheapest_ttl(int(static_calls or 0), float(call_seconds or 0), float(read_rate))
+    t1 = _cheapest_ttl(int(week_calls or 0), float(call_seconds or 0), float(read_rate))
+    if t1 == "1h" and t0 == "5m":
+        t0 = "1h"
+    return t0, t1
 
 
 def prompt_text(content) -> str:

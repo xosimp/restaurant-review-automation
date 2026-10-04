@@ -3944,7 +3944,8 @@ def _usage_of(msg) -> dict:
 
 
 def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_id=None, week_start=None,
-                          dates=None, contract=None, outcome=None, error=None, seconds=None, rows=None):
+                          dates=None, contract=None, outcome=None, error=None, seconds=None, rows=None,
+                          call_kind=None):
     """Store one schedule call's full input and answer (schedule audit
     10/3/26 PR-31: the trace keeps 40k characters of a 55-70k prompt, so no
     real week could be replayed). Returns the record id, or None. A failure
@@ -3961,7 +3962,7 @@ def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_i
             model=(call or {}).get("model"), effort=oc.get("effort"), contract=contract,
             stop_reason=getattr(msg, "stop_reason", None) if msg is not None else None,
             outcome=outcome, error=error, seconds=seconds, usage=_usage_of(msg) if msg is not None else None,
-            rows=rows, answer_chars=len(raw or "") if raw is not None else None)
+            rows=rows, answer_chars=len(raw or "") if raw is not None else None, call_kind=call_kind)
     except Exception as e:
         print(f"[schedule] model call not recorded rid={restaurant_id}: {e!r}")
         try:
@@ -4283,7 +4284,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  owner_rules_text: str = None,
                                  owner_rule_reads: list = None,
                                  prior_week: dict = None,
-                                 payroll_weeks: dict = None) -> dict:
+                                 payroll_weeks: dict = None,
+                                 call_kind: str = None,
+                                 cache_ttls: tuple = None,
+                                 hours_rule_reads: list = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -4315,6 +4319,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     focus         — named weaknesses of the previous draft of these days,
                     for a regeneration of chosen dates (schedule_requirements
                     .focus_block), which names those dates.
+    call_kind     — what this call writes: "week", "slice", "redo" or
+                    "gate" (schedule_output.CALL_KINDS), recorded with the
+                    call so its cost is read beside calls like it (PROMPT-3).
+    cache_ttls    — (standing instructions, the restaurant's week): each
+                    block's cache breakpoint TTL, "5m", "1h" or None for no
+                    breakpoint (schedule_prompt.cache_ttls — PROMPT-8);
+                    None keeps a 5-minute breakpoint on both.
+    hours_rule_reads — how the code reads each line of hours_notes
+                    (schedule_rules.apply_hours_rules — PROMPT-1):
+                    [{"reads_as", "floor"} | {"unchecked": text}].
     structured    — ask for JSON against the schema built for this
                     generation (schedule_output.schedule_schema); when the
                     API refuses that schema it is asked once more against
@@ -5254,7 +5268,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # inside a fence stay theirs.
     week_text = _sp.iso_dates(_with_ds_sched(week_text.lstrip("\n"), _ready_sched))
     request_text = _sp.iso_dates(request_text)
-    _content = _sp.request_content(static_text, week_text, request_text)
+    _content = _sp.request_content(static_text, week_text, request_text, ttls=cache_ttls)
     prompt = _sp.prompt_text(_content)
 
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
@@ -5272,18 +5286,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # model actually generates, not the ceiling. A thinking model's
         # reasoning shares the ceiling with the rows, so it gets far more.
         max_tokens=SCHEDULE_MAX_TOKENS_THINKING if _thinks else 16000,
-        # A captured generation once opened with a literal "<think>...</think>"
-        # block of plain-text step-by-step reasoning — not the API's own
-        # (disabled) structured thinking feature, just prose the model chose
-        # to write — that alone consumed the entire max_tokens budget and
-        # left zero room for actual CSV rows (stop_reason: max_tokens,
-        # hours_scheduled: 0). An assistant-message prefill would have
-        # blocked this structurally, but this model rejects prefill outright
-        # ("This model does not support assistant message prefill" — a hard
-        # model constraint). The fix is prompt-only: the explicit
-        # no-preamble/no-"<think>" instruction in SCHEDULING RULES below.
-        # Verified live (2026-08-14): stop_reason=end_turn, ~3.7-4k output
-        # tokens (well under the ceiling), real non-empty CSV output.
+        # A captured generation (8/14/26, a model with thinking off) once
+        # opened with a literal "<think>...</think>" block of prose that
+        # used the whole max_tokens and left no rows. The schedule model
+        # now thinks in its own thinking blocks (adaptive, it cannot be
+        # turned off), answers against a JSON schema, and the standing
+        # instructions name no "<think>" (schedule audit 10/3/26 PR-6,
+        # PR-14); the old no-preamble instruction is gone with them
+        # (schedule re-audit 10/4/26 PROMPT-8).
         # The one standing rule about the manager's notes (INT #42): stated
         # where the model takes instructions from, not only beside the notes.
         system=SCHEDULE_SYSTEM_RULES,
@@ -5311,7 +5321,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _call["output_config"] = _oc
     _cut = None
     _contract = ("schema" if schema_enums else "plain_schema") if structured else "csv"
-    _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract)
+    _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract,
+                call_kind=call_kind)
     try:
         # Background job, long output: minutes of generation, well past the
         # request-path default. The timeout is the longest silence between
@@ -5465,6 +5476,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                     rows=_rows_written, **_rec)
     _usage = _usage_of(msg)
     _model_call = {"id": _rec_id, "model": _model, "effort": _oc.get("effort"), "contract": _contract,
+                   "call_kind": call_kind,
                    "stop_reason": _stop, "seconds": _seconds, **_usage, "rows": _rows_written,
                    "answer_chars": len(raw),
                    # Every output token — thinking included — per row written:

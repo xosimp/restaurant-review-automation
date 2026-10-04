@@ -639,36 +639,41 @@ def test_the_row_sizing_is_derived_from_the_ceiling_the_thinking_and_the_schema(
 
 
 def test_a_restaurants_measured_row_cost_shrinks_its_calls_and_never_grows_them(db, monkeypatch):
+    # A call is a fixed part (its thinking) plus a part per row, measured
+    # (schedule_output.call_costs — schedule re-audit 10/4/26 PROMPT-3; it
+    # was one median of tokens per row over every call).
     import schedule_output as so
     rid = _restaurant(db, module_labor=1)
     seen = []
 
-    def measured(cost, calls=12):
+    def measured(per_row, fixed=0.0, calls=12, source="fit"):
         def fake(restaurant_id=None, model=None, **k):
             seen.append((restaurant_id, model))
-            if cost is None:
-                return {"output_tokens_per_row": float(so.ANSWER_TOKENS_PER_ROW_ESTIMATE),
-                        "answer_chars_per_row": None, "calls": 0, "source": "estimate"}
-            return {"output_tokens_per_row": float(cost), "answer_chars_per_row": 84.0, "calls": calls,
-                    "source": "measured"}
+            if per_row is None:
+                return {"fixed": None, "per_row": None, "source": "estimate", "calls": 0,
+                        "seconds_source": "estimate", "tokens_per_second": None, "by_kind": {}}
+            return {"fixed": float(fixed), "per_row": float(per_row), "source": source, "calls": calls,
+                    "seconds_source": "estimate", "tokens_per_second": None, "by_kind": {}}
         return fake
-    monkeypatch.setattr(so, "measured_tokens_per_row", measured(None))
+    monkeypatch.setattr(so, "call_costs", measured(None))
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL              # no calls yet: the estimate
     assert seen[-1] == (rid, ai_utils.model_for("schedule"))           # the restaurant's own, on the model in force
-    monkeypatch.setattr(so, "measured_tokens_per_row", measured(400))   # thinking included, per row written
+    monkeypatch.setattr(so, "call_costs", measured(400))               # thinking included, per row written
     assert se.rows_per_call(rid) == int(se.SCHEDULE_TOKEN_CEILING * se.MEASURED_HEADROOM // 400)
-    monkeypatch.setattr(so, "measured_tokens_per_row", measured(60))    # cheaper than planned: no bigger call
+    monkeypatch.setattr(so, "call_costs", measured(100, fixed=30000))  # the fixed part comes off first
+    assert se.rows_per_call(rid) == int((se.SCHEDULE_TOKEN_CEILING * se.MEASURED_HEADROOM - 30000) // 100)
+    monkeypatch.setattr(so, "call_costs", measured(60))                # cheaper than planned: no bigger call
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL
-    monkeypatch.setattr(so, "measured_tokens_per_row", measured(5000))  # never below the floor
+    monkeypatch.setattr(so, "call_costs", measured(5000))              # never below the floor
     assert se.rows_per_call(rid) == se.MIN_ROWS_PER_CALL
     assert se.rows_per_call(None) == se.CHUNK_ROWS_PER_CALL
 
     def broken(**k):
         raise RuntimeError("no such table")
-    monkeypatch.setattr(so, "measured_tokens_per_row", broken)
+    monkeypatch.setattr(so, "call_costs", broken)
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL              # a store failure never fails the week
     # The plan follows it: 300 rows fit one call at the estimate, three at 400 tokens a row.
-    monkeypatch.setattr(so, "measured_tokens_per_row", measured(400))
+    monkeypatch.setattr(so, "call_costs", measured(400))
     _pin_week(monkeypatch)
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)
     calls = []
@@ -1051,7 +1056,10 @@ def test_the_quality_gate_is_skipped_when_the_job_has_no_time_left_for_it(db, mo
     rid, finished = _gate_harness(monkeypatch, db, [[_line(d, "Ana") for d in WEEK]], calls)
     with se.generation_scope("gate-late") as clock:
         clock.deadline = time.time() + se.SCHEDULE_POST_MODEL_SECONDS + se.GATE_MIN_MODEL_SECONDS - 30
-        clock.started = clock.deadline - se.SCHEDULE_JOB_MIN_SECONDS
+        # Started the longest a job may run before that deadline: no plan
+        # (a call's planned seconds now include its thinking — schedule
+        # re-audit 10/4/26 PROMPT-4) can move the deadline later.
+        clock.started = clock.deadline - se.SCHEDULE_JOB_MAX_SECONDS
         se._run_schedule_job("gate-late", rid)
     assert len(calls) == 1 and finished["status"] == "done"
     assert finished["result"]["gate"] == {"ran": False}

@@ -2720,7 +2720,8 @@ _RETENTION_READERS = {
     "staff_shift_pulse": (("staff_insights.pulse_summary", 90, None),),
     # What a schedule row really costs in output tokens (P-35), from the
     # last 60 days of calls.
-    "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),),
+    "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),
+                             ("schedule_output.call_costs", 60, None)),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so
