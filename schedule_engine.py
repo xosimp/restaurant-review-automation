@@ -1737,6 +1737,15 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         lines = _answer_lines(part.get("schedule_csv", ""))
         if not whole:
             lines = [x for x in lines if x[0] in tdates]
+        else:
+            # A whole-week answer keeps a line it cannot date (the parser
+            # counts it as unreadable), never one on a closed date (re-audit
+            # 10/4/26 PIPE-4): it was saved, swept clean and sent.
+            on_closed = [x for x in lines if x[0] and x[0] in closed]
+            if on_closed:
+                lines = [x for x in lines if not (x[0] and x[0] in closed)]
+                _quality_note("closed_day", kwargs.get("restaurant_id"), len(on_closed),
+                              f"{len(on_closed)} row(s) on a closed date dropped")
         names = None if t["people"] is None else {" ".join(str(n).lower().split()) for n, _r in t["people"]}
         off_list = [x for x in lines if names is not None and x[0] and not x[4] and x[1] not in names]
         if off_list:
@@ -2276,6 +2285,46 @@ def _not_redone_line(dates) -> str:
     which = days[0] if len(days) == 1 else ", ".join(days[:-1]) + " and " + days[-1]
     return (f"{which} couldn't be redone just now, so {'it is' if len(days) == 1 else 'they are'} as "
             f"{'it was' if len(days) == 1 else 'they were'} — redo {'it' if len(days) == 1 else 'them'} again.")
+
+
+# How many times a redo runs again over a draft edited while it ran before
+# it stops and says so (re-audit 10/4/26 PIPE-2).
+REDO_RERUNS_MAX = 2
+
+
+def _redo_base_moved(moved, base_rows, dates, answer, reruns):
+    """What a redo does when the draft it was built from changed while the
+    model wrote (models.DraftChanged — re-audit 10/4/26 PIPE-2): "again"
+    when only kept days changed and the model's answer can be reused — the
+    job runs again over the draft as it stands, so the edit is in the
+    redo; else the sentence the owner reads, nothing saved and their edit
+    kept: an edit to a day being redone is the owner's latest word on it,
+    and a draft deleted is not brought back."""
+    from time_utils import mdy
+    if moved.current_csv is None:
+        return ("The draft you were redoing was deleted while Cavnar AI worked on it, so nothing was saved. "
+                "Generate the week again if you still need it.")
+
+    def by_date(rows):
+        out = {}
+        for r in rows or []:
+            out.setdefault(r.get("date") or "", []).append(tuple(str(r.get(c) or "") for c in _COLS_PINNED))
+        return {d: sorted(v) for d, v in out.items()}
+
+    was, now = by_date(base_rows), by_date(_versions.rows_from_csv(moved.current_csv))
+    changed = {d for d in set(was) | set(now) if was.get(d) != now.get(d)}
+    redone = sorted(changed & set(dates or ()))
+    if redone:
+        days = [f"{_date_of(d).strftime('%A')} {mdy(d)}" for d in redone]
+        which = days[0] if len(days) == 1 else ", ".join(days[:-1]) + " and " + days[-1]
+        one = len(days) == 1
+        return (f"{which} {'was' if one else 'were'} edited and saved while Cavnar AI redid "
+                f"{'it' if one else 'them'}, so nothing was replaced — your edit is kept. Redo "
+                f"{'it' if one else 'them'} again if you still want {'it' if one else 'them'} rewritten.")
+    if answer is not None and reruns < REDO_RERUNS_MAX:
+        return "again"
+    return ("The draft kept changing while Cavnar AI redid these days, so nothing was saved — every change you "
+            "saved is kept. Redo the days again once the edits are done.")
 
 
 def _nobody_message(dates) -> str:
@@ -6686,6 +6735,12 @@ def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
         # Constraints.can_work gives).
         c.roster_names = list(result["roster"] or [])
         c.active = {str(n).strip().lower() for n in (result["roster"] or []) if n}
+        if c.active and result.get("dormant"):
+            # Somebody left out of the prompt for having no shift in weeks
+            # is still on the staff list (re-audit 10/4/26 PIPE-5): a row the
+            # owner wrote for them — a redo's kept day — is legal, as publish
+            # reads it. Code never chooses them (Constraints.fillable).
+            c.active |= {str(n).strip().lower() for n in result["dormant"] if n}
     # Closed dates and days the generation accepted as not trading.
     c.closed_dates = set(getattr(c, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
     newly = _take_new_time_off(c, fresh) if (fresh is not None and fresh is not c) else []
@@ -6897,7 +6952,7 @@ def _in_frozen_inputs(fn):
 
 @_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
-                      focus=None, gate=True, _fallback=None, instruction=None):
+                      focus=None, gate=True, _fallback=None, instruction=None, _model_result=None, _reruns=0):
     """week_start picks the week (any date in it); dates + base_history_id
     regenerate only those days of an existing draft, the rest pinned.
     focus names what was weak in those days for the prompt; gate allows one
@@ -6914,19 +6969,29 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     rules read again (P-41), one frozen context (P-36), the ranked repair
     loop (repair_week — P-47, E-18), then one sweep, the review and the score
     of the rows that are saved (P-11), every stage timed (P-24) and every
-    stage that failed said (P-3, P-17)."""
+    stage that failed said (P-3, P-17).
+
+    A redo saves only over the draft it read (re-audit 10/4/26 PIPE-2): an
+    edit saved to that draft while the model wrote is never lost. One on a
+    kept day is taken in — the job runs again from the model's answer
+    (`_model_result`, nothing paid twice) over the draft as it now stands;
+    one on a day being redone keeps the owner's edit and saves nothing."""
     if dates and not focus:
         gate = False
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
     clock = current_clock()
     _timer = _StageClock()
     try:
-        _pinned, _base_rows = [], []
+        _pinned, _base_rows, _kept_rows = [], [], []
+        _base_csv = None
         redo = bool(dates and base_history_id)
         if redo:
             from models import get_schedule_history_detail as _gshd
             _base = _gshd(int(base_history_id), restaurant_id) or {}
-            _base_rows = _versions.rows_from_csv(_base.get("schedule_csv") or "")
+            # The draft exactly as read: the save goes ahead only over this
+            # (PIPE-2 — models.save_schedule_history `base`).
+            _base_csv = _base.get("schedule_csv") or ""
+            _base_rows = _versions.rows_from_csv(_base_csv)
             _pinned = [r for r in _base_rows if r.get("date") not in set(dates)]
             week_start = week_start or _base.get("week_start")
         # A redo (the owner's, or the quality gate's) writes only its dates,
@@ -6944,7 +7009,20 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         if redo:
             _build_kw.update(dates=sorted(set(dates)), prior_rows=_pinned)
         with _timer.stage("inputs_and_model"):
-            result = _build_schedule_result(restaurant_id, **_build_kw)
+            if _model_result is not None:
+                # Run again over a draft edited while the model wrote: the
+                # model's answer is reused as it came back (PIPE-2).
+                result = copy.deepcopy(_model_result)
+            else:
+                result = _build_schedule_result(restaurant_id, **_build_kw)
+        _answer = None
+        if redo:
+            try:
+                _answer = copy.deepcopy(result)
+            except Exception as _cpx:
+                # Without a copy an edit on a kept day refuses the save
+                # instead of running again (said, never lost).
+                _soft_fail("redo answer copy", _cpx, restaurant_id)
         # A partial redo rewrites only these days; the passes below that can
         # change rows (fixes, the repair loop, the budget trim) leave the
         # owner's kept days exactly as they were.
@@ -6956,9 +7034,15 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _unwritten = {u["date"] for u in (result.get("unwritten_dates") or [])}
             keep = set(dates) - _unwritten
             lines = [ln for ln in result["schedule_csv"].split("\n")[1:] if ln.split(",", 1)[0].strip() in keep]
-            for r in _pinned + [r for r in _base_rows if r.get("date") in _unwritten]:
-                lines.append(",".join(str(r.get(c, "") or "").replace(",", ";") for c in _COLS_PINNED))
             result["schedule_csv"] = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "\n".join(lines)
+            # The days kept are the owner's rows, never model text (re-audit
+            # 10/4/26 PIPE-1): they were written back into the answer and
+            # parsed with it, so the close cap re-timed a planned manager
+            # (opening a no-manager stretch on a day no pass may touch) and
+            # an owner's late close. Added after the parse exactly as saved,
+            # each pinned, a stale NEEDS REVIEW mark taken off (PIPE-6).
+            import schedule_skeleton as _skel_keep
+            _kept_rows = _skel_keep.kept_rows(_pinned + [r for r in _base_rows if r.get("date") in _unwritten])
             result["regenerated_dates"] = sorted(keep)
             _editable = keep
             if _unwritten:
@@ -7020,6 +7104,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     continue
                 # Strip outer quotes Sonnet sometimes adds around field values
                 _row = {_COLS[i]: _parts[i].strip().strip('"').strip() for i in range(min(len(_parts), 8))}
+                # A NEEDS REVIEW mark is the final sweep's to write, with
+                # today's reason (PIPE-6) — never carried in.
+                if "NEEDS REVIEW" in (_row.get("notes") or ""):
+                    _row["notes"] = _rules.strip_review_mark(_row.get("notes"))
                 # Times in 24-hour form ("17:00") are the same times; every
                 # check after this reads "5:00pm", and a 24-hour row used to
                 # skip the close cap and the hours reconciliation (SCHED-38).
@@ -7117,6 +7205,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     n=_hours_drift_rows,
                     detail=(f"{_hours_drift_rows} schedule rows had scheduled_hours that disagreed "
                             f"with their shift times ({round(_hours_drift_total, 1)}h total)"))
+            if _kept_rows:
+                # A redo's kept days, exactly as the owner saved them (PIPE-1).
+                preview_rows.extend(_kept_rows)
+                hours_scheduled = _safe_hours_sum(preview_rows)
             print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
             if not preview_rows:
                 # Every line was unreadable: saving it would publish an empty
@@ -7695,8 +7787,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         _n = (_r.get("notes") or "").strip()
                         _why = _r.get("review_reason") or "could not be auto-checked"
                         _mark = f"NEEDS REVIEW: {_why}"
-                        if "NEEDS REVIEW" not in _n:
-                            _r["notes"] = f"{_n} — {_mark}" if _n else _mark
+                        # Always today's reason (PIPE-6): an old mark kept the
+                        # reason of a breach that may be gone.
+                        _n = _rules.strip_review_mark(_n)
+                        _r["notes"] = f"{_n} — {_mark}" if _n else _mark
                     _lines_out.append(",".join(str(_r.get(c, "") or "").replace(",", ";") for c in _COLS))
                 result["schedule_csv"] = "\n".join(_lines_out)
         except ScheduleGenerationError:
@@ -7770,18 +7864,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         except Exception as _hsx:
             _soft_fail("hours split", _hsx, restaurant_id)
         result["hours_hourly"], result["hours_salaried"] = _split.get("hourly"), _split.get("salaried")
+        from models import DraftChanged as _DraftChanged
         try:
             from models import save_schedule_history
             _wd = result.get("week_dates", [])
-            _t_save = time.monotonic()
-            _history_id = save_schedule_history(
-                restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
-                round(hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
-                result["schedule_csv"], result.get("summary", []),
-                quality=result.get("quality"), what_if=result.get("what_if"),
-                hours_hourly=_split.get("hourly"), hours_salaried=_split.get("salaried"),
-            )
-            _timer.add("save", time.monotonic() - _t_save)
             # How long each stage took, end to end (P-24): the inputs, the
             # model, the rules, the repair loop stage by stage, the sweep,
             # the score and the save — kept with the week; the platform
@@ -7790,16 +7876,40 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _timer.add("model", _model_s)
             _timer.seconds["inputs"] = round(max(0.0, _timer.seconds.get("inputs_and_model", 0.0) - _model_s), 3)
             _timer.seconds.pop("inputs_and_model", None)
+            _t_save = time.monotonic()
+            # The week, its review, timings, weather and economics in one
+            # write (re-audit 10/4/26 PIPE-7): the review was a second commit,
+            # and a failed one left a draft in force that published without
+            # its partial-week and failed-stage blockers. A redo writes only
+            # over the draft it read (PIPE-2).
+            try:
+                _history_id = save_schedule_history(
+                    restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
+                    round(hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
+                    result["schedule_csv"], result.get("summary", []),
+                    quality=result.get("quality"), what_if=result.get("what_if"),
+                    hours_hourly=_split.get("hourly"), hours_salaried=_split.get("salaried"),
+                    review=_json_safe(result.get("review")), generation_seconds=result.get("generation_seconds"),
+                    weather=_json_safe(result.get("weather_forecast")),
+                    economics={"projected_revenue": result.get("projected_revenue"),
+                               "projected_revenue_source": result.get("projected_revenue_source"),
+                               "labor_budget_dollars": result.get("labor_budget_dollars"),
+                               "daily_target_hours": result.get("daily_target_hours") or {},
+                               "demand_data_through": result.get("demand_data_through")},
+                    stage_seconds=_timer.as_dict(),
+                    base=(int(base_history_id), _base_csv) if redo else None,
+                )
+            except _DraftChanged as _moved:
+                _verdict = _redo_base_moved(_moved, _base_rows, dates, _answer, _reruns)
+                if _verdict == "again":
+                    print(f"[schedule] the draft changed on a kept day while the redo ran — running again over it")
+                    return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=dates,
+                                             base_history_id=base_history_id, focus=focus, gate=gate,
+                                             _fallback=_fallback, instruction=instruction, _model_result=_answer,
+                                             _reruns=_reruns + 1)
+                raise ScheduleGenerationError(_verdict)
+            _timer.add("save", time.monotonic() - _t_save)
             result["stage_seconds"] = _timer.as_dict()
-            _annotate_history(_history_id, restaurant_id, review=result.get("review"),
-                              seconds=result.get("generation_seconds"),
-                              weather=result.get("weather_forecast"),
-                              economics={"projected_revenue": result.get("projected_revenue"),
-                                         "projected_revenue_source": result.get("projected_revenue_source"),
-                                         "labor_budget_dollars": result.get("labor_budget_dollars"),
-                                         "daily_target_hours": result.get("daily_target_hours") or {},
-                                         "demand_data_through": result.get("demand_data_through")},
-                              stages=result["stage_seconds"])
             # Every model call this generation made — its full input and
             # answer — keyed to the week it produced, so the week can be
             # replayed against another model, effort or prompt (schedule
@@ -7836,6 +7946,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                          f"{result.get('rows_needing_review', 0)} flagged")
             except Exception:
                 pass
+        except ScheduleGenerationError:
+            raise                      # the redo's draft changed under it: said, nothing saved
         except Exception as _hist_ex:
             print(f"[schedule history] save error: {_hist_ex}")
             # The history row is the ONLY durable copy of this schedule — the
@@ -8029,7 +8141,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                           "was kept." if _why_kept == "rules" else
                                           "Cavnar AI rewrote the weakest days to fix them, but the rewrite was no "
                                           "better on those days, so your original draft was kept.")}
-                _ops.finish_async_job(job_id, "done", _fb)
+                _ops.finish_async_job(job_id, "done", _json_ready(_fb))
                 return
         _gate = _quality_gate(result) if gate else None
         if _gate and clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS:
@@ -8057,7 +8169,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _payload["gate"] = {"ran": True, "kept": "regenerated", "focus": list(focus)[:12],
                                 "dates": list(dates or []),
                                 "reason": "The weakest days were regenerated with what was wrong with them."}
-        _ops.finish_async_job(job_id, "done", _payload)
+        _ops.finish_async_job(job_id, "done", _json_ready(_payload))
     except Exception as e:
         tb = _tb.format_exc()
         print(f"[schedule job] FAILED:\n{tb}")
@@ -8075,11 +8187,53 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _fb = dict(_fallback["payload"])
             _fb["gate"] = {"ran": True, "kept": "original", "dates": _fallback["dates"],
                            "reason": "Cavnar AI tried to rewrite the weakest days but couldn't just now, so your draft is as it was."}
-            _ops.finish_async_job(job_id, "done", _fb)
+            _ops.finish_async_job(job_id, "done", _json_ready(_fb))
+            return
+        _saved = locals().get("_history_id")
+        if _saved:
+            # The draft was saved before this failed (re-audit 10/4/26
+            # PIPE-8): it is the week's draft in force now, so the owner is
+            # never told "nothing was saved" and sent to pay for another.
+            _finish_after_save(job_id, restaurant_id, _saved, locals().get("_payload"),
+                               (locals().get("result") or {}).get("week_dates") or [])
             return
         # The owner gets a sentence that says what stopped it (P-44), never
         # the exception or the traceback.
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e, clock)})
+
+
+def _finish_after_save(job_id, restaurant_id, history_id, payload, week_dates) -> None:
+    """A generation that failed after its draft was saved (re-audit 10/4/26
+    PIPE-8): the job finishes with that draft — the payload built for it,
+    with a line saying the last step failed — or, when the payload itself
+    is what failed, with a sentence naming the saved draft. It used to
+    finish "nothing was saved" over a draft that had superseded the one the
+    owner had."""
+    from time_utils import mdy
+    line = ("Cavnar AI saved this draft but couldn't finish its last step — read it through before you "
+            "publish; we've been alerted.")
+    if isinstance(payload, dict):
+        out = dict(payload, history_id=history_id)
+        review = dict(out.get("review") or {})
+        review["lines"] = [line] + list(review.get("lines") or [])
+        out["review"] = review
+        try:
+            _ops.finish_async_job(job_id, "done", _json_ready(out))
+            return
+        except Exception as _fx:
+            _ops.capture(_fx, job="schedule_generate", context=f"restaurant_id={restaurant_id} — finishing a saved draft")
+    week = f" for the week of {mdy(week_dates[0])}" if week_dates else ""
+    _ops.finish_async_job(job_id, "error", {
+        "ok": False, "saved": True, "history_id": history_id,
+        "error": (f"Cavnar AI saved the draft{week}, but something went wrong while finishing it — open it from "
+                  "Schedule History and read it through before you publish. We've been alerted.")})
+
+
+def _json_ready(payload):
+    """`payload` as the job store can always serialize it (re-audit 10/4/26
+    PIPE-8): sets, tuple keys and anything else JSON cannot carry made
+    plain, so storing a saved draft's result never fails as "error"."""
+    return json.loads(json.dumps(_json_safe(payload), default=_jsonable))
 
 
 def generation_error_message(exc, clock=None) -> str:

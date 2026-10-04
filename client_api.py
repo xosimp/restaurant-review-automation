@@ -10620,7 +10620,11 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         review = json.loads(row["review_json"] or "null") or {}
     except Exception:
         review = {}
-    for line in (review.get("lines") or [])[:6]:
+    # The generation's own lead lines are read whole (re-audit 10/4/26
+    # PIPE-7): with three budget lines and a caveat ahead of it, the
+    # unwritten-day line sat at the edge of the first six.
+    _lead = [x for x in (review.get("lead_lines") or []) if isinstance(x, str)]
+    for line in _lead + [x for x in (review.get("lines") or [])[:6] if isinstance(x, str)]:
         if line.startswith("⚠") and "over the ceiling" not in line:   # the hours check below says it once
             t = line.lstrip("⚠ ").strip()
             add("saved:" + t, t)

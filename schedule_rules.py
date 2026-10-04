@@ -63,7 +63,7 @@ _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "min_shift_hou
 # with a real person still on the floor.
 NO_SHOW = frozenset({"off_roster", "inactive", "outside_week", "double_booked", "overlap",
                      "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere"})
-NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert", "note_unavailable"})
+NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert", "note_unavailable", "closed_day"})
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
                             "minor_early", "minor_week_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
@@ -71,7 +71,7 @@ HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "min
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
-                  "closer_unavailable", "trainee_unpaired", "role_time"})
+                  "closer_unavailable", "trainee_unpaired", "role_time", "past_close"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily overtime and a time-off
 # request nobody answered are things a person decides, not a week to send
@@ -112,6 +112,12 @@ LABELS = {
     "closer_unavailable": "none of that role's closers can work that day",
     "trainee_unpaired": "a trainee with nobody to train them",
     "role_time": "starts or ends off a time rule you set for the role",
+    # A row on a date the restaurant is closed (re-audit 10/4/26 PIPE-4):
+    # nobody is really on it, and it was saved and sent unflagged.
+    "closed_day": "scheduled on a day you're closed",
+    # A shift running past close by more than its role may stay (re-audit
+    # 10/4/26 PIPE-10): the cap the job's parser holds every model row to.
+    "past_close": "runs past the time after close you allow the role",
 }
 
 
@@ -1165,6 +1171,10 @@ class Constraints:
             return False, LABELS["off_roster"]
         if self.week_dates and date_str not in self.week_dates:
             return False, LABELS["outside_week"]
+        # Nobody works a day the restaurant is closed (re-audit 10/4/26
+        # PIPE-4): no pass may put a row there, and a row on it is a breach.
+        if date_str and date_str in (self.closed_dates or ()):
+            return False, LABELS["closed_day"]
         blocked = self.blocked_dates.get(key) or {}
         if date_str in blocked:
             return False, blocked[date_str]
@@ -3064,6 +3074,17 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         ok, why = c.cert_ok(name, r.get("role", ""))
         if not ok:
             out.append(_v("missing_cert", i, r, why))
+        # Past close by more than the role may stay: the one cap the job's
+        # parser holds every model row to (_enforce_close_time), judged here
+        # so a pass that runs a close past it is seen (re-audit 10/4/26
+        # PIPE-10). Soft: an owner may keep somebody on by hand.
+        cap = close_cap_minutes(c, r)
+        end_m = end_minutes(r) if cap is not None else None
+        if cap is not None and end_m is not None and end_m > cap:
+            out.append(_v("past_close", i, r,
+                          f"ends {r.get('shift_end')}, past {_fmt_minutes(cap % (24 * 60))} — the most after close "
+                          f"you allow {r.get('role') or 'the role'}",
+                          severity=round((end_m - cap) / 60.0, 2)))
         # A role written for somebody who holds no role of its family — the
         # model's guess treated as theirs (schedule audit 10/3/26 D-15).
         if not c.holds(name, r.get("role", ""), r.get("date")):
@@ -3412,6 +3433,37 @@ def close_minutes(c: Constraints, day: str):
     if m is None:
         return None
     return m + 24 * 60 if m < _OVERNIGHT_LATEST_BEFORE else m
+
+
+def close_cap_minutes(c, row):
+    """The latest a row may end, as minutes past its date's midnight: that
+    day's close plus the most its role may stay after it
+    (Constraints.role_buffers, role_close_caps — the cap the job's parser
+    holds every model row to), or None when that day has no close set. A
+    manager on that date may stay as long as any role does — the manager
+    plan keeps one on until the last role leaves (schedule_skeleton) —
+    (re-audit 10/4/26 PIPE-10)."""
+    day = _weekday_of(row.get("date") or "")
+    close_m = close_minutes(c, day) if day else None
+    if close_m is None:
+        return None
+    buffers = getattr(c, "role_buffers", None) or {}
+    stay = int(role_minutes(buffers, (row.get("role") or "").strip(), getattr(c, "role_families", None)) or 0)
+    name = (row.get("employee") or "").strip()
+    if buffers and name and c.manages(name, row.get("date")):
+        stay = max([stay] + [int(v or 0) for v in buffers.values()])
+    return close_m + stay
+
+
+# The mark the job's final sweep writes on a row it still faults ("— NEEDS
+# REVIEW: why"). One pattern for every path that takes it off (re-audit
+# 10/4/26 PIPE-6): a redo used to carry a stale one on a kept row.
+REVIEW_MARK = _re_roles.compile(r"\s*(?:—\s*)?NEEDS REVIEW\b.*$", _re_roles.S)
+
+
+def strip_review_mark(notes) -> str:
+    """`notes` without a NEEDS REVIEW mark."""
+    return REVIEW_MARK.sub("", str(notes or "")).strip()
 
 
 def end_minutes(row):
@@ -3887,6 +3939,10 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                "daily_ot": TIER_OVERTIME,
                "payroll_tail_full": TIER_OVERTIME,
                "under_min_hours": TIER_MIN_HOURS,
+               # Soft (an owner may keep somebody on by hand), but ranked with
+               # the close rules, so no pass below them runs a shift past the
+               # owner's after-close allowance (re-audit 10/4/26 PIPE-10).
+               "past_close": TIER_COVERAGE,
                # the owner's start/end rule for a role (L-33): below every
                # tier that keeps people legal, managed, covered and paid right
                "role_time": TIER_QUALITY}

@@ -7815,7 +7815,9 @@ def mobile_score_schedule(current_user):
 _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
                   "scheduled_hours", "notes")
 
-_REVIEW_MARK = re.compile(r"\s*(?:—\s*)?NEEDS REVIEW\b.*$", re.S)
+# The one NEEDS REVIEW pattern, shared with the generation's parse
+# (schedule_rules.REVIEW_MARK — re-audit 10/4/26 PIPE-6).
+from schedule_rules import REVIEW_MARK as _REVIEW_MARK  # noqa: E402
 
 
 def _mark_review_rows(rows, violations):
