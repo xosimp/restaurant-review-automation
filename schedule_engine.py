@@ -592,6 +592,7 @@ _INPUT_WORDS = {
     "salaried_week": "the salaried staff's share of the budget", "signals_by_date": "the week's dated events",
     "pairs": "who works well together", "reliability": "attendance", "learned": "the habits learned from your edits",
     "date_demand": "each day's demand", "splh": "sales per labor hour", "outcomes": "how past weeks went",
+    "person rates": "each person's pay rate",
     "ledger": "who has carried the weekends and closes", "stated_preferences": "staff preferences",
     "learned_preferences": "what staff drop and pick up", "could_hold": "who could hold a station",
     "last_nights": "the nightly reports", "soft_requirements": "the staffing asks from reviews and reports",
