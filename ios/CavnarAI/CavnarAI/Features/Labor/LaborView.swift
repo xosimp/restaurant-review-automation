@@ -392,6 +392,9 @@ struct LaborView: View {
             await setupViewModel.loadSignals()
         }
         .task { await teamMemory.load() }
+        // The week on screen's sections and each server's usual one (H2-2) —
+        // for a week restored from the cache or reopened, not only a fresh one.
+        .task(id: viewModel.scheduleResult?.historyId) { await viewModel.loadSections() }
         .sheet(isPresented: $showingPublishSchedule, onDismiss: { Task { await viewModel.loadDraftCheck() } }) {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,

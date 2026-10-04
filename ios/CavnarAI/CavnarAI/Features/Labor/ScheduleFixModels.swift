@@ -559,9 +559,12 @@ struct ReviewUnmetItem: Codable, Hashable {
     var why: String?
 
     init(from decoder: Decoder) throws {
-        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        // An entry with nothing to say is skipped by the lenient list.
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self), let w = c.sfText(.what) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no what"))
+        }
         kind = c.sfText(.kind); date = c.sfText(.date); day = c.sfText(.day); daypart = c.sfText(.daypart)
-        what = c.sfText(.what); why = c.sfText(.why)
+        what = w; why = c.sfText(.why)
     }
     enum CodingKeys: String, CodingKey { case kind, date, day, daypart, what, why }
 
