@@ -3384,7 +3384,12 @@ def _do_shift_request_decide(u, request_id):
     # The account log is owner-facing: M/D/YY, as time off's is (F2-15).
     log_account_event(_rid(u), "shift_request_decided", current_user=u,
                       detail=f"{row['employee_name']} {mdy(row['date'])} {row['shift_start']}: {row['status']}")
-    return {"ok": True, "request": row}, 200
+    # A drop that leaves the floor without a manager is said with the
+    # answer (shift_requests.drop_manager_gap, RULES-15).
+    out = {"ok": True, "request": row}
+    if row.get("manager_gap"):
+        out["warning"] = row["manager_gap"]
+    return out, 200
 
 
 def _shift_label(row):

@@ -849,14 +849,16 @@ class Problem:
             if not ok:
                 return why
         for r in u.rows:
-            for part in sq.present_dayparts(r):
+            # Any minute in a blocked half of the day (RULES-11), the card as
+            # it stands that date (RULES-14) — the sweep's own tests.
+            for part in sq.touched_dayparts(r):
                 ok, why = c.can_work(name, u.date, part)
                 if not ok:
                     return why
             ok, why = c.window_ok(name, u.date, r.get("shift_start", ""), r.get("shift_end", ""))
             if not ok:
                 return why
-            ok, why = c.cert_ok(name, r.get("role", ""))
+            ok, why = c.cert_ok(name, r.get("role", ""), u.date)
             if not ok:
                 return why
             if not c.holds(name, r.get("role", ""), u.date):

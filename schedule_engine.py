@@ -5248,7 +5248,7 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=dict(targets), week_rows=rows)
     c = inputs.get("constraints")
     if c is not None and inputs.get("roster"):
-        c.active = {n.lower() for n in inputs["roster"]}
+        c.active = {c.key(n) for n in inputs["roster"] if c.key(n)}
         c.roster_names = list(inputs["roster"])
     signals, weights = _quality_signals(restaurant_id, inputs)
     import threading as _threading
@@ -6684,8 +6684,17 @@ def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
         # checked against — one roster, one answer. An explicitly empty list
         # means "no roster on file", which is no opinion (the same reading
         # Constraints.can_work gives).
-        c.roster_names = list(result["roster"] or [])
-        c.active = {str(n).strip().lower() for n in (result["roster"] or []) if n}
+        # The people left off the prompt as dormant are still on the roster:
+        # a row the owner keeps or writes for them is legal, and code never
+        # chooses them (Constraints.fillable). Reading the roster without
+        # them made an owner's kept row for a returning server "not on the
+        # staff list" in the review, while the publish gate passed it
+        # (schedule re-audit 10/4/26 RULES-16). Keyed by c.key, as every
+        # other rule keys a person.
+        names = list(result["roster"] or [])
+        names += [n for n in sorted(result.get("dormant") or {}) if n not in names]
+        c.roster_names = names
+        c.active = {c.key(n) for n in names if n and c.key(n)}
     # Closed dates and days the generation accepted as not trading.
     c.closed_dates = set(getattr(c, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
     newly = _take_new_time_off(c, fresh) if (fresh is not None and fresh is not c) else []

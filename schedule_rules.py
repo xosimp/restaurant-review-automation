@@ -949,6 +949,7 @@ class Constraints:
     notes: dict = field(default_factory=dict)              # {lower: free-text note}
     time_windows: dict = field(default_factory=dict)       # {lower: {day: (earliest_min, latest_min)}}
     certifications: dict = field(default_factory=dict)     # {lower: set(cert)}
+    cert_expiry: dict = field(default_factory=dict)        # {lower: {cert: expires_on}} for cards ending mid-week
     role_requirements: dict = field(default_factory=dict)  # {role lower: set(cert)}
     keyholders: set = field(default_factory=set)           # lower: can close, or holds a manager/keyholder cert
     # A manager or owner role on the roster, or the manager certification:
@@ -1305,7 +1306,7 @@ class Constraints:
         ok, why = self.window_ok(name, d, row.get("shift_start", ""), row.get("shift_end", ""))
         if not ok:
             return False, why
-        ok, why = self.cert_ok(name, row.get("role", ""))
+        ok, why = self.cert_ok(name, row.get("role", ""), d)
         if not ok:
             return False, why
         # A training shift is never coverage, so no pass creates one: the
@@ -1367,11 +1368,17 @@ class Constraints:
             return False, f"{LABELS['outside_window']} (not before {_fmt_minutes(lo)})"
         return False, f"{LABELS['outside_window']} (not after {_fmt_minutes(hi)})"
 
-    def cert_ok(self, name: str, role: str) -> tuple:
+    def cert_ok(self, name: str, role: str, date_str: str = None) -> tuple:
+        """Whether `name` holds every certificate `role` needs — on
+        `date_str`, when given: a card that expires mid-week is held up to
+        its expiry and not after (cert_expiry, RULES-14)."""
         need = self.role_requirements.get((role or "").strip().lower()) or set()
         if not need:
             return True, ""
         have = self.certifications.get(self.key(name)) or set()
+        if date_str:
+            ends = self.cert_expiry.get(self.key(name)) or {}
+            have = {x for x in have if not (ends.get(x) and ends[x] < str(date_str)[:10])}
         missing = sorted(need - have)
         if missing:
             return False, f"{LABELS['missing_cert']} ({', '.join(missing)})"
@@ -1437,6 +1444,27 @@ def _expired_certs(restaurant_id, week_dates, db_path=None) -> dict:
         return {k: {cert_key(x) for x in v} for k, v in raw.items()}
     except Exception:
         return {}
+
+
+def _expiring_certs(restaurant_id, week_dates, db_path=None) -> dict:
+    """{person name_key: {cert_key: expires_on}} for the certificates that
+    run out during the week (after its first day, before its last):
+    cert_ok holds a row to the card as it stands on the row's date
+    (schedule re-audit 10/4/26 RULES-14 — a card expiring Wednesday
+    counted all week)."""
+    days = sorted(str(d)[:10] for d in (week_dates or []) if d)
+    if not days:
+        return {}
+    import staff_knowledge
+    kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+    raw = staff_knowledge.cert_expiries(restaurant_id, days[-1], **kw) or {}
+    out = {}
+    for k, certs in raw.items():
+        for cert, exp in (certs or {}).items():
+            if exp >= days[0]:
+                cur = out.setdefault(k, {})
+                cur[cert_key(cert)] = max(cur.get(cert_key(cert), exp), exp)
+    return out
 
 
 def _load_json(raw, default):
@@ -1802,6 +1830,11 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     expired = {}
     for k, v in (_expired_certs(restaurant_id, c.week_dates, db_path) or {}).items():
         expired.setdefault(c.key(k), set()).update(v)
+    try:
+        for k, v in (_expiring_certs(restaurant_id, c.week_dates, db_path) or {}).items():
+            c.cert_expiry.setdefault(c.key(k), {}).update(v)
+    except Exception as exc:
+        _input_problem(c, "certificate expiry dates", exc)
     if c.stations and c.stations.get("skills"):
         # A station skill typed under another spelling is the person's own.
         skills = {}
@@ -3237,7 +3270,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
             kind = ("approved_time_off" if str(why).startswith(LABELS["approved_time_off"]) else
                     "note_unavailable" if str(why).startswith("your note:") else "outside_window")
             out.append(_v(kind, i, r, why))
-        ok, why = c.cert_ok(name, r.get("role", ""))
+        ok, why = c.cert_ok(name, r.get("role", ""), r.get("date"))
         if not ok:
             out.append(_v("missing_cert", i, r, why))
         # A role written for somebody who holds no role of its family — the

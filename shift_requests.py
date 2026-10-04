@@ -645,6 +645,52 @@ def _vanished(restaurant_id, row, db_path):
                                 "Deny it to close it")
 
 
+def drop_manager_gap(restaurant_id, req, db_path=DB_PATH):
+    """The sentence to say when letting `req`'s person off their shift
+    leaves its date with a stretch nobody manages that it did not have —
+    "Approving it leaves Saturday 10/10/26 5:00pm to 11:00pm with no manager
+    on" — else None. A drop of the only manager on Saturday dinner was
+    approved, the shift opened and the manager excused, and nothing said
+    the floor would be unmanaged if nobody claimed it (schedule re-audit
+    10/4/26 RULES-15). Never raises: a question it can't answer is None."""
+    try:
+        from schedule_versions import rows_from_csv
+        import schedule_rules as _rules
+        from time_utils import mdy
+        if (req.get("kind") or "drop") == "swap" or not (req.get("employee_name") or "").strip():
+            return None
+        conn = get_conn(db_path)
+        try:
+            hist = _live_hist(conn, restaurant_id, req)
+        finally:
+            conn.close()
+        rows = rows_from_csv(hist["schedule_csv"]) if hist else []
+        idx = _find(rows, req["employee_name"], req["date"], req["shift_start"])
+        if idx is None:
+            return None
+        d = rows[idx].get("date")
+        dates = sorted({r["date"] for r in rows if r.get("date")})
+        c = _rules.build_constraints(restaurant_id, dates,
+                                     [datetime.strptime(x, "%Y-%m-%d").strftime("%A") for x in dates])
+        if not c.manages(req["employee_name"], d):
+            return None
+        before = _rules.manager_gaps(rows, c, dates={d}).get(d) or []
+        after = _rules.manager_gaps(rows[:idx] + rows[idx + 1:], c, dates={d}).get(d) or []
+        if sum(e - s for s, e, _i in after) <= sum(e - s for s, e, _i in before):
+            return None
+        new = [(s, e) for s, e, _i in after
+               if not any(bs <= s and e <= be for bs, be, _j in before)]
+        if not new:
+            return None
+        s, e = new[0]
+        day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        return (f"approving it leaves {day} {mdy(d)} {_rules._fmt_minutes(s % 1440)} to "
+                f"{_rules._fmt_minutes(e % 1440)} with no manager on — name a manager to cover it")
+    except Exception as exc:
+        print(f"[shift_requests] could not check the manager rule for request {req.get('id')}: {exc}")
+        return None
+
+
 def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None, note=None, db_path=DB_PATH,
            now=None, today=None):
     """The manager's answer. Approving makes the shift open (or covers it
@@ -689,6 +735,9 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
         if named:
             return _cover(restaurant_id, row, replacement, actor=decided_by, from_status="pending",
                           check_role=False, db_path=db_path, now=now, until="end", note=note)
+    # The manager rule, asked of the drop before it is let go (RULES-15):
+    # said with the answer and to the managers, never silently.
+    gap = drop_manager_gap(restaurant_id, row, db_path) if approve else None
     status = "open" if approve else "denied"
     conn = get_conn(db_path)
     try:
@@ -702,6 +751,10 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
     finally:
         conn.close()
     _notify(restaurant_id, "opened" if approve else "denied", out, db_path=db_path)
+    if gap:
+        out = dict(out, manager_gap=gap[:1].upper() + gap[1:])
+        _tell_managers(restaurant_id, "No manager on",
+                       f"{out.get('employee_name')}'s drop of {_when(out)} is approved — {gap}.", db_path)
     return out
 
 
@@ -1763,9 +1816,12 @@ def _notify_event(restaurant_id, event, req, db_path):
         who, when, role = req.get("employee_name") or "", _when(req), req.get("role") or ""
         reason = f" — “{req['reason']}”" if req.get("reason") else ""
         if event == "drop_asked":
-            # The employee's reason rides in the decider's push (COM-14).
+            # The employee's reason rides in the decider's push (COM-14),
+            # and what approving costs the manager rule (RULES-15).
+            gap = drop_manager_gap(restaurant_id, req, db_path)
             _tell_managers(restaurant_id, "Shift drop request",
                            f"{who} asked to drop {when}" + (f" ({role})" if role else "") + reason
+                           + (f". Careful: {gap}" if gap else "")
                            + ". Approve or decline it in Labor.", db_path, req=req)
         elif event == "opened":
             # They are still on the published week until someone claims it:
