@@ -544,3 +544,14 @@ def test_the_floors_reach_every_cut_surface(ejs, db):
     floors = sr.effective_role_floors(r, day="2026-10-06", db_path=db)
     assert sr.floor_for(floors, "Host", "Tuesday", "morning") == 1
     assert sr.floor_for(floors, "Bartender", "Tuesday", "morning") == 0
+
+
+def test_the_rules_screen_says_how_each_line_is_checked(ejs, db):
+    import strategy_routes
+    payload = strategy_routes._setup_payload(ejs, principal=True)
+    reads = {r["text"]: r["reads_as"] for r in payload["hours_rules"]}
+    assert reads["Bartenders: no earlier than 3:00pm"] == "every Bartender shift starts no earlier than 3:00pm"
+    # Said as held: an evening-only bar's "whenever the bar is open" is a dinner floor.
+    assert "dinner/night" in reads["Bartenders: minimum 1 whenever the bar is open"]
+    assert "lunch/day" not in reads["Bartenders: minimum 1 whenever the bar is open"]
+    assert "Line cooks: others stagger from 3:00pm" in payload["hours_rules_unchecked"]

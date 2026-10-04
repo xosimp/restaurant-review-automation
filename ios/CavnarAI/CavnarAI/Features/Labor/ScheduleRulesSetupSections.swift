@@ -395,10 +395,13 @@ struct RulesSalariedSection: View {
 struct RulesOwnerRulesSection: View {
     let rules: [OwnerRuleReadback]
     let unchecked: [String]
+    /// "Your staffing rules", or "Your hours & shift rules" for the
+    /// restaurant's hours notes as the schedule reads them (PROMPT-1).
+    var kicker: String = "Your staffing rules"
 
     var body: some View {
         if !rules.isEmpty || !unchecked.isEmpty {
-            AccountSection(kicker: "Your staffing rules") {
+            AccountSection(kicker: kicker) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(rules) { rule in
                         HStack(alignment: .top, spacing: 8) {

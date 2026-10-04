@@ -93,6 +93,12 @@ struct ScheduleRulesSheet: View {
                             RulesOwnerRulesSection(rules: viewModel.teamSetup.ownerRules,
                                                    unchecked: viewModel.teamSetup.ownerRulesUnchecked)
                         }
+                        // The hours & shift rules as every draft is checked
+                        // against them (PROMPT-1) — the restaurant's own
+                        // settings, read by everyone who sees the rules.
+                        RulesOwnerRulesSection(rules: viewModel.teamSetup.hoursRules,
+                                               unchecked: viewModel.teamSetup.hoursRulesUnchecked,
+                                               kicker: "Your hours & shift rules")
                         floorsSection
                         cutFloorSection
                         arrivalsSection
