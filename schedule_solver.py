@@ -2657,7 +2657,7 @@ def _soft_repaired(rows, constraints, viols=None) -> set:
 
 
 def improve(rows, inputs=None, signals=None, weights=None, constraints=None, only_dates=None,
-            max_seconds=DEFAULT_SECONDS, min_gain=MIN_GAIN) -> dict:
+            max_seconds=DEFAULT_SECONDS, min_gain=MIN_GAIN, hours_budget=None) -> dict:
     """Solve the draft's assignment and keep the answer only when it is
     worth more to the owner: Shift Quality higher (each candidate scored
     with the rows that will not stand and the hard breaches of ITS rows;
@@ -2670,7 +2670,11 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     minute, the floors and the closer, overtime, minimum hours — schedule
     audit 10/3/26 E-1, P-14), brings back no soft breach a pass repaired,
     and puts nobody newly past their overtime line (for somebody who
-    habitually runs past their shift, the line less that headroom — L-16).
+    habitually runs past their shift, the line less that headroom — L-16)
+    nor the week further over its hourly hours budget (`hours_budget`, else
+    inputs["hours_budget"]) — each candidate held to what the repair loop
+    holds the stage to (schedule_engine._judge), so a good answer is never
+    lost to a bad one.
 
     Returns {applied, rows, before_score, after_score, quality, changes,
     stats, reason}. The input rows are never modified.
@@ -2711,6 +2715,22 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     likely = [f for f in (signals.get("likely_edits") or []) if isinstance(f, dict)]
     headroom = _opt.ot_headroom(signals, constraints)
     base_dollars = _opt.labor_dollars(base, pricing) if pricing else 0.0
+    # The hourly hours budget, judged as the repair loop judges it (schedule_
+    # engine._judge: hourly hours past the budget and the trim's tolerance):
+    # handing a salaried person's shift to somebody hourly spends from it, and
+    # a week further over it is refused — candidate by candidate, so one that
+    # goes over never costs the loop the solver's other answers.
+    try:
+        budget = float(hours_budget if hours_budget is not None else (inputs.get("hours_budget") or 0) or 0)
+    except (TypeError, ValueError):
+        budget = 0.0
+
+    def over_budget(rs) -> float:
+        if budget <= 0:
+            return 0.0
+        import schedule_economics as _econ
+        return max(0.0, _rules.hourly_hours(rs, constraints) - budget * (1 + _econ.TRIM_TOLERANCE))
+    base_over = over_budget(base)
 
     def value(q, rs):
         return _opt.week_value(q, rs, pricing, base_dollars, likely)
@@ -2743,6 +2763,9 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
         if _opt.overtime_created(base, cand, constraints, headroom=headroom):
             refused += 1
             continue            # nor an hour of overtime the draft did not have
+        if over_budget(cand) > base_over + 0.01:
+            refused += 1
+            continue            # nor a week further over its hours budget
         q = score(cand, sig)
         judged_n += 1
         if not q.get("checked"):

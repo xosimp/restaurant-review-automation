@@ -77,12 +77,18 @@ def test_a_redo_of_some_days_only_touches_those_days():
     assert all(m["index"] == 2 for m in out["moves"])
 
 
-def test_the_engine_runs_it_before_the_fix_pass_and_reports_each_move():
+def test_the_engine_runs_it_in_its_rank_and_reports_each_move():
     import inspect
     import schedule_engine
-    src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert src.index("_rules.rebalance_overtime(") < src.index("_sqf.apply_fixes(")
-    assert "_fixes, _unfixed = list(_ot_fixes), []" in src and "_fixes = _ot_fixes + _out[\"fixes\"]" in src
+    # A stage of the ranked repair loop (schedule audit 10/3/26 P-47): after
+    # legality, the manager rule and the floors, before the minimum hours and
+    # the budget; each move a "Fixed by Cavnar AI" line of the review.
+    order = [k for k, *_rest in schedule_engine.REPAIR_STAGES]
+    assert order.index("manager") < order.index("close_out") < order.index("overtime") < order.index("min_hours")
+    assert schedule_engine._STAGE_TIER["overtime"] == sr.TIER_OVERTIME
+    src = inspect.getsource(schedule_engine._stage_overtime)
+    assert "\"kind\": m.get(\"kind\") or \"overtime\"" in src and "out[\"trims\"]" in src
+    assert "_fixes = list(_loop[\"fixes\"])" in inspect.getsource(schedule_engine._run_schedule_job)
 
 
 def test_the_prompt_says_overtime_is_a_cost_the_owner_does_not_want():
@@ -91,12 +97,15 @@ def test_the_prompt_says_overtime_is_a_cost_the_owner_does_not_want():
     assert "nobody goes past \"\n        \"40 hours in the payroll week while a teammate in the same role has room" in src
 
 
-def test_the_week_is_priced_after_the_overtime_pass_and_again_on_its_final_rows():
+def test_the_week_is_priced_on_its_final_rows_before_the_review():
     import inspect
     import schedule_engine
+    # Priced once, on the rows that are saved: after the repair loop (no row
+    # changes after the sweep, P-11) and before the review states its cost.
     src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert src.index("_rules.rebalance_overtime(") < src.index("_price_week(preview_rows)")
-    assert "_price_week(preview_rows)\n                _lines_out" in src
+    assert src.count("_price_week(preview_rows)") == 1
+    assert src.index("repair_week(") < src.index("_price_week(preview_rows)") < \
+        src.index("result[\"review\"] = _rules.summarize(_viols)")
 
 
 def test_a_night_nobody_closes_keeps_a_keyholder_on_to_close():

@@ -7693,8 +7693,27 @@ def mobile_score_schedule(current_user):
                                             expected_version=(sent if latest else None),
                                             saved_authority=_sv.authority_of(current_user),
                                             row_origins=_step["stored"])
-                conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
-                              (json.dumps(review) if review else None, hid, rid))
+                # The generation's review is kept and only what the edited
+                # rows decide is refreshed (schedule audit 10/3/26 P-26): the
+                # save used to overwrite it with a bare sweep, and the fix
+                # lines, the trims, the manager stretches nobody could cover,
+                # the rules it could not check and the budget line vanished.
+                if review is not None and violations is not None:
+                    _was = conn2.execute("SELECT review_json, hours_budget FROM schedule_history "
+                                         "WHERE id=? AND restaurant_id=?", (hid, rid)).fetchone()
+                    try:
+                        _saved_rv = json.loads((_was["review_json"] if _was else None) or "null") or {}
+                    except ValueError:
+                        _saved_rv = {}
+                    from schedule_engine import refresh_review as _refresh_rv
+                    review = _refresh_rv(_saved_rv, violations, rows, inputs.get("constraints"),
+                                         hours_budget=(_was["hours_budget"] if _was else None),
+                                         extras={k: review[k] for k in ("unmet", "soft_requirements") if k in review})
+                if review is not None:
+                    # A sweep that could not run leaves the review as it was,
+                    # never wiped.
+                    conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
+                                  (json.dumps(review, default=str), hid, rid))
                 conn2.commit()
                 saved = hid
             except _sv.StaleVersion:

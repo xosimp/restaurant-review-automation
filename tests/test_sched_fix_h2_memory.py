@@ -656,10 +656,16 @@ def test_the_nightly_join_observes_a_shift_that_ran_late(monkeypatch):
 
 def test_the_job_pads_the_draft_from_the_memory_before_the_solver_and_the_pricing():
     import schedule_engine
+    # A stage of the ranked repair loop (schedule audit 10/3/26 P-47): at the
+    # budget's rank ahead of the trim, so the trim makes room for the real
+    # ends; before the solver and the optimizer in every cycle; the week is
+    # priced once, on the rows the loop ends with.
+    order = [k for k, *_rest in schedule_engine.REPAIR_STAGES]
+    assert order.index("min_hours") < order.index("pad_overruns") < order.index("budget") \
+        < order.index("solver") < order.index("optimizer")
+    assert "_smem_pad.pad_overruns(" in inspect.getsource(schedule_engine._stage_pad_overruns)
     src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert "_smem_pad.pad_overruns(" in src
-    assert src.index("pad_overruns(") < src.index("_price_week(preview_rows)") < src.index("_opt.optimize(")
-    assert src.index("apply_role_times(preview_rows") < src.index("pad_overruns(")
+    assert src.index("repair_week(") < src.index("_price_week(preview_rows)")
 
 
 # ══ L-21: teams ═══════════════════════════════════════════════════════════

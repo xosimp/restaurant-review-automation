@@ -363,3 +363,24 @@ def test_a_candidate_that_trades_one_breach_for_another_is_refused(monkeypatch):
     assert after <= before + 1
     out = ss.improve(rows, {}, signals=sig, constraints=c)
     assert not out["applied"] and out["stats"]["refused"] == 1
+
+
+def test_an_answer_that_spends_more_of_the_hourly_budget_is_refused():
+    """Erik (salaried) holds Saturday; Cat (hourly, rated 5) scores better
+    there. Left free, the solver gives Cat Erik's Saturday and her own
+    Tuesday — 7 more hourly hours than the 14h budget has, which the repair
+    loop would answer by refusing the whole result. Each candidate is now
+    judged as the loop judges the stage: the one that goes over is refused
+    and a good one inside the budget (Cat in for Ann) is kept (B1)."""
+    names = ["Erik", "Cat", "Ann"]
+    c = cons(names, salaried={"erik"})
+    rows = [row(SAT, "Erik", "4:00pm", "11:00pm"), row(SAT, "Ann", "4:00pm", "11:00pm"),
+            row(TUE, "Cat", "4:00pm", "11:00pm")]
+    sig = _sig(names, scores={"Erik": 1, "Ann": 3, "Cat": 5}, salaried={"erik"}, demand_by_day={"Saturday": 40.0},
+               typical_headcount={("Saturday", "night"): {"Server": 2}, ("Tuesday", "night"): {"Server": 1}})
+    free = ss.improve(rows, {}, signals=sig, constraints=c)
+    assert sr.hourly_hours(free["rows"], c) == 21.0
+    held = ss.improve(rows, {"hours_budget": 14}, signals=sig, constraints=c)
+    assert held["applied"] and held["stats"]["refused"] >= 1
+    assert sr.hourly_hours(held["rows"], c) == 14.0
+    assert any(r["employee"] == "Cat" for r in held["rows"] if r["date"] == SAT)
