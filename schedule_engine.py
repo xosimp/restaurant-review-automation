@@ -591,6 +591,8 @@ _INPUT_WORDS = {
     "staff_availability": "staff availability", "staffing_baseline": "the usual crew from past weeks",
     "salaried_week": "the salaried staff's share of the budget", "signals_by_date": "the week's dated events",
     "pairs": "who works well together", "reliability": "attendance", "learned": "the habits learned from your edits",
+    "last published week": "how last week's published schedule went",
+    "role shifts": "the roles each person has worked", "roster facts": "each person's limits and availability",
     "date_demand": "each day's demand", "splh": "sales per labor hour", "outcomes": "how past weeks went",
     "ledger": "who has carried the weekends and closes", "stated_preferences": "staff preferences",
     "learned_preferences": "what staff drop and pick up", "could_hold": "who could hold a station",
