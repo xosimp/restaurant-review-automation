@@ -38882,28 +38882,40 @@ function sfw2RuleCheck(chk) {
   function renderStandards(s) {
     var el = $id('sfw2-std'); if (!el) return;
     if (!s || !s.ok) { el.innerHTML = '<div class="hb-empty">' + e((s && s.error) || 'The labor standards couldn’t be read.') + '</div>'; return; }
-    var std = s.standards || {}, fams = s.families || [], ro = !s.can_edit, units = s.units || {}, h = '', i, any = false;
+    var std = s.standards || {}, fams = s.families || [], ro = !s.can_edit, units = s.units || {}, h = '', i, rest = [];
     for (i = 0; i < fams.length; i++) {
       var f = fams[i], one = std[f] || {}, lunch = one.morning, dinner = one.night;
-      if (!lunch && !dinner && ro) continue;
-      any = true;
+      // A role with nothing measured and nothing set is offered below,
+      // never listed empty.
+      if (!lunch && !dinner) { rest.push(f); continue; }
       var lines = [];
       if (lunch) lines.push(n(lunch.text));
       if (dinner) lines.push(n(dinner.text));
       var mine = (lunch && lunch.source === 'yours') || (dinner && dinner.source === 'yours');
-      h += '<div class="sfw2-std"><span class="fam">' + e(sfw2FamilyLabel(f)) + '</span><div class="tx">' + (lines.length ? lines.join('<br>') : '<span style="color:var(--ink3)">Not measured yet — it takes six shifts of a lunch or a dinner on the ticket archive.</span>')
-        + '<small>' + e(units[f] || '') + ' per person per hour</small></div>'
-        + (ro ? '' : '<div class="ed" data-sfw2-std="' + e(f) + '"><input type="number" class="ac-input ac-num" data-p="lunch" min="0.5" max="500" step="0.5" placeholder="lunch" value="' + (lunch && lunch.source === 'yours' ? e(lunch.per_hour) : '') + '" aria-label="' + e(sfw2FamilyLabel(f)) + ' at lunch, your standard">'
-          + '<input type="number" class="ac-input ac-num" data-p="dinner" min="0.5" max="500" step="0.5" placeholder="dinner" value="' + (dinner && dinner.source === 'yours' ? e(dinner.per_hour) : '') + '" aria-label="' + e(sfw2FamilyLabel(f)) + ' at dinner, your standard">'
+      h += '<div class="sfw2-std"><span class="fam">' + e(sfw2FamilyLabel(f)) + '</span><div class="tx">' + lines.join('<br>') + '</div>'
+        + (ro ? '' : '<div class="ed" data-sfw2-std="' + e(f) + '">' + _stdInputs(f, lunch, dinner)
           + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-std-save="1">Set</button>'
           + (mine ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw2-std-clear="1">Use measured</button>' : '') + '</div>') + '</div>';
     }
-    if (!any) h = '<div class="hb-empty">No standard measured yet — it takes the ticket archive and six shifts of a role at lunch or dinner.</div>';
+    if (!h) h = '<div class="hb-empty">Nothing measured yet — it takes the ticket archive and six shifts of a role at lunch or dinner.</div>';
+    if (!ro && rest.length) {
+      var o = '', j;
+      for (j = 0; j < rest.length; j++) o += '<option value="' + e(rest[j]) + '">' + e(sfw2FamilyLabel(rest[j]) + ' — ' + (units[rest[j]] || '') + ' an hour') + '</option>';
+      h += '<div class="sfw2-std"><span class="fam">Another role</span><div class="ed" data-sfw2-std=""><select class="ac-select" data-p="family" aria-label="Role">' + o + '</select>' + _stdInputs('', null, null)
+        + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw2-std-save="1">Set</button></div></div>';
+    }
+    if (ro) h += '<div class="lb2-ro">Only the account owner can set a labor standard.</div>';
     el.innerHTML = h + '<div class="ac-status" id="sfw2-std-status"></div>';
+  }
+  function _stdInputs(f, lunch, dinner) {
+    var lbl = f ? sfw2FamilyLabel(f) : 'This role';
+    return '<input type="number" class="ac-input ac-num" data-p="lunch" min="0.5" max="500" step="0.5" placeholder="lunch" value="' + (lunch && lunch.source === 'yours' ? e(lunch.per_hour) : '') + '" aria-label="' + e(lbl) + ' at lunch, your standard">'
+      + '<input type="number" class="ac-input ac-num" data-p="dinner" min="0.5" max="500" step="0.5" placeholder="dinner" value="' + (dinner && dinner.source === 'yours' ? e(dinner.per_hour) : '') + '" aria-label="' + e(lbl) + ' at dinner, your standard">';
   }
   document.addEventListener('click', function (ev) {
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-std-save],[data-sfw2-std-clear]') : null; if (!t || t.disabled) return;
-    var row = t.closest('[data-sfw2-std]'), fam = row ? row.getAttribute('data-sfw2-std') : '', body = {family: fam}, st = $id('sfw2-std-status');
+    var row = t.closest('[data-sfw2-std]'), pick = row ? row.querySelector('[data-p="family"]') : null;
+    var fam = row ? (row.getAttribute('data-sfw2-std') || (pick ? pick.value : '')) : '', body = {family: fam}, st = $id('sfw2-std-status');
     if (t.hasAttribute('data-sfw2-std-clear')) body.remove = true;
     else {
       var l = row.querySelector('[data-p="lunch"]').value, dn = row.querySelector('[data-p="dinner"]').value;
