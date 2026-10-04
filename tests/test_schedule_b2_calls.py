@@ -172,7 +172,7 @@ def test_a_redo_of_two_days_is_one_call_for_those_days_with_the_kept_days_in_vie
 
 def test_the_focus_block_names_its_dates():
     block = sreq.focus_block(["Saturday 2026-10-10 dinner: 2 servers short"], dates=["2026-10-10"])
-    assert "THE PREVIOUS DRAFT OF SATURDAY 2026-10-10 SCORED WEAK ON" in block
+    assert "THE PREVIOUS DRAFT OF Sat 2026-10-10 SCORED WEAK ON" in block    # the one date format (C1, PR-20)
     assert "Saturday 2026-10-10 dinner: 2 servers short" in block
     assert sreq.focus_block(None) == "" and sreq.focus_block([]) == ""
 
@@ -237,7 +237,7 @@ def test_the_redo_prompt_names_the_dates_and_says_the_owners_words_once(db, monk
                                       focus=["Saturday 2026-10-10 dinner: short"], instruction=reason,
                                       deadline=time.time() + 600)
     p = prompts[-1]["prompt"]
-    assert "SATURDAY 2026-10-10 SCORED WEAK ON" in p and "ALREADY WRITTEN FOR THE OTHER DAYS" in p
+    assert "Sat 2026-10-10 SCORED WEAK ON" in p and "ALREADY WRITTEN FOR THE OTHER DAYS" in p
     # One owner-reason path: the instruction block, once, priority 5, its
     # markers neutralised so it can never open a fence.
     # (The standing instructions name the channel to rank it — C1, PR-2; the

@@ -4423,6 +4423,9 @@ def person_facts(c: Constraints, names=None) -> dict:
                         if t else None)
         skills = (c.stations or {}).get("skills") or {}
         f["stations"] = list(skills.get(name) or skills.get(key) or [])
+        # The roles they hold beyond their roster role (people.held_roles —
+        # trained or promoted, D-15): part of CAN WORK (PR-21).
+        f["held"] = sorted(c.role_names.get(r, r) for r in (c.held_roles.get(key) or ()))
         out[name] = f
     return out
 

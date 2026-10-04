@@ -251,7 +251,6 @@ def test_settings_carry_windows_certifications_and_wishes_into_the_constraints(d
     import labor
     import schedule_engine
     import schedule_prompt
-    assert intel.preferences_block({}, ss.stated_preferences(rid, db_path=db_path)) == ""
     facts = sr.person_facts(c, ["Ana"])
     schedule_engine._roster_signals(facts, rid, stated=ss.stated_preferences(rid, db_path=db_path))
     line = schedule_prompt.roster_table(labor._roster_people([("Ana", "Server")], facts=facts))

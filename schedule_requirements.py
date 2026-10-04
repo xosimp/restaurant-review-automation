@@ -680,9 +680,9 @@ def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_
 
 
 def _dates_named(dates: list) -> str:
-    """'Saturday 2026-10-10 and Sunday 2026-10-11' — the dates as the rest
-    of the prompt writes them."""
-    named = [f"{_day_name(d, d)} {d}" for d in sorted(set(dates or []))]
+    """'Sat 2026-10-10 and Sun 2026-10-11' — the dates as the rest of the
+    prompt writes them, weekday and ISO (schedule audit 10/3/26 PR-20)."""
+    named = [f"{_day_name(d, d)[:3]} {d}" for d in sorted(set(dates or []))]
     if len(named) <= 1:
         return "".join(named)
     return ", ".join(named[:-1]) + " and " + named[-1]
@@ -704,7 +704,7 @@ def focus_block(focus: list, dates: list = None) -> str:
             break
     if not items:
         return ""
-    which = _dates_named(dates).upper() if dates else "THESE DAYS"
+    which = _dates_named(dates) if dates else "THESE DAYS"
     return (f"\n\nTHE PREVIOUS DRAFT OF {which} SCORED WEAK ON:\n" + "\n".join(f"  * {t}" for t in items)
             + "\n  Fix these specifically in this draft, within the PRIORITIES order — never by breaking "
             "anything ranked above the thing being fixed.")

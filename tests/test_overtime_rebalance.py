@@ -86,9 +86,12 @@ def test_the_engine_runs_it_before_the_fix_pass_and_reports_each_move():
 
 
 def test_the_prompt_says_overtime_is_a_cost_the_owner_does_not_want():
-    import labor
-    src = open(labor.__file__, encoding="utf-8").read()
-    assert "nobody goes past \"\n        \"40 hours in the payroll week while a teammate in the same role has room" in src
+    # Each person's own overtime line, never a literal 40 (schedule audit
+    # 10/3/26 PR-3): a 45h cook read three numbers for one limit.
+    import schedule_prompt
+    assert ("Nobody goes past their overtime line (OT in the ROSTER) while a teammate in the same role has room: "
+            "overtime is a cost the owner does not want") in schedule_prompt.PRIORITIES
+    assert "40 hours" not in schedule_prompt.PRIORITIES
 
 
 def test_the_week_is_priced_after_the_overtime_pass_and_again_on_its_final_rows():

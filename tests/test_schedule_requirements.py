@@ -317,7 +317,7 @@ def test_focus_reaches_the_prompt_only_when_given(monkeypatch):
                      week_slice=["2026-10-10"])
     # The header names the dates it is about (schedule audit 10/3/26 PR-18:
     # it said "THESE DAYS" and never named them).
-    assert "THE PREVIOUS DRAFT OF SATURDAY 2026-10-10 SCORED WEAK ON:" in prompt
+    assert "THE PREVIOUS DRAFT OF Sat 2026-10-10 SCORED WEAK ON:" in prompt
     assert "  * Saturday dinner: no leader on" in prompt
 
 

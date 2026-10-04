@@ -2375,17 +2375,6 @@ def _cohort_block(restaurant_id, restaurant) -> str:
         return ""
 
 
-def _could_hold_block(could_hold: dict) -> str:
-    """Who could hold a station they have worked beside a closer: each
-    person's ROSTER line now — their CAN WORK carries the role (schedule
-    audit 10/3/26 PR-21, PR-33: TRAINED UP was a second cross-training list
-    with its own standard of evidence). Nothing is left to say apart from
-    the people, so this is empty. Candidate for future cleanup after
-    additional verification: the learning workstream's learned-block
-    sections still name it."""
-    return ""
-
-
 # Sales older than this many TRADING days stop a generation (schedule audit
 # 10/3/26 D-33): the demand, the hours budget and every day's target would
 # be built on them as if current. demand.STALE_SAMPLE_DAYS is the same

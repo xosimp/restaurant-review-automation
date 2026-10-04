@@ -11,7 +11,10 @@ a model; nothing crosses a tenant.
   fairness_ledger       weekends, closes and holidays per person over 8 weeks
   rotation_plan         who is next for a weekend off, a close and a holiday,
                         per role, planned across those weeks
-  behaviour_preferences what people keep dropping and claiming
+  behaviour_preferences what people keep dropping and claiming (each person's
+                        ROSTER line in the schedule prompt, WANTS)
+  role_shifts           shifts per role over the last year — the evidence the
+                        prompt's CAN WORK holds a second role to
   mentoring             shifts worked beside a closer in a role that is not
                         their own — who could hold a station
   chemistry_suggestions pairs whose shared dayparts ran clean — suggested,
@@ -1102,17 +1105,6 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
         if avoids or prefers:
             out[n] = {"avoids": avoids, "prefers": prefers, "drops": t["drops"], "claims": t["claims"]}
     return out
-
-
-def preferences_block(learned: dict, stated: dict) -> str:
-    """What staff want — stated (staff_settings.preferred_dayparts /
-    desired_hours) and learned from what they drop and claim — is each
-    person's ROSTER line in the schedule prompt now (WANTS, schedule audit
-    10/3/26 PR-33: one of about nine blocks the model joined by name).
-    Nothing is left to say apart from the people, so this is empty.
-    Candidate for future cleanup after additional verification: the
-    learning workstream's learned-block sections still name it."""
-    return ""
 
 
 def role_shifts(restaurant_id, days: int = MENTOR_WINDOW_DAYS, db_path=DB_PATH) -> dict:

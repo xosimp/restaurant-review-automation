@@ -180,6 +180,7 @@ RULE_MARKS = (
 def _coverage_text() -> str:
     late_start = _clock(_sq.LATE_WINDOW_START)
     late_after = _clock(_sq.LATE_CLOSE_AFTER)
+    (lo_m, hi_m), (lo_n, hi_n) = _sq.CORE_WINDOWS["morning"], _sq.CORE_WINDOWS["night"]
     return (
         "HOW COVERAGE IS COUNTED\n"
         "- Coverage is counted by who is on the floor. " + _req.presence_rule() + "\n"
@@ -187,8 +188,10 @@ def _coverage_text() -> str:
         "that start in it: a shift that counts at dinner this way is already one of dinner's people — it counts "
         "toward the number, it does not add to it — and a shift that falls short of the dinner window does not "
         "count at dinner at all. Lunch and dinner are separate numbers, never one day's total to split.\n"
-        "- The owner's staffing floors are also scored half hour by half hour across each daypart: a floor holds "
-        "from opening through close, not only at the peak.\n"
+        "- The owner's staffing floors are held half hour by half hour through each daypart's core service window "
+        f"(lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}, inside the day's open hours), "
+        "not only at the peak; where SHIFT REQUIREMENTS give half-hour numbers, every half hour of the daypart is "
+        "judged against them too.\n"
         "- \"by the half hour\" in SHIFT REQUIREMENTS is how many of a role a shift needs on at once as its sales "
         "climb and fall, read from the restaurant's own hourly sales: \"Server 2 from 11:00am, 4 from 12:00pm\" means "
         "two on from eleven and four from noon. Starts and ends follow it — the ramp in and the taper out — and the "
@@ -277,7 +280,7 @@ EXAMPLE_ROWS = (
     ("Ben", "Server", "11:30am", "7:00pm", "", False),
     ("Cy", "Server", "4:30pm", "10:00pm", "closer", False),
     ("Di", "Server", "6:00pm", "10:00pm", "", False),
-    ("Ed", "Server", "6:00pm", "8:30pm", "staggered start", False),
+    ("Ed", "Server", "6:00pm", "8:30pm", "", False),
     ("Fay", "Line Cook", "10:00am", "4:00pm", "opener", False),
     ("Gus", "Line Cook", "10:30am", "3:30pm", "", False),
     ("Hal", "Line Cook", "3:30pm", "10:00pm", "closer", False),

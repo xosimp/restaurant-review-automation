@@ -4047,8 +4047,10 @@ def _roster_people(employees, facts=None, availability=None, time_off=None, scor
         allowed = ({fam(r)} if r else set()) | {fam(x) for x in held_here}
         allowed |= {fx for fx, k in fam_count.items() if k >= _hold}
         allowed |= {fam(x) for x in (f.get("could_hold") or [])}
-        candidates = list(f.get("roles") or []) if f else sorted({x for x in ([r] + list(held_here) + list(counts))
-                                                                     if x}, key=str.lower)
+        # Every role spelling in sight — their own, held, worked, the code's
+        # legal ones — kept only where its family is allowed above.
+        candidates = sorted({x for x in ([r] + list(held_here) + list(counts) + list(f.get("roles") or [])) if x},
+                            key=str.lower)
         lacking = dict(f.get("roles_lacking_cert") or {})
         groups = {}
         for x in candidates:
@@ -5099,9 +5101,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # the fixed rows of the others are its weekly hours and handovers too).
     _manager_block = _skel.prompt_block(_pins, plan=manager_plan)
     _manager_names = _skel.priority_line(_pins, plan=manager_plan)
-    if _manager_names:
+    if _manager_names and not rules_block:
         # PRIORITIES 1a is a standing instruction (the same for every
-        # restaurant); who the managers are is this restaurant's fact.
+        # restaurant); who the managers are is this restaurant's fact. The
+        # rules block's manager line names them when there is one, beside
+        # MANAGER COVERAGE's own instructions — said a third time here, the
+        # rule ran four times in one prompt.
         _manager_block = "\n\nTHE MANAGERS (PRIORITIES 1a) — " + _manager_names + (_manager_block or "")
     elif manager_plan is not None and not (manager_plan or {}).get("managers"):
         _manager_block = ("\n\nTHE MANAGERS (PRIORITIES 1a) — nobody on this roster counts as a manager or owner, "
@@ -5174,9 +5179,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _labor_vs_target = (f"hourly staff only (target: {labor_target}%, which counts the salaried staff too — "
                             f"the hours budget is what that leaves for hourly labor)"
                             if _budget_basis.get("kind") == "all_in_less_salaries" else f"(target: {labor_target}%)")
-        _over = [f"{d['day']} {d.get('date') or ''} ({d['labor_pct']}%)".replace("  ", " ")
+        # A day as every other date reads (PR-20): "Mon 2026-09-28", or the
+        # weekday alone when the analysis carries no date.
+        _over = [f"{_sp.day_date(d['date']) if d.get('date') else d['day']} ({d['labor_pct']}%)"
                  for d in overstaffed if d.get("day")]
-        _under = [f"{d['day']} {d.get('date') or ''}".strip() for d in understaffed if d.get("day")]
+        _under = [_sp.day_date(d["date"]) if d.get("date") else d["day"] for d in understaffed if d.get("day")]
         _dow_bits = [f"{k} {v}%" for k, v in sorted((dow or {}).items(),
                                                     key=lambda kv: week_days.index(kv[0]) if kv[0] in week_days else 7)
                      if v is not None]
