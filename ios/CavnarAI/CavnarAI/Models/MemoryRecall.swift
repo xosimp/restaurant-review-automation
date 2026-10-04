@@ -499,15 +499,31 @@ struct StandingPattern: Codable, Hashable, Identifiable {
     let status: String
     let canBeRule: Bool
     let rule: Rule?
+    // Its evidence (schedule audit 10/3/26 L-6, L-30, L-35): the published
+    // weeks that tested it and kept it, the confidence that reads (Wilson
+    // bound × decay since a hand last confirmed it), when a manager's own
+    // hand last did, since when it is being re-tested, why it retired, and
+    // whether the owner said "always". Absent on an older server.
+    var opportunities: Int? = nil
+    var hits: Int? = nil
+    var confidence: Double? = nil
+    var lastHand: String? = nil
+    var retestSince: String? = nil
+    var retiredReason: String? = nil
+    var source: String? = nil
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
         case key, kind, employee, day, daypart, text, editors, status, rule
+        case opportunities, hits, confidence, source
         case firstLearned = "first_learned"
         case lastConfirmed = "last_confirmed"
         case timesApplied = "times_applied"
         case timesOverridden = "times_overridden"
         case canBeRule = "can_be_rule"
+        case lastHand = "last_hand"
+        case retestSince = "retest_since"
+        case retiredReason = "retired_reason"
     }
 
     init(key: String, kind: String? = nil, employee: String? = nil, day: String? = nil, daypart: String? = nil,
@@ -544,17 +560,45 @@ struct StandingPattern: Codable, Hashable, Identifiable {
         status = c.mrText(.status)?.lowercased() ?? "active"
         canBeRule = c.mrBool(.canBeRule) ?? false
         rule = try? c.decodeIfPresent(Rule.self, forKey: .rule)
+        opportunities = c.mrInt(.opportunities)
+        hits = c.mrInt(.hits)
+        confidence = c.mrDouble(.confidence)
+        lastHand = c.mrText(.lastHand)
+        retestSince = c.mrText(.retestSince)
+        retiredReason = c.mrText(.retiredReason)?.lowercased()
+        source = c.mrText(.source)?.lowercased()
     }
 
     /// "learned 9/7/26 · last kept 9/21/26 · taught by Dana" — dates as the
-    /// server wrote them (M/D/YY).
+    /// server wrote them (M/D/YY). The owner's "always" reads as theirs.
     var historyLine: String? {
         var bits: [String] = []
+        if source == "owner_said" { bits.append("You said always") }
         if let firstLearned { bits.append("learned " + firstLearned) }
         if let lastConfirmed, lastConfirmed != firstLearned { bits.append("last kept " + lastConfirmed) }
         if !editors.isEmpty { bits.append("taught by " + editors.joined(separator: ", ")) }
         return bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} ")
     }
+
+    /// "kept 2 of 3 weeks · 64% confidence · last confirmed by hand
+    /// 9/21/26" — the confidence "—" until two weeks tested it (L-6, L-30).
+    var evidenceLine: String? {
+        var bits: [String] = []
+        if let o = opportunities, o > 0 {
+            bits.append("kept \(hits ?? 0) of \(o) week\(o == 1 ? "" : "s")")
+            if o >= 2, let conf = confidence {
+                bits.append("\(Int((min(max(conf, 0), 1) * 100).rounded()))% confidence")
+            } else {
+                bits.append("confidence \u{2014}")
+            }
+        }
+        if let lastHand { bits.append("last confirmed by hand " + lastHand) }
+        return bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} ")
+    }
+
+    /// Being re-tested: the next draft leaves it out to check it is still
+    /// wanted (L-30).
+    var isRetest: Bool { status == "retest" }
 
     /// The status in words — an unknown status is shown as the server
     /// wrote it.
@@ -562,7 +606,16 @@ struct StandingPattern: Codable, Hashable, Identifiable {
         switch status {
         case "active": return "in use"
         case "ruled": return "now a rule"
-        case "retired": return "retired \u{2014} reversed twice"
+        case "retest": return "being re-tested"
+        case "retired":
+            switch retiredReason {
+            case "reversed": return "retired \u{2014} reversed by hand"
+            case "retest": return "retired \u{2014} not put back when tested"
+            case "decayed": return "retired \u{2014} faded, never confirmed"
+            case "owner": return "retired \u{2014} you let it go"
+            default: return "retired \u{2014} reversed twice"
+            }
+        case "dormant": return "asleep \u{2014} they haven\u{2019}t worked lately"
         case "dismissed": return "not in use"
         default: return status.replacingOccurrences(of: "_", with: " ")
         }

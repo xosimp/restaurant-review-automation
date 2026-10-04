@@ -341,8 +341,47 @@ struct LearnedPattern: Codable, Identifiable, Equatable {
     let key: String
     var active: Bool?
     var dismissed: Bool?
+    /// Its denominator (schedule audit 10/3/26 L-6): the weeks it could
+    /// have been made in, the share it was, and the Wilson bound — and a
+    /// dismissal made through support that counts only once adopted
+    /// (L-10). Absent on an older server.
+    var opportunities: Int? = nil
+    var confidence: Double? = nil
+    var dismissedByAdmin: Bool? = nil
 
     var id: String { key }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, employee, day, daypart, times, text, key, active, dismissed, opportunities, confidence
+        case dismissedByAdmin = "dismissed_by_admin"
+    }
+
+    /// "2 of 3 weeks · 41% confidence" — "—" until two weeks could show it.
+    var evidenceLine: String? {
+        guard let n = times else { return nil }
+        guard let o = opportunities, o > 0 else { return "\(n) \(n == 1 ? "time" : "times")" }
+        var s = "\(n) of \(o) week\(o == 1 ? "" : "s")"
+        if o >= 2, let c = confidence { s += " \u{00B7} \(Int((min(max(c, 0), 1) * 100).rounded()))% confidence" }
+        else { s += " \u{00B7} confidence \u{2014}" }
+        return s
+    }
+}
+
+/// Schedule edits made through Cavnar AI support (view-as) that teach the
+/// draft nothing until the account holder counts them as theirs (L-8).
+struct AdminSavesPending: Decodable, Equatable {
+    var versions: Int = 0
+    var weeks: Int = 0
+    var answers: Int = 0
+
+    enum CodingKeys: String, CodingKey { case versions, weeks, answers }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        versions = c.setupInt(.versions) ?? 0
+        weeks = c.setupInt(.weeks) ?? 0
+        answers = c.setupInt(.answers) ?? 0
+    }
 }
 
 // MARK: - Rules
@@ -1555,6 +1594,13 @@ final class ScheduleSetupViewModel {
     var patternConflicts: [PatternConflict] = []
     /// The server's answer to the last "Make it a rule".
     var patternMessage: String?
+    /// Support's (view-as) schedule edits and pattern dismissals waiting on
+    /// the account holder, and whether this login is the one who may count
+    /// them (schedule audit 10/3/26 L-8, L-10).
+    var adminSaves: AdminSavesPending?
+    var adminDismissals = 0
+    var canAdoptPatterns = false
+    var isAdoptingPatterns = false
 
     private struct PatternsResponse: Decodable {
         let ok: Bool
@@ -1563,19 +1609,48 @@ final class ScheduleSetupViewModel {
         let error: String?
         let standing: HomeLenientList<StandingPattern>?
         let conflicts: HomeLenientList<PatternConflict>?
+        var adminSaves: AdminSavesPending? = nil
+        var adminDismissals: Int? = nil
+        var canAdopt: Bool? = nil
         enum CodingKeys: String, CodingKey {
             case ok, patterns, error, standing, conflicts
             case canEdit = "can_edit"
+            case adminSaves = "admin_saves"
+            case adminDismissals = "admin_dismissals"
+            case canAdopt = "can_adopt"
         }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
-            patterns = try? c.decodeIfPresent([LearnedPattern].self, forKey: .patterns)
+            patterns = ((try? c.decodeIfPresent(HomeLenientListDecodable<LearnedPattern>.self, forKey: .patterns)) ?? nil)?.items
             canEdit = try? c.decodeIfPresent(Bool.self, forKey: .canEdit)
             error = try? c.decodeIfPresent(String.self, forKey: .error)
             standing = try? c.decodeIfPresent(HomeLenientList<StandingPattern>.self, forKey: .standing)
             conflicts = try? c.decodeIfPresent(HomeLenientList<PatternConflict>.self, forKey: .conflicts)
+            adminSaves = (try? c.decodeIfPresent(AdminSavesPending.self, forKey: .adminSaves)) ?? nil
+            adminDismissals = c.setupInt(.adminDismissals)
+            canAdopt = c.setupBool(.canAdopt)
         }
+    }
+
+    private struct RuleResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let rule: String?
+        let employee: String?
+        enum CodingKeys: String, CodingKey { case ok, error, rule, employee }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = c.setupBool(.ok) ?? false
+            error = c.setupText(.error)
+            rule = c.setupText(.rule)
+            employee = c.setupText(.employee)
+        }
+    }
+
+    private struct KeepBody: Encodable {
+        let key: String
+        let keep: Bool
     }
 
     private struct RuleBody: Encodable {
@@ -1596,26 +1671,35 @@ final class ScheduleSetupViewModel {
             canEditPatterns = r.canEdit ?? true
             standingPatterns = r.standing?.items ?? []
             patternConflicts = r.conflicts?.items ?? []
+            adminSaves = r.adminSaves
+            adminDismissals = r.adminDismissals ?? 0
+            canAdoptPatterns = r.canAdopt ?? false
         } catch {
             // A secondary list; the roster stands without it.
         }
     }
 
-    /// "Make it a rule": the standing pattern becomes the person's own
-    /// availability, with its author (POST {key, rule: true}). Reloads so
-    /// the pattern reads "now a rule".
+    /// "Make it a rule": a person's pattern becomes their own availability,
+    /// a headcount the manager keeps adding a role floor, a start or end
+    /// time a role time rule — with its author (POST {key, rule: true};
+    /// the two staffing kinds are the account owner's, L-33). Says the
+    /// server's own words for the rule, and reloads so it reads "now a rule".
     func makeRule(_ pattern: StandingPattern) async {
         patternBusyKey = pattern.key
         patternError = nil
         patternMessage = nil
         defer { patternBusyKey = nil }
         do {
-            let r: OKResponse = try await client.send(
+            let r: RuleResponse = try await client.send(
                 "/mobile/api/labor/learned-patterns", method: .post,
                 body: RuleBody(key: pattern.key, rule: true), hapticOnError: false, retryTransient: false)
             if r.ok {
                 Haptic.success()
-                patternMessage = "Now a rule for \(pattern.employee ?? "them") \u{2014} it lives in their availability."
+                if let words = r.rule, !words.isEmpty {
+                    patternMessage = "Now a rule: \(words)"
+                } else {
+                    patternMessage = "Now a rule for \(pattern.employee ?? "them") \u{2014} it lives in their availability."
+                }
                 await loadLearnedPatterns()
             } else {
                 patternError = r.error ?? "Couldn\u{2019}t make that a rule."
@@ -1624,6 +1708,76 @@ final class ScheduleSetupViewModel {
             patternError = error.message
         } catch {
             patternError = "Couldn\u{2019}t make that a rule."
+        }
+    }
+
+    /// A pattern being re-tested, answered: keep it (a hand confirmation,
+    /// the re-test over) or let it go (retired as the owner's word) —
+    /// schedule audit 10/3/26 L-30.
+    func answerStanding(_ pattern: StandingPattern, keep: Bool) async {
+        patternBusyKey = pattern.key
+        patternError = nil
+        patternMessage = nil
+        defer { patternBusyKey = nil }
+        do {
+            let r: OKResponse = try await client.send(
+                "/mobile/api/labor/learned-patterns", method: .post,
+                body: KeepBody(key: pattern.key, keep: keep), hapticOnError: false, retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                patternMessage = keep ? "Kept \u{2014} the draft goes on using it." : "Let go \u{2014} the draft stops using it."
+                await loadLearnedPatterns()
+            } else {
+                patternError = r.error ?? "Couldn\u{2019}t save that."
+            }
+        } catch let error as APIClient.APIError {
+            patternError = error.message
+        } catch {
+            patternError = "Couldn\u{2019}t save that."
+        }
+    }
+
+    private struct AdoptAnswer: Decodable {
+        let ok: Bool
+        let error: String?
+        let adopted: Int?
+        let versions: Int?
+        enum CodingKeys: String, CodingKey { case ok, error, adopted, versions }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = c.setupBool(.ok) ?? false
+            error = c.setupText(.error)
+            adopted = c.setupInt(.adopted)
+            versions = c.setupInt(.versions)
+        }
+    }
+
+    /// "Count as mine": support's pattern dismissals (L-10) or schedule
+    /// edits (L-8) count as the account holder's — signed in as themselves,
+    /// never through view-as (the server refuses that).
+    func adoptPatternWork(saves: Bool) async {
+        isAdoptingPatterns = true
+        patternError = nil
+        patternMessage = nil
+        defer { isAdoptingPatterns = false }
+        let path = saves ? "/mobile/api/labor/schedule/adopt-admin-saves" : "/mobile/api/labor/learned-patterns/adopt"
+        do {
+            let r: AdoptAnswer = try await client.send(path, method: .post, body: EmptyBody(),
+                                                       hapticOnError: false, retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                let n = saves ? (r.versions ?? 0) : (r.adopted ?? 0)
+                patternMessage = saves
+                    ? "Counted as yours \u{2014} \(n) edit\(n == 1 ? "" : "s") now teach the draft."
+                    : "Counted as yours \u{2014} \(n) dismissal\(n == 1 ? "" : "s")."
+                await loadLearnedPatterns()
+            } else {
+                patternError = r.error ?? "Couldn\u{2019}t count those as yours."
+            }
+        } catch let error as APIClient.APIError {
+            patternError = error.message
+        } catch {
+            patternError = "Couldn\u{2019}t count those as yours."
         }
     }
 

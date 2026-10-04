@@ -95,10 +95,28 @@ struct RosterSection: View {
 
                 if !viewModel.openSuggestions.isEmpty { suggestedPairsBlock }
 
+                // Edits made through Cavnar AI support teach the draft
+                // nothing until the account holder counts them as theirs
+                // (schedule audit 10/3/26 L-8).
+                if let saves = viewModel.adminSaves, saves.versions > 0, viewModel.canAdoptPatterns {
+                    adminSavesBanner(saves)
+                }
+
                 if !viewModel.learnedPatterns.isEmpty { learnedPatternsBlock }
 
                 if !viewModel.standingPatterns.isEmpty || !viewModel.patternConflicts.isEmpty {
                     standingPatternsBlock
+                }
+
+                // What the last answer about a pattern did, said once under
+                // every pattern block (Make it a rule, keep, let go, adopt).
+                if let message = viewModel.patternMessage {
+                    Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let error = viewModel.patternError {
+                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -413,11 +431,34 @@ extension RosterSection {
                     }
                 }
             }
-            if let error = viewModel.patternError {
-                Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
+    }
+
+    /// "6 edits made through Cavnar AI support on 2 weeks don't teach the
+    /// draft yet — count them as yours?"
+    private func adminSavesBanner(_ saves: AdminSavesPending) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HomeMixedText.make("\(saves.versions) edit\(saves.versions == 1 ? "" : "s") made through Cavnar AI support on "
+                               + "\(saves.weeks) week\(saves.weeks == 1 ? "" : "s") don\u{2019}t teach the draft yet \u{2014} "
+                               + "count them as yours?", size: 14, weight: 600, color: .cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Only where those edits were your decisions.")
+                .font(.cavnarBody(12.5))
+                .foregroundStyle(Color.cavnarInk3)
+            Button {
+                Task { await viewModel.adoptPatternWork(saves: true) }
+            } label: {
+                Group {
+                    if viewModel.isAdoptingPatterns { CavnarShimmerText(text: "Counting\u{2026}") } else { Text("Count them as mine") }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.isAdoptingPatterns))
+            .disabled(viewModel.isAdoptingPatterns)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarAmber.opacity(0.08)))
     }
 
     private func learnedPatternRow(_ pattern: LearnedPattern) -> some View {
@@ -434,12 +475,36 @@ extension RosterSection {
                     HomeMixedText.make(pattern.text ?? "", size: 14, color: dismissed ? .cavnarInk3 : .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
-                        if let n = pattern.times {
-                            HomeMixedText.make("\(n) \(n == 1 ? "time" : "times")", size: 12.5, color: .cavnarInk3)
+                        // Its denominator: "2 of 3 weeks", and how sure
+                        // that makes it (schedule audit 10/3/26 L-6).
+                        if let evidence = pattern.evidenceLine {
+                            HomeMixedText.make(evidence, size: 12.5, color: .cavnarInk3)
                         }
-                        Text(dismissed ? "not in use" : (pattern.active == true ? "in use" : "needs one more repeat"))
+                        Text(dismissed ? "not in use" : (pattern.active == true ? "in use" : "not enough weeks yet"))
                             .font(.cavnarBody(12.5, weight: 600))
                             .foregroundStyle(dismissed ? Color.cavnarInk3 : (pattern.active == true ? Color.cavnarGreen : Color.cavnarInk3))
+                    }
+                    // A dismissal made through support counts once the
+                    // account holder says it's theirs (L-10).
+                    if pattern.dismissedByAdmin == true {
+                        HStack(spacing: 10) {
+                            Text("Dismissed through Cavnar AI support \u{2014} not counted")
+                                .font(.cavnarBody(12.5, weight: 600))
+                                .foregroundStyle(Color.cavnarAmber)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if viewModel.canAdoptPatterns {
+                                Button {
+                                    Task { await viewModel.adoptPatternWork(saves: false) }
+                                } label: {
+                                    Text("Count as mine")
+                                        .font(.cavnarBody(13, weight: 700))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .frame(minHeight: 32)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(viewModel.isAdoptingPatterns)
+                            }
+                        }
                     }
                 }
             }
@@ -507,10 +572,6 @@ extension RosterSection {
                     }
                 }
             }
-            if let message = viewModel.patternMessage {
-                Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
@@ -532,8 +593,14 @@ extension RosterSection {
                         HomeMixedText.make(history, size: 12.5, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // Kept how many of the weeks that tested it, how sure,
+                    // and when a manager's hand last confirmed it (L-6, L-30).
+                    if let evidence = pattern.evidenceLine {
+                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack(spacing: 6) {
-                        if let applied = pattern.timesApplied {
+                        if pattern.evidenceLine == nil, let applied = pattern.timesApplied {
                             HomeMixedText.make("kept \(applied) \(applied == 1 ? "time" : "times")", size: 12.5,
                                                color: .cavnarInk3)
                         }
@@ -542,14 +609,53 @@ extension RosterSection {
                         }
                         Text(pattern.statusLabel)
                             .font(.cavnarBody(12.5, weight: 600))
-                            .foregroundStyle(ruled ? Color.cavnarGreen : (retired ? Color.cavnarInk3 : Color.cavnarEmber2))
+                            .foregroundStyle(ruled ? Color.cavnarGreen : (retired ? Color.cavnarInk3
+                                : (pattern.isRetest ? Color.cavnarAmber : Color.cavnarEmber2)))
                     }
                     if ruled, let note = pattern.rule?.note {
                         HomeMixedText.make("Rule: " + note + (pattern.rule?.by.map { " \u{00B7} by " + $0 } ?? ""),
                                            size: 12.5, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // A cut stays a habit: Cavnar AI holds minimums, not
+                    // maximums (L-33's refusal, said before anyone asks).
+                    if pattern.kind == "headcount_cut", !retired {
+                        Text("A cut can\u{2019}t be a rule \u{2014} Cavnar AI holds staffing minimums, not maximums. The draft keeps it as a habit.")
+                            .font(.cavnarBody(12.5))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+            }
+            // Re-tested: the next draft leaves it out to check it's still
+            // wanted — the owner can answer now instead (L-30).
+            if pattern.isRetest {
+                VStack(alignment: .leading, spacing: 6) {
+                    HomeMixedText.make("Left out of the next draft to check you still want it"
+                                       + (pattern.retestSince.map { " (since \($0))" } ?? "") + ".",
+                                       size: 13, weight: 600, color: .cavnarAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if viewModel.canEditPatterns {
+                        HStack(spacing: 18) {
+                            Button {
+                                Task { await viewModel.answerStanding(pattern, keep: true) }
+                            } label: {
+                                Text("Keep it").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                                    .frame(minHeight: 32)
+                            }
+                            .buttonStyle(.plain)
+                            Button {
+                                Task { await viewModel.answerStanding(pattern, keep: false) }
+                            } label: {
+                                Text("Let it go").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                                    .frame(minHeight: 32)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .disabled(busy)
+                    }
+                }
+                .padding(.leading, 26)
             }
             if pattern.canBeRule && viewModel.canEditPatterns {
                 Button {
