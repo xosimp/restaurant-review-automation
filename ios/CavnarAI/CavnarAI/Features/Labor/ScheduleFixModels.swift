@@ -1118,3 +1118,77 @@ extension GeneratedSchedule {
     }
 }
 
+
+/// The week's labor % on ONE stated basis (schedule re-audit 10/4/26 SQ-4,
+/// schedule_economics.labor_view): all-in for the owner — hourly pay plus
+/// the salaried staff's share of the week, against the all-in target —
+/// hourly pay only for anyone else, against the hourly budget's share of
+/// sales. `projected_cost` alone is hourly pay; it is never divided by
+/// sales and graded against the all-in target.
+struct ScheduleLaborView: Codable, Hashable {
+    var basis: String?
+    var pct: Double?
+    var targetPct: Double?
+    var targetBasis: String?
+    var recentPct: Double?
+    var recentDays: Int?
+    var savings: Double?
+    var text: String?
+
+    var isAllIn: Bool { basis == "all_in" }
+
+    /// "Labor 39.4% of forecast sales, all-in · your target 30%".
+    var line: String? {
+        guard let pct else { return nil }
+        var out = "Labor \(String(format: "%.1f", pct))% of forecast sales, " + (isAllIn ? "all-in" : "hourly pay only")
+        if let t = targetPct {
+            out += (targetBasis == "hourly" ? " · the hourly budget is " : " · your target is ")
+                + "\(String(format: "%g", t))%"
+        }
+        return out
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        basis = c.sfText(.basis); pct = c.sfDouble(.pct); targetPct = c.sfDouble(.targetPct)
+        targetBasis = c.sfText(.targetBasis); recentPct = c.sfDouble(.recentPct); recentDays = c.sfInt(.recentDays)
+        savings = c.sfDouble(.savings); text = c.sfText(.text)
+    }
+    enum CodingKeys: String, CodingKey {
+        case basis, pct, savings, text
+        case targetPct = "target_pct"
+        case targetBasis = "target_basis"
+        case recentPct = "recent_pct"
+        case recentDays = "recent_days"
+    }
+}
+
+/// {date: hours} the week was generated against (`daily_target_hours`).
+/// Sent back with every re-score so the phone's number is the server's
+/// (schedule re-audit 10/4/26 UI-5); a malformed entry is skipped.
+struct DailyHourTargets: Codable, Hashable {
+    var hours: [String: Double] = [:]
+
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: Key.self) else { return }
+        for k in c.allKeys {
+            if let d = (try? c.decode(Double.self, forKey: k)), d.isFinite, d > 0 {
+                hours[k.stringValue] = d
+            } else if let s = (try? c.decode(String.self, forKey: k)), let d = Double(s), d.isFinite, d > 0 {
+                hours[k.stringValue] = d
+            }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        for (k, v) in hours { if let key = Key(stringValue: k) { try c.encode(v, forKey: key) } }
+    }
+}

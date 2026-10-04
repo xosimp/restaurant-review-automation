@@ -21882,12 +21882,16 @@ function renderQualityWarnings(quality) {
     }).map(function (x) { return x.r; });
   }
   var hidden = quality.suppressed_recommendation_kinds || [];
-  if (!below.length && !recs.length && !hidden.length) { el.innerHTML = ''; return; }
+  var held = quality.held_by && quality.held_by.text ? quality.held_by : null;
+  if (!below.length && !recs.length && !hidden.length && !held) { el.innerHTML = ''; return; }
   // Two short lists, not a paragraph of sentences (owner, 10/2/26: "WAY too
   // wordy and jumbled together"): the shifts under their bar as one line
   // each, score against the bar; then what to do, each with a confidence
   // pill whose tap has the reason, and its buttons spaced apart.
   var html = '<div class="sq-warn">';
+  // A broken hard rule holds the whole week under fair (SQ-2): said first,
+  // in the cap's own style, so "weak" is never unexplained.
+  if (held) html += '<div style="margin-bottom:9px"><div class="sq-cap">' + num(held.text) + '</div></div>';
   if (below.length) {
     html += '<div class="sq-k">Below the bar</div>';
     for (i = 0; i < Math.min(below.length, 5); i++) {
@@ -22964,8 +22968,9 @@ function _schedRenderEconomics(data) {
   var pc = data.projected_cost || null, h = '', i;
   if (pc) {
     h += '<div class="hb-stats">'
-       + '<div class="hb-stat' + ((data.over_budget_dollars || 0) > 0 ? ' ember' : '') + '"><div class="k">Projected cost</div><div class="v">' + _schedMoney(pc.total) + '</div><div class="s">'
-       + ((data.over_budget_dollars === null || data.over_budget_dollars === undefined) ? 'no dollar budget set' : (data.over_budget_dollars > 0 ? _schedMoney(data.over_budget_dollars) + ' over the budget' : _schedMoney(-data.over_budget_dollars) + ' under the budget')) + '</div></div>'
+       + '<div class="hb-stat' + ((data.over_budget_dollars || 0) > 0 ? ' ember' : '') + '"><div class="k">Projected hourly pay</div><div class="v">' + _schedMoney(pc.total) + '</div><div class="s">'
+       // Hourly pay against the hourly budget (SQ-4): salaried pay is in neither.
+       + ((data.over_budget_dollars === null || data.over_budget_dollars === undefined) ? 'no dollar budget set' : (data.over_budget_dollars > 0 ? _schedMoney(data.over_budget_dollars) + ' over the hourly budget' : _schedMoney(-data.over_budget_dollars) + ' under the hourly budget')) + '</div></div>'
        + '<div class="hb-stat"><div class="k">Overtime hours</div><div class="v">' + _schedHrs(pc.overtime_hours) + '<small>h</small></div><div class="s">over the weekly ceiling</div></div>'
        + '<div class="hb-stat"><div class="k">Overtime premium</div><div class="v">' + _schedMoney(pc.overtime_premium) + '</div><div class="s">at ' + (pc.multiplier || 1.5) + '× on those hours</div></div>'
        + '<div class="hb-stat"><div class="k">Straight time</div><div class="v">' + _schedMoney(pc.straight) + '</div><div class="s">at the rates on file</div></div>'
@@ -23125,13 +23130,17 @@ function _schedSetDirty(on) {
 function _schedRecheck() {
   var base = [];
   try { base = JSON.parse(_schedSaved) || []; } catch (e) { base = []; }
+  var sent = _swRowsSig(_schedRows);
   fetch('/api/labor/schedule/violations', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({rows: _schedRows, baseline_rows: base})
+    body: JSON.stringify({rows: _schedRows, baseline_rows: base, history_id: _schedHistoryId || null})
   }).then(apiJson).then(function (d) {
     if (d && d.ok && window.renderScheduleReview) {
       renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, overtime_moves: d.overtime_moves || [], fixes: [], unfixed: []});
     }
+    // Kept only for the rows still on screen: a late answer for rows since
+    // edited (or another week's) waits for the next recheck.
+    if (d && d.ok && d.hours && sent === _swRowsSig(_schedRows)) { _swHours = {sig: sent, v: d.hours}; if (typeof swLive === 'function') swLive(); }
     _schedRenderCost(d && d.ok ? d.cost : null);
   }).catch(function () { _schedRenderCost(null); });
 }
@@ -23144,9 +23153,13 @@ function _schedRenderCost(c) {
   if (!c || !_schedDirty) { el.innerHTML = ''; el.className = 'sched-cost'; return; }
   var hd = +c.hours_delta || 0, dd = +c.dollars_delta || 0, ot = +c.overtime_hours_after || 0;
   var sign = function (n) { return (n > 0 ? '+' : (n < 0 ? '−' : '')); };
-  var bits = ['<span class="hb-num">' + sign(hd) + _schedHrs(Math.abs(hd)) + 'h</span>',
+  var sd = +c.salaried_hours_delta || 0;
+  // Hourly hours and hourly pay (SQ-6): a salaried person's hours cost
+  // nothing more and are said apart.
+  var bits = ['<span class="hb-num">' + sign(hd) + _schedHrs(Math.abs(hd)) + 'h</span>' + (c.basis === 'hourly' ? ' hourly' : ''),
               '<span class="hb-num">' + sign(dd) + '$' + Math.round(Math.abs(dd)).toLocaleString() + '</span>'];
   if (ot > 0) bits.push('<span class="hb-num">' + _schedHrs(ot) + 'h</span> overtime');
+  if (sd) bits.push('<span class="hb-num">' + sign(sd) + _schedHrs(Math.abs(sd)) + 'h</span> salaried, no added pay');
   el.innerHTML = bits.join(' · ');
   el.className = 'sched-cost' + (dd > 0 ? ' up' : (dd < 0 ? ' down' : ''));
 }
@@ -24536,6 +24549,16 @@ var _swView = 'week';
 var _swData = null;          // the draft as generated or reopened (swFill)
 var _swRoster = null;        // /api/labor/roster
 var _swRules = null;         // /api/labor/rules .rules
+// The hours panel's figures on the hourly basis the PAR and the daily
+// targets are sized on, from the rule recheck (schedule re-audit 10/4/26
+// SQ-5): {sig, v: hours}. Who is salaried is the owner's, so the page is
+// never told; the server splits the hours.
+var _swHours = null;
+function _swRowsSig(rows) {
+  var out = [], i, r;
+  for (i = 0; i < (rows || []).length; i++) { r = rows[i] || {}; out.push([r.employee, r.date, r.role, r.shift_start, r.shift_end, r.scheduled_hours].join('|')); }
+  return out.join('~');
+}
 var _swEditIdx = null;       // the shift the popover edits
 var _swAddedIdx = null;      // a shift added from the grid, not yet Done
 function _swCeil() { var c = _swRules && +_swRules.weekly_hours_ceiling; return c > 0 ? c : 40; }
@@ -24789,6 +24812,7 @@ function _swBar(label, val, max, target, cls, right) {
 }
 function swFill(data) {
   _swData = data || null;
+  _swHours = null;   // another week's split is not this one's (SQ-5)
   var fc = document.getElementById('sw-forecast');
   // The Forecast tab is the preview's (ssLoadForecast), which names its
   // week; a new or reopened draft only makes it re-read (blind audit).
@@ -24815,6 +24839,18 @@ function swLive() {
     var rl = r.role || 'Other'; rh[rl] = (rh[rl] || 0) + hh;
     ph[r.employee || ''] = (ph[r.employee || ''] || 0) + hh;
   }
+  // The PAR, the daily targets and the 40h line are HOURLY (SQ-5): the
+  // server's split of the rows (the last recheck) replaces the all-rows
+  // sums, salaried hours said apart. Until the first recheck answers, the
+  // sums stand and say they are every hour.
+  var hv = _swHours ? _swHours.v : null, salTot = 0, roleCnt = null, k2;
+  if (hv) {
+    tot = +hv.hourly || 0; salTot = +hv.salaried || 0;
+    dh = {}; for (k2 in (hv.by_date || {})) if (hv.by_date.hasOwnProperty(k2)) dh[k2] = +hv.by_date[k2] || 0;
+    rh = {}; for (k2 in (hv.by_role || {})) if (hv.by_role.hasOwnProperty(k2)) rh[k2] = +hv.by_role[k2] || 0;
+    ph = {}; for (i = 0; i < (hv.over || []).length; i++) ph[hv.over[i].name] = +hv.over[i].hours || 0;
+    roleCnt = hv.role_people || {};
+  }
   if (cov) {
     var mx = 0, h = '';
     for (j = 0; j < days.length; j++) mx = Math.max(mx, dh[days[j]] || 0, +tg[days[j]] || 0);
@@ -24826,7 +24862,8 @@ function swLive() {
     // people times the weekly ceiling. Past that, the overtime is the
     // roster's size, not any one shift (owner, 9/26/26: "13 hard rules").
     var ceil = _swCeil(), cnt = {}, ro = (_swRoster && _swRoster.roster) || [], flags = [];
-    for (i = 0; i < ro.length; i++) if (ro[i].active !== false) { var rr = ro[i].role || 'Other'; cnt[rr] = (cnt[rr] || 0) + 1; }
+    if (roleCnt) cnt = roleCnt;
+    else for (i = 0; i < ro.length; i++) if (ro[i].active !== false) { var rr = ro[i].role || 'Other'; cnt[rr] = (cnt[rr] || 0) + 1; }
     var rows2 = '', rk, rmx = 0; for (rk in rh) if (rh.hasOwnProperty(rk)) rmx = Math.max(rmx, rh[rk], (cnt[rk] || 0) * ceil);
     for (rk in rh) if (rh.hasOwnProperty(rk)) {
       var cap = (cnt[rk] || 0) * ceil, over = cap && rh[rk] > cap;
@@ -24836,7 +24873,7 @@ function swLive() {
     // By role only when a role is past what its roster covers without
     // overtime (the flag below says which): otherwise it was a second chart
     // saying "fine" (owner, 9/26/26: the panel was jammed).
-    h = '<div class="sw-note" style="margin-bottom:6px">People on · hours scheduled / the forecast’s</div>' + h
+    h = '<div class="sw-note" style="margin-bottom:6px">People on · ' + (hv ? 'hourly hours' : 'hours') + ' scheduled / the forecast’s' + (hv && salTot ? ' · salaried hours apart' : '') + '</div>' + h
       + (rows2 && flags.length ? '<div class="sw-sub">By role · hours / what the roster covers at <span class="hb-num">' + ceil + 'h</span> each</div>' + rows2 : '');
     for (i = 0; i < flags.length; i++) h += '<div class="sw-flag bad">' + flags[i] + '</div>';
     if (cov._h !== h) { cov.innerHTML = h; cov._h = h; }
@@ -24853,11 +24890,15 @@ function swLive() {
     var bud = _swData && +_swData.hours_budget, ot = [], nm, lh = '';
     for (nm in ph) if (ph.hasOwnProperty(nm) && nm && ph[nm] > _swCeil()) ot.push({n: nm, h: ph[nm]});
     ot.sort(function (a, b) { return b.h - a.h; });
-    lh += '<div class="sw-kv"><span>Scheduled</span><b class="hb-num' + (bud && tot > bud ? ' bad' : '') + '">' + _schedHrs(tot) + 'h</b></div>';
+    lh += '<div class="sw-kv"><span>' + (hv ? 'Hourly hours scheduled' : 'Scheduled') + '</span><b class="hb-num' + (bud && tot > bud ? ' bad' : '') + '">' + _schedHrs(tot) + 'h</b></div>';
+    if (hv && salTot) lh += '<div class="sw-kv"><span>Salaried hours (not paid from PAR)</span><b class="hb-num">' + _schedHrs(salTot) + 'h</b></div>';
     if (bud) lh += '<div class="sw-kv"><span>PAR (the ceiling)</span><b class="hb-num">' + _schedHrs(bud) + 'h</b></div>'
                + '<div class="sw-kv"><span>' + (tot > bud ? 'Over PAR' : 'Under PAR') + '</span><b class="hb-num ' + (tot > bud ? 'bad' : 'good') + '">' + _schedHrs(Math.abs(bud - tot)) + 'h</b></div>';
-    var pc = _swData && _swData.projected_cost, rev = _swData && +_swData.projected_revenue;
-    if (pc && pc.total && rev) lh += '<div class="sw-kv"><span>Labor % as drafted</span><b class="hb-num">' + (Math.round(pc.total / rev * 1000) / 10) + '%</b></div>';
+    // The week's labor % on the basis the server states (SQ-4): all-in for
+    // the owner, hourly for anyone else — never hourly pay over sales
+    // beside an all-in target.
+    var lv = _swData && _swData.labor_view;
+    if (lv && lv.pct != null) lh += '<div class="sw-kv"><span>Labor % as drafted, ' + (lv.basis === 'all_in' ? 'all-in' : 'hourly pay only') + '</span><b class="hb-num">' + _escHtml(String(lv.pct)) + '%</b></div>';
     if (ot.length) {
       var names = []; for (i = 0; i < Math.min(ot.length, 5); i++) names.push(_escHtml(ot[i].n) + ' <span class="hb-num">' + _schedHrs(ot[i].h) + 'h</span>');
       lh += '<div class="sw-flag bad"><b><span class="hb-num">' + ot.length + '</span> ' + (ot.length === 1 ? 'person' : 'people') + ' over <span class="hb-num">' + _swCeil() + 'h</span></b>: ' + names.join(', ') + (ot.length > 5 ? ' and <span class="hb-num">' + (ot.length - 5) + '</span> more' : '') + '.</div>';
@@ -25435,24 +25476,30 @@ function studioOnReset() {
   if (_ssOpen && _ssStage === 'build') studioGo('setup');
 }
 // ── Summary ────────────────────────────────────────────────────────────
+// The week's labor % as the server states it (schedule re-audit 10/4/26
+// SQ-4): one basis for the figure, its target and the recent % it is
+// compared with — all-in for the owner, hourly pay for anyone else.
 function _ssLaborPct() {
-  var d = _swData || {}, pc = d.projected_cost, rev = +d.projected_revenue;
-  return (pc && pc.total && rev) ? Math.round(pc.total / rev * 1000) / 10 : null;
+  var lv = (_swData || {}).labor_view;
+  return (lv && lv.pct != null) ? +lv.pct : null;
 }
 function ssRenderSummary() {
   var el = document.getElementById('ss-summary'); if (!el) return;
   var q = (typeof _quality !== 'undefined' && _quality) || {}, d = _swData || {}, pc = d.projected_cost || null;
   var rv = _ssReview || d.review || {}, hard = +rv.hard || 0, soft = +rv.soft || 0, i;
   var cov = null; for (i = 0; i < (q.dimensions || []).length; i++) if (q.dimensions[i].key === 'coverage') cov = q.dimensions[i].score;
-  var lp = _ssLaborPct(), tgt = +(d.labor_target || window._SS_TARGET || 0);
+  var lv = d.labor_view || null, lp = _ssLaborPct(), tgt = lv && lv.target_pct != null ? +lv.target_pct : 0;
   var ds = _schedWeekDates || [], people = {}, hrs = 0;
   for (i = 0; i < _schedRows.length; i++) { people[String(_schedRows[i].employee || '').toLowerCase()] = 1; hrs += _swRowHrs(_schedRows[i]); }
   var np = 0, k; for (k in people) if (people.hasOwnProperty(k) && k) np++;
   // Savings are a projection, never a result (CLAUDE.md, value delivered):
   // the forecast's sales at the labor % measured over the recent window,
-  // minus the same sales at this draft's. Shown only when both are measured.
-  var rec = window._SS_RECENT || {}, rev = +d.projected_revenue, sav = null;
-  if (lp !== null && rec.pct && rev && rec.pct > lp) sav = Math.round((rec.pct - lp) / 100 * rev);
+  // minus the same sales at this draft's — the server's, both on one basis
+  // (SQ-4: the hourly draft against the all-in recent % made the salaries
+  // the "savings"). Shown only when both are measured.
+  var rev = +d.projected_revenue, sav = (lv && lv.savings != null) ? +lv.savings : null;
+  var rec = {pct: lv ? lv.recent_pct : null, days: lv ? lv.recent_days : null};
+  var basisWord = lv ? (lv.basis === 'all_in' ? 'all-in' : 'hourly pay only') : '';
   var sc = q.score, band = q.band ? String(q.band) : '';
   var C = 2 * Math.PI * 30, off = sc != null ? C * (1 - Math.max(0, Math.min(100, +sc)) / 100) : C;
   function tile(cls, k, v, s, extra) { return '<div class="ss-tile ' + cls + '"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + '</div>' + (extra || '') + '</div>'; }
@@ -25464,7 +25511,9 @@ function ssRenderSummary() {
             band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week',
             sc == null ? '' : '<svg class="ring" viewBox="0 0 74 74" aria-hidden="true"><circle class="tr" cx="37" cy="37" r="30"/><circle class="fg" cx="37" cy="37" r="30" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 37 37)"/></svg>');
   h += tile(lp === null ? '' : (tgt && lp > tgt + 0.5 ? 'bad' : 'good'), 'Labor', lp === null ? '—' : '<span class="hb-num">' + lp + '</span><small>%</small>',
-            lp === null ? 'Needs the forecast this draft was built on — generate a new draft to see it' : 'of forecast sales' + (tgt ? ' · your target is <span class="hb-num">' + tgt + '%</span>' : ''));
+            lp === null ? 'Needs the forecast this draft was built on — generate a new draft to see it'
+              : 'of forecast sales, ' + basisWord + (tgt ? ' · ' + (lv.target_basis === 'hourly' ? 'the hourly budget is' : 'your target is') + ' <span class="hb-num">' + tgt + '%</span>' : ''),
+            lv && lv.text ? '<div class="s" style="margin-top:4px">' + _numText(lv.text) + '</div>' : '');
   h += tile(cov == null ? '' : (cov >= 90 ? 'good' : (cov >= 75 ? 'warn' : 'bad')), 'Coverage', cov == null ? '—' : '<span class="hb-num">' + Math.round(cov) + '</span><small>%</small>',
             'of the people each shift needs, on it');
   var ot = pc ? +pc.overtime_hours || 0 : null;
@@ -25474,7 +25523,7 @@ function ssRenderSummary() {
             hard ? '<span class="hb-num">' + hard + '</span> break a hard rule · fix before sending' : (soft ? 'Soft rules only · worth a look' : 'Every rule kept'));
   h += tile('hero', 'Estimated savings', sav === null ? '—' : '<span class="hb-num">' + _schedMoney(sav) + '</span>',
             sav === null ? 'Needs a measured labor % for your recent weeks and this draft’s forecast'
-              : 'this week vs your last <span class="hb-num">' + (rec.days || 14) + '</span> days at <span class="hb-num">' + rec.pct + '%</span> labor, on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
+              : 'this week vs your last <span class="hb-num">' + (rec.days || 14) + '</span> days at <span class="hb-num">' + rec.pct + '%</span> labor (' + basisWord + '), on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
             '<span class="tag">Projection · not yet earned</span>');
   h += '</div><div class="sfw1-notes" id="sfw1-sum"></div><div class="ss-sum-go">'
     + '<button type="button" class="cbtn cbtn-primary cbtn-lg" data-ss-go="schedule">View the schedule</button>'
@@ -36907,7 +36956,8 @@ window.cavPalette = cavPalette;
         // What the week was written against, and its rows priced as they
         // stand (mobile_schedule_history_detail), so a reopened week shows
         // its cost, labor % and forecast like a fresh one.
-        projected_cost: d.projected_cost || null, projected_revenue: (d.economics || {}).projected_revenue || null,
+        projected_cost: d.projected_cost || null, labor_view: d.labor_view || null,
+        projected_revenue: (d.economics || {}).projected_revenue || null,
         projected_revenue_source: (d.economics || {}).projected_revenue_source || null,
         labor_budget_dollars: (d.economics || {}).labor_budget_dollars || null,
         demand_data_through: (d.economics || {}).demand_data_through || null,

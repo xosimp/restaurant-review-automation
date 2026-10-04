@@ -5005,7 +5005,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
                 floors_here[role] = int(n)
         # The late segment rides on the night of a date closing past 11pm.
         late = _late_facts(date, day, part, close_times, req_by_date, day_rows_by_date.get(date, []),
-                           splh_targets, daypart_sales, demand_by_date)
+                           splh_targets, daypart_sales, demand_by_date, salaried=salaried)
         contexts.append(ShiftContext(
             date=date, day=day, daypart=part, rows=shift_rows,
             profile=profile,
@@ -5076,11 +5076,17 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
 
 
 def _late_facts(date, day, part, close_times, req_by_date, day_rows, splh_targets, daypart_sales,
-                demand_by_date) -> dict:
+                demand_by_date, salaried=frozenset()) -> dict:
     """The late segment's ShiftContext fields for one night (D-32): its
     window, the people it needs (the requirements table's late row), its
     usual sales raised by the date's lift, its target and the hours the
-    draft puts in it. {} for a morning, or a night not closing past 11pm."""
+    draft puts in it. {} for a morning, or a night not closing past 11pm.
+
+    `salaried` (name keys): their late hours are not the late segment's, on
+    the basis its target is measured on (splh_by_daypart is hourly only) and
+    the night's own hours already are (schedule re-audit 10/4/26 SQ-9): a
+    salaried owner closing beside one bartender read half the late SPLH and
+    told the owner to cut 4 late hours."""
     if part != "night":
         return {}
     window = late_window(_slot_minutes((close_times or {}).get(day)) if (close_times or {}).get(day) else None)
@@ -5093,7 +5099,8 @@ def _late_facts(date, day, part, close_times, req_by_date, day_rows, splh_target
             sales = float(sales) * (1 + float(lift) / 100.0) if lift else float(sales)
         except (TypeError, ValueError):
             sales = float(sales)
-    hours = sum(late_minutes(r, window) for r in day_rows or [] if (r.get("employee") or "").strip()) / 60.0
+    hours = sum(late_minutes(r, window) for r in day_rows or []
+                if (r.get("employee") or "").strip() and name_key(r.get("employee")) not in salaried) / 60.0
     return {"late_window": window, "late_required": dict(req_by_date.get((date, "late")) or {}),
             "late_expected_sales": sales or None, "late_splh_target": ((splh_targets or {}).get(day) or {}).get("late"),
             "late_hours": round(hours, 2)}

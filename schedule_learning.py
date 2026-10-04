@@ -2112,6 +2112,13 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
     candidates beyond the people already in the draft."""
     from shift_quality import _SwapIndex, WEEKLY_HOURS_CEILING
     rows = [r for r in (rows or []) if (r.get("employee") or "").strip()]
+    # A salaried person owes no overtime and their hours are not the hourly
+    # pay this forecasts (owner's rule; schedule re-audit 10/4/26 SQ-5/SQ-6
+    # siblings): a salaried GM at 55h was "past the ceiling", with a move
+    # that "saves" overtime pay nobody owes. Their own cap is the sweep's
+    # (over_max_hours on Constraints.salaried_limit).
+    salaried_row = (lambda r: constraints.is_salaried(r.get("employee"))) if constraints is not None \
+        else (lambda r: False)
     if constraints is not None:
         base_hours = constraints.base_hours if base_hours is None else base_hours
         bucket = constraints.bucket if bucket is None else bucket
@@ -2166,6 +2173,8 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
         n = r["employee"].strip()
         low = n.lower()
         names[low] = n
+        if salaried_row(r):
+            continue
         k = (low, _bucket(r.get("date")))
         draft[k] = draft.get(k, 0.0) + _hours(r)
         role = (r.get("role") or "").strip().lower()
@@ -2198,6 +2207,9 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
             best = None
             for cand in sorted(roles.get(role, set()) - {low}):
                 cname = names.get(cand, cand)
+                if salaried_row({"employee": cname}):
+                    # Their hours are not counted here, so their "room" is not known.
+                    continue
                 room = _cap(cname) - _total(cand, b)
                 if room + 0.05 < _hours(r):
                     continue

@@ -297,6 +297,29 @@ def standards(restaurant_id, restaurant=None, shifts: list = None, db_path=DB_PA
     return {"families": fams, "slots": slots}
 
 
+def split_people(need: int, roles: dict) -> dict:
+    """{role: people} — `need` people of one family shared across its job
+    codes as they usually split (`roles`: {role: usual people}), by largest
+    remainder: each code its whole share, then the people left over to the
+    codes with the largest fractions (the busier code, then the name, on a
+    tie). The split always sums to exactly `need`: rounding each share and
+    holding the lead code to at least 1 asked 3 servers across three codes
+    when the owner's standard said 2 (schedule re-audit 10/4/26 SQ-12)."""
+    need = max(0, int(need))
+    usual = sum(max(0, int(n or 0)) for n in roles.values())
+    if not roles:
+        return {}
+    if usual <= 0:
+        lead = max(roles, key=lambda r: (int(roles[r] or 0), r))
+        return {r: (need if r == lead else 0) for r in roles}
+    exact = {r: need * max(0, int(n or 0)) / usual for r, n in roles.items()}
+    split = {r: int(math.floor(v + 1e-9)) for r, v in exact.items()}
+    left = need - sum(split.values())
+    for r in sorted(roles, key=lambda r: (-(exact[r] - split[r]), -int(roles[r] or 0), r))[:max(0, left)]:
+        split[r] += 1
+    return split
+
+
 def needs_for_week(week_dates, typical_headcount: dict, std: dict, date_demand: dict = None) -> dict:
     """{(date, daypart): {role lower: {"people", "reason"}}} — for each role
     whose family carries the OWNER's standard on that daypart: the usual
@@ -332,10 +355,7 @@ def needs_for_week(week_dates, typical_headcount: dict, std: dict, date_demand: 
                 if not work or not per_person:
                     continue
                 need = max(1, int(math.ceil(work * f / (float(st["per_hour"]) * float(per_person)) - 1e-9)))
-                usual = sum(roles.values()) or 1
-                split = {r: int(round(need * n / usual)) for r, n in roles.items()}
-                lead = max(roles, key=lambda r: (roles[r], r))
-                split[lead] = max(1, need - sum(v for r, v in split.items() if r != lead))
+                split = split_people(need, roles)
                 why = (f"your standard of {st['per_hour']:g} {st['unit']} per {UNIT_WORDS.get(fam, fam)}-hour: "
                        f"about {work * f:.0f} {st['unit']} over {per_person:g}h shifts needs {need}")
                 for r, v in split.items():
