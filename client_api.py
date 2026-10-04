@@ -10666,6 +10666,12 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         for v in viols:
             if v["hard"]:
                 continue
+            if v["kind"] in _sr.ROSTER_BLOCKERS:
+                # Nobody counted as a floor manager: the highest rule is
+                # unmet on every shift, so the week waits for the owner to
+                # name who runs the floor (schedule re-audit 10/4/26 RULES-13).
+                add(f"roster:{v['kind']}", v["detail"][:1].upper() + v["detail"][1:])
+                continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             text = f"{v['employee']} — {where}: {v['detail']}"
             if unattended and v["kind"] in _sr.HOLD_UNATTENDED:

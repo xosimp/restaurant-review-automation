@@ -179,6 +179,10 @@ def test_a_keyholder_stays_until_close_by_default(db_path, rid):
     _m.set_capability(rid, "Mgr", attribute="can_close", flag=True, db_path=db_path)
     csv_text = HEADER + (f"{WEEK[5]},Saturday,Mgr,Manager,2:00pm,8:00pm,6.0,\n"
                          f"{WEEK[5]},Saturday,Cook1,Cook,4:00pm,11:30pm,7.5,\n")
+    # With no close on file the closer is only the last of their role out:
+    # a cook's 11:30pm is not the manager closer's close (re-audit RULES-6).
+    assert not [x for x in _sweep(rid, csv_text) if x["kind"] == "keyholder_until_close"]
+    update_restaurant(rid, {"close_times_json": json.dumps({"Saturday": "11:30pm"})}, db_path=db_path)
     v = [x for x in _sweep(rid, csv_text) if x["kind"] == "keyholder_until_close"]
     assert v and v[0]["hard"]
     ok = csv_text.replace("2:00pm,8:00pm,6.0", "4:00pm,11:30pm,7.5")

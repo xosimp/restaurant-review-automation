@@ -321,7 +321,9 @@ def test_the_review_names_only_the_minutes_the_finished_week_leaves_unmanaged():
     week = plan["rows"] + [{"date": "2026-10-07", "day": "Wednesday", "employee": "Ana", "role": "Server",
                             "shift_start": "4:00pm", "shift_end": "10:00pm", "scheduled_hours": "6"}]
     lines = [x for x in sk.review_lines(plan, gaps=sr.manager_gaps(week, c)) if x.startswith("No manager")]
-    assert lines == ["No manager can be on Wednesday 10/7/26 from 4:00pm to 10:00pm — Erik: on approved time off; "
+    # The restaurant opens at 11am: the hours open with nobody managing are
+    # unmanaged minutes too, not only the hours Ana is on (re-audit RULES-1).
+    assert lines == ["No manager can be on Wednesday 10/7/26 from 11:00am to 10:00pm — Erik: on approved time off; "
                      "Jim: on approved time off; Anthony: on approved time off; Andrew: on approved time off."]
     assert not [x for x in sk.review_lines(plan, gaps={}) if x.startswith("No manager")]
 

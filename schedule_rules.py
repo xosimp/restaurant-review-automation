@@ -67,16 +67,17 @@ NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert", "note_unavailab
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
                             "minor_early", "minor_week_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
-                            "no_manager", "role_not_held",
-                            # Nobody on the roster runs the floor: the highest
-                            # rule can't be met by any week, so none publishes
-                            # until the owner names who manages (schedule
-                            # re-audit 10/4/26 RULES-13 — it was a soft note).
-                            "no_manager_roster"})
+                            "no_manager", "role_not_held"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
-                  "owner_rule", "payroll_tail_full", "shift_too_short",
+                  "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
                   "closer_unavailable", "trainee_unpaired", "role_time"})
+# Soft flags about the roster, not the week, that still hold every publish:
+# with nobody counted as a floor manager the highest rule is unmet on every
+# shift and no draft can mend it, so the week waits until the owner names
+# who runs the floor (schedule re-audit 10/4/26 RULES-13 — it published
+# under a soft note).
+ROSTER_BLOCKERS = frozenset({"no_manager_roster"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily overtime and a time-off
 # request nobody answered are things a person decides, not a week to send
@@ -959,9 +960,10 @@ class Constraints:
     patio_roles: set = field(default_factory=set)
     close_mins: dict = field(default_factory=dict)         # {role lower: minutes after close the role stays until}
     # The role families whose punches show them on until the restaurant's
-    # close (closing_families over the last weeks): with close_mins, the
-    # roles a closer stays to the close for (RULES-6).
+    # close, and those they show ending before it (closing_split over the
+    # last weeks): what closer_need holds each role's closer to (RULES-6).
     close_roles: set = field(default_factory=set)
+    early_close_roles: set = field(default_factory=set)
     section_cap: int = 0
     role_floors: dict = field(default_factory=dict)
     open_times: dict = field(default_factory=dict)
@@ -1820,7 +1822,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     try:
         from models import get_leader_flags
         chosen, c.closer_roles_basis = closer_roles(restaurant), "yours"
-        c.close_roles = closing_families(c, _closing_history(restaurant_id, c))
+        c.close_roles, c.early_close_roles = closing_split(c, _closing_history(restaurant_id, c))
         if not chosen:
             chosen = sorted(c.close_roles)
             c.closer_roles_basis = "history" if chosen else "all"
@@ -2216,6 +2218,14 @@ def _closing_history(restaurant_id, c) -> list:
 def closing_families(c, rows) -> set:
     """The role families the restaurant's own punches show on until close
     (D-9): a closer rule's default reach until the owner chooses the roles."""
+    return closing_split(c, rows)[0]
+
+
+def closing_split(c, rows) -> tuple:
+    """(closing, early): the role families the punches show on until close,
+    and those seen on enough days to say they end before it (a kitchen that
+    closes at 11pm when the bar closes at 2am) — closer_need holds only the
+    first to the restaurant's close (RULES-6)."""
     by_day, fam_day = {}, {}
     for r in rows or []:
         d, fam, e = str(r.get("date") or "")[:10], c.family(r.get("role")), end_minutes(r)
@@ -2230,8 +2240,9 @@ def closing_families(c, rows) -> set:
         worked[fam] = worked.get(fam, 0) + 1
         if e >= last - 15:
             closed[fam] = closed.get(fam, 0) + 1
-    return {f for f, n in worked.items()
-            if n >= CLOSING_ROLE_MIN_DAYS and closed.get(f, 0) >= CLOSING_ROLE_SHARE * n}
+    seen = {f for f, n in worked.items() if n >= CLOSING_ROLE_MIN_DAYS}
+    closing = {f for f in seen if closed.get(f, 0) >= CLOSING_ROLE_SHARE * worked[f]}
+    return closing, seen - closing
 
 
 def _floors_on_job_codes(c):
@@ -3718,18 +3729,29 @@ def _closer_rule_runs(c, fam, d) -> bool:
 
 def closer_need(c, fam, day, role_last_end) -> tuple:
     """(minute, until_close) the closer of role family `fam` stays until on
-    `day`: the restaurant's close plus the role's minutes for a role that
-    stays to the close — one the owner gave a "stays until close" setting
-    (close_mins) or whose own punches show it on until close
-    (close_roles) — else the role's own last end: the closer is then only
-    the last of their role to leave (owner, 10/2/26). Every role used to be
-    held to the restaurant's close, or with no close on file to the day's
-    last shift of ANY role, so a cook closer was kept on to the bar's 2am
-    and a server to the dishwasher's 1am (schedule re-audit 10/4/26
-    RULES-6). The sweep, close_out_gaps and the solver all ask this."""
+    `day` — each role against its own close (schedule re-audit 10/4/26
+    RULES-6). Every role used to be held to the restaurant's close, or with
+    no close on file to the day's last shift of ANY role, so a cook closer
+    was kept on to the bar's 2am and a server to the dishwasher's 1am. In
+    order:
+      1. the owner's end-time rule for the role's night (role_times — "line
+         cooks end at 11pm Fridays"): that is the role's close;
+      2. a "stays until close + N" setting (close_mins): close plus N;
+      3. a role its own punches show ending before the close
+         (early_close_roles): the last of the role out — the closer is the
+         last of their role to leave (owner, 10/2/26);
+      4. the restaurant's close, when it is on file;
+      5. else the role's own last end.
+    The sweep, close_out_gaps, the solver and the prompt all ask this."""
+    for (role, wd, part), spec in (getattr(c, "role_times", None) or {}).items():
+        if wd == day and part == "night" and spec.get("end") is not None and c.family(role) == fam:
+            end = int(spec["end"])
+            return (end + 24 * 60 if end < _OVERNIGHT_LATEST_BEFORE else end), True
     close_m = close_minutes(c, day)
-    if close_m is not None and (fam in (c.close_mins or {}) or fam in (c.close_roles or set())):
+    if close_m is not None and fam in (c.close_mins or {}):
         return close_m + int((c.close_mins or {}).get(fam, 0) or 0), True
+    if close_m is not None and fam not in (getattr(c, "early_close_roles", None) or set()):
+        return close_m, True
     return role_last_end, False
 
 
@@ -3991,8 +4013,10 @@ def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
 
 
 def _manager_violations(rows: list, c: "Constraints", context=()) -> list:
-    """no_manager per unmanaged stretch, and the hard no_manager_roster when
-    nobody on the roster manages (RULES-13). Each no_manager is about its DAY, not the
+    """no_manager per unmanaged stretch, and no_manager_roster when nobody on
+    the roster manages — soft to the repair passes (no change to the week
+    can mend the roster), but a blocker at publish (ROSTER_BLOCKERS,
+    schedule re-audit 10/4/26 RULES-13). Each no_manager is about its DAY, not the
     row it is pinned to (`day_level`): the review shows it on the day, never
     as "needs review" on whichever server happened to be on at its start
     (schedule audit 10/3/26 E-13)."""
@@ -4510,7 +4534,7 @@ def _closer_prompt_lines(c) -> list:
         # Each role's own close (closer_need, RULES-6): a role that stays to
         # the restaurant's close is told so; the rest close when their role
         # is done — a kitchen closer is not kept on to the bar's close.
-        stays = bool(c.close_times) and (fam in (c.close_mins or {}) or fam in (c.close_roles or set()))
+        stays = bool(c.close_times) and fam not in (c.early_close_roles or set())
         bits.append(f"{_family_label(c, fam)}: " + ", ".join(sorted(_display_name(c, k) for k in keys))
                     + (f" (on until {mins} min after close)" if stays and mins else
                        " (on until close)" if stays else " (the last of the role to leave)"))
