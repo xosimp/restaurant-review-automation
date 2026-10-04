@@ -156,15 +156,17 @@ def test_the_restaurants_analysis_divides_by_the_measured_wage(db_path):
     rows = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes,pay_rate"]
     for n in range(1, 8):
         d = (today - timedelta(days=n)).isoformat()
-        rows.append(f"{d},X,Cal Cook,Line Cook,08:00,16:00,8,8,4000,,22")
+        # 5h a day: no payroll week passes 40h whatever today's weekday is,
+        # so the cost carries no overtime premium and cost ÷ hours is the wage
+        rows.append(f"{d},X,Cal Cook,Line Cook,08:00,13:00,5,5,4000,,22")
         rows.append(f"{d},X,Sue Server,Server PM,17:00,23:00,6,6,4000,,")
     models.save_client_data(rid, "shifts", "\n".join(rows) + "\n", source="rpower", db_path=db_path)
     a = labor.analyse_shifts_for_restaurant(rid, with_salaries=False)
-    want = round((56 * 22 + 42 * 9.48) / 98, 2)
+    want = round((35 * 22 + 42 * 9.48) / 77, 2)
     assert a["blended_rate"] == want
     assert a["rate_basis"]["assumed_share"] == 0 and a["rate_basis"]["basis"] == "measured"
     # The cost the Labor tab shows is the same wages: cost ÷ hours is the rate.
-    assert abs(a["hourly_costed_labor"] / 98 - want) < 0.01
+    assert abs(a["hourly_costed_labor"] / 77 - want) < 0.01
 
 
 def test_every_roles_measured_rate_reaches_the_prompt(monkeypatch):
