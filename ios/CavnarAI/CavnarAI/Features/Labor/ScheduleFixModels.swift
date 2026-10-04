@@ -339,7 +339,14 @@ struct UnstaffableDate: Codable, Hashable {
         guard let d = c.sfText(.date) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no date"))
         }
-        date = d; day = c.sfText(.day); reasons = c.sfWords(.reasons)
+        date = d; day = c.sfText(.day)
+        // {why: how many people} — "approved time off (3)" — or a plain list.
+        if let byWhy = (try? c.decodeIfPresent([String: Int].self, forKey: .reasons)) ?? nil {
+            reasons = byWhy.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+                .map { "\($0.key) (\($0.value))" }
+        } else {
+            reasons = c.sfWords(.reasons)
+        }
     }
     enum CodingKeys: String, CodingKey { case date, day, reasons }
 }
@@ -358,23 +365,6 @@ struct StartingPoint: Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case floors, borrowed
         case noHistory = "no_history"
-    }
-}
-
-/// Which budget the hours are and how it was built (E: D-1, D-2, E-24) —
-/// `text` says it in words, `caveat` warns when it rests on an assumed wage.
-struct BudgetBasis: Codable, Hashable {
-    var text: String?
-    var caveat: String?
-    var trimOk: Bool?
-
-    init(from decoder: Decoder) throws {
-        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
-        text = c.sfText(.text); caveat = c.sfText(.caveat); trimOk = c.sfBool(.trimOk)
-    }
-    enum CodingKeys: String, CodingKey {
-        case text, caveat
-        case trimOk = "trim_ok"
     }
 }
 
@@ -449,6 +439,72 @@ struct RequirementRow: Codable, Hashable, Identifiable {
             return window.count == 2 ? "Late night \(window[0])\u{2013}\(window[1])" : "Late night"
         default: return (daypart ?? "").capitalized
         }
+    }
+}
+
+// MARK: - Shift Quality additions (D1a, D1b)
+
+/// What holds a shift at its number (SQ-8): the capping dimension, the hard
+/// rules, or a daypart nobody was written onto — `text` says it.
+struct QualityHeldBy: Codable, Hashable {
+    var key: String?
+    var label: String?
+    var score: Int?
+    var floor: Double?
+    var text: String?
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        key = c.sfText(.key); label = c.sfText(.label); score = c.sfInt(.score); floor = c.sfDouble(.floor)
+        text = c.sfText(.text)
+    }
+    enum CodingKeys: String, CodingKey { case key, label, score, floor, text }
+}
+
+/// One deduction from the read's completeness, with the points it cost.
+struct QualityConfidenceDeduction: Codable, Hashable {
+    var reason: String
+    var points: Double?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let r = c.sfText(.reason) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no reason"))
+        }
+        reason = r; points = c.sfDouble(.points)
+    }
+    enum CodingKeys: String, CodingKey { case reason, points }
+}
+
+extension AnyCodableValue {
+    var objectValue: [String: AnyCodableValue]? { if case .object(let o) = self { return o }; return nil }
+    var arrayValue: [AnyCodableValue]? { if case .array(let a) = self { return a }; return nil }
+    var stringValue: String? {
+        switch self {
+        case .string(let s): return s
+        case .int(let i): return String(i)
+        case .double(let d): return d == d.rounded() ? String(Int(d)) : String(format: "%.1f", d)
+        default: return nil
+        }
+    }
+    var doubleValue: Double? {
+        switch self {
+        case .int(let i): return Double(i)
+        case .double(let d): return d
+        case .string(let s): return Double(s)
+        default: return nil
+        }
+    }
+    var boolValue: Bool? {
+        switch self {
+        case .bool(let b): return b
+        case .int(let i): return i != 0
+        default: return nil
+        }
+    }
+    /// A list of names: strings, or objects carrying a `name`.
+    var names: [String] {
+        (arrayValue ?? []).compactMap { $0.stringValue ?? $0.objectValue?["name"]?.stringValue }
     }
 }
 
