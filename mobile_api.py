@@ -3245,11 +3245,6 @@ def mobile_generate_schedule(current_user):
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
         return jsonify(ok=False, error="Your login can view labor but not draft a schedule."), 403
     import ops as _ops
-    running = _ops.active_job("schedule", rid)
-    if running:
-        return jsonify(ok=True, job_id=running, joined=True, wait_seconds=_schedule_wait(running, rid))
-    if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
-        return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
     # week_start may also come as a query arg (the web twin's older callers);
     # the body wins when both are sent. Both routes are POST only.
@@ -3272,9 +3267,26 @@ def mobile_generate_schedule(current_user):
     import schedule_engine as _se
     instruction = " ".join(str(body.get("instruction") or "").split())[:500] or None
     instruction = _se.with_redo_reason(instruction, _se.redo_reason_from(body))
+    # What this press asks for (re-audit 10/4/26 UI-8): a generation already
+    # running is joined only when it is this same request — the same week,
+    # days, draft and instruction. Any other is said, with its week, and
+    # nothing starts: Generate for one week used to join a redo of another,
+    # show that as the answer, and lose the owner's instruction.
+    _req = _se.generation_request(rid, week_start, dates, base_history_id, instruction)
+    _running, _running_req = _ops.running_job("schedule", rid)
+    if _running:
+        if _running_req == _req:
+            return jsonify(ok=True, job_id=_running, joined=True, wait_seconds=_schedule_wait(_running, rid))
+        return jsonify(ok=False, busy=True, running=_running_req,
+                       error=_se.busy_message(_running_req)), 409
+    if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
+        return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     # Checked and started in one transaction: two presses at the same instant
     # get one job (SCHED-25).
-    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
+    try:
+        job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid, request=_req)
+    except _ops.JobBusy as _busy:
+        return jsonify(ok=False, busy=True, running=_busy.request, error=_se.busy_message(_busy.request)), 409
     if joined:
         return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid))
     # The owner throwing a draft away is the strongest "no" there is, and it
@@ -3340,6 +3352,7 @@ def mobile_schedule_status(job_id, current_user):
         result["status"] = job["status"]
         if job["status"] == "done":
             _capi.present_schedule_result(current_user["restaurant_id"], result, current_user.get("id"))
+            _capi.attach_labor_view(current_user["restaurant_id"], result)
         return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, status="error", error=_safe_err(e)), 500
@@ -3404,6 +3417,10 @@ def mobile_schedule_history_detail(history_id, current_user):
         if len(_parts) < 6:
             continue
         preview_rows.append({_COLS[i]: _parts[i].strip() for i in range(min(len(_parts), 8))})
+    # A reopened week shows its manager-plan rows as pinned again (re-audit
+    # 10/4/26 UI-6): the pin is the plan's mark in the stored notes.
+    import schedule_skeleton as _skel_pins
+    preview_rows = _skel_pins.mark_pins(preview_rows)
 
     # A stored week reopened puts its verdict back on screen (web reload,
     # iOS Labor): its recommendations are shown by this response.
@@ -3416,8 +3433,31 @@ def mobile_schedule_history_detail(history_id, current_user):
     # overtime the way a fresh one does (Schedule Studio, 9/26/26).
     economics, projected_cost = _schedule_economics(current_user["restaurant_id"], history_id, preview_rows,
                                                     detail.get("week_start"))
+    # The week's labor % on one stated basis (schedule re-audit 10/4/26
+    # SQ-4): all-in for the owner, hourly for anyone else, with the recent %
+    # and any savings on the same basis.
+    labor_view = None
+    try:
+        import schedule_economics as _econ_lv
+        labor_view = _econ_lv.labor_view(current_user["restaurant_id"], projected_cost,
+                                         (economics or {}).get("projected_revenue"),
+                                         labor_target=detail.get("labor_target"),
+                                         labor_budget_dollars=(economics or {}).get("labor_budget_dollars"),
+                                         week_dates=_week_dates_of(detail.get("week_start")))
+    except Exception as e:
+        print(f"[schedule history] labor view failed for {history_id}: {e!r}")
     return jsonify(ok=True, **detail, preview_rows=preview_rows, economics=economics,
-                   projected_cost=projected_cost)
+                   projected_cost=projected_cost, labor_view=labor_view)
+
+
+def _week_dates_of(week_start) -> list:
+    """The seven ISO dates from `week_start`, [] when it is not a date."""
+    from datetime import date as _d, timedelta as _td
+    try:
+        start = _d.fromisoformat(str(week_start)[:10])
+    except (TypeError, ValueError):
+        return []
+    return [(start + _td(days=i)).isoformat() for i in range(7)]
 
 
 def _schedule_economics(rid, history_id, rows, week_start):
@@ -3441,19 +3481,30 @@ def _schedule_economics(rid, history_id, rows, week_start):
     try:
         import schedule_economics as _econ
         import schedule_rules as _rules
-        from labor import OVERTIME_THRESHOLD_HOURS
-        from models import get_role_rates, get_restaurant
-        rates = get_role_rates(rid) or {}
+        from models import get_restaurant
         r = get_restaurant(rid)
-        from labor import person_rate_book
-        _ppl, _typ = person_rate_book(rid)
-        cons = _rules.Constraints(restaurant_id=rid, week_dates=[], week_days=[],
-                                  week_start_day=int(getattr(r, "week_start_day", 0) or 0))
-        cost = _econ.priced_cost(rows, rates, rates.get("_default") or getattr(r, "hourly_rate", None) or 15.0,
-                                 ceiling=OVERTIME_THRESHOLD_HOURS, bucket=cons.bucket,
-                                 daily_ot_hours=(_rules.compliance(r) or {}).get("daily_ot_hours"),
-                                 salaried=[x["name"] for x in __import__("models").salaried_staff(r)],
-                                 person_rates=_ppl, role_typical=_typ)
+        # The week's own people facts — who is salaried, the payroll week,
+        # the hours already published in it — so the reopened week is priced
+        # exactly as the generation priced it (schedule re-audit 10/4/26
+        # SQ-6, schedule_economics.week_pricing). An empty Constraints read
+        # no published hours and so missed overtime they push a person into.
+        dates = _week_dates_of(week_start)
+        try:
+            from datetime import date as _d
+            days = [_d.fromisoformat(x).strftime("%A") for x in dates]
+            cons = _rules.build_constraints(rid, dates, days, restaurant=r)
+        except Exception as e:
+            print(f"[schedule history] constraints unavailable for {history_id}: {e!r}")
+            cons = _rules.Constraints(restaurant_id=rid, week_dates=[], week_days=[],
+                                      week_start_day=int(getattr(r, "week_start_day", 0) or 0))
+            cons.compliance = _rules.compliance(r) or {}
+            cons.salaried = {" ".join(str(x["name"]).lower().split())
+                             for x in __import__("models").salaried_staff(r)}
+        blended = (econ or {}).get("blended_rate") or None
+        pricing = _econ.week_pricing(rid, cons, blended_rate=blended)
+        if not pricing.get("blended_rate"):
+            pricing["blended_rate"] = getattr(r, "hourly_rate", None) or 15.0
+        cost = _econ.price_week(rows, pricing)
     except Exception as e:
         print(f"[schedule history] pricing failed for {history_id}: {e}")
     return econ, cost
@@ -7713,6 +7764,19 @@ def mobile_score_schedule(current_user):
             # sent for a week that has versions, refuse and hand back the
             # diff. Checked inside the write lock below.
             _mark_review_rows(rows, violations)
+            # A manager-plan row keeps its pin through the save whatever the
+            # client sent back (re-audit 10/4/26 UI-6): the plan's mark, from
+            # the week as stored, rides the row that is still that manager's
+            # shift that day.
+            import schedule_skeleton as _skel_save
+            from models import get_conn as _gc_pins
+            _pc = _gc_pins()
+            try:
+                _stored_rows = _sv.latest_rows(_pc, hid)
+            finally:
+                _pc.close()
+            rows = _skel_save.carry_pins(_skel_save.mark_pins(rows, sent=[r for r in raw_rows if isinstance(r, dict)]),
+                                         _stored_rows)
             csv_text = _rows_to_csv(rows)
             who = current_user.get("username") or current_user.get("email")
             # The week, its version row and its review are one write: the
@@ -7862,7 +7926,9 @@ def mobile_score_schedule(current_user):
 _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
                   "scheduled_hours", "notes")
 
-_REVIEW_MARK = re.compile(r"\s*(?:—\s*)?NEEDS REVIEW\b.*$", re.S)
+# The one NEEDS REVIEW pattern, shared with the generation's parse
+# (schedule_rules.REVIEW_MARK — re-audit 10/4/26 PIPE-6).
+from schedule_rules import REVIEW_MARK as _REVIEW_MARK  # noqa: E402
 
 
 def _mark_review_rows(rows, violations):

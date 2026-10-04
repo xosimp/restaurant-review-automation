@@ -1346,9 +1346,15 @@ def answer_edit_question(restaurant_id, history_id, key, answer, user=None, db_p
         subject = json.loads(row["subject_json"] or "{}") or {}
         if answer not in (subject.get("options") or WHY_ANSWERS[:2]):
             raise ValueError("That answer doesn't fit this change.")
-        if row["answer"] and row["answer"] != answer:
-            raise ValueError("This one is already answered.")
         auth = _sv.authority_of(user) if user else _sv.SYSTEM
+        # Only a COUNTED answer locks the question (schedule re-audit 10/4/26
+        # LEARN-9): an admin's through view-as is kept but changes nothing
+        # until the owner adopts it, so the restaurant's own login answers
+        # over it — the rule dismiss_pattern applies — instead of being
+        # refused and left to agree with the admin or adopt their answer.
+        admins_only = (row["authority"] or "") == "admin" and not row["adopted_at"] and auth != "admin"
+        if row["answer"] and row["answer"] != answer and not admins_only:
+            raise ValueError("This one is already answered.")
         conn.execute("UPDATE schedule_edit_answers SET answer=?, authority=?, answered_by=?, answered_at=datetime('now') "
                      "WHERE id=?", (answer, auth, _who(user) or None, row["id"]))
         conn.commit()
@@ -1365,28 +1371,31 @@ def answer_edit_question(restaurant_id, history_id, key, answer, user=None, db_p
     return {"ok": True, "key": key, "answer": answer, "counted": auth != "admin", "applied": applied}
 
 
-def _said_pattern(subject) -> dict:
+def _said_pattern(subject, authority="principal") -> dict:
     """The learned-pattern shape of an answered question (pattern_key's
-    fields and the standing row's words)."""
+    fields and the standing row's words) — worded by whose "always" it is:
+    "The owner said always" only for an account holder's (schedule re-audit
+    10/4/26 LEARN-3: a manager's tap was stored and shown as the owner's)."""
     kind, day, part = subject.get("kind"), subject.get("day"), subject.get("daypart")
     meal = _PRETTY.get(part, part)
+    said = "The owner said always" if authority == "principal" else "A manager said always"
     p = {"kind": kind, "employee": "", "role": subject.get("role") or "", "day": day, "daypart": part}
     if kind == "moved_off":
         p["employee"] = subject.get("employee") or ""
         p["role"] = ""
-        p["text"] = (f"The owner said always: keep {p['employee']} off {day} {meal} — avoid scheduling them there.")
+        p["text"] = (f"{said}: keep {p['employee']} off {day} {meal} — avoid scheduling them there.")
     elif kind == "headcount_add":
         p["delta"] = int(subject.get("delta") or 1)
-        p["text"] = (f"The owner said always: {p['delta']} more {_plural(p['role']) if p['delta'] != 1 else p['role']} "
+        p["text"] = (f"{said}: {p['delta']} more {_plural(p['role']) if p['delta'] != 1 else p['role']} "
                      f"on {day} {meal} — draft {p['delta']} more there.")
     elif kind in ("retime_start", "retime_end"):
         p["time"] = subject.get("time")
         verb = "start" if kind == "retime_start" else "end"
-        p["text"] = f"The owner said always: {verb} {_plural(p['role'])} on {day} {meal} at {p['time']} — {verb} them then."
+        p["text"] = f"{said}: {verb} {_plural(p['role'])} on {day} {meal} at {p['time']} — {verb} them then."
     elif kind == "role_change":
         p["employee"] = subject.get("employee") or ""
         p["was_role"] = subject.get("was_role") or ""
-        p["text"] = (f"The owner said always: {p['employee']} as {p['role']} on {day} {meal} — draft them as "
+        p["text"] = (f"{said}: {p['employee']} as {p['role']} on {day} {meal} — draft them as "
                      f"{p['role']} there.")
     return p
 
@@ -1408,7 +1417,7 @@ def apply_edit_answer(restaurant_id, answer_id, db_path=DB_PATH) -> dict:
     subject = json.loads(row["subject_json"] or "{}") or {}
     auth = row["authority"] if (row["authority"] or "") != "admin" else "principal"
     if row["answer"] == "always":
-        p = _said_pattern(subject)
+        p = _said_pattern(subject, auth)
         if not p.get("day") or p.get("daypart") in (None, "", "unknown"):
             return {}
         return {"pattern": _sv.owner_said_pattern(restaurant_id, p, auth, history_id=row["history_id"],
@@ -2112,6 +2121,13 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
     candidates beyond the people already in the draft."""
     from shift_quality import _SwapIndex, WEEKLY_HOURS_CEILING
     rows = [r for r in (rows or []) if (r.get("employee") or "").strip()]
+    # A salaried person owes no overtime and their hours are not the hourly
+    # pay this forecasts (owner's rule; schedule re-audit 10/4/26 SQ-5/SQ-6
+    # siblings): a salaried GM at 55h was "past the ceiling", with a move
+    # that "saves" overtime pay nobody owes. Their own cap is the sweep's
+    # (over_max_hours on Constraints.salaried_limit).
+    salaried_row = (lambda r: constraints.is_salaried(r.get("employee"))) if constraints is not None \
+        else (lambda r: False)
     if constraints is not None:
         base_hours = constraints.base_hours if base_hours is None else base_hours
         bucket = constraints.bucket if bucket is None else bucket
@@ -2166,6 +2182,8 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
         n = r["employee"].strip()
         low = n.lower()
         names[low] = n
+        if salaried_row(r):
+            continue
         k = (low, _bucket(r.get("date")))
         draft[k] = draft.get(k, 0.0) + _hours(r)
         role = (r.get("role") or "").strip().lower()
@@ -2198,6 +2216,9 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
             best = None
             for cand in sorted(roles.get(role, set()) - {low}):
                 cname = names.get(cand, cand)
+                if salaried_row({"employee": cname}):
+                    # Their hours are not counted here, so their "room" is not known.
+                    continue
                 room = _cap(cname) - _total(cand, b)
                 if room + 0.05 < _hours(r):
                     continue

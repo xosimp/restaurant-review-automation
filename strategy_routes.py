@@ -2740,19 +2740,27 @@ def _do_schedule_versions(u, history_id):
 def _rows_from_body(b):
     """The rows in a request, or None when there are none worth reading. A
     row whose date is not YYYY-MM-DD cannot be judged by any rule and made
-    the rule load fail with a 500; such a body is refused (None) instead."""
+    the rule load fail with a 500; such a body is refused (None) instead.
+
+    A manager-plan row keeps its pin (re-audit 10/4/26 UI-6): only the eight
+    columns were read, so apply fixes and Improve could move a shift the
+    screen says no pass ever moves. The pin is read from the plan's mark in
+    the notes as the week stores it, and from the row's "_pinned" a client
+    sent (schedule_skeleton.mark_pins); its "_rid" rides along."""
     from datetime import datetime as _dt
+    import schedule_skeleton as _skel
     cols = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
     raw = b.get("rows")
     if not isinstance(raw, list) or not raw or len(raw) > 2000:
         return None
-    rows = [{c: str(r.get(c) or "")[:200] for c in cols} for r in raw if isinstance(r, dict)]
+    raw = [r for r in raw if isinstance(r, dict)]
+    rows = [{c: str(r.get(c) or "")[:200] for c in cols} for r in raw]
     for r in rows:
         try:
             _dt.strptime(r["date"].strip(), "%Y-%m-%d")
         except ValueError:
             return None
-    return rows or None
+    return _skel.mark_pins(rows, sent=raw) or None
 
 
 def _do_schedule_violations(u):
@@ -2776,6 +2784,14 @@ def _do_schedule_violations(u):
     viols = _sr.violations(rows, c)
     out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
            "pending_time_off": inputs.get("pending_time_off") or {}}
+    # The hours panel's figures on the hourly basis the PAR and the daily
+    # targets are sized on (schedule re-audit 10/4/26 SQ-5): salaried hours
+    # apart, never against PAR or the 40h line.
+    try:
+        import schedule_economics as _econ_hv
+        out["hours"] = _econ_hv.hours_view(rows, c)
+    except Exception as e:
+        print(f"[schedule] hours view unavailable: {e!r}")
     # What the rows on screen miss — the same list generation saves with the
     # review (schedule audit 10/3/26 PR-11).
     try:
@@ -2808,14 +2824,14 @@ def _do_schedule_violations(u):
     if base is not None:
         try:
             import schedule_economics as _econ
-            from models import get_role_rates
-            rates = get_role_rates(_rid(u))
-            # Overtime pay starts at 40h (labor.OVERTIME_THRESHOLD_HOURS);
-            # the owner's weekly hours ceiling is a cap, not the overtime
-            # line, in either direction (NS3 H5).
-            from labor import OVERTIME_THRESHOLD_HOURS as _OT_LINE
-            out["cost"] = _econ.cost_delta(base, rows, rates, (rates or {}).get("_default"),
-                                           ceiling=float(_OT_LINE))
+            # Priced exactly as the generation prices the week (schedule
+            # re-audit 10/4/26 SQ-6, schedule_economics.week_pricing): each
+            # person's own rate, overtime from the 40h line per payroll week
+            # with the hours already published in it, salaried people free;
+            # the hours are hourly hours. It priced a salaried GM's extra
+            # shift at the blended rate with overtime.
+            out["cost"] = _econ.cost_delta(base, rows, pricing=_econ.week_pricing(
+                _rid(u), c, blended_rate=_econ.stored_blended_rate(_rid(u), b.get("history_id"))))
         except Exception:
             out["cost"] = None
     return out, 200
@@ -3452,7 +3468,12 @@ def _do_shift_request_decide(u, request_id):
     # The account log is owner-facing: M/D/YY, as time off's is (F2-15).
     log_account_event(_rid(u), "shift_request_decided", current_user=u,
                       detail=f"{row['employee_name']} {mdy(row['date'])} {row['shift_start']}: {row['status']}")
-    return {"ok": True, "request": row}, 200
+    # A drop that leaves the floor without a manager is said with the
+    # answer (shift_requests.drop_manager_gap, RULES-15).
+    out = {"ok": True, "request": row}
+    if row.get("manager_gap"):
+        out["warning"] = row["manager_gap"]
+    return out, 200
 
 
 def _shift_label(row):
@@ -3628,10 +3649,13 @@ def _do_learned_pattern_set(u):
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
         return out, 200
-    if b.get("dismissed", True):
-        _si.dismiss_pattern(_rid(u), key, actor=_who(u), authority=_answer_authority(u))
-    else:
-        _si.restore_pattern(_rid(u), key)
+    try:
+        if b.get("dismissed", True):
+            _si.dismiss_pattern(_rid(u), key, actor=_who(u), authority=_answer_authority(u))
+        else:
+            _si.restore_pattern(_rid(u), key, authority=_answer_authority(u))
+    except ValueError as e:                 # a manager undoing the owner's answer (LEARN-3)
+        return {"ok": False, "error": str(e)}, 400
     return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True)),
             "counted": _answer_authority(u) != "admin"}, 200
 
@@ -3663,8 +3687,12 @@ def _do_schedule_memory(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see this.")
     import schedule_memory as _smem
-    from permissions import answer_authority
-    view = _smem.memory_view(_rid(u), include_retired=str(request.args.get("retired") or "1") != "0")
+    from permissions import answer_authority, is_principal
+    # A manager's or a member's login never reads an owner-only fact (a
+    # learned keep-apart), nor is offered to undo the owner's answer
+    # (schedule re-audit 10/4/26 LEARN-3, LEARN-6).
+    view = _smem.memory_view(_rid(u), include_retired=str(request.args.get("retired") or "1") != "0",
+                             principal=is_principal(u))
     return {"ok": True, **view, "can_answer": _may_draft(u) and answer_authority(u) != "admin",
             "can_make_rules": _principal(u) and answer_authority(u) != "admin"}, 200
 

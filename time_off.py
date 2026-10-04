@@ -278,12 +278,15 @@ def part_minutes(part):
 
 def shift_hits_part(row, part) -> bool:
     """Whether a shift row reaches into part of a day off: overlaps the
-    times, or is on the floor for the daypart (shift_quality.present_dayparts)."""
+    times, or reaches into the daypart by any minute of its service
+    (shift_quality.touched_dayparts — an hour of presence let a shift run
+    55 minutes into an approved dinner off, schedule re-audit 10/4/26
+    RULES-11)."""
     from schedule_rules import parse_minutes
     lo, hi, dp = part_minutes(part)
     if dp:
-        from shift_quality import present_dayparts
-        return dp in (present_dayparts(row) or [])
+        from shift_quality import touched_dayparts
+        return dp in (touched_dayparts(row) or [])
     s, e = parse_minutes(row.get("shift_start") or ""), parse_minutes(row.get("shift_end") or "")
     if s is None or e is None:
         return True

@@ -202,7 +202,8 @@ def test_pr3_the_roster_max_is_the_codes_max_and_no_literal_40_is_left(monkeypat
     people = {p["name"]: p for p in labor._roster_people([("Andre", "Line Cook"), ("Bea", "Line Cook")],
                                                          facts=facts)}
     assert c.max_hours("Andre") == 45.0
-    assert people["Andre"]["hours"] == "30-45h, overtime past 40h allowed for them"
+    # The owner's 45h is a ceiling; overtime starts at 40 (re-audit RULES-9).
+    assert people["Andre"]["hours"] == "30-45h, OT 40h"
     assert people["Bea"]["hours"] == ""                       # the restaurant's default, said once in the head
     # The code agrees with the line: 45h passes, 46h is the hard breach.
     def week(hours):

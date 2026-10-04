@@ -41,6 +41,10 @@ def rid(db_path, monkeypatch):
     rid = create_restaurant(Restaurant(name="Gate Co", owner_email="g@x.com"), db_path=db_path)
     for n in ("Ana", "Bob", "Cy"):
         models.add_manual_team_member(rid, n, role="Server", db_path=db_path)
+    # Ana and Bob run the floor: a roster with nobody counted as a floor
+    # manager is itself a publish blocker (schedule re-audit 10/4/26 RULES-13).
+    for n in ("Ana", "Bob"):
+        ss.upsert(rid, n, floor_manager=True, db_path=db_path)
     return rid
 
 

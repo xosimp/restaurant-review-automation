@@ -382,6 +382,19 @@ def init_schedule_memory(db_path=None):
             updated_at              TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(restaurant_id, memory_key)
         )""")
+        # Whose answer owner_said is (schedule re-audit 10/4/26 LEARN-3):
+        # permissions.answer_authority of the login that kept it or let it
+        # go — principal (an account holder) or delegate (a manager or a
+        # member). Only a principal's answer is the owner's; a delegate's
+        # never overrides it. NULL on a row answered before the column:
+        # read as the owner's, so no answer the owner gave is lost.
+        _cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_memory)").fetchall()}
+        if "owner_said_authority" not in _cols:
+            try:
+                conn.execute("ALTER TABLE schedule_memory ADD COLUMN owner_said_authority TEXT")
+            except Exception as _e:
+                if "duplicate column" not in str(_e).lower():
+                    raise
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_memory_status ON schedule_memory(restaurant_id, status)")
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_memory_state (
             restaurant_id     INTEGER PRIMARY KEY REFERENCES restaurants(id),
@@ -520,8 +533,47 @@ OPENER_TIE_MINUTES = 15
 PAIR_MIN_SHARED = 6
 PAIR_MIN_LIFT = 0.15
 TRIO_MAX_PEOPLE = 12
+# Every pair and trio of each night's crew is tested at once — hundreds of
+# groups — so a team is a finding only when its one-sided binomial test
+# against the restaurant's own rate survives Holm's correction for all the
+# groups tested at PAIR_ALPHA (schedule re-audit 10/4/26 LEARN-7: with a
+# fixed bar, about one restaurant in four learned and enforced a "team"
+# from outcomes that had nothing to do with who worked). The rate the team
+# is held against is the higher of the restaurant's and the one on the
+# nights some of them worked without the others (PAIR_MIN_APART of those
+# at least): a person who lifts every night they work is not a team.
+PAIR_ALPHA = 0.05
+PAIR_MIN_APART = 3
 GOOD_REVIEW = 4.0
 POS_SOURCES = ("rpower", "toast", "square", "clover")
+
+
+def chosen_closers_of(restaurant_id, restaurant=None, db_path=None) -> dict:
+    """{role family: {name key}} — the closers the owner chose for each role
+    (schedule_rules.chosen_closers: the closer flags in the roles the owner
+    chose, the draft's own closer rule), keyed as this module keys a person
+    (_nk). A learned "closer" is about one of THEM (schedule re-audit
+    10/4/26 LEARN-10: a closer is the person chosen to close, owner's rule
+    2). {} when none is marked or the read failed (logged): no role then has
+    chosen closers, and nothing is filtered."""
+    try:
+        import models
+        import schedule_rules
+        got = schedule_rules.chosen_closers(restaurant_id, restaurant=restaurant, db_path=db_path or models.DB_PATH)
+    except Exception as e:
+        log.warning("schedule_memory: chosen closers unreadable for %s: %s", restaurant_id, e)
+        return {}
+    return {fam: {_nk(n) for n in names} for fam, names in (got or {}).items() if fam and names}
+
+
+def _not_a_chosen_closer(kind, role, person, closers, families=None) -> bool:
+    """A learned closer for a role whose closers the owner chose, about
+    somebody who is not one of them (LEARN-10)."""
+    if kind != "closer" or not closers:
+        return False
+    fam = _fam(role, families) if role else ""
+    chosen = closers.get(fam) or set()
+    return bool(chosen) and _nk(person) not in chosen
 
 
 class _Ctx:
@@ -636,6 +688,33 @@ class _Ctx:
             return out
         return self._get("cavnar_dates", read)
 
+    def closers(self) -> dict:
+        """{role family: {name key}} — the people the owner chose to close
+        each role (schedule_rules.chosen_closers, as the draft's closer rule
+        reads them). {} when nobody is marked to close."""
+        def read():
+            return chosen_closers_of(self.rid, restaurant=self.restaurant, db_path=self.db)
+        return self._get("closers", read)
+
+    def previous(self, kind) -> list:
+        """This restaurant's memory rows of `kind` as they stood before
+        tonight's read (value decoded) — what a measured learner checks its
+        own effect against (LEARN-2: a pad must not erase its own evidence)."""
+        def read():
+            conn = get_conn(self.db)
+            try:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT * FROM schedule_memory WHERE restaurant_id=? AND kind=?", (self.rid, kind)).fetchall()]
+            except Exception as e:
+                log.warning("schedule_memory: previous %s unreadable for %s: %s", kind, self.rid, e)
+                rows = []
+            finally:
+                conn.close()
+            for r in rows:
+                r["value"] = _loads(r.get("value_json")) or {}
+            return rows
+        return self._get(f"previous:{kind}", read)
+
     def person_ids(self) -> dict:
         def read():
             conn = get_conn(self.db)
@@ -698,7 +777,7 @@ class _Ctx:
 def _evidence(kind) -> dict:
     return {"kind": kind, "opps_w": 0.0, "hits_w": 0.0, "opps": 0, "hits": 0, "hand": 0, "hand_dates": [],
             "miss_dates": [], "weeks": set(), "hit_weeks": set(), "last": "", "first": "", "names": {},
-            "roles": {}, "starts": []}
+            "roles": {}, "starts": [], "kept_dates": []}
 
 
 def _note(e, iso, w, hit, hand=False, person=None, role=None, start=None, week=None):
@@ -745,12 +824,23 @@ def _confidence(e, kind, ctx, habit=True) -> float:
     the recency-weighted opportunities — and for a manager habit, times the
     half-life decay since a hand last confirmed it (the standing patterns'
     rule, L-30): weeks the draft merely carried it keep it, they never
-    renew it."""
+    renew it. What was MEASURED on the floor renews it too (`kept_dates`:
+    the punches show the person really opened or closed a day Cavnar AI
+    drafted — schedule re-audit 10/4/26 LEARN-11: once Cavnar AI drafted
+    every week nothing renewed an opener's decay, so a habit the manager
+    kept every week fell out of force about 100 days in). A habit is still
+    BORN only by hand (qualifies_new counts hand dates alone)."""
     conf = wilson_lower(e["hits_w"], e["opps_w"])
     if habit:
-        hand = max(e["hand_dates"]) if e["hand_dates"] else ""
+        hand = _renewed(e)
         conf *= recency_weight(ctx.age(hand) if hand else 2 * half_life(kind), half_life(kind))
     return round(conf, 3)
+
+
+def _renewed(e) -> str:
+    """The newest date a hand confirmed the fact or the floor showed it
+    (hand_dates, kept_dates) — what a habit's decay runs from."""
+    return max(list(e.get("hand_dates") or []) + list(e.get("kept_dates") or []) or [""])
 
 
 def _rate(e) -> float:
@@ -783,6 +873,7 @@ def _memory(ctx, key, kind, e, *, person=None, role=None, day=None, daypart=None
             "value": value or {}, "text": text, "opps_w": round(e["opps_w"], 3), "hits_w": round(e["hits_w"], 3),
             "opps": e["opps"], "hits": e["hits"], "weeks": len(e["hit_weeks"]), "of_weeks": len(e["weeks"]),
             "hand_dates": sorted(e["hand_dates"]), "miss_dates": sorted(e["miss_dates"]),
+            "kept_dates": sorted(e.get("kept_dates") or []),
             "first": e["first"], "last": e["last"], "rate": rate, "confidence": conf, "habit": habit,
             # A habit is BORN only from a hand (or the restaurant's own
             # scheduling before Cavnar AI drafted): a draft choice the
@@ -815,6 +906,12 @@ def _pattern_value(p) -> dict:
 
 _STANDING_STATUS = {"active": "active", "retest": "retest", "retired": "retired", "ruled": "rule",
                     "dormant": "dormant"}
+
+
+def _fresh_keep(said_at, kind, ctx) -> bool:
+    """The owner's Keep, said less than two half-lives ago."""
+    said = str(said_at or "")[:10]
+    return bool(said) and ctx.age(said) < 2 * half_life(kind)
 
 
 def _learn_patterns(ctx, patterns=None) -> list:
@@ -869,10 +966,20 @@ def _learn_patterns(ctx, patterns=None) -> list:
         m["misses_by_hand"] = int(s.get("times_overridden") or 0)
         m["last_hand"] = hand
         status = _STANDING_STATUS.get(s["status"], "candidate")
+        row = raw.get(s["key"]) or {}
         # The owner's own one-tap "always" (source owner_said, L-35) is their
-        # word, applied at once like a "keep"; a learned row binds the passes
-        # only once its confidence clears the line.
-        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and s.get("source") != "owner_said":
+        # word, applied at once; so is the owner's Keep (owner_kept_at, set
+        # only for an account holder's answer — schedule re-audit 10/4/26
+        # LEARN-4: a Keep on a habit under the line only stamped a hand date,
+        # and the habit stayed "Learning" while the owner was told it was
+        # kept), held for two half-lives from when they said it, as _settle
+        # holds the other kinds. A learned row binds the passes only once
+        # its confidence clears the line.
+        owner_word = s.get("source") == "owner_said" or _fresh_keep(row.get("owner_kept_at"), kind, ctx)
+        if status == "rule" and not _pattern_rule_alive(ctx, s):
+            _unrule_pattern(ctx, s["key"])
+            status = "active"
+        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and not owner_word:
             status = "candidate"
         reason = s.get("retired_reason") if status == "retired" else None
         if s["key"] in dismissed:
@@ -884,11 +991,11 @@ def _learn_patterns(ctx, patterns=None) -> list:
             m["value"]["conflict"] = True
         if status == "rule":
             m["value"]["rule"] = (s.get("rule") or {}).get("note")
-        row = raw.get(s["key"]) or {}
         m["value"]["standing"] = {f: row.get(f) for f in (
             "times_applied", "times_confirmed", "times_overridden", "last_overridden", "checked_through",
             "first_learned", "last_confirmed", "retired_at", "retired_week", "retest_since", "last_retest_end",
-            "retests", "dormant_at", "rule_note", "ruled_by", "source", "authority", "status") if f in row}
+            "retests", "dormant_at", "rule_note", "ruled_by", "source", "authority", "status", "owner_kept_at",
+            "answer_authority") if f in row}
         if row.get("person_id"):
             m["person_id"] = row["person_id"]
         m["status"], m["retired_reason"] = status, reason
@@ -975,9 +1082,31 @@ def _learn_edges(ctx, kind) -> list:
         manager gave them the opening or the close (the draft had somebody
         else), merely kept when the draft already had them; the manager
         handing it to somebody else is a miss by hand.
-    An opportunity is a day the person worked that role."""
+    An opportunity is a day the person worked that role.
+
+    For a role whose closers the owner chose (the closer flags — the
+    draft's closer rule), a closer is learned only AMONG them: which of the
+    chosen closers is last out on Fridays (schedule re-audit 10/4/26
+    LEARN-10 — "Bo closes Server on Fridays" was learned from who happened
+    to leave last before Cavnar AI, beside a rule naming Ana, and the solver
+    paid to make Bo last out). A day none of them worked teaches nothing.
+
+    Who really opened or closed a day Cavnar AI drafted (the punches) keeps
+    an existing fact alive (`kept_dates`, LEARN-11) without adding evidence
+    of its own: those days are already counted, as the manager settled
+    them, from the weeks above."""
     hl = half_life(kind)
     ev = {}
+    closers = ctx.closers() if kind == "closer" else {}
+
+    def among(group, fam):
+        """The part of a role's day a closer is learned from: its chosen
+        closers when the owner chose any (None: no chosen closer worked)."""
+        chosen = closers.get(fam) if closers else None
+        if not chosen:
+            return group
+        mine = [x for x in group if _nk(x[1]) in chosen]
+        return mine or None
 
     def take(group, d, edge, by_hand, missed=()):
         w = recency_weight(ctx.age(d), hl)
@@ -998,13 +1127,39 @@ def _learn_edges(ctx, kind) -> list:
 
     cav = ctx.cavnar_dates()
     pre = [r for r in ctx.punches() if str(r.get("date") or "")[:10] not in cav]
-    for (d, _fam), g in _by_role_day(ctx, pre).items():
-        take(g, d, _edge_of(g, kind), lambda k: True)
+    for (d, fam), g in _by_role_day(ctx, pre).items():
+        g = among(g, fam)
+        if g:
+            take(g, d, _edge_of(g, kind), lambda k: True)
     for rec in ctx.weeks():
         fin, base = _by_role_day(ctx, rec.get("final")), _by_role_day(ctx, rec.get("base"))
         for (d, fam), g in fin.items():
-            drafted = _edge_of(base[(d, fam)], kind) if (d, fam) in base else set()
-            take(g, d, _edge_of(g, kind), lambda k, _d=drafted: k not in _d, missed=drafted)
+            g = among(g, fam)
+            if not g:
+                continue
+            b = among(base[(d, fam)], fam) if (d, fam) in base else None
+            drafted = _edge_of(b, kind) if b else set()
+            # By hand only when the manager put the person there — their
+            # shift is not the draft's as it stood; one who became the
+            # first in (or last out) only because the manager took the
+            # drafted one off was chosen by nobody (re-audit 10/4/26, the
+            # LEARN lens's open suspicion).
+            as_drafted = {(_nk(x[1]), x[0], x[4]) for x in base.get((d, fam)) or []}
+            mine = {}
+            for x in g:
+                mine.setdefault(_nk(x[1]), set()).add((_nk(x[1]), x[0], x[4]))
+            take(g, d, _edge_of(g, kind),
+                 lambda k, _d=drafted, _m=mine, _a=as_drafted: k not in _d and not (_m.get(k, set()) <= _a),
+                 missed=drafted)
+    post = [r for r in ctx.punches() if str(r.get("date") or "")[:10] in cav]
+    for (d, fam), g in _by_role_day(ctx, post).items():
+        g = among(g, fam)
+        if not g:
+            continue
+        for k in _edge_of(g, kind):
+            e = ev.get((fam, _weekday(d), k))
+            if e is not None:
+                e["kept_dates"].append(d)
     out = []
     for (fam, wd, k), e in ev.items():
         if not e["hits"] or not fam or not wd:
@@ -1167,7 +1322,15 @@ def _learn_overtime(ctx) -> list:
         if max(h, plan or 0.0) < OT_NEAR_HOURS:
             continue
         e = ev.setdefault(k, dict(_evidence("ot_risk"), over=[], overrun=[]))
-        _note(e, b, recency_weight(ctx.age(b), hl), over > OT_TOLERANCE_HOURS, person=names.get(k), week=b)
+        # A week is evidence when they ran into overtime OR ran past what
+        # they were scheduled by more than the tolerance — overtime had they
+        # been scheduled to the line (schedule re-audit 10/4/26 LEARN-2: once
+        # the passes kept them the headroom under the line they stopped
+        # crossing it, the hits stopped, the memory fell under the active
+        # line and the next draft took the room away again).
+        ran_over = plan is not None and plan > 0 and (h - plan) > OT_TOLERANCE_HOURS
+        _note(e, b, recency_weight(ctx.age(b), hl), over > OT_TOLERANCE_HOURS or ran_over, person=names.get(k),
+              week=b)
         if over > OT_TOLERANCE_HOURS:
             e["over"].append(over)
         if plan:
@@ -1181,8 +1344,10 @@ def _learn_overtime(ctx) -> list:
         runs = [x for x in e["overrun"] if x > 0]
         overrun = sum(runs) / len(e["overrun"]) if e["overrun"] else 0.0
         head = min(OT_HEADROOM_MAX, math.ceil(max(over, overrun) * 2) / 2.0)
-        text = (f"{name} has run into overtime in {e['hits']} of their last {e['opps']} payroll weeks near "
-                f"full time — about {over:.1f}h past {LINE:g} each time; keep about {head:g}h of room under the "
+        how = (f"about {over:.1f}h past {LINE:g} when they ran over" if over
+               else f"about {overrun:.1f}h past what they were scheduled")
+        text = (f"{name} has run into overtime, or past their scheduled week, in {e['hits']} of their last "
+                f"{e['opps']} payroll weeks near full time — {how}; keep about {head:g}h of room under the "
                 f"line for them.")
         out.append(_memory(ctx, f"ot_risk|{_person_token(ctx, name)}", "ot_risk", e, person=name,
                            value={"headroom_hours": head, "over_hours": round(over, 2),
@@ -1198,7 +1363,16 @@ def _learn_overruns(ctx) -> list:
     Ran STAYED_LATE_MINUTES or more past it: stayed late (observed
     `stayed_late`). The memory per role, weekday and daypart carries the pad
     the draft's closes should get: the typical overrun, rounded to
-    END_PAD_STEP, at most END_PAD_MAX_MINUTES."""
+    END_PAD_STEP, at most END_PAD_MAX_MINUTES.
+
+    An overrun is measured against the close as the restaurant set it
+    BEFORE any pad: the earlier of the published end and the usual close
+    this memory already holds (`ends_at`, the unpadded end) — never against
+    an end the memory itself moved (schedule re-audit 10/4/26 LEARN-2: a
+    padded close that ran exactly to its padded end read as on time, two
+    such weeks dropped the memory under the active line and the next draft
+    ended the close early again). `ends_at` is kept from those same
+    unpadded ends, so a pad never drifts into the baseline."""
     punches = {}
     for p in ctx.punches():
         if p.get("source") in POS_SOURCES or p.get("shift_end"):
@@ -1206,6 +1380,11 @@ def _learn_overruns(ctx) -> list:
     hl = half_life("end_overrun")
     ev = {}
     today = ctx.today.isoformat()
+    unpadded = {}
+    for prev in ctx.previous("end_overrun"):
+        u = _minutes((prev.get("value") or {}).get("ends_at"))
+        if u is not None and prev.get("status") in ("candidate", "active", "rule", "dormant"):
+            unpadded[(prev.get("role"), prev.get("day"), prev.get("daypart"))] = u
     for _hid, _ws, rows in ctx.published():
         by = {}
         for r in rows:
@@ -1229,8 +1408,16 @@ def _learn_overruns(ctx) -> list:
                 if over is None:
                     continue
                 part = _end_part(r)
+                base = last
+                u = unpadded.get((fam, _weekday(d), part))
+                if u is not None:
+                    # The usual close on the same side of midnight as this one.
+                    u += 1440 if (u < 12 * 60 and last >= 12 * 60) else 0
+                    if u < last:
+                        over += last - u
+                        base = u
                 e = ev.setdefault((fam, _weekday(d), part), dict(_evidence("end_overrun"), over=[], ends=[]))
-                e["ends"].append(last)
+                e["ends"].append(base)
                 hit = over >= STAYED_LATE_MINUTES
                 _note(e, d, recency_weight(ctx.age(d), hl), hit, role=(r.get("role") or "").strip(), week=_week_of(d))
                 if hit:
@@ -1256,6 +1443,82 @@ def _learn_overruns(ctx) -> list:
                                                 "ends_at": _clock(ends) if ends is not None else None,
                                                 "padded_end": _clock(ends + pad) if ends is not None else None},
                            text=text, source="punches", origin="measured", habit=False))
+    return out
+
+
+def binom_tail(k, n, p, upper=True) -> float:
+    """P(X >= k) (or P(X <= k) with upper False) for X ~ Binomial(n, p)."""
+    n, k = int(n), int(k)
+    p = min(1.0, max(0.0, float(p)))
+    rng = range(k, n + 1) if upper else range(0, k + 1)
+    return min(1.0, sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in rng))
+
+
+def fisher_tail(hits, n, other_hits, other_n, upper=True) -> float:
+    """One-sided Fisher exact p-value that `hits` of `n` is higher (upper)
+    or lower than `other_hits` of `other_n` beyond chance — both rates
+    measured, neither taken as known (the hypergeometric tail)."""
+    hits, n, oh, on = int(hits), int(n), int(other_hits), int(other_n)
+    total, good = n + on, hits + oh
+    if n <= 0 or on <= 0:
+        return 1.0
+    denom = math.comb(total, n)
+    lo, hi = max(0, n - (total - good)), min(n, good)
+    rng = range(hits, hi + 1) if upper else range(lo, hits + 1)
+    return min(1.0, sum(math.comb(good, i) * math.comb(total - good, n - i) for i in rng) / float(denom))
+
+
+def significant_teams(stats, base, alpha=PAIR_ALPHA) -> dict:
+    """{group: (kind, held_to, p_value)} — the groups whose shared shifts
+    ran well (prefer) or badly (avoid) beyond chance (LEARN-7). `stats`:
+    {group: {n, hits, other_n, other_hits, apart_n, apart_hits}} for every
+    group tested (shared PAIR_MIN_SHARED shifts or more): their shared
+    shifts, the read shifts they were NOT all on (other_*), and of those the
+    ones some of them worked without the rest (apart_*). `base` (the
+    restaurant's share of shifts that ran well) stands in when there are no
+    other shifts. Each group is held to the higher (prefer) or lower (avoid)
+    of the rate without them together and its own apart rate (PAIR_MIN_APART
+    apart shifts at least) — a crew that works most nights is never held to
+    a rate it makes itself, and a person who lifts every night they work is
+    not a team — must clear it by PAIR_MIN_LIFT, and its one-sided p-value
+    must survive Holm's step-down over every group of its size tested
+    (pairs are what the passes may enforce; trios only reach the prompt).
+    The p-value is Fisher's exact test of the shared shifts against the
+    shifts without them together, and against the apart shifts when there
+    are enough — the larger of the two (both comparisons must hold); with
+    no other shifts at all, the binomial test against `base`. A trio is
+    never "avoid" (keeping people apart pairs two). Pure."""
+    out = {}
+    for size in sorted({len(g) for g in stats}):
+        family = {g: s for g, s in stats.items() if len(g) == size}
+        m = len(family)
+        tested = []
+        for g, s in family.items():
+            n, hits = int(s.get("n") or 0), int(s.get("hits") or 0)
+            if n <= 0:
+                continue
+            rate = hits / float(n)
+            other = (s["other_hits"] / float(s["other_n"])) if int(s.get("other_n") or 0) else base
+            apart = (s.get("apart_hits", 0) / float(s["apart_n"])) if int(s.get("apart_n") or 0) >= PAIR_MIN_APART \
+                else None
+            hi = max(other, apart) if apart is not None else other
+            lo = min(other, apart) if apart is not None else other
+
+            def pvalue(upper, s=s, n=n, hits=hits):
+                if not int(s.get("other_n") or 0):
+                    return binom_tail(hits, n, base, upper=upper)
+                pv = fisher_tail(hits, n, s["other_hits"], s["other_n"], upper=upper)
+                if int(s.get("apart_n") or 0) >= PAIR_MIN_APART:
+                    pv = max(pv, fisher_tail(hits, n, s.get("apart_hits", 0), s["apart_n"], upper=upper))
+                return pv
+            if rate >= hi + PAIR_MIN_LIFT and rate >= CANDIDATE_MIN_RATE:
+                tested.append((pvalue(True), g, "prefer", hi))
+            elif size == 2 and rate <= lo - PAIR_MIN_LIFT:
+                tested.append((pvalue(False), g, "avoid", lo))
+        for i, (pv, g, kind, held_to) in enumerate(sorted(tested, key=lambda t: (t[0], t[1]))):
+            if pv > alpha / float(m - i):
+                break                                # Holm: the first to fail stops the rest
+            out[g] = (kind, held_to, pv)
     return out
 
 
@@ -1354,11 +1617,14 @@ def _learn_pairs(ctx) -> list:
     base = sum(1 for v in read.values() if v) / float(len(read))
     hl = half_life("pair")
     ev, names = {}, {}
+    nights_of = {}
     from itertools import combinations
     for (d, part), good in read.items():
         people = who[(d, part)]
         names.update(people)
         keys = sorted(people)
+        for k in keys:
+            nights_of.setdefault(k, set()).add((d, part))
         w = recency_weight(ctx.age(d), hl)
         groups = list(combinations(keys, 2))
         if len(keys) <= TRIO_MAX_PEOPLE:
@@ -1366,37 +1632,51 @@ def _learn_pairs(ctx) -> list:
         for g in groups:
             e = ev.setdefault(g, _evidence("pair"))
             _note(e, d, w, good, week=_week_of(d))
-    out = []
+    stats = {}
     for g, e in ev.items():
         if e["opps"] < PAIR_MIN_SHARED:
             continue
         if len(g) == 2 and frozenset(g) in owner_pairs:
             continue                                     # the owner already said: it is their rule
+        # The nights some of them worked without the others.
+        some = set().union(*(nights_of.get(k, set()) for k in g))
+        every = set.intersection(*(nights_of.get(k, set()) for k in g))
+        apart = some - every
+        other = [v for s, v in read.items() if s not in every]
+        stats[g] = {"n": e["opps"], "hits": e["hits"], "apart_n": len(apart),
+                    "apart_hits": sum(1 for s in apart if read.get(s)),
+                    "other_n": len(other), "other_hits": sum(1 for v in other if v)}
+    found = significant_teams(stats, base)
+    out = []
+    for g, (kind_, held_to, pvalue) in found.items():
+        e = ev[g]
         rate = _rate(e)
-        if rate >= base + PAIR_MIN_LIFT and rate >= CANDIDATE_MIN_RATE:
-            kind_, conf_e = "prefer", e
-        elif rate <= base - PAIR_MIN_LIFT and len(g) == 2:
-            kind_ = "avoid"
-            conf_e = dict(e, hits_w=e["opps_w"] - e["hits_w"], hits=e["opps"] - e["hits"])
+        if kind_ == "prefer":
+            conf_e = e
         else:
-            continue
+            conf_e = dict(e, hits_w=e["opps_w"] - e["hits_w"], hits=e["opps"] - e["hits"])
         shown = [names.get(k) or k.title() for k in g]
         together = ", ".join(shown[:-1]) + " and " + shown[-1]
         if kind_ == "prefer":
             text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well (sales per "
                     f"labor hour and the Shift Quality as it ran at or above the usual for that night, no coverage "
-                    f"issue, no poor review) against {_pct(base)} of this restaurant's shifts — a team worth keeping "
-                    f"together.")
+                    f"issue, no poor review) against {_pct(held_to)} of this restaurant's shifts — a team worth "
+                    f"keeping together.")
         else:
-            text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well against "
-                    f"{_pct(base)} of this restaurant's shifts — for the owner to look at, never applied on its own.")
+            # Worded by what its evidence counts — the shared shifts that did
+            # NOT run well — so "6 of 6" beside it reads true.
+            text = (f"{together} on the same shift: {e['opps'] - e['hits']} of {e['opps']} shared shifts did not "
+                    f"run well, against {_pct(1 - held_to)} of this restaurant's shifts — for the owner to look at, "
+                    f"never applied on its own.")
         m = _memory(ctx, f"pair|{kind_}|" + "+".join(_person_token(ctx, names.get(k) or k) for k in g), "pair",
                     conf_e, person=names.get(g[0]) or g[0],
                     value={"with": [names.get(k) or k for k in g[1:]], "kind": kind_, "rate": rate,
-                           "baseline": round(base, 3), "shared": e["opps"], "ran_well": e["hits"],
-                           "size": len(g)},
+                           "baseline": round(base, 3), "held_to": round(held_to, 3), "p_value": round(pvalue, 5),
+                           "shared": e["opps"], "ran_well": e["hits"], "size": len(g)},
                     text=text, source="outcomes_and_punches", origin="measured", habit=False,
-                    may_activate=(kind_ == "prefer"), min_rate=0.0)
+                    # A trio is told to the model, never enforced (LEARN-7);
+                    # keeping two apart is the owner's call alone.
+                    may_activate=(kind_ == "prefer" and len(g) == 2), min_rate=0.0)
         m["qualifies_new"] = m["qualifies"] = True
         out.append(m)
     return out
@@ -1536,15 +1816,129 @@ def _reversed(m) -> bool:
     return False
 
 
+def said_by_owner(row) -> bool:
+    """Whether a memory's answer (owner_said) is an account holder's — the
+    owner's word. A delegate's (a manager's, a member's) is theirs: a hand
+    confirmation or a let-go, never the owner's (schedule re-audit 10/4/26
+    LEARN-3). A row answered before whose answer it was got recorded reads
+    as the owner's: no answer the owner gave is lost."""
+    return bool(row) and (row.get("owner_said_authority") or "principal") == "principal"
+
+
+def _rule_alive(ctx, row) -> bool:
+    """Whether the rule a memory was made into (_make_rule) still exists:
+    the owner's pair in Team (staff_pairs), the person's standing shift on
+    that weekday, the role's end-time rule for that night. A read that fails
+    keeps the rule (never dropped for want of a read); a kind with no rule
+    of its own here keeps it too (schedule re-audit 10/4/26 LEARN-5)."""
+    kind, value = row.get("kind"), _loads(row.get("value_json")) if "value_json" in row else (row.get("value") or {})
+    value = value or {}
+    try:
+        import staff_settings
+        kw = {"db_path": ctx.db} if ctx.db else {}
+        if kind == "pair":
+            sets = ctx._get("pair_sets", lambda: staff_settings.pair_sets(ctx.rid, **kw))
+            other = (value.get("with") or [None])[0]
+            want = frozenset((" ".join(str(row.get("person") or "").lower().split()),
+                              " ".join(str(other or "").lower().split())))
+            which = value.get("kind") if value.get("kind") in ("prefer", "avoid") else "prefer"
+            return want in {frozenset(" ".join(str(x).lower().split()) for x in p)
+                            for p in (sets or {}).get(which) or ()}
+        if kind in ("opener", "closer"):
+            mine = staff_settings.for_name(ctx.rid, row.get("person"), **kw) or {}
+            return any(str((s or {}).get("day") or "") == str(row.get("day") or "")
+                       for s in mine.get("standing_shifts") or [])
+        if kind == "end_overrun":
+            rules = _standing_note_rules(ctx)
+            fam = ctx.fam(row.get("role"))
+            return any(r.get("kind") == "end" and ctx.fam(r.get("role")) == fam
+                       and (not r.get("days") or row.get("day") in r["days"])
+                       and (not r.get("dayparts") or row.get("daypart") in r["dayparts"]) for r in rules or [])
+    except Exception as e:
+        log.warning("schedule_memory: rule of %s unreadable for %s: %s", row.get("memory_key"), ctx.rid, e)
+        return True
+    return True
+
+
+def _standing_note_rules(ctx) -> list:
+    """The restaurant's note rules in force (schedule_note_rules' rows),
+    read so that a failed read raises — note_rules() answers [] on a
+    failure, which would read as every rule removed."""
+    def read():
+        import schedule_note_rules
+        conn = get_conn(ctx.db)
+        try:
+            return [schedule_note_rules._row(r) for r in conn.execute(
+                "SELECT * FROM schedule_note_rules WHERE restaurant_id=? AND removed_at IS NULL", (ctx.rid,))]
+        finally:
+            conn.close()
+    return ctx._get("note_rules", read)
+
+
+def _pattern_rule_alive(ctx, s) -> bool:
+    """Whether the rule a standing pattern was made into (schedule_versions.
+    make_rule) is still there: a moved_off's day and daypart still not one
+    the person can work, a moved_on's daypart still preferred, a
+    headcount's role floor and a start or end time still among the note
+    rules. The pattern side of LEARN-5. A read that fails keeps the rule."""
+    kind, day, part = s.get("kind"), s.get("day"), s.get("daypart")
+    try:
+        if kind in ("moved_off", "moved_on"):
+            import staff_settings
+            kw = {"db_path": ctx.db} if ctx.db else {}
+            mine = staff_settings.for_name(ctx.rid, s.get("employee"), **kw) or {}
+            if kind == "moved_off":
+                return (mine.get("daypart_availability") or {}).get(day, "any") not in ("any", part)
+            return part in (mine.get("preferred_dayparts") or [])
+        if kind in ("headcount_add", "retime_start", "retime_end"):
+            want = {"headcount_add": "floor", "retime_start": "start", "retime_end": "end"}[kind]
+            fam = ctx.fam(s.get("role"))
+            return any(r.get("kind") == want and ctx.fam(r.get("role")) == fam and r.get("scope") == "every"
+                       and (not r.get("days") or day in r["days"]) and part in (r.get("dayparts") or [part])
+                       for r in _standing_note_rules(ctx))
+    except Exception as e:
+        log.warning("schedule_memory: rule of pattern %s unreadable for %s: %s", s.get("key"), ctx.rid, e)
+        return True
+    return True
+
+
+def _unrule_pattern(ctx, key):
+    """The owner removed the rule a standing pattern was made into: the
+    standing row is a learned pattern again (its evidence decides), never a
+    rule nothing holds (LEARN-5)."""
+    conn = get_conn(ctx.db)
+    try:
+        conn.execute("UPDATE schedule_standing_patterns SET status='active', rule_note=NULL, ruled_by=NULL, "
+                     "updated_at=datetime('now') WHERE restaurant_id=? AND pattern_key=? AND status='ruled'",
+                     (ctx.rid, key))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _settle(m, prev, ctx) -> tuple:
     """(status, retired_reason) for one learned fact, or (None, None) when
-    it is not yet anything (not created). The ladder (module doc)."""
+    it is not yet anything (not created). The ladder (module doc).
+
+    A rule holds while the rule it was made into exists; once the owner
+    removed it (deleted the pair in Team, the standing shift, the time rule)
+    the evidence decides again, as for any learned fact — it read "A rule,
+    held by the checks" for good while nothing held it (LEARN-5).
+
+    Only the owner's answer (said_by_owner) holds a fact applied whatever
+    its confidence, or retires it as "you let it go"; a delegate's keep is a
+    hand confirmation — the fact still has to clear the line — and their
+    let-go retires it as theirs (LEARN-3, LEARN-4)."""
     if prev and prev.get("status") == "rule" and m["kind"] not in PATTERN_KINDS:
-        return "rule", None
+        if _rule_alive(ctx, prev):
+            return "rule", None
+        m["_rule_gone"] = True
+        prev = dict(prev, status="candidate", owner_said=None, owner_said_at=None, owner_said_authority=None)
     if m.get("status"):
         return m["status"], m.get("retired_reason")
     hand_new = max(m.get("hand_dates") or [""])
-    if prev and prev.get("owner_said") == "keep" and prev.get("status") != "retired":
+    owners = said_by_owner(prev)
+    if prev and prev.get("owner_said") == "keep" and prev.get("status") != "retired" and owners:
         # The owner's "keep" is a hand confirmation that holds the fact
         # applied for two half-lives from when they said it — unless the
         # manager has since reversed it twice by hand.
@@ -1552,9 +1946,17 @@ def _settle(m, prev, ctx) -> tuple:
         if said and ctx.age(said) < 2 * half_life(m["kind"]) and not _reversed(
                 dict(m, hand_dates=list(m.get("hand_dates") or []) + [said])):
             return ("dormant", None) if (m.get("person") and ctx.away(m["person"])) else ("active", None)
+    if prev and prev.get("owner_said") == "keep" and prev.get("status") != "retired" and not owners:
+        # A delegate's keep: their hand confirming it on that day — the
+        # decay runs from it, the confidence still has to clear the line.
+        said = str(prev.get("owner_said_at") or "")[:10]
+        if said and m.get("habit") and said > _renewed(m):
+            m["hand_dates"] = sorted(list(m.get("hand_dates") or []) + [said])
+            m["confidence"] = round(wilson_lower(m.get("hits_w") or 0, m.get("opps_w") or 0)
+                                    * recency_weight(ctx.age(said), half_life(m["kind"])), 3)
     if prev and prev.get("owner_said") == "let_go":
         if not (m["qualifies_new"] and hand_new > str(prev.get("owner_said_at") or "")[:10]):
-            return "retired", "owner"
+            return "retired", ("owner" if owners else "manager")
     elif prev and prev.get("status") == "retired":
         newer = (m["hand_dates"] or not m.get("habit")) and (
             (hand_new if m.get("habit") else m.get("last") or "") > str(prev.get("retired_at") or "")[:10])
@@ -1567,7 +1969,8 @@ def _settle(m, prev, ctx) -> tuple:
     if m.get("habit"):
         if _reversed(m):
             return "retired", "reversed"
-        age = ctx.age(hand_new) if hand_new else 10 ** 6
+        renewed = _renewed(m)
+        age = ctx.age(renewed) if renewed else 10 ** 6
         if m["confidence"] < RETIRE_CONFIDENCE and age >= 2 * half_life(m["kind"]):
             return "retired", "decayed"
     if m.get("person") and ctx.away(m["person"]):
@@ -1591,6 +1994,7 @@ def _write(ctx, produced, kinds_done) -> dict:
     went, an opener nobody opens as any more). {created, updated, retired,
     by_status}."""
     stats = {"created": 0, "updated": 0, "retired": 0, "by_status": {}}
+    ctx.closers()                    # read before the write lock is taken
     conn = get_conn(ctx.db)
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -1635,17 +2039,35 @@ def _write(ctx, produced, kinds_done) -> dict:
                     "updated_at=datetime('now') WHERE id=?",
                     row + (status, now, prev["id"]))
                 stats["updated"] += 1
+            if m.get("_rule_gone"):
+                # The owner removed the rule: it is no longer theirs to show,
+                # nor an answer of theirs to hold (LEARN-5).
+                conn.execute("UPDATE schedule_memory SET rule_ref=NULL, owner_said=NULL, owner_said_by=NULL, "
+                             "owner_said_at=NULL, owner_said_authority=NULL WHERE restaurant_id=? AND memory_key=?",
+                             (ctx.rid, key))
             stats["by_status"][status] = stats["by_status"].get(status, 0) + 1
         for key, prev in have.items():
-            if key in seen or prev["kind"] not in kinds_done or prev["status"] in ("retired", "rule"):
+            if key in seen or prev["kind"] not in kinds_done or prev["status"] == "retired":
+                continue
+            if prev["status"] == "rule":
+                # A rule the learner no longer finds holds while its rule
+                # exists; once the owner removed it, it retires (LEARN-5).
+                if prev["kind"] in PATTERN_KINDS or _rule_alive(ctx, prev):
+                    continue
+                conn.execute("UPDATE schedule_memory SET status='retired', enforcement='prompt', "
+                             "retired_reason='rule_removed', retired_at=?, rule_ref=NULL, owner_said=NULL, "
+                             "owner_said_by=NULL, owner_said_at=NULL, owner_said_authority=NULL, "
+                             "updated_at=datetime('now') WHERE id=?", (now, prev["id"]))
+                stats["retired"] += 1
                 continue
             dismissed = prev["kind"] in PATTERN_KINDS and key.split(":", 1)[-1] in ctx._cache.get(
                 "dismissed_patterns", ())
+            reason = ("dismissed" if dismissed else
+                      "gone" if prev["kind"] in _MIRROR_KINDS or prev["kind"] in PATTERN_KINDS else
+                      "not_closer" if _not_a_chosen_closer(prev["kind"], prev.get("role"), prev.get("person"),
+                                                           ctx.closers(), ctx.families) else "faded")
             conn.execute("UPDATE schedule_memory SET status='retired', enforcement='prompt', retired_reason=?, "
-                         "retired_at=?, updated_at=datetime('now') WHERE id=?",
-                         ("dismissed" if dismissed else
-                          "gone" if prev["kind"] in _MIRROR_KINDS or prev["kind"] in PATTERN_KINDS else "faded",
-                          now, prev["id"]))
+                         "retired_at=?, updated_at=datetime('now') WHERE id=?", (reason, now, prev["id"]))
             stats["retired"] += 1
         conn.commit()
     except Exception:
@@ -1761,7 +2183,22 @@ def _members(r, value) -> list:
     return names
 
 
-def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None) -> list:
+def _pair_binds(r, value) -> bool:
+    """Whether an active pair memory may reach the passes (LEARN-1): a team
+    to keep together ("prefer"), or a keep-apart the OWNER kept ("avoid" —
+    the learner never activates one, and only an account holder's Keep
+    does). A pair with any other polarity, or none, never binds: the passes
+    read a pair's polarity from its value, and a missing one must not read
+    as "together"."""
+    kind = value.get("kind")
+    if kind == "prefer":
+        return True
+    if kind == "avoid":
+        return r.get("owner_said") == "keep" and said_by_owner(r) and len(value.get("with") or []) == 1
+    return False
+
+
+def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None, closers=None) -> list:
     """The active memories that bind this week's passes: [{kind, key, person,
     day, daypart, role, value, confidence, enforcement, source}], most
     confident first — schedule_engine._learning_signals hands them to the
@@ -1786,12 +2223,19 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None)
                              first one in that weekday, around `start`
       closer                 {start, end, role}: the person is the last of
                              the role out that weekday, around `end`
-      pair                   {with, kind: prefer, rate, baseline, shared}:
-                             the person with `with` on the same shifts
+      pair                   {with, kind, rate, baseline, shared}: kind
+                             "prefer" — the person with `with` on the same
+                             shifts; kind "avoid" — the owner kept a learned
+                             keep-apart: never two of them on the same shift
+                             (LEARN-1). Nothing else is a pair signal.
       ot_risk                {headroom_hours, over_hours, overrun_hours}:
                              keep the person headroom_hours under their line
       end_overrun            {minutes, ends_at, padded_end}: the role's
-                             closes there end `minutes` later (pad_overruns)"""
+                             closes there end `minutes` later (pad_overruns)
+
+    A learned closer for a role whose closers the owner chose binds only
+    when it is one of them (LEARN-10): `closers` ({family: {name key}},
+    chosen_closers_of) when the caller has them, else read here."""
     if not restaurant_id or not _learns(restaurant_id, db_path):
         return []
     rows = _rows(restaurant_id, ("active",), db_path, kinds=SIGNAL_KINDS + ("retime_end",))
@@ -1801,12 +2245,18 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None)
     retimed_ends = set()
     for r in _rows(restaurant_id, ("active", "candidate"), db_path, kinds=("retime_end",)):
         retimed_ends.add((_fam(r.get("role"), families), r.get("day"), r.get("daypart")))
+    if closers is None and any(r["kind"] == "closer" for r in rows):
+        closers = chosen_closers_of(restaurant_id, db_path=db_path)
     out = []
     for r in rows:
         if r["enforcement"] not in ("soft", "hard") or r["kind"] not in SIGNAL_KINDS:
             continue
         value = _loads(r.get("value_json")) or {}
         if value.get("conflict"):
+            continue
+        if r["kind"] == "pair" and not _pair_binds(r, value):
+            continue
+        if _not_a_chosen_closer(r["kind"], r.get("role"), r.get("person"), closers, families):
             continue
         if r.get("day") and weekdays and r["day"] not in weekdays:
             continue
@@ -1891,12 +2341,28 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
                 if mine and who not in _edge_of([x[:5] for x in g], kind):
                     hit.append(mine[0][5])
         elif kind == "pair":
+            # Its polarity is its meaning (schedule re-audit 10/4/26 LEARN-1:
+            # every pair was read as "together", so the owner's Keep on a
+            # learned keep-apart charged the week for keeping them apart).
+            polarity = v.get("kind")
+            if polarity not in ("prefer", "avoid"):
+                continue
             group = {who} | {_nk(n) for n in v.get("with") or []}
-            dates = {}
+            dates, idx = {}, {}
             for i, r in enumerate(rows or []):
                 if name_of(i) in group:
-                    dates.setdefault(str(r.get("date"))[:10], {}).setdefault(_row_part(r), set()).add(name_of(i))
+                    d_, p_ = str(r.get("date"))[:10], _row_part(r)
+                    dates.setdefault(d_, {}).setdefault(p_, set()).add(name_of(i))
+                    idx.setdefault((d_, p_), []).append(i)
             for _d, parts in dates.items():
+                if polarity == "avoid":
+                    # Two of them on the same shift (a row's slot: its first
+                    # daypart) — one miss, naming the rows on it.
+                    clash = [i for p_, ps in parts.items() if len(ps) > 1 for i in idx[(_d, p_)]]
+                    if clash:
+                        hit.append(-1)
+                        hit += clash
+                    continue
                 there = set().union(*parts.values())
                 if len(there) > 1 and any(len(ps & there) < len(there) for ps in parts.values()):
                     hit.append(-1)
@@ -1980,6 +2446,11 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
     overtime), the row is not pinned and its day is being drafted, and the
     owner set no end time for that role and night (Constraints.role_times —
     their rule stands). A close is the last of its role family out that day.
+    Never past the owner's after-close allowance for the role
+    (schedule_rules.close_cap_minutes — the cap the job's parser holds every
+    model row to): a pad that would run past it stops there, and the rest
+    is left with why, so the owner can raise the allowance if the closes
+    really run that late (re-audit 10/4/26 PIPE-10).
     Returns {rows, padded:[{index, employee, date, from, to, minutes,
     reason}], left:[{index, employee, date, reason}]} — the reasons go to the
     review, never into a row's note (staff read the notes)."""
@@ -2033,6 +2504,17 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                     step = pad
                 if step <= 0:
                     continue                       # already drafted until they really finish
+                cut = 0
+                if c is not None:
+                    import schedule_rules as _sr_cap
+                    cap = _sr_cap.close_cap_minutes(c, r)
+                    if cap is not None and end + step > cap:
+                        cut = end + step - cap
+                        step = cap - end
+                if step <= 0:
+                    left.append({"index": i, "employee": r.get("employee"), "date": d,
+                                 "reason": _allowance_reason(r, v, fam, cut)})
+                    continue
                 trial = dict(r, shift_end=_clock(end + step, like=r.get("shift_end")),
                              scheduled_hours=f"{hours + step / 60.0:g}")
                 if c is not None:
@@ -2046,7 +2528,19 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                                "reason": (f"{v.get('role') or fam} closes on {day}s have run about "
                                           f"{v.get('typical_over') or pad} minutes past the scheduled end "
                                           f"({v.get('over')} of {v.get('closes')} closes)")})
+                if cut > 0:
+                    left.append({"index": i, "employee": r.get("employee"), "date": d,
+                                 "reason": _allowance_reason(r, v, fam, cut)})
     return {"rows": out, "padded": padded, "left": left}
+
+
+def _allowance_reason(row, value, fam, minutes) -> str:
+    """Why a late close was not padded all the way (PIPE-10): it would run
+    past the owner's after-close allowance — offered as theirs to raise,
+    never applied over it."""
+    role = row.get("role") or value.get("role") or fam
+    return (f"{role} closes have run about {int(minutes)} more minutes than your after-close allowance for "
+            f"{role} lets them stay — raise the allowance in your schedule rules if they really stay that late")
 
 
 # ── the learned block of the prompt (L-28) ────────────────────────────────
@@ -2098,6 +2592,9 @@ def _short(m) -> str:
     if kind == "closer":
         return f"{who} closes {v.get('role') or role} on {day}s" + (
             f", until about {v.get('end')}" if v.get("end") else "")
+    if kind == "pair" and v.get("kind") == "avoid":
+        # The owner's own keep-apart: never named where it is read (LEARN-6).
+        return "two people the owner keeps apart, on the same shift"
     if kind == "pair":
         return f"{who} with {' and '.join(v.get('with') or [])} on the same shifts"
     if kind == "ot_risk":
@@ -2107,19 +2604,35 @@ def _short(m) -> str:
     return str(m.get("text") or "")
 
 
-def _memory_units(restaurant_id, week_dates, roster_names, db_path) -> list:
+def _memory_units(restaurant_id, week_dates, roster_names, db_path, closers=None) -> list:
     """[(text, rank)] — the memory's lines for this week: candidates in
     full, with their evidence; an active fact held in code as one short
     [held] line; only what is about this week's weekdays and people still on
-    the roster."""
+    the roster.
+
+    Never a keep-apart (schedule re-audit 10/4/26 LEARN-1, LEARN-6): the
+    draft is shared with every login that opens the schedule, and a learned
+    keep-apart is the owner's alone — a candidate is for the owner to look
+    at, and one the owner kept is held by the passes, counted and never
+    named, as an owner-only pairing is (the [held] line said "Ana with Bo on
+    the same shifts", the opposite of what the owner kept). Never a learned
+    closer who is not one of the closers the owner chose (LEARN-10)."""
     if not _learns(restaurant_id, db_path):
         return []
     weekdays = {_weekday(d) for d in (week_dates or []) if _weekday(d)}
     roster = {_nk(n) for n in roster_names} if roster_names else None
+    rows = _rows(restaurant_id, ("candidate", "active"), db_path, kinds=PROMPT_KINDS)
+    if closers is None and any(r["kind"] == "closer" for r in rows):
+        closers = chosen_closers_of(restaurant_id, db_path=db_path)
+    families = _families(restaurant_id, db_path) if closers else None
     units = []
-    for r in _rows(restaurant_id, ("candidate", "active"), db_path, kinds=PROMPT_KINDS):
+    for r in rows:
         value = _loads(r.get("value_json")) or {}
         if value.get("conflict"):
+            continue
+        if r["kind"] == "pair" and value.get("kind") != "prefer":
+            continue
+        if _not_a_chosen_closer(r["kind"], r.get("role"), r.get("person"), closers, families):
             continue
         if r.get("day") and weekdays and r["day"] not in weekdays:
             continue
@@ -2188,7 +2701,7 @@ def _unit_rank(text, names, weekdays) -> float:
 
 
 def prompt_lines(restaurant_id, week_dates, roster_names=None, budget_chars=1600, db_path=None,
-                 sections=None) -> str:
+                 sections=None, closers=None) -> str:
     """ONE learned block for the schedule prompt, inside `budget_chars`
     (schedule audit 10/3/26 L-28: about fifteen learned blocks were
     concatenated with no budget and no ranking, the standing patterns with
@@ -2210,7 +2723,7 @@ def prompt_lines(restaurant_id, week_dates, roster_names=None, budget_chars=1600
     names = sorted({_nk(n) for n in (roster_names or []) if _nk(n)}, key=len, reverse=True)
     parts = []
     try:
-        mem = _memory_units(restaurant_id, week_dates, roster_names, db_path)
+        mem = _memory_units(restaurant_id, week_dates, roster_names, db_path, closers=closers)
     except Exception as e:
         _capture(e, "prompt memory", restaurant_id)
         mem = []
@@ -2284,7 +2797,8 @@ STATUS_LABELS = {"candidate": "Learning", "active": "Applied", "rule": "A rule",
                  "retired": "Retired", "dormant": "Asleep"}
 RETIRED_WORDS = {"reversed": "reversed by hand", "decayed": "faded unconfirmed", "faded": "no longer seen",
                  "gone": "no longer seen", "owner": "you let it go", "dismissed": "dismissed",
-                 "retest": "not put back when tested"}
+                 "retest": "not put back when tested", "manager": "a manager let it go",
+                 "rule_removed": "its rule was removed", "not_closer": "not one of the closers you chose"}
 # What "make it a rule" becomes for each kind; the rest are refused in words.
 _RULE_NOTES = {
     "ot_risk": "Overtime risk can't be a rule — set their hours limit in Team to cap their week.",
@@ -2294,14 +2808,38 @@ _RULE_NOTES = {
 }
 
 
-def memory_view(restaurant_id, db_path=None, include_retired=True) -> dict:
+def owner_only(r, value=None) -> bool:
+    """A memory only the account holders may read (schedule re-audit
+    10/4/26 LEARN-6): a learned keep-apart — that two people's shared
+    shifts ran worse is a judgement about them, the owner's call alone
+    (memory_lines' audience rule, held on every surface)."""
+    value = value if value is not None else (_loads(r.get("value_json")) or {})
+    return r.get("kind") == "pair" and value.get("kind") == "avoid"
+
+
+def _answer_words(r, principal=True) -> str:
+    """Who answered a memory, in the viewer's words, or None."""
+    said = r.get("owner_said")
+    if said not in ("keep", "let_go") or r.get("status") == "rule":
+        return None
+    who = ("you" if principal else "the owner") if said_by_owner(r) else "a manager"
+    return ("Kept by " if said == "keep" else "Let go by ") + who
+
+
+def memory_view(restaurant_id, db_path=None, include_retired=True, principal=True) -> dict:
     """The memory for the owner's screen: {items, counts, consolidated_at
     (M/D/YY), classes, ladder}. Each item says what it is (class, kind,
     text), how sure (confidence 0-1 and `confidence_pct` — a computed %, "—"
     below CANDIDATE_MIN_HITS opportunities), on what (opportunities, hits,
     misses by hand), when it was last confirmed by hand and last seen (M/D/YY),
-    its status and what holds it (held_in_code, bound_by) and what the owner
-    may do (can_keep, can_let_go, can_be_rule)."""
+    its status and what holds it (held_in_code, bound_by), who answered it
+    (`answered`: "Kept by you", "Let go by a manager"…) and what the viewer
+    may do (can_keep — `keep_label` names it: "Keep them apart" for a
+    keep-apart —, can_let_go, can_be_rule).
+
+    `principal` False (a manager's or a member's login): the owner-only
+    facts are left out (owner_only, LEARN-6), and nothing the owner already
+    answered can be answered the other way (LEARN-3)."""
     from time_utils import mdy
     statuses = STATUSES if include_retired else ("candidate", "active", "rule", "retest", "dormant")
     rows = _rows(restaurant_id, statuses, db_path)
@@ -2314,10 +2852,14 @@ def memory_view(restaurant_id, db_path=None, include_retired=True) -> dict:
     items, counts = [], {}
     for r in rows:
         value = _loads(r.get("value_json")) or {}
+        if not principal and owner_only(r, value):
+            continue
         opps = int(r.get("opportunities") or 0)
         conf = r.get("confidence")
         held = r["status"] == "active" and r["kind"] in SIGNAL_KINDS
         mirror = r["kind"] in _MIRROR_KINDS
+        live = not mirror and r["status"] in ("candidate", "active", "retest", "dormant")
+        owners = r.get("owner_said") and said_by_owner(r)
         items.append({
             "key": r["memory_key"], "kind": r["kind"], "fact_class": r["fact_class"],
             "class_label": CLASS_LABELS.get(r["fact_class"], r["fact_class"]),
@@ -2336,8 +2878,10 @@ def memory_view(restaurant_id, db_path=None, include_retired=True) -> dict:
             "retired_reason": r.get("retired_reason"),
             "retired_words": RETIRED_WORDS.get(r.get("retired_reason")) if r["status"] == "retired" else None,
             "owner_said": r.get("owner_said"), "rule": r.get("rule_ref"),
-            "can_keep": not mirror and r["status"] in ("candidate", "active", "retest", "dormant"),
-            "can_let_go": not mirror and r["status"] in ("candidate", "active", "retest", "dormant"),
+            "answered": _answer_words(r, principal),
+            "keep_label": "Keep them apart" if owner_only(r, value) else "Keep",
+            "can_keep": live and (principal or not (owners and r.get("owner_said") == "let_go")),
+            "can_let_go": live and (principal or not (owners and r.get("owner_said") == "keep")),
             "can_be_rule": (not mirror and r["status"] in ("candidate", "active", "retest")
                             and _rule_refusal(r, value) is None)})
         counts[r["status"]] = counts.get(r["status"], 0) + 1
@@ -2370,23 +2914,39 @@ def _rule_refusal(r, value):
 
 def owner_answer(restaurant_id, key, action, user=None, db_path=None) -> dict:
     """The owner's say over one memory (raw_L §3 B: "rule: owner confirms"):
-      keep    a hand confirmation — the fact is applied (active) while its
-              evidence holds; for a standing pattern, schedule_versions.
-              confirm_standing (a live one becomes a standing pattern now)
-      let_go  retired by the owner; only newer hand evidence brings it back
-              (a pattern: its dismissal or its standing row let go)
+      keep    the owner's (an account holder's): the fact is applied
+              (active) for two half-lives whatever its confidence (_settle;
+              a standing pattern through schedule_versions.confirm_standing,
+              owner_kept_at — LEARN-4), unless the manager reverses it
+              twice by hand; a keep-apart the owner keeps holds the two
+              APART in every pass (LEARN-1). A delegate's (a manager's, a
+              member's): their hand confirmation, recorded as theirs — the
+              fact still has to clear the line.
+      let_go  retired as the answerer's ("you let it go" for the owner, "a
+              manager let it go" for a delegate); only newer hand evidence
+              brings it back (a pattern: its dismissal or its standing row
+              let go)
       rule    made something code enforces: a person pattern, a headcount or
               a start/end through schedule_versions.make_rule (L-33); a
               pair → the owner's pair (staff_pairs); an opener → their
               standing shift; a closing overrun → the role's end-time rule
               (schedule_note_rules.add_time_rule)
-    Through view-as nothing changes — it is not the restaurant's word (L-8,
-    L-10). Raises ValueError with the owner's words."""
+    Whose word it is (schedule re-audit 10/4/26 LEARN-3): a delegate never
+    undoes the owner's answer (their Let go on what the owner kept, their
+    Keep on what the owner let go — refused in words), never answers an
+    owner-only fact (a keep-apart), and never makes a rule beyond a person's
+    own slot pattern; the answer is stored with its authority
+    (owner_said_authority). Through view-as nothing changes — it is not the
+    restaurant's word (L-8, L-10). A fact that is a rule is changed where
+    the rule lives. Returns {ok, key, action, rule, message}; raises
+    ValueError with the owner's words."""
     import schedule_versions as sv
     if action not in ("keep", "let_go", "rule"):
         raise ValueError("Answer keep, let go or make it a rule.")
-    if sv.authority_of(user) == "admin":
+    auth = sv.authority_of(user)
+    if auth == "admin":
         raise ValueError("An answer through view-as doesn't change what the draft keeps — the owner answers this one.")
+    owner = auth == "principal"
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT * FROM schedule_memory WHERE restaurant_id=? AND memory_key=?",
@@ -2398,7 +2958,22 @@ def owner_answer(restaurant_id, key, action, user=None, db_path=None) -> dict:
     r, value = dict(row), _loads(row["value_json"]) or {}
     if r["kind"] in _MIRROR_KINDS:
         raise ValueError("This one follows its own record — it changes as that record does.")
-    who = (user or {}).get("username") or (user or {}).get("email") or "owner"
+    if r["status"] == "rule" and action != "rule":
+        raise ValueError("This one is a rule now — change or remove it where the rule is kept.")
+    if owner_only(r, value) and not owner:
+        raise ValueError("Only the owner answers this one.")
+    if action == "rule" and not owner and r["kind"] not in ("moved_off", "moved_on"):
+        raise ValueError("Only the account owner can turn something learned into a rule the draft must keep.")
+    if not owner and r.get("owner_said") in ("keep", "let_go") and said_by_owner(r) and r["status"] != "rule":
+        if action == "let_go" and r["owner_said"] == "keep":
+            raise ValueError("The owner kept this one — only the owner can let it go.")
+        if action == "keep" and r["owner_said"] == "let_go":
+            raise ValueError("The owner let this one go — only the owner can bring it back.")
+        if action == r["owner_said"]:
+            return {"ok": True, "key": key, "action": action, "rule": None, "unchanged": True,
+                    "message": "The owner already " + ("kept" if action == "keep" else "let go of") + " this one."}
+    who = (user or {}).get("username") or (user or {}).get("email") or ("owner" if owner else "manager")
+    said_auth = "principal" if owner else "delegate"
     kw = {"db_path": db_path} if db_path else {}
     rule_ref = None
     if r["kind"] in PATTERN_KINDS:
@@ -2409,38 +2984,81 @@ def owner_answer(restaurant_id, key, action, user=None, db_path=None) -> dict:
         elif action == "keep":
             try:
                 sv.confirm_standing(restaurant_id, pkey, user=user, keep=True, **kw)
+            except sv.OwnerAnswered as e:
+                raise ValueError(str(e))
             except ValueError:
                 p = {"kind": r["kind"], "employee": r.get("person"), "role": r.get("role"), "day": r.get("day"),
                      "daypart": r.get("daypart"), "time": value.get("time"), "text": r.get("text"),
                      "was_role": value.get("was_role"), "delta": value.get("delta"), "names": value.get("names")}
-                sv.owner_said_pattern(restaurant_id, p, sv.authority_of(user), who=who, **kw)
+                sv.owner_said_pattern(restaurant_id, p, auth, who=who, **kw)
         else:
             try:
                 sv.confirm_standing(restaurant_id, pkey, user=user, keep=False, **kw)
+            except sv.OwnerAnswered as e:
+                raise ValueError(str(e))
             except ValueError:
                 import schedule_intel
-                schedule_intel.dismiss_pattern(restaurant_id, pkey, actor=who, authority=sv.authority_of(user), **kw)
+                schedule_intel.dismiss_pattern(restaurant_id, pkey, actor=who, authority=auth, **kw)
+        if action != "rule":
+            _record_answer(restaurant_id, r["id"], action, who, said_auth, db_path)
         consolidate(restaurant_id, db_path=db_path, only=("patterns",))
-        return {"ok": True, "key": key, "action": action, "rule": rule_ref}
+        return {"ok": True, "key": key, "action": action, "rule": rule_ref,
+                "message": _answer_message(action, owner, r, value)}
     if action == "rule":
         why = _rule_refusal(r, value)
         if why:
             raise ValueError(why)
         rule_ref = _make_rule(restaurant_id, r, value, user, db_path)
-    status = {"keep": "active", "let_go": "retired", "rule": "rule"}[action]
+    if action == "keep" and not owner:
+        # A delegate's keep: their hand confirmation, recorded as theirs;
+        # the status stays what the evidence makes it (_settle) — one
+        # retired by anybody but the owner goes back on the ladder.
+        status = "candidate" if r["status"] == "retired" else r["status"]
+    else:
+        status = {"keep": "active", "let_go": "retired", "rule": "rule"}[action]
     conn = get_conn(db_path)
     try:
         conn.execute("UPDATE schedule_memory SET status=?, enforcement=?, owner_said=?, owner_said_by=?, "
-                     "owner_said_at=datetime('now'), last_confirmed_by_hand=CASE WHEN ?='keep' THEN date('now') "
-                     "ELSE last_confirmed_by_hand END, retired_reason=CASE WHEN ?='let_go' THEN 'owner' ELSE NULL END, "
+                     "owner_said_authority=?, owner_said_at=datetime('now'), "
+                     "last_confirmed_by_hand=CASE WHEN ?='keep' THEN date('now') ELSE last_confirmed_by_hand END, "
+                     "retired_reason=CASE WHEN ?='let_go' THEN ? ELSE NULL END, "
                      "retired_at=CASE WHEN ?='let_go' THEN datetime('now') ELSE NULL END, "
                      "rule_ref=COALESCE(?, rule_ref), updated_at=datetime('now') WHERE id=?",
-                     (status, _enforcement(r["kind"], status), action if action != "rule" else "keep", who, action,
-                      action, action, rule_ref, r["id"]))
+                     (status, _enforcement(r["kind"], status), action if action != "rule" else "keep", who, said_auth,
+                      action, action, "owner" if owner else "manager", action, rule_ref, r["id"]))
         conn.commit()
     finally:
         conn.close()
-    return {"ok": True, "key": key, "action": action, "rule": rule_ref}
+    return {"ok": True, "key": key, "action": action, "rule": rule_ref,
+            "message": _answer_message(action, owner, r, value)}
+
+
+def _record_answer(restaurant_id, memory_id, action, who, authority, db_path=None):
+    """A pattern memory's answer, with whose it is (the standing row holds
+    its effect; the memory row says who answered, for the screen and for
+    the next answer's check)."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE schedule_memory SET owner_said=?, owner_said_by=?, owner_said_authority=?, "
+                     "owner_said_at=datetime('now'), updated_at=datetime('now') WHERE id=?",
+                     (action, who, authority, memory_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _answer_message(action, owner, r, value) -> str:
+    """What the screen says after an answer, in the answerer's words."""
+    if action == "rule":
+        return "Now a rule the draft keeps."
+    if action == "let_go":
+        return ("Let go — only newer edits of yours bring it back." if owner
+                else "Let go — the owner can still keep it.")
+    if not owner:
+        return "Noted as your confirmation — it's applied once Cavnar AI is sure enough, or when the owner keeps it."
+    if owner_only(r, value):
+        return "Kept — every draft keeps them on different shifts."
+    return "Kept — the draft applies it."
 
 
 def _make_rule(restaurant_id, r, value, user, db_path) -> str:

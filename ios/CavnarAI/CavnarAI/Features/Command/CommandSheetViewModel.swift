@@ -145,6 +145,12 @@ final class CommandSheetViewModel {
     // MARK: Inline answers
 
     private struct DecideBody: Encodable { let decision: String }
+    private struct DecideResult: Decodable {
+        let ok: Bool
+        let error: String?
+        // A drop that leaves the floor without a manager (re-audit RULES-15).
+        let warning: String?
+    }
 
     /// Approve / Deny a time-off or shift request in place — the same decide
     /// routes the Labor rows post. A drop approved here opens the shift for
@@ -157,9 +163,9 @@ final class CommandSheetViewModel {
         rowBusy.insert(item.key)
         defer { rowBusy.remove(item.key) }
         do {
-            let r: APIClient.OKResponse = try await client.send(path, method: .post, body: DecideBody(decision: approve ? "approve" : "deny"))
+            let r: DecideResult = try await client.send(path, method: .post, body: DecideBody(decision: approve ? "approve" : "deny"))
             if r.ok {
-                rowOutcome[item.key] = approve ? "Approved" : "Denied"
+                rowOutcome[item.key] = approve ? (r.warning.map { "Approved — \($0)" } ?? "Approved") : "Denied"
                 Haptic.success()
             } else {
                 rowOutcome[item.key] = r.error ?? "That didn't go through."

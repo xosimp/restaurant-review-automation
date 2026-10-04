@@ -16,6 +16,17 @@ struct ScheduleWeekNotes: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let cost = result.projectedCost, let total = cost.total { costBlock(cost, total: total) }
+            // The week's labor % on the basis the server states (schedule
+            // re-audit 10/4/26 SQ-4): all-in for the owner, hourly pay for
+            // anyone else, and any projected saving on that same basis.
+            if let view = result.laborView, let line = view.line {
+                caption(line + (view.text.map { ". \($0)" } ?? "."))
+                if let saved = view.savings, saved > 0, let recent = view.recentPct {
+                    caption("Projection, not yet earned: about $\(saved.commaFormatted) under your last "
+                            + "\(view.recentDays ?? 14) days at \(String(format: "%g", recent))% "
+                            + (view.isAllIn ? "all-in" : "hourly pay") + ".")
+                }
+            }
             if let source = result.projectedRevenueSource, !source.isEmpty {
                 caption("Revenue basis: \(source).")
             }
@@ -58,7 +69,9 @@ struct ScheduleWeekNotes: View {
     private func costBlock(_ cost: ProjectedCost, total: Double) -> some View {
         let over = result.overBudgetDollars ?? 0
         return HStack(alignment: .top, spacing: 14) {
-            stat("Projected cost", value: "$\(total.commaFormatted)",
+            // Hourly pay, against the hourly budget (SQ-4): salaried pay is
+            // in neither.
+            stat("Hourly pay", value: "$\(total.commaFormatted)",
                  tone: over > 0 ? .cavnarAmber : .cavnarInk)
             if let ot = cost.overtimeHours, ot > 0 {
                 stat("Overtime", value: "\(ot.commaFormatted)h", tone: .cavnarAmber)
@@ -67,7 +80,7 @@ struct ScheduleWeekNotes: View {
                 stat("OT premium", value: "$\(premium.commaFormatted)", tone: .cavnarAmber)
             }
             if over > 0 {
-                stat("Over budget", value: "$\(over.commaFormatted)", tone: .cavnarRed)
+                stat("Over hourly budget", value: "$\(over.commaFormatted)", tone: .cavnarRed)
             }
             Spacer(minLength: 0)
         }

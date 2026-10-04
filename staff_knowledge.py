@@ -588,6 +588,27 @@ def expired_certs(restaurant_id, today=None, db_path=DB_PATH) -> dict:
     return out
 
 
+def cert_expiries(restaurant_id, before, db_path=DB_PATH) -> dict:
+    """{name_key: {cert: expires_on iso}} for the certificates whose expiry
+    falls before `before` (a date or an iso string) — what a week's
+    schedule needs to know of a card that runs out mid-week (schedule
+    re-audit 10/4/26 RULES-14)."""
+    before = before.isoformat() if hasattr(before, "isoformat") else str(before)[:10]
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute("SELECT employee_key, cert, expires_on FROM staff_certs WHERE restaurant_id=? "
+                            "AND expires_on IS NOT NULL AND expires_on < ?", (restaurant_id, before)).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        cur = out.setdefault(r["employee_key"], {})
+        exp = str(r["expires_on"])[:10]
+        # Two cards of one kind: the later expiry is the one held.
+        cur[r["cert"]] = max(cur.get(r["cert"], exp), exp)
+    return out
+
+
 def _mdy(iso):
     try:
         from time_utils import mdy

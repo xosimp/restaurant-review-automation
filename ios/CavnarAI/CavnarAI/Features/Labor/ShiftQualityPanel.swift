@@ -91,6 +91,12 @@ struct ShiftQualityPanel: View {
             if let week = quality.weekDimensions, !week.isEmpty {
                 weekMeasures(week)
             }
+            // A broken hard rule holds the whole week under fair (schedule
+            // re-audit 10/4/26 SQ-2): said first, in the engine's words.
+            if let held = quality.heldBy?.text {
+                HomeMixedText.make(held, size: 13.5, weight: 600, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !warnings.isEmpty { warningBlock }
             if onRecommendation != nil, let recs = quality.recommendations, !recs.isEmpty { recommendationsBlock(recs) }
             if !suppressedKinds.isEmpty { hiddenKindsNote }
@@ -864,15 +870,22 @@ struct ShiftQualityPanel: View {
         guard !who.isEmpty, let rows = viewModel.whatIfRows(shift: shift, who: who, replacing: replacing) else { return }
         whatIfBusy = shift.id
         defer { whatIfBusy = nil }
+        // The week as it stands, scored the same way and against the same
+        // inputs as the what-if (schedule re-audit 10/4/26 UI-5): the
+        // stored verdict was scored when the week was built, so a what-if
+        // that changed nothing could read as a gain.
+        let base = await viewModel.liveScore(rows: viewModel.scheduleResult?.previewRows ?? [])
         guard let live = await viewModel.liveScore(rows: rows) else {
             whatIfAnswer[shift.id] = WhatIfAnswer(text: "Couldn't score that just now.", who: who, date: shift.date,
                                                   replacing: replacing, applicable: false)
             return
         }
+        let before = base?.quality.shifts?.first { $0.date == shift.date && $0.daypart == shift.daypart }?.score
+            ?? shift.score ?? 0
         let after = live.quality.shifts?.first { $0.date == shift.date && $0.daypart == shift.daypart }?.score
-        var text = "This shift \(shift.score ?? 0) → \(after.map(String.init) ?? "—")"
-        if let after { text += " (\(ScoreDeltaChip.signed(after - (shift.score ?? 0))))" }
-        if let week = live.quality.score, let now = quality.score {
+        var text = "This shift \(before) → \(after.map(String.init) ?? "—")"
+        if let after { text += " (\(ScoreDeltaChip.signed(after - before)))" }
+        if let week = live.quality.score, let now = base?.quality.score ?? quality.score {
             text += ", the week \(now) → \(week) (\(ScoreDeltaChip.signed(week - now)))"
         }
         text += ". Nothing saved."

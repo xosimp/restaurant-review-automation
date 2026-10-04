@@ -5037,7 +5037,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # The dates to write rows for. A big roster is generated in parts; the
     # rules that span the whole week (the hours ceiling, rest, runs of days)
     # are verified after the parts are merged.
-    _gen_dates = [d for d in week_dates if not week_slice or d in set(week_slice)]
+    # Never a date the restaurant is closed (re-audit 10/4/26 PIPE-4): only
+    # the enum schema left them out, so the plain schema and the CSV
+    # fallback kept a closed day's rows, swept clean and sent.
+    _gen_dates = [d for d in week_dates if (not week_slice or d in set(week_slice)) and d not in _closed_set]
     _gen_days = [n for d, n in zip(week_dates, week_days) if d in set(_gen_dates)]
 
     # ── What each shift needs ─────────────────────────────────────────────
@@ -5135,12 +5138,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # ── THIS REQUEST: the dates to write, their requirements, the seam ────
     _dates_lines = "\n".join(f"- {_sp.day_date(d)}" for d in _gen_dates)
     _request_head = (f"\n\n{_sp.REQUEST_HEAD} — write shifts for these dates only:\n" + _dates_lines)
-    if len(_gen_dates) < len(week_dates):
+    _open_week = [d for d in week_dates if d not in _closed_set]
+    if len(_gen_dates) < len(_open_week):
         _request_head += ("\nThe week runs " + _sp.day_date(week_dates[0]) + " to " + _sp.day_date(week_dates[-1])
                           + "; its other dates are written separately or kept as they are. Write nothing for them, "
                           "and keep each person's whole week in mind for hours and rest.")
     _slice_budget = ""
-    if hours_budget and _daily_target_map and len(_gen_dates) < len(week_dates):
+    if hours_budget and _daily_target_map and len(_gen_dates) < len(_open_week):
         # Each part is told its own share of the week's hours (PR-16): it
         # used to read only the whole week's ceiling.
         _share = round(sum(float(_daily_target_map.get(d) or 0) for d in _gen_dates), 1)
@@ -5422,6 +5426,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         if week_slice:
             _keep = set(_gen_dates)
             _data_rows = [r for r in _data_rows if r.split(",", 1)[0].strip() in _keep]
+        elif _closed_set:
+            _data_rows = [r for r in _data_rows if r.split(",", 1)[0].strip().strip('"') not in _closed_set]
         for line in summary_part.strip().split("\n"):
             line = line.strip()
             if line.startswith("- "):
