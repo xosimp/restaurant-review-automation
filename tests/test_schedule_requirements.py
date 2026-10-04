@@ -8,6 +8,7 @@ the prompt they land in: one ranked priority list, no competing "highest
 priority" claims, the daypart-presence rule worded exactly as the scorer
 counts it, and every existing hard rule still present.
 """
+import schedule_prompt
 import re
 import types
 
@@ -118,46 +119,56 @@ def test_the_presence_rule_in_words_matches_what_the_scorer_counts():
 
 # ── people ────────────────────────────────────────────────────────────────
 
+def _people(names, **kw):
+    """Each person's ROSTER line as fields (C1, PR-33: experience and the
+    usual pattern are columns of one line per person — the EXPERIENCED
+    STAFF and USUAL PATTERN blocks that named people again are gone)."""
+    return {p["name"]: p for p in labor._roster_people([(n, "Server") for n in names], **kw)}
+
+
 def test_experienced_and_developing_staff_are_named():
-    out = req.experience_block({"Ana": 40, "Ben": 3, "Cy": 10}, ["Ana", "Ben", "Cy", "Dee"])
-    assert f"{sq.EXPERIENCE_SHIFTS}+ shifts" in out and "Ana." in out
-    assert "Still developing" in out and "Ben" in out.split("Still developing")[1]
-    # Cy sits between the two bars and Dee has no history: neither listed.
-    assert "Cy" not in out and "Dee" not in out
+    out = _people(["Ana", "Ben", "Cy", "Dee"], tenure={"Ana": 40, "Ben": 3, "Cy": 10})
+    assert out["Ana"]["experience"] == "experienced"
+    assert out["Ben"]["experience"] == "developing (3 shifts)"
+    # Cy sits between the two bars and Dee has no history: neither is said.
+    assert out["Cy"]["experience"] == "" and out["Dee"]["experience"] == ""
+    head = schedule_prompt.roster_table(list(out.values()))
+    assert f"experienced ({sq.EXPERIENCE_SHIFTS}+ shifts here or marked by the owner)" in head
+    assert f"developing (under {sq.DEVELOPING_SHIFTS})" in head
 
 
 def test_a_history_too_short_for_anyone_says_nothing_about_experience():
     """Two weeks of history makes everybody look new. The scorer withdraws
     the dimension then; the prompt must not claim nobody is experienced."""
-    assert req.experience_block({"Ana": 12, "Ben": 3}, ["Ana", "Ben"]) == ""
+    out = _people(["Ana", "Ben"], tenure={"Ana": 12, "Ben": 3})
+    assert out["Ana"]["experience"] == "" and out["Ben"]["experience"] == ""
 
 
 def test_the_owners_word_makes_somebody_experienced():
-    out = req.experience_block({"Ana": 4}, ["Ana", "Ben"], experienced={"ana"})
-    assert "EXPERIENCED STAFF" in out and "Ana" in out
-    assert "Still developing" not in out     # marked experienced is not developing
+    out = _people(["Ana", "Ben"], tenure={"Ana": 4}, experienced={"ana"})
+    assert out["Ana"]["experience"] == "experienced"      # marked experienced is not developing
 
 
 def test_people_authorized_to_close_are_named_even_without_tenure():
-    out = req.experience_block({}, ["Ana", "Ben"], leader_flags={"Ben": True})
-    assert "EXPERIENCED STAFF" not in out
-    assert "AUTHORIZED TO CLOSE" in out and "Ben" in out
+    out = _people(["Ana", "Ben"], leader_flags={"Ben": True})
+    assert out["Ben"]["experience"] == "" and out["Ben"]["closes"] == "can run a shift (authorized to close)"
+    assert out["Ana"]["closes"] == ""
 
 
-def test_usual_pattern_groups_people_and_caps_its_length():
+def test_the_usual_pattern_is_each_persons_own_column_and_nobody_is_capped_away():
     pattern = {"Ana": {"days": ["Friday", "Saturday"], "dayparts": ["night"]},
                "Ben": {"days": ["Saturday", "Friday"], "dayparts": ["night"]},
                "Cy": {"days": list(req._DAY_ORDER), "dayparts": ["morning", "night"]},
                "Dee": {"days": [], "dayparts": []}}
-    out = req.usual_pattern_block(pattern, ["Ana", "Ben", "Cy", "Dee"])
-    assert "Schedule stability is scored" in out
-    assert "  Fri/Sat, nights: Ana, Ben" in out
-    assert "  any day, day or night: Cy" in out
-    assert "Dee" not in out
+    out = _people(["Ana", "Ben", "Cy", "Dee"], prior_pattern=pattern)
+    assert out["Ana"]["usual"] == out["Ben"]["usual"] == "Fri/Sat nights"
+    assert out["Cy"]["usual"] == "any day, day or night" and out["Dee"]["usual"] == ""
+    assert "keeping a person on their pattern is scored as stability" in schedule_prompt.ROSTER_HEAD
+    # 400 people, 400 lines: no cap drops anybody (PR-33).
     many = {f"P{i:03d}": {"days": ["Monday"] if i % 2 else ["Tuesday"], "dayparts": ["night"]} for i in range(400)}
-    capped = req.usual_pattern_block(many, sorted(many), cap=300)
-    assert len(capped) < 800 and "more people not listed" in capped
-    assert req.usual_pattern_block({}, ["Ana"]) == ""
+    table = schedule_prompt.roster_table(labor._roster_people([(n, "Server") for n in sorted(many)],
+                                                              prior_pattern=many))
+    assert all(f"  {n} | Server |" in table for n in many) and "not listed" not in table
 
 
 # ── the chunk seam ────────────────────────────────────────────────────────
@@ -237,7 +248,7 @@ def _prompt(monkeypatch, **kw):
     kw.setdefault("roster", [("S0", "Server"), ("S1", "Server"), ("S2", "Server"), ("S3", "Server")])
     labor.generate_optimized_schedule(_ANALYSIS, _history(), restaurant_name="T", hourly_rate=20.0,
                                       labor_target=30.0, week_start="2026-10-05", **kw)
-    return captured["messages"][0]["content"]
+    return schedule_prompt.prompt_text(captured["messages"][0]["content"])
 
 
 def test_one_ranked_priority_list_and_no_competing_claims(monkeypatch):
@@ -256,8 +267,11 @@ def test_one_ranked_priority_list_and_no_competing_claims(monkeypatch):
     # Every hard rule is still stated.
     assert "STAFF CONSTRAINTS — priority 1" in prompt and "- S0: no Fridays" in prompt
     assert "the constraint wins" in prompt
-    avail = prompt[prompt.index("EMPLOYEE AVAILABILITY"):]
-    assert "hard constraint" in avail.split("\n\n")[0].lower() and "S1: NOT available: Monday" in avail
+    # Availability is the ROSTER's AVAILABLE column, marked [HARD] (C1,
+    # PR-33: one line per person instead of a block per fact).
+    roster = prompt[prompt.index("ROSTER — "):]
+    assert "approved time off (all [HARD])" in roster.split("\n\n")[0]
+    assert "  S1 | Server | Server | off Mon |" in roster
     assert "RESTAURANT HOURS & SHIFT RULES (priority 1" in prompt and "Open 11am-10pm" in prompt
 
 
@@ -269,16 +283,22 @@ def test_the_requirements_table_and_people_reach_the_prompt(monkeypatch):
     assert "Server 5 (floor 5)" in fri
     mon = next(ln for ln in prompt.splitlines() if ln.startswith("  Mon 2026-10-05 night"))
     assert "Server 5 (floor 5)" in mon
-    assert "EXPERIENCED STAFF" in prompt and "S0." in prompt
-    assert "Still developing" in prompt and "S1" in prompt.split("Still developing")[1].split("\n")[0]
-    assert "USUAL PATTERN" in prompt and "  Fri, nights: S0" in prompt
+    # Experience and the usual pattern are columns of each person's one
+    # ROSTER line (C1, PR-33) — not blocks that name the same people again.
+    assert "  S0 | Server | Server | any day | - | - | experienced | - | Fri nights |" in prompt
+    assert "  S1 | Server | Server | any day | - | - | developing (2 shifts) |" in prompt
+    for gone in ("EXPERIENCED STAFF", "Still developing", "USUAL PATTERN"):
+        assert gone not in prompt, gone
 
 
 def test_the_straight_through_paragraph_states_the_presence_rule(monkeypatch):
     prompt = _prompt(monkeypatch)
-    para = next(ln for ln in prompt.splitlines() if ln.startswith("- Server shift length:"))
-    assert req.presence_rule() in para
-    assert "counts toward the 6, it does not add to it" in para
+    # Stated once, in the standing instructions every call shares, from the
+    # scorer's own constants (C1, PR-26); shift length is its own default.
+    assert prompt.count(req.presence_rule()) == 1
+    assert "it counts toward the number, it does not add to it" in prompt
+    para = next(ln for ln in prompt.splitlines() if ln.startswith("- Shift length:"))
+    assert "one or two a day may work straight through" in para and "never headcount" in para
     # The old wording — any shift extending past 3pm counts at night — is gone.
     assert "any shift that extends into the night daypart" not in prompt
 
@@ -297,7 +317,7 @@ def test_focus_reaches_the_prompt_only_when_given(monkeypatch):
                      week_slice=["2026-10-10"])
     # The header names the dates it is about (schedule audit 10/3/26 PR-18:
     # it said "THESE DAYS" and never named them).
-    assert "THE PREVIOUS DRAFT OF SATURDAY 2026-10-10 SCORED WEAK ON:" in prompt
+    assert "THE PREVIOUS DRAFT OF Sat 2026-10-10 SCORED WEAK ON:" in prompt
     assert "  * Saturday dinner: no leader on" in prompt
 
 
@@ -307,7 +327,7 @@ def test_a_slice_is_told_closes_weekends_and_busy_shifts_so_far(monkeypatch):
     prompt = _prompt(monkeypatch, week_slice=["2026-10-10", "2026-10-11"], prior_rows=prior,
                      role_floors={"Server": {"night": 2}})
     block = prompt[prompt.index("ALREADY WRITTEN FOR THE OTHER DAYS"):]
-    assert "S0: 6h so far on Fri, last shift Friday until 11:00pm; 1 close, 1 weekend, 1 busy" in block
+    assert "S0: 6h so far on Fri, last shift Fri 2026-10-09 until 11:00pm; 1 close, 1 weekend, 1 busy" in block
     assert "closes, weekend shifts and busy shifts" in block
     # The table covers only the slice being written.
     assert "  Fri 2026-10-09" not in prompt and "  Sat 2026-10-10" in prompt

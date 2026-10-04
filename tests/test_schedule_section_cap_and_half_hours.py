@@ -160,7 +160,10 @@ def test_the_prompt_carries_the_half_hour_needs_compactly():
     assert night["half_hours"]["Server"][0] == (17 * 60 + 30, 2)
     block = req.requirements_block(rows)
     assert "by the half hour: Server 2 from 5:30pm, 3 from 6:30pm" in block
-    assert "interpolated to the half hour" in block
+    # What "by the half hour" means is said once, in the standing
+    # instructions every call shares (C1, PR-26).
+    import schedule_prompt
+    assert "\"by the half hour\" in SHIFT REQUIREMENTS is how many of a role" in schedule_prompt.static_block()
     # no curve: the table and its wording are what they were
     plain = req.shift_requirements([SAT], typical_headcount={("Saturday", "night"): {"Server": 4}})
     assert "half_hours" not in plain[0]

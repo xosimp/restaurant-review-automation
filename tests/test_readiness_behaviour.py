@@ -6,6 +6,7 @@ cross-module link evidence, and the Ask data-health tool.
 Each test names the Top-50 item it pins. Source-level adoption (every
 create_with_retry passes readiness=) is tests/test_readiness_adoption.py.
 """
+import schedule_prompt
 import json
 import types
 from datetime import date, datetime, timedelta, timezone
@@ -162,7 +163,7 @@ def test_the_labor_note_prompt_carries_the_data_state_and_passes_readiness(db_pa
          "dow_summary": {}, "period_days": 14, "date_range": {"start": _ago(9), "end": _ago(8), "days": 2}}
     labor.get_claude_insights(a, restaurant_id=rid)
     assert isinstance(seen.get("readiness"), dict) and seen["readiness"].get("module") == "labor"
-    prompt = seen["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(seen["messages"][0]["content"])
     assert "DATA STATE" in prompt and "Shifts" in prompt
 
 
@@ -184,7 +185,7 @@ def test_the_digest_holds_a_module_whose_data_is_past_its_horizon(db_path, monke
     out = reporter.generate_ai_digest_summary(report, "Probe Bistro", "Pat", restaurant_id=rid)
     assert out.get("headline") and "labor" not in out
     assert any(g.startswith("Labor: the shift data isn't current") for g in out.get("_data_gaps") or [])
-    assert "LABOR" not in seen["messages"][0]["content"].split("You MUST output exactly these lines")[1].split("\n")[0]
+    assert "LABOR" not in schedule_prompt.prompt_text(seen["messages"][0]["content"]).split("You MUST output exactly these lines")[1].split("\n")[0]
     assert isinstance(seen.get("readiness"), dict)
 
 
@@ -369,7 +370,7 @@ def test_stale_forecast_rows_are_labelled_and_all_stale_means_no_forecast():
              "as_of": "2026-09-21T10:00:00+00:00", "stale": True},
             {"date": "2026-09-27", "day_name": "Saturday", "high_f": 70, "short_forecast": "Sunny", "stale": False}]
     lines, all_stale = labor.weather_prompt_rows(rows)
-    assert "(forecast from 9/21/26, not refreshed)" in lines[0] and "not refreshed" not in lines[1]
+    assert "(forecast from Mon 2026-09-21, not refreshed)" in lines[0] and "not refreshed" not in lines[1]
     assert all_stale is False
     assert labor.weather_prompt_rows([rows[0]])[1] is True
 
@@ -386,7 +387,7 @@ def test_an_all_stale_forecast_puts_the_no_weather_marker_in_the_schedule_prompt
     stale = [{"date": "2026-09-26", "day_name": "Friday", "high_f": 61, "short_forecast": "Rain",
               "as_of": "2026-09-21T10:00:00+00:00", "stale": True}]
     labor.generate_optimized_schedule(analysis, shifts, restaurant_name="Test Bistro", weather_forecast=stale)
-    prompt = seen["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(seen["messages"][0]["content"])
     assert labor.NO_WEATHER_MARKER in prompt and "Rain" not in prompt.split(labor.NO_WEATHER_MARKER)[0][-400:]
 
 

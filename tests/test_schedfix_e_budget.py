@@ -11,6 +11,7 @@ E-24 Hours priced at the assumed wage are counted; past a share the budget
      says "assumes $26/hr — set pay rates", past a larger one it is no
      ceiling to cut shifts to (trim_ok False).
 """
+import schedule_prompt
 import json
 import types
 from datetime import date, timedelta
@@ -112,10 +113,10 @@ def test_the_prompt_says_which_budget_it_is_and_never_the_salaries(monkeypatch):
     out = labor.generate_optimized_schedule(analysis, [], roster=[("Ana", "Server")], week_start="2026-10-05",
                                             projected_revenue_override=100000, hourly_rate=15.0, labor_target=35.0,
                                             salaried_week={"cost": 5769.23, "people": 2, "trading_days": 7})
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     par = prompt[prompt.index("PAR HOURS CEILING"):]
     assert "35.0% counting salaries" in par and "after the salaried staff's pay for the week, $29,231" in par
-    assert "→ 1948.7h is the MAXIMUM" in par
+    assert "1948.7h is the MAXIMUM for the week" in par
     assert "5,769" not in prompt and "5769" not in prompt
     assert "hourly staff only" in prompt
     assert out["budget_basis"]["kind"] == "all_in_less_salaries" and "salaried_week_cost" not in out["budget_basis"]
@@ -155,15 +156,17 @@ def test_the_restaurants_analysis_divides_by_the_measured_wage(db_path):
     rows = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes,pay_rate"]
     for n in range(1, 8):
         d = (today - timedelta(days=n)).isoformat()
-        rows.append(f"{d},X,Cal Cook,Line Cook,08:00,16:00,8,8,4000,,22")
+        # 5h a day: no payroll week passes 40h whatever today's weekday is,
+        # so the cost carries no overtime premium and cost ÷ hours is the wage
+        rows.append(f"{d},X,Cal Cook,Line Cook,08:00,13:00,5,5,4000,,22")
         rows.append(f"{d},X,Sue Server,Server PM,17:00,23:00,6,6,4000,,")
     models.save_client_data(rid, "shifts", "\n".join(rows) + "\n", source="rpower", db_path=db_path)
     a = labor.analyse_shifts_for_restaurant(rid, with_salaries=False)
-    want = round((56 * 22 + 42 * 9.48) / 98, 2)
+    want = round((35 * 22 + 42 * 9.48) / 77, 2)
     assert a["blended_rate"] == want
     assert a["rate_basis"]["assumed_share"] == 0 and a["rate_basis"]["basis"] == "measured"
     # The cost the Labor tab shows is the same wages: cost ÷ hours is the rate.
-    assert abs(a["hourly_costed_labor"] / 98 - want) < 0.01
+    assert abs(a["hourly_costed_labor"] / 77 - want) < 0.01
 
 
 def test_every_roles_measured_rate_reaches_the_prompt(monkeypatch):
@@ -185,7 +188,7 @@ def test_every_roles_measured_rate_reaches_the_prompt(monkeypatch):
     labor.generate_optimized_schedule(analysis, [], roster=[("Cal", "Line Cook")], week_start="2026-10-05",
                                       projected_revenue_override=50000, hourly_rate=rb["rate"], labor_target=30.0,
                                       role_rates={"Server PM": 9.48})
-    block = captured["messages"][0]["content"].split("Per-role hourly rates", 1)[1].split("\n\n", 1)[0]
+    block = schedule_prompt.prompt_text(captured["messages"][0]["content"]).split("Per-role hourly rates", 1)[1].split("\n\n", 1)[0]
     assert "Line Cook: $22.00/hr (POS pay)" in block
     assert "Server PM: $9.48/hr (POS pay)" in block
     assert "Dishwasher: $26.00/hr (assumed — no pay rate on file)" in block
@@ -226,7 +229,7 @@ def test_the_par_block_carries_the_assumed_wage_caveat(monkeypatch):
                 "total_sales": 0, "period_days": 0, "by_day": _by_day(), "rate_basis": rb}
     out = labor.generate_optimized_schedule(analysis, [], roster=[("Ana", "Server")], week_start="2026-10-05",
                                             projected_revenue_override=50000, hourly_rate=26.0, labor_target=30.0)
-    par = captured["messages"][0]["content"].split("PAR HOURS CEILING", 1)[1]
+    par = schedule_prompt.prompt_text(captured["messages"][0]["content"]).split("PAR HOURS CEILING", 1)[1]
     assert "Budget assumes $26/hr — set pay rates" in par
     assert out["budget_basis"]["trim_ok"] is False
 

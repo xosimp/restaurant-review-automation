@@ -42,6 +42,15 @@ def _hours(rows, name):
     return sum(float(r["scheduled_hours"]) for r in rows if r["employee"] == name)
 
 
+def _roster_line(c, name, role=""):
+    """The person's ROSTER line, as the schedule prompt carries their facts
+    (schedule audit 10/3/26 PR-33: one table, from schedule_rules.person_facts)."""
+    import labor
+    import schedule_prompt
+    people = labor._roster_people([(name, role)], facts=sr.person_facts(c, [name]))
+    return schedule_prompt.roster_table(people).split("\n")[-1]
+
+
 def _hard(rows, c):
     return [v for v in sr.violations(rows, c) if v["hard"]]
 
@@ -61,8 +70,11 @@ def test_a_forty_to_forty_five_cook_is_held_to_45_by_the_code_and_the_prompt():
     week46 = week44[:-1] + [_row(5, "Cook", "8:00am", "2:00pm", "Line Cook")]
     assert "over_max_hours" in _kinds(week46, c)
     block = sr.prompt_block(c)
-    assert "at most 45h (overtime past 40h allowed for them)" in block
-    assert "except where a person's own maximum below is higher" in block
+    # One weekly line per person, the code's own (C1, PR-3, PR-33): the
+    # cook's ROSTER line says 40-45h with the overtime allowed, the rule what
+    # a maximum above the line means — never a bare "nobody over 40".
+    assert "40-45h, overtime past 40h allowed for them" in _roster_line(c, "Cook", "Line Cook")
+    assert "above 40h, that is the owner allowing them that overtime" in block and "Nobody over 40" not in block
 
 
 def test_the_swap_index_reads_the_same_maximum():
@@ -605,7 +617,7 @@ def test_a_wednesday_payroll_week_full_by_sunday_is_flagged_softly():
     # nor for a salaried person, who owes no overtime
     assert "payroll_tail_full" not in _kinds(rows, _c(week_start_day=2, salaried={"ann"}))
     # the model is told to keep the reserve too
-    assert "runs on into next week (Mon 10/12/26 and Tue 10/13/26)" in sr.prompt_block(c)
+    assert "runs on into next week (Mon 2026-10-12 and Tue 2026-10-13)" in sr.prompt_block(c)   # C1, PR-20
     assert "runs on into next week" not in sr.prompt_block(_c())
 
 

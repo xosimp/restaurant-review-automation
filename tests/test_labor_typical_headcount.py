@@ -12,6 +12,7 @@ Alongside it: the daypart split never returned "morning" for any CSV a
 client actually uploads, and the no-show rate read 100% on every day when
 the actual_hours column was simply absent.
 """
+import schedule_prompt
 import types
 
 import pytest
@@ -44,7 +45,7 @@ def _prompt(monkeypatch, shifts, **kw):
     captured = _capture(monkeypatch)
     generate_optimized_schedule(_analysis(), shifts, restaurant_name="Test",
                                 hourly_rate=20.0, labor_target=30.0, **kw)
-    return captured["messages"][0]["content"]
+    return schedule_prompt.prompt_text(captured["messages"][0]["content"])
 
 
 # ── Headcount reflects how many people are actually on ─────────────────────
@@ -186,7 +187,11 @@ def test_partial_yoy_coverage_is_not_scaled_onto_the_days_it_has(monkeypatch):
         yoy_context=yoy, monthly_revenue_target=365000.0)
     assert result["daily_target_hours"]["2026-08-28"] == 60.0
     assert result["daily_target_hours"]["2026-08-29"] == 70.0
-    assert "NOT scaled to the weekly budget" in captured["messages"][0]["content"]
+    # Said once, in the PAR block, beside the day targets on the SHIFT
+    # REQUIREMENTS rows (C1, PR-24).
+    assert ("Only 2 of the week's days have hours history here, so the day targets in SHIFT REQUIREMENTS are "
+            "those dates' own usual hours, not shares of a weekly total"
+            in schedule_prompt.prompt_text(captured["messages"][0]["content"]))
 
 
 def test_full_yoy_coverage_is_scaled(monkeypatch):
@@ -225,7 +230,7 @@ def test_no_revenue_projection_states_no_ceiling_rather_than_zero(monkeypatch):
              "shift_start": "16:00", "shift_end": "23:00", "scheduled_hours": 7,
              "actual_hours": 7, "sales": 9000}],
         restaurant_name="T", hourly_rate=20.0, labor_target=30.0)
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     assert "MAXIMUM for the week" not in prompt
     assert "PAR HOURS CEILING — none available" in prompt
     assert "do not invent a total to aim at" in prompt
@@ -237,7 +242,7 @@ def test_a_real_budget_still_states_the_ceiling(monkeypatch):
         _analysis(), _fridays([[f"S{i}" for i in range(6)]] * 3),
         restaurant_name="T", hourly_rate=20.0, labor_target=30.0,
         monthly_revenue_target=365000.0)
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     assert "MAXIMUM for the week" in prompt
     assert "ceiling, not a quota" in prompt
 

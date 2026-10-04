@@ -411,9 +411,15 @@ def test_a_late_rate_needs_clocked_shifts_and_reaches_who_opens(monkeypatch):
     assert rel_few["Ana"]["late_shifts"] == 5 and rel_few["Ana"]["late_rate"] is None
     assert rel_few["Ana"]["late_risk"] is False
 
-    # The prompt names them for the open and the close.
-    block = schedule_engine._reliability_block({"Ana": rel["Ana"]})
-    assert "LATENESS" in block and "Ana: late to 4 of 8 clocked shifts" in block and "opens or closes" in block
+    # The prompt names them on their ROSTER line (C1, PR-33), and the one
+    # rule about it — never the only one of their role who opens or closes —
+    # is a standing instruction (PR-23).
+    import labor
+    import schedule_prompt
+    people = labor._roster_people([("Ana", "Server")], facts={"Ana": {"reliability": rel["Ana"]}})
+    assert people[0]["reliability"] == "late to 4 of 8 clocked"
+    assert "never make them the only one of their role who opens or closes a day" in schedule_prompt.static_block()
+    assert schedule_engine._reliability_block({"Ana": rel["Ana"]}) == ""
 
     # The scorer: Ana alone opening the bar costs the shift; with Bo opening
     # beside her it does not.

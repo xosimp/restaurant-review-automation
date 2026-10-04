@@ -30,6 +30,7 @@ import models
 import ops
 import schedule_engine as se
 import schedule_output as so
+import schedule_prompt
 from models import create_restaurant, Restaurant
 from scripts import schedule_model_eval as sme
 
@@ -98,7 +99,10 @@ def test_a_call_is_stored_with_its_whole_prompt_its_arguments_and_its_answer(db,
     assert len(calls) == 1
     call = calls[0]
     sent_prompt = seen[0]["messages"][0]["content"]
-    assert len(sent_prompt) > 60000
+    # Three text blocks — the standing instructions, the restaurant's week,
+    # this request — the first two cached (C1, PR-26).
+    assert isinstance(sent_prompt, list) and len(sent_prompt) == 3
+    assert len(schedule_prompt.prompt_text(sent_prompt)) > 60000
     assert call["request"]["messages"][0]["content"] == sent_prompt         # whole, not the first 40k
     assert call["request"]["output_config"]["format"] == seen[0]["output_config"]["format"]
     assert call["answer"] == answer and call["rows"] == 1 and call["outcome"] == "ok"
@@ -298,14 +302,16 @@ def test_the_rerender_arm_answers_todays_prompt_and_stores_nothing(db, monkeypat
     after = conn.execute("SELECT COUNT(*) FROM schedule_model_calls").fetchone()[0]
     conn.close()
     assert after == before
-    prompt = received[0]["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(received[0]["messages"][0]["content"])
     assert "printed on that employee's own schedule" in prompt and "Max" in prompt
     assert received[0]["output_config"]["effort"] == "low" and received[0]["model"] == "claude-opus-5-5"
 
 
 def _shout(request, call):
+    # The user turn is a list of text blocks (schedule_prompt.request_content).
     req = dict(request)
-    req["messages"] = [{"role": "user", "content": request["messages"][0]["content"] + "\n\nVARIANT B"}]
+    blocks = list(request["messages"][0]["content"])
+    req["messages"] = [{"role": "user", "content": blocks + [{"type": "text", "text": "VARIANT B"}]}]
     return req
 
 
@@ -315,7 +321,7 @@ def test_a_prompt_variant_is_a_transform_of_the_stored_request(db, monkeypatch):
     received = []
     sme.run(sme.load_weeks(restaurant_ids=[rid]), sme.arms_from(["claude-opus-5-5"], ["high"], [f"{__name__}:_shout"]),
             call_model=lambda req: received.append(req) or _arm_answer(req), live=True)
-    assert received[0]["messages"][0]["content"].endswith("VARIANT B")
+    assert received[0]["messages"][0]["content"][-1] == {"type": "text", "text": "VARIANT B"}
 
 
 def test_schedule_eval_shows_the_calls_behind_a_week_and_scores_the_models_own_answer(db, monkeypatch):

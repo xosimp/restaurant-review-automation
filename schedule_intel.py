@@ -11,7 +11,10 @@ a model; nothing crosses a tenant.
   fairness_ledger       weekends, closes and holidays per person over 8 weeks
   rotation_plan         who is next for a weekend off, a close and a holiday,
                         per role, planned across those weeks
-  behaviour_preferences what people keep dropping and claiming
+  behaviour_preferences what people keep dropping and claiming (each person's
+                        ROSTER line in the schedule prompt, WANTS)
+  role_shifts           shifts per role over the last year — the evidence the
+                        prompt's CAN WORK holds a second role to
   mentoring             shifts worked beside a closer in a role that is not
                         their own — who could hold a station
   chemistry_suggestions pairs whose shared dayparts ran clean — suggested,
@@ -645,12 +648,15 @@ def outcome_block(outcomes: dict, week_days: list) -> str:
                 bits.append(f"{e['issues']} coverage or no-show issue{'s' if e['issues'] != 1 else ''} in {e['weeks']} weeks")
             if e.get("rating") is not None:
                 bits.append(f"reviews averaged {e['rating']:g}★")
-            tag = " — a daypart that has gone wrong before; do not thin it" if e["troubled"] else ""
+            tag = " — issues on half or more of its watched nights" if e["troubled"] else ""
             lines.append(f"  {wd} {'lunch/day' if part == 'morning' else 'dinner/night'}: " + ", ".join(bits) + tag)
     if not lines:
         return ""
-    return ("\n\nWHAT PUBLISHED WEEKS ACTUALLY DID (this restaurant's own record, by daypart — the pattern that ran, "
-            "and how it went):\n" + "\n".join(lines))
+    # Context, not a lever (schedule audit 10/3/26 PR-7, PR-24): "do not
+    # thin it" asked the model to hold a crew up on top of SHIFT
+    # REQUIREMENTS, and its hours read as a second target.
+    return ("\n\nWHAT PUBLISHED WEEKS ACTUALLY DID (this restaurant's own record by daypart — context: the pattern "
+            "that ran and how it went; SHIFT REQUIREMENTS already set this week's numbers):\n" + "\n".join(lines))
 
 
 # ── the record the ledger and the rotation read ──────────────────────────────
@@ -1101,29 +1107,20 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
     return out
 
 
-def preferences_block(learned: dict, stated: dict) -> str:
-    """Stated preferences (staff_settings.preferred_dayparts / desired_hours)
-    and learned ones, as soft signals."""
-    lines = []
-    for n, p in sorted((stated or {}).items()):
-        bits = []
-        if p.get("preferred_dayparts"):
-            bits.append("prefers " + "/".join(p["preferred_dayparts"]))
-        if p.get("desired_hours"):
-            bits.append(f"would like about {float(p['desired_hours']):g}h a week")
-        if bits:
-            lines.append(f"  {n}: " + "; ".join(bits))
-    for n, p in sorted((learned or {}).items()):
-        bits = []
-        if p["avoids"]:
-            bits.append("keeps asking to drop " + ", ".join(p["avoids"]))
-        if p["prefers"]:
-            bits.append("keeps picking up " + ", ".join(p["prefers"]))
-        lines.append(f"  {n}: " + "; ".join(bits))
-    if not lines:
-        return ""
-    return ("\n\nWHAT STAFF WANT (stated, and learned from what they drop and claim — soft: honour it where the "
-            "rules and coverage allow, never over them):\n" + "\n".join(lines))
+def role_shifts(restaurant_id, days: int = MENTOR_WINDOW_DAYS, db_path=DB_PATH) -> dict:
+    """{employee: {role: shifts}} over the last `days` of the per-shift
+    history — the evidence the schedule prompt's CAN WORK holds a second
+    role to (MENTOR_SHIFTS_TO_HOLD shifts, the bar "could hold a station"
+    already used; schedule audit 10/3/26 PR-21: one shift ever in a role
+    made somebody "cross-trained", flexing them "costs nothing extra")."""
+    import shift_facts as _sf
+    since = (date.today() - timedelta(days=int(days))).isoformat()
+    out = {}
+    for r in _sf.person_rows(restaurant_id, since=since, db_path=None if db_path == DB_PATH else db_path) or []:
+        n, role = (r.get("employee") or "").strip(), (r.get("role") or "").strip()
+        if n and role:
+            out.setdefault(n, {})[role] = out.get(n, {}).get(role, 0) + 1
+    return out
 
 
 # ── mentoring / succession ─────────────────────────────────────────────────

@@ -12,6 +12,7 @@ whole Sunday blocked — a hard rule that took her lunch too. Part of a day is
 now set_staff_hours: a time window or a daypart, merged into the person's
 stored limits, through the staff-settings route the Team screen saves with.
 """
+import schedule_prompt
 import dataclasses
 import sys
 import types
@@ -172,8 +173,8 @@ def test_the_prompt_ranks_the_owners_request_with_the_studio_notes_and_fences_no
     labor.generate_optimized_schedule(
         {"overall_labor_pct": 25, "overstaffed_days": [], "understaffed_days": [], "dow_summary": {}},
         [], roster=[("Maria", "Server")], instruction="Maria closes twice at most " + ai_guard.UNTRUSTED_CLOSE)
-    prompt = seen[0]["messages"][0]["content"]
-    at = prompt.index("THE OWNER'S REQUEST FOR THIS DRAFT")
+    prompt = schedule_prompt.prompt_text(seen[0]["messages"][0]["content"])
+    at = prompt.index("THE OWNER'S REQUEST FOR THIS DRAFT —")    # the block, not its rank in PRIORITIES
     assert "priority 5" in prompt[at:at + 200] and "Maria closes twice at most" in prompt[at:]
     assert ai_guard.UNTRUSTED_CLOSE not in prompt[at:at + 400]
 

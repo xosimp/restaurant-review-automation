@@ -228,7 +228,11 @@ def get_person(restaurant_id, key, db_path=None, include_pay=True):
         # What the sheet's controls may hold — the store's own lists.
         "choices": {"employment_type": list(staff_settings.EMPLOYMENT_TYPES),
                     "daypart": list(staff_settings.DAYPART_CHOICES), "days": list(staff_settings.DAYS),
-                    "certifications": list(staff_settings.CERTIFICATIONS)},
+                    "certifications": list(staff_settings.CERTIFICATIONS),
+                    # How each certificate reads: "Floor manager (can run the
+                    # shift)" apart from the food-safety card (schedule audit
+                    # 10/3/26 E-15) — the sheet's chips say what the roster's do.
+                    "certification_labels": dict(staff_settings.CERTIFICATION_LABELS)},
     }
     if include_pay:
         out["pay_rate"] = _pay_rate(restaurant_id, row.get("role"), db)
@@ -266,8 +270,14 @@ def get_person(restaurant_id, key, db_path=None, include_pay=True):
         out["guest_mentions"] = []
     try:
         rel = {staff_settings.name_key(n): r for n, r in staff_settings.reliability(restaurant_id, db_path=db).items()}.get(k)
+        # Lateness over the CLOCKED shifts only, and call-outs apart from
+        # no-shows (schedule audit 10/3/26 D-44, L-18): "late to 3 of 12
+        # clocked shifts", "called out 1 time" — late_rate None below the
+        # floor of clocked shifts, said as "—", never 0%.
         out["attendance"] = ({"known": True, "shifts": rel["shifts"], "missed": rel["no_shows"],
                               "late": rel.get("late", 0), "no_show_rate": rel["no_show_rate"],
+                              "called_out": rel.get("called_out", 0), "late_shifts": rel.get("late_shifts", 0),
+                              "late_rate": rel.get("late_rate"),
                               "unreliable": rel["unreliable"], "last_miss": rel.get("last_miss")}
                              if rel else {"known": False})
     except Exception:

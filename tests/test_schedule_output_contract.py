@@ -18,6 +18,7 @@ PR-13, P-35, PR-15, PR-28, PR-29, PR-30).
   saved with the review; the prompt stops asking a three-bullet summary to
   carry it.
 """
+import schedule_prompt
 import json
 import re
 import sys
@@ -188,7 +189,7 @@ def test_the_call_reports_what_a_row_cost(monkeypatch):
 def test_the_prompt_says_the_employee_reads_the_note_and_lists_the_only_notes(monkeypatch):
     seen = _capture(monkeypatch, [_Msg(_answer([]))])
     _gen()
-    prompt = seen[0]["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(seen[0]["messages"][0]["content"])
     assert "printed on that employee's own schedule and read by them" in prompt
     assert "opener, closer, staggered start, training shift, standby" in prompt
     assert "Never put a rating or score, reliability or attendance, pay, performance" in prompt
@@ -374,7 +375,7 @@ def test_the_prompt_no_longer_asks_the_summary_to_carry_what_the_week_misses(mon
     _gen(shifts=shifts, operational_scores={"Ana": 4}, strength_thresholds={"Server": 6},
          leader_rules=[{"role": "Server", "count": 1, "min_score": 4, "days": ["Friday"]}],
          projected_revenue_override=40000)
-    prompt = seen[0]["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(seen[0]["messages"][0]["content"])
     for phrase in ("say so plainly in your summary", "say which in the summary", "Say in the summary which days",
                    "note in the summary that a standby", "name each one you applied"):
         assert phrase not in prompt, phrase

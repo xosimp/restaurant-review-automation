@@ -502,10 +502,13 @@ def last_nights_block(restaurant_id, week_dates, today=None, db_path=None) -> st
                      + ", ".join(bits) + ev)
     if not lines:
         return ""
-    head = ("\n\nWHAT THE LAST NIGHTS SHOWED (the nightly reports of the last four weeks, per weekday — what "
-            "actually happened on these nights; a repeated no-show, late arrival or overtime on a weekday is a "
-            "reason to staff that day differently — say so in the summary when it is one of the week's biggest "
-            "decisions):\n")
+    # Context (schedule audit 10/3/26 PR-7): "a reason to staff that day
+    # differently" was a lever on numbers already made in code; who misses
+    # or runs late is each person's ROSTER line and the one rule about them
+    # a standing instruction.
+    head = ("\n\nWHAT THE LAST NIGHTS SHOWED (the nightly reports of the last four weeks, per weekday — context: "
+            "what actually happened on these nights; SHIFT REQUIREMENTS already carry each date's demand, and the "
+            "summary may name one of these when it shaped the week's biggest decisions):\n")
     return head + "\n".join(lines)
 
 
@@ -553,9 +556,12 @@ def soft_block(reqs) -> str:
     # to the owner with everything else the week misses (schedule_output.
     # unmet_items) — not asked of a three-bullet summary (schedule audit
     # 10/3/26 PR-11).
-    return ("\n\nSOFT STAFFING REQUIREMENTS (from the reviews diagnosis and the nightly reports — add the person "
-            "where the hours budget and the rules allow, never over a hard constraint; the owner is shown which "
-            "ones the finished week carries and which it does not):\n" + "\n".join(lines))
+    # Each ask is already a number (schedule_requirements, "+1 asked by …"
+    # in its SHIFT REQUIREMENTS row, never firm — schedule audit 10/3/26
+    # PR-7): "add the person" here asked for it a second time.
+    return ("\n\nSOFT STAFFING REQUIREMENTS (the reviews diagnosis's and the nightly reports' asks — context: each is "
+            "already counted in that shift's SHIFT REQUIREMENTS as \"+1 …\", a soft ask, never above a hard "
+            "constraint; the owner is shown which ones the finished week carries):\n" + "\n".join(lines))
 
 
 def applied(reqs, rows, typical=None) -> list:

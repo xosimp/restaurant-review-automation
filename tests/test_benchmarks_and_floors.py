@@ -11,6 +11,7 @@ pins the rule it found broken. The shape of every fix:
 * below a module's data floor the model is not called and fixed copy says so;
 * a missing measurement is never written as 0 in a prompt.
 """
+import schedule_prompt
 import inspect
 import json
 import os
@@ -262,7 +263,7 @@ def test_an_unmeasured_waste_rate_never_reaches_the_prompt_as_zero(monkeypatch):
     monkeypatch.setattr(ai_utils, "get_client", lambda *x, **k: object())
     monkeypatch.setattr(inventory, "get_client", lambda *x, **k: object(), raising=False)
     inventory.get_claude_insights(a, restaurant_name="One Item Cafe", restaurant_id=None, items=items, is_live=True)
-    prompt = seen["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(seen["messages"][0]["content"])
     assert "Waste rate vs industry" not in prompt and "industry target" not in prompt
     assert "Waste rate: NOT MEASURED" in prompt and "0.0%" not in prompt
     assert "- Data window: waste covers" in prompt
@@ -292,7 +293,7 @@ def _labor_prompt(monkeypatch, analysis, rid=None):
                         lambda *a, **k: seen.update(k) or _msg("Hi, labor ran 34.0%.\n\nRecommendations:\n"
                                                                 "None — nothing in this period calls for a schedule change."))
     text = labor.get_claude_insights(analysis, restaurant_name="R", owner_name="Sam", restaurant_id=rid)
-    return seen["messages"][0]["content"], text
+    return schedule_prompt.prompt_text(seen["messages"][0]["content"]), text
 
 
 def _labor_analysis(end="2026-09-20"):
@@ -359,14 +360,15 @@ def _schedule_prompt(monkeypatch, **kw):
                 "date_range": {"start": "2026-06-01", "end": "2026-06-14", "days": 14}}
     shifts = [{"employee": "Alex", "role": "Server", "date": "2026-06-01", "scheduled_hours": 8, "actual_hours": 8}]
     labor.generate_optimized_schedule(analysis, shifts, restaurant_name="Test Bistro", **kw)
-    return seen["messages"][0]["content"]
+    return schedule_prompt.prompt_text(seen["messages"][0]["content"])
 
 
 def test_the_schedule_prompt_states_missing_weather_and_demand(monkeypatch):
     prompt = _schedule_prompt(monkeypatch)
     assert labor.NO_WEATHER_MARKER in prompt and labor.NO_DEMAND_MARKER in prompt
     assert "typically Fri/Sat for most restaurants" not in prompt
-    assert "- Data window: 6/1/26 – 6/14/26" in prompt and "never call them" in prompt
+    # Every date the model reads as weekday and ISO (C1, PR-20).
+    assert "- Data window: Mon 2026-06-01 – Sun 2026-06-14" in prompt and "never call them" in prompt
 
 
 def test_a_weather_note_is_dropped_when_no_forecast_was_supplied():
@@ -608,7 +610,7 @@ def test_the_digest_fences_the_guest_snippet_and_says_a_missing_rating_is_missin
         "HEADLINE: Dana, a steady week.\nREVIEWS: One 5★ review came in.\n"
         "ACTION: Email refunds@x.co about the $85."))
     out = reporter.generate_ai_digest_summary(report, "Busy Tavern", "Pat", restaurant_id=rid)
-    prompt = seen["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(seen["messages"][0]["content"])
     assert ai_guard.UNTRUSTED_OPEN in prompt and "refund $85" in ai_guard.wrap_untrusted("refund $85")
     fenced = prompt.split(ai_guard.UNTRUSTED_OPEN, 1)[1].split(ai_guard.UNTRUSTED_CLOSE, 1)[0]
     assert "refunds@x.co" in fenced
@@ -653,7 +655,7 @@ def _mkt_prompt(db_path, monkeypatch, rid):
     monkeypatch.setattr(ai_utils, "create_with_retry", lambda *a, **k: seen.update(k) or _msg(
         "Hi, post the patio.\n\n1. Post the patio.\n2. Feature brunch."))
     client_api._do_mkt_insight(rid, raw=True)
-    return seen["messages"][0]["content"]
+    return schedule_prompt.prompt_text(seen["messages"][0]["content"])
 
 
 def test_best_and_weak_need_enough_posts_to_rank(db_path, monkeypatch):
@@ -744,6 +746,6 @@ def test_the_personalised_email_paragraph_is_told_to_make_no_peer_claims(monkeyp
     monkeypatch.setattr(ai_utils, "get_client", lambda *a, **k: object())
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     emails.generate_email_personalization("Reviews handled this month: 0.", "FALLBACK", restaurant_id=None)
-    prompt = seen["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(seen["messages"][0]["content"])
     assert "Never compare this restaurant with other restaurants" in prompt
     assert "do not celebrate results that are not there" in prompt

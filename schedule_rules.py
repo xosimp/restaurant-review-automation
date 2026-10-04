@@ -4256,16 +4256,50 @@ def summarize(viols: list) -> dict:
                           for v in sorted(hard, key=lambda x: (x.get("date") or "", x["kind"])) if v.get("day_level")]}
 
 
+def rule_tag(kind) -> str:
+    """"[HARD]" for a breach kind the sweep holds hard (HARD), "[SOFT]" for
+    any other — the same sets violations() marks each breach by, so a rule
+    line can never call itself something the checker does not hold it to
+    (schedule audit 10/3/26 PR-5: every rule used to be a flat "- …" line
+    under one header that said each was "verified … a breach is flagged",
+    daily overtime beside the longest shift). A prompt rule with no breach
+    kind of its own (a station the backstop fills) is [SOFT]: nothing about
+    it ever blocks a week."""
+    return "[HARD]" if kind in HARD else "[SOFT]"
+
+
+def _rule(kind, text, why=None) -> str:
+    """One rule line: its tag, the rule, and for a hard rule why it is hard
+    (PR-27: reasons let the model carry a rule to a case it does not name)."""
+    return f"- {rule_tag(kind)} {text}" + (f" — {why}." if why else "")
+
+
+def _iso_day(d) -> str:
+    """"Wed 2026-10-07": the one date the model reads (PR-20). An owner's
+    M/D/YY (a trainee's "until 12/1/26") reads the same way."""
+    text = str(d or "").strip()
+    for fmt, part in (("%Y-%m-%d", text[:10]), ("%m/%d/%y", text), ("%m/%d/%Y", text)):
+        try:
+            x = datetime.strptime(part, fmt)
+        except ValueError:
+            continue
+        return f"{x.strftime('%a')} {x.strftime('%Y-%m-%d')}"
+    return text
+
+
+def _iso_days(dates) -> str:
+    named = [_iso_day(d) for d in sorted({str(d)[:10] for d in (dates or []) if d})]
+    return named[0] if len(named) == 1 else (", ".join(named[:-1]) + " and " + named[-1] if named else "")
+
+
 def _acting_prompt_lines(c) -> list:
     """Who stands in as the manager, on which dates (E-13)."""
-    from time_utils import mdy
     bits = []
     for key, days in sorted(c.acting_managers.items()):
         if days:
-            bits.append(f"{_display_name(c, key)} on " + ", ".join(
-                f"{datetime.strptime(d, '%Y-%m-%d').strftime('%a')} {mdy(d)}" for d in sorted(days)))
-    return ["- Standing in as the manager (counts as the manager on the floor those days only): "
-            + "; ".join(bits) + "."] if bits else []
+            bits.append(f"{_display_name(c, key)} on " + ", ".join(_iso_day(d) for d in sorted(days)))
+    return [_rule("no_manager", "Standing in as the manager (counts as the manager on the floor those days only): "
+                  + "; ".join(bits) + ".")] if bits else []
 
 
 def _closer_prompt_lines(c) -> list:
@@ -4276,30 +4310,56 @@ def _closer_prompt_lines(c) -> list:
         mins = int((c.close_mins or {}).get(fam, 0) or 0)
         bits.append(f"{_family_label(c, fam)}: " + ", ".join(sorted(_display_name(c, k) for k in keys))
                     + (f" (stays until {mins} min after close)" if mins else ""))
-    return ["- Closers, by role — every open day the last person of each of these roles to leave is one of its "
-            "closers, on until close: " + "; ".join(bits) + ". A closer is somebody chosen to close for their role, "
-            "not somebody with keys; other roles have no closer rule."] if bits else []
+    return [_rule("keyholder_until_close",
+                  "Closers, by role — every open day the last person of each of these roles to leave is one of its "
+                  "closers, on until close: " + "; ".join(bits) + ". A closer is somebody chosen to close for their "
+                  "role, not somebody with keys; other roles have no closer rule",
+                  why="the owner chose who closes each role")] if bits else []
 
 
 def _trainee_prompt_lines(c) -> list:
     """Who is training, for what, with whom (D-16)."""
-    from time_utils import mdy
     out = []
     for key, t in sorted(c.trainees.items()):
         who = _display_name(c, key)
         trainer = _display_name(c, c.key(t["trainer"])) if (t.get("trainer") or "").strip() else None
-        out.append(f"  {who}: training as {t['target_role']}" + (f" until {mdy(t['until'])}" if t.get("until") else "")
+        out.append(f"  {who}: training as {t['target_role']}" + (f" until {_iso_day(t['until'])}" if t.get("until") else "")
                    + (f" with {trainer}" if trainer else "") + f" — schedule their {t['target_role']} shifts only "
                    f"alongside {trainer or 'a strong ' + t['target_role']}; a training shift does not count toward "
                    f"{t['target_role']} headcount or any floor.")
-    return ["- TRAINEES:"] + out if out else []
+    return [_rule("trainee_unpaired", "TRAINEES:")] + out if out else []
+
+
+def _minor_band_lines(c) -> list:
+    """The limits the code checks for each age band on the roster (NS5 H4),
+    once per band — who is in which band is in each person's ROSTER line."""
+    out = []
+    comp = c.compliance
+    bands = sorted({c.minor_bands.get(c.key(n)) or "" for n in (c.roster_names or []) if c.key(n) in c.minors})
+    for band in bands:
+        br = minor_rules(band or None, c.jurisdiction)
+        if br.get("earliest_start"):
+            out.append(f"  Minors {band}: start no earlier than {br['earliest_start']}; finish by "
+                       f"{br['latest_end_school']} ({br['latest_end_summer']} June 1 to Labor Day); at most "
+                       f"{br['max_daily_school_day']:g}h on a school day and {br['max_weekly_school_week']:g}h in a "
+                       f"school week, {br['max_daily_other_day']:g}h a day and {br['max_weekly_other_week']:g}h a week "
+                       f"otherwise. Treat every weekday outside June 1 to Labor Day as a school day.")
+        else:
+            out.append(f"  Minors{(' ' + band) if band else ''}: finish by {comp.get('minor_latest_end')}, at most "
+                       f"{float(comp.get('minor_max_daily_hours') or 8):g} hours a day.")
+    return out
 
 
 def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
-    """The rules, as the model should read them — the same facts the code
-    will check afterwards, so the draft has every chance to be right.
-    `manager_plan` (schedule_skeleton.plan_manager_coverage) — when the
-    managers' shifts were planned, the manager line points at them."""
+    """The rules the week is checked against, as the model reads them —
+    the same facts the code checks afterwards, each line marked [HARD] or
+    [SOFT] from the sweep's own sets (rule_tag, PR-5), a hard rule with why.
+    Each person's own limits, windows, time off, certificates and band are
+    their ROSTER line (labor, from person_facts — PR-33); this block says
+    the rule once. `manager_plan` (schedule_skeleton.plan_manager_coverage)
+    — when the managers' shifts were planned, the manager line points at
+    them."""
+    from labor import OVERTIME_THRESHOLD_HOURS as _OT
     comp = c.compliance
     lines = []
     if c.managers:
@@ -4308,167 +4368,111 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         # The same rule PRIORITIES 1a states, in the same rank: it used to
         # call itself "above every other rule" — above the availability and
         # time off PRIORITIES puts first (schedule audit 10/3/26 PR-1).
-        lines.append("- NON-NEGOTIABLE — PRIORITIES 1a, the owner's highest staffing rule: at every minute anybody is "
-                     f"on the schedule, at least ONE manager is on too. The managers: {_mg}."
-                     + (" Somebody standing in as the manager counts on their dates (below)." if c.acting_managers else "")
-                     + " It gives way only to a manager's own availability, time off and legal limits. Every trading "
-                       "day has a manager from the first shift's start to the last shift's end — overlap them so "
-                       "there is never a gap, not even a few minutes."
-                     + (" Their shifts are already planned: MANAGER COVERAGE, at the top, is fixed."
-                        if (manager_plan or {}).get("rows") else ""))
-    if c.closed_dates:
-        _pretty = ", ".join(datetime.strptime(d, "%Y-%m-%d").strftime("%A %-m/%-d") for d in sorted(c.closed_dates))
-        lines.append(f"- The restaurant is CLOSED on {_pretty}. Write no shifts at all on those dates.")
+        lines.append(_rule("no_manager",
+                           "NON-NEGOTIABLE — PRIORITIES 1a, the owner's highest staffing rule: at every minute anybody "
+                           f"is on the schedule, at least ONE manager is on too. The managers: {_mg}."
+                           + (" Somebody standing in as the manager counts on their dates (below)." if c.acting_managers else "")
+                           + " It gives way only to a manager's own availability, time off and legal limits. Every "
+                             "trading day has a manager from the first shift's start to the last shift's end — overlap "
+                             "them so there is never a gap, not even a few minutes."
+                           + (" Their shifts are already planned: MANAGER COVERAGE, at the top, is fixed."
+                              if (manager_plan or {}).get("rows") else ""),
+                           why="the owner's non-negotiable: somebody is always in charge of the floor"))
+    if c.acting_managers:
+        lines.extend(_acting_prompt_lines(c))
+    lines.append(_rule("unavailable_day", "Availability: nobody works outside their AVAILABLE column — a weekday or "
+                       "daypart they can't work, outside their hours that day, or on approved time off",
+                       why="the person cannot be there"))
+    lines.append(_rule("pending_time_off", "A day somebody has asked off that the owner has not decided (\"asked off\" "
+                       "in AVAILABLE): avoid it if the day can be covered."))
+    lines.append(_rule("role_not_held", "Roles: only a role in the person's CAN WORK",
+                       why="anything else is a role nobody has trained them for"))
+    lines.append(_rule("overlap", "No two shifts of one person overlap; two on one date (lunch, then dinner) are a "
+                       "double, which is allowed"))
     if comp.get("min_rest_hours"):
-        lines.append(f"- At least {float(comp['min_rest_hours']):g} hours between one shift's end and the same person's next start. No closing then opening.")
+        lines.append(_rule("rest_gap", f"At least {float(comp['min_rest_hours']):g} hours between the end of one shift and "
+                           "the same person's next start — no closing then opening",
+                           why="a short turnaround can be the owner's legal exposure under rest rules, and it puts an "
+                               "opener on the floor without sleep"))
     if comp.get("max_shift_hours"):
-        lines.append(f"- No shift longer than {float(comp['max_shift_hours']):g} hours.")
+        lines.append(_rule("shift_too_long", f"No shift longer than {float(comp['max_shift_hours']):g} hours"))
     if comp.get("min_shift_hours"):
-        lines.append(f"- No shift shorter than {float(comp['min_shift_hours']):g} hours.")
-    # A start in the small hours is read as the night it belongs to (E-32),
-    # so the model is told to date it that way.
-    lines.append("- A shift that starts after midnight belongs to the night before: write it on that night's date "
-                 "(a 12:30am-4:00am porter after Friday's close is dated Friday).")
-    # A person's own maximum above the ceiling is the owner allowing them the
-    # hours, overtime included — the code checks the same (P-12, D-18).
-    _ceiling = float(comp.get("weekly_hours_ceiling") or 40)
-    _above = any(lim and lim[1] and float(lim[1]) > _ceiling and not c.is_salaried(n)
-                 for n, lim in ((n, c.hours_limits.get(c.key(n))) for n in (c.roster_names or [])))
-    lines.append(f"- Nobody over {_ceiling:g} hours in the payroll week"
-                 + (" (the week starts on " + DAYS[c.week_start_day] + ")" if c.week_start_day else "")
-                 + (" — except where a person's own maximum below is higher: the owner allows them those hours, "
-                    "overtime included" if _above else "") + ".")
+        lines.append(_rule("shift_too_short", f"No shift shorter than {float(comp['min_shift_hours']):g} hours."))
+    # One weekly limit per person — their MAX, which is the code's
+    # max_hours (P-12, D-18): the ceiling, or their own maximum when the
+    # owner set it (above the overtime line, that is the owner allowing them
+    # that overtime). The literal 40 the prompt used to state beside a
+    # person's own 45h is gone (schedule audit 10/3/26 PR-3).
+    _ceiling = float(comp.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"])
+    lines.append(_rule("over_max_hours",
+                       "Nobody past their weekly maximum in a payroll week"
+                       + (" (it starts on " + DAYS[c.week_start_day] + ")" if c.week_start_day else "")
+                       + f": MAX in their ROSTER line — the {_ceiling:g}h ceiling, or their own maximum where the owner "
+                         f"set one (above {float(_OT):g}h, that is the owner allowing them that overtime). Hours already "
+                         "published in the same payroll week count toward it",
+                       why="the most hours the owner allows anyone"))
     # A payroll week that runs on into next week's days (E-10): next week's
     # draft schedules them inside the same overtime line.
     _tails = [c.bucket_tail(b) for b in sorted({c.bucket(d) for d in (c.week_dates or [])})]
     _tail = next((t for t in _tails if len(t) >= TAIL_RESERVE_MIN_DAYS), None)
     if _tail:
         _from = DAYS[c.week_start_day] if c.week_start_day else "Monday"
-        lines.append(f"- The payroll week that starts {_from} runs on into next week ({_tail_days_text(_tail)}), which "
-                     f"next week's schedule fills from the same overtime line: leave each hourly person about "
-                     f"{len(_tail)}/7 of their line free for those days (about {40 * len(_tail) / 7:.0f}h of 40h).")
+        lines.append(_rule("payroll_tail_full",
+                           f"The payroll week that starts {_from} runs on into next week ({_iso_days(_tail)}), which "
+                           f"next week's schedule fills from the same overtime line: leave each hourly person about "
+                           f"{len(_tail)}/7 of their line free for those days (about {float(_OT) * len(_tail) / 7:.0f}h "
+                           f"of {float(_OT):g}h)."))
     if comp.get("daily_ot_hours"):
-        lines.append(f"- Daily overtime starts at {float(comp['daily_ot_hours']):g} hours — avoid it.")
+        lines.append(_rule("daily_ot", f"Daily overtime starts at {float(comp['daily_ot_hours']):g} hours — avoid it."))
     if comp.get("meal_break_after_hours"):
-        lines.append(f"- A shift over {float(comp['meal_break_after_hours']):g} hours includes a meal break; leave room for it.")
+        lines.append(_rule("meal_break", f"A shift over {float(comp['meal_break_after_hours']):g} hours includes a meal "
+                           "break; leave room for it."))
     if comp.get("max_consecutive_days"):
-        lines.append(f"- Nobody works more than {int(comp['max_consecutive_days'])} days in a row, counting days already published last week.")
-    if comp.get("min_consecutive_days_off"):
-        lines.append(f"- Everyone gets at least {int(comp['min_consecutive_days_off'])} consecutive days off"
-                     + (f"; part-time staff {int(comp['part_time_days_off'])}." if comp.get("part_time_days_off") else "."))
-    if comp.get("manager_on_duty"):
-        lines.append("- Every open daypart has somebody authorized to close or holding a manager/keyholder certification on it.")
-    if c.acting_managers:
-        lines.extend(_acting_prompt_lines(c))
+        lines.append(_rule("long_run", f"Nobody works more than {int(comp['max_consecutive_days'])} days in a row, "
+                           "counting days already published last week", why="the owner's limit on days in a row"))
+    if c.minors:
+        lines.append(_rule("minor_late", "MINORS (marked minor in the ROSTER) — the limits the code checks, as "
+                           "starting values, not legal advice", why="child-labor law is the owner's legal exposure"))
+        lines.extend(_minor_band_lines(c))
+    if c.salaried:
+        # Each one's weekly cap — their own, the restaurant's, or the
+        # default — is their MAX in the ROSTER (E-17).
+        lines.append(_rule("over_max_hours", "Salaried people (marked salaried in the ROSTER, the same pay whatever "
+                           "the hours): at most their weekly cap; no overtime and no hourly ceiling for them, and their "
+                           "hours are not spent from the hourly hours budget. Never move an hourly person's shift onto "
+                           "them to save overtime"))
+    if c.role_requirements:
+        lines.append(_rule("missing_cert",
+                           "Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}"
+                                                                  for r, v in sorted(c.role_requirements.items()))
+                           + " — only schedule people who hold them (CAN WORK leaves the role out for anyone who "
+                             "doesn't)", why="the owner requires it to work the role"))
     if comp.get("keyholder_until_close", True) and c.closers_by_role:
         lines.extend(_closer_prompt_lines(c))
+    lines.append(_rule("nobody_at_close", "Somebody is on until close every trading day."))
+    if c.close_mins and c.close_times:
+        lines.append(_rule("ends_before_role_close", "Stays after close: "
+                           + "; ".join(f"the last {_family_label(c, fam)} until {m} min after close"
+                                       for fam, m in sorted(c.close_mins.items()) if m) + "."))
     if c.trainees:
         lines.extend(_trainee_prompt_lines(c))
     if c.role_floors:
-        lines.append("- The staffing floors below are hard: a day under a floor is flagged to the owner.")
+        lines.append(_rule("coverage_floor", "The staffing floors below are hard: a day under a floor is flagged to the "
+                           "owner", why="the fewest people the owner says a shift can run with"))
+    lines.append(_rule("under_min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
+                       "full-time line): fill from the people below theirs first."))
+    if c.stations:
+        import kitchen_stations as _ks
+        lines.extend(("- [SOFT] " + ln[2:]) if ln.startswith("- ") else ("- [SOFT] " + ln)
+                     for ln in _ks.prompt_lines(c.stations, people=False))
+    block = ("\n\nRULES THE SCHEDULE IS CHECKED AGAINST — the code checks every one of these after you write the "
+             "week; each is [HARD] or [SOFT] as the standing instructions say:\n" + "\n".join(lines))
     pack = comp.get("_pack") or {}
     if pack.get("applied"):
         # Starting values from a pack, never "the law": the Illinois pack's
         # 10-hour rest is the Chicago ordinance's, not the state's (NS5 L13).
-        lines.append(f"- Starting values from the {pack.get('label')} pack (set in Cavnar AI, not a statement of the law): "
-                     + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
-    if c.role_requirements:
-        lines.append("- Certifications by role: " + "; ".join(f"{r} needs {', '.join(sorted(v))}" for r, v in sorted(c.role_requirements.items())) + " — only schedule people who hold them.")
-    # Only salaried people on the roster, as the roster spells them (D-7):
-    # a salaried name the roster check would refuse ("Gabriel Huerta", who
-    # is on no roster at Simple EJ's) was offered to the model. Each one's
-    # weekly cap — their own, the restaurant's, or the default — is the
-    # most the code gives them (E-17).
-    _sal_names = sorted({n for n in c.roster_names if c.key(n) in c.salaried}, key=str.lower)
-    if _sal_names:
-        lines.append("- Salaried (the same pay whatever the hours): "
-                     + ", ".join(f"{n} (at most {c.salaried_limit(n):g}h a week)" for n in _sal_names)
-                     + " — no overtime and no hourly ceiling for them, and their hours are not spent from the "
-                       "hourly hours budget. Never move an hourly person's shift onto them to save overtime.")
-    if c.stations:
-        import kitchen_stations as _ks
-        lines.extend(_ks.prompt_lines(c.stations))
-    if c.close_mins and c.close_times:
-        lines.append("- Stays after close: " + "; ".join(f"the last {_family_label(c, fam)} until {m} min after close"
-                                                         for fam, m in sorted(c.close_mins.items()) if m) + ".")
-    if c.minors:
-        # The limits Cavnar CHECKS, said as that — not as the law. Minors
-        # with an age band carry the band's federal floor (NS5 H4).
-        lines.append("- MINORS — the limits the code checks (starting values, not legal advice):")
-        for n in sorted({n for n in c.roster_names if c.key(n) in c.minors}):
-            band = c.minor_bands.get(c.key(n))
-            br = minor_rules(band, c.jurisdiction)
-            if br.get("earliest_start"):
-                lines.append(f"  {n} (age {band}): start no earlier than {br['earliest_start']}; finish by "
-                             f"{br['latest_end_school']} ({br['latest_end_summer']} June 1 to Labor Day); at most "
-                             f"{br['max_daily_school_day']:g}h on a school day and {br['max_weekly_school_week']:g}h in a "
-                             f"school week, {br['max_daily_other_day']:g}h a day and {br['max_weekly_other_week']:g}h a week "
-                             f"otherwise. Treat every weekday outside June 1 to Labor Day as a school day.")
-            else:
-                lines.append(f"  {n}" + (f" (age {band})" if band else "") + f": finish by {comp.get('minor_latest_end')}, "
-                             f"at most {float(comp.get('minor_max_daily_hours') or 8):g} hours a day.")
-    per_person = []
-    for n in c.roster_names:
-        key = c.key(n)
-        bits = []
-        lim = c.hours_limits.get(key)
-        if lim:
-            if lim[0]:
-                bits.append(f"at least {float(lim[0]):g}h" + (" (full-time)" if key in c.full_time_default else ""))
-            if lim[1]:
-                from labor import OVERTIME_THRESHOLD_HOURS as _OT_PB
-                over = float(lim[1]) > float(_OT_PB) and not c.is_salaried(n)
-                bits.append(f"at most {float(lim[1]):g}h"
-                            + (f" (overtime past {float(_OT_PB):g}h allowed for them)" if over else ""))
-        if c.employment.get(key) and key not in c.full_time_default:
-            bits.append(f"{c.employment[key]}-time")
-        dp = c.daypart_avail.get(key) or {}
-        offs = [d[:3] for d in DAYS if dp.get(d) == "off"]
-        mornings = [d[:3] for d in DAYS if dp.get(d) == "morning"]
-        nights = [d[:3] for d in DAYS if dp.get(d) == "night"]
-        if offs:
-            bits.append("off " + "/".join(offs))
-        if mornings:
-            bits.append("lunch/day only " + "/".join(mornings))
-        if nights:
-            bits.append("dinner/night only " + "/".join(nights))
-        win = c.time_windows.get(key) or {}
-        for d in DAYS:
-            w = win.get(d)
-            if w:
-                lo, hi = w
-                span = (f"from {_fmt_minutes(lo)}" if lo is not None else "") + (f" until {_fmt_minutes(hi)}" if hi is not None else "")
-                bits.append(f"{d[:3]} only {span.strip()}")
-        # Part of a day off (D-39): the rest of that day they can work.
-        for d, parts in sorted((c.blocked_parts.get(key) or {}).items()):
-            for p in parts:
-                why = str(p.get("reason") or "")
-                words = "approved time off" if why.startswith(LABELS["approved_time_off"]) else (why[:80] or "time off")
-                if p.get("daypart"):
-                    off = "no lunch/day shift" if p["daypart"] == "morning" else "no dinner/night shift"
-                else:
-                    off = (f"off {_fmt_minutes(p['from'] % 1440)}" if p.get("from") is not None else "off")
-                    off += (f" until {_fmt_minutes(p['until'] % 1440)}" if p.get("until") is not None else " to close")
-                try:
-                    when = datetime.strptime(d, "%Y-%m-%d").strftime("%a %-m/%-d")
-                except ValueError:
-                    when = d
-                bits.append(f"{when}: {off} ({words})")
-        certs = c.certifications.get(key)
-        if certs:
-            bits.append("holds " + ", ".join(sorted(certs)))
-        base = c.base_hours.get(key) or {}
-        carried = sum(h for b, h in base.items() if b in {c.bucket(d) for d in c.week_dates})
-        if carried:
-            bits.append(f"{carried:g}h already published in this payroll week")
-        pend = c.pending_off.get(key)
-        if pend:
-            bits.append("has asked for " + ", ".join(sorted(pend)) + " off (not yet decided — avoid if the day can be covered)")
-        if bits:
-            per_person.append(f"  {n}: " + "; ".join(bits))
-    block = "\n\nRULES THE SCHEDULE IS CHECKED AGAINST (every one of these is verified in code after you write the week; a breach is flagged to the owner):\n" + "\n".join(lines)
-    if per_person:
-        block += "\n\nPER-PERSON LIMITS AND WINDOWS:\n" + "\n".join(per_person)
+        block += (f"\n  Starting values from the {pack.get('label')} pack (set in Cavnar AI, not a statement of the "
+                  "law): " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
     floors = []
     for role, spec in (c.role_floors or {}).items():
         base = []
@@ -4480,7 +4484,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         if base or days:
             floors.append(f"  {role}: at least " + ", ".join(base) + (f" — {days}" if days else ""))
     if floors:
-        block += "\n\nSTAFFING FLOORS BY ROLE AND DAYPART (never below these, whatever the hours ceiling says):\n" + "\n".join(floors)
+        block += (f"\n\nSTAFFING FLOORS BY ROLE AND DAYPART {rule_tag('coverage_floor')} (never below these, whatever "
+                  "the hours ceiling says):\n" + "\n".join(floors))
     # The owner's start and end rules (schedule audit 10/3/26 L-33): the
     # code retimes the draft to them afterwards, so the model is told them.
     times = []
@@ -4492,9 +4497,120 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
             times.append(f"  {role.title()} on {day} {'lunch/day' if part == 'morning' else 'dinner/night'}: "
                          + " and ".join(bits))
     if times:
-        block += "\n\nSTARTS AND ENDS BY ROLE (the owner's rules — every shift of that role on that daypart):\n" \
-                 + "\n".join(times)
+        block += (f"\n\nSTARTS AND ENDS BY ROLE {rule_tag('role_time')} (the owner's rules — every shift of that role "
+                  "on that daypart):\n" + "\n".join(times))
     return block
+
+
+# ── each person's facts, for the ROSTER (schedule audit 10/3/26 PR-33) ─────
+#
+# What the checker holds each person to, as plain data — the one source of
+# the ROSTER table's availability and hours columns (labor._roster_people
+# adds the scores, experience, usual pattern, wants and reliability). The
+# same facts used to reach the model in five blocks (PER-PERSON LIMITS,
+# EMPLOYEE AVAILABILITY, the salaried line, the minors lines, the closers
+# line), with "Xh already published in this payroll week" summed over every
+# payroll week the schedule week touches (E-9, D-19).
+
+def person_facts(c: Constraints, names=None) -> dict:
+    """{display name: facts} for `names` (default the roster): manager role,
+    acting dates, the week's limits (min, the code's max, the overtime
+    line, salaried cap, full-time), hours already published per payroll
+    week this week shares (with the dates here and the room left before
+    overtime), availability (weekdays off, daypart-only days, windows,
+    approved time off, days held off by a note, days asked off), minor band,
+    certificates, the roles they can be scheduled in by the code's own test
+    (`holds` families, a certificate their role needs left out), closer
+    families, training. Plain data: lists and numbers, ISO dates."""
+    from labor import OVERTIME_THRESHOLD_HOURS as _OT
+    out = {}
+    buckets = {}
+    for d in c.week_dates or []:
+        buckets.setdefault(c.bucket(d), []).append(d)
+    fams_by_person = {}
+    for fam, keys in (c.closers_by_role or {}).items():
+        for k in keys or ():
+            fams_by_person.setdefault(k, []).append(_family_label(c, fam))
+    for name in (names if names is not None else (c.roster_names or [])):
+        name = str(name or "").strip()
+        if not name:
+            continue
+        key = c.key(name)
+        lim = c.hours_limits.get(key) or (None, None)
+        salaried = c.is_salaried(name)
+        f = {"manager": c.managers.get(key), "acting": sorted(c.acting_managers.get(key) or ()),
+             "salaried": salaried, "cap": float(c.salaried_limit(name)) if salaried else None,
+             "min": float(lim[0]) if lim[0] else None,
+             "max": float(c.max_hours(name)) if c.max_hours(name) else None, "own_max": bool(lim[1]),
+             "ceiling": float(c.compliance.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"]),
+             "ot": None if salaried else float(overtime_line(c, name) or _OT),
+             "employment": c.employment.get(key), "full_time_default": key in c.full_time_default,
+             "minor": (c.minor_bands.get(key) or "minor") if key in c.minors else None}
+        carried = []
+        base = c.base_hours.get(key) or {}
+        for b, here in sorted(buckets.items()):
+            h = float(base.get(b) or 0)
+            if not b or h <= 0:
+                continue
+            try:
+                start = datetime.strptime(str(b)[:10], "%Y-%m-%d")
+            except (TypeError, ValueError):
+                continue
+            end = (start + timedelta(days=6)).strftime("%Y-%m-%d")
+            line = f["max"] if salaried else f["ot"]
+            carried.append({"bucket": b, "start": start.strftime("%Y-%m-%d"), "end": end, "hours": round(h, 1),
+                            "dates_here": sorted(here), "room": round(max(0.0, (line or 0) - h), 1) if line else None,
+                            "tail": c.bucket_tail(b)})
+        f["carried"] = carried
+        dp = c.daypart_avail.get(key) or {}
+        f["off_days"] = [d for d in DAYS if d in (c.unavailable_days.get(key) or set()) or dp.get(d) == "off"]
+        f["daypart_only"] = {d: dp[d] for d in DAYS if dp.get(d) in ("morning", "night") and d not in f["off_days"]}
+        f["windows"] = {d: list(w) for d, w in (c.time_windows.get(key) or {}).items() if d not in f["off_days"]}
+        time_off, note_off, other_off = [], [], []
+        for d, why in sorted((c.blocked_dates.get(key) or {}).items()):
+            if d not in (c.week_dates or [d]):
+                continue
+            why = str(why or "")
+            if why.startswith(LABELS["approved_time_off"]):
+                time_off.append(d)
+            elif "note" in why.lower():
+                note_off.append(d)
+            else:
+                other_off.append(d)
+        f["time_off"], f["note_off"], f["unavailable_dates"] = time_off, note_off, other_off
+        f["asked_off"] = sorted(d for d in (c.pending_off.get(key) or ()) if d in (c.week_dates or [d]))
+        parts = []
+        for d, ps in sorted((c.blocked_parts.get(key) or {}).items()):
+            for p in ps or []:
+                if p.get("daypart"):
+                    off = "no lunch/day shift" if p["daypart"] == "morning" else "no dinner/night shift"
+                else:
+                    off = (f"off from {_fmt_minutes(p['from'] % 1440)}" if p.get("from") is not None else "off")
+                    off += (f" until {_fmt_minutes(p['until'] % 1440)}" if p.get("until") is not None else " to close")
+                parts.append({"date": d, "words": off})
+        f["parts"] = parts
+        f["certs"] = sorted(c.certifications.get(key) or ())
+        roles, lacking = [], {}
+        for r in sorted(c.known_roles.get(key) or (), key=str.lower):
+            need = c.role_requirements.get(r) or set()
+            missing = sorted(need - set(c.certifications.get(key) or ()))
+            if missing:
+                lacking[c.role_names.get(r, r)] = missing
+                continue
+            roles.append(c.role_names.get(r, r))
+        f["roles"], f["roles_lacking_cert"] = roles, lacking
+        f["closes_for"] = sorted(fams_by_person.get(key) or [])
+        t = c.trainees.get(key)
+        f["trainee"] = ({"target_role": t.get("target_role"), "until": t.get("until"),
+                         "trainer": _display_name(c, t["trainer"].strip().lower()) if t.get("trainer") else None}
+                        if t else None)
+        skills = (c.stations or {}).get("skills") or {}
+        f["stations"] = list(skills.get(name) or skills.get(key) or [])
+        # The roles they hold beyond their roster role (people.held_roles —
+        # trained or promoted, D-15): part of CAN WORK (PR-21).
+        f["held"] = sorted(c.role_names.get(r, r) for r in (c.held_roles.get(key) or ()))
+        out[name] = f
+    return out
 
 
 # ── overtime, avoided before anything else is fixed ────────────────────────
