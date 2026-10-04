@@ -661,11 +661,19 @@ struct ScheduleWhatIf: Codable, Equatable {
     let swaps: [WhatIfSwap]?
     let verdict: String?
     let reason: String?
+    /// D2 (P-36): an edit's rescore no longer searches by itself — it
+    /// answers `{ran: false, on_demand: true, reason}` and the owner asks
+    /// ("Look for a better arrangement"). `checked_with` says what a search
+    /// held its swaps to: "every rule", or "availability and hours" only.
+    var onDemand: Bool? = nil
+    var checkedWith: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case ran, evaluated, swaps, verdict, reason, improvement
         case baselineScore = "baseline_score"
         case bestScore = "best_score"
+        case onDemand = "on_demand"
+        case checkedWith = "checked_with"
     }
 }
 
@@ -842,7 +850,12 @@ struct OptimizerChange: Codable, Identifiable, Equatable {
     let kind: String
     let reason: String
     let gain: Double?
+    /// What the change moved in labor dollars (D2, P-32) — "+$84"; nil
+    /// with no rate on file.
+    var dollars: Double? = nil
     var id: String { "\(kind)-\(reason)" }
+    /// A `trade` is two people swapping shifts within one day.
+    var isTrade: Bool { kind == "trade" }
 }
 
 /// Something still wrong after the search, and why no legal change fixed
@@ -869,11 +882,34 @@ struct ScheduleOptimizer: Codable, Equatable {
     let unresolved: [OptimizerUnresolved]?
     let verdict: String?
     let stopped: String?
+    /// The week's labor dollars before and after the changes (D2, P-32),
+    /// overtime at its premium; the solver's own when it ran.
+    var dollarsBefore: Double? = nil
+    var dollarsAfter: Double? = nil
+    var solver: SolverDollars? = nil
+
+    struct SolverDollars: Codable, Equatable {
+        var dollarsBefore: Double? = nil
+        var dollarsAfter: Double? = nil
+        enum CodingKeys: String, CodingKey {
+            case dollarsBefore = "dollars_before"
+            case dollarsAfter = "dollars_after"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
-        case ran, applied, improvement, changes, unresolved, verdict, stopped
+        case ran, applied, improvement, changes, unresolved, verdict, stopped, solver
         case beforeScore = "before_score"
         case afterScore = "after_score"
+        case dollarsBefore = "dollars_before"
+        case dollarsAfter = "dollars_after"
+    }
+
+    /// "$4,210 → $4,128 labor" — the week's dollars, when priced.
+    var dollarsLine: String? {
+        guard let before = dollarsBefore ?? solver?.dollarsBefore,
+              let after = dollarsAfter ?? solver?.dollarsAfter else { return nil }
+        return "Labor $\(before.commaFormatted) \u{2192} $\(after.commaFormatted) for the week"
     }
 
     /// "Cavnar improved this draft from 71 to 84 — 5 changes", or nil when
@@ -2339,11 +2375,14 @@ final class LaborViewModel {
         /// Rows Cavnar AI took out (apply fixes / Improve), so the save
         /// credits Cavnar AI rather than the manager's habit (L-5).
         var cavnarChanges: [CavnarRemovedRow]? = nil
+        /// Ask the rescore to look for a better arrangement (D2, P-36).
+        var whatIf: Bool? = nil
         enum CodingKeys: String, CodingKey {
             case rows, save, version
             case dailyTargetHours = "daily_target_hours"
             case historyId = "history_id"
             case cavnarChanges = "cavnar_changes"
+            case whatIf = "what_if"
         }
     }
 
@@ -4094,6 +4133,36 @@ final class LaborViewModel {
     /// True when the picked week's sales are too old to plan by — the
     /// generation would be refused, so the button says why first.
     var generateBlocked: Bool { generateForecast?.dataThrough?.blocked == true }
+
+    // MARK: Look for a better arrangement (D2, P-36)
+
+    var isSearchingArrangement = false
+
+    /// The rescore with `what_if: true`: the same people, rearranged, and
+    /// whether a better week exists. Nothing is saved.
+    func lookForBetterArrangement() async {
+        guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
+        isSearchingArrangement = true
+        defer { isSearchingArrangement = false }
+        do {
+            let response: ScoreResponse = try await client.send(
+                "/mobile/api/labor/schedule/score", method: .post,
+                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: false, historyId: result.historyId,
+                                version: nil, whatIf: true),
+                hapticOnError: false, timeout: 45, retryTransient: false)
+            guard response.ok else { overrideState = .failed(response.error ?? "Couldn\u{2019}t look just now."); return }
+            guard (scheduleResult?.previewRows ?? []).map(\.signature) == rows.map(\.signature) else { return }
+            result.whatIf = response.whatIf ?? ScheduleWhatIf(ran: false, evaluated: nil, baselineScore: nil,
+                                                              bestScore: nil, improvement: nil, swaps: nil,
+                                                              verdict: nil, reason: "Nothing better came back.")
+            scheduleResult = result
+            Haptic.light()
+        } catch let error as APIClient.APIError {
+            overrideState = .failed(error.message)
+        } catch {
+            overrideState = .failed("Couldn\u{2019}t look just now.")
+        }
+    }
 
     // MARK: Save: the one-tap "why" (L-35, H1-1)
 

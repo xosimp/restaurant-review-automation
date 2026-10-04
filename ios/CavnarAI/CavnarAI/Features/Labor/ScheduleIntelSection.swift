@@ -457,7 +457,8 @@ struct ScheduleIntelSection: View {
                             .font(.cavnarNumber(15, weight: 700))
                             .foregroundStyle(troubled ? Color.cavnarAmber : Color.cavnarInk)
                             .cavnarSensitive()
-                        Text("per labor hour")
+                        Text(o.splhBasis == "worked" ? "per worked hour"
+                             : o.splhBasis == "scheduled" ? "per scheduled hour" : "per labor hour")
                             .font(.cavnarBody(10.5))
                             .foregroundStyle(Color.cavnarInk3)
                     }
@@ -475,8 +476,18 @@ struct ScheduleIntelSection: View {
     private func outcomeDetail(_ o: IntelOutcome) -> String {
         var parts: [String] = []
         if let w = o.weeks, w > 0 { parts.append("\(w) \(w == 1 ? "week" : "weeks")") }
-        if let h = o.avgHours, h > 0 { parts.append("\(h.commaFormatted)h") }
+        if let h = o.avgHours, h > 0 {
+            // Scheduled beside worked, once punches exist (H2-5).
+            if let a = o.avgActualHours, (o.actualWeeks ?? 0) > 0 {
+                parts.append("\(h.commaFormatted)h scheduled \u{00B7} \(a.commaFormatted)h worked")
+            } else {
+                parts.append("\(h.commaFormatted)h")
+            }
+        }
+        if let m = o.missed, m > 0 { parts.append("\(m) shift\(m == 1 ? "" : "s") missed") }
+        if let l = o.stayedLate, l > 0 { parts.append("\(l) ran late") }
         if let s = o.avgSales, s > 0 { parts.append("$\(s.commaFormatted) sales") }
+        if let pct = o.laborPct { parts.append("labor \(String(format: "%.1f", pct))%") }
         if let issues = o.issuesText { parts.append(issues) }
         if let r = o.rating { parts.append("rated \(String(format: "%.1f", r))") }
         return parts.joined(separator: " · ")

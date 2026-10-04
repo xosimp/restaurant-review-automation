@@ -643,12 +643,27 @@ struct IntelOutcome: Codable, Equatable {
     /// on these nights" — and how many nights were a reading at all.
     var issuesLabel: String? = nil
     var watched: Int? = nil
+    /// What the punches say happened (schedule audit 10/3/26 L-12, L-13,
+    /// H2-5): hours worked over the weeks that had punches, shifts missed,
+    /// shifts that ran late, the daypart's own labor %, and whether sales
+    /// per labor hour is per worked or per scheduled hour.
+    var avgActualHours: Double? = nil
+    var actualWeeks: Int? = nil
+    var missed: Int? = nil
+    var stayedLate: Int? = nil
+    var laborPct: Double? = nil
+    var splhBasis: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case weeks, splh, issues, troubled, rating, watched
+        case weeks, splh, issues, troubled, rating, watched, missed
         case avgHours = "avg_hours"
         case avgSales = "avg_sales"
         case issuesLabel = "issues_label"
+        case avgActualHours = "avg_actual_hours"
+        case actualWeeks = "actual_weeks"
+        case stayedLate = "stayed_late"
+        case laborPct = "labor_pct"
+        case splhBasis = "splh_basis"
     }
 
     /// What the detail line says about issues: the server's label when sent

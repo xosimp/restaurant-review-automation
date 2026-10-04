@@ -1114,3 +1114,4 @@ extension GeneratedSchedule {
             + "\(days.count == 1 ? "that day" : "those days")."
     }
 }
+

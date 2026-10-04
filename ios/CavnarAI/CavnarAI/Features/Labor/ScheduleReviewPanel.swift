@@ -11,6 +11,10 @@ import SwiftUI
 struct ScheduleReviewPanel: View {
     @Bindable var viewModel: LaborViewModel
     let result: GeneratedSchedule
+    /// A person a review line names (an unmatched name's suggestion).
+    var onOpenPerson: (String) -> Void = { _ in }
+    /// Account → Profile's hours, for the close times a setup line asks for.
+    var onOpenHours: () -> Void = {}
 
     @State private var showingAllLines = false
     /// The overtime move whose "Not for us" is asking why.
@@ -28,6 +32,11 @@ struct ScheduleReviewPanel: View {
             if let review {
                 kindChips
                 if let lines = review.lines, !lines.isEmpty { linesBlock(lines) }
+                // The review's structured parts (schedule audit 10/3/26):
+                // stages that didn't run, what the week doesn't meet, the
+                // setup to confirm, names that match nobody, the hours by pay.
+                ScheduleReviewExtras(viewModel: viewModel, result: result,
+                                     onOpenPerson: onOpenPerson, onOpenHours: onOpenHours)
                 if let fixes = review.fixes, !fixes.isEmpty { fixesBlock(fixes) }
                 if let unfixed = review.unfixed, !unfixed.isEmpty { unfixedBlock(unfixed) }
             }
@@ -193,6 +202,12 @@ struct ScheduleReviewPanel: View {
                         Text("\(fix.from ?? "—") → \(fix.to ?? "—")")
                             .font(.cavnarBody(14, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
+                        // A row edited away since (index null, B1-1): the
+                        // fix still names its shift.
+                        if fix.index == nil, let label = fix.row?.label, !label.isEmpty {
+                            HomeMixedText.make(label + " \u{00B7} since edited", size: 13, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let reason = fix.reason, !reason.isEmpty {
                             HomeMixedText.make(reason, size: 13.5, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -369,7 +384,7 @@ struct ScheduleReviewPanel: View {
                         .frame(width: 13)
                         .padding(.top, 3)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.employee ?? "Row \(item.index + 1)")
+                        Text(item.employee ?? item.index.map { "Row \($0 + 1)" } ?? "A shift")
                             .font(.cavnarBody(14, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                         if let reason = item.reason, !reason.isEmpty {
@@ -525,7 +540,9 @@ struct ScheduleReviewPanel: View {
     private var provenance: some View {
         let parts: [String] = {
             var out: [String] = []
-            if result.chunked == true { out.append("generated in parts — the roster was too big for one pass") }
+            if result.chunked == true {
+                out.append(result.calls.map { "generated in \($0) parts" } ?? "generated in parts — the roster was too big for one pass")
+            }
             if let s = result.generationSeconds, s > 0 {
                 out.append(s < 60 ? "\(Int(s.rounded()))s to generate"
                                   : "\(Int((s / 60).rounded(.down)))m \(Int(s.truncatingRemainder(dividingBy: 60)))s to generate")
