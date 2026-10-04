@@ -74,6 +74,7 @@ struct ShiftTargetsSection: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             ForEach(viewModel.teamRoles, id: \.self) { role in
+                VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 10) {
                     Text(role)
                         .font(.cavnarBody(14.5, weight: 600))
@@ -98,6 +99,14 @@ struct ShiftTargetsSection: View {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .strokeBorder(focusedRole == role ? Color.cavnarEmber : Color.cavnarPaper3,
                                               lineWidth: 1))
+                }
+                // The saved target as the scorer reads it, per person
+                // (schedule audit 10/3/26 SQ-3/SQ-4).
+                if let crew = viewModel.strengthCrews.first(where: { $0.key.caseInsensitiveCompare(role) == .orderedSame })?.value,
+                   let line = crew.line(role: role) {
+                    HomeMixedText.make(line, size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 }
             }
 

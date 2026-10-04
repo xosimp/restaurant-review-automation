@@ -439,11 +439,19 @@ struct PersonAttendance: Codable, Hashable {
     let noShowRate: Double?
     let unreliable: Bool
     let lastMiss: String?
+    /// Call-outs among the misses, and lateness over clocked shifts — the
+    /// rate nil below six of them (schedule audit 10/3/26 D-44, L-18).
+    var calledOut: Int? = nil
+    var lateShifts: Int? = nil
+    var lateRate: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case known, shifts, missed, late, unreliable
         case noShowRate = "no_show_rate"
         case lastMiss = "last_miss"
+        case calledOut = "called_out"
+        case lateShifts = "late_shifts"
+        case lateRate = "late_rate"
     }
 
     init(known: Bool, shifts: Int? = nil, missed: Int? = nil, late: Int? = nil, noShowRate: Double? = nil,
@@ -461,14 +469,21 @@ struct PersonAttendance: Codable, Hashable {
         noShowRate = c.mrDouble(.noShowRate)
         unreliable = c.mrBool(.unreliable) ?? false
         lastMiss = c.mrText(.lastMiss)
+        calledOut = c.mrInt(.calledOut)
+        lateShifts = c.mrInt(.lateShifts)
+        lateRate = c.mrDouble(.lateRate)
     }
 
-    /// "Missed 1 of 24 watched shifts · late 2 · last miss 9/3/26", or "Not
-    /// watched yet".
+    /// "Missed 1 of 24 watched shifts · called out 1 time · late to 2 of 18
+    /// clocked (11%) · last miss 9/3/26", or "Not watched yet".
     var line: String {
         guard known, let shifts else { return "Not watched yet" }
         var bits = ["Missed \(missed ?? 0) of \(shifts) watched shift\(shifts == 1 ? "" : "s")"]
-        if let late, late > 0 { bits.append("late \(late)") }
+        if let n = calledOut, n > 0 { bits.append("called out \(n) time\(n == 1 ? "" : "s")") }
+        if let clocked = lateShifts, clocked > 0 {
+            let pct = lateRate.map { "\(Int(($0 * 100).rounded()))%" } ?? "\u{2014}"
+            bits.append("late to \(late ?? 0) of \(clocked) clocked (\(pct))")
+        } else if let late, late > 0 { bits.append("late \(late)") }
         if let lastMiss { bits.append("last miss " + CavnarDate.mdy(lastMiss)) }
         return bits.joined(separator: " \u{00B7} ")
     }

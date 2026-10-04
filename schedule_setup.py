@@ -553,6 +553,16 @@ def owner_rule_preview(restaurant_id, text, c=None) -> dict:
         pass
     rule = _sr.parse_owner_rule(text, roles, c.role_families)
     if rule is None:
+        # A rule about two people ("keep Ana and Ben apart") is held too —
+        # apply_owner_rules reads it into the pairings (D-38) — and was said
+        # back as one Cavnar AI can't check (schedule fix round 10/3/26, UI
+        # W2). A pairing on some days only stays unchecked, as it is there.
+        pair = _sr.parse_pair_rule(text, list(c.roster_names or []), aliases=getattr(c, "aliases", None),
+                                   display=getattr(c, "display", None))
+        if pair is not None and not pair.get("days"):
+            reads = (f"{pair['a']} and {pair['b']} kept apart" if pair.get("kind") == "avoid"
+                     else f"{pair['a']} and {pair['b']} on together where the week allows")
+            return {"checked": True, "reads_as": reads, "text": f"Checked on every draft as: {reads}."}
         return {"checked": False, "reads_as": None,
                 "text": "Cavnar AI can't check this one automatically — a draft is asked to follow it, and the "
                         "review reminds you to check the week against it."}
@@ -562,6 +572,99 @@ def owner_rule_preview(restaurant_id, text, c=None) -> dict:
             rule["floor_role"] = code
     reads = _sr.rule_reads_as(rule)
     return {"checked": True, "reads_as": reads, "text": f"Checked on every draft as: {reads}."}
+
+
+def staffing_rule_checks(restaurant_id, facts, c=None) -> dict:
+    """{fact id: owner_rule_preview(...)} for each of `facts` (Account →
+    memory's rows) that is an account holder's staffing rule — a constraint
+    or preference about labor or the schedule — read against one set of
+    rules. Account → memory says beside each one how the schedule checks it,
+    or that it doesn't (schedule audit 10/3/26 D-14, D-38): an owner-only
+    rule the schedule can't read had no surface at all
+    (Constraints.owner_rules_unchecked_private). The caller passes only the
+    facts its viewer may read, as stored (owner_memory.facts_for: the
+    authority that makes a fact a rule, its modules as written)."""
+    import owner_memory
+
+    def _mods(f):
+        m = f.get("modules")
+        return set(m) if isinstance(m, (list, tuple, set)) else owner_memory._modules_of(f)
+    rules = [f for f in facts or [] if f.get("id") is not None and owner_memory.is_owner_rule(f)
+             and _mods(f) & {"labor", "schedule"}]
+    if not rules:
+        return {}
+    c = _constraints(restaurant_id, c=c)
+    return {f["id"]: owner_rule_preview(restaurant_id, f.get("fact") or "", c=c) for f in rules}
+
+
+def salaried_caps(c) -> list:
+    """[{name, cap, own}] — each salaried person on the roster and the most
+    hours code schedules them for in a week (Constraints.salaried_limit):
+    their own maximum (`own`), else the restaurant's salaried cap (schedule
+    audit 10/3/26 E-12, E-17). The rules screen lists them under the cap."""
+    out = []
+    for name in c.roster_names or []:
+        if not c.is_salaried(name):
+            continue
+        lim = (c.hours_limits or {}).get(c.key(name))
+        out.append({"name": name, "cap": round(float(c.salaried_limit(name)), 1), "own": bool(lim and lim[1])})
+    return out
+
+
+def strength_crews_view(restaurant_id, thresholds=None, c=None) -> dict:
+    """{role: {"target", "crew", "per_person", "source", "known"}} — for each
+    of the owner's strength targets (Team → Shift strength targets), the
+    full crew it is judged against and what that asks of each person: the
+    most of the role any shift the target governs needs, read as the scorer
+    reads it (shift_quality.strength_crews over the same profiles, usual
+    crew, floors, section cap and role families — schedule audit 10/3/26
+    SQ-3/4/5), and the target ÷ that crew on the 1–5 scale. The editor says
+    "8 across your largest bartender crew of 2 — about 4 a person". `known`
+    False: nothing on file says how many of the role work, so the crew is the
+    fewest people who could reach the target. {} with no targets."""
+    import shift_quality as _sq
+    from models import (get_role_strength_thresholds, get_shift_profiles, get_shift_leader_rules,
+                        get_quality_tuning, get_restaurant)
+    if thresholds is None:
+        thresholds = get_role_strength_thresholds(restaurant_id)
+    targets = {}
+    for role, v in (thresholds or {}).items():
+        try:
+            if float(v) > 0:
+                targets[str(role)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    if not targets:
+        return {}
+    c = _constraints(restaurant_id, c=c)
+    profiles = _sq.profiles_from_config(
+        [_sq.profile_from_dict(p) for p in (get_shift_profiles(restaurant_id) or [])] or None,
+        default_strength=targets, default_leader_rules=get_shift_leader_rules(restaurant_id),
+        tuning=get_quality_tuning(restaurant_id))
+    try:
+        from labor import staffing_baseline
+        typical = (staffing_baseline(restaurant_id) or {}).get("typical_headcount") or {}
+    except Exception as e:
+        print(f"[setup] usual crew unavailable for {restaurant_id}: {e!r}")
+        typical = {}
+    try:
+        from schedule_engine import _parse_role_minimums
+        minimums = _parse_role_minimums(getattr(get_restaurant(restaurant_id), "role_minimums_json", None))
+    except Exception:
+        minimums = {}
+    families = {str(k).strip().lower(): v for k, v in (c.role_families or {}).items() if k}
+    crews = _sq.strength_crews(profiles, typical, c.role_floors or {}, minimums or {},
+                               int(getattr(c, "section_cap", 0) or 0),
+                               sorted(getattr(c, "foh_roles", None) or {"server"}), families)
+    out = {}
+    for role, target in targets.items():
+        hit = crews.get((_sq.role_family(role, families), float(target)))
+        known = bool(hit and int(hit[0] or 0) > 0)
+        crew = int(hit[0]) if known else max(1, int(math.ceil(target / _sq.SCORE_SCALE_MAX - 1e-9)))
+        out[role] = {"target": target, "crew": crew, "known": known,
+                     "source": hit[1] if known else "the fewest people who could reach it",
+                     "per_person": round(max(float(_sq.SCORE_SCALE_MIN), min(float(_sq.SCORE_SCALE_MAX), target / crew)), 1)}
+    return out
 
 
 # ── what a generation's review says about the setup ───────────────────────

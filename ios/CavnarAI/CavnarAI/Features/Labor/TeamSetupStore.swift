@@ -24,9 +24,13 @@ struct RulesSetupFields: Decodable {
     var certificationLabels: [String: String] = [:]
     var sectionCount: Int? = nil
     var crossTrainingDefaults: [String: Int] = [:]
+    /// Each salaried person and the weekly cap code holds them to — the
+    /// owner's alone (schedule_setup.salaried_caps, E-12/E-17).
+    var salariedCaps: [SalariedCap] = []
 
     enum CodingKeys: String, CodingKey {
         case managers, closers
+        case salariedCaps = "salaried_caps"
         case managersLine = "managers_line"
         case ownerRules = "owner_rules"
         case ownerRulesUnchecked = "owner_rules_unchecked"
@@ -65,6 +69,25 @@ struct RulesSetupFields: Decodable {
         sectionCount = c.setupInt(.sectionCount)
         crossTrainingDefaults = ((try? c.decodeIfPresent([String: Double].self, forKey: .crossTrainingDefaults)) ?? nil)?
             .compactMapValues { $0.isFinite ? Int($0.rounded()) : nil } ?? [:]
+        salariedCaps = c.setupList(SalariedCap.self, .salariedCaps).filter { !$0.name.isEmpty }
+    }
+}
+
+/// One salaried person and the most hours a week code schedules them for:
+/// their own maximum (`own`), else the salaried cap.
+struct SalariedCap: Decodable, Equatable, Identifiable {
+    var name: String
+    var cap: Double?
+    var own: Bool
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey { case name, cap, own }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = c.setupText(.name) ?? ""
+        cap = c.setupDouble(.cap)
+        own = c.setupBool(.own) ?? false
     }
 }
 
@@ -100,6 +123,7 @@ final class TeamSetupStore {
     var sectionCount: Int?
     /// The roster's roles (the cross-training defaults are keyed by them).
     var rosterRoles: [String] = []
+    var salariedCaps: [SalariedCap] = []
 
     func apply(_ f: RulesSetupFields) {
         managers = f.managers
@@ -119,6 +143,7 @@ final class TeamSetupStore {
         certificationLabels = f.certificationLabels
         sectionCount = f.sectionCount
         rosterRoles = f.crossTrainingDefaults.keys.sorted()
+        salariedCaps = f.salariedCaps
     }
 
     // MARK: Who runs the floor (POST labor/managers)

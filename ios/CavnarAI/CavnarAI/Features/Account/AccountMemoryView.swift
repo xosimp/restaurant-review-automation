@@ -395,17 +395,25 @@ struct AccountMemory: Decodable {
     var facts: [MemoryFact] = []
     var lanes: [MemoryLane] = []
     var archived: [ArchivedFact] = []
-    /// How the schedule reads each staffing rule shown (schedule audit
-    /// 10/3/26 D-14, D-38): the rules every draft is checked against, with
-    /// how, and the ones it can't check — an owner-only one only for an
-    /// account holder. Empty on an older server.
-    var scheduleReads: [OwnerRuleReadback] = []
-    var scheduleUnchecked: [String] = []
+    /// How the schedule reads each account holder's staffing rule shown,
+    /// by fact id (schedule audit 10/3/26 D-14, D-38): checked on every
+    /// draft and as what, or that it can't be. Empty on an older server.
+    var scheduleChecks: [Int: ScheduleCheck] = [:]
+
+    struct ScheduleCheck: Decodable {
+        let checked: Bool
+        let text: String
+        enum CodingKeys: String, CodingKey { case checked, text }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            checked = c.setupBool(.checked) ?? false
+            text = c.setupText(.text) ?? ""
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case facts, lanes, archived
-        case scheduleReads = "schedule_reads"
-        case scheduleUnchecked = "schedule_unchecked"
+        case scheduleChecks = "schedule_checks"
     }
 
     init() {}
@@ -415,25 +423,17 @@ struct AccountMemory: Decodable {
         facts = ((try? c.decodeIfPresent(HomeLenientList<MemoryFact>.self, forKey: .facts)) ?? nil)?.items ?? []
         lanes = ((try? c.decodeIfPresent(HomeLenientList<MemoryLane>.self, forKey: .lanes)) ?? nil)?.items ?? []
         archived = ((try? c.decodeIfPresent(HomeLenientList<ArchivedFact>.self, forKey: .archived)) ?? nil)?.items ?? []
-        scheduleReads = c.setupList(OwnerRuleReadback.self, .scheduleReads)
-        scheduleUnchecked = c.setupTexts(.scheduleUnchecked)
+        var checks: [Int: ScheduleCheck] = [:]
+        for (k, v) in ((try? c.decodeIfPresent([String: ScheduleCheck].self, forKey: .scheduleChecks)) ?? nil) ?? [:] {
+            if let id = Int(k), !v.text.isEmpty { checks[id] = v }
+        }
+        scheduleChecks = checks
     }
 
     /// One line beside a staffing rule: how every draft checks it, or that
     /// the schedule can't — nil for a fact the schedule doesn't read.
     func scheduleLine(for fact: MemoryFact) -> (text: String, checked: Bool)? {
-        let key = Self.folded(fact.fact)
-        if let r = scheduleReads.first(where: { Self.folded($0.text ?? "") == key }), let reads = r.readsAs {
-            return ("Checked on every draft as: \(reads).", true)
-        }
-        if scheduleUnchecked.contains(where: { Self.folded($0) == key }) {
-            return ("Not checked by the schedule \u{2014} a draft is asked to follow it; check the week yourself.", false)
-        }
-        return nil
-    }
-
-    static func folded(_ text: String) -> String {
-        text.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+        scheduleChecks[fact.id].map { ($0.text, $0.checked) }
     }
 }
 

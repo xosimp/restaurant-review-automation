@@ -4,9 +4,9 @@ staffing rules said back where they are written and where they are set.
   D-38  an owner-only staffing rule's words reach an account holder only —
         the rules screen read every parsed rule back to every login that
         can see labor, private ones included
-  F2-7  the owner-only rules the schedule can't check had no surface:
-        Account → Memory now says, beside each staffing rule, how every
-        draft checks it, or that it can't (owner-only ones to the owner)
+  (Account → Memory's `schedule_checks` beside each staffing rule — F2-7
+  — is the web workstream's route, tested in test_sf_uiw2_web.py; the
+  phone reads the same key.)
 """
 import sys
 from datetime import date, timedelta
@@ -74,29 +74,3 @@ def test_an_owner_only_staffing_rule_is_read_back_to_an_account_holder_only():
     assert status == 200
     assert [r["text"] for r in manager["owner_rules"]] == ["At least 1 server every day"], \
         "the owner-only rule's words never reach a manager"
-
-
-def test_memory_says_how_the_schedule_checks_each_staffing_rule_and_which_it_cannot():
-    rid = _rid()
-    _rule(rid, "Always two servers on Saturday night", "principals")
-    _rule(rid, "Keep the rotation fair for the new hires", "principals")
-    _rule(rid, "Give the new hires a fair rotation please", "team")
-    owner, status = _call(strategy_routes._do_memory_list, dict(OWNER, restaurant_id=rid))
-    assert status == 200
-    assert owner["schedule_reads"] == [{"text": "Always two servers on Saturday night",
-                                        "reads_as": "at least 2 Server on Sat at dinner/night"}]
-    assert set(owner["schedule_unchecked"]) == {"Keep the rotation fair for the new hires",
-                                                "Give the new hires a fair rotation please"}
-    manager, status = _call(strategy_routes._do_memory_list, dict(MANAGER, restaurant_id=rid))
-    assert status == 200
-    assert manager.get("schedule_reads") == []
-    assert manager.get("schedule_unchecked") == ["Give the new hires a fair rotation please"], \
-        "an owner-only rule the schedule can't check is said to the owner alone"
-
-
-def test_memory_with_no_staffing_rule_builds_no_schedule():
-    rid = _rid()
-    owner_memory.remember(rid, "We close early the first Sunday", kind="context",
-                          user=dict(OWNER, restaurant_id=rid))
-    out, status = _call(strategy_routes._do_memory_list, dict(OWNER, restaurant_id=rid))
-    assert status == 200 and "schedule_reads" not in out and "schedule_unchecked" not in out

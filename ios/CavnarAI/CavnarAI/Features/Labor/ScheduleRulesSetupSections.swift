@@ -331,11 +331,25 @@ struct RulesSalariedSection: View {
                 SetupHelp(text: "Salaried people owe no overtime, and their hours aren\u{2019}t spent from the hourly budget. "
                           + "The draft gives each at most this many hours a week unless their own maximum says otherwise.")
                     .padding(.bottom, 9)
-                ForEach(people, id: \.self) { name in
-                    AccountRowDivider()
-                    AccountKVRow(label: name, showsDivider: false) {
-                        AccountValue(text: ownMax[name].map { "\(Self.hours($0))h, their own" }
-                                        ?? "\(Self.hours(capHours))h cap", isNumber: true, tone: .cavnarInk2)
+                // The server's own list when it sends one (the cap code
+                // holds each to); else the salaried managers and the
+                // salaried list, against the cap.
+                if !store.salariedCaps.isEmpty {
+                    ForEach(store.salariedCaps) { s in
+                        AccountRowDivider()
+                        AccountKVRow(label: s.name, showsDivider: false) {
+                            AccountValue(text: s.own ? "\(Self.hours(s.cap ?? capHours))h, their own"
+                                            : "\(Self.hours(edited ? capHours : (s.cap ?? capHours)))h cap",
+                                         isNumber: true, tone: .cavnarInk2)
+                        }
+                    }
+                } else {
+                    ForEach(people, id: \.self) { name in
+                        AccountRowDivider()
+                        AccountKVRow(label: name, showsDivider: false) {
+                            AccountValue(text: ownMax[name].map { "\(Self.hours($0))h, their own" }
+                                            ?? "\(Self.hours(capHours))h cap", isNumber: true, tone: .cavnarInk2)
+                        }
                     }
                 }
                 ForEach(store.salaried.filter { $0.warning != nil }) { entry in

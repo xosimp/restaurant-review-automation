@@ -62,7 +62,7 @@ DECODED_KEYS = {
     "Features/Staff/StaffRequestsViews.swift": ["start_time", "end_time", "lunch", "dinner"],
     "Features/Staff/StaffModels.swift": ["shifts_checked", "minutes_late", "date_label"],
     "Features/Home/HomeDay.swift": ["covered_by", "shift_start", '"for"'],
-    "Features/Account/AccountMemoryView.swift": ["schedule_reads", "schedule_unchecked", "schedule_rule"],
+    "Features/Account/AccountMemoryView.swift": ["schedule_checks", "schedule_rule"],
     "Models/MemoryRecall.swift": ["last_hand", "retest_since", "retired_reason"],
 }
 

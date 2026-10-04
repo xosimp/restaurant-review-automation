@@ -272,6 +272,37 @@ struct RatingCoverage: Codable, Equatable {
     }
 }
 
+/// A strength target as the scorer judges it (schedule audit 10/3/26
+/// SQ-3/SQ-4): the full crew it was set for and what that asks a person.
+struct StrengthCrew: Decodable, Equatable {
+    var target: Double?
+    var crew: Int?
+    var perPerson: Double?
+    var known: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case target, crew, known
+        case perPerson = "per_person"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = c.setupDouble(.target)
+        crew = c.setupInt(.crew)
+        perPerson = c.setupDouble(.perPerson)
+        known = c.setupBool(.known) ?? false
+    }
+
+    private static func fig(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v) }
+
+    /// "8 across your largest Bartender crew of 2 — about 4 a person".
+    func line(role: String) -> String? {
+        guard let t = target, let n = crew, let p = perPerson else { return nil }
+        let crewWords = known ? "your largest \(role) crew of \(n)" : "\(n) \(n == 1 ? "person" : "people") (nothing on file says how many work)"
+        return "\(Self.fig(t)) across \(crewWords) \u{2014} about \(Self.fig(p)) a person"
+    }
+}
+
 /// Whether the leader rules can judge anyone yet (schedule audit 10/3/26
 /// D-10): the sentences, and whether ratings or closer flags entered
 /// through support wait on the owner.
@@ -1835,6 +1866,8 @@ final class LaborViewModel {
     var leaderRulesStatus: LeaderRulesStatus?
     /// Whose per-role rating is mid-flight ("name|role").
     var savingRoleFor: String?
+    /// Each strength target's crew and per-person ask, by role.
+    var strengthCrews: [String: StrengthCrew] = [:]
 
     private let client: APIClient
     private var restaurantId: Int?
@@ -3287,6 +3320,7 @@ final class LaborViewModel {
         let error: String?
         var leaderRuleDefaults: LeaderRuleDefaults? = nil
         var leaderRulesStatus: LeaderRulesStatus? = nil
+        var strengthCrews: [String: StrengthCrew]? = nil
 
         struct LeaderRuleDefaults: Decodable {
             let minScore: Double?
@@ -3303,6 +3337,7 @@ final class LaborViewModel {
             case leaderRules = "leader_rules"
             case leaderRuleDefaults = "leader_rule_defaults"
             case leaderRulesStatus = "leader_rules_status"
+            case strengthCrews = "strength_crews"
         }
 
         init(from decoder: Decoder) throws {
@@ -3317,6 +3352,7 @@ final class LaborViewModel {
             error = try c.decodeIfPresent(String.self, forKey: .error)
             leaderRuleDefaults = (try? c.decodeIfPresent(LeaderRuleDefaults.self, forKey: .leaderRuleDefaults)) ?? nil
             leaderRulesStatus = (try? c.decodeIfPresent(LeaderRulesStatus.self, forKey: .leaderRulesStatus)) ?? nil
+            strengthCrews = (try? c.decodeIfPresent([String: StrengthCrew].self, forKey: .strengthCrews)) ?? nil
         }
     }
 
@@ -3373,9 +3409,20 @@ final class LaborViewModel {
         let error: String?
         /// The leader rules the team can't meet, said at save (D-11).
         var leaderRuleWarnings: [String]? = nil
+        var strengthCrews: [String: StrengthCrew]? = nil
         enum CodingKeys: String, CodingKey {
             case ok, thresholds, warnings, error
             case leaderRuleWarnings = "leader_rule_warnings"
+            case strengthCrews = "strength_crews"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            thresholds = try? c.decodeIfPresent([String: Double].self, forKey: .thresholds)
+            warnings = try? c.decodeIfPresent([String].self, forKey: .warnings)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+            leaderRuleWarnings = (try? c.decodeIfPresent([String].self, forKey: .leaderRuleWarnings)) ?? nil
+            strengthCrews = (try? c.decodeIfPresent([String: StrengthCrew].self, forKey: .strengthCrews)) ?? nil
         }
     }
 
@@ -3394,6 +3441,7 @@ final class LaborViewModel {
                 leaderRuleDefaultMinScore = bar
             }
             leaderRulesStatus = response.leaderRulesStatus
+            strengthCrews = response.strengthCrews ?? [:]
             teamError = response.ok ? nil : response.error
         } catch {
             teamError = "Couldn't load your team just now."
@@ -3539,6 +3587,7 @@ final class LaborViewModel {
                 // first into `warnings` too).
                 let ruleWarnings = response.leaderRuleWarnings ?? []
                 leaderRuleWarnings = ruleWarnings
+                if let crews = response.strengthCrews { strengthCrews = crews }
                 targetWarnings = (response.warnings ?? []).filter { !ruleWarnings.contains($0) }
                 Haptic.success()
             } else {
