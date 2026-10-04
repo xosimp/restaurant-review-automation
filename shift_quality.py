@@ -159,6 +159,15 @@ CRITICAL_FLOORS = {"coverage": 70, "operational_strength": 55, "leadership": 60,
 HARD_BREACH_CAP = 50
 HARD_RULES_KEY = "hard_rules"
 HARD_RULES_LABEL = "Hard rules"
+# A hard breach is a fact about the WEEK as well as its shift. Capping only
+# the shift left a week with a Saturday-dinner manager gap at 92
+# "excellent" (the demand-weighted mean barely moved), and the optimiser
+# stopped there at "target reached" (schedule re-audit 10/4/26 SQ-2). A week
+# with any hard breach on it is scaled into [0, WEEK_HARD_BREACH_CEILING] —
+# under the "fair" band, so it reads "weak" — rather than clipped flat, so
+# every pass that chooses by the score still sees a move that lifts a
+# capped shift, or fixes one breach of three, as a gain.
+WEEK_HARD_BREACH_CEILING = 64
 
 
 @dataclass
@@ -3781,10 +3790,27 @@ def evaluate_schedule(contexts: list, weights: dict = None,
         hoisted["weaknesses"] = list(d.weaknesses) + list(hoisted.get("weaknesses") or [])
     share = _week_share(scored, week_dims)
     details = recommendation_details(scored, week_dims)
+    # The week-level hold (SQ-2), said once at the top of the week: which
+    # rules are broken and on what, so "weak" never reads unexplained.
+    held_by = None
+    if week_held(scored):
+        broken = [s for s in scored if s.get("hard_breaches")]
+        first = broken[0]
+        where = f"{first['day']} {'lunch' if first['daypart'] == 'morning' else 'dinner'}"
+        lines = sum(len(s["hard_breaches"]) for s in broken)
+        held_by = {"key": HARD_RULES_KEY, "label": HARD_RULES_LABEL, "score": overall,
+                   "ceiling": WEEK_HARD_BREACH_CEILING, "shifts": len(broken), "breaches": lines,
+                   "text": (f"A hard rule is broken on {where}: {first['hard_breaches'][0]}"
+                            + (f" (and {lines - 1} more this week)" if lines > 1 else "")
+                            + f". The week cannot score above {WEEK_HARD_BREACH_CEILING} until it is fixed.")}
+        hoisted["weaknesses"] = [held_by["text"]] + [w for w in (hoisted.get("weaknesses") or [])
+                                                      if w != held_by["text"]]
 
     return {
         "checked": True,
         "score": overall,
+        # The week's hard-rule hold, or None (SQ-2).
+        "held_by": held_by,
         # Before rounding, for a search that has to see a shift move three
         # points (schedule_optimizer.objective).
         "raw_score": round(raw, 4),
@@ -3883,6 +3909,12 @@ def _week_share(scored: list, week_dims: list) -> float:
     return num / (den or 1.0)
 
 
+def week_held(scored: list) -> bool:
+    """True when a scored shift of the week carries a hard breach the rule
+    sweep found: the week is held under WEEK_HARD_BREACH_CEILING (SQ-2)."""
+    return any(s.get("hard_breaches") for s in scored or [])
+
+
 def week_score_raw(scored: list, week_dims: list = None) -> float:
     """The week's score before rounding.
 
@@ -3903,7 +3935,11 @@ def week_score_raw(scored: list, week_dims: list = None) -> float:
         share = _shift_share(s, week_w)
         num += (s["score"] * (1 - share) + week_val * share) * w
         den += w
-    return max(0.0, min(float(SCORE_MAX), num / (den or 1.0)))
+    raw = max(0.0, min(float(SCORE_MAX), num / (den or 1.0)))
+    # A broken hard rule holds the whole week, not only its shift (SQ-2).
+    if week_held(scored):
+        raw = raw * WEEK_HARD_BREACH_CEILING / float(SCORE_MAX)
+    return raw
 
 
 # A line true of most of the week is a fact about the WEEK, and printing it
@@ -4209,7 +4245,10 @@ def points_if_fixed(shifts: list, shift: dict = None, key: str = None, week_dims
                   for d in measures]
         return round(max(0.0, week_score_raw(scored, lifted) - before), 2)
     score, capped = _rescore(shift, key)
-    trial = [dict(s, score=score, capped_by=capped) if s is shift else s for s in scored]
+    # Fixing the shift's hard breach also lifts the week's hold once no
+    # other shift carries one (SQ-2).
+    lifted_rules = {"hard_breaches": []} if key == HARD_RULES_KEY else {}
+    trial = [dict(s, score=score, capped_by=capped, **lifted_rules) if s is shift else s for s in scored]
     return round(max(0.0, week_score_raw(trial, measures) - before), 2)
 
 
@@ -4981,7 +5020,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
                 floors_here[role] = int(n)
         # The late segment rides on the night of a date closing past 11pm.
         late = _late_facts(date, day, part, close_times, req_by_date, day_rows_by_date.get(date, []),
-                           splh_targets, daypart_sales, demand_by_date)
+                           splh_targets, daypart_sales, demand_by_date, salaried=salaried)
         contexts.append(ShiftContext(
             date=date, day=day, daypart=part, rows=shift_rows,
             profile=profile,
@@ -5052,11 +5091,17 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
 
 
 def _late_facts(date, day, part, close_times, req_by_date, day_rows, splh_targets, daypart_sales,
-                demand_by_date) -> dict:
+                demand_by_date, salaried=frozenset()) -> dict:
     """The late segment's ShiftContext fields for one night (D-32): its
     window, the people it needs (the requirements table's late row), its
     usual sales raised by the date's lift, its target and the hours the
-    draft puts in it. {} for a morning, or a night not closing past 11pm."""
+    draft puts in it. {} for a morning, or a night not closing past 11pm.
+
+    `salaried` (name keys): their late hours are not the late segment's, on
+    the basis its target is measured on (splh_by_daypart is hourly only) and
+    the night's own hours already are (schedule re-audit 10/4/26 SQ-9): a
+    salaried owner closing beside one bartender read half the late SPLH and
+    told the owner to cut 4 late hours."""
     if part != "night":
         return {}
     window = late_window(_slot_minutes((close_times or {}).get(day)) if (close_times or {}).get(day) else None)
@@ -5069,7 +5114,8 @@ def _late_facts(date, day, part, close_times, req_by_date, day_rows, splh_target
             sales = float(sales) * (1 + float(lift) / 100.0) if lift else float(sales)
         except (TypeError, ValueError):
             sales = float(sales)
-    hours = sum(late_minutes(r, window) for r in day_rows or [] if (r.get("employee") or "").strip()) / 60.0
+    hours = sum(late_minutes(r, window) for r in day_rows or []
+                if (r.get("employee") or "").strip() and name_key(r.get("employee")) not in salaried) / 60.0
     return {"late_window": window, "late_required": dict(req_by_date.get((date, "late")) or {}),
             "late_expected_sales": sales or None, "late_splh_target": ((splh_targets or {}).get(day) or {}).get("late"),
             "late_hours": round(hours, 2)}

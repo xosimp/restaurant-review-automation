@@ -2708,6 +2708,14 @@ def _do_schedule_violations(u):
     viols = _sr.violations(rows, c)
     out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
            "pending_time_off": inputs.get("pending_time_off") or {}}
+    # The hours panel's figures on the hourly basis the PAR and the daily
+    # targets are sized on (schedule re-audit 10/4/26 SQ-5): salaried hours
+    # apart, never against PAR or the 40h line.
+    try:
+        import schedule_economics as _econ_hv
+        out["hours"] = _econ_hv.hours_view(rows, c)
+    except Exception as e:
+        print(f"[schedule] hours view unavailable: {e!r}")
     # What the rows on screen miss — the same list generation saves with the
     # review (schedule audit 10/3/26 PR-11).
     try:
@@ -2740,14 +2748,14 @@ def _do_schedule_violations(u):
     if base is not None:
         try:
             import schedule_economics as _econ
-            from models import get_role_rates
-            rates = get_role_rates(_rid(u))
-            # Overtime pay starts at 40h (labor.OVERTIME_THRESHOLD_HOURS);
-            # the owner's weekly hours ceiling is a cap, not the overtime
-            # line, in either direction (NS3 H5).
-            from labor import OVERTIME_THRESHOLD_HOURS as _OT_LINE
-            out["cost"] = _econ.cost_delta(base, rows, rates, (rates or {}).get("_default"),
-                                           ceiling=float(_OT_LINE))
+            # Priced exactly as the generation prices the week (schedule
+            # re-audit 10/4/26 SQ-6, schedule_economics.week_pricing): each
+            # person's own rate, overtime from the 40h line per payroll week
+            # with the hours already published in it, salaried people free;
+            # the hours are hourly hours. It priced a salaried GM's extra
+            # shift at the blended rate with overtime.
+            out["cost"] = _econ.cost_delta(base, rows, pricing=_econ.week_pricing(
+                _rid(u), c, blended_rate=_econ.stored_blended_rate(_rid(u), b.get("history_id"))))
         except Exception:
             out["cost"] = None
     return out, 200
