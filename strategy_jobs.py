@@ -1308,7 +1308,7 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     (schedule_engine.generation_scope) like any generation, with the same
     wall clock."""
     import ops
-    from schedule_engine import generation_scope
+    from schedule_engine import generation_scope, generation_request
     # What it asks, as an owner's press of Generate for next week would: an
     # owner's identical press joins it, and it never joins (or is joined by)
     # a generation of anything else (re-audit 10/4/26 UI-8).
@@ -1316,7 +1316,7 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     _today = _dt_req.strptime(period, "%Y-%m-%d") if period else None
     try:
         job_id, joined = ops.claim_async_job(f"auto-{uuid.uuid4().hex[:12]}", "schedule", r.id,
-                                             request=_se.generation_request(r.id, today=_today))
+                                             request=generation_request(r.id, today=_today))
     except ops.JobBusy:
         job_id, joined = None, True
     if joined:

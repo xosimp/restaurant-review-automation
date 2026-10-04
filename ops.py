@@ -1737,7 +1737,7 @@ def _dsr_missing(db_path=None):
 
 # Schedule generation end to end (schedule audit 10/3/26 P-24): each week
 # saves its stage timings and total (schedule_history.total_seconds, written
-# by schedule_engine._annotate_history). The p95 of the last
+# with the draft by models.save_schedule_history). The p95 of the last
 # SCHEDULE_P95_SAMPLE generations in SCHEDULE_P95_DAYS past
 # SCHEDULE_P95_ALERT_SECONDS is a warning the platform check pages once a
 # day — the owner sits waiting on every one, and the clients' wait is 15

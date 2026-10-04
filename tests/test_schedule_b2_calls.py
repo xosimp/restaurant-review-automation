@@ -457,7 +457,10 @@ def test_a_job_its_poll_called_dead_saves_nothing(db, monkeypatch):
     base = {"ok": True, "schedule_csv": _csv([_line(WEEK[0], "Ana")]), "week_dates": WEEK, "week_days": DAYS,
             "summary": [], "hours_budget": 0, "daily_target_hours": {}, "labor_target": 30}
     monkeypatch.setattr(se, "_build_schedule_result", lambda r, week_start=None: dict(base))
-    monkeypatch.setattr(ops, "job_still_pending", lambda job_id: False)
+    # Alive when it starts (a job called dead before it starts is never run
+    # — re-audit 10/4/26 PIPE-9), called dead while it ran.
+    alive = iter([True])
+    monkeypatch.setattr(ops, "job_still_pending", lambda job_id: next(alive, False))
     finished = {}
     monkeypatch.setattr(se._ops, "finish_async_job", lambda j, s, r: finished.update(status=s, result=r))
     se._run_schedule_job("late-job", rid)

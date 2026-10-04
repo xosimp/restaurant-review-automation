@@ -3443,6 +3443,8 @@ def close_cap_minutes(c, row):
     manager on that date may stay as long as any role does — the manager
     plan keeps one on until the last role leaves (schedule_skeleton) —
     (re-audit 10/4/26 PIPE-10)."""
+    if not getattr(c, "close_times", None):
+        return None
     day = _weekday_of(row.get("date") or "")
     close_m = close_minutes(c, day) if day else None
     if close_m is None:

@@ -314,7 +314,7 @@ class _StageClock:
     """Wall-clock seconds per stage of one generation (schedule audit
     10/3/26 P-24): `generation_seconds` was the model's time alone, so the
     real latency — the inputs, the repair loop, the scoring and the what-if,
-    the save — was unknown. Stored with the week (_annotate_history) and read
+    the save — was unknown. Stored with the week (save_schedule_history) and read
     by the platform check's p95 (ops.check_platform_sla)."""
 
     def __init__(self):
@@ -7955,6 +7955,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 raise ScheduleGenerationError(_verdict)
             _timer.add("save", time.monotonic() - _t_save)
             result["stage_seconds"] = _timer.as_dict()
+            # The save's own seconds join the stored timings afterwards: only
+            # timings, so a failure here costs the week nothing it needs.
+            try:
+                _store_stage_seconds(_history_id, restaurant_id, result["stage_seconds"])
+            except Exception as _tsx:
+                print(f"[schedule] stage timings not updated for history {_history_id}: {_tsx}")
+                _ops.capture(_tsx, job="schedule_generate", context=f"restaurant_id={restaurant_id} — stage timings")
             # Every model call this generation made — its full input and
             # answer — keyed to the week it produced, so the week can be
             # replayed against another model, effort or prompt (schedule
@@ -8474,6 +8481,23 @@ def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weat
                       json.dumps(economics, default=str) if economics else None,
                       json.dumps(stages) if stages else None,
                       (stages or {}).get("total"), history_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _store_stage_seconds(history_id, restaurant_id, stages) -> None:
+    """The generation's seconds per stage, the save's included, on its saved
+    week (P-24). The draft and everything the gate reads are written in one
+    write by save_schedule_history (re-audit 10/4/26 PIPE-7); this adds only
+    the save's own time to the timings stored with it."""
+    if not history_id or not stages:
+        return
+    from models import get_conn
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE schedule_history SET stage_seconds_json=?, total_seconds=? WHERE id=? AND restaurant_id=?",
+                     (json.dumps(stages), stages.get("total"), history_id, restaurant_id))
         conn.commit()
     finally:
         conn.close()
