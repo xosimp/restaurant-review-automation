@@ -857,6 +857,8 @@ struct CapabilityChange: Decodable, Hashable, Identifiable {
         case "leader_rule": return "Leader rule"
         case "profile": return "Shift profile"
         case "weights": return "Weighting"
+        // A nightly calibration's suggested floors and bars (H2-7).
+        case "quality_profiles_suggested": return "Cavnar AI suggested new floors and bars"
         default: return kind.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }

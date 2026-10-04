@@ -103,9 +103,16 @@ struct PublishCheck: Decodable, Equatable {
     var reach: PublishReach? = nil
     var unsentChanges: [String]? = nil
     var canPublish = false
+    /// What is worth a look but never holds the send (SQ-29), the week's
+    /// hours split by pay (E-7) and the rows the manager's own record says
+    /// they are likely to change (L-15) — G-1, H1-6.
+    var notes: [PublishNote] = []
+    var hours: PublishHours? = nil
+    var likelyToChange: LikelyToChange? = nil
 
     enum CodingKeys: String, CodingKey {
-        case ok, blockers, reach
+        case ok, blockers, reach, notes, hours
+        case likelyToChange = "likely_to_change"
         case scheduleId = "schedule_id"
         case weekStart = "week_start"
         case weekEnd = "week_end"
@@ -129,6 +136,9 @@ struct PublishCheck: Decodable, Equatable {
         reach = try? c.decodeIfPresent(PublishReach.self, forKey: .reach)
         unsentChanges = try? c.decodeIfPresent([String].self, forKey: .unsentChanges)
         canPublish = (try? c.decodeIfPresent(Bool.self, forKey: .canPublish)) ?? false
+        notes = c.sfList(PublishNote.self, .notes)
+        hours = (try? c.decodeIfPresent(PublishHours.self, forKey: .hours)) ?? nil
+        likelyToChange = (try? c.decodeIfPresent(LikelyToChange.self, forKey: .likelyToChange)) ?? nil
     }
 
     /// The lines to show and the keys they carry, items first.
@@ -254,6 +264,8 @@ final class PublishScheduleViewModel {
     /// appeared after they read the list is never acknowledged unseen.
     var blockerKeys: [String] = []
     var acknowledgeBlockers = false
+    /// The 409's "worth a look" notes, when the gate answered the press.
+    var gateNotes: [PublishNote] = []
     /// People whose shifts changed since the week went out and who haven't
     /// been told (the save's `unsent_changes`). Send tells only them.
     var unsentChanges: [String] = []
@@ -422,8 +434,10 @@ final class PublishScheduleViewModel {
         let blockerKeys: [String]?
         let blockerItems: [Item]?
         let scheduleId: Int?
+        /// Worth a look, never holding the send (SQ-29, G-1).
+        var notes: HomeLenientList<PublishNote>? = nil
         enum CodingKeys: String, CodingKey {
-            case blockers
+            case blockers, notes
             case needsAck = "needs_ack"
             case blockerKeys = "blocker_keys"
             case blockerItems = "blocker_items"
@@ -478,6 +492,7 @@ final class PublishScheduleViewModel {
                 // Not a failure: the week has something to read first.
                 blockers = gate.shown.lines
                 blockerKeys = gate.shown.keys
+                gateNotes = gate.notes?.items ?? []
                 if let id = gate.scheduleId { self.scheduleId = id }
                 acknowledgeBlockers = false
                 Haptic.warning()
@@ -502,7 +517,13 @@ struct PublishScheduleSheet: View {
 
     /// The schedule_history row to send — required by the server now; the
     /// sheet says so rather than sending without one.
-    init(scheduleId: Int? = nil, unsentChanges: [String] = [], onSent: (() -> Void)? = nil) {
+    /// The week's hourly budget, when the screen opening the sheet has it —
+    /// the publish check states the hours but not the budget they are held to.
+    var hoursBudget: Double? = nil
+
+    init(scheduleId: Int? = nil, unsentChanges: [String] = [], hoursBudget: Double? = nil,
+         onSent: (() -> Void)? = nil) {
+        self.hoursBudget = hoursBudget
         let vm = PublishScheduleViewModel()
         vm.scheduleId = scheduleId
         vm.unsentChanges = unsentChanges
@@ -527,6 +548,16 @@ struct PublishScheduleSheet: View {
                         staffCard
                         if !viewModel.blockers.isEmpty {
                             blockersCard
+                        }
+                        // Worth a look — never a block, nothing to acknowledge.
+                        let notes = viewModel.gateNotes.isEmpty ? (viewModel.check?.notes ?? []) : viewModel.gateNotes
+                        if viewModel.check?.publishedAt == nil,
+                           !notes.isEmpty || viewModel.check?.hours?.hourly != nil {
+                            PublishWorthALookCard(notes: notes, hours: viewModel.check?.hours, budget: hoursBudget)
+                        }
+                        if let likely = viewModel.check?.likelyToChange, likely.ready, !likely.rows.isEmpty,
+                           viewModel.check?.publishedAt == nil {
+                            PublishLikelyToChangeCard(likely: likely)
                         }
                         publishButton
                         if let error = viewModel.publishError {

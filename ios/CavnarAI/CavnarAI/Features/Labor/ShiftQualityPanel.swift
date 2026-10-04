@@ -147,9 +147,10 @@ struct ShiftQualityPanel: View {
                     ConfidenceLine(confidence: detail, surface: "schedule_review", module: "schedule")
                 } else if let confidence = quality.confidence {
                     confidencePill(confidence)
-                    // Low confidence says why first — the top reason.
-                    if quality.isProvisional, let top = confidence.reasons.first {
-                        HomeMixedText.make(top, size: 13, color: .cavnarAmber)
+                    // The deduction that cost the most, beside the % (D1a-5);
+                    // an older server's first reason when it sent none.
+                    if let top = confidence.topReason ?? (quality.isProvisional ? confidence.reasons.first : nil) {
+                        HomeMixedText.make(top, size: 13, color: quality.isProvisional ? .cavnarAmber : .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -205,16 +206,23 @@ struct ShiftQualityPanel: View {
     private func dimensionGrid(_ dimensions: [QualityDimension]) -> some View {
         VStack(spacing: 11) {
             ForEach(dimensions) { dimension in
-                HStack(spacing: 10) {
-                    Text(dimension.label)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .frame(width: 132, alignment: .leading)
-                    QualityBar(score: dimension.score, tone: toneFor(dimension.score))
-                    Text("\(dimension.score)%")
-                        .font(.cavnarNumber(14.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                        .frame(width: 46, alignment: .trailing)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 10) {
+                        Text(dimension.label)
+                            .font(.cavnarBody(14.5))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .frame(width: 132, alignment: .leading)
+                        QualityBar(score: dimension.score, tone: toneFor(dimension.score))
+                        Text("\(dimension.score)%")
+                            .font(.cavnarNumber(14.5, weight: 700))
+                            .foregroundStyle(Color.cavnarInk)
+                            .frame(width: 46, alignment: .trailing)
+                    }
+                    // The floor under which this dimension caps a shift.
+                    if let floor = dimension.floor, floor > 0 {
+                        HomeMixedText.make("caps a shift under \(Int(floor))", size: 12, color: .cavnarInk3)
+                            .padding(.leading, 142)
+                    }
                 }
             }
         }
@@ -239,10 +247,18 @@ struct ShiftQualityPanel: View {
                             .foregroundStyle(Color.cavnarInk)
                             .frame(width: 46, alignment: .trailing)
                     }
-                    if let why = dim.why {
+                    // Every finding, not only the first (D1b-1, D2's learned
+                    // patterns): overtime by person and premium, staff
+                    // preferences missed, what the managers keep changing.
+                    let findings = Array((dim.weaknesses?.isEmpty == false ? dim.weaknesses! : (dim.strengths ?? [])).prefix(3))
+                    ForEach(Array(findings.enumerated()), id: \.offset) { i, line in
                         HomeMixedText.make(
-                            why + (dim.shareText.map { " \($0) of the week score." } ?? ""),
+                            line + (i == findings.count - 1 ? (dim.shareText.map { " \($0) of the week score." } ?? "") : ""),
                             size: 13, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(Self.weekFactLines(dim), id: \.self) { line in
+                        HomeMixedText.make(line, size: 12.5, weight: 600, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -293,18 +309,32 @@ struct ShiftQualityPanel: View {
                                     .foregroundStyle(Color.cavnarGreen)
                                     .frame(width: 13)
                                     .padding(.top, 4)
-                                HomeMixedText.make(change.reason, size: 14, color: .cavnarInk2)
+                                HomeMixedText.make((change.isTrade ? "Swap within the day: " : "") + change.reason,
+                                                   size: 14, color: .cavnarInk2)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
-                                if let gain = change.gain, gain > 0 {
-                                    Text("+\(Int(gain.rounded()))")
-                                        .font(.cavnarNumber(13, weight: 700))
-                                        .foregroundStyle(Color.cavnarGreen)
+                                VStack(alignment: .trailing, spacing: 1) {
+                                    if let gain = change.gain, gain > 0 {
+                                        Text("+\(Int(gain.rounded()))")
+                                            .font(.cavnarNumber(13, weight: 700))
+                                            .foregroundStyle(Color.cavnarGreen)
+                                    }
+                                    // Labor dollars the change moved (D2, P-32).
+                                    if let d = change.dollars, d.rounded() != 0 {
+                                        Text(d > 0 ? "+$\(d.commaFormatted)" : "\u{2212}$\((-d).commaFormatted)")
+                                            .font(.cavnarNumber(12, weight: 600))
+                                            .foregroundStyle(Color.cavnarInk3)
+                                            .cavnarSensitive()
+                                    }
                                 }
                             }
                         }
                     }
                     .transition(.opacity)
+                }
+                if let dollars = o.dollarsLine {
+                    HomeMixedText.make(dollars, size: 13, weight: 600, color: .cavnarInk3)
+                        .cavnarSensitive()
                 }
             } else if let verdict = o.verdict {
                 HomeMixedText.make(verdict, size: 14, color: .cavnarInk2)
@@ -394,8 +424,11 @@ struct ShiftQualityPanel: View {
     /// information the manager can fix in thirty seconds, not an alarm.
     private var warnings: [String] {
         var out = (quality.belowProfile ?? []).map { shift in
-            "\(shift.day) \(shift.daypart == "morning" ? "lunch" : "dinner") came in at "
-            + "\(shift.score), under the \(shift.minQuality) this \(shift.label.lowercased()) expects."
+            // A daypart nobody was written onto says so; every line carries
+            // why it is under the bar (D1a-1, SQ-8).
+            "\(shift.day) \(shift.daypart == "morning" ? "lunch" : "dinner")"
+            + (shift.noShiftWritten == true ? " \u{2014} no shift written: " : " came in at \(shift.score), under the \(shift.minQuality) this \(shift.label.lowercased()) expects. ")
+            + (shift.reason ?? "")
         }
         // With a decision handler the recommendations get their own block
         // below, each with ✓ / ✕; without one they read here as before.
@@ -407,8 +440,13 @@ struct ShiftQualityPanel: View {
 
     /// Each one with ✓ (did it) / ✕ (not for us). The answer goes to the
     /// ledger that decides which kinds keep being shown.
-    private func recommendationsBlock(_ recs: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func recommendationsBlock(_ unsorted: [String]) -> some View {
+        // Most valuable first, each with "up to +N points" (D1a-4, SQ-28).
+        let recs = unsorted.enumerated().sorted { a, b in
+            let pa = quality.item(for: a.element)?.points ?? -1, pb = quality.item(for: b.element)?.points ?? -1
+            return pa == pb ? a.offset < b.offset : pa > pb
+        }.map(\.element)
+        return VStack(alignment: .leading, spacing: 8) {
             Text("RECOMMENDATIONS")
                 .font(.cavnarBody(12, weight: 700))
                 .tracking(1.3)
@@ -420,9 +458,15 @@ struct ShiftQualityPanel: View {
                         .fill(decision == "accepted" ? Color.cavnarGreen : (decision == "dismissed" ? Color.cavnarInk3 : Color.cavnarAmber))
                         .frame(width: 5, height: 5)
                         .padding(.top, 6)
-                    HomeMixedText.make(rec, size: 14.5, color: decision == "dismissed" ? .cavnarInk3 : .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .strikethrough(decision == "dismissed", color: Color.cavnarInk3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HomeMixedText.make(rec, size: 14.5, color: decision == "dismissed" ? .cavnarInk3 : .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .strikethrough(decision == "dismissed", color: Color.cavnarInk3)
+                        if let points = quality.item(for: rec)?.points, points >= 0.5 {
+                            HomeMixedText.make("up to +\(Int(points.rounded())) points", size: 12.5, weight: 700,
+                                               color: .cavnarGreen)
+                        }
+                    }
                     Spacer(minLength: 4)
                     HStack(spacing: 6) {
                         decisionButton("checkmark", on: decision == "accepted", tone: .cavnarGreen,
@@ -492,7 +536,7 @@ struct ShiftQualityPanel: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .padding(.top, 2)
                 HomeMixedText.make(
-                    "\(suppressedKinds.count) recommendation \(suppressedKinds.count == 1 ? "kind" : "kinds") hidden — you set them aside. Coverage, leadership and fatigue are never hidden.",
+                    "\(suppressedKinds.count) recommendation \(suppressedKinds.count == 1 ? "kind" : "kinds") hidden — you set them aside. Coverage, leadership, fatigue and hard rules are never hidden.",
                     size: 12.5, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -670,14 +714,27 @@ struct ShiftQualityPanel: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let capped = shift.cappedBy {
+            // What holds the shift at its number, in the engine's words —
+            // hard rules and unwritten dayparts included (D1a-2).
+            if let held = shift.heldBy?.text {
+                HomeMixedText.make(held, size: 13.5, weight: 600, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let capped = shift.cappedBy {
                 Text("Capped by \(capped.replacingOccurrences(of: "_", with: " ")) — a shift is never better than its weakest critical part.")
                     .font(.cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            ForEach(Self.shiftFactLines(shift), id: \.self) { line in
+                detailLine(line, symbol: "circle.fill", color: .cavnarInk3)
+            }
+            ForEach(Array(Self.leadershipMisses(shift).enumerated()), id: \.offset) { _, miss in
+                leadershipAction(shift, miss)
+            }
+            // Every counting dimension (up to about 15), wrapping rather
+            // than sharing one row's width (D1a-3).
             if let dimensions = shift.dimensions?.filter({ $0.isCustomerFacing }), !dimensions.isEmpty {
-                HStack(spacing: 6) {
+                AccountFlowLayout(spacing: 6) {
                     ForEach(dimensions) { d in
                         VStack(spacing: 2) {
                             Text("\(d.score)")
@@ -686,9 +743,16 @@ struct ShiftQualityPanel: View {
                             Text(shortLabel(d.label))
                                 .font(.cavnarBody(11))
                                 .foregroundStyle(Color.cavnarInk3)
+                                .lineLimit(1)
+                            if let floor = d.floor, floor > 0 {
+                                Text("caps <\(Int(floor))")
+                                    .font(.cavnarNumber(12))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            }
                         }
-                        .frame(maxWidth: .infinity)
+                        .frame(minWidth: 64)
                         .padding(.vertical, 6)
+                        .padding(.horizontal, 4)
                         .background(
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
                                 .fill(Color.cavnarPaper3.opacity(0.5)))
@@ -870,6 +934,7 @@ struct ShiftQualityPanel: View {
 
             if showingReasoning {
                 VStack(alignment: .leading, spacing: 9) {
+                    if let viewModel { arrangementSearch(viewModel) }
                     if let whatIf, whatIf.ran, let verdict = whatIf.verdict {
                         Text(verdict)
                             .font(.cavnarBody(14))
@@ -892,14 +957,171 @@ struct ShiftQualityPanel: View {
                             .font(.cavnarBody(14, weight: 600))
                             .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, 2)
-                        ForEach(confidence.reasons, id: \.self) { reason in
-                            detailLine(reason, symbol: "circle.fill", color: .cavnarInk3)
+                        // Each deduction with the points it cost (D1a-5);
+                        // the plain reasons on an older server.
+                        if let breakdown = confidence.breakdown?.items, !breakdown.isEmpty {
+                            ForEach(Array(breakdown.enumerated()), id: \.offset) { _, b in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(b.points.map { "\u{2212}\(Int($0.rounded()))" } ?? "")
+                                        .font(.cavnarNumber(12.5, weight: 700))
+                                        .foregroundStyle(Color.cavnarAmber)
+                                        .frame(width: 30, alignment: .leading)
+                                    HomeMixedText.make(b.reason, size: 14, color: .cavnarInk2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        } else {
+                            ForEach(confidence.reasons, id: \.self) { reason in
+                                detailLine(reason, symbol: "circle.fill", color: .cavnarInk3)
+                            }
                         }
                     }
                 }
                 .transition(.opacity)
             }
         }
+    }
+
+    // MARK: Look for a better arrangement (D2, P-36)
+
+    /// An edit's rescore no longer searches on its own; the owner asks. The
+    /// on-demand reason is the hint, and a search held to availability and
+    /// hours only says so.
+    @ViewBuilder
+    private func arrangementSearch(_ vm: LaborViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                Haptic.light()
+                Task { await vm.lookForBetterArrangement() }
+            } label: {
+                Group {
+                    if vm.isSearchingArrangement {
+                        CavnarShimmerText(text: "Looking")
+                    } else {
+                        Label("Look for a better arrangement", systemImage: "arrow.triangle.swap")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(vm.isSearchingArrangement || vm.isRescoringQuality)
+            if let w = whatIf, w.onDemand == true, let reason = w.reason {
+                HomeMixedText.make(reason, size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let w = whatIf, w.ran == false, w.onDemand != true, let reason = w.reason {
+                HomeMixedText.make(reason, size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if whatIf?.checkedWith == "availability and hours" {
+                Text("Checked against availability and hours only.")
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarAmber)
+            }
+        }
+    }
+
+    // MARK: Leadership misses (D1a-8)
+
+    struct LeadershipMiss { let rule: String; let role: String?; let why: String }
+
+    /// The leadership dimension's misses with `why`: nobody of the role on
+    /// ("Add a …") or nobody on it qualifies ("Swap in a …").
+    static func leadershipMisses(_ shift: QualityShift) -> [LeadershipMiss] {
+        guard let facts = shift.dimensions?.first(where: { $0.key == "leadership" })?.facts?.objectValue,
+              let missed = facts["missed"]?.arrayValue else { return [] }
+        return missed.compactMap { m in
+            guard let o = m.objectValue, let why = o["why"]?.stringValue, why == "nobody_on" || why == "not_qualified",
+                  let rule = o["rule"]?.stringValue else { return nil }
+            return LeadershipMiss(rule: rule, role: o["role"]?.stringValue, why: why)
+        }
+    }
+
+    private func leadershipAction(_ shift: QualityShift, _ miss: LeadershipMiss) -> some View {
+        let role = miss.role ?? "leader"
+        let adding = miss.why == "nobody_on"
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HomeMixedText.make("Needs \(miss.rule).", size: 13.5, color: .cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+            if let vm = viewModel, !vm.whatIfCandidates(for: shift).isEmpty {
+                Button(adding ? "Add a \(role.lowercased())" : "Swap in a \(role.lowercased())") {
+                    Haptic.light()
+                    // The what-if below, set up for it: added, or in place of
+                    // the role's person on the shift.
+                    whatIfFor[shift.id] = adding ? nil : vm.rows(for: shift).first {
+                        ($0.role ?? "").localizedCaseInsensitiveContains(role)
+                    }?.id
+                    whatIfAnswer[shift.id] = nil
+                }
+                .font(.cavnarBody(13, weight: 700))
+                .foregroundStyle(Color.cavnarEmber2)
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: Facts the sentences don't carry (D1b-2, D1b-3)
+
+    /// Kitchen stations, mentors, who cross-training did not judge, who is
+    /// experienced by default — from the dimension facts.
+    static func shiftFactLines(_ shift: QualityShift) -> [String] {
+        var out: [String] = []
+        for d in shift.dimensions ?? [] {
+            guard let f = d.facts?.objectValue else { continue }
+            switch d.key {
+            case "stations":
+                let req = f["required"]?.names ?? [], gaps = f["gaps"]?.names ?? []
+                if !req.isEmpty {
+                    out.append("Kitchen stations: \(req.count) needed\(gaps.isEmpty ? ", all held" : " \u{2014} not held: " + gaps.joined(separator: ", "))")
+                }
+            case "training_balance":
+                let mentors = f["mentors"]?.names ?? []
+                if !mentors.isEmpty { out.append("Mentors on: " + mentors.joined(separator: ", ")) }
+            case "cross_training":
+                let nj = f["not_judged"]?.names ?? []
+                if !nj.isEmpty { out.append("Not judged for cross-training: " + nj.joined(separator: ", ")) }
+            case "experience_balance":
+                let bd = f["by_default"]?.names ?? []
+                if !bd.isEmpty { out.append("Experienced as a manager or salaried: " + bd.joined(separator: ", ")) }
+            case "fairness":
+                // Who on this shift carries more than their share of the
+                // busiest services over recent weeks (the busy ledger).
+                for p in f["busy_ledger"]?.objectValue?["overloaded"]?.arrayValue ?? [] {
+                    guard let o = p.objectValue, let n = o["name"]?.stringValue,
+                          let have = o["have"]?.stringValue, let share = o["share"]?.stringValue else { continue }
+                    out.append("\(n) has worked \(have) of the busiest shifts lately, against a share of about \(share)")
+                }
+            default: break
+            }
+        }
+        return out
+    }
+
+    /// The week measures' numbers: overtime premium's share of pay, people
+    /// on sustained busy shifts or hours, the busy-shift ledger.
+    static func weekFactLines(_ dim: QualityWeekDimension) -> [String] {
+        guard let f = dim.facts?.objectValue else { return [] }
+        var out: [String] = []
+        switch dim.key {
+        case "overtime":
+            if let share = f["share_pct"]?.doubleValue, share > 0, f["priced"]?.boolValue == true {
+                out.append("Overtime premium is \(String(format: "%.1f", share))% of the week\u{2019}s pay")
+            }
+        case "fatigue":
+            for key in ["sustained_busy", "sustained_hours"] {
+                for p in f[key]?.arrayValue ?? [] {
+                    guard let o = p.objectValue, let n = o["name"]?.stringValue else { continue }
+                    let avg = o["average"]?.stringValue ?? "", wks = o["weeks"]?.stringValue ?? ""
+                    out.append(key == "sustained_busy"
+                               ? "\(n): \(avg) busy shifts a week for \(wks) weeks"
+                               : "\(n): \(avg)h a week for \(wks) weeks")
+                }
+            }
+        case "preferences", "staff_preferences":
+            let misses = (f["misses"]?.arrayValue?.count ?? 0) + (f["learned_misses"]?.arrayValue?.count ?? 0)
+            if misses > 0 { out.append("\(misses) staff preference\(misses == 1 ? "" : "s") not kept") }
+        default: break
+        }
+        return Array(out.prefix(4))
     }
 
     // MARK: Tone
@@ -930,7 +1152,8 @@ struct ShiftQualityPanel: View {
     /// so the full labels have to give.
     private func shortLabel(_ label: String) -> String {
         ["Operational strength": "Strength", "Labor efficiency": "Labor",
-         "Training balance": "Training", "Demand match": "Demand"][label] ?? label
+         "Training balance": "Training", "Demand match": "Demand", "Kitchen stations": "Stations",
+         "Cross-training": "Cross-train", "Learned patterns": "Learned"][label] ?? label
     }
 }
 

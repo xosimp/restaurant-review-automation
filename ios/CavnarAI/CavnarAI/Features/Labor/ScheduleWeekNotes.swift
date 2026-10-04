@@ -104,7 +104,7 @@ struct ScheduleWeekNotes: View {
                     Image(systemName: "scissors")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarAmber)
-                    HomeMixedText.make("Trimmed to budget — \(shifts.count) \(shifts.count == 1 ? "shift" : "shifts"), \(result.trimmedHours.commaFormatted)h",
+                    HomeMixedText.make(Self.trimSummary(shifts, hours: result.trimmedHours),
                                        size: 14, weight: 700, color: .cavnarInk)
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.down")
@@ -122,6 +122,7 @@ struct ScheduleWeekNotes: View {
                             HomeMixedText.make(
                                 [shift.employee, shift.role,
                                  [shift.day, shift.shiftStart.map { "\($0)–\(shift.shiftEnd ?? "")" }].compactMap { $0 }.joined(separator: " "),
+                                 shift.kind == "cut" ? shift.to.map { "ended at \($0)" } : nil,
                                  shift.hours.map { "\($0.commaFormatted)h" }]
                                     .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
                                 size: 13.5, weight: 600, color: .cavnarInk)
@@ -144,6 +145,17 @@ struct ScheduleWeekNotes: View {
         .background(
             RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                 .fill(Color.cavnarAmber.opacity(0.07)))
+    }
+
+    /// "Trimmed 12h — 3 ended early, 2 removed" (A1-1): a cut ends a shift
+    /// early; anything else took it off the week.
+    static func trimSummary(_ shifts: [TrimmedShift], hours: Double) -> String {
+        let cut = shifts.filter { $0.kind == "cut" }.count
+        let removed = shifts.count - cut
+        var parts: [String] = []
+        if cut > 0 { parts.append("\(cut) ended early") }
+        if removed > 0 { parts.append("\(removed) removed") }
+        return "Trimmed \(hours.commaFormatted)h \u{2014} " + parts.joined(separator: ", ")
     }
 
     // MARK: Staggered
@@ -468,7 +480,8 @@ struct RedoSelectedDaysRow: View {
             Spacer(minLength: 6)
             Button {
                 Haptic.medium()
-                Task { await viewModel.redoSelectedDays() }
+                // Why first: the redo sheet asks the reason (B2, H1-5).
+                viewModel.openRedo()
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .bold))

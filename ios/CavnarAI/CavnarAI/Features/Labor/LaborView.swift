@@ -51,6 +51,12 @@ struct LaborView: View {
     @State private var editingShift: ShiftEditSheet.Mode?
     /// A shift the owner asked to take off the week, awaiting the confirm.
     @State private var removingRow: ScheduleRow?
+    /// What the schedule has learned, and measured ratings (H2-1, H2-3).
+    @State private var showingMemory = false
+    @State private var showingMeasuredRatings = false
+    /// A person a review line named (an unmatched name's suggestion).
+    @State private var reviewPerson: PersonSheetTarget?
+    @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     struct DraftToSend: Identifiable {
         let id: Int
@@ -159,6 +165,17 @@ struct LaborView: View {
                                 }, demandAccuracy: viewModel.stats?.demandAccuracy,
                                    weekProjectionAccuracy: viewModel.stats?.weekProjectionAccuracy)
                                 .id(Self.intelID)
+                                // What the draft has learned, and the
+                                // servers' measured ratings (account holder
+                                // only) — H2-1, H2-3.
+                                learningRow("What the schedule has learned",
+                                            detail: "Habits, teams and patterns the draft keeps \u{2014} keep, let go or make a rule",
+                                            symbol: "brain") { showingMemory = true }
+                                if sessionStore.currentUser?.isOwner == true {
+                                    learningRow("Measured ratings",
+                                                detail: "What each server sells a guest, offered as a rating to confirm",
+                                                symbol: "chart.bar.xaxis") { showingMeasuredRatings = true }
+                                }
 
                                 laborGroupHeader("Scheduling setup")
                                     .padding(.top, 14)
@@ -375,9 +392,13 @@ struct LaborView: View {
             await setupViewModel.loadSignals()
         }
         .task { await teamMemory.load() }
+        // The week on screen's sections and each server's usual one (H2-2) —
+        // for a week restored from the cache or reopened, not only a fresh one.
+        .task(id: viewModel.scheduleResult?.historyId) { await viewModel.loadSections() }
         .sheet(isPresented: $showingPublishSchedule, onDismiss: { Task { await viewModel.loadDraftCheck() } }) {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,
+                                 hoursBudget: viewModel.scheduleResult?.hoursBudget,
                                  onSent: { viewModel.unsentChanges = [] })
         }
         .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
@@ -397,6 +418,14 @@ struct LaborView: View {
         } message: {
             Text("The week is re-scored and saved without it. Staff who already have the week hear about it when you press Send.")
         }
+        .sheet(isPresented: $viewModel.showingRedoSheet) { RedoDaysSheet(viewModel: viewModel) }
+        .sheet(isPresented: Binding(get: { !viewModel.whyQuestions.isEmpty },
+                                    set: { if !$0 { viewModel.dismissWhy() } })) {
+            EditWhySheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingMemory) { ScheduleMemoryScreen() }
+        .sheet(isPresented: $showingMeasuredRatings) { MeasuredRatingsScreen() }
+        .sheet(item: $reviewPerson) { target in PersonSheet(target: target) }
         .sheet(item: $explainingRow) { row in
             AssignmentExplanationSheet(row: row, explanation: viewModel.scheduleResult?.explanation(for: row))
         }
@@ -508,8 +537,15 @@ struct LaborView: View {
                     action: { Task { await viewModel.generateSchedule() } }
                 )
                 .padding(.top, 2)
+                // A week whose sales are too old is refused (D-33): the
+                // button is off and the line under the picker says why.
+                .disabled(viewModel.generateBlocked)
+                .opacity(viewModel.generateBlocked ? 0.5 : 1)
                 // Which week: next (the default), the one after, or a date.
                 GenerateWeekPicker(viewModel: viewModel)
+                // How current the sales are, the budget's caveat, and the
+                // owner's words for this draft (E, C2-3).
+                GenerateWeekNotes(viewModel: viewModel)
             }
 
             // "Building the Week" — shifts fill a 7-day grid while an ember
@@ -826,6 +862,13 @@ struct LaborView: View {
             viewModel.scheduleResultExpanded = true
             // No draft yet: the top of Labor, where the week is built.
             if viewModel.scheduleResult?.ok == true { scrollToReveal(Self.scheduleID, proxy: proxy) }
+        case .ratings:
+            if sessionStore.currentUser?.isOwner == true { showingMeasuredRatings = true }
+        case .intel:
+            setupViewModel.intelExpanded = true
+            scrollToReveal(Self.intelID, proxy: proxy)
+        case .learned:
+            showingMemory = true
         case nil:
             break
         }
@@ -915,11 +958,21 @@ struct LaborView: View {
             isExpanded: $viewModel.scheduleResultExpanded
         ) {
             VStack(alignment: .leading, spacing: 16) {
+                // What the generation could not do leads the draft: days it
+                // could not write, days nobody can work, a starting point,
+                // the managers' plan (schedule audit 10/3/26 B2, M, E).
+                DraftNotices(viewModel: viewModel, result: result,
+                             onOpenAvailability: openAvailability, onOpenClosures: openHours)
+                if let plan = result.plan, let question = plan.question, !plan.unknownPattern.isEmpty {
+                    ManagerQuestionCard(viewModel: viewModel, question: question, names: plan.unknownPattern)
+                }
                 // The rules check comes first: a hard violation is decided
                 // on before anything is admired. Shown whenever the server
                 // sent one, or there is pending time off to say.
                 if result.review != nil || !(result.pendingTimeOff ?? [:]).isEmpty {
-                    ScheduleReviewPanel(viewModel: viewModel, result: result)
+                    ScheduleReviewPanel(viewModel: viewModel, result: result,
+                                        onOpenPerson: { reviewPerson = PersonSheetTarget(key: nil, name: $0) },
+                                        onOpenHours: openHours)
                         .id(Self.reviewID)
                 }
 
@@ -1015,6 +1068,10 @@ struct LaborView: View {
                                               : viewModel.suppressedRecommendationKinds,
                                           viewModel: viewModel)
                     }
+                }
+                // The requirements the week was written and scored to (E).
+                if let reqs = result.requirements?.items, !reqs.isEmpty {
+                    ScheduleRequirementsView(rows: reqs)
                 }
                 if let rows = result.previewRows, !rows.isEmpty {
                     fullScheduleTable(rows, csv: result.scheduleCsv)
@@ -1191,7 +1248,12 @@ struct LaborView: View {
         let recognized = rows.filter { $0.needsReview != true || !($0.reviewReason ?? "").isEmpty }
         let unrecognized = rows.filter { $0.needsReview == true && ($0.reviewReason ?? "").isEmpty }
         let grouped = Dictionary(grouping: recognized, by: { $0.day ?? "—" })
-        let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil }
+        // Days the generation could not write are shown empty, tagged "Not
+        // written", so the week never reads as complete (P-34).
+        let unwritten = Dictionary((viewModel.scheduleResult?.unwritten ?? []).map {
+            ($0.day ?? LaborViewModel.weekdayName($0.date) ?? $0.date, $0.date)
+        }, uniquingKeysWith: { a, _ in a })
+        let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil || unwritten[$0] != nil }
 
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -1226,7 +1288,7 @@ struct LaborView: View {
                 }
             }
             ForEach(orderedDays, id: \.self) { day in
-                scheduleDayGroup(day: day, rows: grouped[day] ?? [])
+                scheduleDayGroup(day: day, rows: grouped[day] ?? [], emptyDate: unwritten[day])
             }
             if !unrecognized.isEmpty {
                 needsReviewGroup(unrecognized)
@@ -1277,6 +1339,16 @@ struct LaborView: View {
                 Haptic.light()
                 editingShift = .edit(row)
             } label: { Label("Change the times", systemImage: "pencil") }
+            if !viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role) {
+                Menu {
+                    ForEach(viewModel.sections.sections, id: \.self) { name in
+                        Button(name) { Task { await viewModel.assignSection(row, section: name) } }
+                    }
+                    if viewModel.sections.section(for: row) != nil {
+                        Button("No section") { Task { await viewModel.assignSection(row, section: "") } }
+                    }
+                } label: { Label("Section", systemImage: "square.grid.2x2") }
+            }
             Button(role: .destructive) {
                 removingRow = row
             } label: { Label("Remove this shift", systemImage: "trash") }
@@ -1287,6 +1359,9 @@ struct LaborView: View {
                         Text(row.employee ?? "")
                             .font(.cavnarBody(14, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
+                        if fixedRowIds.contains(row.rowId ?? "\u{0}") && !wasChanged {
+                            ScheduleRowTag(text: "Fixed", tone: .cavnarBlue)
+                        }
                         if wasChanged {
                             Text("CHANGED")
                                 .font(.cavnarBody(9, weight: 700))
@@ -1309,6 +1384,9 @@ struct LaborView: View {
                     if let role = row.role, !role.isEmpty {
                         Text(role).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                     }
+                    // The manager plan's chip, the clock change, the section
+                    // or the usual one to assign (M-2, A2-6, H2-2).
+                    ScheduleRowBadges(viewModel: viewModel, row: row)
                     if flagged, let reason = row.reviewReason {
                         HomeMixedText.make(reason, size: 13, weight: 600, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1335,6 +1413,54 @@ struct LaborView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    /// Rows a generation's fix lines name by their stable id (B1-1).
+    private var fixedRowIds: Set<String> {
+        Set((viewModel.scheduleResult?.review?.fixes ?? []).compactMap(\.rowId))
+    }
+
+    /// Scheduling setup, opened on availability.
+    private func openAvailability() {
+        viewModel.availabilityExpanded = true
+        showingSetup = true
+    }
+
+    /// Account → Profile, where the hours and closed dates are set.
+    private func openHours() {
+        if let nav = NavPath("account/profile") { deepLinkRouter.open(nav) }
+    }
+
+    /// One row that opens a learning screen, in the setup row's shape.
+    private func learningRow(_ title: String, detail: String, symbol: String,
+                             action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.cavnarBody(CavnarType.body, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                    Text(detail)
+                        .font(.cavnarBody(CavnarType.caption))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarCard()
     }
 
     private func needsReviewGroup(_ rows: [ScheduleRow]) -> some View {
@@ -1397,10 +1523,11 @@ struct LaborView: View {
         return hour * 60 + minute
     }
 
-    private func scheduleDayGroup(day: String, rows: [ScheduleRow]) -> some View {
+    private func scheduleDayGroup(day: String, rows: [ScheduleRow], emptyDate: String? = nil) -> some View {
         let morning = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) < Self.nightCutoffMinutes }
         let night = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) >= Self.nightCutoffMinutes }
-        let date = rows.first?.date
+        let date = rows.first?.date ?? emptyDate
+        let notWritten = emptyDate != nil && (viewModel.scheduleResult?.unwritten ?? []).contains { $0.date == date }
         let holiday = viewModel.scheduleResult?.holiday(on: date)
         let ticked = date.map { viewModel.selectedRedoDates.contains($0) } ?? false
         let canRedo = viewModel.scheduleResult?.historyId != nil && date != nil
@@ -1415,9 +1542,13 @@ struct LaborView: View {
                     .padding(.vertical, 4)
                     .background(Color.cavnarEmber.opacity(0.16))
                     .clipShape(Capsule())
-                Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                if notWritten {
+                    ScheduleRowTag(text: "Not written", tone: .cavnarAmber, symbol: "exclamationmark.triangle.fill")
+                } else {
+                    Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
                 // A holiday inside the week, with the lift when the record
                 // has one — an owner should never be surprised by the date.
                 if let holiday {
@@ -1451,7 +1582,20 @@ struct LaborView: View {
                     .accessibilityAddTraits(ticked ? .isSelected : [])
                 }
             }
+            // The day's manager window, its day-level breaches, stretches
+            // nobody could manage and standing shifts not used (M-3, M-4,
+            // M-5, A2-1, A2-2) — on the day, never on a person's row.
+            if let date, let result = viewModel.scheduleResult {
+                DayManagerNotes(viewModel: viewModel, date: date, result: result,
+                                onChangeAvailability: openAvailability)
+            }
             VStack(alignment: .leading, spacing: 12) {
+                if notWritten {
+                    Text("This day wasn\u{2019}t written. Tick Redo and redo it, or add its shifts by hand.")
+                        .font(.cavnarBody(13.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !morning.isEmpty {
                     daypartRows(label: "MORNING", count: morning.count, rows: morning)
                 }
@@ -1722,7 +1866,7 @@ private struct ShimmerText: View {
 /// The sections a link can name inside Labor (nav.py; friction audit #3, #18)
 /// — every spelling the server, the web and older builds use, folded to one.
 enum LaborFocus: Equatable {
-    case waiting, requests, timeOff, team, overtime, availability, schedule
+    case waiting, requests, timeOff, team, overtime, availability, schedule, ratings, intel, learned
 
     init?(section: String) {
         switch section.lowercased() {
@@ -1733,6 +1877,10 @@ enum LaborFocus: Equatable {
         case "overtime": self = .overtime
         case "availability": self = .availability
         case "schedule": self = .schedule
+        // The action queue's measured-ratings and calibration items (H2-4).
+        case "ratings": self = .ratings
+        case "intel": self = .intel
+        case "learned", "schedule-memory", "memory": self = .learned
         default: return nil
         }
     }
