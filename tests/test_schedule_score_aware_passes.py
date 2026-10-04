@@ -147,8 +147,9 @@ def test_the_stagger_backs_off_where_the_curve_needs_people_on():
 
 def test_the_engine_hands_every_pass_the_scorer():
     import inspect
-    src = inspect.getsource(se._run_schedule_job)
-    for call in ("_ensure_role_floors(", "_top_up_hours_gap(", "_trim_server_overlap_cap(", "stagger_same_starts("):
-        seg = src.split(call, 1)[1].split(")", 3)
-        assert "scorer" in "".join(seg[:3]), call
-    assert "_trim_scorer" in src                           # the budget trim scores locally too
+    # Each pass is a stage of the repair loop (schedule audit 10/3/26 P-47),
+    # handed the local scorer built once from the frozen signals (P-36).
+    for stage in (se._stage_floors, se._stage_stations, se._stage_top_up, se._stage_section_cap, se._stage_stagger):
+        assert "scorer" in inspect.getsource(stage), stage.__name__
+    assert "score_fn=score_fn" in inspect.getsource(se._stage_budget)   # the budget trim scores locally too
+    assert "_pass_scorer(" in inspect.getsource(se.RepairContext)

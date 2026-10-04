@@ -1096,9 +1096,10 @@ def test_the_draft_is_retimed_to_the_owners_time_rules():
     prompt: the job runs apply_role_times over the draft (L-33)."""
     import inspect
     import schedule_engine
-    src = inspect.getsource(schedule_engine._run_schedule_job)
-    # Once after the fill, trim and overtime passes, and once more on the
-    # finished rows after the solver and the optimizer.
-    assert src.count("_rules.apply_role_times(preview_rows, _constraints, editable=_editable)") == 2
-    assert src.index("apply_role_times") < src.index("_opt.optimize(") < src.rindex("apply_role_times")
+    # The last stage of every cycle of the repair loop (schedule audit
+    # 10/3/26 P-47): after the fill, trim and overtime stages and after the
+    # solver and the optimizer, cycle after cycle until nothing changes.
+    order = [k for k, *_rest in schedule_engine.REPAIR_STAGES]
+    assert order[-1] == "role_times" and order.index("optimizer") < order.index("role_times")
+    assert "_rules.apply_role_times(rows, x.c, editable=x.editable)" in inspect.getsource(schedule_engine._stage_role_times)
     assert "role_times" in inspect.getsource(snr.apply_note_rules)

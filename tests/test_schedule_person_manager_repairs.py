@@ -357,9 +357,12 @@ def test_the_score_counts_the_minimum_hours_given():
 
 def test_generation_runs_the_minimum_hours_pass_after_the_repairs():
     import schedule_engine
-    src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert src.index("_rules.fix_person_breaches(") < src.index("_rules.fill_min_hours(") < src.index("_sqf.apply_fixes(")
-    assert "hours_budget=float(result.get(\"hours_budget\") or 0) or None" in src
+    # The ranked repair loop (schedule audit 10/3/26 P-47): the person
+    # repairs and the replacements (legality) before the manager, the floors
+    # and overtime, the minimum hours after them, inside the hours budget.
+    order = [k for k, *_rest in schedule_engine.REPAIR_STAGES]
+    assert order.index("person") < order.index("replace") < order.index("overtime") < order.index("min_hours")
+    assert "hours_budget=x.budget or None" in inspect.getsource(schedule_engine._stage_min_hours)
 
 
 # ── E-12 / E-17: a salaried cap, and ranked by fatigue and hours ─────────
@@ -626,7 +629,8 @@ def test_the_rebalance_keeps_the_reserve_where_a_teammate_has_room():
 def test_generation_keeps_day_level_breaches_off_rows_and_says_why_once():
     import schedule_engine
     src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert '_hard = [v for v in _viols if v["hard"] and not v.get("day_level")' in src
+    # The replacement stage hands apply_fixes no day-level breach (E-13).
+    assert 'v.get("hard") and not v.get("day_level")' in inspect.getsource(schedule_engine._stage_replace)
     assert 'result["review"]["lines"].append(_short)' in src
     assert "manager_coverage=result.get(\"manager_coverage\")" in src and "min_hours=result.get(\"min_hours\")" in src
 
