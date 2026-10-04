@@ -74,10 +74,12 @@ def test_whoever_took_a_cover_when_asked_is_suggested_first():
     conn.commit()
     conn.close()
     _history(rid, [("Zed Q.", "Server")], day=date(2026, 9, 20))          # Zed came in that day
-    assert people.record_cover_signals(rid, today=date(2026, 9, 29), days=30) == 2
+    # Zed took it; Ben was asked too but the shift was already covered —
+    # not needed, never "declined" (schedule re-audit 10/4/26 LEARN-8).
+    assert people.record_cover_signals(rid, today=date(2026, 9, 29), days=30) == 1
     rec = people.cover_record(rid, days=3650)
     assert rec[staff_settings.name_key("Zed Q.")]["accepted"] == 1
-    assert rec[staff_settings.name_key("Ben C.")]["declined"] == 1
+    assert staff_settings.name_key("Ben C.") not in rec
     fits = labor_replacements.for_gap(rid, "Server", "Friday", limit=3)
     assert [f["name"] for f in fits][0] == "Zed Q."                        # not alphabetical any more
     assert fits[0]["covers_taken"] == 1

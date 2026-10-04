@@ -741,6 +741,10 @@ struct ScheduleQuality: Codable, Equatable {
     /// Measures of the whole week (fatigue), judged once. Absent on older
     /// payloads.
     let weekDimensions: [QualityWeekDimension]?
+    /// A broken hard rule holding the whole week under fair, in the
+    /// engine's words (schedule re-audit 10/4/26 SQ-2). Absent on older
+    /// payloads and on a week with no hard breach.
+    var heldBy: QualityHeldBy? = nil
 
     var scoredShifts: [QualityShift] { (shifts ?? []).filter { $0.scored } }
     var customerDimensions: [QualityDimension] {
@@ -764,6 +768,7 @@ struct ScheduleQuality: Codable, Equatable {
         case suppressedRecommendationKinds = "suppressed_recommendation_kinds"
         case recommendationItems = "recommendation_items"
         case weekDimensions = "week_dimensions"
+        case heldBy = "held_by"
     }
 
     /// The server's kind for a recommendation, falling back to the prefix
@@ -1254,6 +1259,12 @@ struct EditCostDelta: Codable, Equatable {
     let dollarsAfter: Double?
     let dollarsDelta: Double?
     let overtimeHoursAfter: Double?
+    /// "hourly" when the server priced the edit as the generation prices the
+    /// week (schedule re-audit 10/4/26 SQ-6): the hours are hourly hours and
+    /// a salaried person's hours move apart, at no added pay. Absent on an
+    /// older server.
+    var basis: String? = nil
+    var salariedHoursDelta: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case hoursBefore = "hours_before"
@@ -1263,18 +1274,23 @@ struct EditCostDelta: Codable, Equatable {
         case dollarsAfter = "dollars_after"
         case dollarsDelta = "dollars_delta"
         case overtimeHoursAfter = "overtime_hours_after"
+        case basis
+        case salariedHoursDelta = "salaried_hours_delta"
     }
 
-    /// "+6h · +$90 · 2h overtime". Nil when nothing moved.
+    /// "+6h hourly · +$90 · 2h overtime · +6h salaried, no added pay". Nil
+    /// when nothing moved.
     var summary: String? {
         let h = hoursDelta ?? 0
         let d = dollarsDelta ?? 0
         let ot = overtimeHoursAfter ?? 0
-        guard h != 0 || d != 0 || ot > 0 else { return nil }
+        let sal = salariedHoursDelta ?? 0
+        guard h != 0 || d != 0 || ot > 0 || sal != 0 else { return nil }
         var parts: [String] = []
-        parts.append("\(h >= 0 ? "+" : "")\(h.commaFormatted)h")
+        parts.append("\(h >= 0 ? "+" : "")\(h.commaFormatted)h" + (basis == "hourly" ? " hourly" : ""))
         parts.append("\(d >= 0 ? "+" : "-")$\(abs(d).commaFormatted)")
         if ot > 0 { parts.append("\(ot.commaFormatted)h overtime") }
+        if sal != 0 { parts.append("\(sal >= 0 ? "+" : "")\(sal.commaFormatted)h salaried, no added pay") }
         return parts.joined(separator: " · ")
     }
 }
@@ -1818,6 +1834,11 @@ struct GeneratedSchedule: Codable {
     // and the requirements each shift was written and scored to.
     var managerPlan: ManagerPlan? = nil
     var managerCoverage: ManagerCoverage? = nil
+    /// The week's labor % on one stated basis (SQ-4) and the daily hour
+    /// targets it was generated against (UI-5: every re-score sends them, so
+    /// the phone scores exactly as the server). Absent on an older server.
+    var laborView: ScheduleLaborView? = nil
+    var dailyTargetHours: DailyHourTargets? = nil
     var minHours: MinHoursReport? = nil
     @LenientBool var partial: Bool?
     var unwrittenDates: HomeLenientList<UnwrittenDate>? = nil
@@ -1875,6 +1896,8 @@ struct GeneratedSchedule: Codable {
         case secondsLeft = "seconds_left"
         case managerPlan = "manager_plan"
         case managerCoverage = "manager_coverage"
+        case laborView = "labor_view"
+        case dailyTargetHours = "daily_target_hours"
         case minHours = "min_hours"
         case unwrittenDates = "unwritten_dates"
         case unstaffableDates = "unstaffable_dates"
@@ -3058,7 +3081,13 @@ final class LaborViewModel {
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: false, historyId: nil, version: nil),
+                // The week's own hour targets and its id (schedule re-audit
+                // 10/4/26 UI-5): sent with neither, the server scored these
+                // rows with no labor-efficiency dimension, so a re-score
+                // after a rating or a what-if read points the save path
+                // never gives.
+                body: ScoreBody(rows: rows, dailyTargetHours: scheduleResult?.dailyTargetHours?.hours ?? [:], save: false,
+                                historyId: scheduleResult?.historyId, version: nil),
                 hapticOnError: false, retryTransient: true)
             guard response.ok, let quality = response.quality else { return nil }
             return LiveScore(quality: quality, hardRules: response.review?.hardCount ?? 0)
@@ -3073,7 +3102,9 @@ final class LaborViewModel {
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
         isRescoringQuality = true
         defer { isRescoringQuality = false }
-        guard let live = await liveScore(rows: rows) else {
+        // A re-score that judged nothing never replaces a scored verdict:
+        // the week kept its number and lost it (UI-5).
+        guard let live = await liveScore(rows: rows), live.quality.checked || result.quality?.checked != true else {
             overrideState = .failed("Couldn't re-score the week.")
             return
         }
@@ -3462,7 +3493,8 @@ final class LaborViewModel {
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: save, historyId: result.historyId,
+                body: ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: save,
+                                historyId: result.historyId,
                                 version: save ? latestVersion : nil,
                                 cavnarChanges: save && !cavnarRemoved.isEmpty ? cavnarRemoved : nil),
                 hapticOnError: false, retryTransient: true)
@@ -4147,8 +4179,8 @@ final class LaborViewModel {
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: [:], save: false, historyId: result.historyId,
-                                version: nil, whatIf: true),
+                body: ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: false,
+                                historyId: result.historyId, version: nil, whatIf: true),
                 hapticOnError: false, timeout: 45, retryTransient: false)
             guard response.ok else { overrideState = .failed(response.error ?? "Couldn\u{2019}t look just now."); return }
             guard (scheduleResult?.previewRows ?? []).map(\.signature) == rows.map(\.signature) else { return }

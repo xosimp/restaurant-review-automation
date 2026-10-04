@@ -307,7 +307,16 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             if section_cap:
                 capped, held = _curve.cap_requirement({v[0]: v[1] for v in need.values()}, section_cap, cap_roles)
                 for k, v in need.items():
+                    # The cap takes the soft ask first: the firm part (what
+                    # the shift needs without the ask) is held to the cap
+                    # too, and only what is left over it is still "asked".
+                    # Lowering `required` alone left the ask whole, so a
+                    # Friday of 4 usual servers under a 4-section cap scored
+                    # firm 3 — full coverage with 3 (schedule re-audit
+                    # 10/4/26 SQ-10).
+                    firm = v[1] - v[4]
                     v[1] = int(capped.get(v[0], v[1]))
+                    v[4] = max(0, v[1] - min(firm, v[1]))
             if roles is not None:
                 need = {k: v for k, v in need.items() if k in roles}
             if not need:
