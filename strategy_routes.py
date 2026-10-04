@@ -3560,10 +3560,13 @@ def _do_learned_pattern_set(u):
         except ValueError as e:
             return {"ok": False, "error": str(e)}, 400
         return out, 200
-    if b.get("dismissed", True):
-        _si.dismiss_pattern(_rid(u), key, actor=_who(u), authority=_answer_authority(u))
-    else:
-        _si.restore_pattern(_rid(u), key)
+    try:
+        if b.get("dismissed", True):
+            _si.dismiss_pattern(_rid(u), key, actor=_who(u), authority=_answer_authority(u))
+        else:
+            _si.restore_pattern(_rid(u), key, authority=_answer_authority(u))
+    except ValueError as e:                 # a manager undoing the owner's answer (LEARN-3)
+        return {"ok": False, "error": str(e)}, 400
     return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True)),
             "counted": _answer_authority(u) != "admin"}, 200
 
@@ -3595,8 +3598,12 @@ def _do_schedule_memory(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see this.")
     import schedule_memory as _smem
-    from permissions import answer_authority
-    view = _smem.memory_view(_rid(u), include_retired=str(request.args.get("retired") or "1") != "0")
+    from permissions import answer_authority, is_principal
+    # A manager's or a member's login never reads an owner-only fact (a
+    # learned keep-apart), nor is offered to undo the owner's answer
+    # (schedule re-audit 10/4/26 LEARN-3, LEARN-6).
+    view = _smem.memory_view(_rid(u), include_retired=str(request.args.get("retired") or "1") != "0",
+                             principal=is_principal(u))
     return {"ok": True, **view, "can_answer": _may_draft(u) and answer_authority(u) != "admin",
             "can_make_rules": _principal(u) and answer_authority(u) != "admin"}, 200
 

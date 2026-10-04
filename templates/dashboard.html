@@ -36323,8 +36323,9 @@ function sfw1RatingLine(s) {
     if (it.held_in_code) bits.push('Held by Cavnar AI’s checks');
     if (it.bound_by) bits.push(String(it.bound_by));
     if (it.retired_words) bits.push(String(it.retired_words));
+    if (it.answered) bits.push(String(it.answered));
     if (d.can_answer !== false) {
-      if (it.can_keep) acts += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-mem="keep" data-key="' + e(it.key) + '">Keep</button>';
+      if (it.can_keep) acts += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-mem="keep" data-key="' + e(it.key) + '">' + e(it.keep_label || 'Keep') + '</button>';
       if (it.can_let_go) acts += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw1-mem="let_go" data-key="' + e(it.key) + '">Let it go</button>';
       if (it.can_be_rule && d.can_make_rules !== false) acts += '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-mem="rule" data-key="' + e(it.key) + '">Make it a rule</button>';
     }
@@ -36337,7 +36338,9 @@ function sfw1RatingLine(s) {
     jpost('/api/labor/schedule-memory', {key: key, action: act}, function (d) {
       done();
       if (!d.ok) { if (err) err.textContent = d.error || 'That didn’t save.'; return; }
-      say(act === 'rule' ? ((d.rule && (d.rule.text || d.rule.words)) ? 'Now a rule: ' + (d.rule.text || d.rule.words) : 'Now a rule the draft keeps') : (act === 'keep' ? 'Kept — the draft applies it while the evidence holds' : 'Let go — only newer edits of yours bring it back'));
+      // The server words what the answer did, by whose it was (a manager's
+      // keep is their confirmation, not the owner's word).
+      say(act === 'rule' ? ((d.rule && (d.rule.text || d.rule.words)) ? 'Now a rule: ' + (d.rule.text || d.rule.words) : 'Now a rule the draft keeps') : (d.message || (act === 'keep' ? 'Kept — the draft applies it' : 'Let go')));
       sfw1LoadMemory(true);
     });
   }

@@ -14,6 +14,8 @@ final class ScheduleMemoryViewModel {
     var busyKey: String?
     /// The server's answer per fact: the rule's words, or its refusal.
     var notes: [String: String] = [:]
+    /// The facts whose last answer went through (their note reads as done).
+    var saved: Set<String> = []
 
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
@@ -38,6 +40,9 @@ final class ScheduleMemoryViewModel {
         let ok: Bool
         var error: String? = nil
         var rule: AnyCodableValue? = nil
+        /// What the answer did, in the server's words — a manager's keep is
+        /// their confirmation, not the owner's word.
+        var message: String? = nil
     }
 
     /// keep | let_go | rule. A refusal (400) shows the server's words.
@@ -52,14 +57,18 @@ final class ScheduleMemoryViewModel {
                 Haptic.success()
                 let ruleWords = r.rule?.objectValue?["text"]?.stringValue ?? r.rule?.stringValue
                 notes[item.key] = action == "rule" ? (ruleWords.map { "Now a rule: \($0)" } ?? "Now a rule")
-                    : action == "keep" ? "Kept" : "Let go"
+                    : r.message ?? (action == "keep" ? "Kept" : "Let go")
+                saved.insert(item.key)
                 await load()
             } else {
+                saved.remove(item.key)
                 notes[item.key] = r.error ?? "Couldn\u{2019}t do that."
             }
         } catch let e as APIClient.APIError {
+            saved.remove(item.key)
             notes[item.key] = e.message
         } catch {
+            saved.remove(item.key)
             notes[item.key] = "Couldn\u{2019}t do that."
         }
     }
@@ -155,17 +164,18 @@ struct ScheduleMemoryScreen: View {
             }
             HomeMixedText.make([item.evidence.map { "\($0) times" },
                                 item.lastConfirmedByHand.map { "last confirmed by hand \($0)" },
-                                retired ? item.retiredWords : nil].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                                retired ? item.retiredWords : nil, item.answered].compactMap { $0 }
+                                .joined(separator: " \u{00B7} "),
                                size: 12.5, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if let note = viewModel.notes[item.key] {
                 HomeMixedText.make(note, size: 13, weight: 600,
-                                   color: ["Kept", "Let go"].contains(note) || note.hasPrefix("Now a rule") ? .cavnarGreen : .cavnarRed)
+                                   color: viewModel.saved.contains(item.key) ? .cavnarGreen : .cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if canAnswer, item.canKeep || item.canLetGo || item.canBeRule {
                 HStack(spacing: 16) {
-                    if item.canKeep { action("Keep", item, "keep") }
+                    if item.canKeep { action(item.keepLabel ?? "Keep", item, "keep") }
                     if item.canLetGo { action("Let it go", item, "let_go") }
                     if item.canBeRule { action("Make it a rule", item, "rule") }
                 }

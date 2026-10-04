@@ -2366,14 +2366,22 @@ def make_rule(restaurant_id, pattern_key, user=None, db_path=DB_PATH) -> dict:
 
 
 def owner_said_pattern(restaurant_id, p, authority, history_id=None, who=None, db_path=DB_PATH) -> str:
-    """The owner's one-tap "always" for a change they just made (schedule
-    audit 10/3/26 L-35): the pattern becomes a standing row at once, with
-    the owner's authority — the first weeks carry the most explicit intent,
-    and two weeks of edits were needed before anything was learned. An
-    existing row of the same key is confirmed by hand (active again,
-    last_hand today); a ruled one is already a rule. Returns the key."""
+    """A one-tap "always" for a change just made (schedule audit 10/3/26
+    L-35): the pattern becomes a standing row at once — the first weeks
+    carry the most explicit intent, and two weeks of edits were needed
+    before anything was learned. Returns the key.
+
+    Whose "always" it is decides what it does (schedule re-audit 10/4/26
+    LEARN-3): an account holder's (`authority` principal) is the owner's
+    word — source owner_said, applied whatever its confidence, and it
+    brings back a row anybody retired. A delegate's (a manager's) is their
+    hand confirming it — a new row is an ordinary learned one (one week of
+    evidence, held only once it clears the line), an existing one is
+    confirmed by hand, and a row the OWNER let go stays let go. A ruled row
+    is already a rule."""
     import schedule_intel as _si
     k = _si.pattern_key(p)
+    owner = authority == "principal"
     today = date.today().isoformat()
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     detail = json.dumps({f: p[f] for f in ("was_role", "delta", "names") if p.get(f) not in (None, "", [])})
@@ -2384,18 +2392,34 @@ def owner_said_pattern(restaurant_id, p, authority, history_id=None, who=None, d
         if row is None:
             conn.execute("INSERT INTO schedule_standing_patterns (restaurant_id, pattern_key, kind, employee, role, day, "
                          "daypart, time, text, editors, first_learned, last_confirmed, detail, checked_through, "
-                         "times_confirmed, opportunities, hits, last_hand, source, authority, person_id) "
-                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1,1,?,'owner_said',?,?)",
+                         "times_confirmed, opportunities, hits, last_hand, source, authority, person_id, "
+                         "owner_kept_at, answer_authority) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1,1,?,?,?,?,?,?)",
                          (restaurant_id, k, p["kind"], p.get("employee") or None, p.get("role") or None, p.get("day"),
                           p.get("daypart"), p.get("time") or None, p.get("text"),
                           json.dumps({(who or "owner"): 1}), now, now, detail, int(history_id or 0), today,
-                          authority, _person_id(restaurant_id, p.get("employee"), db_path)
-                          if p.get("employee") else None))
-        elif row["status"] != "ruled":
+                          "owner_said" if owner else "learned", authority,
+                          _person_id(restaurant_id, p.get("employee"), db_path) if p.get("employee") else None,
+                          today if owner else None, "principal" if owner else "delegate"))
+        elif row["status"] == "ruled":
+            pass
+        elif not owner and row["status"] == "retired" and (row.get("retired_reason") or "") == "owner":
+            pass                           # the owner let it go: a manager's "always" doesn't bring it back
+        elif owner:
             conn.execute("UPDATE schedule_standing_patterns SET status='active', last_hand=?, retest_since=NULL, "
                          "retired_at=NULL, retired_week=NULL, retired_reason=NULL, times_overridden=0, "
+                         "times_confirmed=COALESCE(times_confirmed, 0)+1, last_confirmed=?, source='owner_said', "
+                         "authority='principal', owner_kept_at=?, answer_authority='principal', "
+                         "detail=CASE WHEN ?='{}' THEN detail ELSE ? END, "
+                         "updated_at=datetime('now') WHERE id=?", (today, now, today, detail, detail, row["id"]))
+        else:
+            conn.execute("UPDATE schedule_standing_patterns SET status=CASE WHEN status='dormant' THEN 'dormant' "
+                         "ELSE 'active' END, last_hand=?, retest_since=NULL, "
+                         "retired_at=NULL, retired_week=NULL, retired_reason=NULL, times_overridden=0, "
                          "times_confirmed=COALESCE(times_confirmed, 0)+1, last_confirmed=?, "
-                         "authority=COALESCE(authority, ?), detail=CASE WHEN ?='{}' THEN detail ELSE ? END, "
+                         "authority=COALESCE(authority, ?), "
+                         "answer_authority=CASE WHEN answer_authority='principal' THEN 'principal' ELSE 'delegate' END, "
+                         "detail=CASE WHEN ?='{}' THEN detail ELSE ? END, "
                          "updated_at=datetime('now') WHERE id=?", (today, now, authority, detail, detail, row["id"]))
         conn.commit()
     finally:
@@ -2403,33 +2427,62 @@ def owner_said_pattern(restaurant_id, p, authority, history_id=None, who=None, d
     return k
 
 
+class OwnerAnswered(ValueError):
+    """A delegate's answer that would undo the owner's (LEARN-3) — refused
+    in the owner's words."""
+
+
+def _owner_kept(row) -> bool:
+    """Whether the owner's own word keeps a standing row: their Keep
+    (owner_kept_at, an account holder's answer) or their one-tap "always"
+    (source owner_said, by an account holder)."""
+    if (row.get("answer_authority") or "") == "principal" and row.get("owner_kept_at"):
+        return True
+    return row.get("source") == "owner_said" and (row.get("authority") or "principal") == "principal"
+
+
 def confirm_standing(restaurant_id, pattern_key, user=None, keep=True, db_path=DB_PATH) -> dict:
-    """The owner's answer to a standing pattern (L-30, "ask the owner"):
-    `keep` — a hand confirmation (last_hand today, any re-test ended, the
-    draft carries it again); not `keep` — "let it go", retired by the owner.
-    An admin's answer (view-as) changes nothing: it is not the restaurant's
-    word (L-8, L-10). Raises ValueError with the owner's words."""
-    if authority_of(user) == "admin":
+    """An answer to a standing pattern (L-30, "ask the owner"): `keep` — a
+    hand confirmation (last_hand today, any re-test ended, the draft carries
+    it again); not `keep` — "let it go", retired. An admin's answer
+    (view-as) changes nothing: it is not the restaurant's word (L-8, L-10).
+
+    Whose answer it is (schedule re-audit 10/4/26 LEARN-3, LEARN-4): an
+    account holder's Keep is the owner's word — owner_kept_at, which holds
+    the pattern applied whatever its confidence (schedule_memory.
+    _learn_patterns); their Let go retires it as theirs (retired_reason
+    owner). A delegate's Keep is their hand confirmation only, and their Let
+    go retires it as a manager's — but never one the owner keeps
+    (OwnerAnswered). Raises ValueError with the owner's words."""
+    auth = authority_of(user)
+    if auth == "admin":
         raise ValueError("An answer through view-as doesn't change what the draft keeps — the owner answers this one.")
+    owner = auth == "principal"
     conn = get_conn(db_path)
     try:
         row = next((r for r in _standing_rows(conn, restaurant_id) if r["pattern_key"] == pattern_key), None)
         if row is None or row["status"] not in ("active", "retest", "dormant"):
             raise ValueError("That pattern isn't one the draft is keeping now.")
+        if not owner and not keep and _owner_kept(row):
+            raise OwnerAnswered("The owner kept this one — only the owner can let it go.")
         today = date.today().isoformat()
         if keep:
             conn.execute("UPDATE schedule_standing_patterns SET status=CASE WHEN status='dormant' THEN 'dormant' "
                          "ELSE 'active' END, last_hand=?, retest_since=NULL, "
                          "last_retest_end=CASE WHEN retest_since IS NOT NULL THEN datetime('now') ELSE last_retest_end END, "
                          "times_confirmed=COALESCE(times_confirmed, 0)+1, last_confirmed=datetime('now'), "
-                         "updated_at=datetime('now') WHERE id=?", (today, row["id"]))
+                         "owner_kept_at=CASE WHEN ? THEN ? ELSE owner_kept_at END, "
+                         "answer_authority=CASE WHEN ? OR answer_authority='principal' THEN 'principal' "
+                         "ELSE 'delegate' END, updated_at=datetime('now') WHERE id=?",
+                         (today, 1 if owner else 0, today, 1 if owner else 0, row["id"]))
         else:
             # Only a draft made after this answer can bring it back.
             newest = conn.execute("SELECT MAX(id) FROM schedule_history WHERE restaurant_id=?",
                                   (restaurant_id,)).fetchone()[0] or 0
-            conn.execute("UPDATE schedule_standing_patterns SET status='retired', retired_reason='owner', "
-                         "retired_at=datetime('now'), retired_week=?, retest_since=NULL, updated_at=datetime('now') "
-                         "WHERE id=?", (newest, row["id"]))
+            conn.execute("UPDATE schedule_standing_patterns SET status='retired', retired_reason=?, "
+                         "retired_at=datetime('now'), retired_week=?, retest_since=NULL, owner_kept_at=NULL, "
+                         "answer_authority=?, updated_at=datetime('now') WHERE id=?",
+                         ("owner" if owner else "manager", newest, "principal" if owner else "delegate", row["id"]))
         conn.commit()
     finally:
         conn.close()

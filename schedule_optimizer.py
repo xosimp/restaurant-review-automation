@@ -381,7 +381,10 @@ def _learned_problems(quality: dict) -> list:
     out = []
     for x in misses:
         targets = []
-        for r in x.get("rows") or []:
+        # A miss the score keeps private (the owner's keep-apart — no names
+        # in the shared review, shift_quality.week_learned) names only its
+        # shifts; the move reads the memory itself (_moves_for, LEARN-1).
+        for r in list(x.get("rows") or []) + [{"date": d, "daypart": p} for d, p in x.get("slots") or []]:
             s = at.get((r.get("date"), r.get("daypart")))
             if s is not None and s not in targets:
                 targets.append(s)
@@ -394,12 +397,17 @@ def _learned_problems(quality: dict) -> list:
                 targets = [s for s in shifts if who in {sq.name_key(n) for n in s.get("people") or []}]
             elif kind == "pair":
                 team = {who} | {sq.name_key(n) for n in ((x.get("value") or {}).get("with") or [])}
+                apart = (x.get("value") or {}).get("kind") == "avoid"
                 by_date = {}
                 for s in shifts:
                     on = team & {sq.name_key(n) for n in s.get("people") or []}
                     if on:
                         by_date.setdefault(s.get("date"), []).append((s, on))
                 for _d, here in by_date.items():
+                    if apart:
+                        # Two the owner keeps apart, on the same shift.
+                        targets += [s for s, on in here if len(on) > 1]
+                        continue
                     there = set().union(*(on for _s, on in here))
                     if len(there) > 1 and any(len(on) < len(there) for _s, on in here):
                         targets += [s for s, _on in here]
@@ -1050,6 +1058,12 @@ def _moves_for(problem, state: _State) -> list:
         # words on the row and in the list say only that this is how the
         # managers schedule the shift: staff read the notes.
         x = facts.get("miss") or {}
+        if (x.get("value") or {}).get("private"):
+            # The owner's keep-apart, read back from the memory by its key
+            # (the score's copy names nobody — LEARN-1, LEARN-6).
+            m = next((m for m in (state.signals or {}).get("learned") or []
+                      if isinstance(m, dict) and m.get("key") == x.get("key")), None)
+            x = dict(x, person=m.get("person"), value=dict(m.get("value") or {})) if m else {}
         kind, v = x.get("kind"), x.get("value") or {}
         who = state.key(x.get("person"))
         name = state.name_of(who) if who else ""
@@ -1099,7 +1113,23 @@ def _moves_for(problem, state: _State) -> list:
                 for i in mine[:1]:
                     for j in edge[:3]:
                         moves.append(_trade_move(state, i, j, why))
-        elif kind == "pair":
+        elif kind == "pair" and v.get("kind") == "avoid":
+            # Two the owner keeps apart on this shift (LEARN-1): all but one
+            # of them trades with somebody of their role on the other half
+            # of the day, or gives the shift to somebody outside the pair.
+            team = {who} | {state.key(n) for n in (v.get("with") or [])}
+            here = [i for i, r in enumerate(state.rows) if r.get("date") == date
+                    and state.key(r.get("employee")) in team and sq.present_dayparts(r)[0] == part]
+            for i in here[1:]:
+                outside = lambda n, t=frozenset(team): state.key(n) not in t  # noqa: E731
+                replace_in(i, outside, why)
+                _swap_moves(state, i, moves, why, want=outside)
+                for j in [j for j, r in enumerate(state.rows) if r.get("date") == date
+                          and sq.present_dayparts(r)[0] != part
+                          and state.family(r.get("role")) == state.family(state.rows[i].get("role"))
+                          and state.key(r.get("employee")) not in team][:3]:
+                    moves.append(_trade_move(state, i, j, why))
+        elif kind == "pair" and v.get("kind") == "prefer":
             team = {who} | {state.key(n) for n in (v.get("with") or [])}
             here = [i for i, r in enumerate(state.rows) if r.get("date") == date and state.key(r.get("employee")) in team]
             parts_of = {i: sq.present_dayparts(state.rows[i])[0] for i in here}

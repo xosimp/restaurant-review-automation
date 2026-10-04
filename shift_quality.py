@@ -3231,6 +3231,10 @@ def _learned_line(m: dict, miss: dict) -> str:
         return f"{who} is on {day} but not opening {role}, which they usually do."
     if kind == "closer":
         return f"{who} is on {day} but not closing {role}, which they usually do."
+    if kind == "pair" and v.get("kind") == "avoid":
+        # The owner's own keep-apart: counted, never named — the review is
+        # shared with the team (schedule re-audit 10/4/26 LEARN-1, LEARN-6).
+        return "Two people you chose to keep apart are on the same shift."
     if kind == "pair":
         return f"{who} and {_names(list(v.get('with') or []))} are on different shifts; their shifts together run well."
     if kind == "end_overrun":
@@ -3287,6 +3291,17 @@ def week_learned(contexts: list) -> DimensionResult | None:
     for x in found:
         m = by_key.get(x.get("key")) or {}
         rs = [rows[i] for i in (x.get("indexes") or []) if 0 <= i < len(rows)]
+        if x.get("kind") == "pair" and (m.get("value") or {}).get("kind") == "avoid":
+            # The owner's own keep-apart (schedule re-audit 10/4/26 LEARN-1,
+            # LEARN-6): its cost counts and its shifts are named (as an
+            # owner-only pairing's are), never its people — the optimizer
+            # reads the memory itself by its key.
+            misses.append({"key": x.get("key"), "kind": "pair", "weight": float(x.get("weight") or 0),
+                           "person": None, "day": m.get("day"), "daypart": m.get("daypart"), "role": None,
+                           "value": {"kind": "avoid", "private": True}, "rows": [],
+                           "slots": sorted({(r.get("date") or "", present_dayparts(r)[0]) for r in rs}),
+                           "text": _learned_line(m, x)})
+            continue
         misses.append({"key": x.get("key"), "kind": x.get("kind"), "weight": float(x.get("weight") or 0),
                        "person": m.get("person"), "day": m.get("day"), "daypart": m.get("daypart"),
                        "role": m.get("role"), "value": dict(m["value"]) if isinstance(m.get("value"), dict) else {},

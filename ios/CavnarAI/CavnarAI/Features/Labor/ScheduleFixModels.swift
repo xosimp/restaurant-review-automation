@@ -954,6 +954,11 @@ struct ScheduleMemoryItem: Codable, Hashable, Identifiable {
     var hits: Int?
     var lastConfirmedByHand: String?
     var retiredWords: String?
+    /// Who answered it, in the viewer's words ("Kept by you", "Let go by a
+    /// manager") — only an account holder's answer is the owner's.
+    var answered: String?
+    /// The Keep button's words: "Keep them apart" for a learned keep-apart.
+    var keepLabel: String?
     var canKeep = false
     var canLetGo = false
     var canBeRule = false
@@ -961,7 +966,8 @@ struct ScheduleMemoryItem: Codable, Hashable, Identifiable {
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
-        case key, kind, text, status, hits, opportunities
+        case key, kind, text, status, hits, opportunities, answered
+        case keepLabel = "keep_label"
         case classLabel = "class_label"
         case statusLabel = "status_label"
         case heldInCode = "held_in_code"
@@ -989,6 +995,7 @@ struct ScheduleMemoryItem: Codable, Hashable, Identifiable {
         }
         opportunities = c.sfInt(.opportunities); hits = c.sfInt(.hits)
         lastConfirmedByHand = c.sfText(.lastConfirmedByHand); retiredWords = c.sfText(.retiredWords)
+        answered = c.sfText(.answered); keepLabel = c.sfText(.keepLabel)
         canKeep = c.sfBool(.canKeep) ?? false; canLetGo = c.sfBool(.canLetGo) ?? false
         canBeRule = c.sfBool(.canBeRule) ?? false
     }

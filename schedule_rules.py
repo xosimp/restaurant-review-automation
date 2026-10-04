@@ -2160,6 +2160,37 @@ def _closers_by_role(c, people, flags, chosen):
     c.keyholders = set().union(*c.closers_by_role.values()) if c.closers_by_role else set()
 
 
+def chosen_closers(restaurant_id, restaurant=None, db_path=DB_PATH) -> dict:
+    """{role family: {person key}} — the people the owner chose to close
+    each role, read exactly as build_constraints reads them (the closer
+    flags, in the roles the owner chose — until they choose, the roles the
+    punches show on until close; _closers_by_role) without the rest of a
+    week's constraints: for the readers that have none — the scheduling
+    memory's learned closer and the rotation plan's closing queue (schedule
+    re-audit 10/4/26 LEARN-10, PROMPT-2: both named people who are not
+    chosen closers as the role's closers, beside the hard closer rule). {}
+    when nobody is marked to close."""
+    from models import get_restaurant, get_close_times, get_leader_flags
+    restaurant = restaurant or get_restaurant(restaurant_id, db_path)
+    flags = get_leader_flags(restaurant_id, db_path) or {}
+    if not any(flags.values()):
+        return {}
+    c = Constraints(restaurant_id=restaurant_id, week_dates=[], week_days=[])
+    c.role_families = role_families(restaurant)
+    try:
+        c.close_times = get_close_times(restaurant_id, db_path) or {}
+    except Exception as exc:
+        _input_problem(c, "open and close times", exc)
+    import staff_settings as _ss
+    people_ = list(_ss.roster(restaurant_id, db_path=db_path, include_inactive=True))
+    _identity(c, restaurant_id, people_, db_path)
+    chosen = closer_roles(restaurant)
+    if not chosen:
+        chosen = sorted(closing_families(c, _closing_history(restaurant_id, c)))
+    _closers_by_role(c, people_, flags, chosen)
+    return {fam: set(keys) for fam, keys in c.closers_by_role.items() if keys}
+
+
 # A role "closes here" when its last person out reached the close (or, with
 # no close on file, the day's last shift) — within the closer rule's own 15
 # minutes — on at least half the days it worked in the last weeks of

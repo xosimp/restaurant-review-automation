@@ -227,6 +227,10 @@ def test_a_retired_ruled_or_dormant_pattern_keeps_its_status_in_the_memory():
     _bob_off_weeks(rid)
     sv.refresh_standing_patterns(rid)
     key = next(s["key"] for s in sv.standing_patterns(rid) if s["kind"] == "moved_off")
+    # The rule a ruled pattern is (make_rule: Bob can't work Tuesday dinner)
+    # — one whose rule the owner removed is a pattern again (re-audit
+    # 10/4/26 LEARN-5, tests/test_rx_learn.py).
+    staff_settings.upsert(rid, "Bob", daypart_availability={"Tuesday": "morning"}, updated_by="erik")
     for status, want in (("retired", "retired"), ("ruled", "rule"), ("dormant", "dormant")):
         _sql("UPDATE schedule_standing_patterns SET status=? WHERE restaurant_id=? AND pattern_key=?", status, rid, key)
         sm.consolidate(rid, only=("patterns",))

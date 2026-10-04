@@ -3190,10 +3190,16 @@ def cover_record(restaurant_id, days=180, db_path=None) -> dict:
                               "GROUP BY employee_key, kind", (restaurant_id, since)).fetchall():
             e = out.setdefault(r["employee_key"], {"accepted": 0, "declined": 0})
             e["accepted" if r["kind"] == "cover_accepted" else "declined"] += int(r["n"])
-        for r in conn.execute("SELECT replacement_name, COUNT(*) AS n FROM shift_change_requests WHERE "
+        claims = conn.execute("SELECT replacement_name, COUNT(*) AS n FROM shift_change_requests WHERE "
                               "restaurant_id=? AND status='covered' AND replacement_name IS NOT NULL AND date>=? "
-                              "GROUP BY replacement_name", (restaurant_id, since)).fetchall():
-            e = out.setdefault(_nk(r["replacement_name"]), {"accepted": 0, "declined": 0})
+                              "GROUP BY replacement_name", (restaurant_id, since)).fetchall()
+        # One person however the claim spelled them (an alias, an old POS
+        # spelling) — the signals above are keyed by the person already.
+        canon = canonical_names(restaurant_id, [r["replacement_name"] for r in claims], db_path=db_path) \
+            if claims else {}
+        for r in claims:
+            e = out.setdefault(_nk(canon.get(r["replacement_name"]) or r["replacement_name"]),
+                               {"accepted": 0, "declined": 0})
             e["accepted"] += int(r["n"])
     except Exception:
         return out
@@ -3202,18 +3208,123 @@ def cover_record(restaurant_id, days=180, db_path=None) -> dict:
     return out
 
 
+# A missing shift's span when its end is not on the issue (a person-keyed
+# issue before 10/3/26): this long from its start.
+COVER_SPAN_MINUTES = 4 * 60
+
+
+def _span(start, end=None):
+    """(start, end) minutes of a shift, its end read across midnight; the
+    end COVER_SPAN_MINUTES after the start when it is not known. None
+    without a start."""
+    from schedule_rules import parse_minutes
+    s = parse_minutes(str(start or ""))
+    if s is None:
+        return None
+    e = parse_minutes(str(end or "")) if end else None
+    if e is None:
+        e = s + COVER_SPAN_MINUTES
+    elif e <= s:
+        e += 1440
+    return s, e
+
+
+def _overlaps(a, b) -> bool:
+    return a is not None and b is not None and a[0] < b[1] and b[0] < a[1]
+
+
+def cover_verdicts(gaps, asked, punches, own_rows=None, offers=None) -> dict:
+    """{asked name key: "accepted" | "declined" | None} for one coverage
+    issue — who took a cover when asked, and who said no (schedule re-audit
+    10/4/26 LEARN-8: everyone asked who did not punch that day was blamed
+    as having declined even after somebody else took the shift, and anyone
+    asked with ANY punch that day — their own lunch — was credited with the
+    cover). Pure.
+
+      gaps      issues.coverage_people: [{employee, shift_start, shift_end,
+                status, covered_by}] — the missing shifts
+      asked     the issue's asks: [{name, for?, shift_start?, answer?,
+                offer_id?}]
+      punches   {name key: [(start, end) minutes]} that day
+      own_rows  {name key: [(start, end)]} — each person's OWN published
+                shifts that day: a punch inside one is their shift, not a
+                cover
+      offers    {offer id: status} — an app offer's answer
+
+    An ask resolves for the person who covered — the gap's covered_by, an
+    accepted offer, or a punch of theirs that overlaps the missing shift
+    and is not their own shift (accepted). An ask the person turned down (a
+    declined offer, the manager's "declined" on the ask) is declined. Any
+    other ask is "not needed" (None) once the gap was covered by somebody
+    else or the missing person came in; declined only when the gap stayed
+    open — nobody covered it — and they did not come in."""
+    from staff_settings import name_key as _k
+    own_rows = own_rows or {}
+    offers = offers or {}
+
+    def gap_for(a):
+        if len(gaps) == 1:
+            return gaps[0]
+        for g in gaps:
+            if _k(g.get("employee")) == _k(a.get("for")) and (
+                    not a.get("shift_start") or not g.get("shift_start") or a["shift_start"] == g["shift_start"]):
+                return g
+        return gaps[0] if gaps else {}
+
+    def covered(who, g):
+        span = _span(g.get("shift_start"), g.get("shift_end"))
+        mine = punches.get(who) or []
+        if span is None:
+            return bool(mine)                   # no time on the issue: any punch that day, as before
+        own = own_rows.get(who) or []
+        return any(_overlaps(p, span) and not any(_overlaps(p, o) and _overlaps(o, span) for o in own)
+                   for p in mine)
+
+    out, took = {}, {}
+    for a in asked:
+        who = _k(a.get("name"))
+        if not who:
+            continue
+        g = gap_for(a)
+        verdict = None
+        if _k(g.get("covered_by")) == who or offers.get(a.get("offer_id")) == "accepted" or a.get("answer") == "took":
+            verdict = "accepted"
+        elif offers.get(a.get("offer_id")) == "declined" or a.get("answer") == "declined":
+            verdict = "declined"
+        elif covered(who, g):
+            verdict = "accepted"
+        out[who] = verdict
+        if verdict == "accepted":
+            took[id(g)] = who
+    for a in asked:
+        who = _k(a.get("name"))
+        if not who or out.get(who) is not None:
+            continue
+        g = gap_for(a)
+        filled = (id(g) in took or bool(g.get("covered_by"))
+                  or (g.get("status") or "") in ("covered", "arrived"))
+        out[who] = None if filled else "declined"
+    return out
+
+
 def record_cover_signals(restaurant_id, days=7, db_path=None, today=None) -> int:
-    """From the coverage issues the live check opened: everyone asked to
-    cover who then worked that day took it (cover_accepted); asked and did
-    not work by the end of the day, cover_declined. Returns signals written."""
+    """From the coverage issues the live check opened: each ask, resolved
+    by cover_verdicts — the person who covered took it (cover_accepted);
+    somebody who turned it down, or who was asked while the gap stayed
+    open and did not come in, declined (cover_declined); everyone else
+    asked was not needed and is not recorded (a job's earlier guess for
+    them is set aside). A day still going on is left for tomorrow, and
+    somebody's word on an ask (people.answer_cover) stands over all of it.
+    Returns signals written."""
     import json as _j
     from datetime import date as _d, timedelta as _td
     today = today or _d.today()
     since = (today - _td(days=days)).isoformat()
     conn = _conn(db_path)
     try:
-        issues_ = conn.execute("SELECT id, source_key, meta_json FROM ops_issues WHERE restaurant_id=? AND "
-                               "kind='coverage' AND source_key >= ?", (restaurant_id, f"coverage:{since}")).fetchall()
+        issues_ = [dict(r) for r in conn.execute(
+            "SELECT * FROM ops_issues WHERE restaurant_id=? AND kind='coverage' AND source_key >= ?",
+            (restaurant_id, f"coverage:{since}")).fetchall()]
     except Exception:
         issues_ = []
     finally:
@@ -3224,15 +3335,60 @@ def record_cover_signals(restaurant_id, days=7, db_path=None, today=None) -> int
             meta = _j.loads(iss["meta_json"] or "null") or {}
         except (TypeError, ValueError):
             meta = {}
-        asked = meta.get("asked") or []
+        asked = [a for a in (meta.get("asked") or []) if isinstance(a, dict) and a.get("name")]
         day = (iss["source_key"] or "").split(":")[1] if (iss["source_key"] or "").count(":") >= 2 else None
         if not asked or not day:
             continue
         try:
-            import shift_facts
-            worked = {_nk(r["employee"]) for r in shift_facts.rows(restaurant_id, since=day, until=day, db_path=db_path)}
+            import issues as _issues
+            gaps = _issues.coverage_people(iss)
         except Exception:
-            worked = set()
+            gaps = []
+        if not gaps and meta.get("missing"):
+            gaps = [{"employee": meta.get("missing"), "shift_start": meta.get("shift_start"),
+                     "shift_end": meta.get("shift_end"), "status": "missing"}]
+        for g in gaps:
+            if not g.get("shift_end") and meta.get("shift_end") and len(gaps) == 1:
+                g["shift_end"] = meta.get("shift_end")
+        names = [a["name"] for a in asked] + [g.get("employee") for g in gaps if g.get("employee")]
+        canon = canonical_names(restaurant_id, names, db_path=db_path)
+        asked = [dict(a, name=canon.get(a["name"]) or a["name"]) for a in asked]
+        punches, own_rows = {}, {}
+        try:
+            import shift_facts
+            for r in shift_facts.rows(restaurant_id, since=day, until=day, db_path=db_path):
+                span = _span(r.get("shift_start"), r.get("shift_end"))
+                if span is not None or not r.get("shift_start"):
+                    punches.setdefault(_nk(canon.get(r["employee"]) or r["employee"]), []).append(
+                        span or (0, 2880))
+        except Exception:
+            punches = {}
+        try:
+            import intraday
+            from datetime import date as _date
+            for r in intraday.published_rows(restaurant_id, _date.fromisoformat(day),
+                                             db_path=db_path or DB_PATH):
+                span = _span(r.get("shift_start"), r.get("shift_end"))
+                if span is not None:
+                    own_rows.setdefault(_nk(canon.get(r["employee"]) or r["employee"]), []).append(span)
+        except Exception:
+            own_rows = {}
+        offers = {}
+        ids = [int(a["offer_id"]) for a in asked if str(a.get("offer_id") or "").isdigit()]
+        if ids:
+            try:
+                conn = _conn(db_path)
+                try:
+                    offers = {r["id"]: r["status"] for r in conn.execute(
+                        "SELECT id, status FROM shift_offers WHERE restaurant_id=? AND id IN (%s)"
+                        % ",".join("?" * len(ids)), [restaurant_id] + ids).fetchall()}
+                finally:
+                    conn.close()
+            except Exception:
+                offers = {}
+            asked = [dict(a, offer_id=int(a["offer_id"])) if str(a.get("offer_id") or "").isdigit() else a
+                     for a in asked]
+        verdicts = cover_verdicts(gaps, asked, punches, own_rows, offers)
         try:
             conn = _conn(db_path)
             try:
@@ -3244,20 +3400,27 @@ def record_cover_signals(restaurant_id, days=7, db_path=None, today=None) -> int
                 conn.close()
         except Exception:
             answered = set()
+        ref = f"issue:{iss['id']}"
         for a in asked:
-            who = a.get("name")
-            if not who:
-                continue
-            if _nk(canonical_names(restaurant_id, [who], db_path=db_path).get(who) or who) in answered:
+            key = _nk(a["name"])
+            if key in answered:
                 continue                           # somebody's word stands over the punches
-            if _nk(canonical_names(restaurant_id, [who], db_path=db_path).get(who) or who) in worked:
-                kind = "cover_accepted"
-            elif day < today.isoformat():
-                kind = "cover_declined"
-            else:
-                continue
-            if record_signal(restaurant_id, who, kind, day, ref=f"issue:{iss['id']}",
-                             detail=f"asked to cover {meta.get('missing') or 'a shift'}", db_path=db_path):
+            verdict = verdicts.get(key)
+            if verdict == "declined" and day >= today.isoformat():
+                continue                           # the day is not over: they may still come in
+            # The job's own earlier guess for this ask that no longer holds
+            # is set aside (the rule answer_cover keeps).
+            keep = {"accepted": "cover_accepted", "declined": "cover_declined"}.get(verdict)
+            conn = _conn(db_path)
+            try:
+                conn.execute("UPDATE person_signals SET status='rejected' WHERE restaurant_id=? AND ref=? AND "
+                             "employee_key=? AND kind IN ('cover_accepted','cover_declined') AND kind<>? AND "
+                             "COALESCE(authority, 'system')='system'", (restaurant_id, ref, key, keep or ""))
+                conn.commit()
+            finally:
+                conn.close()
+            if keep and record_signal(restaurant_id, a["name"], keep, day, ref=ref,
+                                      detail=f"asked to cover {meta.get('missing') or 'a shift'}", db_path=db_path):
                 n += 1
     return n
 
