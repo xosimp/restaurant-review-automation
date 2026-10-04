@@ -157,6 +157,7 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
     if c is None:
         out = _not_dormant(restaurant_id, out, None, db_path)
     legal = []
+    prep = _se.try_prepare_replacements(restaurant_id, rows, c) if out else None
     for m in out:
         if len(legal) >= limit:
             break
@@ -164,7 +165,7 @@ def for_gap(restaurant_id, role, weekday, exclude=(), db_path=DB_PATH, limit=2, 
         # own unconfirmed note covers the day (Constraints.fillable).
         if c is not None and not c.fillable(m["name"], day.isoformat())[0]:
             continue
-        ok, _why = _se.replacement_is_legal(restaurant_id, rows, idx, m["name"], constraints=c)
+        ok, _why = _se.replacement_is_legal(restaurant_id, rows, idx, m["name"], constraints=c, prepared=prep)
         if ok:
             legal.append(m)
     return legal
@@ -271,13 +272,14 @@ def stay_on(restaurant_id, gap, on_today, exclude=(), db_path=DB_PATH, limit=2, 
     ranked = sorted(cands.values(), key=lambda m: (-m["_end"], -(m["score"] or 0), m["name"]))
     c = constraints if constraints is not None else _week_constraints(restaurant_id, rows)
     out = []
+    prep = _se.try_prepare_replacements(restaurant_id, rows, c) if ranked else None
     for m in ranked:
         if len(out) >= limit:
             break
         if c is not None and not c.fillable(m["_listed"], day.isoformat())[0]:
             continue                       # their own unconfirmed note covers today
         # Judged under the week's own spelling, so their own rows are seen.
-        ok, _why = _se.replacement_is_legal(restaurant_id, rows, index, m["_listed"], constraints=c)
+        ok, _why = _se.replacement_is_legal(restaurant_id, rows, index, m["_listed"], constraints=c, prepared=prep)
         if ok:
             how = (f"on today until {m['ends']} — could stay on" if m["_end"] == start
                    else f"on today until {m['ends']} — could come back for it")

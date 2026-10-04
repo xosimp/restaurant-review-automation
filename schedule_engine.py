@@ -8329,6 +8329,17 @@ def prepare_replacements(restaurant_id, rows: list, constraints=None) -> dict:
             "swap": _sq._SwapIndex(rows, availability, {}, _rules_for_swaps(c))}
 
 
+
+def try_prepare_replacements(restaurant_id, rows: list, constraints=None):
+    """prepare_replacements for a loop over candidates, or None when it
+    fails — each replacement_is_legal call then tries again on its own and
+    answers its plain sentence, exactly as it did unprepared."""
+    try:
+        return prepare_replacements(restaurant_id, rows, constraints)
+    except Exception as e:
+        print(f"[schedule] replacement prep failed rid={restaurant_id}: {e!r}")
+        return None
+
 def _breach_reason(worse: dict) -> str:
     """A regression (schedule_rules.regressions) as the sweep's own words:
     the rule's label, with the breach's detail when it says more."""

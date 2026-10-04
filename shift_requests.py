@@ -1657,6 +1657,7 @@ def _who_could_take(restaurant_id, req, db_path) -> list:
         day = row.get("date") or ""
         asker = c.key(req.get("employee_name") or "")
         legal = []
+        prep = _se.try_prepare_replacements(restaurant_id, rows, c)
         for e in staff_settings.roster(restaurant_id, db_path=db_path):
             n = e["name"]
             if asker and c.key(n) == asker:
@@ -1666,7 +1667,7 @@ def _who_could_take(restaurant_id, req, db_path) -> list:
                 continue
             if not _role_ok(restaurant_id, rows, row, n, db_path)[0]:
                 continue
-            if _se.replacement_is_legal(restaurant_id, rows, idx, n, constraints=c)[0]:
+            if _se.replacement_is_legal(restaurant_id, rows, idx, n, constraints=c, prepared=prep)[0]:
                 legal.append(n)
         told = _recent_notices(restaurant_id, db_path, c)
         bucket = c.bucket(day) if day else ""

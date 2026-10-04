@@ -133,13 +133,12 @@ restaurant 5; restaurant 4 is Will's demo copy.
   - **Code found in passing, not fixed:** `models.Restaurant` has no
     `organization_id` field and `_restaurant_from_row` never hydrates it, so
     `preferences.org_key` / `org_location_ids` always take the group +
-    owner-email path (a 4-touch-point fix); `shift_requests` and
-    `labor_replacements` still check each candidate without
-    `prepare_replacements`; `task_sheets._MANAGER_WORDS` and
+    owner-email path (a 4-touch-point fix); `task_sheets._MANAGER_WORDS` and
     `dsr/block_labor._MANAGER_RE` read manager titles apart from the floor
-    rule; `schedule_rules` has two 55-hour constants (`SALARIED_HOURS_CAP`,
-    `SALARIED_CAP_DEFAULT`) — each a candidate for future cleanup after
-    additional verification.
+    rule — each a candidate for future cleanup after additional
+    verification. (Fixed since: the candidate loops in `shift_requests` and
+    `labor_replacements` share one `prepare_replacements` per week, and the
+    two 55-hour constants are one.)
   - **Still building:** the Schedule Studio, generate, review, publish and
     Shift Quality screens (web and iOS) for the round.
 - **Apollo.io upgrade.** No longer held for Gia Mia, who is not becoming a
