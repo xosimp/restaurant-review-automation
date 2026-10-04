@@ -3352,6 +3352,7 @@ def mobile_schedule_status(job_id, current_user):
         result["status"] = job["status"]
         if job["status"] == "done":
             _capi.present_schedule_result(current_user["restaurant_id"], result, current_user.get("id"))
+            _capi.attach_labor_view(current_user["restaurant_id"], result)
         return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, status="error", error=_safe_err(e)), 500
@@ -3411,8 +3412,31 @@ def mobile_schedule_history_detail(history_id, current_user):
     # overtime the way a fresh one does (Schedule Studio, 9/26/26).
     economics, projected_cost = _schedule_economics(current_user["restaurant_id"], history_id, preview_rows,
                                                     detail.get("week_start"))
+    # The week's labor % on one stated basis (schedule re-audit 10/4/26
+    # SQ-4): all-in for the owner, hourly for anyone else, with the recent %
+    # and any savings on the same basis.
+    labor_view = None
+    try:
+        import schedule_economics as _econ_lv
+        labor_view = _econ_lv.labor_view(current_user["restaurant_id"], projected_cost,
+                                         (economics or {}).get("projected_revenue"),
+                                         labor_target=detail.get("labor_target"),
+                                         labor_budget_dollars=(economics or {}).get("labor_budget_dollars"),
+                                         week_dates=_week_dates_of(detail.get("week_start")))
+    except Exception as e:
+        print(f"[schedule history] labor view failed for {history_id}: {e!r}")
     return jsonify(ok=True, **detail, preview_rows=preview_rows, economics=economics,
-                   projected_cost=projected_cost)
+                   projected_cost=projected_cost, labor_view=labor_view)
+
+
+def _week_dates_of(week_start) -> list:
+    """The seven ISO dates from `week_start`, [] when it is not a date."""
+    from datetime import date as _d, timedelta as _td
+    try:
+        start = _d.fromisoformat(str(week_start)[:10])
+    except (TypeError, ValueError):
+        return []
+    return [(start + _td(days=i)).isoformat() for i in range(7)]
 
 
 def _schedule_economics(rid, history_id, rows, week_start):
@@ -3436,19 +3460,30 @@ def _schedule_economics(rid, history_id, rows, week_start):
     try:
         import schedule_economics as _econ
         import schedule_rules as _rules
-        from labor import OVERTIME_THRESHOLD_HOURS
-        from models import get_role_rates, get_restaurant
-        rates = get_role_rates(rid) or {}
+        from models import get_restaurant
         r = get_restaurant(rid)
-        from labor import person_rate_book
-        _ppl, _typ = person_rate_book(rid)
-        cons = _rules.Constraints(restaurant_id=rid, week_dates=[], week_days=[],
-                                  week_start_day=int(getattr(r, "week_start_day", 0) or 0))
-        cost = _econ.priced_cost(rows, rates, rates.get("_default") or getattr(r, "hourly_rate", None) or 15.0,
-                                 ceiling=OVERTIME_THRESHOLD_HOURS, bucket=cons.bucket,
-                                 daily_ot_hours=(_rules.compliance(r) or {}).get("daily_ot_hours"),
-                                 salaried=[x["name"] for x in __import__("models").salaried_staff(r)],
-                                 person_rates=_ppl, role_typical=_typ)
+        # The week's own people facts — who is salaried, the payroll week,
+        # the hours already published in it — so the reopened week is priced
+        # exactly as the generation priced it (schedule re-audit 10/4/26
+        # SQ-6, schedule_economics.week_pricing). An empty Constraints read
+        # no published hours and so missed overtime they push a person into.
+        dates = _week_dates_of(week_start)
+        try:
+            from datetime import date as _d
+            days = [_d.fromisoformat(x).strftime("%A") for x in dates]
+            cons = _rules.build_constraints(rid, dates, days, restaurant=r)
+        except Exception as e:
+            print(f"[schedule history] constraints unavailable for {history_id}: {e!r}")
+            cons = _rules.Constraints(restaurant_id=rid, week_dates=[], week_days=[],
+                                      week_start_day=int(getattr(r, "week_start_day", 0) or 0))
+            cons.compliance = _rules.compliance(r) or {}
+            cons.salaried = {" ".join(str(x["name"]).lower().split())
+                             for x in __import__("models").salaried_staff(r)}
+        blended = (econ or {}).get("blended_rate") or None
+        pricing = _econ.week_pricing(rid, cons, blended_rate=blended)
+        if not pricing.get("blended_rate"):
+            pricing["blended_rate"] = getattr(r, "hourly_rate", None) or 15.0
+        cost = _econ.price_week(rows, pricing)
     except Exception as e:
         print(f"[schedule history] pricing failed for {history_id}: {e}")
     return econ, cost

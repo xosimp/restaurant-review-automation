@@ -86,7 +86,11 @@ def test_the_summary_states_its_six_figures_and_labels_savings_a_projection():
     f = _fn("ssRenderSummary")
     for k in ("'Shift quality'", "'Labor'", "'Coverage'", "'Overtime'", "'Warnings'", "'Estimated savings'"):
         assert k in f
-    assert "Projection · not yet earned" in f and "rec.pct > lp" in f
+    # The savings are the server's, on one basis with the draft's labor %
+    # (schedule re-audit 10/4/26 SQ-4): the page's own "rec.pct > lp" put an
+    # all-in recent % against the hourly-only draft, and the "savings" were
+    # the salaries.
+    assert "Projection · not yet earned" in f and "lv.savings" in f and "rec.pct > lp" not in f
     for b in ("View the schedule", "Optimize again", ">Publish<"):
         assert b in f
 

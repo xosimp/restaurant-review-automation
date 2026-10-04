@@ -3421,6 +3421,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     # and the hours so far — from the model's own output.
     role_people, tpl_by_date, tpl_by_part = {}, {}, {}
     hours_by_employee, working_on_date, by_date_hours = {}, {}, {}
+    written_dates = set()
     for r in preview_rows:
         date, emp, role = r.get("date", ""), (r.get("employee") or "").strip(), (r.get("role") or "").strip()
         if not (date and emp and role):
@@ -3430,7 +3431,13 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         working_on_date.setdefault(date, set()).add(emp)
         hrs = _row_hours_value(r)
         hours_by_employee[emp] = hours_by_employee.get(emp, 0.0) + hrs
-        by_date_hours[date] = by_date_hours.get(date, 0.0) + hrs
+        # A day's hours against its HOURLY target are hourly hours: a
+        # salaried manager's day read as the least under (schedule re-audit
+        # 10/4/26 SQ-7's sibling in the top-up).
+        if not c.is_salaried(emp):
+            by_date_hours[date] = by_date_hours.get(date, 0.0) + hrs
+        if hrs > 0:
+            written_dates.add(date)
         # Keyed by daypart: a Saturday with seven morning servers and no
         # dinner ones used to read as "seven servers", and the template it
         # cloned was the first morning row. (role, daypart) is the unit.
@@ -3451,7 +3458,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                 role_people.setdefault(_role_key(_hr, c), set()).add(_display[_low])
     # A day the model wrote nothing for is not thin — it is missing, and
     # that is the generation's failure to report, never this pass's to fill.
-    dates_with_rows = {d for d, h in by_date_hours.items() if h > 0}
+    dates_with_rows = written_dates
     closed = set(getattr(c, "closed_dates", None) or ())
     skip = _will_not_stand(preview_rows, c)
     _rel = getattr(c, "reliability", None) or {}
@@ -3553,10 +3560,12 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
 
         preview_rows.append(new_row)
         hours_added += hrs
-        remaining_gap -= hrs
         added_dates[target_date] = added_dates.get(target_date, 0) + 1
         added_by_date[target_date] = added_by_date.get(target_date, 0.0) + hrs
-        by_date_hours[target_date] = by_date_hours.get(target_date, 0.0) + hrs
+        if not c.is_salaried(employee):
+            # The hourly budget and the hourly daily target (SQ-7 sibling).
+            remaining_gap -= hrs
+            by_date_hours[target_date] = by_date_hours.get(target_date, 0.0) + hrs
         working_on_date.setdefault(target_date, set()).add(employee)
         hours_by_employee[employee] = hours_by_employee.get(employee, 0.0) + hrs
 
@@ -7347,21 +7356,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
 
             def _price_week(_rows):
                 try:
-                    from models import get_role_rates as _grr
-                    _rates = _grr(restaurant_id)
-                    import labor as _lab_book
-                    _ppl, _typ = _lab_book.person_rate_book(restaurant_id)
-                    _priced = _econ.priced_cost(_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
-                                                person_rates=_ppl, role_typical=_typ,
-                                                # Overtime is priced from the 40h line
-                                                # (labor.OVERTIME_THRESHOLD_HOURS), never the
-                                                # owner's hours ceiling: a 35h ceiling priced
-                                                # $50 of "premium" on a week that owes none (NS3 H5).
-                                                ceiling=_labor_ot_line(),
-                                                salaried=getattr(_constraints, "salaried", None),
-                                                base_hours={n: dict(v) for n, v in (_constraints.base_hours or {}).items()},
-                                                bucket=_constraints.bucket,
-                                                daily_ot_hours=_constraints.compliance.get("daily_ot_hours"))
+                    # The one set of pricing inputs (schedule_economics.
+                    # week_pricing) the reopened week and the live edit line
+                    # use too, so the three agree (schedule re-audit 10/4/26
+                    # SQ-6). Overtime is priced from the 40h line
+                    # (labor.OVERTIME_THRESHOLD_HOURS), never the owner's
+                    # hours ceiling: a 35h ceiling priced $50 of "premium"
+                    # on a week that owes none (NS3 H5).
+                    _pricing = _econ.week_pricing(restaurant_id, _constraints,
+                                                  blended_rate=result.get("blended_rate"))
+                    _priced = _econ.price_week(_rows, _pricing)
                     result["projected_cost"] = _priced
                     _lbd = float(result.get("labor_budget_dollars") or 0)
                     result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None
@@ -7939,6 +7943,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     economics={"projected_revenue": result.get("projected_revenue"),
                                "projected_revenue_source": result.get("projected_revenue_source"),
                                "labor_budget_dollars": result.get("labor_budget_dollars"),
+                               # The rate the week was priced at, for the
+                               # reopened week and the edit line (SQ-6).
+                               "blended_rate": result.get("blended_rate"),
                                "daily_target_hours": result.get("daily_target_hours") or {},
                                "demand_data_through": result.get("demand_data_through")},
                     stage_seconds=_timer.as_dict(),
