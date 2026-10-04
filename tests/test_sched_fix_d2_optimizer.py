@@ -476,3 +476,36 @@ def test_a_pair_from_an_owner_only_rule_is_kept_apart_and_never_named():
     assert not {"Ann", "Bob"} <= tue
     text = " ".join([ch["reason"] for ch in res["changes"]] + [r.get("notes") or "" for r in res["rows"]])
     assert res["changes"] and "apart" not in text and "rule" not in text
+
+
+def test_a_refused_retime_never_breaks_the_moves_that_follow_it():
+    """A coverage-by-the-hour gap tries a stretch first and then adds: a
+    stretch a rule refuses is None among the moves, and counting the adds
+    read it as a move — the whole search failed inside the repair loop."""
+    names = ["Ann", "Kim", "Lee", "Max"]
+    c = cons(names, time_windows={"ann": {"Tuesday": (sr.parse_minutes("4:00pm"), sr.parse_minutes("9:00pm"))}})
+    rows = [row(TUE, "Ann", "4:00pm", "9:00pm"), row(MON, "Kim", "4:00pm", "9:00pm"),
+            row(MON, "Lee", "4:00pm", "9:00pm"), row(TUE, "Max", "5:00pm", "11:00pm", role="Host")]
+    st = so._State(rows, _sig(names), {}, constraints=c)
+    facts = {"gaps": {"Server": {"worst_minute": sr.parse_minutes("9:30pm"), "worst_at": "9:30pm"}}}
+    shift = {"date": TUE, "daypart": "night", "day": "Tuesday", "people": ["Ann"], "profile": {"demand": "busy"}}
+    moves = so._moves_for((5.0, shift, {"key": "coverage_curve", "facts": facts}), st)
+    assert moves and all(m is not None for m in moves)
+    assert any(m[0][0] == "add" for m in moves) and not any(m[0][0] == "retime" for m in moves)
+
+
+def test_the_repair_loop_keeps_what_the_searches_hand_it(db_path, monkeypatch):
+    """B1's loop refuses a whole solver or optimizer result that makes any
+    tier above quality worse; each search now holds every move (and every
+    candidate) to that same check, so on a realistic week the loop keeps
+    what they hand it and refuses nothing of theirs."""
+    import schedule_engine as se
+    rows, c, sig = big_week()
+    result = {"rows": rows, "week_dates": list(WEEK), "roster": sig["roster"], "roster_roles": sig["roster_roles"],
+              "hours_budget": 900, "daily_target_hours": sig["daily_target_hours"]}
+    for key in ("floors", "stations", "top_up"):           # the database-reading stages are not this test's
+        monkeypatch.setitem(se._STAGE_FNS, key, lambda rs, x: {"rows": rs})
+    x = se.RepairContext(1, result, c, signals=sig, weights={}, max_seconds=40)
+    out = se.repair_week(rows, x)
+    assert not [r for r in out["refused"] if r["stage"] in ("solver", "optimizer")], out["refused"]
+    assert not [f for f in out["failures"] if f["stage"] in ("solver", "optimizer")], out["failures"]

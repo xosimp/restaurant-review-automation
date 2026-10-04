@@ -708,7 +708,8 @@ def _moves_for(problem, state: _State) -> list:
                 moves.append((("add", date, name, role, start),
                               f"Added {name} as {role} on {where} ({start}–{end}) — {why}.",
                               lambda rows, row=row: rows + [dict(row)]))
-                if len([m for m in moves if m[0][0] == "add"]) >= 3:
+                # (a retime or a trade a rule refused is None until the end)
+                if len([m for m in moves if m is not None and m[0][0] == "add"]) >= 3:
                     return
 
     def replace_in(idx, predicate, why, limit=4, rank=None):
