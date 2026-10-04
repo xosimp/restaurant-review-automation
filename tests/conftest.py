@@ -189,6 +189,22 @@ def _reset_ask_context_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_studio_cache():
+    """schedule_engine keeps a Studio re-score's inputs per restaurant and
+    week for two minutes (studio_prepared, schedule audit 10/3/26 P-25), and
+    every test's fresh database starts its ids at 1 — so one test's inputs
+    would judge the next one's edit. Same shape as the resets above."""
+    import sys as _sys
+    se = _sys.modules.get("schedule_engine")
+    if se is not None:
+        se.studio_invalidate()
+    yield
+    se = _sys.modules.get("schedule_engine")
+    if se is not None:
+        se.studio_invalidate()
+
+
+@pytest.fixture(autouse=True)
 def _reset_admin_rate_limits():
     """security's per-session /admin ceiling is a process-global window, and
     tests that fake an admin without a session share one key ("user:<id>"),

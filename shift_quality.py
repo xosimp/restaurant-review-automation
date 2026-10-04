@@ -407,6 +407,10 @@ class ShiftContext:
     # week}, "published": {lower: {week: hours}}, "rates", "default_rate",
     # "rules"} — the overtime forecast's own inputs; {} when not supplied.
     overtime: dict = field(default_factory=dict)
+    # The scheduling memory's active facts (schedule_memory.enforced_signals:
+    # [{kind, key, person, day, daypart, role, value, confidence, enforcement,
+    # source}]) — what week_learned holds the week to (L-3).
+    learned: list = field(default_factory=list)
     # ── what the rule sweep found, and what the restaurant's own record says ──
     # The hard breaches the rule sweep pinned to this shift ([{kind,
     # label}]); any one holds the shift at HARD_BREACH_CAP (SQ-14).
@@ -599,7 +603,7 @@ DIMENSION_LABELS = {
     "pairings": "Pairings", "fatigue": "Fatigue", "fairness": "Fairness",
     "preferences": "Staff preferences", "stability": "Schedule stability",
     "cross_training": "Cross-training", "min_hours": "Minimum hours", "overtime": "Overtime",
-    "stations": "Kitchen stations",
+    "stations": "Kitchen stations", "learned": "Learned patterns",
 }
 
 
@@ -636,6 +640,11 @@ DEFAULT_WEIGHTS = {
     # Every kitchen station a daypart needs held by a cook trained on it
     # (SQ-26). Withdraws for a restaurant that has set no stations.
     "stations": 10,
+    # What the restaurant's scheduling has learned and the week breaks
+    # (week_learned, schedule audit 10/3/26 L-3): judged once for the week;
+    # withdraws until the scheduling memory has an active fact. The
+    # managers' own repeated edits — "an owner's edits never vanish".
+    "learned": 10,
 }
 
 
@@ -1610,7 +1619,7 @@ def _past_load(ctx: ShiftContext, name: str) -> tuple:
     cutoff = ""
     if ctx.week_start:
         try:
-            cutoff = (datetime.strptime(ctx.week_start, "%Y-%m-%d")
+            cutoff = (_iso_datetime(ctx.week_start)
                       - timedelta(weeks=SUSTAINED_WINDOW - 1)).strftime("%Y-%m-%d")
         except ValueError:
             cutoff = ""
@@ -1811,7 +1820,7 @@ def _longest_run(dates: list) -> int:
     previous = None
     for raw in dates:
         try:
-            current = datetime.strptime(raw, "%Y-%m-%d").date()
+            current = _iso_datetime(raw).date()
         except (ValueError, TypeError):
             continue
         run = run + 1 if previous and (current - previous) == timedelta(days=1) else 1
@@ -2332,17 +2341,27 @@ SLOT_MINUTES = 30
 DAYPART_CUTOVER = 15 * 60
 
 
+@lru_cache(maxsize=4096)
+def _clock(raw: str):
+    """(hour, minute) of a normalised clock string ("4:30pm", "16:30"), or
+    None. Remembered: the scorer reads the same few dozen times a thousand
+    times a week score, and strptime was most of a score's cost (schedule
+    audit 10/3/26 P-38)."""
+    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
+        try:
+            t = datetime.strptime(raw, fmt)
+            return t.hour, t.minute
+        except ValueError:
+            continue
+    return None
+
+
 def _slot_minutes(value: str):
     raw = (value or "").strip().lower().replace(" ", "")
     if not raw:
         return None
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            return t.hour * 60 + t.minute
-        except ValueError:
-            continue
-    return None
+    hm = _clock(raw)
+    return hm[0] * 60 + hm[1] if hm else None
 
 
 def _row_span(row: dict):
@@ -3174,6 +3193,122 @@ def week_overtime(contexts: list) -> DimensionResult | None:
     return res
 
 
+# ── What the restaurant's scheduling has learned (L-3, D-35) ───────────────
+
+# Points of the measure one broken memory costs at full confidence, from a
+# week that breaks none: a slot memory at 0.8 is about 20 of them — some 1.7
+# points of a fourteen-shift week at the default weight, several times what a
+# leader on one weekday dinner earns it, so a move or a fill that puts "Bob
+# back on Tuesday dinner" for the generic reasons no longer wins; only a real
+# fix (a shift short, a station nobody can work) still outweighs what the
+# managers keep doing. Each further unit of broken weight costs the same
+# share of what is left (geometric, never a flat floor): a role's start time
+# missed on six rows still shows each row put right.
+LEARNED_MISS_POINTS = 25
+_MEALS = {"morning": "lunch", "night": "dinner"}
+
+
+def _learned_line(m: dict, miss: dict) -> str:
+    """One owner-facing sentence for a memory the week breaks."""
+    kind = m.get("kind")
+    v = m.get("value") if isinstance(m.get("value"), dict) else {}
+    who = (m.get("person") or "").strip()
+    day, meal = m.get("day") or "", _MEALS.get(m.get("daypart"), m.get("daypart") or "")
+    slot = " ".join(x for x in (day, meal) if x)
+    role = role_words(v.get("role") or m.get("role") or "") if (v.get("role") or m.get("role")) else "staff"
+    if kind == "moved_off":
+        return f"{who} is on {slot}; your managers keep taking them off it."
+    if kind == "moved_on":
+        return f"{who} is not on {slot}; your managers keep putting them on it."
+    if kind in ("retime_start", "retime_end"):
+        edge = "start" if kind == "retime_start" else "end"
+        return f"{role.capitalize()} shifts on {slot} do not {edge} at {v.get('time')}, where your managers keep setting them."
+    if kind == "role_change":
+        return f"{who} is on {slot} in another role; your managers keep making them {v.get('role')}."
+    if kind == "leader_swap":
+        return f"None of {_names(list(v.get('names') or []))} is on {slot}; your managers keep putting one of them there."
+    if kind == "opener":
+        return f"{who} is on {day} but not opening {role}, which they usually do."
+    if kind == "closer":
+        return f"{who} is on {day} but not closing {role}, which they usually do."
+    if kind == "pair":
+        return f"{who} and {_names(list(v.get('with') or []))} are on different shifts; their shifts together run well."
+    if kind == "end_overrun":
+        return (f"{role.capitalize()} closes on {slot} end before {v.get('padded_end')}; they usually run about "
+                f"{v.get('minutes')} minutes past the scheduled end.")
+    return str(miss.get("text") or "")
+
+
+def learned_score(lost: float) -> int:
+    """The learned-patterns measure for `lost` units of broken memory weight
+    (schedule_memory.misses' weights): SCORE_MAX less LEARNED_MISS_POINTS of
+    what is left per unit."""
+    return int(round(SCORE_MAX * (1 - LEARNED_MISS_POINTS / 100.0) ** max(0.0, float(lost or 0))))
+
+
+def week_learned(contexts: list) -> DimensionResult | None:
+    """What this restaurant's scheduling has learned and the week breaks
+    (schedule audit 10/3/26 L-3, D-35): the active memories the passes are
+    held to (signals["learned"], schedule_memory.enforced_signals — somebody
+    the managers keep taking off a slot or putting on one, the role's usual
+    opener or closer, a team whose shifts together run well, somebody who
+    habitually runs past their shift, closes that run late), each broken one
+    costing LEARNED_MISS_POINTS of what is left at its weight (learned_score;
+    schedule_memory.misses — the meaning of every kind lives there, once).
+    Judged once for the week. The
+    patterns reached only the prompt, so a fill, the trim, the solver or the
+    optimizer put back the edit the manager kept making, and the score said
+    nothing. None without an active memory."""
+    if not contexts:
+        return None
+    ctx = contexts[0]
+    # A memory enforced only in the prompt stays there (enforced_signals
+    # hands over none; a caller's list may).
+    learned = [m for m in (ctx.learned or []) if isinstance(m, dict) and m.get("kind")
+               and str(m.get("enforcement") or "soft").lower() != "prompt"]
+    if not learned:
+        return None
+    rows_by_date = {}
+    for c in contexts:
+        if c.date not in rows_by_date:
+            rows_by_date[c.date] = [r for r in (c.day_rows or c.rows) if not c._is_flagged(r)]
+    rows = [r for d in sorted(rows_by_date) for r in rows_by_date[d] if (r.get("employee") or "").strip()]
+    ot = ctx.overtime or {}
+    bucket_of = ot.get("bucket_of") or {}
+    try:
+        line = float(ot.get("line") or 0) or None
+    except (TypeError, ValueError):
+        line = None
+    import schedule_memory as _smem          # pure: the one meaning of each memory
+    found = _smem.misses(rows, learned, families=ctx.role_families or None, line=line,
+                         bucket=(lambda d: bucket_of.get(d, "")) if bucket_of else None)
+    by_key = {m.get("key"): m for m in learned}
+    misses = []
+    for x in found:
+        m = by_key.get(x.get("key")) or {}
+        rs = [rows[i] for i in (x.get("indexes") or []) if 0 <= i < len(rows)]
+        misses.append({"key": x.get("key"), "kind": x.get("kind"), "weight": float(x.get("weight") or 0),
+                       "person": m.get("person"), "day": m.get("day"), "daypart": m.get("daypart"),
+                       "role": m.get("role"), "value": dict(m["value"]) if isinstance(m.get("value"), dict) else {},
+                       "rows": [{"employee": (r.get("employee") or "").strip(), "date": r.get("date") or "",
+                                 "shift_start": r.get("shift_start") or "", "shift_end": r.get("shift_end") or "",
+                                 "role": r.get("role") or "", "daypart": present_dayparts(r)[0]} for r in rs],
+                       "text": _learned_line(m, x) if x.get("kind") != "ot_risk" else str(x.get("text") or "")})
+    lost = sum(x["weight"] for x in misses)
+    score = learned_score(lost)
+    res = DimensionResult(key="learned", label=DIMENSION_LABELS["learned"], score=score,
+                          weight=DEFAULT_WEIGHTS["learned"],
+                          facts={"memories": len(learned), "broken": len(misses), "misses": misses,
+                                 "strained": sorted({x["person"] for x in misses if x.get("person")}),
+                                 "scope": "week"})
+    for x in sorted(misses, key=lambda x: -x["weight"])[:3]:
+        res.weaknesses.append(x["text"])
+    if not misses:
+        res.strengths.append(f"Keeps all {len(learned)} thing{'s' if len(learned) != 1 else ''} your managers "
+                             "keep doing by hand.")
+    return res
+
+
 # ── Kitchen stations ───────────────────────────────────────────────────────
 
 # Under this share of a daypart's required stations held by a trained cook,
@@ -3248,6 +3383,7 @@ DIMENSIONS = {
     "min_hours": dim_min_hours,
     "overtime": week_overtime,          # a payroll-week fact: judged only for the week
     "stations": dim_stations,
+    "learned": week_learned,            # the scheduling memory: judged only for the week
 }
 
 # Dimensions that are properties of the whole week, judged once per week in
@@ -3261,6 +3397,7 @@ WEEK_LEVEL_DIMENSIONS = {
     "min_hours": week_min_hours,
     "preferences": week_preferences,
     "overtime": week_overtime,
+    "learned": week_learned,
 }
 
 # What the owner sees as a bar: every shift dimension that counts toward the
@@ -3601,13 +3738,15 @@ def _headline(ctx: ShiftContext, score: int) -> str:
 # ── Scoring a whole schedule ───────────────────────────────────────────────
 
 def evaluate_schedule(contexts: list, weights: dict = None,
-                      signals: dict = None) -> dict:
+                      signals: dict = None, shifts: list = None) -> dict:
     """Roll every shift up into one number, with the reasons intact.
 
     Shifts are weighted by demand: a weak Saturday dinner is a worse week
-    than a weak Monday lunch, and a flat mean says the opposite.
-    """
-    shifts = [evaluate_shift(c, weights) for c in contexts]
+    than a weak Monday lunch, and a flat mean says the opposite. `shifts`,
+    each context's evaluate_shift already worked out (LocalScorer.evaluate),
+    in the contexts' order, are rolled up as they are."""
+    if shifts is None:
+        shifts = [evaluate_shift(c, weights) for c in contexts]
     scored = [s for s in shifts if s.get("scored")]
     if not scored:
         return {"checked": False, "score": None, "shifts": shifts,
@@ -4166,22 +4305,33 @@ def daypart_of(shift_start: str) -> str:
     raw = (shift_start or "").strip().lower().replace(" ", "")
     if not raw:
         return "unknown"
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            hour = datetime.strptime(raw, fmt).hour
-        except ValueError:
-            continue
-        # A start in the small hours is the night it belongs to — the row's
-        # date is its business date (time_utils.BUSINESS_DAY_START_HOUR;
-        # schedule audit 10/3/26 E-32), never the next morning; from 4am it
-        # is early prep for the morning (schedule_rules._night_offset).
-        return "night" if hour >= 15 or _small_hours_night(hour * 60) else "morning"
-    return "unknown"
+    hm = _clock(raw)
+    if hm is None:
+        return "unknown"
+    hour = hm[0]
+    # A start in the small hours is the night it belongs to — the row's
+    # date is its business date (time_utils.BUSINESS_DAY_START_HOUR;
+    # schedule audit 10/3/26 E-32), never the next morning; from 4am it
+    # is early prep for the morning (schedule_rules._night_offset).
+    return "night" if hour >= 15 or _small_hours_night(hour * 60) else "morning"
+
+
+@lru_cache(maxsize=1024)
+def _weekday_name(date_str: str) -> str:
+    return datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
+
+
+@lru_cache(maxsize=2048)
+def _iso_datetime(date_str: str) -> datetime:
+    """An ISO date as a datetime, remembered: the week measures read the
+    same seven dates thousands of times a pass (P-38). Raises as strptime
+    does."""
+    return datetime.strptime(date_str, "%Y-%m-%d")
 
 
 def _day_name(date_str: str, fallback: str = "") -> str:
     try:
-        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
+        return _weekday_name(date_str)
     except (ValueError, TypeError):
         return fallback or ""
 
@@ -4197,14 +4347,11 @@ def _end_minutes(value: str) -> int:
     raw = (value or "").strip().lower().replace(" ", "")
     if not raw:
         return -1
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            minutes = t.hour * 60 + t.minute
-            return minutes + 1440 if t.hour < 5 else minutes
-        except ValueError:
-            continue
-    return -1
+    hm = _clock(raw)
+    if hm is None:
+        return -1
+    minutes = hm[0] * 60 + hm[1]
+    return minutes + 1440 if hm[0] < 5 else minutes
 
 
 def _row_hours(row: dict) -> float:
@@ -4596,8 +4743,15 @@ def _breach_from_id(bid) -> dict:
     return {}
 
 
-def build_contexts(rows: list, profiles: list = None, **signals) -> list:
+def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: dict = None, **signals) -> list:
     """Bucket a finished schedule into the shifts the engine scores.
+
+    `only_dates` builds the contexts of those dates only — the week-level
+    facts every context shares (who works what across the week, the hard
+    breaches' placement) are still read from every row; `frame`, a dict,
+    is filled with those shared facts ({"week_assignments", "flagged",
+    "breaches_at", "week_start", "ratings"}) — LocalScorer's way of building
+    only the dates a move touched (schedule audit 10/3/26 P-38).
 
     One context per (date, daypart) — the whole shift across every role,
     not per role. Coverage and strength look at roles from the inside;
@@ -4786,8 +4940,13 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
     # wherever the draft carries them (schedule audit 10/3/26 P-19).
     req_by_date = signals.get("requirements_by_date") or {}
     req_reasons = signals.get("requirement_reasons") or {}
+    if frame is not None:
+        frame.update(week_assignments=week_assignments, flagged=signals.get("flagged") or set(),
+                     breaches_at=breaches_at, week_start=week_start, ratings=ratings)
     contexts = []
     for (date, part), shift_rows in sorted(buckets.items()):
+        if only_dates is not None and date not in only_dates:
+            continue
         day = _day_name(date, shift_rows[0].get("day", "") if shift_rows else "")
         profile = _profile(date, day, part)
         # The sales this weekday's daypart usually does, raised by a lift
@@ -4863,6 +5022,7 @@ def build_contexts(rows: list, profiles: list = None, **signals) -> list:
             busy_slots=busy_slots,
             week_start=week_start,
             overtime=signals.get("overtime") or {},
+            learned=list(signals.get("learned") or []),
             managers=managers,
             acting_managers=acting,
             role_families=families,
@@ -5027,8 +5187,17 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
     # and named once, in the confidence reasons; a rule only some of the
     # roster can meet is held to the people able, and named too (SQ-17).
     signals, aside, capped = _rules_for_roster(rows, signals)
-    unmeetable = sorted({_rule_label(r) for r in aside})
     contexts = build_contexts(rows, profiles=profiles, **signals)
+    people, conf_signals = _confidence_inputs(rows, profiles, signals, aside, capped)
+    result = evaluate_schedule(contexts, weights=weights, signals=conf_signals)
+    result["people"] = sorted(people)
+    return result
+
+
+def _confidence_inputs(rows: list, profiles, signals: dict, aside: list, capped: list) -> tuple:
+    """(people on the rows, the confidence signals) — what score_rows hands
+    evaluate_schedule beside the contexts."""
+    unmeetable = sorted({_rule_label(r) for r in aside})
     people = {(r.get("employee") or "").strip() for r in rows or []}
     people.discard("")
     scores = signals.get("scores") or {}
@@ -5055,9 +5224,7 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
         "unmeetable_rules": unmeetable,
         "capped_rules": capped,
     }
-    result = evaluate_schedule(contexts, weights=weights, signals=conf_signals)
-    result["people"] = sorted(people)
-    return result
+    return people, conf_signals
 
 
 # ── Scoring a change without re-scoring the week ───────────────────────────
@@ -5065,16 +5232,20 @@ def score_rows(rows: list, profiles: list = None, weights: dict = None,
 # The fill-in and trim passes choose between a handful of legal options —
 # which of four people takes a floor shift, which of three rows gives way at
 # the section cap — and each choice should cost the week the least score.
-# Re-scoring the whole week per option is ~0.2s on a 250-row week, which is
-# why only the budget trim used to ask. A move touches one date; every
-# shift-level dimension reads that date's rows (coverage, the half-hour
-# sweep, the day's hours, who closes), so the shifts on every OTHER date
-# score exactly as they did and are reused. The week-level measures
-# (fatigue) are recomputed every time — they are cheap and they are the
-# part a move on one date can change anywhere. The one approximation:
-# fairness on an untouched date can drift slightly because a move changes
-# a role's overall rate; the passes only compare options against each
-# other, and the finished week is always scored in full.
+# A move touches one date; every shift-level dimension reads that date's
+# rows (coverage, the half-hour sweep, the day's hours, who closes), so the
+# shifts on every OTHER date score exactly as they did and are reused — and
+# only the touched dates' contexts are BUILT: it used to build every
+# context of the week on every call, so the "local" scorer re-did most of a
+# whole-week score each time (schedule audit 10/3/26 P-38). A date is
+# re-scored when its rows, the rows on it that will not stand, or the hard
+# breaches placed on it differ from a date already scored. The week-level
+# measures (fatigue, preferences, overtime, minimum hours) are recomputed
+# every time — they are the part a move on one date can change anywhere.
+# The one approximation: fairness on an untouched date can drift slightly
+# because a move changes a role's overall rate; the passes only compare
+# options against each other, and the finished week is always scored in
+# full.
 
 LOCAL_CACHE_LIMIT = 4000
 
@@ -5087,18 +5258,71 @@ class LocalScorer:
         best = max(options, key=lambda rows_after: scorer.score(rows_after))
 
     Pure, like the rest of this module. Build one per pass: the signals are
-    taken as they are when it is built."""
+    taken as they are when it is built; a pass that sweeps its options can
+    hand each one's own unstanding rows and hard breaches to score().
 
-    def __init__(self, rows: list, profiles: list = None, weights: dict = None, **signals):
+    `exact` (the Studio's re-score as a manager edits, schedule audit
+    10/3/26 P-25): a date is reused only when everything its shifts read
+    from the rest of the week is unchanged too — the week's hours of the
+    people on it (each person's explanation), the fairness groups of the
+    people on it, the rotation — so evaluate(rows) is score_rows(rows)
+    exactly, re-scoring only the dates an edit could have moved."""
+
+    def __init__(self, rows: list, profiles: list = None, weights: dict = None, exact: bool = False,
+                 cache_limit: int = LOCAL_CACHE_LIMIT, **signals):
+        self.cache_limit = int(cache_limit or LOCAL_CACHE_LIMIT)
+        self._raw_signals = dict(signals)
         signals, _aside, _capped = _rules_for_roster(rows, signals)
         import time as _time
-        self.profiles = profiles
+        self._profiles_arg = profiles
+        self.profiles = profile_set(profiles, signals.get("demand_by_day"))
         self.weights = weights
+        self.exact = bool(exact)
         self.signals = signals
         self._cache = {}
         self.evaluations = 0
+        self.dates_built = 0
         self.started = _time.monotonic()      # a pass may stop consulting it past its own time budget
         self.baseline = self.score(rows)
+
+    def _cross_keys(self, frame: dict, rows_by_date: dict, sig: dict) -> dict:
+        """{date: what its shifts read from the rest of the week} — the
+        exact mode's part of each date's cache key."""
+        wa = frame.get("week_assignments") or {}
+        families = sig.get("role_families") or {}
+        summary, group_of = {}, {}
+        for name, entries in wa.items():
+            mine = [e for e in entries if e.get("date") and not e.get("prior")]
+            hours = round(sum(float(e.get("hours") or 0) for e in mine), 3)
+            summary[name] = hours
+            if len(mine) >= 2:
+                fam = _primary_role(mine, families)
+                group_of[name] = fam
+        groups = {}
+        for name, fam in group_of.items():
+            mine = [e for e in wa.get(name) or [] if e.get("date") and not e.get("prior")]
+            groups.setdefault(fam, []).append((name, len(mine), sum(1 for e in mine if e.get("closing")),
+                                               sum(1 for e in mine if e.get("weekend")),
+                                               sum(1 for e in mine if _is_busy(e)),
+                                               any(e.get("daypart") == "night" for e in mine)))
+        groups = {f: tuple(sorted(v)) for f, v in groups.items()}
+        rotation = ()
+        plan = ((sig.get("rotation") or {}).get("roles")) or {}
+        if plan:
+            rot = []
+            for role, rp in sorted(plan.items()):
+                names = set(rp.get("people") or []) | set(rp.get("next_close") or []) | set(rp.get("weekend_due") or [])
+                for n in sorted(names):
+                    es = [e for e in wa.get(n) or [] if e.get("date") and not e.get("prior")]
+                    rot.append((role, n, bool(es), any(e.get("weekend") for e in es), any(e.get("closing") for e in es)))
+            rotation = tuple(rot)
+        out = {}
+        for date, rs in rows_by_date.items():
+            people = sorted({(r.get("employee") or "").strip() for r in rs})
+            out[date] = (tuple((n, summary.get(n, 0.0)) for n in people),
+                         tuple(sorted((f, groups.get(f, ())) for f in {group_of[n] for n in people if n in group_of})),
+                         rotation)
+        return out
 
     @staticmethod
     def _signature(rows: list) -> tuple:
@@ -5106,30 +5330,96 @@ class LocalScorer:
                              r.get("shift_start") or "", r.get("shift_end") or "",
                              str(r.get("scheduled_hours") or "")) for r in rows))
 
-    def score(self, rows: list) -> float:
-        contexts = build_contexts(rows, profiles=self.profiles, **self.signals)
-        by_date = {}
-        for c in contexts:
-            by_date.setdefault(c.date, []).append(c)
-        rows_by_date = {}
-        for r in rows or []:
-            if (r.get("employee") or "").strip() and (r.get("date") or "").strip():
-                rows_by_date.setdefault(r["date"].strip(), []).append(r)
-        shifts = []
-        for date, ctxs in by_date.items():
-            key = (date, self._signature(rows_by_date.get(date, [])))
-            hit = self._cache.get(key)
-            if hit is None:
-                hit = [evaluate_shift(c, self.weights) for c in ctxs]
-                self.evaluations += 1
-                if len(self._cache) >= LOCAL_CACHE_LIMIT:
-                    self._cache.clear()
-                self._cache[key] = hit
-            shifts.extend(hit)
+    def score(self, rows: list, flagged=None, hard_breaches=None) -> float:
+        """The week score before rounding. `flagged` and `hard_breaches` are
+        these rows' own (the sweep of THIS option, P-28) when given, else the
+        signals'."""
+        contexts, shifts, _sig = self._shifts(rows, flagged, hard_breaches)
         scored = [x for x in shifts if x.get("scored")]
         if not scored:
             return 0.0
         return week_score_raw(scored, evaluate_week_dimensions(contexts, self.weights))
+
+    def evaluate(self, rows: list, flagged=None, hard_breaches=None) -> dict:
+        """score_rows(rows) as a whole evaluation — exactly, when built with
+        `exact` — re-scoring only the dates the rows moved."""
+        sig = self._raw_signals
+        if flagged is not None or hard_breaches is not None:
+            sig = dict(sig)
+            if flagged is not None:
+                sig["flagged"] = flagged
+            if hard_breaches is not None:
+                sig["hard_breaches"] = hard_breaches
+        sig, aside, capped = _rules_for_roster(rows, sig)
+        contexts, shifts, _s = self._shifts(rows, flagged, hard_breaches, signals=sig)
+        people, conf = _confidence_inputs(rows, self._profiles_arg, sig, aside, capped)
+        # The roll-up reassigns the lines it hoists out of each shift (and
+        # drops its line_keys): a copy of each, so the kept evaluations stay
+        # as they were scored.
+        result = evaluate_schedule(contexts, weights=self.weights, signals=conf,
+                                   shifts=[dict(x) for x in shifts])
+        result["people"] = sorted(people)
+        return result
+
+    def _shifts(self, rows: list, flagged=None, hard_breaches=None, signals: dict = None) -> tuple:
+        """(contexts, shift evaluations, signals) of `rows`, building and
+        evaluating only the dates not already kept."""
+        sig = self.signals if signals is None else signals
+        if signals is None and (flagged is not None or hard_breaches is not None):
+            sig = dict(sig)
+            if flagged is not None:
+                sig["flagged"] = flagged
+            if hard_breaches is not None:
+                sig["hard_breaches"] = hard_breaches
+        rows_by_date = {}
+        for r in rows or []:
+            if (r.get("employee") or "").strip() and (r.get("date") or "").strip():
+                rows_by_date.setdefault(r["date"].strip(), []).append(r)
+        # The week-level facts every context shares, with no context built.
+        frame = {}
+        build_contexts(rows, profiles=self.profiles, only_dates=(), frame=frame, **sig)
+        flags = {}
+        for f in frame.get("flagged") or ():
+            if isinstance(f, (tuple, list)) and len(f) >= 2:
+                flags.setdefault(f[1], []).append(tuple(f))
+        placed = {}
+        for (d, part), items in (frame.get("breaches_at") or {}).items():
+            placed.setdefault(d, []).append((part, tuple((b.get("kind"), b.get("label")) for b in items)))
+        ratings = tuple(sorted((k, tuple(v)) for k, v in (frame.get("ratings") or {}).items()))
+        cross = self._cross_keys(frame, rows_by_date, sig) if self.exact else {}
+        rules = tuple(sorted(repr(sorted((k, repr(v)) for k, v in r.items())) for r in sig.get("leader_rules") or []
+                             if isinstance(r, dict)))
+        keys, misses = {}, set()
+        for date in rows_by_date:
+            key = (date, self._signature(rows_by_date[date]), tuple(sorted(flags.get(date, ()))),
+                   tuple(sorted(placed.get(date, ()))), frame.get("week_start"), ratings, rules, cross.get(date))
+            keys[date] = key
+            if key not in self._cache:
+                misses.add(date)
+        built = {}
+        if misses:
+            for c in build_contexts(rows, profiles=self.profiles, only_dates=misses, **sig):
+                built.setdefault(c.date, []).append(c)
+            self.dates_built += len(misses)
+        contexts, shifts = [], []
+        for date in sorted(rows_by_date):
+            key = keys[date]
+            hit = self._cache.get(key)
+            if hit is None:
+                ctxs = built.get(date, [])
+                hit = (ctxs, [evaluate_shift(c, self.weights) for c in ctxs])
+                self.evaluations += 1
+                if len(self._cache) >= self.cache_limit:
+                    self._cache.clear()
+                self._cache[key] = hit
+            for c in hit[0]:
+                # The week's own facts, not the ones it was cached with.
+                c.week_assignments = frame.get("week_assignments") or {}
+                c.flagged = frame.get("flagged") or set()
+                c.week_start = frame.get("week_start") or ""
+            contexts.extend(hit[0])
+            shifts.extend(hit[1])
+        return contexts, shifts, sig
 
     def cost(self, rows: list) -> float:
         """Points the week gives up against the scorer's baseline (negative
@@ -5207,7 +5497,7 @@ def _span(row):
     (schedule_rules.shift_span, E-32), so a swap's rest and overlap checks
     read a 12:30am porter the way the rule sweep does."""
     try:
-        base = datetime.strptime(row.get("date", ""), "%Y-%m-%d")
+        base = _iso_datetime(row.get("date", ""))
     except (ValueError, TypeError):
         return None, None
     s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
@@ -5385,11 +5675,11 @@ class _SwapIndex:
         if not self.person_fits(name_b, a, ignore_index=j) or not self.person_fits(name_a, b, ignore_index=i):
             return False
 
-        if scores is not None:
-            rated_a = scores.get(name_a) is not None
-            rated_b = scores.get(name_b) is not None
-            if rated_a != rated_b:
-                return False
+        # Rated and unrated people may trade (schedule audit 10/3/26 SQ-19):
+        # the guard refused it while the score counted an unrated person as
+        # nothing, so any such trade "improved" it; strength and demand match
+        # now judge the rated people and treat the unrated as unknown, so the
+        # score decides. `scores` is kept for callers that still pass it.
 
         # The cap binds only the side whose hours go UP. Somebody already
         # over it (a week written at 47.5h against 40) can still trade a
@@ -5428,26 +5718,70 @@ def _swap_is_legal(rows: list, i: int, j: int, availability: dict,
                    scores: dict = None, constraints: dict = None, rules: dict = None) -> bool:
     """Can these two rows trade employees without breaking anything?
 
-    Six ways a swap goes wrong: an unavailable day, a staff constraint, a
+    Five ways a swap goes wrong: an unavailable day, a staff constraint, a
     person already working that shift, a week pushed over forty hours, a
-    double booking, and — the subtle one — trading a rated employee against
-    an unrated one, which always "improves" the score because an unrated
-    person counts as nothing and would have the engine advising an owner
-    not to schedule the people they have not got round to rating.
+    double booking. Trading a rated employee against an unrated one was a
+    sixth while an unrated person counted as nothing toward strength; the
+    score now treats them as unknown and decides (schedule audit 10/3/26
+    SQ-19). The day's rules (a manager, a closer) are the whole sweep's:
+    compare_candidates asks it when given the week's Constraints.
     """
     return _SwapIndex(rows, availability, constraints, rules).legal(i, j, scores)
 
 
+def _people_by_family(rows: list, roster: list, signals: dict, families: dict = None) -> dict:
+    """{family: names} who may take a shift of the family: anybody working
+    it this week, the roster by role, held roles and the roles their
+    history shows (cross_trained) — "Server AM" and "Server PM" are one
+    family (D-13). Without a roster, only the people working the family."""
+    out = {}
+    roster_low = {n.strip().lower() for n in roster}
+    for r in rows:
+        n = (r.get("employee") or "").strip()
+        if n and (not roster or n.lower() in roster_low):
+            out.setdefault(role_family(r.get("role"), families), set()).add(n)
+    roles = signals.get("roster_roles") or {}
+    cross = signals.get("cross_trained") or {}
+    held = {str(k).strip().lower(): v for k, v in (signals.get("held_roles") or {}).items()}
+    for n in roster:
+        for role in [roles.get(n)] + list(cross.get(n) or []) + list(held.get(n.strip().lower()) or ()):
+            if str(role or "").strip():
+                out.setdefault(role_family(role, families), set()).add(n)
+    return out
+
+
 def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
-                       max_evaluations: int = MAX_CANDIDATE_EVALUATIONS,
-                       **signals) -> dict:
-    """Hill-climb same-role swaps and report what the alternatives cost.
+                       max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, rule_constraints=None,
+                       max_seconds: float = None, **signals) -> dict:
+    """Hill-climb same-role swaps and replacements, and report what the
+    alternatives cost.
 
     Returns the winning rows, the baseline and final scores, and one line
     per accepted swap saying which dimensions moved. A run that finds
     nothing is a real result and says so — but only ever about the
     candidates it actually tried, never about the whole space.
-    """
+
+    With `rule_constraints` (schedule_rules.Constraints) every candidate is
+    held to every rule the week is: the person-level rules for whoever
+    gains a shift (Constraints.can_add, the overtime line for the side whose
+    hours go up, fillable), then the whole week swept and compared by
+    breach identity (schedule_rules.regressions to the budget tier — days
+    in a row, the manager every minute, the closer, overtime, minimum
+    hours). The swap index alone knew none of the day's rules, so the panel
+    could offer an arrangement that broke one (schedule audit 10/3/26 P-33).
+    A row the manager plan or the owner pinned is never offered. Rated and
+    unrated people may trade: the score judges an unrated person as unknown,
+    not as nothing, so it decides (SQ-19); rated pairs, where a gap can be
+    seen, are tried first. Candidates are ranked with the local scorer and
+    the one taken is confirmed by the full score (P-25: sixty whole-week
+    scores per drag). `max_seconds` bounds the search in time as well as in
+    evaluations (a generation's deadline); the verdict speaks only of what
+    was tried."""
+    import time as _time
+    t0 = _time.monotonic()
+
+    def out_of_time() -> bool:
+        return max_seconds is not None and _time.monotonic() - t0 > max_seconds
     baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
     if not baseline.get("checked"):
         return {"ran": False, "reason": baseline.get("reason"), "baseline": baseline,
@@ -5459,77 +5793,105 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
     rules = signals.get("rules") or {}
     roster = [n for n in (signals.get("roster") or []) if n]
     scores = signals.get("scores") or {}
+    families = signals.get("role_families") or getattr(rule_constraints, "role_families", None) or None
+    c = rule_constraints
     current_rows = [dict(r) for r in rows]
     current = baseline
     swaps, evaluated = [], 0
     legal_total = 0
+    sweep = prof = None
+    if c is not None:
+        import schedule_rules as _rules
+        sweep = _rules.IncrementalSweep(c)
+        prof = _rules.breach_profile(current_rows, c, viols=sweep.violations(current_rows))
+    scorer = LocalScorer(current_rows, profiles=profiles, weights=weights, **signals)
+    pool_of = _people_by_family(current_rows, roster, signals, families)
+
+    def _sc(n):
+        return scores.get((n or "").strip())
+
+    def legal(trial, gainers):
+        """(flagged, hard breaches, profile) of a trial every rule allows;
+        False when a rule refuses it; None with no rule set to ask."""
+        if c is None:
+            return None
+        for name, i, up in gainers:
+            row = trial[i]
+            if not c.fillable(name, row.get("date") or "")[0] or not c.holds(name, row.get("role") or "", row.get("date")):
+                return False
+            if not c.can_add(row, trial, overtime=up)[0]:
+                return False
+        viols = sweep.violations(trial)
+        after = _rules.breach_profile(trial, c, viols=viols)
+        if _rules.regressions(prof, after, upto=_rules.TIER_BUDGET, hard_only=False):
+            return False
+        return ({((v.get("employee") or "").strip().lower(), v.get("date") or "", v.get("shift_start") or "")
+                 for v in viols if v.get("no_show")}, [v for v in viols if v.get("hard")], after)
 
     improved = True
-    while improved and evaluated < max_evaluations:
+    while improved and evaluated < max_evaluations and not out_of_time():
         improved = False
         index = _SwapIndex(current_rows, availability, constraints, rules)
-        # Keep only the most promising candidates rather than sorting the
-        # whole space: the widest score gap is where an improvement lives,
-        # and sorting a million pairs to use sixty was the other half of
-        # the cost.
-        best_pairs = []
+        # Rated pairs first, the widest rating gap first: that is where an
+        # improvement can be seen. Unrated pairs after, in order.
+        pinned = {i for i, r in enumerate(current_rows) if r.get("_pinned")}
+        by_family = {}
+        for i, r in enumerate(current_rows):
+            if (r.get("employee") or "").strip() and i not in pinned:
+                by_family.setdefault(role_family(r.get("role"), families), []).append(i)
+        ranked = []
         legal_here = 0
-        for i, j in index.pairs():
-            if not index.legal(i, j, scores):
-                continue
-            legal_here += 1
-            gap = abs((scores.get((current_rows[i].get("employee") or "").strip()) or 0)
-                      - (scores.get((current_rows[j].get("employee") or "").strip()) or 0))
-            if len(best_pairs) < max_evaluations:
-                best_pairs.append((gap, i, j))
-                if len(best_pairs) == max_evaluations:
-                    best_pairs.sort(reverse=True)
-            elif gap > best_pairs[-1][0]:
-                best_pairs[-1] = (gap, i, j)
-                best_pairs.sort(reverse=True)
-        # A second kind of move: somebody on the roster who is not working
-        # that date takes the row outright. Only people seen in that role
-        # this week (or cross-trained into it) are candidates, so a cook is
-        # never proposed for the bar.
-        role_people = {}
-        for r in current_rows:
-            role_people.setdefault((r.get("role") or "").strip().lower(), set()).add((r.get("employee") or "").strip())
-        cross = signals.get("cross_trained") or {}
-        roster_low = {n.strip().lower() for n in roster}
+        for idxs in by_family.values():
+            for a in range(len(idxs)):
+                for b in range(a + 1, len(idxs)):
+                    i, j = idxs[a], idxs[b]
+                    if not index.legal(i, j, None):
+                        continue
+                    legal_here += 1
+                    si, sj = _sc(current_rows[i].get("employee")), _sc(current_rows[j].get("employee"))
+                    ranked.append(((0, -abs(float(si) - float(sj))) if si is not None and sj is not None else (1, 0.0),
+                                   i, j))
+        # A second kind of move: somebody who works the role's family and is
+        # not on that date takes the row outright.
         for i, row in enumerate(current_rows) if roster else []:
-            role = (row.get("role") or "").strip().lower()
+            if i in pinned:
+                continue
             cur = (row.get("employee") or "").strip()
-            pool = {n for n in role_people.get(role, set()) if n.strip().lower() in roster_low}
-            pool |= {n for n in roster if any(x.strip().lower() == role for x in (cross.get(n) or []))}
-            for name in pool:
+            for name in sorted(pool_of.get(role_family(row.get("role"), families)) or ()):
                 if name == cur or not index.replacement_legal(i, name):
                     continue
-                if scores and (scores.get(cur) is None) != (scores.get(name) is None):
-                    continue
                 legal_here += 1
-                gap = abs((scores.get(cur) or 0) - (scores.get(name) or 0))
-                entry = (gap, i, ("replace", name))
-                if len(best_pairs) < max_evaluations:
-                    best_pairs.append(entry)
-                    if len(best_pairs) == max_evaluations:
-                        best_pairs.sort(reverse=True, key=lambda t: t[0])
-                elif gap > best_pairs[-1][0]:
-                    best_pairs[-1] = entry
-                    best_pairs.sort(reverse=True, key=lambda t: t[0])
+                sc, sn = _sc(cur), _sc(name)
+                ranked.append(((0, -abs(float(sc) - float(sn))) if sc is not None and sn is not None else (1, 0.0),
+                               i, ("replace", name)))
         legal_total = max(legal_total, legal_here)
-        best_pairs.sort(reverse=True, key=lambda t: t[0])
+        ranked.sort(key=lambda t: t[0])
 
-        for _gap, i, j in best_pairs:
-            if evaluated >= max_evaluations:
+        for _prio, i, j in ranked:
+            if evaluated >= max_evaluations or out_of_time():
                 break
-            trial = [dict(r) for r in current_rows]
+            trial = list(current_rows)
             if isinstance(j, tuple):
-                trial[i]["employee"] = j[1]
+                trial[i] = dict(current_rows[i], employee=j[1])
+                gainers = [(j[1], i, True)]
             else:
-                trial[i]["employee"], trial[j]["employee"] = \
-                    current_rows[j]["employee"], current_rows[i]["employee"]
-            candidate = score_rows(trial, profiles=profiles, weights=weights, **signals)
+                a, b = current_rows[i], current_rows[j]
+                trial[i], trial[j] = dict(a, employee=b["employee"]), dict(b, employee=a["employee"])
+                up_b = _row_hours(a) > _row_hours(b)
+                gainers = [((b["employee"] or "").strip(), i, up_b), ((a["employee"] or "").strip(), j, not up_b)]
+            judged = legal(trial, gainers)
+            if judged is False:
+                continue
+            fl, hb = (judged[0], judged[1]) if judged is not None else (None, None)
             evaluated += 1
+            try:
+                quick = scorer.score(trial, flagged=fl, hard_breaches=hb)
+            except Exception:
+                continue
+            if quick - float(current.get("raw_score") or current["score"]) < MIN_IMPROVEMENT - 0.5:
+                continue
+            sig = dict(signals, flagged=fl, hard_breaches=hb) if judged is not None else signals
+            candidate = score_rows(trial, profiles=profiles, weights=weights, **sig)
             if not candidate.get("checked"):
                 continue
             gain = candidate["score"] - current["score"]
@@ -5540,6 +5902,8 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
                     swaps.append(_describe_swap(current_rows[i], current_rows[j],
                                                 current, candidate, gain))
                 current_rows, current = trial, candidate
+                if judged is not None:
+                    prof = judged[2]
                 improved = True
                 break
 
@@ -5554,6 +5918,9 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
         "rows": current_rows,
         "baseline": baseline,
         "best": current,
+        # Whether each swap was held to every rule the week is, or only to the
+        # swap index's person checks (no rule set given).
+        "checked_with": "every rule" if c is not None else "availability and hours",
         "verdict": _candidate_verdict(baseline, current, swaps, evaluated, legal_total),
     }
 
@@ -5602,28 +5969,45 @@ def _describe_replacement(row: dict, name: str, before: dict, after: dict, gain:
 # it: swapping the person "fixed" nothing and cost them the shift. A minor
 # over their age band's weekly cap or starting before its earliest start is
 # cleared by an adult on the shift that crosses it (schedule audit 10/3/26
-# P-5, E-27: both stayed hard flags every week, never tried).
+# P-5, E-27: both stayed hard flags every week, never tried). A role written
+# for somebody who does not hold it (D-15) is cleared by somebody who does,
+# and a day a person's own scheduling note holds them off by somebody free.
 PERSON_FIXABLE = frozenset({"off_roster", "inactive", "outside_week", "double_booked", "overlap",
                             "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere",
                             "outside_window", "missing_cert", "over_max_hours", "rest_gap",
-                            "minor_late", "minor_hours", "long_run", "minor_week_hours", "minor_early"})
+                            "minor_late", "minor_hours", "long_run", "minor_week_hours", "minor_early",
+                            "role_not_held", "note_unavailable"})
 
 
 def apply_fixes(rows: list, violations: list, profiles: list = None, weights: dict = None,
                 max_evaluations: int = MAX_CANDIDATE_EVALUATIONS, rule_constraints=None,
-                only_dates=None, **signals) -> dict:
+                only_dates=None, max_seconds: float = None, **signals) -> dict:
     """Repair the rows that break a hard rule by putting somebody legal on
     them, choosing the replacement that scores best. Rows nobody legal can
     take are left as they are and named, never dropped: a coverage gap the
     owner can see beats a silently thinner week.
 
     Only breaches a different person can clear are attempted (PERSON_FIXABLE).
-    With `rule_constraints` (schedule_rules.Constraints) a replacement is kept
-    only when the full rule sweep shows that row's breach gone and no new
-    hard breach anywhere — the swap index does not know every rule (days in
-    a row, a keyholder), and a fix that trades one breach for another is
-    not a fix. Rows the evaluation budget did not reach are reported as not
-    tried, never as impossible.
+    A breach about a DAY (no manager on, a floor short — `day_level`) is the
+    day's, shown on the day by the review, never an "unfixed" line on whoever
+    the sweep pinned it to (E-13). A row the manager plan or the owner pinned
+    ("_pinned") is never handed to somebody else.
+
+    With `rule_constraints` (schedule_rules.Constraints) each candidate is
+    somebody code may choose that day (Constraints.fillable) for whom the row
+    is legal with their week swept (Constraints.can_add — first only people
+    who stay under their overtime line, and only when nobody can, someone
+    past it but never past their maximum: a person's legality outranks
+    overtime, the owner's rule is that overtime goes to nobody while a
+    teammate has room; schedule audit 10/3/26 P-2). The fix is kept only when
+    the whole week, swept (incrementally — P-37) and compared by breach
+    identity, shows the row's breach gone or smaller and nothing else new or
+    worse: nothing about anybody, no minute without a manager, no floor or
+    closer, and — taking somebody under their line — no overtime or minimum
+    hours either (schedule_rules.regressions; it used to compare (row index,
+    kind) sets, blind to a new breach pinned to the same row — E-1). Rows the
+    evaluation budget (or `max_seconds`, a generation's deadline) did not
+    reach are reported as not tried, never as impossible.
 
     A missed day off (schedule_rules "days_off": fewer consecutive days off
     than the rule) is fixable too, after the hard breaches: one of the
@@ -5635,15 +6019,15 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     Returns {rows, fixes: [{index, from, to, kind, reason}], unfixed: [...]}.
     """
     rows = [dict(r) for r in rows]
+    c = rule_constraints
     days_off = [v for v in (violations or []) if v.get("kind") == "days_off"]
     availability = signals.get("availability") or {}
     cons = signals.get("constraints") or {}
     rules = signals.get("rules") or {}
     roster = [n for n in (signals.get("roster") or []) if n]
-    roster_roles = signals.get("roster_roles") or {}
-    cross = signals.get("cross_trained") or {}
+    families = signals.get("role_families") or getattr(c, "role_families", None) or None
     fixes, unfixed, evaluated = [], [], 0
-    hard = [v for v in (violations or []) if v.get("hard")]
+    hard = [v for v in (violations or []) if v.get("hard") and not v.get("day_level")]
     for v in hard:
         if v.get("kind") not in PERSON_FIXABLE:
             unfixed.append({"index": v.get("index"), "employee": v.get("employee"), "kind": v.get("kind"),
@@ -5676,16 +6060,20 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
                 removed += _row_hours(rows[v["index"]])
         hard = [v for v in hard if v.get("kind") != "over_max_hours" or id(v) in keep]
 
-    def _hard_state(rs):
-        if rule_constraints is None:
-            return None
-        from schedule_rules import violations as _viol
-        vs = [x for x in _viol(rs, rule_constraints) if x.get("hard")]
-        return {(x.get("index"), x.get("kind")) for x in vs}, len(vs)
-
+    sweep = before = None
+    if c is not None:
+        import schedule_rules as _rules
+        sweep = _rules.IncrementalSweep(c)
+        before = _rules.breach_profile(rows, c, viols=sweep.violations(rows))
+    scorer = None
+    pools = None
     seen_idx = set()
-    baseline = None
     budget_out = False
+    import time as _time
+    t0 = _time.monotonic()
+
+    def spent() -> bool:
+        return evaluated >= max_evaluations or (max_seconds is not None and _time.monotonic() - t0 > max_seconds)
     for v in sorted(hard, key=lambda x: (0 if x.get("no_show") else 1, x.get("index", 0))):
         i = v.get("index")
         if i is None or i in seen_idx or i >= len(rows):
@@ -5693,52 +6081,82 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
         seen_idx.add(i)
         row = rows[i]
         cur = (row.get("employee") or "").strip()
-        if budget_out or evaluated >= max_evaluations:
+        if row.get("_pinned"):
+            unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"),
+                            "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift is fixed "
+                                      "(the manager plan, or a day you kept) — change it by hand."})
+            continue
+        if only_dates is not None and row.get("date") not in only_dates:
+            continue
+        if budget_out or spent():
             budget_out = True
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"), "not_tried": True,
                             "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift wasn't "
                                       "checked yet — press Apply fixes to check the rest."})
             continue
+        if scorer is None:
+            scorer = LocalScorer(rows, profiles=profiles, weights=weights, **signals)
+            pools = _people_by_family(rows, roster, signals, families)
         index = _SwapIndex(rows, availability, cons, rules)
-        role = (row.get("role") or "").strip().lower()
-        pool = {(r.get("employee") or "").strip() for r in rows if (r.get("role") or "").strip().lower() == role}
-        pool |= {n for n in roster if (roster_roles.get(n) or "").strip().lower() == role}
-        pool |= {n for n in roster if any(x.strip().lower() == role for x in (cross.get(n) or []))}
+        pool = set(pools.get(role_family(row.get("role"), families)) or ())
+        pool |= {(r.get("employee") or "").strip() for r in rows
+                 if role_family(r.get("role"), families) == role_family(row.get("role"), families)}
         pool.discard("")
-        candidates = [n for n in sorted(pool) if n != cur and index.replacement_legal(i, n)]
-        scored = []
-        for name in candidates:
-            if evaluated >= max_evaluations:
-                budget_out = True
-                break
-            if baseline is None:
-                baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
-            trial = [dict(r) for r in rows]
-            trial[i]["employee"] = name
-            cand = score_rows(trial, profiles=profiles, weights=weights, **signals)
-            evaluated += 1
-            sc = cand.get("score") if cand.get("checked") else (baseline.get("score") or 0)
-            scored.append((sc or 0, name, cand, trial))
-        scored.sort(key=lambda t: (-t[0], t[1]))
-        before = _hard_state(rows)
-        chosen = None
-        for sc, name, cand, trial in scored:
-            if before is not None:
-                after = _hard_state(trial)
-                still = any(ix == i and k == v.get("kind") for ix, k in after[0])
-                if still or after[1] >= before[1]:
+        if c is not None:
+            # The week's rules decide the hours (can_add below: the overtime
+            # line, then the maximum) — the swap index's cap is only the
+            # caller's copy of them, the ceiling when none was passed.
+            candidates = [n for n in sorted(pool) if n != cur and (n.lower(), row.get("date")) not in index.working
+                          and index.person_fits(n, row)]
+        else:
+            candidates = [n for n in sorted(pool) if n != cur and index.replacement_legal(i, n)]
+        target = None
+        if c is not None:
+            target = _rules.breach_id(v)
+        legal_opts, tried = [], 0
+        for under_line in (True, False) if c is not None else (True,):
+            for name in candidates:
+                if spent():
+                    budget_out = True
+                    break
+                trial = list(rows)
+                trial[i] = dict(row, employee=name)
+                fl = hb = after = None
+                if c is not None:
+                    if not c.fillable(name, row.get("date") or "")[0]:
+                        continue
+                    if not c.can_add(trial[i], trial, overtime=under_line)[0]:
+                        continue
+                    viols = sweep.violations(trial)
+                    after = _rules.breach_profile(trial, c, viols=viols)
+                    if after["by_id"].get(target, 0.0) >= before["by_id"].get(target, 0.0) - 1e-9:
+                        continue            # the breach this fix is for is still there
+                    if _rules.regressions(before, after, upto=_rules.TIER_MIN_HOURS if under_line else _rules.TIER_COVERAGE,
+                                          hard_only=not under_line):
+                        continue            # a fix that trades one breach for another is not a fix
+                    fl = {((x.get("employee") or "").strip().lower(), x.get("date") or "", x.get("shift_start") or "")
+                          for x in viols if x.get("no_show")}
+                    hb = [x for x in viols if x.get("hard")]
+                tried += 1
+                evaluated += 1
+                try:
+                    val = scorer.score(trial, flagged=fl, hard_breaches=hb)
+                except Exception:
                     continue
-            chosen = (name, cand, trial)
-            break
-        if chosen:
-            name, cand, trial = chosen
-            baseline = cand
+                legal_opts.append((val, name, trial, after))
+            if legal_opts or budget_out:
+                break
+        if legal_opts:
+            val, name, trial, after = sorted(legal_opts, key=lambda t: (-t[0], t[1]))[0]
             rows = trial
+            rows[i] = dict(rows[i])
+            if after is not None:
+                before = after
             note = (rows[i].get("notes") or "").strip()
             rows[i]["notes"] = (note + f" (was {cur} — {v.get('label') or v.get('kind')})").strip()
             fixes.append({"index": i, "from": cur, "to": name, "kind": v.get("kind"),
                           "reason": f"{cur} — {v.get('detail') or v.get('label')}; {name} can take it."})
-        elif budget_out and not scored:
+        elif budget_out and not tried:
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"), "not_tried": True,
                             "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift wasn't "
                                       "checked yet — press Apply fixes to check the rest."})
@@ -5757,16 +6175,10 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     return {"rows": rows, "fixes": fixes, "unfixed": unfixed, "evaluated": evaluated}
 
 
-def _hard_keys(rows: list, rule_constraints) -> set:
+def _days_off_people(rows: list, rule_constraints, viols=None) -> set:
     from schedule_rules import violations as _viol
-    return {(v.get("index"), v.get("kind"), (v.get("employee") or "").strip().lower())
-            for v in _viol(rows, rule_constraints) if v.get("hard")}
-
-
-def _days_off_people(rows: list, rule_constraints) -> set:
-    from schedule_rules import violations as _viol
-    return {(v.get("employee") or "").strip().lower() for v in _viol(rows, rule_constraints)
-            if v.get("kind") == "days_off"}
+    viols = _viol(rows, rule_constraints) if viols is None else viols
+    return {(v.get("employee") or "").strip().lower() for v in viols if v.get("kind") == "days_off"}
 
 
 def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constraints,
@@ -5778,9 +6190,13 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
     person works inside it are what would have to go; the windows needing
     the fewest are tried, and for each shift the teammate taken is the one
     that costs the week the least score (LocalScorer). A window is kept only
-    when the rule sweep then shows the person's days off met, NO hard breach
-    that was not there before, and nobody newly short of their own days
-    off; of the windows that pass, the best-scoring one wins.
+    when the rule sweep then shows the person's days off met, nothing new or
+    worse by breach identity (schedule_rules.regressions — the manager every
+    minute, the floors, the closer; it compared (row, kind) sets — E-1), and
+    nobody newly short of their own days off; of the windows that pass, the
+    best-scoring one wins. Each teammate is somebody code may choose that
+    day for whom the row is legal (Constraints.fillable, can_add — P-2); a
+    pinned row never moves.
 
     Returns (rows, fixes, unfixed, evaluations)."""
     fixes, unfixed, used = [], [], 0
@@ -5790,14 +6206,16 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
                             "reason": f"{v.get('employee')} — {v.get('detail') or v.get('label')}; "
                                       "the rules were not loaded, so nothing was moved."})
         return rows, fixes, unfixed, used
+    import schedule_rules as _rules
     c = rule_constraints
+    sweep = _rules.IncrementalSweep(c)
     week = list(getattr(c, "week_dates", None) or [])
     availability = signals.get("availability") or {}
     cons = signals.get("constraints") or {}
     rules = signals.get("rules") or {}
     roster = [n for n in (signals.get("roster") or []) if n]
-    roster_roles = signals.get("roster_roles") or {}
-    cross = signals.get("cross_trained") or {}
+    families = signals.get("role_families") or getattr(c, "role_families", None) or None
+    pools = _people_by_family(rows, roster, signals, families)
     done = set()
     for v in violations:
         name = (v.get("employee") or "").strip()
@@ -5805,7 +6223,8 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
         if not low or low in done:
             continue
         done.add(low)
-        if low not in _days_off_people(rows, c):
+        now = sweep.violations(rows)
+        if low not in _days_off_people(rows, c, now):
             continue                      # an earlier fix already gave them the run
         part = (getattr(c, "employment", {}) or {}).get(low) == "part"
         req = c.compliance.get("part_time_days_off") if part else c.compliance.get("min_consecutive_days_off")
@@ -5813,7 +6232,8 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
             req = int(req or 0)
         except (TypeError, ValueError):
             req = 0
-        mine = [i for i, r in enumerate(rows) if (r.get("employee") or "").strip().lower() == low]
+        mine = [i for i, r in enumerate(rows) if (r.get("employee") or "").strip().lower() == low
+                and not r.get("_pinned")]
         windows = []
         for k in range(0, max(0, len(week) - req + 1)):
             span = week[k:k + req]
@@ -5827,8 +6247,8 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
                                       "could be handed over here."})
             continue
         fewest = min(w[0] for w in windows)
-        before_hard = _hard_keys(rows, c)
-        before_short = _days_off_people(rows, c)
+        before = _rules.breach_profile(rows, c, viols=now)
+        before_short = _days_off_people(rows, c, now)
         scorer = LocalScorer(rows, profiles=profiles, weights=weights, **signals)
         best = None
         out_of_budget = False
@@ -5842,13 +6262,11 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
                     ok = False
                     break
                 index = _SwapIndex(trial, availability, cons, rules)
-                role = (trial[i].get("role") or "").strip().lower()
-                pool = {(r.get("employee") or "").strip() for r in trial
-                        if (r.get("role") or "").strip().lower() == role}
-                pool |= {n for n in roster if (roster_roles.get(n) or "").strip().lower() == role}
-                pool |= {n for n in roster if any(x.strip().lower() == role for x in (cross.get(n) or []))}
+                pool = set(pools.get(role_family(trial[i].get("role"), families)) or ())
                 pool.discard("")
-                cands = [n for n in sorted(pool) if n.lower() != low and index.replacement_legal(i, n)]
+                cands = [n for n in sorted(pool) if n.lower() != low and index.replacement_legal(i, n)
+                         and c.fillable(n, trial[i].get("date") or "")[0]
+                         and c.can_add(dict(trial[i], employee=n), trial)[0]]
                 options = []
                 for n in cands:
                     t2 = list(trial)
@@ -5863,9 +6281,11 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
                 moved.append((i, pick))
             if not ok or not moved:
                 continue
-            after_hard = _hard_keys(trial, c)
-            after_short = _days_off_people(trial, c)
-            if after_hard - before_hard or low in after_short or (after_short - before_short):
+            after_v = sweep.violations(trial)
+            after = _rules.breach_profile(trial, c, viols=after_v)
+            after_short = _days_off_people(trial, c, after_v)
+            if _rules.regressions(before, after, upto=_rules.TIER_COVERAGE) or low in after_short \
+                    or (after_short - before_short):
                 continue
             val = scorer.score(trial)
             if best is None or val > best[0] + 1e-9:

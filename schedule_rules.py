@@ -16,6 +16,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from models import get_conn, DB_PATH
 
@@ -698,10 +699,17 @@ def cut_policy(restaurant, text: str = "") -> dict:
 # ── time helpers ───────────────────────────────────────────────────────────
 
 def parse_minutes(t: str):
-    """'9:30pm' / '21:30' → minutes past midnight, or None."""
+    """'9:30pm' / '21:30' → minutes past midnight, or None. The parse is
+    remembered per spelling (_parse_clock): the sweep reads the same few
+    dozen times on every trial a pass weighs (schedule audit 10/3/26 P-37)."""
     raw = (t or "").strip().lower().replace(" ", "")
     if not raw:
         return None
+    return _parse_clock(raw)
+
+
+@lru_cache(maxsize=4096)
+def _parse_clock(raw: str):
     for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
         try:
             d = datetime.strptime(raw, fmt)
@@ -2975,17 +2983,19 @@ def _sibling_weeks(restaurant_id, lo, hi, db_path):
 
 # ── the violation sweep ────────────────────────────────────────────────────
 
-def violations(rows: list, c: Constraints, person_only: bool = False) -> list:
+def violations(rows: list, c: Constraints, person_only: bool = False, day_only: bool = False) -> list:
     """Every rule the finished week breaks, one entry per breach, each
     naming the person, the date, the rule and whether it is hard (the row
     cannot stand) or soft (worth a look). `person_only` keeps to the rules
     about one person's own rows (can_add sweeps a single person's week with
-    it: the day-level rules — floors, a closer, a manager — need everyone)."""
+    it: the day-level rules — floors, a closer, a manager — need everyone);
+    `day_only` to the rules about who is on a day (IncrementalSweep sweeps
+    one date's rows with it)."""
     out = []
     by_person = {}
     seen_slots = set()
     from shift_quality import present_dayparts as _present
-    for i, r in enumerate(rows or []):
+    for i, r in enumerate([] if day_only else (rows or [])):
         name = (r.get("employee") or "").strip()
         # One person, one key: every spelling that is them (people's
         # identity), and a roster person an open "same person?" question
@@ -3466,6 +3476,7 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
     retimed, left = [], []
     if not getattr(c, "role_times", None):
         return {"rows": out_rows, "retimed": retimed, "left": left}
+    sweep = IncrementalSweep(c)          # each retime re-sweeps its person and date only (P-37)
     for i in range(len(out_rows)):
         r = out_rows[i]
         if not (r.get("employee") or "").strip() or r.get("_pinned"):
@@ -3492,7 +3503,7 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
         trial = out_rows[:i] + [new] + out_rows[i + 1:]
         ok, why = c.can_add(new, trial)
         if ok:
-            worse = regressions(breach_profile(out_rows, c), breach_profile(trial, c), upto=TIER_BUDGET,
+            worse = regressions(sweep.profile(out_rows), sweep.profile(trial), upto=TIER_BUDGET,
                                 hard_only=False)
             if worse:
                 ok, why = False, worse[0]["label"]
@@ -3980,6 +3991,144 @@ def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only:
                             "label": (after.get("labels") or {}).get(("no_manager", d)) or LABELS["no_manager"]})
     out.sort(key=lambda x: (x["tier"], str(x["id"])))
     return out
+
+
+# ── the sweep, kept by person and by date (schedule audit 10/3/26 P-37) ────
+#
+# Every trial change a pass weighs used to copy the week and run the whole
+# rule sweep over it: up to 300 sweeps in the overtime rebalance, 120 a run
+# in the manager filler, 192 in the fix pass, one per candidate in the
+# optimizer and the solver's judge — about a thousand whole-week sweeps a
+# generation, doubled when the quality gate fired. A change touches one or
+# two people on one or two dates. Every rule is about one person's own rows
+# (their hours, rest, minors, availability) or about one date's rows (the
+# floors, the closers, the manager every minute, the section count), so a
+# trial only re-sweeps the people and the dates whose rows moved; the rest
+# is the last sweep's answer. What comes back is exactly violations(rows, c)
+# — the same entries in the same order — so nothing that reads the sweep can
+# tell the difference (tests/test_sched_fix_d2_sweep.py holds the two equal
+# over randomised weeks).
+
+# The person-level kinds violations() emits in its per-person block, after
+# every day-level rule; every other person-level kind is a row's own check.
+_PERSON_WEEK_KINDS = frozenset({"over_max_hours", "payroll_tail_full", "under_min_hours", "minor_hours",
+                                "daily_ot", "minor_age_unknown", "minor_week_hours", "overlap", "rest_gap",
+                                "long_run", "days_off"})
+# violations()' order of the day-level blocks.
+_DAY_PHASE = {"ends_before_role_close": 2, "role_time": 3, "coverage_floor": 4, "owner_rule": 4,
+              "nobody_at_close": 4, "keyholder_until_close": 4, "closer_unavailable": 4,
+              "trainee_unpaired": 4, "no_manager": 5, "no_manager_on_duty": 6, "over_section_cap": 7}
+# The two about the whole week, not a person or a date.
+_WEEK_KINDS = frozenset({"no_manager_roster", "manager_rule_unusable"})
+SWEEP_CACHE_LIMIT = 20000
+
+
+def _sweep_sig(r) -> tuple:
+    """What the sweep reads of one row."""
+    out = []
+    for k in ("employee", "date", "day", "role", "shift_start", "shift_end", "scheduled_hours"):
+        v = r.get(k)
+        try:
+            hash(v)
+        except TypeError:
+            v = str(v)
+        out.append(v)
+    return tuple(out)
+
+
+class IncrementalSweep:
+    """violations(rows, c) for one week's trials, re-sweeping only the people
+    and the dates whose rows differ from a sweep already run (P-37). Build
+    one per pass (or per week being edited) over its Constraints; reuse it
+    for every trial. `violations(rows)` and `profile(rows)` are the sweep's
+    and breach_profile's answers for `rows`."""
+
+    def __init__(self, c: "Constraints"):
+        self.c = c
+        self._person = {}
+        self._date = {}
+        self.swept_people = self.swept_dates = 0
+
+    def _cache(self, store, key, compute):
+        hit = store.get(key)
+        if hit is None:
+            if len(store) >= SWEEP_CACHE_LIMIT:
+                store.clear()
+            hit = store[key] = compute()
+        return hit
+
+    def violations(self, rows: list) -> list:
+        c = self.c
+        rows = rows or []
+        by_person, by_date = {}, {}
+        for i, r in enumerate(rows):
+            # People grouped exactly as violations() groups them: one person,
+            # one key, and a roster person an open "same person?" question
+            # joins read as one (Constraints.key / sweep_key — D-8, E-25).
+            name = (r.get("employee") or "").strip()
+            if c.key(name):
+                by_person.setdefault(c.sweep_key(name), []).append((i, r))
+            if r.get("date"):
+                by_date.setdefault(r["date"], []).append((i, r))
+        out = []
+        for pos, (key, items) in enumerate(by_person.items()):
+            sig = tuple(_sweep_sig(r) for _i, r in items)
+
+            def _person(items=items):
+                self.swept_people += 1
+                return violations([r for _i, r in items], c, person_only=True)
+            for seq, v in enumerate(self._cache(self._person, (key, sig), _person)):
+                gi = items[v["index"]][0]
+                out.append(((8, pos, seq) if v["kind"] in _PERSON_WEEK_KINDS else (1, gi, seq), dict(v, index=gi)))
+        firsts = {}
+        for d, items in by_date.items():
+            sig = tuple(_sweep_sig(r) for _i, r in items)
+
+            def _day(items=items):
+                self.swept_dates += 1
+                return [v for v in violations([r for _i, r in items], c, day_only=True)
+                        if v["kind"] not in _WEEK_KINDS]
+            for seq, v in enumerate(self._cache(self._date, (d, sig), _day)):
+                gi = items[v["index"]][0]
+                phase = _DAY_PHASE.get(v["kind"], 9)
+                if phase == 2:
+                    sk = (2, self._first(firsts, items, ("close", v.get("floor_role")),
+                                         lambda r, fam=v.get("floor_role"): c.family(r.get("role")) == fam
+                                         and not c.training_row(r)))
+                elif phase == 3:
+                    sk = (3, gi, seq)
+                elif phase == 7:
+                    counted = {c.family(x) for x in (c.foh_roles or ()) if str(x).strip()} or {"server"}
+                    sk = (7, self._first(firsts, items, ("cap",), lambda r: c.family(r.get("role")) in counted))
+                else:
+                    sk = (phase, 1, d, seq)
+                out.append((sk, dict(v, index=gi)))
+        # The week's own: nobody on the roster manages (pinned to the first
+        # row somebody is on), and the retired per-daypart switch with nobody
+        # to satisfy it (pinned to the first row).
+        staffed = next(((i, r) for i, r in enumerate(rows) if r.get("date") and (r.get("employee") or "").strip()
+                        and r.get("date") not in (c.closed_dates or set())), None)
+        if staffed is not None:
+            for v in _manager_violations([staffed[1]], c):
+                if v["kind"] == "no_manager_roster":
+                    out.append(((5, 0), dict(v, index=staffed[0])))
+        if c.compliance.get("manager_on_duty") and not c.keyholders and rows:
+            out.append(((6, 0), _v("manager_rule_unusable", 0, rows[0], LABELS["manager_rule_unusable"])))
+        out.sort(key=lambda t: t[0])
+        return [v for _k, v in out]
+
+    @staticmethod
+    def _first(memo, items, tag, test) -> int:
+        """The first row index on this date passing `test` — where
+        violations()' block met that date first."""
+        key = (items[0][1].get("date"),) + tuple(tag)
+        if key not in memo:
+            memo[key] = next((i for i, r in items if test(r)), items[0][0])
+        return memo[key]
+
+    def profile(self, rows: list, viols: list = None) -> dict:
+        """breach_profile(rows, c) through the kept sweep."""
+        return breach_profile(rows, self.c, viols=viols if viols is not None else self.violations(rows))
 
 
 def hourly_hours(rows: list, c: "Constraints" = None, salaried=None) -> float:
@@ -4567,7 +4716,9 @@ class _Repair:
     def __init__(self, rows, c, upto=TIER_COVERAGE, soft_upto=None, max_sweeps=OT_MAX_SWEEPS, ignore=()):
         self.c = c
         self.rows = [dict(r) for r in (rows or [])]
-        self.viols = violations(self.rows, c)
+        # Each trial re-sweeps only the people and dates it moved (P-37).
+        self.sweep = IncrementalSweep(c)
+        self.viols = self.sweep.violations(self.rows)
         self.prof = breach_profile(self.rows, c, viols=self.viols)
         self.upto, self.soft_upto, self.ignore = upto, soft_upto, frozenset(ignore)
         self.sweeps, self.max_sweeps = 0, max_sweeps
@@ -4580,7 +4731,7 @@ class _Repair:
         """(worse, after): what `trial` makes new or worse at the pass's
         tiers ([] = nothing), and its sweep and profile to take()."""
         self.sweeps += 1
-        viols = violations(trial, self.c)
+        viols = self.sweep.violations(trial)
         after = breach_profile(trial, self.c, viols=viols)
         upto = self.upto if upto is None else upto
         soft = self.soft_upto if soft_upto == "same" else soft_upto
@@ -5011,7 +5162,9 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
     extended = []
     if not c.closers_by_role or not c.compliance.get("keyholder_until_close", True):
         return {"rows": rows, "extended": extended}
-    before = breach_profile(rows, c)
+    # Each trial re-sweeps only the person and the date it moved (P-37).
+    sweep = IncrementalSweep(c)
+    before = sweep.profile(rows)
     sweeps = 0
     for d in sorted({r.get("date") for r in rows if r.get("date")}):
         if d in (c.closed_dates or set()) or (editable is not None and d not in editable) or sweeps >= max_sweeps:
@@ -5053,7 +5206,7 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
                     continue
                 trial = [dict(x) for x in rows]
                 trial[i] = new
-                after = breach_profile(trial, c)
+                after = sweep.profile(trial)
                 if regressions(before, after, upto=TIER_COVERAGE) or \
                         after["by_id"].get(bid, 0.0) >= before["by_id"].get(bid, 0.0):
                     continue
