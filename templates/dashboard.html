@@ -9662,8 +9662,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    schedule tools as rows. The three staffing tables keep their own look. */
 #studio{--ss-dayrow:rgba(14,12,10,.06);--hb-inner:rgba(14,12,10,.035)}
 [data-theme="dark"] #studio{--ss-dayrow:rgba(0,0,0,.3);--hb-inner:rgba(255,255,255,.04)}
-#panel-labor,#studio{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-labor,[data-theme="dark"] #studio{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-labor,#studio,#sfw1-modal{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-labor,[data-theme="dark"] #studio,[data-theme="dark"] #sfw1-modal{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-labor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 .lb2-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center}
 .lb2-hero{margin-top:30px}
@@ -11336,7 +11336,15 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
                  same draft (POST /api/generate-schedule {dates, history_id}). -->
             <div id="sched-redo" class="sched-redo" style="display:none"></div>
           </section>
-          {% if labor.is_live %}<div class="sw-gen"><button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button></div>{% endif %}
+          {% if labor.is_live %}
+          {# What the owner asks of this draft (schedule audit 10/3/26 PR-19:
+             sent as `instruction`, at most 500 characters), and how fresh
+             the sales the forecast stands on are - a stale read stops
+             Generate, and says so before the press (D-33; cav-sfw1). #}
+          <div class="sw-gen-ask"><label class="sw-lbl" for="sfw1-instr">Anything for this week? <small>optional</small></label>
+            <input type="text" class="ac-input" id="sfw1-instr" maxlength="500" placeholder="e.g. Homecoming Saturday — one more bartender after 8pm" autocomplete="off"></div>
+          <div id="sfw1-gen-fresh" class="sfw1-notes" style="padding:8px 0 0"></div>
+          <div class="sw-gen"><button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button></div>{% endif %}
         </aside>
         </div>
       </div>
@@ -11394,6 +11402,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <div id="sched-verdict" class="sr-note" style="margin-top:6px;color:var(--ink2)"></div>
         </div>
       </div>
+      <!-- What the generation could not do or wants answered: days not
+           written, days nobody can work, the managers' question, stretches
+           with no manager, the setup it was drafted against (cav-sfw1). -->
+      <div id="sfw1-week" class="sfw1-notes" aria-live="polite"></div>
       <div class="sw-view">
         <div class="lb2-range sw-seg" role="tablist" aria-label="View">
           <button type="button" class="on" data-sw-view="week" role="tab" aria-selected="true">Week</button>
@@ -11512,6 +11524,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
              (memory round 9/29/26, cav-mem-wb memSchedExtras). -->
         <div id="sw-asked"></div>
       </section>
+      <section class="sw-sec" data-sw="req" data-ss-of="overview">
+        <div class="sw-k">Shift requirements</div>
+        <!-- The SHIFT REQUIREMENTS the week was written and scored to, each
+             with why it moved off the usual (schedule audit 10/3/26 E). -->
+        <div id="sfw1-req"></div>
+      </section>
       <section class="sw-sec" data-sw="cost" data-ss-of="overview">
         <div class="sw-k">Cost</div>
         <!-- What the week costs and what the forecast saw (_schedRenderEconomics). -->
@@ -11583,6 +11601,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <div class="ss-pub-card">
             <div class="sw-k">Before it goes out</div>
             <div id="ss-pub-check"></div>
+            <!-- The hours split, the quality notes that never hold the send
+                 and the rows likely to change (G-1, H1-6; cav-sfw1). -->
+            <div id="sfw1-pub"></div>
             <!-- The publish gate: a 409 needs_ack (or the pre-send check) lists
                  what the sender must read before the week goes out; the send
                  button then names them. Rendered by _psRenderBlockers, folded
@@ -11911,7 +11932,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
        the weekends and closes, what staff keep dropping and claiming, who
        could hold a station, and the pairs the record suggests. Every line
        is read from a row a published week wrote; nothing is invented. -->
-  <div class="lb2-srow s8">
+  <div class="lb2-srow s8" data-nav="labor/intel">
     <div class="lb2-subsection" onclick="lb2RowClick(event,toggleIntelPanel)">
       <div class="lb2-subsection-title">What the record says <span id="intel-chip" class="lb2-subsection-chip"></span></div>
       <button type="button" onclick="toggleIntelPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="intel-toggle-btn">Read it ↓</button>
@@ -11920,6 +11941,40 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="lb2-avail">
         <div class="lb2-intro">What your published weeks did, read from the record.</div>
         <div id="intel-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
+  {# What the schedule has learned (schedule audit 10/3/26 L-29, H2-1): the
+     scheduling memory - each habit with its status, how sure it is over how
+     many chances, and the owner's say (Keep / Let it go / Make it a rule).
+     Loads when opened; data-nav labor/learned opens it (cav-sfw1). #}
+  <div class="lb2-srow s11" data-nav="labor/learned">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,sfw1ToggleMem)">
+      <div class="lb2-subsection-title">What the schedule has learned <span id="sfw1-mem-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="sfw1ToggleMem()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle">Open ↓</button>
+    </div>
+    <div id="sfw1-mem-panel" style="display:none">
+      <div class="lb2-avail">
+        <div class="lb2-intro">The habits Cavnar AI keeps from how you edit and publish weeks. Nothing becomes a rule unless you make it one.</div>
+        <div id="sfw1-mem-body"></div>
+      </div>
+    </div>
+  </div>
+
+  {# Measured ratings (L-23, D-27): what each server sells a guest against
+     the house, as a suggested score - the account holder's alone (the GET
+     is 403 for anyone else, and the row hides). data-nav labor/ratings is
+     the action queue's link. #}
+  <div class="lb2-srow s12" data-nav="labor/ratings" id="sfw1-rate-row"{% if is_principal is defined and not is_principal %} hidden{% endif %}>
+    <div class="lb2-subsection" onclick="lb2RowClick(event,sfw1ToggleRate)">
+      <div class="lb2-subsection-title">Measured ratings <span id="sfw1-rate-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="sfw1ToggleRate()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle">Open ↓</button>
+    </div>
+    <div id="sfw1-rate-panel" style="display:none">
+      <div class="lb2-avail">
+        <div class="lb2-intro">Your POS measures what each server sells a guest. Confirm a suggestion and it becomes their Operational Score.</div>
+        <div id="sfw1-rate-body"></div>
       </div>
     </div>
   </div>
@@ -20989,7 +21044,10 @@ function _schedHandleResult(data) {
   if (!data.ok) {
     _schedReset(_schedBtn);
     // The server's sentence only, never the stack (CLIENT-14 / DATA-46).
-    _schedNotice(_schedBtn, (data.error || 'Schedule generation failed.') + ' Try again.');
+    // Verbatim: the job's error names its cause — budget, provider, data,
+    // time, refusal or ours (schedule audit 10/3/26 P-34); "Try again" was
+    // wrong advice for most of them.
+    _schedNotice(_schedBtn, data.error || 'Schedule generation failed. Try again.');
     return;
   }
   if (_schedBtn) {
@@ -21061,6 +21119,10 @@ function _schedHandleResult(data) {
   _schedLoadVersion();
   var psb = document.getElementById('ps-blockers'); if (psb) { psb.style.display = 'none'; psb.innerHTML = ''; }
   var psr = document.getElementById('ps-result'); if (psr) psr.textContent = '';
+  // What the generation could not do or wants answered — the week's
+  // notices, the requirements view, the grid's manager windows (schedule
+  // fix round 10/3/26, cav-sfw1).
+  if (window.sfw1Take) sfw1Take(data);
   // The week shows the week (Friction #19): the grid opens with the draft.
   _schedRenderTable();
   _schedTableOpen = false; toggleSchedTable();
@@ -21102,7 +21164,10 @@ function _schedHandleResult(data) {
       + (window.sfw2BudgetNote ? memNum(sfw2BudgetNote(pbb, data.labor_target)) + '<br>' : '')
       + (pbb && pbb.caveat ? memNum(pbb.caveat) + '<br>' : '')
       + 'PAR target: <strong class="hb-num">' + budget + 'h</strong> &nbsp;&#xB7;&nbsp; '
-      + 'This schedule: <strong class="hb-num">' + scheduled + 'h</strong>';
+      + 'This schedule: <strong class="hb-num">' + scheduled + 'h</strong>'
+      // Hourly beside salaried (B1-4, E-7): the budget is spent only by the
+      // hourly hours.
+      + (window.sfw1HoursLine && data.hours_hourly != null ? '<br>' + sfw1Num(sfw1HoursLine(data.hours_hourly, budget, data.hours_salaried)) : '');
     if (diff > 0) {
       parBadge.textContent = '+' + absDiff + 'h over PAR';
       parBadge.style.background = 'rgba(235,87,87,.18)';
@@ -22255,6 +22320,10 @@ function rescoreSchedule(btn, after) {
   // version the page loaded goes with it: a newer one on file is a 409.
   if (_schedHistoryId) body.history_id = _schedHistoryId;
   if (_schedVersion !== null && _schedVersion !== undefined) body.version = _schedVersion;
+  // Rows Cavnar AI took out (apply-fixes / Improve's cavnar_removed): kept
+  // as its changes, never taught as the manager's habit (schedule audit
+  // 10/3/26 L-5, H1-2). Its own rows carry origin / origin_sig already.
+  if ((window._sfw1Removed || []).length) body.cavnar_changes = window._sfw1Removed.slice();
   var status = 0;
   fetch('/api/labor/schedule/score', {
     method: 'POST',
@@ -22287,8 +22356,14 @@ function rescoreSchedule(btn, after) {
            saved toast, since it is the one the owner must read (NS5 H2). */
         if (d.late_change_warning) toast(d.late_change_warning, 'warning');
         if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
+        window._sfw1Removed = [];
+        // One tap on why a big change was made (L-35): the sheet asks, the
+        // answer teaches the next drafts; it can be skipped.
+        if ((d.why_questions || []).length && window.sfw1WhySheet) sfw1WhySheet(d.why_questions, d.history_id || _schedHistoryId);
       }
-      if (window.renderScheduleReview) renderScheduleReview({review: d.review, violations: d.violations, fixes: [], unfixed: []});
+      // The saved review keeps the generation's fix lines, re-pointed at their
+      // rows (P-26); one whose row was edited away has no index (B1-1).
+      if (window.renderScheduleReview) renderScheduleReview({review: d.review, violations: d.violations, fixes: (d.review && d.review.fixes) || [], unfixed: []});
       _schedRenderTable();
       // Save & send: the send runs only once the week it sends is stored.
       // A plain Save re-reads what Send would do for the saved week.
@@ -22500,6 +22575,9 @@ function regenerateScheduleDays(btn) {
   if (!dates.length) { toast('Tick the days to redo', 'error'); return; }
   if (!_schedHistoryId) { toast('This draft has no history row to rebuild from', 'error'); return; }
   if (_schedDirty) { toast('Save or discard your edits first', 'error'); return; }
+  // Why first (schedule audit 10/3/26 PR-18, L-26): the reasons sheet asks,
+  // then sends the redo with the owner's chip and words (cav-sfw1).
+  if (window.sfw1RedoSheet) { sfw1RedoSheet(dates); return; }
   var gen = document.getElementById('gen-sched-btn') || btn;
   generateSchedule(gen, {dates: dates, history_id: _schedHistoryId});
 }
@@ -22519,6 +22597,12 @@ function generateSchedule(btn, opts) {
   var body = {};
   if (opts.dates && opts.dates.length) { body.dates = opts.dates; body.history_id = opts.history_id; }
   else { var ws = _schedWeekStart(); if (ws) body.week_start = ws; }
+  // Why the owner is redoing these days (a chip and their words, B2 / H1),
+  // and what they asked of this draft (C2 PR-19), both optional.
+  if (opts.reason_chip) body.reason_chip = opts.reason_chip;
+  if (opts.reason_text) body.reason_text = opts.reason_text;
+  var _instr = document.getElementById('sfw1-instr');
+  if (_instr && String(_instr.value || '').replace(/\s+/g, '')) body.instruction = String(_instr.value).replace(/^\s+|\s+$/g, '').slice(0, 500);
   var panel = document.getElementById('schedule-preview-panel');
   if (panel) panel.style.display = 'none';
 
@@ -22571,16 +22655,19 @@ function generateSchedule(btn, opts) {
         var jn = document.getElementById('sched-week');
         if (jn) jn.insertAdjacentHTML('beforeend', '<div id="sched-joined" style="margin-top:8px;text-align:center;font-size:13.5px;color:var(--ink3)">Joining the generation already running\u2026</div>');
       }
-      // A 70-person week takes two or three model calls and about five
-      // minutes; the job keeps running server-side whatever the page does,
-      // so the page waits as long as the job can (15 min) before giving up.
-      var _hardTimeout = setTimeout(function() {
+      // The job holds itself to a deadline and says how long it can run
+      // (wait_seconds, on a join too); a pending poll says what is left
+      // (seconds_left). The page waits exactly that long - it used to give up
+      // at a guessed 15 minutes (schedule audit 10/3/26 P-22).
+      var _waitMs = (+startData.wait_seconds > 0 ? +startData.wait_seconds : 900) * 1000;
+      function _giveUp() {
         clearInterval(_elapsedTimer);
         clearInterval(_schedPollInterval);
         _schedPollInterval = null;
         _schedReset(btn);
-        _schedNotice(btn, 'Schedule generation is still running after 15 minutes. It will appear in Schedule History when it finishes.');
-      }, 900000);
+        _schedNotice(btn, 'We lost touch with the schedule generation. It may still finish \u2014 check Schedule History in a few minutes.');
+      }
+      var _hardTimeout = setTimeout(_giveUp, _waitMs);
 
       // One failed poll (a deploy's 502, a dropped connection) is not a
       // failed job: it keeps running server-side, so the page keeps asking
@@ -22595,7 +22682,11 @@ function generateSchedule(btn, opts) {
             // poll, not a failed job (SCHED-41).
             if (!pollData || typeof pollData.status !== 'string') throw new Error('poll');
             _pollFails = 0;
-            if (pollData.status === 'pending') return;
+            if (pollData.status === 'pending') {
+              // Still inside its deadline: wait out what it says is left.
+              if (+pollData.seconds_left > 0) { clearTimeout(_hardTimeout); _hardTimeout = setTimeout(_giveUp, (+pollData.seconds_left + 30) * 1000); }
+              return;
+            }
             clearTimeout(_hardTimeout);
             clearInterval(_elapsedTimer);
             clearInterval(_schedPollInterval);
@@ -22741,6 +22832,9 @@ function publishScheduleNow(ack){
       // button becomes the acknowledgement.
       if (d.needs_ack) {
         _psRenderBlockers(d.blockers || [], true, d.blocker_keys, true);
+        // Worth a look (10/3/26): the quality verdict rides the 409 as notes,
+        // read without acknowledging.
+        if (window.sfw1RenderPub) { var _pc = window._psCheck || {}; sfw1RenderPub({notes: d.notes || _pc.notes || [], hours: _pc.hours, likely_to_change: _pc.likely_to_change}); }
         result.textContent = '';
         return;
       }
@@ -23213,6 +23307,7 @@ function saveScheduleEdits(btn) {
 
 function discardScheduleEdits() {
   try { _schedRows = JSON.parse(_schedSaved) || []; } catch (e) { _schedRows = []; }
+  window._sfw1Removed = [];   // Cavnar AI's removals go with the edits they belonged to
   _schedOverrides = {}; _schedWhyOpen = null; _schedEditIdx = null; _schedAddedIdx = null;
   _schedRenderTable();
   _schedSetDirty(false);
@@ -24451,6 +24546,7 @@ function _swHasContent(sec) {
   if (k === 'opps') return full('sw-opps');
   if (k === 'fix') return full('sw-fix');
   if (k === 'asked') return full('sw-asked');
+  if (k === 'req') return full('sfw1-req');
   return true;
 }
 function swRenderGrid() {
@@ -24494,7 +24590,11 @@ function swRenderGrid() {
     if (want && got < want * 0.9) st = '<span class="st short">Short <span class="hb-num">' + _schedHrs(want - got) + 'h</span></span>';
     else if (want && got > want * 1.1) st = '<span class="st over">Over <span class="hb-num">' + _schedHrs(got - want) + 'h</span></span>';
     h += '<div class="swg-d' + (d === hot && dayHrs[d] ? ' hot" title="The busiest day this week: the most scheduled hours' : '') + '"><b>' + _escHtml(_schedDayOf(d).slice(0, 3)) + '</b><span class="dt hb-num">' + _escHtml(mdy(d)) + '</span>'
-       + '<span class="dh"><span class="hb-num">' + np + '</span> on · <span class="hb-num">' + _schedHrs(got) + 'h</span></span>' + st + _schedHolidayMark(d) + '</div>';
+       + '<span class="dh"><span class="hb-num">' + np + '</span> on · <span class="hb-num">' + _schedHrs(got) + 'h</span></span>' + st + _schedHolidayMark(d)
+       // The manager window, a day not written, and a breach about the DAY
+       // (no manager, a floor short) on the day - never on a person's row
+       // (schedule audit 10/3/26 M-3, P-34, E-13; cav-sfw1).
+       + (window.sfw1DayHead ? sfw1DayHead(d) : '') + '</div>';
   }
   h += '</div>';
   if (!order.length) h += '<div class="swg-empty">No shifts on this week yet. Add one with + Add a shift.</div>';
@@ -24514,7 +24614,9 @@ function swRenderGrid() {
           var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && rw.role !== q.role ? ' · ' + _escHtml(rw.role) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
           h += '<button type="button" draggable="true" class="swg-chip' + (rw.needs_review ? ' bad' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + (_swSel === ri ? ' sel' : '') + '" data-swg-chip="' + ri + '"'
              + ' aria-label="' + _escAttr(q.name + ', ' + _schedDayOf(days[k]) + ' ' + (rw.shift_start || '') + ' to ' + (rw.shift_end || '') + (rw.needs_review ? ', needs review' : '')) + '">'
-             + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span></button>';
+             + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span>'
+             // A manager shift planned before the draft, and the clocks going back (M-2, A2-6).
+             + (window.sfw1ChipMarks ? sfw1ChipMarks(rw) : '') + '</button>';
         }
         h += '<button type="button" class="cbtn cbtn-text cbtn-sm swg-add" data-swg-add="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" aria-label="' + _escAttr('Add a shift for ' + q.name + ' on ' + _schedDayOf(days[k])) + '"><span class="t">+ Add a shift</span><span class="s">' + _escHtml(_schedDayOf(days[k]).slice(0, 3)) + ' <span class="hb-num">' + _escHtml(mdy(days[k])) + '</span></span></button></div>';
       }
@@ -24985,6 +25087,7 @@ function studioGo(stage) {
   var pub = document.getElementById('ss-top-publish'); if (pub) { pub.hidden = !has || !!(window.psIsSent && psIsSent()); pub.style.visibility = stage === 'publish' ? 'hidden' : ''; }
   ssTopbar();
   if (stage === 'summary') ssRenderSummary();
+  else if (stage === 'setup' && window.sfw1LoadFresh) sfw1LoadFresh();
   else if (stage === 'publish') ssRenderPublish();
   else if (stage === 'history') ssLoadHistory();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
@@ -25338,12 +25441,13 @@ function ssRenderSummary() {
             sav === null ? 'Needs a measured labor % for your recent weeks and this draft’s forecast'
               : 'this week vs your last <span class="hb-num">' + (rec.days || 14) + '</span> days at <span class="hb-num">' + rec.pct + '%</span> labor, on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
             '<span class="tag">Projection · not yet earned</span>');
-  h += '</div><div class="ss-sum-go">'
+  h += '</div><div class="sfw1-notes" id="sfw1-sum"></div><div class="ss-sum-go">'
     + '<button type="button" class="cbtn cbtn-primary cbtn-lg" data-ss-go="schedule">View the schedule</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" onclick="ssOptimize(this)">Optimize again</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" data-ss-go="publish">Publish</button></div>'
     + '<div class="ss-sum-note">Optimize again makes legal changes that raise the score and lists each one; nothing is kept until you save.</div>';
   el.innerHTML = h;
+  if (window.sfw1RenderNotes) sfw1RenderNotes();
 }
 function ssOptimize(btn) {
   if (typeof improveScheduleWithCavnar !== 'function') return;
@@ -25376,6 +25480,7 @@ function ssRenderPublish() {
   var q = (typeof _quality !== 'undefined' && _quality) || {};
   if (q.score != null) lines.push('<div class="sw-kv"><span>Shift quality</span><b class="hb-num">' + Math.round(q.score) + '</b></div>');
   if (c) c.innerHTML = '<div class="ss-pub-check">' + lines.join('') + '</div>';
+  if (window.sfw1RenderPub) sfw1RenderPub();
   var al = document.getElementById('ss-pub-alerts'), bl = document.getElementById('ps-blockers'), n = document.getElementById('ss-pub-alerts-n');
   var cnt = bl ? bl.querySelectorAll('.sr-line').length : 0;
   if (al) al.hidden = _schedDirty || !cnt || (bl && bl.style.display === 'none');
@@ -25473,6 +25578,7 @@ function ssRenderShift() {
     + (sc ? '<div class="sw-kv"><span>Operational score</span><b class="hb-num">' + sc + ' / 5</b></div>' : '')
     + '<div id="ss-sd-sec">' + _ssSecHtml(i) + '</div>'
     + (r.needs_review ? '<div class="sw-flag bad">' + _escHtml(r.review_reason || 'Breaks a rule') + '</div>' : '')
+    + (window.sfw1ShiftExtras ? sfw1ShiftExtras(r) : '')
     + (_schedOverrides[i] ? '<div class="sw-flag">You changed this shift; Save to re-score the week.</div>' : '')
     + '<div class="sw-sub">Why ' + _escHtml(r.employee || 'this person') + '</div><div class="sw-note">' + (why && why.why ? _escHtml(why.why) : 'No facts on file for this assignment.') + '</div>'
     + (r.notes ? '<div class="sw-note" style="margin-top:6px">' + _escHtml(r.notes) + '</div>' : '')
@@ -25512,7 +25618,7 @@ function ssSwapTo(i, name) {
 // sections. Saved at once through /api/labor/schedule/sections, apart from
 // the week's rows, and shown to the employee beside the published shift.
 // No sections named: an FOH shift offers only "Name floor sections".
-var _ssSec = {names: null, map: {}, range: '', foh: ['server'], naming: false};
+var _ssSec = {names: null, map: {}, range: '', foh: ['server'], naming: false, usual: []};
 function _ssSecStart(s) {
   var m = _schedMinutes(s);
   return m === null ? String(s || '').toLowerCase() : ('0' + Math.floor(m / 60)).slice(-2) + ':' + ('0' + (m % 60)).slice(-2);
@@ -25538,6 +25644,9 @@ function _ssSecLoad() {
     .then(apiJson).then(function (d) {
       if (!d || !d.ok) { _ssSec.range = ''; return; }
       _ssSec.names = d.sections || []; _ssSec.foh = d.foh_roles || ['server']; _ssSec.map = {};
+      // Each server's usual section from the scheduling memory (L-22):
+      // offered beside a shift with none, never assigned by code.
+      _ssSec.usual = d.usual || [];
       var a = d.assigned || [], k;
       for (k = 0; k < a.length; k++) _ssSec.map[_ssSecKey(a[k].date, a[k].employee, a[k].shift_start)] = a[k].section;
       _ssSecRefresh();
@@ -25568,7 +25677,12 @@ function _ssSecHtml(i) {
   for (k = 0; k < _ssSec.names.length; k++) {
     opts += '<option value="' + _escAttr(_ssSec.names[k]) + '"' + (_ssSec.names[k] === cur ? ' selected' : '') + '>' + _escHtml(_ssSec.names[k]) + '</option>';
   }
+  var us = (!cur && window.sfw1UsualSection) ? sfw1UsualSection(r, _ssSec.usual) : null, hint = '';
+  if (us && _ssSec.names.indexOf(us.section) >= 0) hint = '<div class="sw-note" style="margin:2px 0 4px">Usually <b>' + _escHtml(us.section) + '</b> on ' + _escHtml(us.day) + ' ' + (us.daypart === 'night' ? 'dinner' : 'lunch')
+    + (us.because ? ' <span title="' + _escAttr(us.because) + '">· ' + _escHtml(String(us.confidence != null ? Math.round(+us.confidence * 100) + '% sure' : '')) + '</span>' : '')
+    + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw1-sec="' + i + '" data-sec="' + _escAttr(us.section) + '">Put them there</button></div>';
   return '<div class="sw-kv"><label for="ss-sec-pick">Section</label><select class="ac-select" id="ss-sec-pick" onchange="ssSecPick(' + i + ',this)">' + opts + '</select></div>'
+    + hint
     + '<button type="button" class="cbtn cbtn-text cbtn-sm" onclick="_ssSec.naming=true;_ssSecRefresh()">Edit sections</button>';
 }
 function ssSecPick(i, sel) {
@@ -33445,7 +33559,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var rows=window._schedRows||[],rv=_rv.review,hard={},reason={},i;
     if(!rv)return;
     for(i=0;i<(rv.hard_rows||[]).length;i++)hard[rv.hard_rows[i]]=1;
-    for(i=0;i<_rv.violations.length;i++){var v=_rv.violations[i];if(v&&v.hard&&v.index!==undefined&&v.index!==null){hard[v.index]=1;if(!reason[v.index])reason[v.index]=v.detail||v.label||v.kind||'';}}
+    // A breach about the DAY (no manager, a floor short, nobody at close) is
+    // shown on the day, never as "needs review" on whoever's row it is
+    // pinned to (schedule audit 10/3/26 E-13, A2-1).
+    for(i=0;i<_rv.violations.length;i++){var v=_rv.violations[i];if(v&&v.hard&&!v.day_level&&v.index!==undefined&&v.index!==null){hard[v.index]=1;if(!reason[v.index])reason[v.index]=v.detail||v.label||v.kind||'';}}
     for(i=0;i<rows.length;i++){
       var on=!!hard[i];
       if(on){rows[i].needs_review=true;if(reason[i]||!rows[i].review_reason)rows[i].review_reason=reason[i]||rows[i].review_reason||'';}
@@ -33484,13 +33601,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       // shift count, not one per shift.
       var grp={},order=[],gi;
       for(gi=0;gi<vs.length;gi++){var v=vs[gi];if(!!v.hard!==(filt==='hard'))continue;
-        var gk=(v.employee||'')+'|'+v.kind+'|'+(v.kind==='over_max_hours'?(v.bucket||''):gi);
+        var gk=(v.day_level?'day:'+(v.date||''):(v.employee||''))+'|'+v.kind+'|'+(v.kind==='over_max_hours'?(v.bucket||''):gi);
         if(!grp[gk]){grp[gk]={v:v,n:0};order.push(gk);}grp[gk].n++;}
       var shown=window._rvAll?order.length:Math.min(order.length,10);
       h+='<div class="sr-list">';
       for(gi=0;gi<shown;gi++){var g=grp[order[gi]],gv=g.v,dday=gv.day||(gv.date&&window._schedDayOf?_schedDayOf(gv.date):'');
         var where=gv.kind==='over_max_hours'?'<span class="hb-num">'+g.n+'</span> shift'+(g.n===1?'':'s'):esc(dday+(gv.shift_start?' '+gv.shift_start:''));
-        h+='<div class="sr-line '+(gv.hard?'bad':'warn')+'"><span class="d"></span><span><b>'+esc(gv.employee||'')+'</b> · '+where+' — '+num(gv.detail||gv.label||gv.kind)+'</span></div>';}
+        // A day-level breach names the day, not a person (E-13); a soft
+        // line like payroll_tail_full or shift_too_short reads the same as
+        // any other (A2-7), its words the server's label when it sent no
+        // detail (F1-14: role_not_held, closer_unavailable, trainee_unpaired).
+        if(gv.day_level)h+='<div class="sr-line '+(gv.hard?'bad':'warn')+'"><span class="d"></span><span><b>'+esc(window.sfw1DayDate?sfw1DayDate(gv.date,gv.day):(dday||''))+'</b> — '+num(gv.detail||gv.label||gv.kind)+'</span></div>';
+        else h+='<div class="sr-line '+(gv.hard?'bad':'warn')+'"><span class="d"></span><span><b>'+esc(gv.employee||'')+'</b> · '+where+' — '+num(gv.detail||gv.label||gv.kind)+'</span></div>';}
       if(order.length>10)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rv-all="1">'+(window._rvAll?'Show fewer':'Show all <span class="hb-num">'+order.length+'</span>')+'</button>';
       h+='</div>';
     }
@@ -33501,7 +33623,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     if(_rv.fixes.length){
       hs+='<div class="sr-grp"><div class="sr-k">Fixed by Cavnar AI</div>';
-      for(i=0;i<_rv.fixes.length;i++){var f=_rv.fixes[i]||{};hs+='<div class="sr-line fix"><span class="d"></span><span><b>'+esc(f.from)+'</b> <span class="arrow">&rarr;</span> <b>'+esc(f.to)+'</b>, '+esc(_rvWhen(_rvRow(f.index)))+' &mdash; '+esc(f.reason||f.kind||'')+'</span></div>';}
+      // Each fix points at its row by id (row_id) on a fresh draft, by index
+      // after a save; a row since edited away (index null) reads as the fix
+      // left it, with nothing to select (schedule audit 10/3/26 B1-1).
+      for(i=0;i<_rv.fixes.length;i++){var f=_rv.fixes[i]||{},fr=window.sfw1FixRow?sfw1FixRow(f,window._schedRows||[]):{row:_rvRow(f.index),index:f.index};
+        hs+='<div class="sr-line fix"><span class="d"></span><span><b>'+esc(f.from)+'</b> <span class="arrow">&rarr;</span> <b>'+esc(f.to)+'</b>, '+esc(window.sfw1FixWhen?sfw1FixWhen(fr.row):_rvWhen(fr.row))+' &mdash; '+num(f.reason||f.kind||'')+'</span>'
+          +(fr.index!==null&&fr.index!==undefined?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw1-sel="'+fr.index+'">Show</button>':'')+'</div>';}
       hs+='</div>';
     }
     if(_rv.moves.length){
@@ -33550,6 +33677,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         h+='</div>';}
       if(later)h+='<div class="sr-note" style="margin-top:8px"><span class="hb-num">'+later+'</span> more weren\u2019t checked yet. Press Apply fixes to check them.</div>';
     }
+    // What the week doesn't meet, checks that did not run, the budget and
+    // section conflicts, facts naming nobody (cav-sfw1: C2-1, B1-2, A1, F2-6).
+    if(window.sfw1ReviewHtml)h+=sfw1ReviewHtml(rv);
     if(pendNames.length){
       // Answered here (Friction #18): Approve / Deny on each request, and an
       // approval offers to redo only the days it touches.
@@ -33589,6 +33719,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(hit<0){toast('That shift has changed \u2014 recheck the week','error');return;}
     rows[hit].employee=cd.employee;
     rows[hit].notes='Moved to '+cd.employee+' to avoid overtime';
+    // Cavnar AI's move, kept as its own through Save (L-5).
+    if(window.sfw1MarkOrigin)sfw1MarkOrigin(rows[hit],'overtime_move');
     window._schedOverrides=window._schedOverrides||{};window._schedOverrides[hit]=true;
     if(btn)btn.disabled=true;
     if(mv.rec_key)jsend('/api/recs/event',{key:mv.rec_key,event:'accepted',surface:'schedule_review',module:'schedule'},function(){});
@@ -33614,6 +33746,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(!d.ok){toast(d.error||'Could not apply the fixes','error');return;}
       if(!window._sqBeforeStaged)window._sqBeforeStaged={quality:window._quality,whatIf:window._whatIf,optimizer:window._sqOptimizer};
       window._schedRows=d.rows||rows;
+      if(window.sfw1NoteRemoved)sfw1NoteRemoved(d.cavnar_removed);
       var i,ov=window._schedOverrides||{};
       for(i=0;i<(d.fixes||[]).length;i++)ov[d.fixes[i].index]=true;
       window._schedOverrides=ov;
@@ -33646,6 +33779,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       }
       if(!window._sqBeforeStaged)window._sqBeforeStaged={quality:window._quality,whatIf:window._whatIf,optimizer:window._sqOptimizer};
       window._schedRows=d.rows||rows;
+      if(window.sfw1NoteRemoved)sfw1NoteRemoved(d.cavnar_removed);
       /* The chip measures what Cavnar's changes bought, from the score it
          started at: an unsaved manual edit may already have moved it. */
       if(o.before_score!==null&&o.before_score!==undefined)prevScore=o.before_score;
@@ -34733,7 +34867,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         for(j=0;j<parts.length;j++){var o=outs[wd][parts[j]];
           if(!o){h+='<td><span class="dim">—</span></td>';continue;}
           h+='<td><div class="cell'+(o.troubled?' trbl':'')+'">'+(o.troubled?'<span class="flag">troubled</span> ':'')+'<span class="hb-num">'+esc(o.avg_hours)+'h</span>'+(o.splh?' · <span class="hb-num">'+_intMoney(o.splh)+'</span>/h':'')+(o.rating?' · <span class="hb-num">'+esc(o.rating)+'</span>★':'')
-            +'<small>'+o.weeks+' week'+(o.weeks===1?'':'s')+(o.issues_label?' · '+esc(o.issues_label):(o.issues==null?' · not watched':(o.issues?' · '+o.issues+' issue'+(o.issues===1?'':'s'):' · no issues')))+(o.avg_sales?' · '+_intMoney(o.avg_sales)+' sales':'')+'</small></div></td>';
+            +'<small>'+o.weeks+' week'+(o.weeks===1?'':'s')+(o.issues_label?' · '+esc(o.issues_label):(o.issues==null?' · not watched':(o.issues?' · '+o.issues+' issue'+(o.issues===1?'':'s'):' · no issues')))+(o.avg_sales?' · '+_intMoney(o.avg_sales)+' sales':'')+'</small>'
+            // What the published weeks did on the floor (L-12, L-13): scheduled
+            // against worked, missed shifts, late stays, the daypart's own
+            // labor %, and what its sales per labor hour is over (cav-sfw1).
+            +(window.sfw1OutcomeBits&&sfw1OutcomeBits(o).length?'<small>'+sfw1Num(sfw1OutcomeBits(o).join(' · '))+'</small>':'')+'</div></td>';
         }
         h+='</tr>';
       }
@@ -35214,6 +35352,1021 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 })();
 </script>
 
+<!-- ── Schedule fix round 10/3/26, UI wave W1 (web) ─────────────────────────
+     The Studio's generate screen, the draft, the review, the publish check,
+     Shift Quality and the learning screens, built on the fix round's
+     payloads. Pure helpers (global `sfw1*`, run by tests under node) turn a
+     payload into the owner's words; the behaviour IIFE draws them and wires
+     each action to its route. DESIGN_SYSTEM.md → "Schedule fix round (web,
+     10/4/26)" lists the patterns. -->
+<style id="cav-sfw1-css">
+/* Week notices: what the generation could not do or wants answered, at the
+   top of the week and the summary. One row each, a state stripe, actions
+   at the end (the Studio's .snr state stripe, as a notice). */
+.sfw1-notes{display:flex;flex-direction:column;gap:8px;padding:6px 20px 10px}
+.sfw1-notes:empty{display:none}
+.sw-gen-ask .ac-input{width:100%;box-sizing:border-box}
+.sw-lbl small{font-weight:400;color:var(--ink3);margin-left:4px}
+#ss-summary .sfw1-notes{padding:0;margin:0 0 22px}
+.sfw1-n{display:flex;gap:12px;align-items:flex-start;padding:11px 14px;border-radius:12px;background:var(--sf-recess);box-shadow:inset 3px 0 0 var(--ink3);font-size:14.5px;line-height:1.5;color:var(--ink2)}
+.sfw1-n.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}
+.sfw1-n.bad{box-shadow:inset 3px 0 0 var(--hb-bad)}
+.sfw1-n.ai{background:var(--sf-ai);box-shadow:inset 3px 0 0 var(--ember),0 0 0 1px var(--sf-ai-line)}
+.sfw1-n .tx{flex:1;min-width:0}
+.sfw1-n .tx b{color:var(--ink);font-weight:600}
+.sfw1-n .tx small{display:block;margin-top:3px;font-size:13.5px;color:var(--ink3)}
+.sfw1-n .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex-shrink:0}
+.sfw1-n ul{margin:6px 0 0;padding-left:18px}
+.sfw1-n li{margin:2px 0}
+.sfw1-badge{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;background:var(--amber-bg);color:var(--hb-warn);vertical-align:2px;margin-left:8px}
+.sfw1-badge.neutral{background:var(--sf-recess);color:var(--ink3)}
+/* The owner's question about the managers' days (M-1): one card on the ai
+   tone, a weekday x start/end grid per name. */
+.sfw1-q{padding:16px 18px;border-radius:14px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);box-shadow:var(--glow-ember)}
+.sfw1-q .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+.sfw1-q h3{font-family:'Clash Display',sans-serif;font-size:21px;font-weight:500;color:var(--ink);margin:6px 0 6px;text-wrap:balance}
+.sfw1-q p{margin:0 0 10px;font-size:15px;line-height:1.55;color:var(--ink2)}
+.sfw1-wk{margin-top:12px;padding-top:12px;border-top:1px solid var(--sf-ai-line)}
+.sfw1-wk .nm{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.sfw1-wk .grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.sfw1-wk .d{display:flex;flex-direction:column;gap:5px;padding:8px;border-radius:10px;background:var(--surface);border:1px solid var(--hb-line2)}
+.sfw1-wk .d.on{border-color:var(--ember);box-shadow:inset 0 0 0 1px var(--ember)}
+.sfw1-wk .d label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--ink2);cursor:pointer}
+.sfw1-wk .d label input{accent-color:var(--ember);margin:0}
+.sfw1-wk .d .ac-select{width:100%;padding:5px 6px;font-size:12.5px;border-radius:7px}
+.sfw1-wk .d:not(.on) .ac-select{opacity:.45}
+.sfw1-wk .ft{display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.sfw1-wk .err{font-size:13.5px;color:var(--hb-bad)}
+@media (max-width:900px){.sfw1-wk .grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* The planned-manager chip (M-2) and the DST mark (A2-6) on a week chip; the
+   day header's manager window and day-level breaches (M-3, A2-1). */
+.swg-chip .sfw1-pin{display:inline-block;margin-top:2px;padding:0 6px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ember2);background:var(--sf-recess);box-shadow:inset 0 0 0 1px var(--sf-ai-line)}
+.swg-chip .sfw1-dst{display:inline-block;margin-top:2px;padding:0 6px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);background:var(--sf-recess)}
+.swg-d .sfw1-mw{display:block;margin-top:3px;font-size:11px;color:var(--ink3)}
+.swg-d .sfw1-hd{display:block;margin:4px auto 0;max-width:150px;padding:2px 7px;border-radius:8px;font-size:10.5px;line-height:1.35;color:var(--hb-bad);background:var(--red-bg);text-align:left}
+.swg-d .sfw1-nw{display:inline-block;margin-top:4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:1px 7px;color:var(--hb-warn);background:var(--sf-recess)}
+/* The review's own groups (C2-1, B1-2, A1, F2-6, A2-3). */
+.sfw1-rv{margin-top:12px}
+.sfw1-rv .sr-k{margin-bottom:4px}
+.sfw1-rv .day{font-size:12.5px;font-weight:700;color:var(--ink2);margin:10px 0 2px}
+.sfw1-rv .sr-line.hard{color:var(--hb-bad)}
+.sfw1-rv .sr-line.hard .d{background:var(--ember);color:var(--ember)}
+.sfw1-rv .sr-line.soft .d{background:var(--ember2);color:var(--ember2)}
+.sfw1-rv .sr-line .w{display:block}
+.sfw1-rv .sr-line .w b{display:block}
+.sfw1-rv .sr-line .w small{display:block;font-size:13px;color:var(--ink3)}
+.sfw1-rv .chk{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-left:6px}
+.sfw1-hours{margin-top:8px;font-size:13.5px;color:var(--ink2)}
+/* The Studio's requirements view (E): each shift's numbers and why. */
+.sfw1-req .sh{padding:8px 0;border-top:1px solid var(--hb-line2)}
+.sfw1-req .sh:first-child{border-top:none}
+.sfw1-req .hd{font-size:13.5px;font-weight:600;color:var(--ink)}
+.sfw1-req .rl{font-size:13px;color:var(--ink2);margin-top:2px}
+.sfw1-req .why{font-size:12.5px;color:var(--ink3);margin-top:2px}
+/* A sheet over the Studio: Redo some days (reason chips + words) and
+   "Why this change?" after a save. The supplier confirm's frame (.so-card). */
+.sfw1-sheet .so-card{width:520px}
+.sfw1-sheet .chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 12px}
+.sfw1-sheet textarea{width:100%;box-sizing:border-box;min-height:72px;resize:vertical}
+.sfw1-sheet .cnt{font-size:12px;color:var(--ink3);text-align:right;margin-top:3px}
+.sfw1-sheet .opts{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.sfw1-sheet .opts .cbtn{justify-content:flex-start;text-align:left}
+.sfw1-sheet .q + .q{margin-top:18px;padding-top:16px;border-top:1px solid var(--hb-line2)}
+.sfw1-sheet .err{margin-top:8px;font-size:13.5px;color:var(--hb-bad)}
+/* Publish check: worth a look, the hours split, likely to change. */
+.sfw1-pub{margin-top:10px}
+.sfw1-pub .sr-k{margin:10px 0 4px}
+/* Shift Quality: every measure as a bar, its floor marked (D1a-3). */
+.sfw1-dims{margin:2px 0 10px}
+.sfw1-dim{display:grid;grid-template-columns:140px 1fr 40px;gap:10px;align-items:center;margin-bottom:6px;font-size:13.5px;color:var(--ink2)}
+.sfw1-dim .tr{position:relative;height:6px;border-radius:999px;background:var(--hb-line2)}
+.sfw1-dim .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:999px}
+.sfw1-dim .tr .fl{position:absolute;top:-3px;bottom:-3px;width:2px;border-radius:1px;background:var(--ink3)}
+.sfw1-dim .v{font-family:'Space Grotesk',sans-serif;font-weight:700;text-align:right;color:var(--ink)}
+.sfw1-dim-f{margin:-2px 0 8px 150px;font-size:12.5px;line-height:1.5;color:var(--ink3)}
+.sfw1-pts{display:inline-block;margin-left:6px;font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;color:var(--hb-good);white-space:nowrap}
+.sfw1-cf-why{margin-top:4px;font-size:13px;color:var(--ink3);line-height:1.5}
+.sfw1-cf-why details{margin-top:2px}
+.sfw1-cf-why summary{cursor:pointer;color:var(--ink2)}
+/* Learning screens: the scheduling memory and measured ratings. */
+.sfw1-mem .grp{margin-top:14px}
+.sfw1-mem .grp:first-child{margin-top:0}
+.sfw1-mem .r{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--hb-line2);font-size:14.5px;line-height:1.5;color:var(--ink2)}
+.sfw1-mem .r:first-of-type{border-top:none}
+.sfw1-mem .r .tx{flex:1;min-width:0}
+.sfw1-mem .r .tx small{display:block;margin-top:2px;font-size:13px;color:var(--ink3)}
+.sfw1-mem .r .acts{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;align-items:center}
+.sfw1-mem .err{display:block;font-size:13px;color:var(--hb-bad);margin-top:3px}
+.sfw1-mem .ft{margin-top:10px;font-size:12.5px;color:var(--ink3)}
+@media (max-width:700px){.sfw1-mem .r{flex-direction:column}.sfw1-dim{grid-template-columns:100px 1fr 36px}.sfw1-dim-f{margin-left:0}}
+</style>
+<div id="sfw1-modal" class="so-modal sfw1-sheet" style="display:none" role="dialog" aria-modal="true" aria-labelledby="sfw1-modal-t">
+  <div class="so-card" id="sfw1-modal-card"></div>
+</div>
+<script id="cav-sfw1">
+/* ── Pure helpers: payload in, owner-facing words out. Global so the
+   renders reach them and the tests run them under node. Self-contained:
+   they lean on nothing else on the page. ── */
+var SFW1_NUM_RE = /(\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}:\d{2}(?:am|pm)?|\$?\d(?:[\d,]*\d)?(?:\.\d+)?%?h?|[+\-−]\d(?:[\d,.]*\d)?%?)/g;
+var SFW1_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+function sfw1Esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+}
+/* Escaped, every number, time, money figure, percent and M/D/YY date in the
+   number face (DESIGN_SYSTEM §2). */
+function sfw1Num(v) {
+  var parts = sfw1Esc(v).split(/(&#?[a-z0-9]+;)/i), out = '', i;
+  for (i = 0; i < parts.length; i++) out += (i % 2) ? parts[i] : parts[i].replace(SFW1_NUM_RE, '<span class="hb-num">$1</span>');
+  return out;
+}
+/* M/D/YY from an ISO date or stamp; an M/D/YY already is kept. */
+function sfw1Mdy(x) {
+  if (x == null || x === '') return '';
+  var s = String(x), m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return (+m[2]) + '/' + (+m[3]) + '/' + m[1].slice(2);
+  return s;
+}
+function sfw1Weekday(iso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  var d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return SFW1_DAYS[(d.getDay() + 6) % 7];
+}
+/* "Fri 10/16/26" — the day as the review groups by it. */
+function sfw1DayDate(iso, day) {
+  var wd = day || sfw1Weekday(iso);
+  return (wd ? wd.slice(0, 3) + ' ' : '') + sfw1Mdy(iso);
+}
+/* "Friday 10/16/26". */
+function sfw1LongDay(iso, day) {
+  var wd = day || sfw1Weekday(iso);
+  return (wd ? wd + ' ' : '') + sfw1Mdy(iso);
+}
+/* Minutes past midnight (past 24h wraps) as "11:00pm" / "2:00am". */
+function sfw1Clock(min) {
+  var m = +min; if (!isFinite(m)) return '';
+  m = ((Math.round(m) % 1440) + 1440) % 1440;
+  var h = Math.floor(m / 60), mm = m % 60;
+  return (h % 12 || 12) + ':' + (mm < 10 ? '0' : '') + mm + (h < 12 ? 'am' : 'pm');
+}
+/* "HH:MM" (24h) or "4:00pm" as minutes past midnight. */
+function sfw1Minutes(t) {
+  var s = String(t || '').replace(/\s+/g, '').toLowerCase(), m = /^(\d{1,2})(?::(\d{2}))?(am|pm)?$/.exec(s);
+  if (!m) return null;
+  var h = +m[1], mm = +(m[2] || 0);
+  if (m[3] === 'pm' && h < 12) h += 12;
+  if (m[3] === 'am' && h === 12) h = 0;
+  return h * 60 + mm;
+}
+/* A daypart as the owner says it: morning is lunch/day, night is dinner/night. */
+function sfw1Part(p) {
+  return p === 'morning' ? 'lunch/day' : (p === 'night' ? 'dinner/night' : (p === 'late' ? 'late night' : String(p || '')));
+}
+function sfw1And(list) {
+  var a = [], i;
+  for (i = 0; i < (list || []).length; i++) if (String(list[i] || '').replace(/\s/g, '')) a.push(String(list[i]));
+  if (a.length < 2) return a.join('');
+  return a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+}
+function sfw1Plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+function sfw1G(v) { var n = +v; return isFinite(n) ? String(Math.round(n * 10) / 10) : ''; }
+
+// ── The generation's notices ──────────────────────────────────────────────
+/* Days the generation could not write (P-34): "Saturday 10/10/26 and
+   Sunday 10/11/26 weren't written — the model ran out of time. The rest of
+   the week is here." One cause per group of days. */
+function sfw1PartialLine(items) {
+  var groups = {}, order = [], i;
+  for (i = 0; i < (items || []).length; i++) {
+    var it = items[i] || {}, why = String(it.why || 'it could not be written just now');
+    if (!groups[why]) { groups[why] = []; order.push(why); }
+    groups[why].push(sfw1LongDay(it.date, it.day));
+  }
+  if (!order.length) return '';
+  var bits = [];
+  for (i = 0; i < order.length; i++) bits.push(sfw1And(groups[order[i]]) + ' ' + (groups[order[i]].length === 1 ? 'wasn’t' : 'weren’t') + ' written — ' + order[i]);
+  return bits.join('; ') + '. The rest of the week is here.';
+}
+/* Days nobody on the team can work (E-20). */
+function sfw1UnstaffableLine(items) {
+  var days = [], i, why = [];
+  for (i = 0; i < (items || []).length; i++) {
+    days.push(sfw1LongDay(items[i].date, items[i].day));
+    var r = items[i].reasons || [];
+    if (typeof r === 'string') r = [r];
+    if (r.length) why.push(sfw1LongDay(items[i].date, items[i].day).split(' ')[0] + ': ' + r.slice(0, 3).join('; '));
+  }
+  if (!days.length) return '';
+  return 'Nobody on the team can work ' + sfw1And(days) + ' (time off or availability)' + (why.length ? ' — ' + why.join(' · ') : '') + '.';
+}
+/* The manager plan (M-3, M-4, M-5): each day's manager window, a stretch
+   nobody could cover, a standing shift the rules refused. */
+function sfw1PlanWindow(w) {
+  if (!w || !w.from || !w.to) return '';
+  return 'Manager on ' + String(w.from).replace(/\s+/g, '') + '–' + String(w.to).replace(/\s+/g, '');
+}
+function sfw1UncoveredLine(u) {
+  if (!u) return '';
+  return 'No manager can be on ' + sfw1LongDay(u.date, u.day) + ' from ' + (u.from || '') + ' to ' + (u.to || '') + (u.why ? ' — ' + u.why : '') + '.';
+}
+/* A stretch the manager backstop could not cover (A2-2): each manager's
+   reason, and who on the day could stand in. */
+function sfw1LeftLine(l) {
+  if (!l) return '';
+  var rs = [], i;
+  for (i = 0; i < (l.reasons || []).length; i++) { var r = l.reasons[i] || {}; rs.push((r.employee || '') + ' — ' + (r.why || '')); }
+  return 'No manager on ' + sfw1LongDay(l.date, l.day) + ' ' + (l.from || '') + '–' + (l.to || '') + (rs.length ? ': ' + rs.join('; ') : '') + '.';
+}
+function sfw1SkippedLine(s) {
+  if (!s) return '';
+  var who = s.employee || s.name || 'A manager';
+  return who + '’s standing shift on ' + sfw1LongDay(s.date) + ' wasn’t used' + (s.why ? ' — ' + s.why : '') + '.';
+}
+/* The hours split by pay (E-7, B1-4, G-1): "312h hourly of 330h budget ·
+   86h salaried". Missing figures are left out, never zero. */
+function sfw1HoursLine(hourly, budget, salaried) {
+  var h = (hourly == null || hourly === '') ? null : +hourly, b = (budget == null || budget === '' || !(+budget > 0)) ? null : +budget, s = (salaried == null || salaried === '') ? null : +salaried;
+  if (h === null || !isFinite(h)) return '';
+  return sfw1G(h) + 'h hourly' + (b !== null ? ' of ' + sfw1G(b) + 'h budget' : '') + (s !== null && isFinite(s) ? ' · ' + sfw1G(s) + 'h salaried' : '');
+}
+
+// ── The review ────────────────────────────────────────────────────────────
+/* What the week doesn't meet (C2-1): the tone each kind wears. */
+var SFW1_UNMET_TONE = {manager: 'hard', floor: 'hard', owner_rule: 'hard', closer: 'hard', close: 'hard', role_close: 'hard',
+  coverage: 'soft', leadership: 'soft', strength: 'soft', station: 'soft', ask: 'soft',
+  min_hours: 'neutral', budget: 'neutral', unchecked_rule: 'neutral'};
+function sfw1UnmetTone(kind) { return SFW1_UNMET_TONE[kind] || 'neutral'; }
+/* Grouped under each date ("Fri 10/16/26"), in the server's order; items
+   with no date under "This week", last. */
+function sfw1UnmetGroups(list) {
+  var groups = {}, order = [], i, week = null;
+  for (i = 0; i < (list || []).length; i++) {
+    var it = list[i] || {};
+    if (!it.what) continue;
+    var key = it.date || '', g;
+    if (!key) { if (!week) week = {key: '', label: 'This week', items: []}; g = week; }
+    else { if (!groups[key]) { groups[key] = {key: key, label: sfw1DayDate(key, it.day), items: []}; order.push(key); } g = groups[key]; }
+    g.items.push({kind: it.kind, tone: sfw1UnmetTone(it.kind), what: String(it.what), why: String(it.why || ''),
+                  part: it.daypart ? sfw1Part(it.daypart) : '', check: it.kind === 'unchecked_rule'});
+  }
+  order.sort();
+  var out = [];
+  for (i = 0; i < order.length; i++) out.push(groups[order[i]]);
+  if (week) out.push(week);
+  return out;
+}
+/* A repair stage that did not run (B1-2): blocking ones first, with ⚠. */
+function sfw1StageFailures(list) {
+  var out = [], i;
+  for (i = 0; i < (list || []).length; i++) {
+    var f = list[i] || {};
+    if (!f.line) continue;
+    out.push({text: String(f.line).replace(/^⚠\s*/, ''), blocking: !!f.blocks_publish});
+  }
+  out.sort(function (a, b) { return (b.blocking ? 1 : 0) - (a.blocking ? 1 : 0); });
+  return out;
+}
+/* Why the trim stopped above the budget (A1-2): what held the shifts. */
+var SFW1_HELD = {requirement: 'the shift requirements', learned: 'a day you corrected before', troubled: 'a troubled daypart',
+  rule: 'your rules', floor: 'your staffing floors', last_of_role: 'the last of a role', station: 'a kitchen station',
+  min_hours: 'minimum hours', only_shift: 'someone’s only shift', kept: 'shifts you kept', review: 'shifts needing review'};
+function sfw1BudgetHeld(bc) {
+  if (!bc || !bc.held) return '';
+  var bits = [], k;
+  for (k in bc.held) if (bc.held.hasOwnProperty(k) && +bc.held[k] > 0) bits.push(sfw1Plural(+bc.held[k], 'shift') + ' held by ' + (SFW1_HELD[k] || String(k).replace(/_/g, ' ')));
+  if (!bits.length) return '';
+  return (bc.over_by ? sfw1G(bc.over_by) + 'h over the budget: ' : '') + bits.join(', ') + '.';
+}
+/* A night left over the section count (A1-3). */
+function sfw1CapConflictLine(c) {
+  if (!c) return '';
+  var why = [], i;
+  for (i = 0; i < (c.held_by || []).length; i++) {
+    var h = c.held_by[i] || {};
+    why.push(h.kind === 'floor' ? 'your floor of ' + h.floor + ' ' + (h.role || '') + (h.daypart ? ' at ' + sfw1Part(h.daypart) : '') : (h.label || 'a rule'));
+  }
+  return sfw1LongDay(c.date, c.day) + (c.at ? ' at ' + c.at : '') + ': ' + (c.on != null ? c.on : '?') + ' on for ' + (c.cap != null ? c.cap : '?') + ' sections' + (why.length ? ' — held by ' + why.join('; ') : '') + '.';
+}
+/* A fix line's shift (B1-1): the row it points at, or — once the row was
+   edited away (`index` null) — the row as the fix left it. */
+function sfw1FixRow(fix, rows) {
+  rows = rows || [];
+  var i;
+  if (fix && fix.row_id) for (i = 0; i < rows.length; i++) if (rows[i] && rows[i]._rid === fix.row_id) return {row: rows[i], index: i};
+  if (fix && typeof fix.index === 'number' && rows[fix.index]) return {row: rows[fix.index], index: fix.index};
+  return {row: (fix && fix.row) || {}, index: null};
+}
+function sfw1FixWhen(r) {
+  r = r || {};
+  var d = r.day ? String(r.day).slice(0, 3) : (r.date ? sfw1Weekday(r.date).slice(0, 3) : '');
+  return (d ? d + ' ' : '') + (r.date ? sfw1Mdy(r.date) + ' ' : '') + (r.shift_start ? r.shift_start + (r.shift_end ? '–' + r.shift_end : '') : '');
+}
+/* The whole row as Cavnar AI handed it back (schedule_versions.row_sig): a
+   flag whose row no longer matches was changed again by hand. */
+function sfw1RowSig(r) {
+  r = r || {};
+  function n(v) { return String(v == null ? '' : v).replace(/^\s+|\s+$/g, '').toLowerCase(); }
+  return [String(r.date || '').slice(0, 10), String(r.employee || '').split(/\s+/).join(' ').replace(/^\s+|\s+$/g, '').toLowerCase(),
+          n(r.shift_start), n(r.shift_end), n(r.role)].join('|');
+}
+
+// ── The Studio's requirements view (E) ───────────────────────────────────
+function sfw1ReqHead(row) {
+  if (!row) return '';
+  if (row.daypart === 'late') {
+    var w = row.window || [];
+    return sfw1DayDate(row.date, row.day) + ' · Late night ' + (w.length > 1 ? sfw1Clock(w[0]) + '–' + sfw1Clock(w[1]) : '');
+  }
+  return sfw1DayDate(row.date, row.day) + ' · ' + sfw1Part(row.daypart);
+}
+/* "Server 5 (usual 4) · +1 asked by last Friday's report". */
+function sfw1ReqRole(e) {
+  if (!e) return '';
+  var t = String(e.role || '') + ' ' + (e.required != null ? e.required : '');
+  if (e.typical != null && +e.typical !== +e.required) t += ' (usual ' + e.typical + ')';
+  if (e.floor && +e.floor > 0) t += ', at least ' + e.floor;
+  if (e.reason) t += ' · ' + e.reason;
+  return t;
+}
+
+// ── Shift Quality ─────────────────────────────────────────────────────────
+function sfw1Points(p) {
+  var n = Math.round(+p);
+  return (p == null || p === '' || !isFinite(n) || n <= 0) ? '' : 'up to +' + n + ' point' + (n === 1 ? '' : 's');
+}
+/* A leadership miss's offer (D1a-8): nobody of the role on — add one;
+   somebody on but not able — swap one in. */
+function sfw1MissAction(m) {
+  if (!m || !m.role) return null;
+  var role = String(m.role).toLowerCase();
+  if (m.why === 'nobody_on') return {kind: 'add', label: 'Add a ' + role};
+  if (m.why === 'not_qualified' || m.why === 'short') return {kind: 'swap', label: 'Swap in a ' + role};
+  return null;
+}
+/* One person in overtime (D1b-1), in the dimension's own words. */
+function sfw1OvertimeLine(o, priced) {
+  if (!o) return '';
+  var when = o.bucket ? ' in the payroll week of ' + sfw1Mdy(o.bucket) : '';
+  var cost = priced && o.premium ? ' — about $' + Math.round(+o.premium).toLocaleString() + ' of overtime premium' : '';
+  var tail = o.avoidable && o.teammate ? '; ' + o.teammate + ' has room in the same role for one of their shifts.' : '; nobody else in the role has room to take a shift.';
+  return (o.name || '') + ' is ' + sfw1G(o.overtime_hours) + 'h into overtime' + when + cost + tail;
+}
+/* A dimension's own facts as lines (D1b-2, D1b-3). */
+function sfw1DimFacts(d) {
+  var f = (d && d.facts) || {}, out = [], i;
+  if (!d) return out;
+  if (d.key === 'stations') {
+    var asg = f.assigned || {}, held = [], k;
+    for (k in asg) if (asg.hasOwnProperty(k)) held.push(k + ' on ' + asg[k]);
+    if ((f.required || []).length) out.push('Needs ' + sfw1And(f.required) + (held.length ? ' — ' + held.join(', ') : '') + ((f.gaps || []).length ? '; nobody trained on ' + sfw1And(f.gaps) : '') + '.');
+  }
+  if (d.key === 'training_balance') for (i = 0; i < Math.min((f.pairs || []).length, 2); i++) out.push('Paired: ' + f.pairs[i] + '.');
+  if (d.key === 'cross_training' && (f.not_judged || []).length) out.push('Not judged for ' + sfw1And(f.not_judged) + ' — nobody in that role covers a second station yet.');
+  if (d.key === 'fatigue') {
+    for (i = 0; i < Math.min((f.sustained_busy || []).length, 2); i++) { var sb = f.sustained_busy[i]; out.push(sb.name + ' has averaged ' + sfw1G(sb.average) + ' of the busiest shifts a week over ' + sb.weeks + ' weeks.'); }
+    for (i = 0; i < Math.min((f.sustained_hours || []).length, 2); i++) { var sh = f.sustained_hours[i]; out.push(sh.name + ' has averaged ' + sfw1G(sh.average) + 'h a week over ' + sh.weeks + ' weeks, against ' + sfw1G(sh.ceiling) + 'h.'); }
+  }
+  if (d.key === 'fairness' && f.busy_ledger && (f.busy_ledger.overloaded || []).length) {
+    var ov = f.busy_ledger.overloaded[0];
+    out.push(ov.name + ' has had ' + ov.have + ' of the busiest shifts over ' + ov.weeks + ' published weeks — about ' + sfw1G(ov.share) + ' would be their share.');
+  }
+  if (d.key === 'experience_balance' && (f.by_default || []).length) out.push(sfw1And(f.by_default) + ' counted as experienced because they manage or are salaried.');
+  return out;
+}
+
+// ── Learning ──────────────────────────────────────────────────────────────
+/* "2 of 3" for a scheduling-memory item, or '' with too few to say. */
+function sfw1MemCount(it) {
+  if (!it || !(+it.opportunities > 0)) return '';
+  return (+it.hits || 0) + ' of ' + (+it.opportunities);
+}
+/* What one published daypart did (L-12, L-13): scheduled against worked,
+   misses, late stays, its labor %, what its sales per labor hour is over. */
+function sfw1OutcomeBits(o) {
+  var out = [];
+  if (!o) return out;
+  if (o.avg_actual_hours != null) out.push(sfw1G(o.avg_hours) + 'h scheduled · ' + sfw1G(o.avg_actual_hours) + 'h worked');
+  if (+o.missed > 0) out.push(sfw1Plural(+o.missed, 'shift') + ' missed');
+  if (+o.stayed_late > 0) out.push(+o.stayed_late + ' ran late');
+  if (o.labor_pct != null) out.push(sfw1G(o.labor_pct) + '% labor');
+  if (o.splh && o.splh_basis) out.push('sales per ' + (o.splh_basis === 'worked' ? 'worked' : 'scheduled') + ' hour');
+  return out;
+}
+/* A measured rating's line (L-23). */
+function sfw1RatingLine(s) {
+  if (!s) return '';
+  function money(v) { var n = +v; return isFinite(n) ? '$' + n.toFixed(2) : '—'; }
+  var pct = (s.ratio != null && isFinite(+s.ratio)) ? Math.round((+s.ratio - 1) * 100) : null;
+  return 'Suggested ' + s.suggested + ' — sells ' + money(s.sales_per_cover) + ' a guest vs ' + money(s.house_sales_per_cover)
+    + ' for the house at the same mealtimes' + (pct !== null ? ' (' + (pct >= 0 ? '+' : '−') + Math.abs(pct) + '%)' : '') + ', ' + (+s.tickets || 0) + ' tickets';
+}
+
+/* ── Behaviour ── */
+(function () {
+  function $id(id) { return document.getElementById(id); }
+  var e = sfw1Esc, n = sfw1Num;
+  function jget(url, cb) { fetch(url, {credentials: 'same-origin'}).then(apiJson).then(function (d) { cb(d || {}); }).catch(function () { cb({ok: false, error: 'Network error — check your connection.'}); }); }
+  function jpost(url, body, cb) {
+    fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})
+      .then(apiJson).then(function (d) { cb(d || {}); }).catch(function () { cb({ok: false, error: 'Network error — check your connection.'}); });
+  }
+  function say(msg, kind) { if (typeof toast === 'function') toast(msg, kind || 'success'); }
+  function busy(btn, label) { return (btn && typeof cbtnBusy === 'function') ? cbtnBusy(btn, label || '') : function () {}; }
+  function rows() { return (typeof _schedRows !== 'undefined' && _schedRows) || []; }
+  function weekDates() { return (typeof _schedWeekDates !== 'undefined' && _schedWeekDates) || []; }
+
+  // ── What the draft carries ─────────────────────────────────────────────
+  /* A fresh generation sends each part on its own; a reopened week has the
+     ones its saved review kept (review.manager_plan, manager_coverage,
+     min_hours, unwritten_dates, unstaffable_dates, setup). */
+  var S = {};
+  window.sfw1Take = function (data) {
+    data = data || {};
+    var rv = data.review || {};
+    S = {
+      plan: data.manager_plan || (rv.manager_plan ? {question: rv.manager_plan.question, unknown_pattern: rv.manager_plan.unknown_pattern || [], uncovered: rv.manager_plan.uncovered || []} : null),
+      cover: data.manager_coverage || rv.manager_coverage || null,
+      minh: data.min_hours || rv.min_hours || null,
+      unwritten: data.unwritten_dates || rv.unwritten_dates || [],
+      unstaffable: data.unstaffable_dates || rv.unstaffable_dates || [],
+      start: data.starting_point || null,
+      startLine: '',
+      ddt: data.demand_data_through || null,
+      bb: data.budget_basis || null,
+      req: data.requirements || [],
+      setup: rv.setup || [],
+      hourly: data.hours_hourly, salaried: data.hours_salaried, budget: data.hours_budget,
+      redo: data.redo || null
+    };
+    var lines = rv.lines || [], i;
+    for (i = 0; i < lines.length; i++) if (/^A starting point:/.test(String(lines[i]))) S.startLine = String(lines[i]);
+    window._sfw1Removed = [];
+    renderNotes();
+    renderReq();
+    var lbl = $id('sched-week-label');
+    if (lbl) {
+      var old = $id('sfw1-start'); if (old) old.parentNode.removeChild(old);
+      if (S.start && S.start.no_history) lbl.insertAdjacentHTML('beforeend', '<span class="sfw1-badge" id="sfw1-start" title="' + e(S.startLine || 'No shift history of its own yet') + '">Starting point</span>');
+    }
+  };
+  window.sfw1State = function () { return S; };
+
+  // ── Week notices (generate screen and the week) ────────────────────────
+  function note(tone, body, acts, extra) {
+    return '<div class="sfw1-n ' + (tone || '') + '"><div class="tx">' + body + (extra || '') + '</div>' + (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div>';
+  }
+  function canEdit() { var r = window._sfw2Roster || window._roster; return !(r && r.can_edit === false); }
+  function notesHtml() {
+    var h = '', i, ed = canEdit();
+    if (S.unwritten && S.unwritten.length) {
+      var ds = []; for (i = 0; i < S.unwritten.length; i++) ds.push(S.unwritten[i].date);
+      h += note('bad', n(sfw1PartialLine(S.unwritten)), ed ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-sfw1-redo="' + e(ds.join(',')) + '">Redo these days</button>' : '');
+    }
+    if (S.unstaffable && S.unstaffable.length) {
+      h += note('bad', n(sfw1UnstaffableLine(S.unstaffable)) + '<small>Mark ' + (S.unstaffable.length === 1 ? 'it' : 'them') + ' closed or fix availability, then redo ' + (S.unstaffable.length === 1 ? 'that day' : 'those days') + '.</small>',
+        '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="swOpenTeam(\'rules\')">Closed days</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam(\'roster\')">Availability</button>');
+    }
+    var p = S.plan || {};
+    if (p.failed) h += note('bad', 'Cavnar AI couldn’t plan the managers’ shifts before writing this draft — check every day has a manager on from open to close.');
+    if (p.question && (p.unknown_pattern || []).length) h += questionHtml(p);
+    var sf = S.cover && S.cover.shortfall && S.cover.shortfall.text;
+    if (sf) h += note('warn', n(sf));
+    var left = (S.cover && S.cover.left) || [], shown = {};
+    for (i = 0; i < left.length; i++) {
+      var l = left[i]; shown[l.date + '|' + l.from] = 1;
+      h += note('warn', n(sfw1LeftLine(l)), ed ? actingActs(l.date, l.could_act || []) : '');
+    }
+    for (i = 0; i < (p.uncovered || []).length; i++) {
+      var u = p.uncovered[i];
+      if (shown[u.date + '|' + u.from] || left.length) continue;
+      h += note('warn', n(sfw1UncoveredLine(u)), ed ? actingActs(u.date, []) : '');
+    }
+    var sk = p.skipped || [];
+    for (i = 0; i < Math.min(sk.length, 3); i++) h += note('', n(sfw1SkippedLine(sk[i])));
+    var mh = (S.minh && S.minh.left) || [];
+    for (i = 0; i < Math.min(mh.length, 4); i++) h += note('', n(mh[i].employee + ' is ' + sfw1G(mh[i].short_by) + 'h under the ' + sfw1G(mh[i].min) + 'h minimum you set' + (mh[i].reason ? ' — ' + mh[i].reason : '') + '.'));
+    if (S.start && S.start.no_history && S.startLine) h += note('', n(S.startLine.replace(/^A starting point:\s*/, '')), '', '');
+    var dd = S.ddt;
+    if (dd && (dd.line || dd.message) && (dd.blind || dd.stale || dd.blocked)) h += note('warn', n(dd.message || dd.line));
+    h += setupHtml(S.setup);
+    return h;
+  }
+  /* The setup the week was drafted against (F1-9): each item with its own
+     action — leader rules nobody counts for ("Count them as mine", the
+     account holder's), trading days with no close time (Hours). */
+  function setupHtml(items) {
+    var h = '', rest = [], i;
+    for (i = 0; i < (items || []).length; i++) {
+      var it = items[i] || {};
+      if (!it.text || it.line === false) continue;
+      if (it.kind === 'leader_rules_inactive') h += note('warn', n(it.text), it.can_adopt ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-adopt="1">Count them as mine</button>' : '');
+      else if (it.kind === 'close_times_missing') h += note('warn', n(it.text), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set the hours</button>');
+      else rest.push(it);
+    }
+    if (rest.length) {
+      var li = '';
+      for (i = 0; i < rest.length; i++) li += '<li>' + n(rest[i].text) + '</li>';
+      h += note('', '<b>How this week was set up</b><ul>' + li + '</ul>', '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam(\'rules\')">Team &amp; rules</button>');
+    }
+    return h;
+  }
+  /* "Make someone acting manager": who on the day could stand in first,
+     then the roster; it saves their dates through the staff settings. */
+  function actingActs(date, could) {
+    var names = [], seen = {}, i, r = (window._sfw2Roster && window._sfw2Roster.roster) || [];
+    for (i = 0; i < could.length; i++) if (could[i] && !seen[could[i].toLowerCase()]) { seen[could[i].toLowerCase()] = 1; names.push(could[i]); }
+    var rn = (typeof _schedRosterNames !== 'undefined' && _schedRosterNames) || [];
+    for (i = 0; i < rn.length; i++) if (rn[i] && !seen[String(rn[i]).toLowerCase()]) { seen[String(rn[i]).toLowerCase()] = 1; names.push(rn[i]); }
+    for (i = 0; i < r.length; i++) if (r[i].name && !seen[r[i].name.toLowerCase()]) { seen[r[i].name.toLowerCase()] = 1; names.push(r[i].name); }
+    var o = '<option value="">Acting manager…</option>';
+    for (i = 0; i < names.length; i++) o += '<option value="' + e(names[i]) + '">' + e(names[i]) + (i < could.length ? ' · on that day' : '') + '</option>';
+    return '<select class="ac-select" data-sfw1-act-who="' + e(date) + '" aria-label="Who stands in as the manager on ' + e(sfw1Mdy(date)) + '">' + o + '</select>'
+      + '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-act="' + e(date) + '">Make acting manager</button>'
+      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam(\'roster\')">Change availability</button>';
+  }
+  function renderNotes() {
+    var h = notesHtml(), a = $id('sfw1-week');
+    if (a) a.innerHTML = h;
+    var sum = $id('ss-summary');
+    if (sum) { var b = $id('sfw1-sum'); if (b) b.innerHTML = h; }
+  }
+  window.sfw1RenderNotes = renderNotes;
+
+  // ── The owner's question about the managers' days (M-1) ────────────────
+  function questionHtml(p) {
+    var names = p.unknown_pattern || [], h = '', i, j;
+    h += '<div class="sfw1-q" id="sfw1-q"><div class="k">A question for you</div><h3>' + e(p.question) + '</h3>'
+      + '<p>Cavnar AI plans your managers’ shifts first so every minute on the floor has a manager. It had no standing shifts or past schedules for these managers, so this week is an even split. Tell it their real days and every draft will keep them.</p>';
+    if (!canEdit()) return h + '<p>Only the account owner or a manager who drafts schedules can set these.</p></div>';
+    for (i = 0; i < names.length; i++) {
+      h += '<div class="sfw1-wk" data-sfw1-wk="' + e(names[i]) + '"><div class="nm">' + e(names[i]) + '</div><div class="grid">';
+      for (j = 0; j < SFW1_DAYS.length; j++) {
+        h += '<div class="d" data-day="' + SFW1_DAYS[j] + '"><label><input type="checkbox" data-sfw1-wk-on="1"> ' + SFW1_DAYS[j].slice(0, 3) + '</label>'
+          + '<select class="ac-select" data-f="start" aria-label="' + e(names[i] + ' starts ' + SFW1_DAYS[j]) + '">' + (window.cavTimeOptions ? cavTimeOptions('') : '') + '</select>'
+          + '<select class="ac-select" data-f="end" aria-label="' + e(names[i] + ' ends ' + SFW1_DAYS[j]) + '">' + (window.cavTimeOptions ? cavTimeOptions('') : '') + '</select></div>';
+      }
+      h += '</div><div class="ft"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-wk-save="' + e(names[i]) + '">Save ' + e(names[i].split(' ')[0]) + '’s days</button><span class="err" data-sfw1-wk-err></span></div></div>';
+    }
+    return h + '</div>';
+  }
+  /* Merged with what they already always work on other days (GET
+     labor/managers), then saved as their standing shifts (F1's
+     staff-settings, both twins). */
+  function saveStanding(name, btn) {
+    var box = btn.closest('[data-sfw1-wk]'), err = box ? box.querySelector('[data-sfw1-wk-err]') : null, picked = [], bad = '', ds = box ? box.querySelectorAll('.d') : [], i;
+    for (i = 0; i < ds.length; i++) {
+      var on = ds[i].querySelector('[data-sfw1-wk-on]');
+      if (!on || !on.checked) continue;
+      var st = ds[i].querySelector('[data-f="start"]').value, en = ds[i].querySelector('[data-f="end"]').value, day = ds[i].getAttribute('data-day');
+      if (!st || !en) { bad = 'Pick when ' + day + '’s shift starts and ends.'; break; }
+      picked.push({day: day, start: st, end: en});
+    }
+    if (err) err.textContent = bad || (picked.length ? '' : 'Tick the days they work.');
+    if (bad || !picked.length) return;
+    var done = busy(btn, 'Saving…');
+    jget('/api/labor/managers', function (m) {
+      var keep = [], k, mine = {};
+      for (k = 0; k < picked.length; k++) mine[picked[k].day] = 1;
+      var ms = (m && m.managers) || [];
+      for (k = 0; k < ms.length; k++) if (String(ms[k].name).toLowerCase() === name.toLowerCase()) {
+        var have = ms[k].standing_shifts || [], q;
+        for (q = 0; q < have.length; q++) if (!mine[have[q].day]) keep.push(have[q]);
+      }
+      jpost('/api/labor/staff-settings', {employee_name: name, standing_shifts: keep.concat(picked)}, function (d) {
+        done();
+        if (!d.ok) { if (err) err.textContent = d.error || 'Couldn’t save their days.'; return; }
+        say(name + '’s days are saved — every draft starts from them');
+        var p = S.plan || {}, left = [], z;
+        for (z = 0; z < (p.unknown_pattern || []).length; z++) if (p.unknown_pattern[z] !== name) left.push(p.unknown_pattern[z]);
+        p.unknown_pattern = left;
+        if (!left.length) p.question = null;
+        renderNotes();
+        if (window.loadRoster) window.loadRoster();
+      });
+    });
+  }
+
+  // ── Redo some days: the reasons sheet (B2, H1-5) ───────────────────────
+  var REDO = [['too_few', 'Too few people on'], ['too_many', 'Too many people on'], ['wrong_people', 'The wrong people on'],
+              ['times', 'Start or end times are off'], ['manager', 'Manager coverage is wrong'], ['overtime', 'Too much overtime'],
+              ['fairness', 'Shifts aren’t shared fairly'], ['other', 'Something else']];
+  window.SFW1_REDO = REDO;
+  var _redo = {dates: [], chip: ''};
+  function sheet(html) {
+    var c = $id('sfw1-modal-card'); if (!c) return;
+    c.innerHTML = html;
+    if (window.cModal) cModal.open('sfw1-modal'); else $id('sfw1-modal').style.display = 'flex';
+  }
+  function closeSheet() { if (window.cModal) cModal.close('sfw1-modal'); else $id('sfw1-modal').style.display = 'none'; }
+  window.sfw1RedoSheet = function (dates) {
+    if (!dates || !dates.length) { say('Tick the days to redo', 'error'); return; }
+    if (typeof _schedHistoryId === 'undefined' || !_schedHistoryId) { say('This draft has no history row to rebuild from', 'error'); return; }
+    if (typeof _schedDirty !== 'undefined' && _schedDirty) { say('Save or discard your edits first', 'error'); return; }
+    _redo = {dates: dates.slice(), chip: ''};
+    var ds = [], i, ch = '';
+    for (i = 0; i < dates.length; i++) ds.push(sfw1DayDate(dates[i]));
+    for (i = 0; i < REDO.length; i++) ch += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct" data-sfw1-chip="' + REDO[i][0] + '" aria-pressed="false">' + e(REDO[i][1]) + '</button>';
+    sheet('<div class="hb-kicker">Redo some days</div><h3 id="sfw1-modal-t">What’s wrong with ' + n(sfw1And(ds)) + '?</h3>'
+      + '<p>Cavnar AI rewrites only ' + (dates.length === 1 ? 'that day' : 'those days') + ' and keeps the rest. Your reason goes with the redo, and the next drafts learn from it.</p>'
+      + '<div class="chips chip-tog" role="group" aria-label="What’s wrong">' + ch + '</div>'
+      + '<label class="sr-k" for="sfw1-redo-why">What’s wrong? (optional)</label>'
+      + '<textarea class="ac-input" id="sfw1-redo-why" maxlength="300" rows="3" placeholder="e.g. Saturday needs a second bartender after 8pm"></textarea><div class="cnt" id="sfw1-redo-cnt">0 / 300</div>'
+      + '<div class="err" id="sfw1-redo-err" role="alert"></div>'
+      + '<div class="so-f"><button type="button" class="cbtn cbtn-secondary" data-sfw1-close="1">Not now</button><button type="button" class="cbtn cbtn-primary" data-sfw1-redo-go="1">Redo ' + sfw1Plural(dates.length, 'day') + '</button></div>');
+  };
+  function redoGo(btn) {
+    var why = $id('sfw1-redo-why'), words = why ? String(why.value || '').replace(/^\s+|\s+$/g, '').slice(0, 300) : '';
+    var gen = $id('gen-sched-btn') || btn;
+    var opts = {dates: _redo.dates, history_id: _schedHistoryId};
+    if (_redo.chip) opts.reason_chip = _redo.chip;
+    if (words) opts.reason_text = words;
+    closeSheet();
+    if (window.studioGo && window._ssOpen) { /* the build stage takes it from here */ }
+    generateSchedule(gen, opts);
+  }
+
+  // ── "Why this change?" after a save (H1-1) ─────────────────────────────
+  window.sfw1WhySheet = function (qs, hid) {
+    if (!qs || !qs.length) return;
+    var h = '<div class="hb-kicker">One tap teaches the next draft</div><h3 id="sfw1-modal-t">Why this change?</h3>', i, j;
+    for (i = 0; i < qs.length; i++) {
+      var q = qs[i] || {}, o = '';
+      for (j = 0; j < (q.options || []).length; j++) o += '<button type="button" class="cbtn cbtn-secondary" data-sfw1-why="' + e(q.key) + '" data-answer="' + e(q.options[j].answer) + '" data-hid="' + e(hid) + '">' + e(q.options[j].label) + '</button>';
+      h += '<div class="q" data-sfw1-q="' + e(q.key) + '"><p>' + n(q.text) + '</p><div class="opts">' + o + '</div><div class="err" data-sfw1-why-err></div></div>';
+    }
+    h += '<div class="so-f"><button type="button" class="cbtn cbtn-text" data-sfw1-close="1">Skip</button></div>';
+    sheet(h);
+  };
+  function answerWhy(btn) {
+    var key = btn.getAttribute('data-sfw1-why'), box = btn.closest('[data-sfw1-q]'), err = box ? box.querySelector('[data-sfw1-why-err]') : null;
+    var done = busy(btn, '');
+    jpost('/api/labor/schedule/edit-why', {history_id: +btn.getAttribute('data-hid'), key: key, answer: btn.getAttribute('data-answer')}, function (d) {
+      done();
+      if (!d.ok) { if (err) err.textContent = d.error || 'That answer didn’t save.'; return; }
+      if (box) box.innerHTML = '<p>' + (d.counted === false ? 'Saved for the owner to confirm.' : 'Thanks — the next drafts know why.') + '</p>';
+      var left = document.querySelectorAll('#sfw1-modal-card [data-sfw1-why]');
+      if (!left.length) setTimeout(closeSheet, 900);
+    });
+  }
+
+  // ── Cavnar AI's own changes, kept through Save (H1-2) ──────────────────
+  window._sfw1Removed = [];
+  window.sfw1NoteRemoved = function (list) {
+    var i; for (i = 0; i < (list || []).length; i++) if (list[i]) window._sfw1Removed.push(list[i]);
+  };
+  window.sfw1MarkOrigin = function (row, source) {
+    if (!row) return;
+    row.origin = 'cavnar:' + source;
+    row.origin_sig = sfw1RowSig(row);
+  };
+
+  // ── The grid: the day header and the chip (M-2, M-3, A2-1, A2-6) ───────
+  window.sfw1DayHead = function (d) {
+    var h = '', p = S.plan || {}, w = (p.windows || {})[d], i, rv = (typeof _ssReview !== 'undefined' && _ssReview) || null;
+    if (w) h += '<span class="sfw1-mw">' + n(sfw1PlanWindow(w)) + '</span>';
+    for (i = 0; i < (S.unwritten || []).length; i++) if (S.unwritten[i].date === d) h += '<span class="sfw1-nw" title="' + e(S.unwritten[i].why || '') + '">Not written</span>';
+    var hd = (rv && rv.hard_days) || [], shown = 0;
+    for (i = 0; i < hd.length && shown < 2; i++) if (hd[i].date === d) { h += '<span class="sfw1-hd">' + n(hd[i].detail || hd[i].kind) + '</span>'; shown++; }
+    return h;
+  };
+  window.sfw1ChipMarks = function (r) {
+    var h = '';
+    if (r && r._pinned === 'manager_plan') h += '<span class="sfw1-pin" title="' + e(r._pin_reason || 'Planned before the draft so every minute has a manager') + '">Manager plan</span>';
+    if (r && r.dst_hours) h += '<span class="sfw1-dst" title="Includes the extra hour when the clocks go back">+1h clocks</span>';
+    return h;
+  };
+  /* The shift pane: why a planned row is there, the clocks, and the server's
+     usual section when the shift has none (H2-2). */
+  window.sfw1ShiftExtras = function (r) {
+    var h = '';
+    if (!r) return '';
+    if (r._pinned === 'manager_plan') h += '<div class="sw-flag"><b>Manager plan</b> — ' + n(r._pin_reason || 'planned before the draft so every minute on the floor has a manager') + '. Passes after the draft never move it.</div>';
+    if (r.dst_hours) h += '<div class="sw-flag">Includes the extra hour when the clocks go back (<span class="hb-num">' + e(sfw1G(r.dst_hours)) + 'h</span> paid).</div>';
+    return h;
+  };
+  window.sfw1UsualSection = function (r, usual) {
+    if (!r || !usual || !usual.length) return null;
+    var wd = sfw1Weekday(r.date), m = sfw1Minutes(r.shift_start), part = (m !== null && (m >= 900 || m < 240)) ? 'night' : 'morning', i;
+    for (i = 0; i < usual.length; i++) {
+      var u = usual[i];
+      if (String(u.employee || '').toLowerCase() === String(r.employee || '').toLowerCase() && u.day === wd && u.daypart === part) return u;
+    }
+    return null;
+  };
+
+  // ── The review's groups (C2-1, B1-2, B1-4, A1, F2-6) ────────────────────
+  window.sfw1ReviewHtml = function (rv) {
+    if (!rv) return '';
+    var h = '', i, j;
+    var sf = sfw1StageFailures(rv.stage_failures);
+    if (sf.length) {
+      h += '<div class="sfw1-rv"><div class="sr-k">Checks that didn’t run</div>';
+      for (i = 0; i < sf.length; i++) h += '<div class="sr-line ' + (sf[i].blocking ? 'bad' : 'warn') + '"><span class="d"></span><span>' + (sf[i].blocking ? '⚠ ' : '') + n(sf[i].text) + (sf[i].blocking ? ' <span class="chk">holds the send</span>' : '') + '</span></div>';
+      h += '</div>';
+    }
+    var gs = sfw1UnmetGroups(rv.unmet);
+    if (gs.length) {
+      h += '<div class="sfw1-rv"><div class="sr-k">What this week doesn’t meet</div>';
+      for (i = 0; i < gs.length; i++) {
+        h += '<div class="day">' + n(gs[i].label) + '</div>';
+        for (j = 0; j < gs[i].items.length; j++) {
+          var it = gs[i].items[j];
+          h += '<div class="sr-line ' + it.tone + '"><span class="d"></span><span class="w"><b>' + n(it.what) + (it.part ? ' <span class="chk">' + e(it.part) + '</span>' : '') + (it.check ? ' <span class="chk">check it yourself</span>' : '') + '</b><small>' + n(it.why) + '</small></span></div>';
+        }
+      }
+      h += '</div>';
+    }
+    var held = sfw1BudgetHeld(rv.budget_conflict), cc = rv.cap_floor_conflicts || [];
+    if (held || cc.length) {
+      h += '<div class="sfw1-rv"><div class="sr-k">Over the budget or the sections</div>';
+      if (held) h += '<div class="sr-line warn"><span class="d"></span><span>' + n(held) + '</span></div>';
+      var ex = (rv.budget_conflict && rv.budget_conflict.examples) || [];
+      for (i = 0; i < Math.min(ex.length, 6); i++) h += '<div class="sr-line"><span class="d"></span><span>' + n(sfw1DayDate(ex[i].date, ex[i].day) + ' ' + sfw1Part(ex[i].daypart) + ': ' + (ex[i].label || ((ex[i].role || '') + (ex[i].required != null ? ' — needs ' + ex[i].required : '')))) + '</span></div>';
+      for (i = 0; i < cc.length; i++) h += '<div class="sr-line warn"><span class="d"></span><span>' + n(sfw1CapConflictLine(cc[i])) + '</span></div>';
+      h += '</div>';
+    }
+    var um = rv.unmatched_names || [];
+    if (um.length) {
+      h += '<div class="sfw1-rv"><div class="sr-k">Facts that name nobody on the roster</div>';
+      for (i = 0; i < um.length; i++) h += '<div class="sr-line warn"><span class="d"></span><span>' + n(um[i].detail || um[i].name) + '</span>'
+        + (um[i].suggestion ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="' + e(um[i].suggestion) + '">Open ' + e(um[i].suggestion) + '</button>' : '') + '</div>';
+      h += '</div>';
+    }
+    return h;
+  };
+  /* Beside hours scheduled (B1-4): hourly, of the budget, and salaried. */
+  window.sfw1HoursHtml = function () {
+    var t = sfw1HoursLine(S.hourly, S.budget, S.salaried);
+    return t ? '<div class="sfw1-hours">' + n(t) + '</div>' : '';
+  };
+
+  // ── Requirements view (E) ──────────────────────────────────────────────
+  function renderReq() {
+    var el = $id('sfw1-req'); if (!el) return;
+    var req = S.req || [], h = '', i, j;
+    if (!req.length) { el.innerHTML = ''; if (window.swActive) swActive(); return; }
+    h += '<div class="sw-note" style="margin-bottom:6px">Who each shift was written and scored for, and why a number moved off the usual.</div><div class="sfw1-req">';
+    for (i = 0; i < req.length; i++) {
+      var r = req[i] || {}, rl = [];
+      for (j = 0; j < (r.roles || []).length; j++) rl.push(n(sfw1ReqRole(r.roles[j])));
+      h += '<div class="sh"><div class="hd">' + n(sfw1ReqHead(r)) + '</div>' + (rl.length ? '<div class="rl">' + rl.join('<br>') + '</div>' : '')
+        + ((r.reasons || []).length ? '<div class="why">' + n(r.reasons.join('; ')) + '</div>' : '')
+        + ((r.leader || []).length ? '<div class="why">Needs ' + n(sfw1And(r.leader)) + '</div>' : '') + '</div>';
+    }
+    el.innerHTML = h + '</div>';
+    if (window.swActive) swActive();
+  }
+
+  // ── Before Generate: how fresh the sales are (E, D-33) ─────────────────
+  /* The forecast's own freshness read for the picked week: its line, and
+     when it is blocked the message and why Generate will refuse; the
+     budget's assumed wage (E-24) with where to fix it. */
+  var _freshKey = null;
+  window.sfw1LoadFresh = function (force) {
+    var el = $id('sfw1-gen-fresh'); if (!el) return;
+    var ws = (window._schedWeekStart && _schedWeekStart()) || '';
+    if (!force && _freshKey === ws) return;
+    _freshKey = ws;
+    jget('/api/labor/schedule-forecast' + (ws ? '?week_start=' + encodeURIComponent(ws) : ''), function (d) {
+      if (_freshKey !== ws) return;
+      if (!d.ok) { _freshKey = null; el.innerHTML = ''; return; }
+      var h = '', dd = d.demand_data_through, bb = d.budget_basis || {};
+      if (dd && dd.blocked) h += note('bad', '<b>Generate will refuse this week for now.</b> ' + n(dd.message || dd.line || 'The sales the forecast stands on are too old.'), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/integrations">Check the POS</button>');
+      else if (dd && dd.line) h += note(dd.blind || dd.stale ? 'warn' : '', n(dd.line));
+      if (bb.caveat) h += note(bb.trim_ok === false ? 'bad' : 'warn', n(bb.caveat), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set pay rates</button>');
+      el.innerHTML = h;
+    });
+  };
+  document.addEventListener('change', function (ev) {
+    var t = ev.target; if (t && (t.id === 'sched-week-pick' || t.id === 'sched-week-date')) sfw1LoadFresh();
+  });
+
+  // ── Publish check: worth a look, hours, likely to change (G-1, H1-6) ───
+  window.sfw1PubHtml = function (c) {
+    if (!c) return '';
+    var h = '', i, hr = c.hours || null;
+    var hl = hr ? sfw1HoursLine(hr.hourly, (typeof _swData !== 'undefined' && _swData && _swData.hours_budget) || S.budget, hr.salaried) : '';
+    if (hl) h += '<div class="sw-kv"><span>Hours</span><b>' + n(hl) + '</b></div>';
+    var notes = c.notes || [];
+    if (notes.length) {
+      h += '<div class="sr-k">Worth a look</div>';
+      for (i = 0; i < notes.length; i++) h += '<div class="sr-line warn"><span class="d"></span><span>' + n(notes[i].text || notes[i]) + '</span></div>';
+      h += '<div class="sr-note">These never hold the send.</div>';
+    }
+    var lk = c.likely_to_change;
+    if (lk && lk.ready && (lk.rows || []).length) {
+      h += '<div class="sr-k">Likely to change</div>';
+      for (i = 0; i < lk.rows.length; i++) h += '<div class="sr-line"><span class="d"></span><span>' + n(lk.rows[i].text) + '</span></div>';
+      if (lk.note) h += '<div class="sr-note">' + n(lk.note) + '</div>';
+    }
+    return h ? '<div class="sfw1-pub">' + h + '</div>' : '';
+  };
+  window.sfw1RenderPub = function (c) {
+    var el = $id('sfw1-pub'); if (!el) return;
+    el.innerHTML = window.sfw1PubHtml(c || window._psCheck);
+  };
+
+  // ── Clicks ─────────────────────────────────────────────────────────────
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw1-redo],[data-sfw1-chip],[data-sfw1-close],[data-sfw1-redo-go],[data-sfw1-why],[data-sfw1-adopt],[data-sfw1-act],[data-sfw1-wk-save],[data-sfw1-sel],[data-sfw1-sec],[data-sfw1-add-role],[data-sfw1-swap-role],[data-sfw1-mem],[data-sfw1-rate]') : null;
+    if (!t || t.disabled) return;
+    if (t.hasAttribute('data-sfw1-redo')) { sfw1RedoSheet(String(t.getAttribute('data-sfw1-redo')).split(',')); return; }
+    if (t.hasAttribute('data-sfw1-chip')) {
+      var k = t.getAttribute('data-sfw1-chip'), on = _redo.chip !== k, cs = document.querySelectorAll('#sfw1-modal-card [data-sfw1-chip]'), i;
+      _redo.chip = on ? k : '';
+      for (i = 0; i < cs.length; i++) { var lit = cs[i].getAttribute('data-sfw1-chip') === _redo.chip; cs[i].className = 'cbtn cbtn-secondary cbtn-sm ct' + (lit ? ' on' : ''); cs[i].setAttribute('aria-pressed', lit ? 'true' : 'false'); }
+      return;
+    }
+    if (t.hasAttribute('data-sfw1-close')) { closeSheet(); return; }
+    if (t.hasAttribute('data-sfw1-redo-go')) { redoGo(t); return; }
+    if (t.hasAttribute('data-sfw1-why')) { answerWhy(t); return; }
+    if (t.hasAttribute('data-sfw1-adopt')) {
+      var fin = busy(t, '');
+      jpost('/api/labor/team/ratings/adopt', {}, function (d) {
+        fin();
+        if (!d.ok) { say(d.error || 'Those ratings didn’t update.', 'error'); return; }
+        say((d.adopted || 0) + ' ratings now count — the leader rules judge them on the next draft');
+        t.disabled = true; t.textContent = 'Counted';
+      });
+      return;
+    }
+    if (t.hasAttribute('data-sfw1-act')) {
+      var date = t.getAttribute('data-sfw1-act'), sel = t.parentNode ? t.parentNode.querySelector('[data-sfw1-act-who]') : null, who = sel ? sel.value : '';
+      if (!who) { say('Pick who stands in as the manager', 'error'); return; }
+      var fin2 = busy(t, 'Saving…');
+      jget('/api/labor/roster', function (rd) {
+        var list = [], q, ro = (rd && rd.roster) || [];
+        for (q = 0; q < ro.length; q++) if (String(ro[q].name).toLowerCase() === who.toLowerCase()) list = ((ro[q].settings || {}).acting_manager || []).slice();
+        list.push({from: date, until: date, note: 'No manager could cover the day'});
+        jpost('/api/labor/staff-settings', {employee_name: who, acting_manager: list}, function (d) {
+          fin2();
+          if (!d.ok) { say(d.error || 'Couldn’t save that', 'error'); return; }
+          say(who + ' counts as the manager on ' + sfw1Mdy(date) + ' — redo that day to plan around it');
+          t.disabled = true;
+        });
+      });
+      return;
+    }
+    if (t.hasAttribute('data-sfw1-wk-save')) { saveStanding(t.getAttribute('data-sfw1-wk-save'), t); return; }
+    if (t.hasAttribute('data-sfw1-sel')) {
+      var ix = +t.getAttribute('data-sfw1-sel');
+      if (window.studioGo && window._ssOpen) studioGo('schedule');
+      if (window.swSelect) swSelect(ix);
+      return;
+    }
+    if (t.hasAttribute('data-sfw1-sec')) {
+      var si = +t.getAttribute('data-sfw1-sec'), pick = $id('ss-sec-pick');
+      if (pick) { pick.value = t.getAttribute('data-sec'); if (window.ssSecPick) ssSecPick(si, pick); }
+      return;
+    }
+    if (t.hasAttribute('data-sfw1-add-role')) { addRole(t.getAttribute('data-date'), t.getAttribute('data-part'), t.getAttribute('data-sfw1-add-role')); return; }
+    if (t.hasAttribute('data-sfw1-swap-role')) {
+      var wi = t.closest('[data-quality-shift-box]'), sel2 = wi ? wi.querySelector('[data-sq-wi-who]') : document.querySelector('[data-sq-wi-who]');
+      if (sel2) { sel2.focus(); if (sel2.scrollIntoView) sel2.scrollIntoView({behavior: 'smooth', block: 'center'}); }
+      return;
+    }
+    if (t.hasAttribute('data-sfw1-mem')) { memAct(t); return; }
+    if (t.hasAttribute('data-sfw1-rate')) { rateConfirm(t); return; }
+  });
+  document.addEventListener('input', function (ev) {
+    var t = ev.target;
+    if (t && t.id === 'sfw1-redo-why') { var c = $id('sfw1-redo-cnt'); if (c) c.textContent = String(t.value || '').length + ' / 300'; }
+  });
+  document.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t && t.hasAttribute && t.hasAttribute('data-sfw1-wk-on')) { var d = t.closest('.d'); if (d) d.className = 'd' + (t.checked ? ' on' : ''); }
+  });
+
+  /* "Add a bartender" (D1a-8): a shift of that role on that daypart,
+     opened in the editor to pick who. */
+  function addRole(date, part, role) {
+    var rs = rows(), tpl = null, i;
+    for (i = 0; i < rs.length && !tpl; i++) if (rs[i].date === date && ((sfw1Minutes(rs[i].shift_start) || 0) >= 900) === (part === 'night')) tpl = rs[i];
+    var st = (tpl && tpl.shift_start) || (part === 'night' ? '4:00pm' : '10:00am'), en = (tpl && tpl.shift_end) || (part === 'night' ? '10:00pm' : '3:00pm');
+    if (window.studioGo && window._ssOpen) studioGo('schedule');
+    rs.push({date: date, day: sfw1Weekday(date), employee: '', role: role.charAt(0).toUpperCase() + role.slice(1), shift_start: st, shift_end: en,
+             scheduled_hours: (window._schedHoursBetween ? _schedHoursBetween(st, en) : '') || '6', notes: ''});
+    if (typeof _swAddedIdx !== 'undefined') _swAddedIdx = rs.length - 1;
+    if (window._schedRenderTable) _schedRenderTable();
+    if (window.swEdit) swEdit(rs.length - 1);
+  }
+
+  // ── Labor → What the schedule has learned (H2-1) ───────────────────────
+  var _mem = null;
+  window.sfw1LoadMemory = function (force) {
+    var el = $id('sfw1-mem-body'); if (!el) return;
+    if (_mem && !force) { renderMem(); return; }
+    el.innerHTML = '<div class="dr-pulse" role="status" aria-label="Loading what the schedule has learned"><i></i></div>';
+    jget('/api/labor/schedule-memory', function (d) { _mem = d; renderMem(); });
+  };
+  function renderMem() {
+    var el = $id('sfw1-mem-body'), d = _mem; if (!el || !d) return;
+    if (!d.ok) { el.innerHTML = '<div class="load-err">' + e(d.error || 'What the schedule has learned couldn’t load.') + '</div>'; return; }
+    var items = d.items || [], groups = {}, order = [], i, h = '';
+    var chip = $id('sfw1-mem-chip'), live = 0;
+    for (i = 0; i < items.length; i++) if (items[i].status !== 'retired') live++;
+    if (chip) chip.textContent = live ? live + ' in use or learning' : '';
+    if (!items.length) { el.innerHTML = '<div class="hb-empty">Nothing yet — as you edit and publish weeks, the habits you keep show here, each with how sure it is.</div>'; return; }
+    for (i = 0; i < items.length; i++) { var c = items[i].class_label || 'Other'; if (!groups[c]) { groups[c] = []; order.push(c); } groups[c].push(items[i]); }
+    for (i = 0; i < order.length; i++) {
+      h += '<div class="grp"><div class="lb2-sub" style="margin-top:0">' + e(order[i]) + '</div>';
+      for (var j = 0; j < groups[order[i]].length; j++) h += memRow(groups[order[i]][j], d);
+      h += '</div>';
+    }
+    if (d.consolidated_at) h += '<div class="ft">Updated <span class="hb-num">' + e(sfw1Mdy(d.consolidated_at)) + '</span></div>';
+    el.innerHTML = '<div class="sfw1-mem">' + h + '</div>';
+  }
+  function memRow(it, d) {
+    var bits = [], badges = '', acts = '';
+    if (it.status_label) badges += (window.memPill ? memPill(it.status_label, it.status === 'rule' || it.status === 'active' ? 'good' : (it.status === 'retired' || it.status === 'dormant' ? 'neutral' : '')) : '<span class="sfw1-badge neutral">' + e(it.status_label) + '</span>');
+    var cnt = sfw1MemCount(it);
+    bits.push((it.confidence_pct || '—') + ' sure' + (cnt ? ' · ' + cnt : ''));
+    if (it.last_confirmed_by_hand) bits.push('last confirmed by hand ' + sfw1Mdy(it.last_confirmed_by_hand));
+    if (it.held_in_code) bits.push('Held by Cavnar AI’s checks');
+    if (it.bound_by) bits.push(String(it.bound_by));
+    if (it.retired_words) bits.push(String(it.retired_words));
+    if (d.can_answer !== false) {
+      if (it.can_keep) acts += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-mem="keep" data-key="' + e(it.key) + '">Keep</button>';
+      if (it.can_let_go) acts += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw1-mem="let_go" data-key="' + e(it.key) + '">Let it go</button>';
+      if (it.can_be_rule && d.can_make_rules !== false) acts += '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-mem="rule" data-key="' + e(it.key) + '">Make it a rule</button>';
+    }
+    return '<div class="r"><div class="tx">' + n(it.text || '') + ' ' + badges + '<small>' + n(bits.join(' · ')) + '</small><span class="err" data-sfw1-mem-err></span></div>' + (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div>';
+  }
+  function memAct(t) {
+    var act = t.getAttribute('data-sfw1-mem'), key = t.getAttribute('data-key'), row = t.closest('.r'), err = row ? row.querySelector('[data-sfw1-mem-err]') : null;
+    var done = busy(t, '');
+    if (err) err.textContent = '';
+    jpost('/api/labor/schedule-memory', {key: key, action: act}, function (d) {
+      done();
+      if (!d.ok) { if (err) err.textContent = d.error || 'That didn’t save.'; return; }
+      say(act === 'rule' ? ((d.rule && (d.rule.text || d.rule.words)) ? 'Now a rule: ' + (d.rule.text || d.rule.words) : 'Now a rule the draft keeps') : (act === 'keep' ? 'Kept — the draft applies it while the evidence holds' : 'Let go — only newer edits of yours bring it back'));
+      sfw1LoadMemory(true);
+    });
+  }
+
+  // ── Labor → Measured ratings (H2-3), the account holder's ──────────────
+  var _rt = null;
+  window.sfw1LoadRatings = function (force) {
+    var el = $id('sfw1-rate-body'); if (!el) return;
+    if (_rt && !force) { renderRatings(); return; }
+    el.innerHTML = '<div class="dr-pulse" role="status" aria-label="Loading measured ratings"><i></i></div>';
+    fetch('/api/labor/ratings/suggested', {credentials: 'same-origin'}).then(function (r) {
+      var st = r.status; return apiJson(r).then(function (d) { d = d || {}; d._status = st; return d; });
+    }).then(function (d) { _rt = d; renderRatings(); }).catch(function () { _rt = {ok: false, error: 'Network error — check your connection.'}; renderRatings(); });
+  };
+  function renderRatings() {
+    var el = $id('sfw1-rate-body'), d = _rt, row = $id('sfw1-rate-row'); if (!el || !d) return;
+    if (d._status === 403) { if (row) row.hidden = true; return; }
+    if (!d.ok) { el.innerHTML = '<div class="load-err">' + e(d.error || 'Measured ratings couldn’t load.') + '</div>'; return; }
+    var sv = d.servers || [], h = '', i, chip = $id('sfw1-rate-chip'), diff = 0;
+    for (i = 0; i < sv.length; i++) if (sv[i].differs) diff++;
+    if (chip) chip.textContent = diff ? diff + ' to confirm' : '';
+    if (!d.available || !sv.length) { el.innerHTML = '<div class="hb-empty">' + n(d.note || ('Needs ' + (d.min_tickets || 20) + '+ tickets with a guest count per server over 8 weeks from the POS.')) + '</div>'; return; }
+    for (i = 0; i < sv.length; i++) {
+      var s = sv[i], v, pick = '';
+      for (v = 1; v <= 5; v++) pick += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (+s.current === v ? ' on' : '') + '" data-sfw1-rate-pick="' + v + '" data-name="' + e(s.name) + '" aria-pressed="' + (+s.current === v ? 'true' : 'false') + '">' + v + '</button>';
+      h += '<div class="r"><div class="tx"><b>' + e(s.name) + '</b> · ' + (s.current == null ? 'not rated' : 'rated <span class="hb-num">' + e(s.current) + '</span>') + '<small>' + n(s.reason || sfw1RatingLine(s)) + '</small><span class="err" data-sfw1-rate-err></span></div>'
+        + '<div class="acts">' + (s.differs || s.current == null ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-rate="' + e(s.suggested) + '" data-name="' + e(s.name) + '">Confirm ' + e(s.suggested) + '</button>' : '')
+        + '<span class="chip-tog" role="group" aria-label="' + e('Rate ' + s.name) + '">' + pick + '</span></div></div>';
+    }
+    if (d.window && d.window.length > 1) h += '<div class="ft">Sales per guest from <span class="hb-num">' + e(sfw1Mdy(d.window[0])) + '</span> to <span class="hb-num">' + e(sfw1Mdy(d.window[1])) + '</span>, against the house at the same mealtimes. ' + n(d.note || '') + '</div>';
+    el.innerHTML = '<div class="sfw1-mem">' + h + '</div>';
+  }
+  function rateConfirm(t) {
+    var name = t.getAttribute('data-name'), sc = +(t.getAttribute('data-sfw1-rate') || t.getAttribute('data-sfw1-rate-pick')), row = t.closest('.r'), err = row ? row.querySelector('[data-sfw1-rate-err]') : null;
+    var done = busy(t, '');
+    jpost('/api/labor/ratings/suggested', {name: name, score: sc}, function (d) {
+      done();
+      if (!d.ok) { if (err) err.textContent = d.error || 'That rating didn’t save.'; return; }
+      say(name + ' is rated ' + (d.score || sc) + ' — the next draft counts it');
+      sfw1LoadRatings(true);
+    });
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw1-rate-pick]') : null;
+    if (t && !t.disabled) rateConfirm(t);
+  });
+
+  /* The two rows open on a deep link too: the action queue's "Review"
+     (labor/ratings) and the calibration's (labor/intel). */
+  window.sfw1ToggleMem = function () { var p = $id('sfw1-mem-panel'); if (!p) return; p.style.display = p.style.display === 'none' ? '' : 'none'; if (p.style.display !== 'none') sfw1LoadMemory(); };
+  window.sfw1ToggleRate = function () { var p = $id('sfw1-rate-panel'); if (!p) return; p.style.display = p.style.display === 'none' ? '' : 'none'; if (p.style.display !== 'none') sfw1LoadRatings(); };
+  if (typeof window.cavNavSection === 'function' && !window.cavNavSection._sfw1) {
+    var _nav = window.cavNavSection;
+    window.cavNavSection = function (p) {
+      var out = _nav.apply(this, arguments);
+      var sec = p && p.rest && p.rest[0];
+      if (out && sec === 'ratings') { var rp = $id('sfw1-rate-panel'); if (rp && rp.style.display === 'none') sfw1ToggleRate(); }
+      if (out && sec === 'learned') { var mp = $id('sfw1-mem-panel'); if (mp && mp.style.display === 'none') sfw1ToggleMem(); }
+      if (out && sec === 'intel') { var ip = $id('intel-panel'); if (ip && ip.style.display === 'none' && window.toggleIntelPanel) toggleIntelPanel(); }
+      return out;
+    };
+    window.cavNavSection._sfw1 = true;
+    try { cavNavSection = window.cavNavSection; } catch (x) { /* a non-writable global keeps the original */ }
+  }
+})();
+</script>
+
 <!-- ── The command palette (⌘K / Ctrl+K / "/") ────────────────────────────
      Friction audit #14 and #48, DESIGN_SYSTEM.md §12 "Command palette".
      Empty, it is the day's list: what is waiting (/api/actions), one-tap
@@ -35545,6 +36698,7 @@ window.cavPalette = cavPalette;
       if (!d.ok || _schedHistoryId !== hid) return;
       window._psCheck = d;
       psReach();
+      if (window.sfw1RenderPub) sfw1RenderPub(d);
       /* Warnings already on file for the saved week go on screen now, and
          the button names them: that press is the acknowledgement. */
       if ((d.blockers || []).length && !_schedDirty && !d.published_at) _psRenderBlockers(d.blockers, true, d.blocker_keys, false);
@@ -36496,6 +37650,7 @@ function memCapLine(c) {
   else if (k === 'weights') what = 'What counts most changed';
   else if (k === 'quality_weights_applied') what = 'Suggested weighting applied';
   else if (k === 'quality_weights_suggested') what = 'Cavnar AI suggested a new weighting';
+  else if (k === 'quality_profiles_suggested') what = 'Cavnar AI suggested new floors and bars';
   else what = (s || String(k).replace(/_/g, ' ')) + ' changed';
   return what + (c.changed_by ? ', by ' + c.changed_by : '') + (c.changed_at ? ' on ' + memMdy(c.changed_at) : '');
 }
