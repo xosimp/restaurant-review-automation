@@ -296,3 +296,68 @@ def test_a_saved_draft_whose_payload_failed_is_named_not_called_unsaved(monkeypa
     assert finished["result"]["saved"] is True and finished["result"]["history_id"] == 42
     assert "Cavnar AI saved the draft for the week of 10/5/26" in finished["result"]["error"]
     assert "nothing was saved" not in finished["result"]["error"]
+
+
+# ── PIPE-10: the late-close pad and the owner's after-close allowance ─────
+
+def _friday_close(db_path, **cols):
+    rid = _restaurant(db_path, module_labor=1, close_times_json=json.dumps({"Friday": "10:00pm"}),
+                      role_close_buffer_json=json.dumps({"Bartender": 30}), **cols)
+    return rid, sr.build_constraints(rid, WEEK, DAYS7)
+
+
+def test_the_late_close_pad_stops_at_the_after_close_allowance_and_says_the_rest(db):
+    import schedule_memory as sm
+    rid, c = _friday_close(db)
+    row = {"date": WEEK[4], "day": "Friday", "employee": "Bo", "role": "Bartender",
+           "shift_start": "5:00pm", "shift_end": "10:00pm", "scheduled_hours": "5", "notes": ""}
+    learned = [{"kind": "end_overrun", "day": "Friday", "daypart": None, "role": sm._fam("Bartender", None),
+                "value": {"minutes": 45, "role": "Bartender", "typical_over": 45, "over": 5, "closes": 6}}]
+    out = sm.pad_overruns([row], learned, c=c)
+    assert out["rows"][0]["shift_end"] == "10:30pm"              # close + the 30 minutes allowed, no further
+    assert out["padded"][0]["minutes"] == 30
+    assert out["left"] and "after-close allowance" in out["left"][0]["reason"]
+    # A close already at the allowance is not padded at all, and says why.
+    at_cap = dict(row, shift_end="10:30pm", scheduled_hours="5.5")
+    out = sm.pad_overruns([at_cap], learned, c=c)
+    assert out["rows"][0]["shift_end"] == "10:30pm" and not out["padded"]
+    assert "after-close allowance" in out["left"][0]["reason"]
+
+
+def test_a_shift_past_the_after_close_allowance_is_flagged_by_its_role_never_by_who_works_it(db):
+    rid, c = _friday_close(db)
+    late = {"date": WEEK[4], "day": "Friday", "employee": "Bo", "role": "Bartender",
+            "shift_start": "5:00pm", "shift_end": "11:15pm", "scheduled_hours": "6.25", "notes": ""}
+    v = [x for x in sr.violations([late], c) if x["kind"] == "past_close"]
+    assert v and not v[0]["hard"] and v[0]["severity"] == 0.75
+    assert sr.breach_id(v[0]) == ("past_close", WEEK[4], "bartender")
+    assert sr.BREACH_TIER["past_close"] == sr.TIER_COVERAGE         # no pass ranked below may cause one
+    ok = dict(late, shift_end="10:30pm", scheduled_hours="5.5")
+    assert not [x for x in sr.violations([ok], c) if x["kind"] == "past_close"]
+    # A manager may stay as long as the longest stay of any role (the plan).
+    c.managers = {"mia": "Manager"}
+    mgr = dict(ok, employee="Mia", role="Manager")
+    assert not [x for x in sr.violations([mgr], c) if x["kind"] == "past_close"]
+
+
+# ── PIPE-3: the auto-draft and a draft the owner has ──────────────────────
+
+def test_the_auto_draft_leaves_a_week_the_owner_drafted_a_week_ago_and_edited(db, monkeypatch):
+    import datetime as dt
+    import strategy_jobs
+    rid = _restaurant(db, module_labor=1, auto_draft_schedule=1)
+    owner = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 42.0, 0, 30, _csv([_line(d, "Ana") for d in WEEK]),
+                                         [], db_path=db)
+    conn = models.get_conn(db)
+    conn.execute("UPDATE schedule_history SET generated_at=datetime('now','-6 days'), edited_at=datetime('now'), "
+                 "edited_by='owner' WHERE id=?", (owner,))
+    conn.commit()
+    conn.close()
+    ran = []
+    monkeypatch.setattr(se, "_run_schedule_job", lambda job_id, r: ran.append(r))
+    monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "done"})
+    monkeypatch.setattr("push.fire_push", lambda *a, **k: None)
+    thursday = dt.datetime(2026, 10, 1, 9, 0)                        # drafts the week of 10/5
+    out = strategy_jobs.run_auto_draft_schedules(db_path=db, now=thursday)
+    assert ran == [] and out["drafted"] == 0
+    assert _history(db, rid) == [(owner, None)]

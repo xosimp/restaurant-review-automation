@@ -228,6 +228,32 @@ def test_auto_publish_never_touches_an_edited_or_already_shared_draft(db_path, m
     assert delayed.pending(rid, db_path=db_path) == []
 
 
+def test_auto_publish_never_sends_an_unedited_draft_over_the_owners_edited_one(db_path, monkeypatch):
+    """Re-audit 10/4/26 PIPE-3: the owner edited the week's draft; a later
+    draft (an auto-draft, a redo, the gate's rewrite) superseded it unedited.
+    The week is the owner's: nothing goes out until they send it."""
+    import scheduler, delayed, strategy_jobs, schedule_intel, time_utils
+    monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
+    rid = _rid(db_path, module_labor=1)
+    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
+        _schedule(db_path, rid, w)
+    owners = _schedule(db_path, rid, "2099-01-04", edited=True, shared=False)
+    later = _schedule(db_path, rid, "2099-01-04", shared=False)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_history SET superseded_by=? WHERE id=?", (later, owners))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
+    monkeypatch.setattr(strategy_jobs, "_reach", lambda *a, **k: 1)
+    friday = datetime(2026, 9, 25, 9, 30)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: friday)
+    monkeypatch.setattr(scheduler, "restaurant_now", lambda *a, **k: friday, raising=False)
+    monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [models.get_restaurant(rid, db_path=db_path)])
+    out = scheduler.run_auto_publish_schedules()
+    assert out["queued"] == 0 and out["skipped"] == 1
+    assert delayed.pending(rid, db_path=db_path) == []
+
+
 def test_the_shared_publish_body_names_the_automation_as_actor(db_path, monkeypatch):
     import client_api, delayed
     rid = _rid(db_path, module_labor=1)

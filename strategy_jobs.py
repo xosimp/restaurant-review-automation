@@ -1105,17 +1105,17 @@ def run_issue_scan(db_path=DB_PATH, local_hour=None):
     return _counts(attempted, attempted - failed, failed, hit_bound=walk.hit_bound, opened=opened)
 
 
-# A schedule generated this recently counts as "next week is handled" — the
-# owner (or last week's auto-draft) already did it, and a second draft would
-# only be noise in Schedule History.
-AUTO_DRAFT_RECENT_DAYS = 5
-
-
-def _recent_schedule(conn, restaurant_id):
+def _week_has_schedule(conn, restaurant_id, week_start) -> bool:
+    """Whether the week the auto-draft would write already has a draft in
+    force or went out (re-audit 10/4/26 PIPE-3): then that week is handled,
+    and a new draft would supersede it. The guard used to be any week's row
+    generated in the last five days, which let the auto-draft supersede a
+    draft the owner had made a week earlier and edited since — and
+    auto-publish could then send the unedited AI draft."""
     return conn.execute(
-        "SELECT 1 FROM schedule_history WHERE restaurant_id=? AND "
-        "generated_at >= datetime('now', ?)",
-        (restaurant_id, f"-{AUTO_DRAFT_RECENT_DAYS} days")).fetchone() is not None
+        "SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+        "AND (superseded_by IS NULL OR published_at IS NOT NULL) LIMIT 1",
+        (restaurant_id, week_start)).fetchone() is not None
 
 
 # A suggestion this strong waits for nobody to open the intel screen
@@ -1264,9 +1264,13 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
         if (getattr(r, "external_scheduling_tool", None) or "").strip():
             _bump("skipped")
             return
+        # The week it would write, as the job reads it (schedule_engine.
+        # _week_monday of the restaurant's own today): next week.
+        from datetime import datetime as _dt_ad
+        target = _se._week_monday(_dt_ad.strptime(local[r.id][1], "%Y-%m-%d")).strftime("%Y-%m-%d")
         conn = get_conn(db_path)
         try:
-            if _recent_schedule(conn, r.id):
+            if _week_has_schedule(conn, r.id, target):
                 _bump("skipped")
                 return
         finally:
@@ -1305,7 +1309,16 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     wall clock."""
     import ops
     from schedule_engine import generation_scope
-    job_id, joined = ops.claim_async_job(f"auto-{uuid.uuid4().hex[:12]}", "schedule", r.id)
+    # What it asks, as an owner's press of Generate for next week would: an
+    # owner's identical press joins it, and it never joins (or is joined by)
+    # a generation of anything else (re-audit 10/4/26 UI-8).
+    from datetime import datetime as _dt_req
+    _today = _dt_req.strptime(period, "%Y-%m-%d") if period else None
+    try:
+        job_id, joined = ops.claim_async_job(f"auto-{uuid.uuid4().hex[:12]}", "schedule", r.id,
+                                             request=_se.generation_request(r.id, today=_today))
+    except ops.JobBusy:
+        job_id, joined = None, True
     if joined:
         if period:
             ops.release_period(f"auto_draft:{r.id}", period)

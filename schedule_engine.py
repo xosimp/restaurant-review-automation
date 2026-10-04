@@ -127,7 +127,9 @@ class GenerationClock:
 
     def _record(self):
         if self.job_id:
-            _ops.set_async_job_deadline(self.job_id, self.deadline)
+            # When it began running too: a job is aged from its slot, not its
+            # press (re-audit 10/4/26 PIPE-9).
+            _ops.set_async_job_deadline(self.job_id, self.deadline, started_ts=self.started)
 
     @property
     def model_deadline(self) -> float:
@@ -198,6 +200,43 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
             _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
             _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
     return _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
+
+
+def generation_request(restaurant_id, week_start=None, dates=None, history_id=None, instruction=None,
+                       today=None) -> dict:
+    """What one press of Generate asks for, as the job store keeps it
+    (ops.claim_async_job `request` — re-audit 10/4/26 UI-8): the week's
+    Monday (from week_start, else a redo's first date, else next week), the
+    days redone, the draft they belong to, the owner's words. A press joins
+    a running generation only when this is the same."""
+    if today is None:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id, naive=True)
+    days = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]}) or None
+    monday = _week_monday(today, week_start or (days[0] if days else None)).strftime("%Y-%m-%d")
+    try:
+        hid = int(history_id) if (days and history_id not in (None, "")) else None
+    except (TypeError, ValueError):
+        hid = None
+    return {"week_start": monday, "dates": days, "history_id": hid, "instruction": instruction or None}
+
+
+def busy_message(request) -> str:
+    """The owner's sentence when a different generation is running (UI-8):
+    which week, and which days of it when it is a redo — dates M/D/YY."""
+    from time_utils import mdy
+    req = request if isinstance(request, dict) else {}
+    week = req.get("week_start")
+    if not week:
+        return "Cavnar AI is already building a schedule for you — try again when it finishes."
+    days = [d for d in (req.get("dates") or []) if d]
+    if days:
+        names = [f"{_date_of(d).strftime('%A')} {mdy(d)}" for d in days]
+        which = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        return (f"Cavnar AI is redoing {which} of the week of {mdy(week)} — try again when it finishes. "
+                "Nothing was started.")
+    return (f"A schedule for the week of {mdy(week)} is being built — try again when it finishes. "
+            "Nothing was started.")
 
 
 def job_wait_seconds(calls: int = None) -> int:
@@ -6978,6 +7017,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     one on a day being redone keeps the owner's edit and saves nothing."""
     if dates and not focus:
         gate = False
+    if job_id and _model_result is None and not focus and not _ops.job_still_pending(job_id):
+        # Called dead while it waited for a slot (a poll past its age, the
+        # boot sweep): the owner was told it didn't finish, so nothing is
+        # paid for now (re-audit 10/4/26 PIPE-9).
+        print(f"[schedule] job {job_id} was failed before it started — not run")
+        return
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
     clock = current_clock()
     _timer = _StageClock()
@@ -7022,7 +7067,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except Exception as _cpx:
                 # Without a copy an edit on a kept day refuses the save
                 # instead of running again (said, never lost).
-                _soft_fail("redo answer copy", _cpx, restaurant_id)
+                _ops.capture(_cpx, job="schedule_generate", context=f"restaurant_id={restaurant_id} — redo answer copy")
         # A partial redo rewrites only these days; the passes below that can
         # change rows (fixes, the repair loop, the budget trim) leave the
         # owner's kept days exactly as they were.

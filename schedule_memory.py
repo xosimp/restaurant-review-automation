@@ -1980,6 +1980,11 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
     overtime), the row is not pinned and its day is being drafted, and the
     owner set no end time for that role and night (Constraints.role_times —
     their rule stands). A close is the last of its role family out that day.
+    Never past the owner's after-close allowance for the role
+    (schedule_rules.close_cap_minutes — the cap the job's parser holds every
+    model row to): a pad that would run past it stops there, and the rest
+    is left with why, so the owner can raise the allowance if the closes
+    really run that late (re-audit 10/4/26 PIPE-10).
     Returns {rows, padded:[{index, employee, date, from, to, minutes,
     reason}], left:[{index, employee, date, reason}]} — the reasons go to the
     review, never into a row's note (staff read the notes)."""
@@ -2033,6 +2038,17 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                     step = pad
                 if step <= 0:
                     continue                       # already drafted until they really finish
+                cut = 0
+                if c is not None:
+                    import schedule_rules as _sr_cap
+                    cap = _sr_cap.close_cap_minutes(c, r)
+                    if cap is not None and end + step > cap:
+                        cut = end + step - cap
+                        step = cap - end
+                if step <= 0:
+                    left.append({"index": i, "employee": r.get("employee"), "date": d,
+                                 "reason": _allowance_reason(r, v, fam, cut)})
+                    continue
                 trial = dict(r, shift_end=_clock(end + step, like=r.get("shift_end")),
                              scheduled_hours=f"{hours + step / 60.0:g}")
                 if c is not None:
@@ -2046,7 +2062,19 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                                "reason": (f"{v.get('role') or fam} closes on {day}s have run about "
                                           f"{v.get('typical_over') or pad} minutes past the scheduled end "
                                           f"({v.get('over')} of {v.get('closes')} closes)")})
+                if cut > 0:
+                    left.append({"index": i, "employee": r.get("employee"), "date": d,
+                                 "reason": _allowance_reason(r, v, fam, cut)})
     return {"rows": out, "padded": padded, "left": left}
+
+
+def _allowance_reason(row, value, fam, minutes) -> str:
+    """Why a late close was not padded all the way (PIPE-10): it would run
+    past the owner's after-close allowance — offered as theirs to raise,
+    never applied over it."""
+    role = row.get("role") or value.get("role") or fam
+    return (f"{role} closes have run about {int(minutes)} more minutes than your after-close allowance for "
+            f"{role} lets them stay — raise the allowance in your schedule rules if they really stay that late")
 
 
 # ── the learned block of the prompt (L-28) ────────────────────────────────

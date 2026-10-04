@@ -749,8 +749,9 @@ def test_a_redo_plans_its_days_against_the_kept_ones_and_keeps_their_rows(db, mo
     rid = _restaurant(db, [("Erik", "Owner"), ("Ana", "Server")])
     kept_csv = (HEADER + "\n2026-10-05,Monday,Erik,Owner,11:00am,11:00pm,12,Cavnar AI: manager plan — kept"
                 "\n2026-10-05,Monday,Ana,Server,4:00pm,10:00pm,6,")
-    monkeypatch.setattr(models, "get_schedule_history_detail",
-                        lambda hid, r, *a, **k: {"schedule_csv": kept_csv, "week_start": WEEK[0]})
+    # A real stored draft: a redo saves only over the draft it read, checked
+    # in the save's own write (re-audit 10/4/26 PIPE-2).
+    base = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 18.0, 0, 30, kept_csv, [], db_path=db)
     seen = {}
     c = _c(roster_names=["Erik", "Ana"], active={"erik", "ana"}, managers={"erik": "Owner"})
 
@@ -764,7 +765,7 @@ def test_a_redo_plans_its_days_against_the_kept_ones_and_keeps_their_rows(db, mo
     monkeypatch.setattr(se, "_build_schedule_result", build)
     done = {}
     monkeypatch.setattr(se._ops, "finish_async_job", lambda j, status, result: done.update(status=status, result=result))
-    se._run_schedule_job("skeleton-redo", rid, dates=["2026-10-06"], base_history_id=1)
+    se._run_schedule_job("skeleton-redo", rid, dates=["2026-10-06"], base_history_id=base)
     assert seen["dates"] == ["2026-10-06"] and {r["date"] for r in seen["prior_rows"]} == {"2026-10-05"}
     rows = done["result"]["preview_rows"]
     kept_erik = [r for r in rows if r["date"] == "2026-10-05" and r["employee"] == "Erik"]

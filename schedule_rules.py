@@ -3084,7 +3084,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
             out.append(_v("past_close", i, r,
                           f"ends {r.get('shift_end')}, past {_fmt_minutes(cap % (24 * 60))} — the most after close "
                           f"you allow {r.get('role') or 'the role'}",
-                          severity=round((end_m - cap) / 60.0, 2)))
+                          severity=round((end_m - cap) / 60.0, 2), floor_role=c.family(r.get("role"))))
         # A role written for somebody who holds no role of its family — the
         # model's guess treated as theirs (schedule audit 10/3/26 D-15).
         if not c.holds(name, r.get("role", ""), r.get("date")):
@@ -3447,11 +3447,16 @@ def close_cap_minutes(c, row):
     close_m = close_minutes(c, day) if day else None
     if close_m is None:
         return None
+    # The larger of the role's allowance and its stay (role_close_caps): a
+    # role told to stay is never past close by staying.
     buffers = getattr(c, "role_buffers", None) or {}
-    stay = int(role_minutes(buffers, (row.get("role") or "").strip(), getattr(c, "role_families", None)) or 0)
+    stays = getattr(c, "close_mins", None) or {}
+    role = (row.get("role") or "").strip()
+    stay = max(int(role_minutes(buffers, role, getattr(c, "role_families", None)) or 0),
+               int(stays.get(c.family(role)) or 0))
     name = (row.get("employee") or "").strip()
-    if buffers and name and c.manages(name, row.get("date")):
-        stay = max([stay] + [int(v or 0) for v in buffers.values()])
+    if name and c.manages(name, row.get("date")):
+        stay = max([stay] + [int(v or 0) for v in list(buffers.values()) + list(stays.values())])
     return close_m + stay
 
 
@@ -3988,7 +3993,9 @@ def breach_id(v) -> tuple:
         return (kind, emp, v.get("week") or _iso_week(d))
     if kind == "coverage_floor":
         return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower(), v.get("daypart") or "")
-    if kind in ("owner_rule", "ends_before_role_close"):
+    if kind in ("owner_rule", "ends_before_role_close", "past_close"):
+        # past_close is about a role's stay that night, not who works it: a
+        # swap of people is no change, a later end is worse (PIPE-10).
         return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower())
     if kind in ("nobody_at_close", "keyholder_until_close", "over_section_cap", "closer_unavailable"):
         return (kind, d, v.get("close_role") or "")
