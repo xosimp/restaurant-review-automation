@@ -399,13 +399,22 @@ def _iso(value):
         return False
 
 
-def save_closures(restaurant_id, closed_weekdays=None, closed_dates=None, db_path=DB_PATH) -> dict:
-    from models import get_restaurant, update_restaurant
-    r = get_restaurant(restaurant_id, db_path)
+def stored_compliance(restaurant) -> dict:
+    """restaurants.compliance_json as stored (the owner's own values and the
+    closures), {} when empty or unreadable."""
     try:
-        data = json.loads(getattr(r, "compliance_json", None) or "{}") or {}
+        data = json.loads(getattr(restaurant, "compliance_json", None) or "{}") or {}
     except Exception:
         data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def merged_closures(stored: dict, closed_weekdays=None, closed_dates=None) -> dict:
+    """The stored compliance JSON with the closures a save names; the rest
+    as it was. Raises ValueError for a week closed every day. Pure — the
+    caller writes, once, after every other field passed (schedule re-audit
+    10/4/26 UI-9)."""
+    data = dict(stored or {})
     if closed_weekdays is not None:
         wanted = {str(d).strip().capitalize() for d in closed_weekdays or []}
         data["closed_weekdays"] = [d for d in WEEKDAYS if d in wanted]
@@ -413,6 +422,13 @@ def save_closures(restaurant_id, closed_weekdays=None, closed_dates=None, db_pat
             raise ValueError("A restaurant closed every day of the week has nothing to schedule.")
     if closed_dates is not None:
         data["closed_dates"] = sorted({str(d).strip()[:10] for d in closed_dates or [] if _iso(str(d).strip()[:10])})[-120:]
+    return data
+
+
+def save_closures(restaurant_id, closed_weekdays=None, closed_dates=None, db_path=DB_PATH) -> dict:
+    from models import get_restaurant, update_restaurant
+    data = merged_closures(stored_compliance(get_restaurant(restaurant_id, db_path)),
+                           closed_weekdays=closed_weekdays, closed_dates=closed_dates)
     update_restaurant(restaurant_id, {"compliance_json": json.dumps(data) if data else None}, db_path=db_path)
     return closures(get_restaurant(restaurant_id, db_path))
 
@@ -446,40 +462,46 @@ def closed_in(restaurant, week_dates) -> set:
     return out
 
 
-# Settings a save that does not send them keeps as stored: newer than the
-# rules screens on web and iOS, so an older screen's Save must not clear them.
-_KEPT_WHEN_NOT_SENT = ("min_shift_hours",)
+# The rules a save can put back to their default (the pack's value, else
+# DEFAULTS) by naming them in `reset`.
+RESETTABLE = tuple(_BOUNDS) + ("minor_latest_end", "keyholder_until_close")
 
 
-def save_compliance(restaurant_id, data: dict, db_path=DB_PATH) -> dict:
-    from models import update_restaurant, get_restaurant as _gr
-    clean = {}
-    # The closures live in the same JSON; saving the rules must keep them.
-    try:
-        _prev = json.loads(getattr(_gr(restaurant_id, db_path), "compliance_json", None) or "{}") or {}
-    except Exception:
-        _prev = {}
-    for k in _CLOSURE_KEYS:
-        if _prev.get(k):
-            clean[k] = _prev[k]
+def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
+    """The stored compliance JSON after a rules save: each rule the save
+    sends is set (null, blank or false is "not tracked"), each rule it
+    names in `reset` goes back to its default, and EVERY other stored value
+    — rules it did not send, the closures — stays as stored.
+
+    A save used to be the whole object: a rule it did not send fell back to
+    the default, so a rules sheet that failed to load and was saved blank
+    reset the weekly ceiling, the notice days and daily overtime, and a
+    screen older than a setting cleared it (schedule re-audit 10/4/26 UI-2;
+    the one-key `_KEPT_WHEN_NOT_SENT` patch this replaces covered only the
+    shortest shift). Pure — the caller writes."""
+    data = data if isinstance(data, dict) else {}
+    clean = dict(stored or {})
+    for k in reset or ():
+        if k in RESETTABLE:
+            clean.pop(k, None)
     for k, (lo, hi) in _BOUNDS.items():
-        if k in (data or {}):
+        if k in data:
             v = data[k]
             clean[k] = None if v in (None, "", False) else _num(v, lo, hi)
-        elif k in _KEPT_WHEN_NOT_SENT and _prev.get(k) is not None:
-            # A screen that does not show this setting yet must not wipe it
-            # (an owner's edit never vanishes).
-            clean[k] = _prev[k]
-    if isinstance((data or {}).get("minor_latest_end"), str):
+    if isinstance(data.get("minor_latest_end"), str):
         clean["minor_latest_end"] = data["minor_latest_end"].strip()[:10] or DEFAULTS["minor_latest_end"]
-    if "manager_on_duty" in (data or {}):
+    if "manager_on_duty" in data:
         clean["manager_on_duty"] = bool(data["manager_on_duty"])
-    if "keyholder_until_close" in (data or {}):
+    if "keyholder_until_close" in data:
         clean["keyholder_until_close"] = bool(data["keyholder_until_close"])
-    elif "keyholder_until_close" in _prev:
-        clean["keyholder_until_close"] = bool(_prev["keyholder_until_close"])
+    return clean
+
+
+def save_compliance(restaurant_id, data: dict, db_path=DB_PATH, reset=()) -> dict:
+    """Merge a rules save into what is stored (merged_compliance) and write it."""
+    from models import update_restaurant, get_restaurant
+    clean = merged_compliance(stored_compliance(get_restaurant(restaurant_id, db_path)), data, reset=reset)
     update_restaurant(restaurant_id, {"compliance_json": json.dumps(clean) if clean else None}, db_path=db_path)
-    from models import get_restaurant
     return compliance(get_restaurant(restaurant_id, db_path))
 
 
@@ -508,6 +530,42 @@ def role_floors(restaurant) -> dict:
         if entry["morning"] or entry["night"] or entry["days"]:
             out[str(role).strip()] = entry
     return out
+
+
+def merge_role_map(stored: dict, sent: dict, clean) -> dict:
+    """A per-role setting after a save that names some roles: each role
+    sent is set to clean(value), or removed when clean gives None (the
+    client sends null for a role it cleared); each role NOT sent stays as
+    stored. Roles match case-insensitively and take the spelling sent.
+    `clean` may raise ValueError, which the caller turns into a refusal
+    before anything is written.
+
+    Each map used to be the whole value, so a sheet that failed to load
+    sent {} and wiped every floor, arrival lead, certificate requirement and
+    cross-training target (schedule re-audit 10/4/26 UI-2)."""
+    out = dict(stored) if isinstance(stored, dict) else {}
+    for role, value in (sent or {}).items():
+        name = str(role).strip()[:60]
+        if not name:
+            continue
+        for k in [k for k in out if str(k).strip().casefold() == name.casefold()]:
+            out.pop(k)
+        v = clean(value)
+        if v is not None:
+            out[name] = v
+    return out
+
+
+def clean_floor_spec(spec):
+    """One role's floor as the save stores it; None (remove) for null or a
+    spec with nothing set."""
+    if not isinstance(spec, dict):
+        return None
+    days = spec.get("days") if isinstance(spec.get("days"), dict) else {}
+    has = any(spec.get(p) not in (None, "") for p in ("morning", "night")) or any(
+        isinstance(d, dict) and any(d.get(p) not in (None, "") for p in ("morning", "night"))
+        for d in days.values())
+    return spec if has else None
 
 
 def save_role_floors(restaurant_id, data: dict, db_path=DB_PATH) -> dict:

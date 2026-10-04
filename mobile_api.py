@@ -3369,9 +3369,30 @@ def mobile_schedule_history_detail(history_id, current_user):
     returns None for an id that belongs to a different tenant, same as a
     genuinely missing id, rather than confirming which ids exist."""
     from models import get_schedule_history_detail
+    import schedule_versions as _sv_d
     detail = get_schedule_history_detail(history_id, current_user["restaurant_id"])
     if not detail:
         return jsonify(ok=False, error="Not found"), 404
+    # The rows and the version they are, read as one value (schedule
+    # re-audit 10/4/26 UI-1): one statement is one snapshot, so a save
+    # landing between two reads can never pair these rows with a newer
+    # number. Clients keep `version` with the rows and send it on save —
+    # they used to fetch the newest number at save time, which let stale
+    # rows overwrite a newer edit.
+    _conn_v = get_conn()
+    try:
+        _snap = _conn_v.execute(
+            "SELECT h.schedule_csv, (SELECT MAX(v.version) FROM schedule_versions v WHERE v.history_id=h.id) "
+            "AS version FROM schedule_history h WHERE h.id=? AND h.restaurant_id=?",
+            (history_id, current_user["restaurant_id"])).fetchone()
+    finally:
+        _conn_v.close()
+    if _snap is not None:
+        detail["schedule_csv"] = _snap["schedule_csv"]
+    detail["version"] = (_snap["version"] if _snap is not None else None)
+    # A copy a newer one replaced is read-only: both clients show why and
+    # hide editing and Send; the save and the Send refuse it (UI-3).
+    detail["replaced_reason"] = _sv_d.replaced_error(detail)
 
     _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
     preview_rows = []
@@ -7673,17 +7694,24 @@ def mobile_score_schedule(current_user):
                 sent = None
 
             def _conflict(latest_list):
+                # Who changed the rows and how: the newest version that
+                # changed any, not a Send's `published` one that changed none
+                # ("No changes in this version", UI-4). `latest_version` is
+                # the number a client that keeps its edit saves against.
                 last = latest_list[-1] if latest_list else {}
+                moved = [v for v in latest_list if v.get("changes")] or [last]
+                who = moved[-1]
                 return jsonify(ok=False, conflict=True, latest_version=last.get("version"),
-                               saved_by=last.get("saved_by"), lines=last.get("lines") or [],
-                               error=f"{last.get('saved_by') or 'Somebody'} saved this week after you opened it. Reload to see their changes."), 409
+                               saved_by=who.get("saved_by"), lines=who.get("lines") or [],
+                               error=f"{who.get('saved_by') or 'Somebody'} changed this week after you opened it. "
+                                     f"Your edits are still on your screen — reload theirs, or keep yours."), 409
             # Two managers editing the same week: the second save must not
-            # silently overwrite the first. The page sends the version it
-            # loaded; a newer one on file, or none sent for a week that has
-            # versions, refuses and hands back the diff.
-            latest = _sv.list_versions(rid, hid)
-            if latest and (sent is None or latest[-1]["version"] > sent):
-                return _conflict(latest)
+            # silently overwrite the first. The client sends the version its
+            # rows came from (it arrives with the rows: the generation, the
+            # history detail, every save and Send return it — schedule
+            # re-audit 10/4/26 UI-1); rows changed since it, or no version
+            # sent for a week that has versions, refuse and hand back the
+            # diff. Checked inside the write lock below.
             _mark_review_rows(rows, violations)
             csv_text = _rows_to_csv(rows)
             who = current_user.get("username") or current_user.get("email")
@@ -7696,6 +7724,20 @@ def mobile_score_schedule(current_user):
             _step, _was_published, _new_version = None, False, None
             try:
                 conn2.execute("BEGIN IMMEDIATE")
+                # A copy of the week a newer one replaced is read-only: it
+                # used to save (and then send) over nothing (UI-3).
+                _own = conn2.execute("SELECT superseded_by, published_at FROM schedule_history "
+                                     "WHERE id=? AND restaurant_id=?", (hid, rid)).fetchone()
+                if _own is None:
+                    raise LookupError("that schedule is gone")
+                _replaced = _sv.replaced_error(_own)
+                if _replaced:
+                    conn2.rollback()
+                    return jsonify(ok=False, replaced=True, superseded_by=_own["superseded_by"],
+                                   error=_replaced), 409
+                _changed = _sv.rows_changed_since(conn2, hid, sent)
+                if _changed:
+                    raise _sv.StaleVersion(_changed)
                 # Whose each changed row is (schedule audit 10/3/26 L-5): the
                 # client's `origin` flag on a row Cavnar AI handed back
                 # (apply fixes, Improve, the overtime move — with its
@@ -7710,7 +7752,7 @@ def mobile_score_schedule(current_user):
                                      (hid, rid)).fetchone()
                 _was_published = bool(_pub and _pub[0])
                 _new_version = _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
-                                            expected_version=(sent if latest else None),
+                                            expected_version=sent,
                                             saved_authority=_sv.authority_of(current_user),
                                             row_origins=_step["stored"])
                 # The generation's review is kept and only what the edited
@@ -7738,7 +7780,7 @@ def mobile_score_schedule(current_user):
                 saved = hid
             except _sv.StaleVersion:
                 conn2.rollback()
-                return _conflict(_sv.newest_version(rid, hid))
+                return _conflict(_sv.list_versions(rid, hid))
             except LookupError:
                 conn2.rollback()
                 return jsonify(ok=False, error="That week is gone — reload the schedule."), 404
@@ -7797,6 +7839,11 @@ def mobile_score_schedule(current_user):
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
                        violations=violations or [], review=review,
                        history_id=saved or None,
+                       # The version these rows now are: the client keeps it
+                       # with its rows and sends it with the next save, never
+                       # fetches it separately (UI-1, UI-4). Null when
+                       # nothing was saved.
+                       version=_new_version if saved else None,
                        # Who a Send would tell: shifts that differ from
                        # what each person was last told (null: the week was
                        # never sent). Nobody has been told yet.

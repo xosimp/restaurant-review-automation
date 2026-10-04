@@ -7760,6 +7760,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             raise ScheduleGenerationError("The schedule didn't finish in the time a generation is given, so "
                                           "nothing was saved. Try again.")
         _history_id = None
+        _history_version = None
         # The week's hours split by pay (schedule audit 10/3/26 E-7, P-6):
         # the hourly part is what the hourly budget is held to; the
         # salaried part is never spent from it. Saved with the week and
@@ -7825,8 +7826,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except Exception as _arx:
                 print(f"[schedule] experiment arm not recorded: {_arx}")
             try:
-                _versions.append(restaurant_id, _history_id, "generated", result["schedule_csv"],
-                                 quality=result.get("quality"), saved_by="Cavnar AI", saved_authority="system")
+                # The version these rows are travels with them to the client,
+                # which sends it back with its first save (schedule re-audit
+                # 10/4/26 UI-1).
+                _history_version = _versions.append(restaurant_id, _history_id, "generated", result["schedule_csv"],
+                                                    quality=result.get("quality"), saved_by="Cavnar AI",
+                                                    saved_authority="system", return_version=True)
             except Exception as _vx:
                 print(f"[schedule] version save failed: {_vx}")
             try:
@@ -7858,6 +7863,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         _payload = dict(
             ok=True,
             history_id=_history_id,
+            # The version of the rows below; a save names it (UI-1).
+            version=_history_version,
             # Every rule breach, hard and soft, with the person and the
             # date; what the fix pass repaired; what it could not.
             rule_violations=result.get("rule_violations") or [],

@@ -370,6 +370,11 @@ def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_pa
         conn.close()
     row = dict(row)
     _tell_requester(restaurant_id, row, db_path)
+    # The same shape as recent(): the decided row replaces the listed one on
+    # the phone, and without its label a part-day request ("10/7/26, until
+    # 4:00pm") read as the whole day off once answered (schedule re-audit
+    # 10/4/26 UI-10).
+    row["span_label"] = span_label(row)
     return row
 
 

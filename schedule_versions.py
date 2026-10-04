@@ -213,6 +213,65 @@ def latest_version(conn, history_id) -> int:
     return int(row["v"] or 0) if row else 0
 
 
+def _rows_sig(csv_text) -> list:
+    """A week's rows as one comparable value: every column, order-free."""
+    return sorted(tuple(r.get(c, "") for c in COLS) for r in rows_from_csv(csv_text))
+
+
+def rows_changed_since(conn, history_id, base_version):
+    """The newest version number when the week's ROWS are no longer the rows
+    of `base_version` (the version the client's rows came from); None when
+    they are, or the week has no versions yet.
+
+    The conflict check compared numbers, so a version that changed no row —
+    the `published` one a Send appends — refused the sender's own next save
+    as "<owner> saved this week after you opened it" (schedule re-audit
+    10/4/26 UI-4). Somebody else's real change to the rows is still a
+    conflict; a client that names no base, or a base the week never had,
+    is too (it cannot show what its rows were made from)."""
+    last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
+                        "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
+    if last is None:
+        return None
+    latest = int(last["version"])
+    try:
+        base = int(base_version) if base_version not in (None, "") else None
+    except (TypeError, ValueError):
+        base = None
+    if base is None or base > latest:
+        return latest
+    if base == latest:
+        return None
+    was = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND version=?",
+                       (history_id, base)).fetchone()
+    if was is None:
+        return latest
+    return None if _rows_sig(was["schedule_csv"]) == _rows_sig(last["schedule_csv"]) else latest
+
+
+def replaced_error(row):
+    """The sentence a save or a Send of a replaced copy of a week is refused
+    with; None when the copy is the one in force. `row` carries
+    superseded_by and published_at (schedule re-audit 10/4/26 UI-3: a draft
+    a newer one replaced could still be edited and sent, and once sent no
+    copy of the week was live for staff)."""
+    if row is None:
+        return None
+    try:
+        sup = row["superseded_by"]
+    except (KeyError, IndexError):
+        sup = None
+    if not sup:
+        return None
+    try:
+        published = row["published_at"]
+    except (KeyError, IndexError):
+        published = None
+    if published:
+        return "A newer copy of this week went to staff since, so this one can't be changed or sent. Open that one instead."
+    return "A newer draft of this week replaced this one, so it can't be changed or sent. Open the newer draft instead."
+
+
 # saved_by on a version support saved through view-as.
 SUPPORT_PREFIX = "support:"
 # The learners' old filter: a week any support save touched taught nothing —
@@ -540,14 +599,16 @@ def _record_implied_acceptance(conn, restaurant_id, recs, before_rows, after_row
 
 
 def append(restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None, db_path=DB_PATH,
-           saved_authority=None, row_origins=None) -> int:
-    """Store one more state of a schedule, with its diff against the last."""
+           saved_authority=None, row_origins=None, return_version=False) -> int:
+    """Store one more state of a schedule, with its diff against the last.
+    Returns the new row's id, or with `return_version` its version number —
+    what a client holding these rows sends back with its next save (UI-1)."""
     conn = get_conn(db_path)
     try:
         row_id, _v = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by,
                                      saved_authority, row_origins=row_origins)
         conn.commit()
-        return row_id
+        return _v if return_version else row_id
     finally:
         conn.close()
 
@@ -569,15 +630,17 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
     two saves checked against one version both landed (SCHED-19, SCHED-5).
 
     expected_version: the version the edit was made against; a newer one
-    raises StaleVersion and nothing is written. hours_scheduled follows the
+    whose rows differ raises StaleVersion and nothing is written (a newer
+    version that changed no row, like a Send's, is not a conflict —
+    rows_changed_since, UI-4). hours_scheduled follows the
     rows, so a budget blocker judged at generation time cannot outlive the
     edit that fixed it (SCHED-17) — and so does its split by pay,
     hours_hourly / hours_salaried (schedule audit 10/3/26 E-7, P-6).
     Returns the new version number."""
     if expected_version is not None:
-        latest = latest_version(conn, history_id)
-        if latest and int(expected_version) != latest:
-            raise StaleVersion(latest)
+        changed = rows_changed_since(conn, history_id, expected_version)
+        if changed:
+            raise StaleVersion(changed)
     hours = round(sum(_hours(r) for r in rows_from_csv(schedule_csv)), 1)
     try:
         split = _models_mod.history_hours(restaurant_id, schedule_csv)

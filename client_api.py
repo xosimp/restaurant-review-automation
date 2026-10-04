@@ -10886,11 +10886,12 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     try:
         if schedule_id:
             row = conn.execute(
-                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                "SELECT id, week_start, week_end, schedule_csv, superseded_by, published_at FROM schedule_history "
+                "WHERE id=? AND restaurant_id=?",
                 (int(schedule_id), rid)).fetchone()
         else:
             row = conn.execute(
-                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
+                "SELECT id, week_start, week_end, schedule_csv, superseded_by, published_at FROM schedule_history "
                 "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
     except (TypeError, ValueError):
         return {"ok": False, "error": "Which schedule?"}, 400
@@ -10899,6 +10900,15 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
 
     if not row or not (row["schedule_csv"] or "").strip():
         return {"ok": False, "error": "Generate a schedule first — there's nothing to send yet."}, 400
+    # A copy of the week a newer one replaced is never sent — by a person,
+    # a stale phone, or the delayed run of a Send queued before the newer
+    # draft (schedule re-audit 10/4/26 UI-3): sent, it left staff with no
+    # live week (models._live_week_row skips a superseded copy).
+    import schedule_versions as _sv_rp
+    _replaced = _sv_rp.replaced_error(row)
+    if _replaced:
+        return {"ok": False, "replaced": True, "superseded_by": row["superseded_by"],
+                "schedule_id": row["id"], "error": _replaced}, 409
 
     # `acknowledge` is True (a person read the list just now) or the list
     # of blocker keys a person acknowledged when they queued it (a delayed
@@ -10928,18 +10938,25 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         _ensure_history_columns(conn)
         got = conn.execute(
             "UPDATE schedule_history SET publishing_at=datetime('now') WHERE id=? AND restaurant_id=? "
-            "AND published_at IS NULL AND (publishing_at IS NULL OR publishing_at < datetime('now','-10 minutes'))",
+            "AND published_at IS NULL AND superseded_by IS NULL "
+            "AND (publishing_at IS NULL OR publishing_at < datetime('now','-10 minutes'))",
             (schedule_id, rid)).rowcount
         conn.commit()
-        state = conn.execute("SELECT published_at FROM schedule_history WHERE id=?", (schedule_id,)).fetchone()
+        state = conn.execute("SELECT published_at, superseded_by FROM schedule_history WHERE id=?",
+                             (schedule_id,)).fetchone()
+        _v_now = _sv_rp.latest_version(conn, schedule_id)
     finally:
         conn.close()
     if not got:
         if state and state["published_at"]:
             return dict(ok=True, already_published=True, schedule_id=schedule_id, week_label=week_label,
-                        sent=[], unreachable=[], failed=[],
+                        sent=[], unreachable=[], failed=[], version=_v_now or None,
                         status=get_schedule_share_status(rid, schedule_id),
                         error=None), 200
+        if state and state["superseded_by"]:
+            # Replaced between the read above and the claim (UI-3).
+            return {"ok": False, "replaced": True, "superseded_by": state["superseded_by"],
+                    "schedule_id": schedule_id, "error": _sv_rp.replaced_error(state)}, 409
         return {"ok": False, "in_progress": True, "schedule_id": schedule_id,
                 "error": "This week is being sent to staff right now."}, 409
 
@@ -11003,8 +11020,11 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
             conn.close()
         import schedule_versions as _sv
         _pub_auth = _sv.authority_of(actor)
-        _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name,
-                   saved_authority=_pub_auth)
+        # The version the Send wrote goes back to the client, which keeps
+        # it with its rows: the next save names it (UI-4). It changed no
+        # row, so a client that never learns it is not refused either.
+        _pub_version = _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name,
+                                  saved_authority=_pub_auth, return_version=True)
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # What the week's first publish says, into the observation log: every
@@ -11040,6 +11060,7 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     return dict(ok=True, schedule_id=schedule_id, week_label=week_label,
                 sent=sent, unreachable=unreachable, failed=failed,
                 acknowledged=bool(blockers), portal_only=not sent, note=note,
+                version=locals().get("_pub_version"),
                 status=get_schedule_share_status(rid, schedule_id),
                 error=None), 200
 
@@ -11098,19 +11119,25 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
         return {"ok": False, "error": "Restaurant not found"}, 404
     conn = get_conn()
     try:
-        row = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_at FROM schedule_history "
-                           "WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+        row = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_at, superseded_by "
+                           "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
     finally:
         conn.close()
     if not row:
         return {"ok": False, "error": "That week is gone — reload the schedule."}, 404
+    # Changes to a copy a newer one replaced reach nobody's live week (UI-3).
+    if _sv.replaced_error(row):
+        return {"ok": False, "replaced": True, "superseded_by": row["superseded_by"], "schedule_id": row["id"],
+                "error": _sv.replaced_error(row)}, 409
     if not row["published_at"]:
         return {"ok": False, "error": "This week hasn't been sent to staff yet — send the whole week."}, 400
     week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
     pending = _sv.unsent_changes(rid, row["id"]) or {"people": [], "dates": []}
     if not pending["people"]:
+        _vn = _sv.newest_version(rid, row["id"])
         return dict(ok=True, already_published=True, schedule_id=row["id"], week_label=week_label,
                     sent=[], unreachable=[], failed=[], unsent_changes=[],
+                    version=_vn[0]["version"] if _vn else None,
                     status=get_schedule_share_status(rid, row["id"]), error=None), 200
     review = publish_review(rid, row["id"])
     _acked, unacked = _ack_gate(review, acknowledge)
@@ -11122,6 +11149,7 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
         _ensure_history_columns(conn)
         got = conn.execute(
             "UPDATE schedule_history SET publishing_at=datetime('now') WHERE id=? AND restaurant_id=? "
+            "AND superseded_by IS NULL "
             "AND (publishing_at IS NULL OR publishing_at < datetime('now','-10 minutes'))", (row["id"], rid)).rowcount
         conn.commit()
     finally:
@@ -11145,7 +11173,8 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
                         status=get_schedule_share_status(rid, row["id"]),
                         error="The changes could not be sent. Try again in a few minutes."), 200
         who = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
-        _sv.append(rid, row["id"], "published", csv_now, saved_by=who, saved_authority=_sv.authority_of(actor))
+        _changes_version = _sv.append(rid, row["id"], "published", csv_now, saved_by=who,
+                                      saved_authority=_sv.authority_of(actor), return_version=True)
         conn = get_conn()
         try:
             conn.execute("UPDATE schedule_history SET republished_at=datetime('now') WHERE id=? AND restaurant_id=?",
@@ -11171,6 +11200,7 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
     return dict(ok=True, changes_sent=True, schedule_id=row["id"], week_label=week_label,
                 sent=sent, unreachable=unreachable, failed=failed, unsent_changes=[],
                 acknowledged=bool(review["blockers"]), portal_only=not sent, note=note,
+                version=locals().get("_changes_version"),
                 status=get_schedule_share_status(rid, row["id"]), error=None), 200
 
 
@@ -11212,12 +11242,17 @@ def _publish_schedule_request(current_user):
     acknowledge = [str(k) for k in ack] if isinstance(ack, (list, tuple)) else bool(ack)
     conn = get_conn()
     try:
-        row = conn.execute("SELECT id, week_start, published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
-                           (schedule_id, rid)).fetchone()
+        row = conn.execute("SELECT id, week_start, published_at, superseded_by FROM schedule_history "
+                           "WHERE id=? AND restaurant_id=?", (schedule_id, rid)).fetchone()
     finally:
         conn.close()
     if not row:
         return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+    # Never queued either (UI-3); the run re-checks when the window ends.
+    import schedule_versions as _sv_rq
+    if _sv_rq.replaced_error(row):
+        return jsonify(ok=False, replaced=True, superseded_by=row["superseded_by"], schedule_id=row["id"],
+                       error=_sv_rq.replaced_error(row)), 409
     changes = None
     if row["published_at"]:
         import schedule_versions as _sv

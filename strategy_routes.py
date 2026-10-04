@@ -2332,13 +2332,35 @@ def _setup_payload(rid, principal=False) -> dict:
 
 
 def _do_compliance_set(u):
+    """Save the scheduling rules. Partial, and all or nothing (schedule
+    re-audit 10/4/26 UI-2, UI-9):
+
+    - A save changes only what it sends. `rules` is merged key by key
+      (`rules_default`: [keys] puts rules back to their default — the web
+      and iOS send it for a box the owner cleared); each per-role map
+      (role_floors, role_arrivals, role_requirements, role_cross_training,
+      role_close_mins) is merged role by role, a role sent as null removed,
+      a role not sent kept. A sheet that failed to load and was saved blank
+      used to wipe every rule, floor and list the owner had set.
+    - Every field is checked before anything is written, and everything is
+      written in one update: a refused save stores nothing. The floors and
+      the rules used to be written before the section count, the salaried
+      cap and the cross-training targets were checked, so a 400 had already
+      saved half the body."""
     if not _principal(u):
         return _forbidden("Only the account owner can change the scheduling rules.")
     import schedule_rules as _sr
     from client_api import log_account_event
+    from models import get_restaurant, update_restaurant
+    import json as _j
     b = _body()
-    out = {}
-    # Checked before anything is saved, so a bad value changes nothing.
+    rid = _rid(u)
+    r = get_restaurant(rid)
+    out, settings, after = {}, {}, []
+
+    def _refuse(msg):
+        return {"ok": False, "error": msg}, 400
+
     cut_floor = None
     if "cut_floor_default" in b:
         raw = b.get("cut_floor_default")
@@ -2348,25 +2370,26 @@ def _do_compliance_set(u):
         except (TypeError, ValueError):
             in_range = False
         if not in_range:
-            return {"ok": False, "error": f"Never cut below must be a whole number of people from 1 to "
-                                          f"{_sr.CUT_FLOOR_MAX}."}, 400
+            return _refuse(f"Never cut below must be a whole number of people from 1 to {_sr.CUT_FLOOR_MAX}.")
     if isinstance(b.get("station_edit"), dict):
         # One station change per request (kitchen_stations.apply_edit), read
         # and written against what is stored now - never a whole list sent
         # back over someone else's change.
         import kitchen_stations as _ks
-        from models import get_restaurant as _gr_ks, update_restaurant as _ur_ks
         try:
-            cfg = _ks.apply_edit(getattr(_gr_ks(_rid(u)), "kitchen_stations_json", None), b["station_edit"])
+            cfg = _ks.apply_edit(getattr(r, "kitchen_stations_json", None), b["station_edit"])
         except ValueError as e:
-            return {"ok": False, "error": str(e)}, 400
-        _ur_ks(_rid(u), {"kitchen_stations_json": _j_ks.dumps(cfg)})
-        out["kitchen_stations"] = _kitchen_stations_payload(_rid(u), _gr_ks(_rid(u)))
-    if isinstance(b.get("rules"), dict):
-        out["rules"] = _sr.save_compliance(_rid(u), b["rules"])
-    if "role_floors" in b:
-        floors = b.get("role_floors") if isinstance(b.get("role_floors"), dict) else {}
-        out["role_floors"] = _sr.save_role_floors(_rid(u), floors)
+            return _refuse(str(e))
+        settings["kitchen_stations_json"] = _j_ks.dumps(cfg)
+        after.append("kitchen_stations")
+    # The rules and the closures share restaurants.compliance_json: both
+    # are merged into one copy of it, written once.
+    comp = None
+    reset = b.get("rules_default") if isinstance(b.get("rules_default"), list) else []
+    if isinstance(b.get("rules"), dict) or reset:
+        comp = _sr.merged_compliance(_sr.stored_compliance(r), b.get("rules") or {},
+                                     reset=[str(k) for k in reset])
+        after.append("rules")
     if "closed_weekdays" in b or "closed_dates" in b:
         cw = b.get("closed_weekdays") if isinstance(b.get("closed_weekdays"), list) else None
         # The web rules page no longer sends closed_dates (each date saves on
@@ -2374,46 +2397,69 @@ def _do_compliance_set(u):
         # rules overwrote dates added on Account since the page loaded.
         cd = b.get("closed_dates") if isinstance(b.get("closed_dates"), list) else None
         try:
-            out["closures"] = _sr.save_closures(_rid(u), closed_weekdays=cw, closed_dates=cd)
+            comp = _sr.merged_closures(comp if comp is not None else _sr.stored_compliance(r),
+                                       closed_weekdays=cw, closed_dates=cd)
         except ValueError as e:
-            return {"ok": False, "error": str(e)}, 400
-    import json as _j
-    from models import update_restaurant
-    settings = {}
+            return _refuse(str(e))
+        after.append("closures")
+    if comp is not None:
+        settings["compliance_json"] = _j.dumps(comp) if comp else None
+    if isinstance(b.get("role_floors"), dict):
+        floors = _sr.merge_role_map(_sr._load_json(getattr(r, "role_floors_json", None), {}) or {},
+                                    b["role_floors"], _sr.clean_floor_spec)
+        settings["role_floors_json"] = _j.dumps(floors) if floors else None
+        after.append("role_floors")
     if "jurisdiction" in b:
         import compliance_packs
         code = (b.get("jurisdiction") or "").strip().upper()
         if code and code not in compliance_packs.PACKS:
-            return {"ok": False, "error": f"No rule pack for {code}."}, 400
+            return _refuse(f"No rule pack for {code}.")
         settings["jurisdiction"] = code or None
         out["jurisdiction"] = code or None
-    if "role_arrivals" in b and isinstance(b.get("role_arrivals"), dict):
+    if isinstance(b.get("role_arrivals"), dict):
         import attendance
-        clean = {}
-        for k, v in b["role_arrivals"].items():
+
+        def _lead(v):
+            if v in (None, ""):
+                return None
             try:
                 # Minutes before each person's own shift start, stored
                 # positive; a signed "before" value reads as its size.
-                clean[str(k).strip()[:60]] = min(attendance.CLOCK_IN_LEAD_MAX, abs(int(v)))
+                return min(attendance.CLOCK_IN_LEAD_MAX, abs(int(v)))
             except (TypeError, ValueError):
-                continue
+                raise ValueError("Arrival minutes are a whole number of minutes, or blank.")
+        try:
+            clean = _sr.merge_role_map(_sr._load_json(getattr(r, "role_arrival_json", None), {}) or {},
+                                       b["role_arrivals"], _lead)
+        except ValueError as e:
+            return _refuse(str(e))
         settings["role_arrival_json"] = _j.dumps(clean) if clean else None
         out["role_arrivals"] = clean
     _stays = b.get("role_close_stays") if isinstance(b.get("role_close_stays"), dict) else \
         (b.get("role_close_mins") if isinstance(b.get("role_close_mins"), dict) else None)
     if _stays is not None:
-        clean = {}
-        for k, v in _stays.items():
+        def _stay(v):
+            if v in (None, ""):
+                return None
             try:
-                clean[str(k).strip()[:60]] = max(0, min(240, int(v)))
+                return max(0, min(240, int(v)))
             except (TypeError, ValueError):
-                continue
-        # One "stays until close + N" per role (D-43): the must-stay and the
-        # after-close allowance are the same number from here on, so the
-        # close-time clamp and the stays-after-close rule read one setting.
-        settings["role_close_min_json"] = _j.dumps(clean) if clean else None
-        settings["role_close_buffer_json"] = _j.dumps(clean) if clean else None
-        out["role_close_mins"] = clean
+                raise ValueError("Stays until close is a whole number of minutes, or blank.")
+        # One "stays until close + N" per role (D-43): a role the save sends
+        # gets the same number in the must-stay and the after-close
+        # allowance, so the close-time clamp and the stays-after-close rule
+        # read one setting; a role it does not send keeps both stored values
+        # (a conflict there is still the owner's to settle).
+        try:
+            must = _sr.merge_role_map(_sr._load_json(getattr(r, "role_close_min_json", None), {}) or {},
+                                      _stays, _stay)
+            may = _sr.merge_role_map(_sr._load_json(getattr(r, "role_close_buffer_json", None), {}) or {},
+                                     _stays, _stay)
+        except ValueError as e:
+            return _refuse(str(e))
+        settings["role_close_min_json"] = _j.dumps(must) if must else None
+        settings["role_close_buffer_json"] = _j.dumps(may) if may else None
+        after.append("role_close_mins")
     if "salaried_cap" in b:
         v = b.get("salaried_cap")
         if v in (None, ""):
@@ -2425,13 +2471,13 @@ def _do_compliance_set(u):
                 n = -1
             lo, hi = _sr.SALARIED_CAP_BOUNDS
             if isinstance(v, bool) or not lo <= n <= hi:
-                return {"ok": False, "error": f"The salaried weekly cap is {lo:g} to {hi:g} hours, or blank for "
-                                              f"{_sr.SALARIED_CAP_DEFAULT:g}."}, 400
+                return _refuse(f"The salaried weekly cap is {lo:g} to {hi:g} hours, or blank for "
+                               f"{_sr.SALARIED_CAP_DEFAULT:g}.")
             settings["salaried_cap"] = n
         out["salaried_cap"] = settings["salaried_cap"] if settings["salaried_cap"] is not None else _sr.SALARIED_CAP_DEFAULT
     if "closer_roles" in b:
         if not isinstance(b.get("closer_roles"), list):
-            return {"ok": False, "error": "closer_roles is a list of roles."}, 400
+            return _refuse("closer_roles is a list of roles.")
         clean = []
         for x in b["closer_roles"]:
             x = " ".join(str(x or "").split())[:60]
@@ -2439,10 +2485,13 @@ def _do_compliance_set(u):
                 clean.append(x)
         settings["closer_roles_json"] = _j.dumps(clean) if clean else None
         out["closer_roles"] = clean
-    if "role_requirements" in b and isinstance(b.get("role_requirements"), dict):
-        clean = {str(k).strip()[:60]: sorted({str(x).strip().lower()[:40] for x in (v or []) if str(x).strip()})
-                 for k, v in b["role_requirements"].items() if str(k).strip()}
-        clean = {k: v for k, v in clean.items() if v}
+    if isinstance(b.get("role_requirements"), dict):
+        def _certs(v):
+            picked = sorted({str(x).strip().lower()[:40] for x in (v or []) if str(x).strip()}) \
+                if isinstance(v, (list, tuple)) else []
+            return picked or None
+        clean = _sr.merge_role_map(_sr._load_json(getattr(r, "role_requirements_json", None), {}) or {},
+                                   b["role_requirements"], _certs)
         settings["role_requirements_json"] = _j.dumps(clean) if clean else None
         out["role_requirements"] = clean
     for key, col in (("foh_roles", "foh_roles_json"), ("patio_roles", "patio_roles_json")):
@@ -2450,15 +2499,25 @@ def _do_compliance_set(u):
             clean = sorted({str(x).strip()[:60] for x in b[key] if str(x).strip()})
             settings[col] = _j.dumps(clean) if clean else None
             out[key] = clean
-    if "role_cross_training" in b and isinstance(b.get("role_cross_training"), dict):
-        clean = {}
-        for k, v in b["role_cross_training"].items():
-            if not str(k).strip() or v is None or v == "":
-                continue
+    if isinstance(b.get("role_cross_training"), dict):
+        def _pct(v):
+            if v is None or v == "":
+                return None
             try:
-                clean[str(k).strip()[:60]] = int(max(0, min(100, round(float(v)))))
+                return int(max(0, min(100, round(float(v)))))
             except (TypeError, ValueError):
-                return {"ok": False, "error": f"The cross-training target for {str(k)[:60]} must be a percent from 0 to 100."}, 400
+                raise ValueError("A cross-training target must be a percent from 0 to 100.")
+        bad = None
+        for k, v in b["role_cross_training"].items():
+            try:
+                _pct(v)
+            except ValueError:
+                bad = str(k)[:60]
+                break
+        if bad is not None:
+            return _refuse(f"The cross-training target for {bad} must be a percent from 0 to 100.")
+        clean = _sr.merge_role_map(_sr._load_json(getattr(r, "role_cross_training_json", None), {}) or {},
+                                   b["role_cross_training"], _pct)
         settings["role_cross_training_json"] = _j.dumps(clean) if clean else None
         out["role_cross_training"] = clean
     if cut_floor is not None:
@@ -2474,7 +2533,7 @@ def _do_compliance_set(u):
             except (TypeError, ValueError):
                 n = -1
             if isinstance(v, bool) or n < 1 or n > 30 or str(v).strip() not in (str(n), f"{n}.0"):
-                return {"ok": False, "error": "Dining sections must be a whole number from 1 to 30, or blank."}, 400
+                return _refuse("Dining sections must be a whole number from 1 to 30, or blank.")
         settings["section_count"] = n
         out["section_count"] = n
     if "trim_to_budget" in b:
@@ -2484,25 +2543,34 @@ def _do_compliance_set(u):
         import reservation_feeds
         prov = (b.get("reservation_provider") or "").strip().lower()
         if prov and prov not in reservation_feeds.PROVIDERS:
-            return {"ok": False, "error": f"{prov} is not a reservation system this build knows."}, 400
+            return _refuse(f"{prov} is not a reservation system this build knows.")
         settings["reservation_provider"] = prov or None
         if "reservation_api_key" in b:
             settings["reservation_api_key"] = (b.get("reservation_api_key") or "").strip()[:200] or None
         out["reservation_provider"] = prov or None
-    if settings:
-        update_restaurant(_rid(u), settings)
-        if "reservation_provider" in settings:
-            import reservation_feeds
-            from models import get_restaurant
-            out["reservation_feed"] = reservation_feeds.status(get_restaurant(_rid(u)))
-    if not out:
-        return {"ok": False, "error": "Send rules, role_floors, or a setting."}, 400
-    log_account_event(_rid(u), "schedule_rules_changed", current_user=u, detail=", ".join(out))
+    if not settings:
+        return _refuse("Send rules, role_floors, or a setting.")
+    # Everything passed: one write.
+    update_restaurant(rid, settings)
+    now = get_restaurant(rid)
+    if "kitchen_stations" in after:
+        out["kitchen_stations"] = _kitchen_stations_payload(rid, now)
+    if "rules" in after:
+        out["rules"] = _sr.compliance(now)
+    if "closures" in after:
+        out["closures"] = _sr.closures(now)
+    if "role_floors" in after:
+        out["role_floors"] = _sr.role_floors(now)
+    if "role_close_mins" in after:
+        out["role_close_mins"] = _sr.role_close_stays(now)
+    if "reservation_provider" in settings:
+        import reservation_feeds
+        out["reservation_feed"] = reservation_feeds.status(now)
+    log_account_event(rid, "schedule_rules_changed", current_user=u, detail=", ".join(out))
     if {"role_floors", "section_count", "foh_roles"} & set(out):
         # The floors and the section count as they now stand: a conflict the
         # save created (or cleared) is said at once (P-29).
-        from models import get_restaurant as _gr_fc
-        out["floor_cap_conflicts"] = _floor_cap_conflicts(_gr_fc(_rid(u)))
+        out["floor_cap_conflicts"] = _floor_cap_conflicts(now)
     return {"ok": True, **out}, 200
 
 
@@ -6085,8 +6153,8 @@ def _do_publish_check(u):
         return {"ok": True, "schedule_id": None}, 200
     conn = _gc()
     try:
-        row = conn.execute("SELECT id, week_start, week_end, published_at, schedule_csv FROM schedule_history "
-                           "WHERE id=? AND restaurant_id=?", (sid, rid)).fetchone()
+        row = conn.execute("SELECT id, week_start, week_end, published_at, schedule_csv, superseded_by "
+                           "FROM schedule_history WHERE id=? AND restaurant_id=?", (sid, rid)).fetchone()
     finally:
         conn.close()
     if not row:
@@ -6137,6 +6205,10 @@ def _do_publish_check(u):
             "notes": review.get("notes") or [], "hours": review.get("hours"),
             "unsent_changes": unsent, "likely_to_change": likely,
             "texts_available": people.staff_sms_ready(),
+            # A copy a newer one replaced cannot be sent (schedule re-audit
+            # 10/4/26 UI-3): the sheet says why instead of offering Send.
+            "superseded_by": row["superseded_by"],
+            "replaced_reason": __import__("schedule_versions").replaced_error(row),
             "can_publish": bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)}, 200
 
 
