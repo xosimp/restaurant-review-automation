@@ -736,6 +736,15 @@ step); an answer with nothing left is replaced by a fixed sentence.
   with `pin_source: "underpowered"` and never counted — and the verdict is
   `{state: "paused", text: "Paused: every restaurant runs … until 5
   restaurants generate schedules (now 1); …"}`.
+- `GET /admin/api/schedule-generations` `?limit=` (default 20, at most 100) —
+  the recent schedule generations for Engineering (schedule audit 10/3/26
+  B1-3; read-only): `latency` (`ops.schedule_generation_latency`: `{n, p50,
+  p95, max, slow, alert_seconds}`) and `weeks[{id, restaurant_id,
+  restaurant, week_start, generated_at, total_seconds, stage_seconds,
+  hours_scheduled, hours_budget, repair: {cycles, converged, restored_best,
+  refused (count), refused_items, skipped, budget, hours_by_stage} | null,
+  stage_failures[{stage, blocks_publish}]}]` from `schedule_history`
+  (`stage_seconds_json`, `total_seconds`, the saved review's `repair`).
 - `POST /admin/api/schedule-experiments/pin` `{restaurant_id, experiment, arm}` —
   pin a restaurant to an arm (`"off"` = the control) or unpin (`arm: null`).
 - `POST /admin/api/schedule-experiments/promote` `{experiment, arm, note?}` —

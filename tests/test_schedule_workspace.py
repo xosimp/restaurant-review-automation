@@ -38,7 +38,10 @@ def test_three_panels_in_order_with_the_asked_for_sections():
     assert 'id="gen-sched-btn"' in left[left.index('data-ss-panel="advanced"'):], "Generate closes the settings"
     # "What this draft was asked to do": the soft requirements and pattern
     # clashes (memory round 9/29/26, UI wave B), in the Overview after Labor.
-    assert _kickers(right) == ["Shift quality", "Coverage", "Labor", "What this draft was asked to do", "Cost",
+    # "Shift requirements": who each shift was written and scored for, and why
+    # a number moved (schedule fix round 10/3/26, UI W1), before Cost.
+    assert _kickers(right) == ["Shift quality", "Coverage", "Labor", "What this draft was asked to do",
+                               "Shift requirements", "Cost",
                                "Warnings", "Opportunities", "AI suggestions", "Apply fixes"]
     assert re.findall(r'data-ss-rtab="(\w+)"', right) == ["overview", "fix", "shift"]
     center = ws[ws.index('class="sw-center"'):ws.index('id="sw-right"')]

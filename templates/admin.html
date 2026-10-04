@@ -3063,7 +3063,7 @@ async function engineering(tab){
     else V().innerHTML = '<div class="empty">No such page.</div>';
     return;
   }
-  const [sys, ex, bk] = await apiAll(['/admin/api/system', '/admin/api/schedule-experiments', '/admin/api/backup'], 3);
+  const [sys, ex, bk, gen] = await apiAll(['/admin/api/system', '/admin/api/schedule-experiments', '/admin/api/backup', '/admin/api/schedule-generations'], 4);
   const sE = readErr(sys), S = sE ? {} : (sys.system || {}), W = sE ? [] : (sys.warnings || []);
   const exps = readErr(ex) ? [] : (ex.experiments || []);
   const boots = S.boots || {}, loop = boots.crash_loop || {};
@@ -3078,7 +3078,7 @@ async function engineering(tab){
   const expRows = exps.map(e => { const v = e.verdict || {}, pr = e.promotion;
     return flagRow('flag', `Schedule experiment · ${esc(e.key)}`, `${esc(v.text || e.question || '')}${e.active ? '' : ' · not running'}`,
       pr ? `<span style="display:flex;align-items:center;gap:8px">${pill('good', 'promoted: ' + esc(pr.arm))}<button class="btn s g w" onclick="expRevert('${jsq(e.key)}')">Revert</button></span>`
-         : (v.state === 'winner' && v.call ? `<button class="btn s p w" onclick="expPromote('${jsq(e.key)}','${jsq(v.call)}')">Promote ${esc(v.call)}</button>` : pill(v.state === 'insufficient' ? 'warn' : v.state === 'conflicting' ? 'bad' : 'neu', esc((v.state || 'running').replace('_', ' ')), false))); }).join('');
+         : (v.state === 'winner' && v.call ? `<button class="btn s p w" onclick="expPromote('${jsq(e.key)}','${jsq(v.call)}')">Promote ${esc(v.call)}</button>` : pill(v.state === 'insufficient' || v.state === 'paused' ? 'warn' : v.state === 'conflicting' ? 'bad' : 'neu', esc((v.state || 'running').replace('_', ' ')), false))); }).join('');
   const gb = ((S.ai || {}).budget || {}).global_month;
   const u = x => sE ? unknownV(sE) : x;
   V().innerHTML = `
@@ -3097,6 +3097,7 @@ async function engineering(tab){
       </div>
     </section>
     ${engLatency(S, sE)}
+    ${engGenerations(gen)}
     ${engErrors(S, sE)}
     ${engBackup(bk)}
     <section class="split">
@@ -3211,6 +3212,30 @@ function engLatency(S, sE){
     <span class="muted" style="font-size:12px;display:flex;gap:12px"><span><span style="color:var(--ember2)">━</span> customers</span><span><span style="color:var(--blue)">╌</span> console</span><span><span style="color:var(--red-t)">▬</span> every thread busy</span></span></div>
     ${body}
     ${sE ? '' : `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px"><span><span class="n">${fmtN(r.saturated_minutes)}</span> <span class="dim">minutes with every thread busy</span></span><span><span class="n">${fmtN(r.peak_inflight)}</span> <span class="dim">peak in flight of ${fmtN(r.threads)}</span></span>${Object.keys(cls).map(k => `<span><span class="dim">${esc(k)}</span> <span class="n">${fmtN(cls[k].requests)}</span> <span class="dim">· p95 ≤${fmtN(cls[k].p95_le_ms)}ms · ${fmtN(cls[k].errors_5xx)} 5xx</span></span>`).join('')}</div>`}</div>`;
+}
+// Schedule generations (schedule audit 10/3/26 B1-3): the generation p95 the
+// platform check pages on, and per week its stage timings and the repair
+// loop's record — cycles, settled or not, changes refused, stages skipped,
+// the budget reconcile, hours each stage added, stages that failed.
+function engGenerations(g){
+  const err = readErr(g);
+  if(err) return `<div class="card" style="padding:16px 18px"><h2>Schedule generations</h2><div style="margin-top:10px">${unknownV(err)}</div></div>`;
+  const L = g.latency || {}, weeks = g.weeks || [];
+  const secs = v => v == null ? '—' : fmtN(Math.round(+v)) + 's';
+  const stages = ss => { const k = Object.keys(ss || {}).filter(x => x.indexOf('repair.') !== 0).sort((a, b) => (ss[b] || 0) - (ss[a] || 0)); return k.length ? k.slice(0, 5).map(x => `${esc(x)} <span class="num">${secs(ss[x])}</span>`).join(' · ') : '<span class="dim">no timings stored</span>'; };
+  const rep = r => !r ? '<span class="dim">no repair record</span>' : `<span class="num">${fmtN(r.cycles || 0)}</span> cycle${r.cycles === 1 ? '' : 's'} · ${r.converged ? 'settled' : '<b>stopped at its bound</b>'}${r.restored_best ? ' · restored best' : ''}${r.refused ? ` · <span class="num">${fmtN(r.refused)}</span> refused` : ''}${(r.skipped || []).length ? ` · skipped ${esc(r.skipped.map(x => x.stage || x).join(', '))}` : ''}`;
+  const bud = r => { const b = (r || {}).budget || {}; return b.hourly == null ? '—' : `<span class="num">${fmtN(b.hourly)}h</span> of <span class="num">${fmtN(b.budget || 0)}h</span>${b.over ? ` · <b>${fmtN(b.over_by)}h over</b>` : ''}`; };
+  const added = r => { const h = (r || {}).hours_by_stage || {}; const k = Object.keys(h).filter(x => Math.abs(+h[x] || 0) >= 0.5); return k.length ? k.map(x => `${esc(x)} <span class="num">${(+h[x] > 0 ? '+' : '') + (Math.round(+h[x] * 10) / 10)}h</span>`).join(' · ') : '<span class="dim">—</span>'; };
+  const cols = [
+    {h:'Generated', key:'generated_at', cell:r => `<span class="num">${fmtDT(r.generated_at)}</span>`},
+    {h:'Client', key:'restaurant', cell:r => clientLink(r.restaurant_id, r.restaurant || ('#' + r.restaurant_id))},
+    {h:'Week', key:'week_start', cell:r => `<span class="num">${fmtD(r.week_start)}</span>`},
+    {h:'Total', key:'total_seconds', r:true, cell:r => `<span class="num">${secs(r.total_seconds)}</span>`},
+    {h:'Slowest stages', key:'stage_seconds', wrap:true, cell:r => stages(r.stage_seconds)},
+    {h:'Repair loop', key:'repair', wrap:true, cell:r => rep(r.repair) + ((r.stage_failures || []).length ? `<br><span style="color:var(--red-t)">failed: ${esc(r.stage_failures.map(f => f.stage + (f.blocks_publish ? ' (holds publish)' : '')).join(', '))}</span>` : '')},
+    {h:'Hourly vs budget', key:'budget', wrap:true, cell:r => bud(r.repair) + `<br><span class="dim" style="font-size:12px">${added(r.repair)}</span>`}];
+  return `<div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px"><h2>Schedule generations</h2><span class="muted" style="font-size:12.5px">${L.n ? `p95 <span class="n">${secs(L.p95)}</span> · p50 <span class="n">${secs(L.p50)}</span> · max <span class="n">${secs(L.max)}</span> over the last <span class="n">${fmtN(L.n)}</span>` : 'no timed generation in the last 14 days'}</span></div>${L.n ? pill(L.slow ? 'bad' : 'good', L.slow ? 'slow — pages daily' : 'within ' + secs(L.alert_seconds), false) : ''}</div>
+    <div class="cb" style="border-top:1px solid var(--line);padding-top:12px">${g.latency_error ? `<div class="err" style="margin-bottom:10px">${esc(g.latency_error)}</div>` : ''}${table(cols, weeks, {id:'gen-t', sort:'generated_at', limit:10, empty:'No schedule generated yet.'})}</div></div>`;
 }
 function engErrors(S, sE){
   const e = S.server_errors_24h || {};
@@ -3822,7 +3847,7 @@ async function experiments(){
   // A difference against the control, its 90% interval clustered by
   // restaurant (cluster_diff), and how many restaurants (clusters) are behind it.
   const dlt = (x, f) => !x ? '<span class="dim">—</span>' : `<span class="num">${x.diff>0?'+':''}${f(x.diff)}</span> <span class="dim">${f(x.ci90[0])} to ${f(x.ci90[1])}</span>${x.clusters!=null?` <span class="dim" title="Restaurants behind the interval — each counts once, however many weeks it has">· <span class="num">${fmtN(x.clusters)}</span> rest.</span>`:''}`;
-  const state = {winner:'ok', insufficient:'warn', conflicting:'bad', no_difference:'', retired:''};
+  const state = {winner:'ok', insufficient:'warn', conflicting:'bad', no_difference:'', retired:'', paused:'warn'};
   const block = (e) => {
     const cols = [
       {h:'Arm',key:'label',cell:r=>`${esc(r.label)}${r.arm===e.control?' <span class="chip">control</span>':''}`},
@@ -3839,7 +3864,7 @@ async function experiments(){
       ? `<div style="margin-bottom:10px"><span class="b ok nodot">promoted</span> ${esc(pr.arm)} is every restaurant's arm — by ${esc(pr.promoted_by||'admin')} on ${fmtD(pr.promoted_at)}${pr.note?' · '+esc(pr.note):''} <button class="cbtn btn s w" onclick="expRevert('${jsq(e.key)}')">Revert</button></div>`
       : (v.state==='winner' && v.call ? `<div style="margin-bottom:10px"><button class="cbtn btn s w" onclick="expPromote('${jsq(e.key)}','${jsq(v.call)}')">Promote ${esc(v.call)} to every restaurant</button> <span class="dim">A reviewed step: recorded with your name, reversible.</span></div>` : '');
     return `<div class="card" style="margin-bottom:14px"><div class="ch"><h2>${esc(e.key)}</h2><span class="sub">${esc(e.question)}${e.started?' · since '+fmtD(e.started):''}${e.active?'':' · not running'}</span></div>
-      <div class="cb"><div style="margin-bottom:10px"><span class="b ${state[v.state]||''} nodot">${esc(v.state||'')}</span> ${esc(v.text||'')}</div>${verdictHistory(e.verdict_history, state)}${promo}
+      <div class="cb"><div style="margin-bottom:10px"><span class="b ${state[v.state]||''} nodot">${esc(v.state||'')}</span> ${esc(v.text||'')}</div>${e.power ? `<div class="dim" style="margin:-4px 0 10px" title="Restaurants that generated a schedule in the window and may teach (schedule audit 10/3/26 P-21)">Power: <span class="num">${e.power.restaurants == null ? '—' : fmtN(e.power.restaurants)}</span> of <span class="num">${fmtN(e.power.need)}</span> restaurants generating in ${fmtN(e.power.window_days)} days — ${e.power.powered ? 'enough to conclude' : 'too few to conclude; weeks run the pinned arm and are not counted'}</div>` : ''}${verdictHistory(e.verdict_history, state)}${promo}
       ${table(cols, e.arms, {id:'exp-'+e.key, sort:'generated', empty:'No weeks recorded yet.'})}</div></div>`;
   };
   const pinCols = [
