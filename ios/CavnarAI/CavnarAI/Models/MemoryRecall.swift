@@ -439,11 +439,19 @@ struct PersonAttendance: Codable, Hashable {
     let noShowRate: Double?
     let unreliable: Bool
     let lastMiss: String?
+    /// Call-outs among the misses, and lateness over clocked shifts — the
+    /// rate nil below six of them (schedule audit 10/3/26 D-44, L-18).
+    var calledOut: Int? = nil
+    var lateShifts: Int? = nil
+    var lateRate: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case known, shifts, missed, late, unreliable
         case noShowRate = "no_show_rate"
         case lastMiss = "last_miss"
+        case calledOut = "called_out"
+        case lateShifts = "late_shifts"
+        case lateRate = "late_rate"
     }
 
     init(known: Bool, shifts: Int? = nil, missed: Int? = nil, late: Int? = nil, noShowRate: Double? = nil,
@@ -461,14 +469,21 @@ struct PersonAttendance: Codable, Hashable {
         noShowRate = c.mrDouble(.noShowRate)
         unreliable = c.mrBool(.unreliable) ?? false
         lastMiss = c.mrText(.lastMiss)
+        calledOut = c.mrInt(.calledOut)
+        lateShifts = c.mrInt(.lateShifts)
+        lateRate = c.mrDouble(.lateRate)
     }
 
-    /// "Missed 1 of 24 watched shifts · late 2 · last miss 9/3/26", or "Not
-    /// watched yet".
+    /// "Missed 1 of 24 watched shifts · called out 1 time · late to 2 of 18
+    /// clocked (11%) · last miss 9/3/26", or "Not watched yet".
     var line: String {
         guard known, let shifts else { return "Not watched yet" }
         var bits = ["Missed \(missed ?? 0) of \(shifts) watched shift\(shifts == 1 ? "" : "s")"]
-        if let late, late > 0 { bits.append("late \(late)") }
+        if let n = calledOut, n > 0 { bits.append("called out \(n) time\(n == 1 ? "" : "s")") }
+        if let clocked = lateShifts, clocked > 0 {
+            let pct = lateRate.map { "\(Int(($0 * 100).rounded()))%" } ?? "\u{2014}"
+            bits.append("late to \(late ?? 0) of \(clocked) clocked (\(pct))")
+        } else if let late, late > 0 { bits.append("late \(late)") }
         if let lastMiss { bits.append("last miss " + CavnarDate.mdy(lastMiss)) }
         return bits.joined(separator: " \u{00B7} ")
     }
@@ -499,15 +514,31 @@ struct StandingPattern: Codable, Hashable, Identifiable {
     let status: String
     let canBeRule: Bool
     let rule: Rule?
+    // Its evidence (schedule audit 10/3/26 L-6, L-30, L-35): the published
+    // weeks that tested it and kept it, the confidence that reads (Wilson
+    // bound × decay since a hand last confirmed it), when a manager's own
+    // hand last did, since when it is being re-tested, why it retired, and
+    // whether the owner said "always". Absent on an older server.
+    var opportunities: Int? = nil
+    var hits: Int? = nil
+    var confidence: Double? = nil
+    var lastHand: String? = nil
+    var retestSince: String? = nil
+    var retiredReason: String? = nil
+    var source: String? = nil
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
         case key, kind, employee, day, daypart, text, editors, status, rule
+        case opportunities, hits, confidence, source
         case firstLearned = "first_learned"
         case lastConfirmed = "last_confirmed"
         case timesApplied = "times_applied"
         case timesOverridden = "times_overridden"
         case canBeRule = "can_be_rule"
+        case lastHand = "last_hand"
+        case retestSince = "retest_since"
+        case retiredReason = "retired_reason"
     }
 
     init(key: String, kind: String? = nil, employee: String? = nil, day: String? = nil, daypart: String? = nil,
@@ -544,17 +575,45 @@ struct StandingPattern: Codable, Hashable, Identifiable {
         status = c.mrText(.status)?.lowercased() ?? "active"
         canBeRule = c.mrBool(.canBeRule) ?? false
         rule = try? c.decodeIfPresent(Rule.self, forKey: .rule)
+        opportunities = c.mrInt(.opportunities)
+        hits = c.mrInt(.hits)
+        confidence = c.mrDouble(.confidence)
+        lastHand = c.mrText(.lastHand)
+        retestSince = c.mrText(.retestSince)
+        retiredReason = c.mrText(.retiredReason)?.lowercased()
+        source = c.mrText(.source)?.lowercased()
     }
 
     /// "learned 9/7/26 · last kept 9/21/26 · taught by Dana" — dates as the
-    /// server wrote them (M/D/YY).
+    /// server wrote them (M/D/YY). The owner's "always" reads as theirs.
     var historyLine: String? {
         var bits: [String] = []
+        if source == "owner_said" { bits.append("You said always") }
         if let firstLearned { bits.append("learned " + firstLearned) }
         if let lastConfirmed, lastConfirmed != firstLearned { bits.append("last kept " + lastConfirmed) }
         if !editors.isEmpty { bits.append("taught by " + editors.joined(separator: ", ")) }
         return bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} ")
     }
+
+    /// "kept 2 of 3 weeks · 64% confidence · last confirmed by hand
+    /// 9/21/26" — the confidence "—" until two weeks tested it (L-6, L-30).
+    var evidenceLine: String? {
+        var bits: [String] = []
+        if let o = opportunities, o > 0 {
+            bits.append("kept \(hits ?? 0) of \(o) week\(o == 1 ? "" : "s")")
+            if o >= 2, let conf = confidence {
+                bits.append("\(Int((min(max(conf, 0), 1) * 100).rounded()))% confidence")
+            } else {
+                bits.append("confidence \u{2014}")
+            }
+        }
+        if let lastHand { bits.append("last confirmed by hand " + lastHand) }
+        return bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} ")
+    }
+
+    /// Being re-tested: the next draft leaves it out to check it is still
+    /// wanted (L-30).
+    var isRetest: Bool { status == "retest" }
 
     /// The status in words — an unknown status is shown as the server
     /// wrote it.
@@ -562,7 +621,16 @@ struct StandingPattern: Codable, Hashable, Identifiable {
         switch status {
         case "active": return "in use"
         case "ruled": return "now a rule"
-        case "retired": return "retired \u{2014} reversed twice"
+        case "retest": return "being re-tested"
+        case "retired":
+            switch retiredReason {
+            case "reversed": return "retired \u{2014} reversed by hand"
+            case "retest": return "retired \u{2014} not put back when tested"
+            case "decayed": return "retired \u{2014} faded, never confirmed"
+            case "owner": return "retired \u{2014} you let it go"
+            default: return "retired \u{2014} reversed twice"
+            }
+        case "dormant": return "asleep \u{2014} they haven\u{2019}t worked lately"
         case "dismissed": return "not in use"
         default: return status.replacingOccurrences(of: "_", with: " ")
         }

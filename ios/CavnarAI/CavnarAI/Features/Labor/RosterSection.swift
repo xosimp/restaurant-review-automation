@@ -11,6 +11,8 @@ struct RosterSection: View {
     @State private var selected: RosterMember?
     @State private var showingPairEditor = false
     @State private var showingRules = false
+    @State private var showingClosers = false
+    @State private var showingFamilies = false
     /// Each pair row's measured height — see CavnarFittedList.
     @State private var pairRowHeights: [StaffPair.ID: CGFloat] = [:]
 
@@ -54,6 +56,15 @@ struct RosterSection: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
+                    // Who stopped working (schedule audit 10/3/26 E-3): left
+                    // off every draft until the owner answers on their row.
+                    let away = viewModel.dormantRoster.count
+                    if away > 0 {
+                        HomeMixedText.make("\(away) \(away == 1 ? "person hasn\u{2019}t" : "people haven\u{2019}t") worked in six weeks "
+                                           + "\u{2014} open each to deactivate them or keep them on the roster.",
+                                           size: 13.5, weight: 600, color: .cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     VStack(spacing: 0) {
                         ForEach(viewModel.roster) { member in
                             memberRow(member)
@@ -66,6 +77,15 @@ struct RosterSection: View {
 
                 rulesLink
 
+                // The one-time closer cleanup and the roles each job code
+                // belongs to (schedule audit 10/3/26 D-9, D-13).
+                setupLink(icon: "lock.fill", title: "Closers",
+                          detail: closersDetail) { showingClosers = true }
+                setupLink(icon: "square.stack.3d.up", title: "Roles and job codes",
+                          detail: "Which job codes are one role \u{2014} Server AM and Server PM are Server") {
+                    showingFamilies = true
+                }
+
                 pairsBlock
 
                 if let error = viewModel.pairError {
@@ -75,10 +95,28 @@ struct RosterSection: View {
 
                 if !viewModel.openSuggestions.isEmpty { suggestedPairsBlock }
 
+                // Edits made through Cavnar AI support teach the draft
+                // nothing until the account holder counts them as theirs
+                // (schedule audit 10/3/26 L-8).
+                if let saves = viewModel.adminSaves, saves.versions > 0, viewModel.canAdoptPatterns {
+                    adminSavesBanner(saves)
+                }
+
                 if !viewModel.learnedPatterns.isEmpty { learnedPatternsBlock }
 
                 if !viewModel.standingPatterns.isEmpty || !viewModel.patternConflicts.isEmpty {
                     standingPatternsBlock
+                }
+
+                // What the last answer about a pattern did, said once under
+                // every pattern block (Make it a rule, keep, let go, adopt).
+                if let message = viewModel.patternMessage {
+                    Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let error = viewModel.patternError {
+                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -91,6 +129,52 @@ struct RosterSection: View {
         .sheet(isPresented: $showingRules) {
             ScheduleRulesSheet(viewModel: viewModel)
         }
+        .sheet(isPresented: $showingClosers, onDismiss: { Task { await viewModel.loadRoster() } }) {
+            CloserCleanupSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingFamilies) {
+            RoleFamiliesSheet(store: viewModel.teamSetup)
+        }
+    }
+
+    /// "4 marked to close of 35 — 2 roles" from the roster itself.
+    private var closersDetail: String {
+        let marked = viewModel.activeRoster.filter { $0.canClose == true }.count
+        let waiting = viewModel.activeRoster.filter { $0.canClosePending == true }.count
+        var s = marked == 0 ? "Nobody is marked to close" : "\(marked) of \(viewModel.activeRoster.count) marked to close"
+        if waiting > 0 { s += " \u{00B7} \(waiting) waiting on you" }
+        return s
+    }
+
+    private func setupLink(icon: String, title: String, detail: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.cavnarBody(14.5, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                    HomeMixedText.make(detail, size: 13, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.cavnarEmber2)
+            }
+            .padding(12)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                    .fill(Color.cavnarPaper2.opacity(0.5)))
+        }
+        .buttonStyle(.plain)
     }
 
     private var subtitle: String {
@@ -132,8 +216,29 @@ struct RosterSection: View {
                                 .padding(.vertical, 1)
                                 .background(Capsule().fill(Color.cavnarBlue.opacity(0.14)))
                         }
+                        // In training for a role (schedule audit 10/3/26
+                        // D-16): those shifts are not coverage.
+                        if member.isTraining {
+                            Text("TRAINING")
+                                .font(.cavnarBody(10, weight: 700))
+                                .tracking(0.5)
+                                .foregroundStyle(Color.cavnarInk2)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.white.opacity(0.08)))
+                        }
                     }
-                    if member.isActive {
+                    if member.isDormant {
+                        // "Not worked since 8/14/26 — deactivate?" (E-3).
+                        HStack(spacing: 5) {
+                            Image(systemName: "moon.zzz")
+                                .font(.system(size: 10, weight: .semibold))
+                            HomeMixedText.make(member.dormantText ?? "Not worked in six weeks \u{2014} deactivate?",
+                                               size: 13.5, color: .cavnarAmber)
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(Color.cavnarAmber)
+                    } else if member.isActive {
                         HomeMixedText.make(detailLine(member), size: 13.5, color: .cavnarInk3)
                             .lineLimit(1)
                     } else {
@@ -164,6 +269,7 @@ struct RosterSection: View {
     private func detailLine(_ member: RosterMember) -> String {
         var parts: [String] = []
         if let role = member.role, !role.isEmpty { parts.append(role) }
+        if member.floorManager?.counts == true { parts.append("runs the floor") }
         if let r = member.reliability?.noShowLabel { parts.append(r) }
         if member.canClose == true { parts.append("can close") }
         if let s = member.settings, let lo = s.minHours, let hi = s.maxHours, hi > 0 {
@@ -325,11 +431,34 @@ extension RosterSection {
                     }
                 }
             }
-            if let error = viewModel.patternError {
-                Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
+    }
+
+    /// "6 edits made through Cavnar AI support on 2 weeks don't teach the
+    /// draft yet — count them as yours?"
+    private func adminSavesBanner(_ saves: AdminSavesPending) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HomeMixedText.make("\(saves.versions) edit\(saves.versions == 1 ? "" : "s") made through Cavnar AI support on "
+                               + "\(saves.weeks) week\(saves.weeks == 1 ? "" : "s") don\u{2019}t teach the draft yet \u{2014} "
+                               + "count them as yours?", size: 14, weight: 600, color: .cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Only where those edits were your decisions.")
+                .font(.cavnarBody(12.5))
+                .foregroundStyle(Color.cavnarInk3)
+            Button {
+                Task { await viewModel.adoptPatternWork(saves: true) }
+            } label: {
+                Group {
+                    if viewModel.isAdoptingPatterns { CavnarShimmerText(text: "Counting\u{2026}") } else { Text("Count them as mine") }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.isAdoptingPatterns))
+            .disabled(viewModel.isAdoptingPatterns)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarAmber.opacity(0.08)))
     }
 
     private func learnedPatternRow(_ pattern: LearnedPattern) -> some View {
@@ -346,12 +475,36 @@ extension RosterSection {
                     HomeMixedText.make(pattern.text ?? "", size: 14, color: dismissed ? .cavnarInk3 : .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
-                        if let n = pattern.times {
-                            HomeMixedText.make("\(n) \(n == 1 ? "time" : "times")", size: 12.5, color: .cavnarInk3)
+                        // Its denominator: "2 of 3 weeks", and how sure
+                        // that makes it (schedule audit 10/3/26 L-6).
+                        if let evidence = pattern.evidenceLine {
+                            HomeMixedText.make(evidence, size: 12.5, color: .cavnarInk3)
                         }
-                        Text(dismissed ? "not in use" : (pattern.active == true ? "in use" : "needs one more repeat"))
+                        Text(dismissed ? "not in use" : (pattern.active == true ? "in use" : "not enough weeks yet"))
                             .font(.cavnarBody(12.5, weight: 600))
                             .foregroundStyle(dismissed ? Color.cavnarInk3 : (pattern.active == true ? Color.cavnarGreen : Color.cavnarInk3))
+                    }
+                    // A dismissal made through support counts once the
+                    // account holder says it's theirs (L-10).
+                    if pattern.dismissedByAdmin == true {
+                        HStack(spacing: 10) {
+                            Text("Dismissed through Cavnar AI support \u{2014} not counted")
+                                .font(.cavnarBody(12.5, weight: 600))
+                                .foregroundStyle(Color.cavnarAmber)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if viewModel.canAdoptPatterns {
+                                Button {
+                                    Task { await viewModel.adoptPatternWork(saves: false) }
+                                } label: {
+                                    Text("Count as mine")
+                                        .font(.cavnarBody(13, weight: 700))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .frame(minHeight: 32)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(viewModel.isAdoptingPatterns)
+                            }
+                        }
                     }
                 }
             }
@@ -419,10 +572,6 @@ extension RosterSection {
                     }
                 }
             }
-            if let message = viewModel.patternMessage {
-                Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
@@ -444,8 +593,14 @@ extension RosterSection {
                         HomeMixedText.make(history, size: 12.5, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // Kept how many of the weeks that tested it, how sure,
+                    // and when a manager's hand last confirmed it (L-6, L-30).
+                    if let evidence = pattern.evidenceLine {
+                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     HStack(spacing: 6) {
-                        if let applied = pattern.timesApplied {
+                        if pattern.evidenceLine == nil, let applied = pattern.timesApplied {
                             HomeMixedText.make("kept \(applied) \(applied == 1 ? "time" : "times")", size: 12.5,
                                                color: .cavnarInk3)
                         }
@@ -454,14 +609,53 @@ extension RosterSection {
                         }
                         Text(pattern.statusLabel)
                             .font(.cavnarBody(12.5, weight: 600))
-                            .foregroundStyle(ruled ? Color.cavnarGreen : (retired ? Color.cavnarInk3 : Color.cavnarEmber2))
+                            .foregroundStyle(ruled ? Color.cavnarGreen : (retired ? Color.cavnarInk3
+                                : (pattern.isRetest ? Color.cavnarAmber : Color.cavnarEmber2)))
                     }
                     if ruled, let note = pattern.rule?.note {
                         HomeMixedText.make("Rule: " + note + (pattern.rule?.by.map { " \u{00B7} by " + $0 } ?? ""),
                                            size: 12.5, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // A cut stays a habit: Cavnar AI holds minimums, not
+                    // maximums (L-33's refusal, said before anyone asks).
+                    if pattern.kind == "headcount_cut", !retired {
+                        Text("A cut can\u{2019}t be a rule \u{2014} Cavnar AI holds staffing minimums, not maximums. The draft keeps it as a habit.")
+                            .font(.cavnarBody(12.5))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+            }
+            // Re-tested: the next draft leaves it out to check it's still
+            // wanted — the owner can answer now instead (L-30).
+            if pattern.isRetest {
+                VStack(alignment: .leading, spacing: 6) {
+                    HomeMixedText.make("Left out of the next draft to check you still want it"
+                                       + (pattern.retestSince.map { " (since \($0))" } ?? "") + ".",
+                                       size: 13, weight: 600, color: .cavnarAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if viewModel.canEditPatterns {
+                        HStack(spacing: 18) {
+                            Button {
+                                Task { await viewModel.answerStanding(pattern, keep: true) }
+                            } label: {
+                                Text("Keep it").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                                    .frame(minHeight: 32)
+                            }
+                            .buttonStyle(.plain)
+                            Button {
+                                Task { await viewModel.answerStanding(pattern, keep: false) }
+                            } label: {
+                                Text("Let it go").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                                    .frame(minHeight: 32)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .disabled(busy)
+                    }
+                }
+                .padding(.leading, 26)
             }
             if pattern.canBeRule && viewModel.canEditPatterns {
                 Button {
@@ -486,11 +680,18 @@ extension RosterSection {
 
 // MARK: - Detail sheet
 
-/// One person's settings, saved a field at a time as they change.
-private struct RosterDetailSheet: View {
+/// One person's settings, saved a field at a time as they change. Opened
+/// from a roster row, and from the rules sheet's "Which days and hours do
+/// … work?" (schedule audit 10/3/26 D-5).
+struct RosterDetailSheet: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     let name: String
     @Environment(\.dismiss) private var dismiss
+
+    init(viewModel: ScheduleSetupViewModel, name: String) {
+        self.viewModel = viewModel
+        self.name = name
+    }
 
     @State private var active = true
     @State private var isMinor = false
@@ -518,6 +719,25 @@ private struct RosterDetailSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     hero
+                    if let member, !member.alsoRoles.isEmpty {
+                        // The role above is the one worked most lately
+                        // (D-17); the others they worked follow it.
+                        HomeMixedText.make("Also: " + member.alsoRoles.prefix(4).joined(separator: ", "),
+                                           size: 13.5, color: .cavnarInk3)
+                            .padding(.top, -14)
+                    }
+                    if let member, member.isDormant {
+                        RosterDormantNotice(
+                            text: member.dormantText ?? "Not worked in six weeks \u{2014} deactivate?",
+                            busy: busy, editable: editable,
+                            onDeactivate: {
+                                active = false
+                                Task { await viewModel.updateSettings(.init(employeeName: name, active: false)) }
+                            },
+                            onStillHere: {
+                                Task { await viewModel.updateSettings(.init(employeeName: name, active: true)) }
+                            })
+                    }
                     // Contact, PIN and pay live in the one person record
                     // (Friction audit #25); this sheet keeps scheduling.
                     Button {
@@ -538,10 +758,48 @@ private struct RosterDetailSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     statusSection
+                    // Who runs the floor and who stands in — the account
+                    // holder's alone (schedule audit 10/3/26 P-7, E-13).
+                    FloorManagerSection(
+                        status: member?.floorManager, stored: member?.settings?.floorManager,
+                        canEdit: viewModel.canEditOwnerFacts, busy: busy) { choice in
+                        Task { await viewModel.updateSettings(.init(employeeName: name, floorManager: choice)) }
+                    }
+                    ActingManagerSection(
+                        ranges: member?.settings?.actingManager ?? [],
+                        canEdit: viewModel.canEditOwnerFacts, busy: busy) { next in
+                        Task { await viewModel.updateSettings(.init(employeeName: name, actingManager: next)) }
+                    }
+                    if isOwnerRole {
+                        paidHourlySection
+                    }
+                    StandingShiftsSection(
+                        shifts: member?.settings?.standingShifts ?? [],
+                        roles: viewModel.roleChoices(for: name),
+                        canEdit: editable, busy: busy) { next in
+                        Task { await viewModel.updateSettings(.init(employeeName: name, standingShifts: next)) }
+                    }
+                    TraineeSection(
+                        trainee: member?.settings?.trainee, name: name,
+                        roles: viewModel.roleChoices(for: name),
+                        trainers: viewModel.activeNames,
+                        canEdit: editable, busy: busy) { change in
+                        Task { await viewModel.updateSettings(.init(employeeName: name, trainee: change)) }
+                    }
                     hoursSection
                     daypartSection
                     windowsSection
                     certificationsSection
+                    if member?.canClose == true || member?.canClosePending == true {
+                        ClosesForSection(
+                            role: member?.role, closesFor: member?.settings?.closesFor ?? [],
+                            roles: viewModel.roleChoices(for: name),
+                            pending: member?.canClosePending == true,
+                            canEdit: editable, busy: busy) { next in
+                            Task { await viewModel.updateSettings(.init(employeeName: name, closesFor: next)) }
+                        }
+                    }
+                    PersonAttendanceSection(reliability: member?.reliability)
                     preferencesSection
                     trainedUpSection
                     if let toast {
@@ -679,7 +937,9 @@ private struct RosterDetailSheet: View {
                             certifications = next
                             Task { await viewModel.updateSettings(.init(employeeName: name, certifications: next)) }
                         } label: {
-                            AccountChip(text: cert, muted: !on)
+                            // "Floor manager (can run the shift)" apart from
+                            // the food-safety card (schedule audit 10/3/26 E-15).
+                            AccountChip(text: viewModel.certificationLabel(cert), muted: !on)
                         }
                         .buttonStyle(.plain)
                         .disabled(!editable)
@@ -687,6 +947,29 @@ private struct RosterDetailSheet: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: Paid by the hour (an Owner role)
+
+    /// An Owner role is salaried-style — no overtime, hours not spent from
+    /// the hourly budget — unless they are paid by the hour (schedule audit
+    /// 10/3/26 E-12). The account holder's to say.
+    private var isOwnerRole: Bool {
+        guard let member else { return false }
+        return ([member.role ?? ""] + (member.recentRoles ?? [])).contains { $0.lowercased().contains("owner") }
+    }
+
+    private var paidHourlySection: some View {
+        AccountSection(kicker: "Pay") {
+            AccountSwitchRow(label: "Paid by the hour",
+                             detail: (member?.settings?.paidHourly ?? false)
+                                ? "Held to the overtime line like anyone hourly, their hours spent from the hourly budget."
+                                : "Off: an owner is salaried-style \u{2014} no overtime, hours outside the hourly budget.",
+                             isOn: Binding(get: { member?.settings?.paidHourly ?? false }, set: { newValue in
+                                Task { await viewModel.updateSettings(.init(employeeName: name, paidHourly: newValue)) }
+                             }),
+                             busy: busy, disabled: !viewModel.canEditOwnerFacts, showsDivider: false)
         }
     }
 
@@ -752,7 +1035,10 @@ private struct RosterDetailSheet: View {
         if let role = member.role, !role.isEmpty { parts.append(role) }
         if let score = member.score { parts.append("score \(score)") }
         if let r = member.reliability?.noShowLabel { parts.append(r) }
-        if let shifts = member.shifts, shifts > 0 { parts.append("\(shifts) shifts") }
+        if let shifts = member.shifts, shifts > 0 {
+            // When they last worked, beside the count (schedule audit 10/3/26 E-3).
+            parts.append("\(shifts) shifts" + (member.lastWorkedLabel.map { ", last \($0)" } ?? ""))
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -819,12 +1105,34 @@ private struct RosterDetailSheet: View {
             AccountField(label: "At most", text: $maxHours, focus: $focused, field: .maxHours,
                          keyboardType: .decimalPad, isNumber: true, showsDivider: false)
                 .disabled(!editable)
+            // A maximum past the weekly ceiling (or 40) lets the draft take
+            // them into overtime — said beside the field (schedule audit
+            // 10/3/26 P-12).
+            if let max = member?.settings?.maxHours, max > 40 {
+                HomeMixedText.make("Overtime allowed up to \(Self.hours(max))h \u{2014} past the 40h overtime line, "
+                                   + "because their own maximum is higher.", size: 13, weight: 600, color: .cavnarAmber)
+                    .padding(.top, 8)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let max = member?.settings?.maxHours, max > weeklyCeiling {
+                HomeMixedText.make("Up to \(Self.hours(max))h \u{2014} past the \(Self.hours(weeklyCeiling))h weekly ceiling "
+                                   + "in Schedule rules, because their own maximum is higher.",
+                                   size: 13, weight: 600, color: .cavnarInk2)
+                    .padding(.top, 8)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text("Leave blank for no floor or ceiling beyond the week's own limit.")
                 .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)
                 .padding(.top, 8)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// The weekly hours ceiling in force (Schedule rules), else its 40h
+    /// default.
+    private var weeklyCeiling: Double {
+        if case .number(let n)? = viewModel.rules["weekly_hours_ceiling"], n > 0 { return n }
+        return 40
     }
 
     private var daypartSection: some View {

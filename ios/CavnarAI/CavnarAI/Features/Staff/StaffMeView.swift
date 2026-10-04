@@ -56,6 +56,7 @@ struct StaffMeView: View {
                         StaffUI.failedCard(failure) { Task { await reload() } }
                     }
                     weekSection
+                    StaffAttendanceSection(store: store)
                     noticesSection
                     languageSection
                     accountSection
@@ -293,6 +294,9 @@ struct StaffMeView: View {
             if languages.value == nil { languages = .failed(StaffErrorText.message(error)) }
         }
         availability = try? await a
+        // Your attendance reads the week's stats; Me opened before Today
+        // still shows it.
+        if store.stats.value == nil { await store.reloadStats() }
     }
 }
 

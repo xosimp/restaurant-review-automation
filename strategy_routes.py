@@ -2308,7 +2308,9 @@ def _setup_payload(rid, principal=False) -> dict:
     failure costs these keys, never the screen. The account holder also
     reads who is salaried and the weekly cap code holds each of them to
     (`salaried_caps`, E-12/E-17) — who is paid a salary is theirs alone, as
-    on Account → Targets."""
+    on Account → Targets. A staffing rule the owner kept to the account
+    holders (D-38) is read back to an account holder only: its words never
+    travel, and every login that can see labor reads this screen."""
     try:
         import schedule_setup as _setup
         c = _setup._constraints(rid)
@@ -2319,7 +2321,8 @@ def _setup_payload(rid, principal=False) -> dict:
                 "closers": {k: cr[k] for k in ("by_role", "flagged", "roster", "share", "warning", "closer_roles",
                                                "closer_roles_basis", "closer_roles_in_force", "outside_roles",
                                                "pending_admin")},
-                "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules],
+                "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules
+                                if principal or not x.get("private")],
                 "owner_rules_unchecked": list(c.owner_rules_unchecked),
                 "close_times_missing": _setup.close_times_missing(c),
                 "role_families": dict(c.role_families)}

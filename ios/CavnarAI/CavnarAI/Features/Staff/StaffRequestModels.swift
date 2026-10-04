@@ -513,11 +513,14 @@ struct StaffTimeOffRequest: Decodable, Identifiable, Hashable {
     /// Published shifts still inside an approved range — the manager has
     /// to move them; the employee should know they're still on them.
     let stillScheduled: [StaffScheduledShift]
+    /// The dates and, for part of a day, which part — "10/7/26, until
+    /// 4:00pm" (schedule audit 10/3/26 D-39). Absent on an older server.
+    let spanLabel: String?
 
     enum CodingKeys: String, CodingKey {
         case id, reason, status
         case startDate = "start_date", endDate = "end_date", decisionNote = "decision_note"
-        case canCancel = "can_cancel", stillScheduled = "still_scheduled"
+        case canCancel = "can_cancel", stillScheduled = "still_scheduled", spanLabel = "span_label"
     }
 
     init(from decoder: Decoder) throws {
@@ -530,10 +533,12 @@ struct StaffTimeOffRequest: Decodable, Identifiable, Hashable {
         decisionNote = c.staffString(.decisionNote)
         canCancel = c.staffBool(.canCancel)
         stillScheduled = c.staffArray(.stillScheduled)
+        spanLabel = c.staffString(.spanLabel).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     var isLive: Bool { status == "pending" || status == "approved" }
-    var rangeLabel: String { CavnarDate.mdyRange(startDate, endDate) }
+    /// The server's span ("10/7/26, until 4:00pm"), else the dates alone.
+    var rangeLabel: String { spanLabel ?? CavnarDate.mdyRange(startDate, endDate) }
 
     var chip: StaffStatusChip {
         switch status {

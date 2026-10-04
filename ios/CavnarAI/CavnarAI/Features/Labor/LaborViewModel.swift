@@ -196,14 +196,57 @@ struct RatedEmployee: Codable, Identifiable, Equatable {
     var canClose: Bool?
     let updatedBy: String?
     let updatedAt: String?
+    // Schedule audit 10/3/26 (D-12, E-3, L-9): a score per role ("Bartender":
+    // 4) over the overall one, how old the newest rating is ("Rated 6/1/26
+    // — still right?" after 90 days), who has stopped working, and a closer
+    // flag set through support that waits on the owner. Absent on an older
+    // server.
+    var roleScores: [String: Int]? = nil
+    var ratedLabel: String? = nil
+    var ratingDue: Bool? = nil
+    var ratingDueText: String? = nil
+    var dormant: Bool? = nil
+    var dormantText: String? = nil
+    var canClosePending: Bool? = nil
     var id: String { name }
 
     enum CodingKeys: String, CodingKey {
-        case name, role, shifts, score, notes
+        case name, role, shifts, score, notes, dormant
         case scoreLabel = "score_label"
         case canClose = "can_close"
         case updatedBy = "updated_by"
         case updatedAt = "updated_at"
+        case roleScores = "role_scores"
+        case ratedLabel = "rated_label"
+        case ratingDue = "rating_due"
+        case ratingDueText = "rating_due_text"
+        case dormantText = "dormant_text"
+        case canClosePending = "can_close_pending"
+    }
+}
+
+extension RatedEmployee {
+    /// Field by field, so a newer field of an odd shape never empties the
+    /// whole team list.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        role = c.setupText(.role)
+        shifts = c.setupInt(.shifts) ?? 0
+        score = c.setupInt(.score)
+        scoreLabel = c.setupText(.scoreLabel)
+        notes = c.setupText(.notes)
+        canClose = c.setupBool(.canClose)
+        updatedBy = c.setupText(.updatedBy)
+        updatedAt = c.setupText(.updatedAt)
+        roleScores = ((try? c.decodeIfPresent([String: Double].self, forKey: .roleScores)) ?? nil)?
+            .compactMapValues { $0.isFinite ? Int($0.rounded()) : nil }
+        ratedLabel = c.setupText(.ratedLabel)
+        ratingDue = c.setupBool(.ratingDue)
+        ratingDueText = c.setupText(.ratingDueText)
+        dormant = c.setupBool(.dormant)
+        dormantText = c.setupText(.dormantText)
+        canClosePending = c.setupBool(.canClosePending)
     }
 }
 
@@ -216,6 +259,75 @@ struct RatingCoverage: Codable, Equatable {
     let unrated: [String]
     let active: Bool
     let pct: Int
+    /// Ratings 90+ days old (schedule audit 10/3/26 D-12) and ratings
+    /// entered through support that count only once the owner takes them as
+    /// theirs (L-9). Absent on an older server.
+    var dueForRerate: Int? = nil
+    var adminSet: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case rated, total, unrated, active, pct
+        case dueForRerate = "due_for_rerate"
+        case adminSet = "admin_set"
+    }
+}
+
+/// A strength target as the scorer judges it (schedule audit 10/3/26
+/// SQ-3/SQ-4): the full crew it was set for and what that asks a person.
+struct StrengthCrew: Decodable, Equatable {
+    var target: Double?
+    var crew: Int?
+    var perPerson: Double?
+    var known: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case target, crew, known
+        case perPerson = "per_person"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = c.setupDouble(.target)
+        crew = c.setupInt(.crew)
+        perPerson = c.setupDouble(.perPerson)
+        known = c.setupBool(.known) ?? false
+    }
+
+    private static func fig(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v) }
+
+    /// "8 across your largest Bartender crew of 2 — about 4 a person".
+    func line(role: String) -> String? {
+        guard let t = target, let n = crew, let p = perPerson else { return nil }
+        let crewWords = known ? "your largest \(role) crew of \(n)" : "\(n) \(n == 1 ? "person" : "people") (nothing on file says how many work)"
+        return "\(Self.fig(t)) across \(crewWords) \u{2014} about \(Self.fig(p)) a person"
+    }
+}
+
+/// Whether the leader rules can judge anyone yet (schedule audit 10/3/26
+/// D-10): the sentences, and whether ratings or closer flags entered
+/// through support wait on the owner.
+struct LeaderRulesStatus: Decodable, Equatable {
+    var lines: [String] = []
+    var canAdopt: Bool = false
+    var adminRatings: Int = 0
+    var adminClosers: Int = 0
+
+    enum CodingKeys: String, CodingKey {
+        case lines
+        case canAdopt = "can_adopt"
+        case adminRatings = "admin_ratings"
+        case adminClosers = "admin_closers"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lines = c.setupTexts(.lines)
+        canAdopt = c.setupBool(.canAdopt) ?? false
+        adminRatings = c.setupInt(.adminRatings) ?? 0
+        adminClosers = c.setupInt(.adminClosers) ?? 0
+    }
 }
 
 /// A shift leader requirement: "Saturday dinner needs a bartender at 5."
@@ -1430,6 +1542,14 @@ struct GeneratedSchedule: Codable {
     // just wasn't decoded on the iOS side until now.
     let hoursBudget: Double?
     let laborBudgetDollars: Double?
+    // The week's hours split by pay (schedule audit 10/3/26 E-7/P-6): only
+    // the hourly hours are held against the hourly budget; the salaried
+    // ones are said beside them. And what the budget is — the labor target
+    // less the salaried pay, the wage it is bought at, any caveat (D-1,
+    // E-24). Absent on an older server or payload.
+    var hoursHourly: Double? = nil
+    var hoursSalaried: Double? = nil
+    var budgetBasis: LenientBudgetBasis? = nil
     let staffConstraints: [String: String]?
     // The Operational Score check the backend runs over the finished
     // schedule. Absent on a server that predates the feature, and
@@ -1552,6 +1672,9 @@ struct GeneratedSchedule: Codable {
         case scheduleCsv = "schedule_csv"
         case hoursBudget = "hours_budget"
         case laborBudgetDollars = "labor_budget_dollars"
+        case hoursHourly = "hours_hourly"
+        case hoursSalaried = "hours_salaried"
+        case budgetBasis = "budget_basis"
         case staffConstraints = "staff_constraints"
         case historyId = "history_id"
         case ruleViolations = "rule_violations"
@@ -1732,6 +1855,19 @@ final class LaborViewModel {
     // Targets an owner can set but the current team cannot reach. Saved
     // anyway — they may be describing the team they intend to have.
     var targetWarnings: [String] = []
+    /// A new leader rule's bar (models.LEADER_RULE_DEFAULTS — 4, not 5:
+    /// a 5 is rarely meetable, schedule audit 10/3/26 D-11).
+    var leaderRuleDefaultMinScore: Double = 4
+    /// What the save said about each leader rule the team can't meet
+    /// ("Only 1 Bartender AM scores 5 or above…"), shown under the rules.
+    var leaderRuleWarnings: [String] = []
+    /// Whether the leader rules judge anyone yet, and the support-entered
+    /// ratings and closer flags waiting on the owner (D-10, L-9).
+    var leaderRulesStatus: LeaderRulesStatus?
+    /// Whose per-role rating is mid-flight ("name|role").
+    var savingRoleFor: String?
+    /// Each strength target's crew and per-person ask, by role.
+    var strengthCrews: [String: StrengthCrew] = [:]
 
     private let client: APIClient
     private var restaurantId: Int?
@@ -3182,11 +3318,58 @@ final class LaborViewModel {
         let leaderRules: [ShiftLeaderRule]?
         let note: String?
         let error: String?
+        var leaderRuleDefaults: LeaderRuleDefaults? = nil
+        var leaderRulesStatus: LeaderRulesStatus? = nil
+        var strengthCrews: [String: StrengthCrew]? = nil
+
+        struct LeaderRuleDefaults: Decodable {
+            let minScore: Double?
+            enum CodingKeys: String, CodingKey { case minScore = "min_score" }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                minScore = c.setupDouble(.minScore)
+            }
+        }
 
         enum CodingKeys: String, CodingKey {
             case ok, team, coverage, thresholds, note, error
             case isLive = "is_live"
             case leaderRules = "leader_rules"
+            case leaderRuleDefaults = "leader_rule_defaults"
+            case leaderRulesStatus = "leader_rules_status"
+            case strengthCrews = "strength_crews"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            isLive = try c.decodeIfPresent(Bool.self, forKey: .isLive)
+            team = try c.decodeIfPresent([RatedEmployee].self, forKey: .team)
+            coverage = try c.decodeIfPresent(RatingCoverage.self, forKey: .coverage)
+            thresholds = try c.decodeIfPresent([String: Double].self, forKey: .thresholds)
+            leaderRules = try c.decodeIfPresent([ShiftLeaderRule].self, forKey: .leaderRules)
+            note = try c.decodeIfPresent(String.self, forKey: .note)
+            error = try c.decodeIfPresent(String.self, forKey: .error)
+            leaderRuleDefaults = (try? c.decodeIfPresent(LeaderRuleDefaults.self, forKey: .leaderRuleDefaults)) ?? nil
+            leaderRulesStatus = (try? c.decodeIfPresent(LeaderRulesStatus.self, forKey: .leaderRulesStatus)) ?? nil
+            strengthCrews = (try? c.decodeIfPresent([String: StrengthCrew].self, forKey: .strengthCrews)) ?? nil
+        }
+    }
+
+    private struct RoleRatingBody: Encodable {
+        let employeeName: String
+        let role: String
+        let score: Int?
+        enum CodingKeys: String, CodingKey {
+            case employeeName = "employee_name"
+            case role, score
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(employeeName, forKey: .employeeName)
+            try c.encode(role, forKey: .role)
+            // An unset score is sent as null: the rating is cleared.
+            try c.encode(score, forKey: .score)
         }
     }
 
@@ -3224,6 +3407,23 @@ final class LaborViewModel {
         let thresholds: [String: Double]?
         let warnings: [String]?
         let error: String?
+        /// The leader rules the team can't meet, said at save (D-11).
+        var leaderRuleWarnings: [String]? = nil
+        var strengthCrews: [String: StrengthCrew]? = nil
+        enum CodingKeys: String, CodingKey {
+            case ok, thresholds, warnings, error
+            case leaderRuleWarnings = "leader_rule_warnings"
+            case strengthCrews = "strength_crews"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            thresholds = try? c.decodeIfPresent([String: Double].self, forKey: .thresholds)
+            warnings = try? c.decodeIfPresent([String].self, forKey: .warnings)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+            leaderRuleWarnings = (try? c.decodeIfPresent([String].self, forKey: .leaderRuleWarnings)) ?? nil
+            strengthCrews = (try? c.decodeIfPresent([String: StrengthCrew].self, forKey: .strengthCrews)) ?? nil
+        }
     }
 
     func loadTeam() async {
@@ -3237,10 +3437,67 @@ final class LaborViewModel {
             teamCoverage = response.coverage
             teamThresholds = response.thresholds ?? [:]
             leaderRules = response.leaderRules ?? []
+            if let bar = response.leaderRuleDefaults?.minScore, (1...5).contains(bar) {
+                leaderRuleDefaultMinScore = bar
+            }
+            leaderRulesStatus = response.leaderRulesStatus
+            strengthCrews = response.strengthCrews ?? [:]
             teamError = response.ok ? nil : response.error
         } catch {
             teamError = "Couldn't load your team just now."
         }
+    }
+
+    /// Rate somebody for one role ("Bartender": 4) — their overall score
+    /// stays their fallback everywhere else (schedule audit 10/3/26 D-12).
+    /// Optimistic, rolled back on a refusal.
+    func setRoleScore(for name: String, role: String, score: Int?) async {
+        guard let index = team.firstIndex(where: { $0.name == name }) else { return }
+        let previous = team[index]
+        savingRoleFor = name + "|" + role
+        teamError = nil
+        defer { savingRoleFor = nil }
+        var scores = team[index].roleScores ?? [:]
+        let key = scores.keys.first { $0.caseInsensitiveCompare(role) == .orderedSame } ?? role
+        scores[key] = score
+        team[index].roleScores = scores
+        do {
+            let response: OkResponse = try await client.send(
+                "/mobile/api/labor/team/rating", method: .post,
+                body: RoleRatingBody(employeeName: name, role: role, score: score))
+            if response.ok {
+                Haptic.light()
+            } else {
+                rollBackRating(previous)
+                teamError = response.error ?? "Couldn't save that rating."
+            }
+        } catch let error as APIClient.APIError {
+            rollBackRating(previous)
+            teamError = error.message
+        } catch {
+            rollBackRating(previous)
+            teamError = "Couldn't save that rating."
+        }
+    }
+
+    /// "Still right": the overall score saved again as it stands, which
+    /// dates it today — the "Rated 6/1/26 — still right?" question goes.
+    func confirmRating(for name: String) async {
+        guard let member = team.first(where: { $0.name == name }), let score = member.score else { return }
+        await setScore(for: name, score: score)
+        if teamError == nil, let i = team.firstIndex(where: { $0.name == name }) {
+            team[i].ratingDue = false
+            team[i].ratingDueText = nil
+            team[i].ratedLabel = CavnarDate.mdy(Date())
+            recountCoverage()
+        }
+    }
+
+    /// Puts one person back by name — the list can reload while a save is
+    /// in flight (CLIENT-32's rule).
+    private func rollBackRating(_ previous: RatedEmployee) {
+        guard let i = team.firstIndex(where: { $0.name == previous.name }) else { return }
+        team[i] = previous
     }
 
     /// Set or clear one person's Operational Score.
@@ -3325,7 +3582,13 @@ final class LaborViewModel {
             if response.ok {
                 teamThresholds = response.thresholds ?? thresholds
                 leaderRules = rules
-                targetWarnings = response.warnings ?? []
+                // Each warning once: the leader rules' own under the rules,
+                // the targets' under the targets (the server folds the
+                // first into `warnings` too).
+                let ruleWarnings = response.leaderRuleWarnings ?? []
+                leaderRuleWarnings = ruleWarnings
+                if let crews = response.strengthCrews { strengthCrews = crews }
+                targetWarnings = (response.warnings ?? []).filter { !ruleWarnings.contains($0) }
                 Haptic.success()
             } else {
                 teamError = response.error ?? "Couldn't save those targets."
@@ -3346,7 +3609,9 @@ final class LaborViewModel {
             rated: rated.count, total: team.count,
             unrated: team.filter { $0.score == nil }.map(\.name).sorted(),
             active: !rated.isEmpty,
-            pct: team.isEmpty ? 0 : Int((Double(rated.count) / Double(team.count) * 100).rounded()))
+            pct: team.isEmpty ? 0 : Int((Double(rated.count) / Double(team.count) * 100).rounded()),
+            dueForRerate: team.filter { $0.ratingDue == true }.count,
+            adminSet: teamCoverage?.adminSet)
     }
 
     /// Mirrors models.SCORE_LABELS. Duplicated rather than read from the

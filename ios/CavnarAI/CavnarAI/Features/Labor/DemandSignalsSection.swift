@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Events and reservations — dated reasons to expect more covers than
 /// the history alone would say. The generator reads them as a lift on
@@ -407,6 +408,8 @@ private struct DemandSignalPasteSheet: View {
 
     @State private var csv = ""
     @FocusState private var focused: Bool
+    @State private var importing = false
+    @State private var fileError: String?
 
     private var lineCount: Int {
         csv.split(whereSeparator: \.isNewline).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
@@ -416,10 +419,29 @@ private struct DemandSignalPasteSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("One reservation day per line as date,covers — the date as 9/21/26 or 2026-09-21. A header line is fine.")
+                    Text("One reservation day per line as date,covers — the date as 9/21/26 or 2026-09-21. A header line is fine. Or bring your reservation system's own booking export: one row per booking, cancellations and no-shows left out.")
                         .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    // The booking export as a file (schedule audit 10/3/26
+                    // D-31) — read into the box, sent with Add these.
+                    Button {
+                        Haptic.light()
+                        fileError = nil
+                        importing = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.badge.plus").font(.system(size: 12, weight: .semibold))
+                            Text("Import your reservation system\u{2019}s booking export")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    if let fileError {
+                        Text(fileError).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     TextEditor(text: $csv)
                         .font(.cavnarNumber(15))
@@ -453,6 +475,10 @@ private struct DemandSignalPasteSheet: View {
                     if let outcome = viewModel.signalOutcome {
                         HomeMixedText.make(outcome, size: 14, weight: 600, color: .cavnarGreen)
                     }
+                    if let report = viewModel.importReport {
+                        HomeMixedText.make(report.sentence, size: 13.5, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let error = viewModel.signalError {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
@@ -462,7 +488,10 @@ private struct DemandSignalPasteSheet: View {
                         Button {
                             focused = false
                             Task {
-                                if await viewModel.pasteSignals(csv: csv), viewModel.signalError == nil {
+                                // A booking export's report stays on screen
+                                // to be read; a plain paste closes.
+                                if await viewModel.pasteSignals(csv: csv), viewModel.signalError == nil,
+                                   viewModel.importReport == nil {
                                     dismiss()
                                 }
                             }
@@ -486,6 +515,21 @@ private struct DemandSignalPasteSheet: View {
             }
             .scrollDismissesKeyboard(.immediately)
             .accountSheetChrome("Paste reservations")
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.commaSeparatedText, .plainText, .text]) { result in
+                switch result {
+                case .success(let url):
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    if let data = try? Data(contentsOf: url),
+                       let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) {
+                        csv = text
+                    } else {
+                        fileError = "That file couldn\u{2019}t be read \u{2014} export it as a CSV and try again."
+                    }
+                case .failure:
+                    fileError = "That file couldn\u{2019}t be opened."
+                }
+            }
         }
         .onAppear {
             viewModel.signalError = nil

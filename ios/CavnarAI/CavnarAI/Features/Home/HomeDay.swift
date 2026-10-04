@@ -129,11 +129,20 @@ struct HomeDayCard: View {
                                     HomeMixedText.make(issue.title, size: 14.5, weight: 600, color: .cavnarInk)
                                     Text((issue.assigneeName ?? "unassigned") + " · " + (issue.status == "acknowledged" ? "on it" : (issue.status ?? "open")))
                                         .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                                    // A call-off of several people is one issue
+                                    // per role (schedule audit 10/3/26 E-31):
+                                    // each gap with where it stands, and one
+                                    // cover button per gap still open.
+                                    if issue.isGroup {
+                                        CoverageGapList(issue: issue) { name in
+                                            Task { await viewModel.askToCover(issue, name: name) }
+                                        }
+                                    }
                                     // A coverage issue's suggested covers: one
                                     // tap asks that person (text or email).
                                     // The schedule moves only when the manager
                                     // decides who is on.
-                                    let covers = issue.coversToAsk
+                                    let covers = issue.isGroup ? [] : issue.coversToAsk
                                     if !covers.isEmpty {
                                         HStack(spacing: 14) {
                                             ForEach(covers, id: \.self) { name in
@@ -301,11 +310,78 @@ final class HomeDayViewModel {
             let name: String?
             var answer: String? = nil
             var answeredAt: String? = nil
-            enum CodingKeys: String, CodingKey { case name, answer; case answeredAt = "answered_at" }
+            /// A cover named for one gap of a role's issue (E-31): "stay"
+            /// (on today, could stay on — `how` says until when) or "off"
+            /// (off today), and the gap it is for — its person and start.
+            var kind: String? = nil
+            var how: String? = nil
+            var forName: String? = nil
+            var shiftStart: String? = nil
+            enum CodingKeys: String, CodingKey {
+                case name, answer, kind, how
+                case answeredAt = "answered_at"
+                case forName = "for"
+                case shiftStart = "shift_start"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                name = c.setupText(.name)
+                answer = c.setupText(.answer)
+                answeredAt = c.setupText(.answeredAt)
+                kind = c.setupText(.kind)
+                how = c.setupText(.how)
+                forName = c.setupText(.forName)
+                shiftStart = c.setupText(.shiftStart)
+            }
         }
-        /// A coverage issue's structured detail: who could cover, and who
-        /// has already been asked (issues._public parses meta_json).
-        struct Meta: Decodable { let covers: [Person]?; let asked: [Person]? }
+        /// One person a role's coverage issue is about: their shift, and
+        /// where it stands — missing, arrived, or covered by somebody.
+        struct Gap: Decodable, Identifiable {
+            let employee: String
+            var shiftStart: String? = nil
+            var status: String? = nil
+            var coveredBy: String? = nil
+            var id: String { employee + "|" + (shiftStart ?? "") }
+            enum CodingKeys: String, CodingKey {
+                case employee, status
+                case shiftStart = "shift_start"
+                case coveredBy = "covered_by"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                employee = c.setupText(.employee) ?? ""
+                shiftStart = c.setupText(.shiftStart)
+                status = c.setupText(.status)
+                coveredBy = c.setupText(.coveredBy)
+            }
+            var isOpen: Bool { status == nil || status == "missing" }
+            /// "Ana Bell — 5:00pm, missing" / "arrived" / "covered by Lu".
+            var line: String {
+                let state: String
+                switch status {
+                case "arrived": state = "arrived"
+                case "covered": state = "covered by " + (coveredBy ?? "a teammate")
+                case "closed": state = "closed"
+                default: state = "missing"
+                }
+                return employee + " \u{2014} " + (shiftStart.map { "\($0), " } ?? "") + state
+            }
+        }
+        /// A coverage issue's structured detail: who could cover, who has
+        /// already been asked (issues._public parses meta_json), and — on a
+        /// role's issue — every gap.
+        struct Meta: Decodable {
+            let covers: [Person]?
+            let asked: [Person]?
+            var people: [Gap]? = nil
+            enum CodingKeys: String, CodingKey { case covers, asked, people }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                covers = c.setupList(Person.self, .covers)
+                asked = c.setupList(Person.self, .asked)
+                people = c.setupList(Gap.self, .people).filter { !$0.employee.isEmpty }
+            }
+        }
         let id: Int
         let title: String
         let severity: String?
@@ -313,6 +389,22 @@ final class HomeDayViewModel {
         let assigneeName: String?
         let meta: Meta?
         enum CodingKeys: String, CodingKey { case id, title, severity, status, meta; case assigneeName = "assignee_name" }
+        /// A role's issue holding several people (E-31): drawn gap by gap.
+        var isGroup: Bool { (meta?.people?.count ?? 0) > 1 }
+
+        /// The cover to ask for one open gap: the first suggested for that
+        /// gap whom nobody has asked yet — one button per gap, not just the
+        /// issue's first two covers.
+        func cover(for gap: Gap) -> Person? {
+            guard status != "resolved", gap.isOpen else { return nil }
+            let asked = Set((meta?.asked ?? []).compactMap { $0.name?.lowercased() })
+            return (meta?.covers ?? []).first { c in
+                guard let n = c.name, !n.isEmpty, !asked.contains(n.lowercased()),
+                      c.forName?.lowercased() == gap.employee.lowercased() else { return false }
+                return c.shiftStart == nil || gap.shiftStart == nil || c.shiftStart == gap.shiftStart
+            }
+        }
+
         /// Up to two suggested covers nobody has asked yet.
         var coversToAsk: [String] {
             guard status != "resolved" else { return [] }
@@ -521,5 +613,63 @@ struct HomeReportCalls: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("The report's calls for today: " + calls.joined(separator: ". ")
                             + (confidencePct.map { ". Its forecast range has held \($0) percent of the time." } ?? ""))
+    }
+}
+
+/// A role's coverage issue, gap by gap (schedule audit 10/3/26 E-31): "Ana
+/// Bell — 5:00pm, missing / arrived / covered by Lu", and under each gap
+/// still open its own cover — "Ask Lu to stay on for Ana's 5:00pm" (on
+/// today, could stay) or "Ask Pat to cover Bo's 5:00pm" (off today). One
+/// button per open gap: the issue used to offer its first two covers only,
+/// whichever gap they were for.
+struct CoverageGapList: View {
+    let issue: HomeDayViewModel.Issue
+    let onAsk: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(issue.meta?.people ?? []) { gap in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Circle()
+                            .fill(gap.isOpen ? Color.cavnarRed : (gap.status == "covered" ? Color.cavnarGreen : Color.cavnarInk3))
+                            .frame(width: 5, height: 5)
+                            .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 3 }
+                        HomeMixedText.make(gap.line, size: 13, weight: 500, color: gap.isOpen ? .cavnarInk2 : .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let cover = issue.cover(for: gap), let name = cover.name {
+                        Button {
+                            Haptic.light()
+                            onAsk(name)
+                        } label: {
+                            Text(Self.askLabel(cover: name, kind: cover.kind, gap: gap))
+                                .font(.cavnarBody(12.5, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .multilineTextAlignment(.leading)
+                                .frame(minHeight: 32, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.leading, 11)
+                        if let how = cover.how, !how.isEmpty {
+                            HomeMixedText.make(how.prefix(1).uppercased() + how.dropFirst(), size: 12, color: .cavnarInk3)
+                                .padding(.leading, 11)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private static func first(_ name: String) -> String {
+        name.split(separator: " ").first.map(String.init) ?? name
+    }
+
+    /// "Ask Lu to stay on for Ana's 5:00pm" / "Ask Pat to cover Bo's 5:00pm".
+    static func askLabel(cover: String, kind: String?, gap: HomeDayViewModel.Issue.Gap) -> String {
+        let whose = first(gap.employee) + "\u{2019}s" + (gap.shiftStart.map { " \($0)" } ?? " shift")
+        return kind == "stay" ? "Ask \(first(cover)) to stay on for \(whose)" : "Ask \(first(cover)) to cover \(whose)"
     }
 }

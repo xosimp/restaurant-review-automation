@@ -59,10 +59,18 @@ struct PersonRecord: Decodable, Equatable {
     var covers: PersonCovers? = nil
     var guestMentions: [GuestMention] = []
     var attendance: PersonAttendance? = nil
+    /// How each certificate reads — "Floor manager (can run the shift)"
+    /// apart from the food-safety card (schedule audit 10/3/26 E-15).
+    var certificationLabels: [String: String] = [:]
+
+    private struct Choices: Decodable {
+        let certificationLabels: [String: String]?
+        enum CodingKeys: String, CodingKey { case certificationLabels = "certification_labels" }
+    }
 
     enum CodingKeys: String, CodingKey {
         case key, name, role, active, phone, email, hours, availability, rating, certifications, editable
-        case covers, attendance
+        case covers, attendance, choices
         case rolesHeld = "roles_held"
         case guestMentions = "guest_mentions"
         case pinSet = "pin_set"
@@ -129,6 +137,12 @@ struct PersonRecord: Decodable, Equatable {
         guestMentions = ((try? c.decodeIfPresent(HomeLenientList<GuestMention>.self, forKey: .guestMentions)) ?? nil)?
             .items ?? []
         attendance = try? c.decodeIfPresent(PersonAttendance.self, forKey: .attendance)
+        certificationLabels = ((try? c.decodeIfPresent(Choices.self, forKey: .choices)) ?? nil)?.certificationLabels ?? [:]
+    }
+
+    /// The certificates in the owner's words.
+    var certificationNames: [String] {
+        (certifications ?? []).map { certificationLabels[$0] ?? $0.replacingOccurrences(of: "_", with: " ").capitalized }
     }
 
     /// Whether the server sent the memory fields at all — an older server
@@ -420,7 +434,7 @@ struct PersonSheet: View {
             kv("Rating", PersonRecord.describe(person.rating) ?? "Not rated")
             kv("Certifications", last: true,
                 (person.certifications ?? []).isEmpty ? "None on file"
-                                : (person.certifications ?? []).joined(separator: ", "))
+                                : person.certificationNames.joined(separator: ", "))
         }
 
         if person.hasMemory { memorySection(person) }

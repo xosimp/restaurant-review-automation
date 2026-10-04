@@ -149,10 +149,26 @@ struct StaffTimeOffBody: Encodable, Equatable {
     let startDate: String
     let endDate: String
     let reason: String
+    /// Part of each day off (schedule audit 10/3/26 D-39): off until a time,
+    /// from a time, or lunch / dinner — none of them is the whole day.
+    var startTime: String? = nil
+    var endTime: String? = nil
+    var daypart: String? = nil
     enum CodingKeys: String, CodingKey {
-        case reason
+        case reason, daypart
         case startDate = "start_date"
         case endDate = "end_date"
+        case startTime = "start_time"
+        case endTime = "end_time"
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(startDate, forKey: .startDate)
+        try c.encode(endDate, forKey: .endDate)
+        try c.encode(reason, forKey: .reason)
+        try c.encodeIfPresent(startTime, forKey: .startTime)
+        try c.encodeIfPresent(endTime, forKey: .endTime)
+        try c.encodeIfPresent(daypart, forKey: .daypart)
     }
 }
 
@@ -715,6 +731,24 @@ struct StaffTimeOffSheet: View {
     @State private var sending = false
     @State private var error: String?
     @State private var posted: String?
+    /// Part of the day (schedule audit 10/3/26 D-39): the whole day, off
+    /// until a time, from a time, or lunch / dinner.
+    @State private var part: Part = .whole
+    @State private var untilTime = "4:00pm"
+    @State private var fromTime = "5:00pm"
+
+    enum Part: String, CaseIterable {
+        case whole, until, from, lunch, dinner
+        var label: String {
+            switch self {
+            case .whole: return "All day"
+            case .until: return "Until\u{2026}"
+            case .from: return "From\u{2026}"
+            case .lunch: return "Lunch"
+            case .dinner: return "Dinner"
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -729,6 +763,7 @@ struct StaffTimeOffSheet: View {
                         .font(.cavnarBody(CavnarType.body))
                         .tint(Color.cavnarEmber)
                         .frame(minHeight: 44)
+                    partOfDay
                     TextField("Why (optional)", text: $reason, axis: .vertical)
                         .lineLimit(1...4)
                         .cavnarTextFieldStyle()
@@ -752,12 +787,56 @@ struct StaffTimeOffSheet: View {
         .cavnarPostedOverlay(posted) { dismiss() }
     }
 
+    /// "Part of the day": all day by default; off until a time (in late),
+    /// from a time (gone early), or lunch / dinner only. Each day off in the
+    /// range is the same part.
+    private var partOfDay: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Part of the day")
+                .font(.cavnarBody(CavnarType.body))
+                .foregroundStyle(Color.cavnarInk3)
+            AccountFlowLayout(spacing: 6) {
+                ForEach(Part.allCases, id: \.self) { p in
+                    Button {
+                        Haptic.selection()
+                        part = p
+                    } label: { AccountChip(text: p.label, muted: part != p) }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(part == p ? .isSelected : [])
+                }
+            }
+            switch part {
+            case .until:
+                HStack(spacing: 8) {
+                    Text("Off until").font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                    CavnarTimeChip(time: $untilTime, accessibilityName: "Off until")
+                    Spacer(minLength: 0)
+                }
+            case .from:
+                HStack(spacing: 8) {
+                    Text("Off from").font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                    CavnarTimeChip(time: $fromTime, accessibilityName: "Off from")
+                    Spacer(minLength: 0)
+                }
+            case .lunch, .dinner, .whole:
+                EmptyView()
+            }
+        }
+    }
+
     private func send() async {
         sending = true
         error = nil
         defer { sending = false }
-        let body = StaffTimeOffBody(startDate: StaffDay.iso(start), endDate: StaffDay.iso(end),
+        var body = StaffTimeOffBody(startDate: StaffDay.iso(start), endDate: StaffDay.iso(end),
                                     reason: reason.trimmingCharacters(in: .whitespacesAndNewlines))
+        switch part {
+        case .whole: break
+        case .until: body.endTime = untilTime
+        case .from: body.startTime = fromTime
+        case .lunch: body.daypart = "lunch"
+        case .dinner: body.daypart = "dinner"
+        }
         do {
             let r: StaffOKResponse = try await staff.authed("/staff/api/time-off", method: .post, body: body)
             if r.ok {
