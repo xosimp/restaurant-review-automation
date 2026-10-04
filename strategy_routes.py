@@ -2672,19 +2672,27 @@ def _do_schedule_versions(u, history_id):
 def _rows_from_body(b):
     """The rows in a request, or None when there are none worth reading. A
     row whose date is not YYYY-MM-DD cannot be judged by any rule and made
-    the rule load fail with a 500; such a body is refused (None) instead."""
+    the rule load fail with a 500; such a body is refused (None) instead.
+
+    A manager-plan row keeps its pin (re-audit 10/4/26 UI-6): only the eight
+    columns were read, so apply fixes and Improve could move a shift the
+    screen says no pass ever moves. The pin is read from the plan's mark in
+    the notes as the week stores it, and from the row's "_pinned" a client
+    sent (schedule_skeleton.mark_pins); its "_rid" rides along."""
     from datetime import datetime as _dt
+    import schedule_skeleton as _skel
     cols = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
     raw = b.get("rows")
     if not isinstance(raw, list) or not raw or len(raw) > 2000:
         return None
-    rows = [{c: str(r.get(c) or "")[:200] for c in cols} for r in raw if isinstance(r, dict)]
+    raw = [r for r in raw if isinstance(r, dict)]
+    rows = [{c: str(r.get(c) or "")[:200] for c in cols} for r in raw]
     for r in rows:
         try:
             _dt.strptime(r["date"].strip(), "%Y-%m-%d")
         except ValueError:
             return None
-    return rows or None
+    return _skel.mark_pins(rows, sent=raw) or None
 
 
 def _do_schedule_violations(u):

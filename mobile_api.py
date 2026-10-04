@@ -3245,11 +3245,6 @@ def mobile_generate_schedule(current_user):
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
         return jsonify(ok=False, error="Your login can view labor but not draft a schedule."), 403
     import ops as _ops
-    running = _ops.active_job("schedule", rid)
-    if running:
-        return jsonify(ok=True, job_id=running, joined=True, wait_seconds=_schedule_wait(running, rid))
-    if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
-        return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
     # week_start may also come as a query arg (the web twin's older callers);
     # the body wins when both are sent. Both routes are POST only.
@@ -3272,9 +3267,26 @@ def mobile_generate_schedule(current_user):
     import schedule_engine as _se
     instruction = " ".join(str(body.get("instruction") or "").split())[:500] or None
     instruction = _se.with_redo_reason(instruction, _se.redo_reason_from(body))
+    # What this press asks for (re-audit 10/4/26 UI-8): a generation already
+    # running is joined only when it is this same request — the same week,
+    # days, draft and instruction. Any other is said, with its week, and
+    # nothing starts: Generate for one week used to join a redo of another,
+    # show that as the answer, and lose the owner's instruction.
+    _req = _se.generation_request(rid, week_start, dates, base_history_id, instruction)
+    _running, _running_req = _ops.running_job("schedule", rid)
+    if _running:
+        if _running_req == _req:
+            return jsonify(ok=True, job_id=_running, joined=True, wait_seconds=_schedule_wait(_running, rid))
+        return jsonify(ok=False, busy=True, running=_running_req,
+                       error=_se.busy_message(_running_req)), 409
+    if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
+        return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     # Checked and started in one transaction: two presses at the same instant
     # get one job (SCHED-25).
-    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid)
+    try:
+        job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", rid, request=_req)
+    except _ops.JobBusy as _busy:
+        return jsonify(ok=False, busy=True, running=_busy.request, error=_se.busy_message(_busy.request)), 409
     if joined:
         return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid))
     # The owner throwing a draft away is the strongest "no" there is, and it
@@ -3384,6 +3396,10 @@ def mobile_schedule_history_detail(history_id, current_user):
         if len(_parts) < 6:
             continue
         preview_rows.append({_COLS[i]: _parts[i].strip() for i in range(min(len(_parts), 8))})
+    # A reopened week shows its manager-plan rows as pinned again (re-audit
+    # 10/4/26 UI-6): the pin is the plan's mark in the stored notes.
+    import schedule_skeleton as _skel_pins
+    preview_rows = _skel_pins.mark_pins(preview_rows)
 
     # A stored week reopened puts its verdict back on screen (web reload,
     # iOS Labor): its recommendations are shown by this response.
@@ -7720,6 +7736,19 @@ def mobile_score_schedule(current_user):
             if latest and (sent is None or latest[-1]["version"] > sent):
                 return _conflict(latest)
             _mark_review_rows(rows, violations)
+            # A manager-plan row keeps its pin through the save whatever the
+            # client sent back (re-audit 10/4/26 UI-6): the plan's mark, from
+            # the week as stored, rides the row that is still that manager's
+            # shift that day.
+            import schedule_skeleton as _skel_save
+            from models import get_conn as _gc_pins
+            _pc = _gc_pins()
+            try:
+                _stored_rows = _sv.latest_rows(_pc, hid)
+            finally:
+                _pc.close()
+            rows = _skel_save.carry_pins(_skel_save.mark_pins(rows, sent=[r for r in raw_rows if isinstance(r, dict)]),
+                                         _stored_rows)
             csv_text = _rows_to_csv(rows)
             who = current_user.get("username") or current_user.get("email")
             # The week, its version row and its review are one write: the
@@ -7850,7 +7879,9 @@ def mobile_score_schedule(current_user):
 _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
                   "scheduled_hours", "notes")
 
-_REVIEW_MARK = re.compile(r"\s*(?:—\s*)?NEEDS REVIEW\b.*$", re.S)
+# The one NEEDS REVIEW pattern, shared with the generation's parse
+# (schedule_rules.REVIEW_MARK — re-audit 10/4/26 PIPE-6).
+from schedule_rules import REVIEW_MARK as _REVIEW_MARK  # noqa: E402
 
 
 def _mark_review_rows(rows, violations):

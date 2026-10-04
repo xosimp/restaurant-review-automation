@@ -215,8 +215,14 @@ def test_auto_publish_queues_only_with_the_switch_and_the_record(db_path, monkey
 
 
 def test_auto_publish_never_touches_an_edited_or_already_shared_draft(db_path, monkeypatch):
-    import scheduler, delayed, strategy_jobs, time_utils
-    rid = _rid(db_path, module_labor=1, auto_publish_schedule=1)
+    import scheduler, delayed, strategy_jobs, schedule_intel, time_utils
+    monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
+    # The flag is set the way the owner sets it: the constructor's value was
+    # never stored, so this test once checked a restaurant with auto-publish
+    # off and attempted nothing (re-audit 10/4/26, PIPE's observation).
+    rid = _rid(db_path, module_labor=1)
+    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    assert models.get_restaurant(rid, db_path=db_path).auto_publish_schedule
     for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
         _schedule(db_path, rid, w)
     _schedule(db_path, rid, "2099-01-04", edited=True, shared=False)
@@ -224,7 +230,34 @@ def test_auto_publish_never_touches_an_edited_or_already_shared_draft(db_path, m
     monkeypatch.setattr(strategy_jobs, "_reach", lambda *a, **k: 1)
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: datetime(2026, 9, 25, 9, 30))
     monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [models.get_restaurant(rid, db_path=db_path)])
-    assert scheduler.run_auto_publish_schedules()["queued"] == 0
+    out = scheduler.run_auto_publish_schedules()
+    assert out["queued"] == 0
+    assert delayed.pending(rid, db_path=db_path) == []
+
+
+def test_auto_publish_never_sends_an_unedited_draft_over_the_owners_edited_one(db_path, monkeypatch):
+    """Re-audit 10/4/26 PIPE-3: the owner edited the week's draft; a later
+    draft (an auto-draft, a redo, the gate's rewrite) superseded it unedited.
+    The week is the owner's: nothing goes out until they send it."""
+    import scheduler, delayed, strategy_jobs, schedule_intel, time_utils
+    monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
+    rid = _rid(db_path, module_labor=1)
+    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
+        _schedule(db_path, rid, w)
+    owners = _schedule(db_path, rid, "2099-01-04", edited=True, shared=False)
+    later = _schedule(db_path, rid, "2099-01-04", shared=False)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_history SET superseded_by=? WHERE id=?", (later, owners))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
+    monkeypatch.setattr(strategy_jobs, "_reach", lambda *a, **k: 1)
+    friday = datetime(2026, 9, 25, 9, 30)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: friday)
+    monkeypatch.setattr(scheduler, "restaurant_now", lambda *a, **k: friday, raising=False)
+    monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [models.get_restaurant(rid, db_path=db_path)])
+    out = scheduler.run_auto_publish_schedules()
+    assert out["queued"] == 0 and out["skipped"] == 1
     assert delayed.pending(rid, db_path=db_path) == []
 
 
@@ -779,3 +812,26 @@ def test_phase_c_routes_and_jobs_are_registered():
         assert want in paths, want
     assert admin_ops.RUNNABLE_JOBS["weekly_plan"]["target"] == ("strategy_jobs", "run_weekly_plan")
     assert admin_ops.RUNNABLE_JOBS["recipe_drafts"]["target"] == ("strategy_jobs", "run_recipe_drafts")
+
+
+def test_auto_publish_does_queue_the_same_week_unedited(db_path, monkeypatch):
+    """The control for the test above: the same restaurant and week, not
+    edited, is sent — so the edited one is held for being edited."""
+    import scheduler, delayed, strategy_jobs, schedule_intel, time_utils
+    monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
+    # The flag is set the way the owner sets it: the constructor's value was
+    # never stored, so this test once checked a restaurant with auto-publish
+    # off and attempted nothing (re-audit 10/4/26, PIPE's observation).
+    rid = _rid(db_path, module_labor=1)
+    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    assert models.get_restaurant(rid, db_path=db_path).auto_publish_schedule
+    for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
+        _schedule(db_path, rid, w)
+    _schedule(db_path, rid, "2099-01-04", shared=False)
+    monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
+    monkeypatch.setattr(strategy_jobs, "_reach", lambda *a, **k: 1)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: datetime(2026, 9, 25, 9, 30))
+    monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [models.get_restaurant(rid, db_path=db_path)])
+    out = scheduler.run_auto_publish_schedules()
+    assert out["queued"] == 1
+

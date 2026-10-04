@@ -424,7 +424,7 @@ def test_a_bad_token_or_action_is_refused(client, db_path, monkeypatch):
 _THURSDAY_9AM = datetime(2026, 9, 24, 9, 0)
 
 
-def test_auto_draft_skips_opt_outs_external_tools_and_recent_schedules(db_path, monkeypatch):
+def test_auto_draft_skips_opt_outs_external_tools_and_a_week_already_drafted(db_path, monkeypatch):
     import strategy_jobs, ops
     ran = []
     monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid: ran.append(rid))
@@ -439,12 +439,19 @@ def test_auto_draft_skips_opt_outs_external_tools_and_recent_schedules(db_path, 
     models.update_restaurant(ext, {"auto_draft_schedule": 1, "external_scheduling_tool": "7shifts"},
                              db_path=db_path)
     models.update_restaurant(recent, {"auto_draft_schedule": 1}, db_path=db_path)
+    # The week it would write (Thursday 9/24 → the week of 9/28) already has
+    # a draft: skipped. A draft of another week, however recent, is not next
+    # week handled (re-audit 10/4/26 PIPE-3).
+    other = _rid(db_path, name="Other", module_labor=1)
+    models.update_restaurant(other, {"auto_draft_schedule": 1}, db_path=db_path)
     conn = get_conn(db_path)
-    conn.execute("INSERT INTO schedule_history (restaurant_id, generated_at) VALUES (?, datetime('now','-1 day'))",
-                 (recent,))
+    conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, generated_at) "
+                 "VALUES (?, '2026-09-28', datetime('now','-6 days'))", (recent,))
+    conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, generated_at) "
+                 "VALUES (?, '2026-09-21', datetime('now','-1 day'))", (other,))
     conn.commit(); conn.close()
     out = strategy_jobs.run_auto_draft_schedules(db_path=db_path, now=_THURSDAY_9AM)
-    assert ran == [on] and out["drafted"] == 1
+    assert sorted(ran) == sorted([on, other]) and out["drafted"] == 2
 
 
 def test_auto_draft_does_not_announce_a_draft_that_failed(db_path, monkeypatch):

@@ -42,6 +42,7 @@ code (merge_pinned), and carry "_pinned": "manager_plan" through the job
 (restore_pinned): no pass removes, re-times or re-assigns a pinned row.
 cover_manager_gaps stays the backstop for whatever the plan could not cover.
 """
+import re
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -62,6 +63,9 @@ PLAN_SOURCE = "manager_plan"            # the "_pinned" value on every row plann
 # so staff never read it; the job's parser and the missing-day check know a
 # planned line by it.
 PLAN_NOTE = "Cavnar AI: manager plan"
+# The "_pinned" value on a row a redo keeps as the owner saved it (re-audit
+# 10/4/26 PIPE-1): no pass changes it; it counts as coverage and hours.
+KEPT_SOURCE = "kept"
 HANDOFF_MIN = 30                        # two managers overlap this long at a handover
 SINGLE_SHIFT_MAX_MIN = 10 * 60          # a day this long or shorter is one manager's shift
 MIN_SHIFT_MIN = _rules.MANAGER_MIN_SHIFT_MIN   # no planned manager shift is shorter (4h)
@@ -1007,6 +1011,105 @@ def merge_pinned_lines(lines, pinned, dates=None, people=None) -> tuple:
         out.append(ln)
     out.extend(_row_line(p) for p in pins)
     return out, dropped
+
+
+def plan_reason(notes):
+    """Why the plan placed a row, read from its notes ("Cavnar AI: manager
+    plan — covers open" → "covers open"), or None."""
+    n = _rules.strip_review_mark(notes)
+    if not is_plan_note(n):
+        return None
+    rest = n[len(PLAN_NOTE):].strip()
+    rest = rest[1:].strip() if rest[:1] in ("—", "-", "–") else rest
+    rest = re.sub(r"\s*\(auto-capped to close time\)\s*$", "", rest).strip()
+    return rest or None
+
+
+def kept_rows(rows) -> list:
+    """A redo's kept days as rows (re-audit 10/4/26 PIPE-1): exactly as the
+    owner saved them — never through the job's parser, whose close cap
+    re-timed a planned manager and opened a no-manager stretch on a day no
+    pass may repair — each carrying "_pinned": PLAN_SOURCE (with its
+    "_pin_reason") for a planned manager row, KEPT_SOURCE for any other.
+    A NEEDS REVIEW mark comes off (PIPE-6): the final sweep marks what is
+    still broken, with today's reason."""
+    out = []
+    for r in rows or []:
+        r = dict(r)
+        r["notes"] = _rules.strip_review_mark(r.get("notes"))
+        if is_plan_note(r["notes"]):
+            r["_pinned"] = PLAN_SOURCE
+            r["_pin_reason"] = plan_reason(r["notes"])
+        else:
+            r["_pinned"] = KEPT_SOURCE
+        out.append(r)
+    return out
+
+
+def mark_pins(rows, sent=None) -> list:
+    """`rows` with every planned manager row carrying "_pinned" and its
+    "_pin_reason" again (re-audit 10/4/26 UI-6). The pin lives in the week
+    the way it is stored and sent back: the plan's mark in the row's notes
+    (PLAN_NOTE — staff never read it, labor.staff_facing_note). A plan pin a
+    client sent (`sent`, the request's own rows in order, or the row's own
+    "_pinned") is kept too, and a pinned row whose notes lost the mark gets
+    it back, so the stored week keeps it. Apply fixes and Improve used to
+    read only the eight columns and drop the pin, and a reopened week had
+    none. Only the plan's pin is read from a client: a redo's KEPT_SOURCE
+    holds for that job alone. Copies; the input is not changed."""
+    out = []
+    sent = list(sent or [])
+    for i, r in enumerate(rows or []):
+        r = dict(r)
+        src = sent[i] if i < len(sent) and isinstance(sent[i], dict) else r
+        why = str(src.get("_pin_reason") or r.get("_pin_reason") or "").strip()[:200] or None
+        pinned = PLAN_SOURCE in (str(src.get("_pinned") or "").strip(), str(r.get("_pinned") or "").strip())
+        if is_plan_note(r.get("notes")):
+            pinned = True
+            why = why or plan_reason(r.get("notes"))
+        elif pinned:
+            mark = f"{PLAN_NOTE} — {why}" if why else PLAN_NOTE
+            n = str(r.get("notes") or "").strip()
+            r["notes"] = f"{mark} — {n}" if n else mark
+        if pinned:
+            r["_pinned"] = PLAN_SOURCE
+            if why:
+                r["_pin_reason"] = why
+        rid = src.get("_rid")
+        if rid and not r.get("_rid"):
+            r["_rid"] = str(rid)[:64]
+        out.append(r)
+    return out
+
+
+def carry_pins(rows, stored_rows) -> list:
+    """`rows` (a save) with the plan's mark carried from the week as stored
+    (`stored_rows`) onto the row that is still that manager's shift that
+    day — the one row for that person and date — when the save sent it
+    without the mark (re-audit 10/4/26 UI-6): no client can drop a pin. A
+    shift the owner deleted or gave to somebody else is no longer the plan's.
+    Then mark_pins."""
+    plan = {}
+    for r in stored_rows or []:
+        if is_plan_note(r.get("notes")):
+            k = ((r.get("employee") or "").strip().lower(), r.get("date") or "")
+            plan.setdefault(k, []).append(r)
+    count = {}
+    for r in rows or []:
+        k = ((r.get("employee") or "").strip().lower(), r.get("date") or "")
+        count[k] = count.get(k, 0) + 1
+    out = []
+    for r in rows or []:
+        r = dict(r)
+        k = ((r.get("employee") or "").strip().lower(), r.get("date") or "")
+        was = plan.get(k) or []
+        if len(was) == 1 and count.get(k) == 1 and not is_plan_note(r.get("notes")):
+            why = plan_reason(was[0].get("notes"))
+            mark = f"{PLAN_NOTE} — {why}" if why else PLAN_NOTE
+            tail = str(r.get("notes") or "").strip()
+            r["notes"] = f"{mark} — {tail}" if tail else mark
+        out.append(r)
+    return mark_pins(out)
 
 
 def restore_pinned(rows, pinned, closed=()) -> list:
