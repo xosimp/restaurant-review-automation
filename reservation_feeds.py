@@ -35,7 +35,21 @@ What a live provider still needs, precisely:
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH, get_restaurant
+import models as _models_mod
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. `from models import get_conn` bound whichever function models
+    held when this module was first imported, so a test that happened to
+    import it while models.get_conn was patched left every later caller on
+    that test's database."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
+
+
+def _path(db_path):
+    """The database: the caller's, else models.DB_PATH as it is now."""
+    return db_path if db_path is not None else _models_mod.DB_PATH
 
 
 class NotConfigured(RuntimeError):
@@ -96,11 +110,12 @@ def status(restaurant) -> dict:
     return {"provider": code, "label": p["label"], "configured": bool(key), "live": live, "message": message}
 
 
-def sync(restaurant_id, days: int = 21, db_path=DB_PATH) -> dict:
+def sync(restaurant_id, days: int = 21, db_path=None) -> dict:
     """Pull covers for the next `days` days and write them as reservation
     signals. Returns {written, skipped, error}; never raises."""
     import demand_signals
-    r = get_restaurant(restaurant_id, db_path)
+    db_path = _path(db_path)
+    r = _models_mod.get_restaurant(restaurant_id, db_path)
     if not r:
         return {"written": 0, "skipped": 0, "error": "no restaurant"}
     code = (getattr(r, "reservation_provider", None) or "").strip().lower()
@@ -119,7 +134,7 @@ def sync(restaurant_id, days: int = 21, db_path=DB_PATH) -> dict:
     return {"written": out["written"], "skipped": out["skipped"], "error": None}
 
 
-def run_reservation_sync(db_path=DB_PATH, weekday=None) -> dict:
+def run_reservation_sync(db_path=None, weekday=None) -> dict:
     """Every restaurant with a provider set - with `weekday` (today, 0 =
     Monday), only those whose schedule is drafted tomorrow, so each feed
     lands the day before its own draft (models.auto_draft_weekday; the
@@ -127,6 +142,7 @@ def run_reservation_sync(db_path=DB_PATH, weekday=None) -> dict:
     are counted, not retried. Returns the standard counts (#39): a feed
     whose provider is not live yet is skipped, one that fails is failed."""
     from models import AUTO_DRAFT_WEEKDAY_DEFAULT
+    db_path = _path(db_path)
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT id, auto_draft_weekday FROM restaurants WHERE reservation_provider IS NOT NULL "
