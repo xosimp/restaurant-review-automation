@@ -787,6 +787,19 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     hours = {}
     for r in plan:
         hours[r["employee"]] = round(hours.get(r["employee"], 0.0) + _rules.row_hours(r), 2)
+    # The managers' hours on the week's other days, already fixed (a redo's
+    # kept days): "Planned manager hours this week" summed only the redone
+    # dates, beside a seam line that counted the whole week (schedule
+    # re-audit 10/4/26 PROMPT-13).
+    week = set(c.week_dates or ())
+    mine = set(managers) | set(acting)
+    kept_hours = {}
+    for r in prior:
+        d = str(r.get("date") or "")[:10]
+        k = c.key(r.get("employee"))
+        if d in dates or (week and d not in week) or k not in mine:
+            continue
+        kept_hours[name_of(k)] = round(kept_hours.get(name_of(k), 0.0) + _rules.row_hours(r), 2)
     known = {k for k in managers if (usual.get(k) or {}).get("days")}
     standing = {k for k in managers if (getattr(c, "standing_shifts", None) or {}).get(k)}
     unknown = [name_of(k) for k in managers if k not in known and k not in standing]
@@ -798,6 +811,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         "unplanned": unplanned,
         "skipped": skipped,
         "hours": hours,
+        "kept_hours": kept_hours,
         "managers": [{"name": name_of(k), "role": (c.managers or {}).get(k) or "",
                       "salaried": bool(c.is_salaried(name_of(k))),
                       "pattern": ("standing" if k in standing else "usual" if k in known else "none")}
@@ -920,6 +934,11 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
     totals = {}
     for r in _plan_rows(pinned_rows):
         totals[r["employee"]] = totals.get(r["employee"], 0.0) + _rules.row_hours(r)
+    # A redo plans only its dates: the kept days' manager hours are part of
+    # the same week, so "this week" counts them (PROMPT-13).
+    kept = {n: float(h) for n, h in (plan.get("kept_hours") or {}).items() if h}
+    for n, h in kept.items():
+        totals[n] = totals.get(n, 0.0) + h
     block = ("\n\nMANAGER COVERAGE — ALREADY SCHEDULED (PRIORITIES 1a). The owner's rule: a manager or owner on "
              "the floor every minute anyone is. Cavnar AI planned these shifts before you, from each manager's "
              "standing shifts, availability, time off and usual days. They are fixed rows: keep every one exactly "
@@ -927,8 +946,9 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
              "these dates. Keep every other shift on a date inside its manager window. These rows count toward "
              "SHIFT REQUIREMENTS for their role.\n" + "\n".join(lines))
     if totals:
-        block += ("\n  Planned manager hours this week: "
-                  + ", ".join(f"{n} {h:g}h" for n, h in sorted(totals.items())) + ".")
+        block += ("\n  Manager hours this week, the kept days included: " if kept else
+                  "\n  Planned manager hours this week: ") \
+            + ", ".join(f"{n} {round(h, 2):g}h" for n, h in sorted(totals.items())) + "."
     return block
 
 

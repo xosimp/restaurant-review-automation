@@ -187,3 +187,61 @@ def test_a_kitchen_part_is_told_only_its_own_closers(ejs, db):
     assert "Line Cook: Hector L., Vince L." in line
     for other in ("Bartender", "Manager", "Server", "Jade F.", "Dana S.", "Angela M."):
         assert other not in line, other
+
+
+def _answer_for(kw):
+    """A schema answer for every date THIS REQUEST asks, twelve of the
+    roster at lunch (the auditor's render harness)."""
+    content = kw["messages"][0]["content"]
+    dates = sp.request_dates(content)
+    sch = (kw.get("output_config") or {}).get("format", {}).get("schema") or {}
+    try:
+        shift = sch["properties"]["days"]["items"]["properties"]["shifts"]["items"]["properties"]
+        names, roles = shift["employee"]["enum"][:12], shift["role"]["enum"]
+    except (KeyError, TypeError):
+        names, roles = ["Ana"], ["Server"]
+    return {"days": [{"date": d, "shifts": [{"employee": n, "role": roles[0], "start": "11:00am", "end": "4:00pm"}
+                                            for n in names]} for d in dates],
+            "summary": ["kept Friday dinner tight"]}
+
+
+@pytest.fixture
+def calls(monkeypatch):
+    """Every schedule call's kwargs; the model is never called."""
+    import types
+    import labor
+    import weather
+    seen = []
+    monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
+
+    def fake(client, **kw):
+        seen.append(kw)
+        return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text=json.dumps(_answer_for(kw)))],
+                                     stop_reason="end_turn", usage=None, stop_details=None)
+    monkeypatch.setattr(labor, "create_with_retry", fake)
+    monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
+    return seen
+
+
+def _blocks(kw):
+    return [b["text"] for b in kw["messages"][0]["content"]]
+
+
+# ── PROMPT-13: "this week" in a redo counts the kept days ─────────────────
+
+def test_a_redo_counts_the_kept_days_in_the_managers_week(ejs, db, calls):
+    import schedule_versions as sv
+    with se.frozen_inputs():
+        first = se._build_schedule_result(ejs)
+        rows = sv.rows_from_csv(first["schedule_csv"])
+        redo = ["2026-10-09", "2026-10-10"]
+        keep = [r for r in rows if r["date"] not in redo]
+        second = se._build_schedule_result(ejs, week_start="2026-10-05", dates=redo, prior_rows=keep)
+    week = _blocks(calls[-1])[1]
+    line = _line(week, "Manager hours this week")
+    assert "the kept days included" in line
+    planned = [r for r in (second.get("manager_plan") or {}).get("rows") or [] if r["date"] in redo]
+    for name in ("Dana S.", "Luis G.", "Parker S."):
+        want = sum(sr.row_hours(r) for r in keep + planned if r.get("employee") == name)
+        if want:
+            assert f"{name} {round(want, 2):g}h" in line, (name, want, line)
