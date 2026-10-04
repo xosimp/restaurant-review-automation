@@ -366,3 +366,178 @@ def test_a_one_call_week_sets_no_breakpoint_nobody_would_read(ejs, db, calls):
     se._build_schedule_result(ejs)
     assert len(calls) == 1
     assert not any("cache_control" in b for b in calls[0]["messages"][0]["content"])
+
+
+# ── PROMPT-12: strength guidance keeps the headcount ──────────────────────
+
+def test_strength_guidance_never_trades_a_body_for_a_stronger_mix(ejs, db, calls):
+    se._build_schedule_result(ejs)
+    week = _blocks(calls[0])[1]
+    assert "prefer fewer stronger people" not in week
+    assert "at the same headcount prefer the stronger mix" in week
+    assert "never drop a person a shift needs" in week
+
+
+# ── PROMPT-1: the owner's written floors and arrival times win, and are checked
+
+EJS_ROLES = {"Bartender", "Server", "Line Cook", "Prep Cook", "Host", "Busser", "Manager", "Dishwasher"}
+
+
+def test_the_hours_notes_are_read_into_floors_hours_ceilings_and_stays():
+    p = sr.parse_hours_rules(demo_seed._EJS_HOURS, EJS_ROLES)
+    floors = {(f["role"], f["min"], f["daypart"], f["days"]) for f in p["floors"]}
+    assert ("Host", 1, "morning", None) in floors                      # "one on at open"
+    assert ("Host", 1, None, None) in floors                           # "whenever the dining room is open"
+    assert ("Server", 2, None, None) in floors                         # "any open hour"
+    assert ("Server", 2, "night", None) in floors                      # "Keep 2 servers through close"
+    assert ("Busser", 1, "night", None) in floors
+    assert ("Busser", 2, "night", ("Friday", "Saturday")) in floors    # "2 Fri and Sat" — the same half
+    assert ("Dishwasher", 1, "morning", None) in floors                # "one from 10:00am"
+    assert ("Dishwasher", 1, "night", None) in floors                  # "one from 3:00pm to close"
+    assert ("Line Cook", 2, "night", None) in floors
+    wins = {(w["role"], w.get("earliest"), w.get("latest"), w.get("before_close")) for w in p["windows"]}
+    assert ("Bartender", 15 * 60, None, None) in wins                  # "evening only, no earlier than 3:00pm"
+    assert ("Line Cook", 14 * 60, None, None) in wins                  # "first arrives 2:00pm"
+    assert ("Server", 10 * 60 + 30, None, None) in wins                # "first arrives 10:30am"
+    assert ("Busser", None, None, 30) in wins                          # "cut 30 minutes before close"
+    assert [(c_["role"], c_["max"]) for c_ in p["caps"]] == [("Server", 5)]
+    assert max(st["minutes"] for st in p["stays"] if st["role"] == "Bartender") == 30
+    assert [(x["role"], x["start"]) for x in p["starts"]] == [("Prep Cook", 8 * 60)]
+    assert {m["role"] for m in p["managers"]} == {"Manager"}
+    # What it could not read is named, never guessed at; headings and the
+    # restaurant's own hours are not rules to name.
+    assert "Line cooks: others stagger from 3:00pm" in p["unchecked"]
+    assert any(u.startswith("Servers 5-7h") for u in p["unchecked"])
+    assert any("cut the rest about an hour" in u for u in p["unchecked"])
+    assert not any("RESTAURANT HOURS" in u or u.endswith(":") for u in p["unchecked"])
+
+
+def test_a_rule_the_owner_parser_cannot_read_is_never_guessed_at(monkeypatch):
+    # RULES-8 makes the owner-rule parser answer {"unclear": …} for a rule
+    # it cannot read as one floor; the hours reader takes that as unread.
+    real = sr.parse_owner_rule
+
+    def unclear(text, roles, families=None):
+        got = real(text, roles, families)
+        if got and text.startswith("at least 2 dishwasher"):
+            return {"role": got["role"], "unclear": "it gives more than one number", "text": text}
+        return got
+    monkeypatch.setattr(sr, "parse_owner_rule", unclear)
+    p = sr.parse_hours_rules("- Dishwashers: two at night Thu-Sat.", EJS_ROLES)
+    assert p["floors"] == [] and p["unchecked"] == ["Dishwashers: two at night Thu-Sat"]
+
+
+def test_the_constraints_hold_them(ejs, db):
+    c = sr.build_constraints(ejs, WEEK, DAYS, db_path=db)
+    # The hours a role works.
+    assert c.role_windows["bartender"]["Wednesday"]["earliest"] == 15 * 60
+    assert c.role_windows["busser"]["Monday"]["latest"] == 22 * 60 - 30         # a 10:00pm close
+    assert c.role_windows["busser"]["Saturday"]["latest"] == 24 * 60 - 30       # a midnight close
+    # The floors, where the role works them, naming the line.
+    assert sr.floor_for(c.role_floors, "Host", "Tuesday", "morning") == 1
+    assert sr.floor_for(c.role_floors, "Host", "Sunday", "night") == 1
+    assert sr.floor_for(c.role_floors, "Server", "Monday", "morning") == 2
+    assert sr.floor_for(c.role_floors, "Bartender", "Wednesday", "morning") == 0   # evening only: no lunch floor
+    assert sr.floor_for(c.role_floors, "Bartender", "Wednesday", "night") >= 1
+    assert sr.floor_for(c.role_floors, "Dishwasher", "Monday", "morning") == 1
+    assert c.rule_floor_sources[("host", "Tuesday", "morning")].startswith("Hosts:")
+    # The ceiling, the stays, the readings and the unread lines.
+    assert c.role_caps["server"][0]["max"] == 5
+    assert c.close_mins["bartender"] == 30 and c.close_mins["line cook"] == 0
+    assert any(r["kind"] == "role_window" for r in c.hours_rules)
+    assert "Line cooks: others stagger from 3:00pm" in c.hours_rules_unchecked
+
+
+def test_the_requirements_table_follows_the_owners_rules_not_the_punches(ejs, db, calls):
+    se._build_schedule_result(ejs)
+    request = _blocks(calls[0])[2]
+    rows = {ln.split("|")[0].strip(): ln for ln in request.splitlines() if re.match(r"^  \w{3} \d{4}-", ln)}
+
+    def shift(day, part):
+        """The people the shift needs (its second column; the leader rule is PROMPT-6's)."""
+        return next(v for k, v in rows.items() if k.startswith(day) and k.endswith(part)).split(" | ")[1]
+    for day in ("Wed", "Thu", "Fri"):
+        assert "Bartender" not in shift(day, "morning"), day           # evening only, no earlier than 3:00pm
+    for day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"):
+        assert "Line Cook" not in shift(day, "morning"), day           # the first line cook arrives at 2:00pm
+        assert re.search(r"Host \d \(floor 1\)", shift(day, "morning")), day   # a host whenever it is open
+        assert "Dishwasher" in shift(day, "morning"), day              # one from 10:00am
+    assert re.search(r"Host \d \(floor \d\)", shift("Sun", "night"))
+    assert "held to your maximum of 5 on at once" in shift("Sat", "night")
+    # The table no longer claims to hold what the code did not read.
+    assert "is not in these numbers: where it says otherwise, it wins over this table" in request
+
+
+def test_the_prompt_says_how_each_line_is_held_and_which_it_could_not_read(ejs, db, calls):
+    se._build_schedule_result(ejs)
+    week = _blocks(calls[0])[1]
+    hours = week[week.index("RESTAURANT HOURS & SHIFT RULES"):week.index("ADDITIONAL SCHEDULING NOTES")]
+    assert "How the code checks them: [HARD] each count is a staffing floor" in hours
+    assert "Not read by the code" in hours and "\"Line cooks: others stagger from 3:00pm\"" in hours
+    assert "[HARD] Hours by role" in week and "Bartender: from 3:00pm" in week
+    assert "[SOFT] Most of a role on at once: Server at most 5" in week
+    assert "Host: at least 1 lunch/day" in week
+    assert "Context, from punches" in week and "the rules win" in week
+
+
+def _r(date, emp, role, start, end):
+    return {"date": date, "day": DAYS[WEEK.index(date)], "employee": emp, "role": role, "shift_start": start,
+            "shift_end": end, "scheduled_hours": str(sr.row_hours({"shift_start": start, "shift_end": end}))}
+
+
+def test_the_sweep_holds_the_draft_to_them(ejs, db):
+    c = sr.build_constraints(ejs, WEEK, DAYS, db_path=db)
+    wed = WEEK[2]
+    lunch_bar = _r(wed, "Rita M.", "Bartender", "11:00am", "5:00pm")
+    viols = sr.violations([lunch_bar], c)
+    hit = [v for v in viols if v["kind"] == "role_window"]
+    assert hit and hit[0]["hard"] and "no earlier than 3:00pm" in hit[0]["detail"]
+    assert "evening only" in hit[0]["detail"] or "no earlier than 3:00pm" in hit[0]["detail"]
+    assert sr.BREACH_TIER["role_window"] == sr.TIER_COVERAGE
+    # No pass adds one.
+    ok, why = c.can_add(lunch_bar, [])
+    assert not ok and "no earlier than 3:00pm" in why
+    # A late busser and a host short at Tuesday lunch.
+    tue = WEEK[1]
+    rows = [_r(tue, "Kase N.", "Busser", "4:30pm", "10:00pm"), _r(tue, "Angela M.", "Server", "10:30am", "4:00pm")]
+    kinds = [(v["kind"], v.get("role")) for v in sr.violations(rows, c)]
+    assert ("role_window", "Busser") in kinds                            # past 9:30pm on a 10:00pm close
+    floors = [v for v in sr.violations(rows, c) if v["kind"] == "coverage_floor" and "Host" in v["detail"]]
+    assert floors and any("Hosts:" in v["detail"] for v in floors)
+
+
+def test_the_retime_pass_moves_a_row_into_the_roles_hours(ejs, db):
+    c = sr.build_constraints(ejs, WEEK, DAYS, db_path=db)
+    row = _r(WEEK[2], "Marcus R.", "Bartender", "1:00pm", "9:00pm")
+    out = sr.apply_role_times([row], c)
+    assert out["rows"][0]["shift_start"] == "3:00pm" and out["rows"][0]["shift_end"] == "9:00pm"
+    assert out["retimed"] and "Bartenders" in out["retimed"][0]["reason"]
+    assert not [v for v in sr.violations(out["rows"], c) if v["kind"] == "role_window"]
+
+
+def test_too_many_of_a_role_on_at_once_is_flagged_and_the_sweeps_agree(ejs, db):
+    c = sr.build_constraints(ejs, WEEK, DAYS, db_path=db)
+    sat = WEEK[5]
+    servers = ["Carla D.", "Mia L.", "Grant W.", "Zoe H.", "Reuben O.", "Trey B."]
+    rows = [_r(sat, n, "Server", "5:00pm", "10:00pm") for n in servers]
+    rows.append(_r(WEEK[4], "Carla D.", "Server", "5:00pm", "10:00pm"))
+    viols = sr.violations(rows, c)
+    cap = [v for v in viols if v["kind"] == "over_role_max"]
+    assert len(cap) == 1 and not cap[0]["hard"] and "6 Server on at once" in cap[0]["detail"]
+    assert sr.IncrementalSweep(c).violations(rows) == viols
+    assert sr.IncrementalSweep(c).violations(rows[:5] + rows[6:]) == sr.violations(rows[:5] + rows[6:], c)
+
+
+def test_the_review_names_every_line_it_could_not_read(ejs, db):
+    c = sr.build_constraints(ejs, WEEK, DAYS, db_path=db)
+    items = so.unmet_items([], constraints=c, owner_rules_unchecked=list(c.owner_rules_unchecked)
+                           + list(c.hours_rules_unchecked))
+    named = [i["what"] for i in items if i["kind"] == "unchecked_rule"]
+    assert any("others stagger from 3:00pm" in w for w in named)
+
+
+def test_the_floors_reach_every_cut_surface(ejs, db):
+    r = models.get_restaurant(ejs, db)
+    floors = sr.effective_role_floors(r, day="2026-10-06", db_path=db)
+    assert sr.floor_for(floors, "Host", "Tuesday", "morning") == 1
+    assert sr.floor_for(floors, "Bartender", "Tuesday", "morning") == 0

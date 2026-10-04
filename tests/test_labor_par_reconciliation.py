@@ -108,7 +108,10 @@ def test_headcount_block_is_context_not_a_cap_or_a_lever(monkeypatch):
     # PR-7): this block is context, with no verb left to scale it again.
     block = prompt[prompt.index("TYPICAL HEADCOUNT PER DAY"):]
     block = block[:block.index("\n\n")]
-    assert "Context: SHIFT REQUIREMENTS have already turned these" in block
+    # ... and no longer claims it holds the owner's written rules the code
+    # did not read (schedule re-audit 10/4/26 PROMPT-1).
+    assert "Context, from punches: SHIFT REQUIREMENTS have turned these" in block
+    assert "the rules win" in block
     for lever in ("starting point", "proportionally across roles", "scale"):
         assert lever not in block, lever
 

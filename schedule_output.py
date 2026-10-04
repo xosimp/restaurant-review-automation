@@ -576,7 +576,9 @@ def week_review_extras(restaurant_id, rows, constraints, violations=None, qualit
         gaps = (station_report(rows, constraints, list(constraints.week_dates or [])) or {}).get("gaps")
     return {"unmet": unmet_items(rows, constraints=constraints, violations=violations, quality=quality,
                                  soft_requirements=asks, hours_budget=budget, station_gaps=gaps,
-                                 owner_rules_unchecked=getattr(constraints, "owner_rules_unchecked", None)),
+                                 owner_rules_unchecked=list(dict.fromkeys(
+                                     list(getattr(constraints, "owner_rules_unchecked", None) or [])
+                                     + list(getattr(constraints, "hours_rules_unchecked", None) or []))) or None),
             "soft_requirements": asks}
 
 

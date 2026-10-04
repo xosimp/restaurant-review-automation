@@ -1229,6 +1229,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     owner_rule_reads = [{"reads_as": r.get("reads_as") or _rules.rule_reads_as(r), "floor": bool(r.get("floor_role"))}
                         for r in (constraints.owner_rules or []) if not r.get("private")]
     owner_rule_reads += [{"unchecked": True} for _t in (constraints.owner_rules_unchecked or [])]
+    # The RESTAURANT HOURS & SHIFT RULES, line by line as the code holds them
+    # and the ones it could not read (schedule_rules.apply_hours_rules,
+    # PROMPT-1).
+    hours_rule_reads = [dict(r) for r in (getattr(constraints, "hours_rules", None) or [])]
+    hours_rule_reads += [{"unchecked": t} for t in (getattr(constraints, "hours_rules_unchecked", None) or [])]
     extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
                   + _pairs_block(pairs, roster_pairs)
                   + learned_blk
@@ -1297,6 +1302,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # The SHIFT REQUIREMENTS table and the people blocks: the same
         # floors, demand, tenure and patterns the quality pass scores with.
         role_floors=constraints.role_floors or {},
+        # The owner's RESTAURANT HOURS & SHIFT RULES as the code reads them
+        # (PROMPT-1): the hours each role works and its ceiling for the
+        # requirements table, and each line's reading for the prompt.
+        **_limit_kwargs(constraints),
+        hours_rule_reads=hours_rule_reads or None,
         demand_by_date=signals_by_date,
         demand_by_day=_demand_by_day,
         tenure=_people["tenure"],
@@ -3324,10 +3334,20 @@ def week_requirements(restaurant_id, result, constraints=None, curve=None) -> li
             open_times=(getattr(c, "open_times", None) or None) if c is not None else None,
             close_times=(getattr(c, "close_times", None) or None) if c is not None else None,
             section_cap=int(getattr(c, "section_cap", 0) or 0) if c is not None else 0,
-            cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else None)
+            cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else None,
+            # The hours and ceilings the owner's hours notes state (PROMPT-1).
+            **_limit_kwargs(c))
     except Exception as exc:
         print(f"[schedule] shift requirements unavailable: {exc}")
         return []
+
+
+def _limit_kwargs(c) -> dict:
+    """shift_requirements' role_windows / role_caps from the Constraints."""
+    if c is None or not hasattr(c, "limit_maps"):
+        return {}
+    windows, caps = c.limit_maps()
+    return {"role_windows": windows or None, "role_caps": caps or None}
 
 
 def _legal_fills(c, rows, options, date, coverage=True, limit=None) -> tuple:
@@ -4481,7 +4501,7 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         close_times=c.close_times or None, section_cap=int(getattr(c, "section_cap", 0) or 0),
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
-        standard_needs=standard_needs or None)
+        standard_needs=standard_needs or None, **_limit_kwargs(c))
 
 
 def learned_worse_levers(restaurant_id) -> dict:
@@ -7417,7 +7437,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # named, so the owner checks the draft against it — the model was
             # asked to follow it, and nothing else checked (memory re-audit
             # 9/29/26, PROMPTS-1).
-            _unchecked = list(getattr(_constraints, "owner_rules_unchecked", None) or [])
+            # The lines of the RESTAURANT HOURS & SHIFT RULES the code could
+            # not read are named the same way (PROMPT-1).
+            _unchecked = list(dict.fromkeys(list(getattr(_constraints, "owner_rules_unchecked", None) or [])
+                                            + list(getattr(_constraints, "hours_rules_unchecked", None) or [])))
             result["review"]["owner_rules_unchecked"] = _unchecked
             for _txt in _unchecked[:3]:
                 result["review"]["lines"].append(

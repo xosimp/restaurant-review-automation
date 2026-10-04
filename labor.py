@@ -4287,7 +4287,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  payroll_weeks: dict = None,
                                  call_kind: str = None,
                                  cache_ttls: tuple = None,
-                                 hours_rule_reads: list = None) -> dict:
+                                 hours_rule_reads: list = None,
+                                 role_windows: dict = None,
+                                 role_caps: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -4328,7 +4330,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                     None keeps a 5-minute breakpoint on both.
     hours_rule_reads — how the code reads each line of hours_notes
                     (schedule_rules.apply_hours_rules — PROMPT-1):
-                    [{"reads_as", "floor"} | {"unchecked": text}].
+                    [{"reads_as", "kind", "floor"} | {"unchecked": text}].
+    role_windows / role_caps — the hours each role works and the most of
+                    it on at once by those rules (Constraints.limit_maps):
+                    SHIFT REQUIREMENTS asks nothing outside them.
     structured    — ask for JSON against the schema built for this
                     generation (schedule_output.schedule_schema); when the
                     API refuses that schema it is asked once more against
@@ -4595,8 +4600,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # a second set of numbers pulling against the first.
         _headcount_block = ("\n\nTYPICAL HEADCOUNT PER DAY — the crew this restaurant usually runs by weekday, counted "
                             "by who is present (morning and night are separate numbers: \"6 night\" is 6 people on "
-                            "the floor at night). Context: SHIFT REQUIREMENTS have already turned these, the owner's "
-                            "floors and each date's demand into the number to schedule to.\n" + "\n".join(_hc_lines))
+                            "the floor at night). Context, from punches: SHIFT REQUIREMENTS have turned these, the "
+                            "owner's floors, hours and ceilings by role that the code reads, and each date's demand "
+                            "into the number to schedule to; where they differ from the owner's own rules, the "
+                            "rules win.\n" + "\n".join(_hc_lines))
 
     # Next Monday as schedule start — in the restaurant's local week, not ours
     from time_utils import restaurant_now
@@ -4616,10 +4623,39 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _owner_parts = []
     if hours_notes and str(hours_notes).strip():
         from ai_guard import _neutralise_markers as _neut_h
+        # How the code holds each line, and which it could not read
+        # (schedule_rules.apply_hours_rules — schedule re-audit 10/4/26
+        # PROMPT-1): the model was told these rules were inside SHIFT
+        # REQUIREMENTS when nothing had read them.
+        _h_reads = [r for r in (hours_rule_reads or []) if r.get("reads_as")]
+        _h_unread = [str(r["unchecked"]) for r in (hours_rule_reads or []) if r.get("unchecked")]
+        _h_checked = ""
+        if _h_reads:
+            # One clause per kind of rule, pointing at the rule lines that
+            # carry the numbers — each figure is said once, there.
+            _h_kinds = {r.get("kind") for r in _h_reads}
+            _h_said = [(k, w) for k, w in (
+                ("coverage_floor", "each count is a staffing floor (STAFFING FLOORS BY ROLE AND DAYPART, inside "
+                                   "SHIFT REQUIREMENTS)"),
+                ("role_window", "the arrival and finishing times are the Hours by role in the rules below"),
+                ("over_role_max", "each maximum is Most of a role on at once below"),
+                ("ends_before_role_close", "who stays to close and how long is held at close"),
+                ("role_time", "a start time is STARTS AND ENDS BY ROLE below"),
+                ("no_manager", "the managers' lines are the manager rule"),
+                ("over_max_hours", "the weekly hours line is each person's weekly maximum")) if k in _h_kinds]
+            _h_checked = ("\n  How the code checks them: "
+                          + "; ".join(f"{_sr_p.rule_tag(k)} {w}" for k, w in _h_said) + ".")
+        if _h_unread:
+            _h_checked += ("\n  Not read by the code — follow each as written; it is not in SHIFT REQUIREMENTS, and "
+                           "where it says otherwise it wins over the table (the owner is told it is not checked): "
+                           + "; ".join(f"\"{_neut_h(t)[:200]}\"" for t in _h_unread) + ".")
+        elif hours_rule_reads is None:
+            _h_checked = ("\n  The code has not read these into SHIFT REQUIREMENTS: follow each as written; where one "
+                          "says otherwise, it wins over the table.")
         _owner_parts.append("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening and closing times; every "
                             "staffing rule in them — floors, arrival times, who stays to close — priority 2, with the "
                             "staffing floors):\n"
-                            + _neut_h(str(hours_notes).strip()))
+                            + _neut_h(str(hours_notes).strip()) + _h_checked)
     if owner_rules_text and str(owner_rules_text).strip():
         # How the code reads each standing rule, so the model knows which
         # are already numbers (a floor in SHIFT REQUIREMENTS, [HARD]; a
@@ -5104,8 +5140,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         adjustments=requirement_adjustments or None,
         late_headcount=_patterns.get("late_headcount") or None,
         standard_needs=(labor_standards or {}).get("needs") or None,
+        # The owner's RESTAURANT HOURS & SHIFT RULES, read by the code: no
+        # number outside the hours a role works, none over its ceiling
+        # (schedule re-audit 10/4/26 PROMPT-1).
+        role_windows=role_windows or None,
+        role_caps=role_caps or None,
     )
-    _requirements_block = _req.requirements_block(_req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs))
+    _requirements_block = _req.requirements_block(
+        _req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs),
+        unread_rules=any(r.get("unchecked") for r in (hours_rule_reads or [])))
     # The whole week's numbers, every role, from the same call with the same
     # inputs: what the coverage score judges the draft against and what the
     # fill passes fill to (P-19) — never a second reading of "typical".

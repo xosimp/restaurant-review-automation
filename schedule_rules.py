@@ -14,6 +14,7 @@ backstops, the swap search, the review panel and the publish gate all share.
 """
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -67,11 +68,11 @@ NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert", "note_unavailab
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
                             "minor_early", "minor_week_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
-                            "no_manager", "role_not_held"})
+                            "no_manager", "role_not_held", "role_window"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
-                  "closer_unavailable", "trainee_unpaired", "role_time"})
+                  "closer_unavailable", "trainee_unpaired", "role_time", "over_role_max"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily overtime and a time-off
 # request nobody answered are things a person decides, not a week to send
@@ -112,6 +113,8 @@ LABELS = {
     "closer_unavailable": "none of that role's closers can work that day",
     "trainee_unpaired": "a trainee with nobody to train them",
     "role_time": "starts or ends off a time rule you set for the role",
+    "role_window": "outside the hours your hours & shift rules give the role",
+    "over_role_max": "more of a role on at once than your hours & shift rules allow",
 }
 
 
@@ -654,6 +657,9 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
             if (e.get("role") or "").strip():
                 c.role_names.setdefault(e["role"].strip().lower(), " ".join(e["role"].split()))
         c.role_families = role_families(restaurant)
+        # The floors the RESTAURANT HOURS & SHIFT RULES state (PROMPT-1).
+        c.close_mins = {}
+        apply_hours_rules(c, restaurant)
         _floors_on_job_codes(c)
         return c.role_floors
     except Exception:
@@ -1083,6 +1089,20 @@ class Constraints:
     # (compliance_set_by, PROMPT-10). None — a Constraints built by hand —
     # reads every value as the owner's.
     compliance_set: dict = None
+    # The owner's RESTAURANT HOURS & SHIFT RULES (restaurants.hours_notes),
+    # read into rules the code holds the week to (apply_hours_rules —
+    # schedule re-audit 10/4/26 PROMPT-1). The floors go into role_floors
+    # (rule_floor_sources names the line) and the stays into close_mins;
+    # here: the hours a role works — {family: {weekday: {"earliest",
+    # "latest", "source"}}} (minutes; None where the rule says nothing) —
+    # the most of a role on at once — {family: [{"max", "days",
+    # "daypart", "source"}]} — each line as the code reads it
+    # ([{"text", "reads_as", "kind", "tag"}]), and the lines it could not
+    # read, which the review names.
+    role_windows: dict = field(default_factory=dict)
+    role_caps: dict = field(default_factory=dict)
+    hours_rules: list = field(default_factory=list)
+    hours_rules_unchecked: list = field(default_factory=list)
 
     # ── lookups ────────────────────────────────────────────────────────
     def key(self, name) -> str:
@@ -1307,6 +1327,11 @@ class Constraints:
         ok, why = self.cert_ok(name, row.get("role", ""))
         if not ok:
             return False, why
+        # The hours the owner's rules give the role (PROMPT-1): no pass adds
+        # a Wednesday-lunch bartender to an evening-only bar.
+        ok, why = self.role_window_ok(row)
+        if not ok:
+            return False, why
         # A training shift is never coverage, so no pass creates one: the
         # owner places training beside a trainer (D-16).
         if self.training_row(row):
@@ -1332,6 +1357,67 @@ class Constraints:
                 if self.is_salaried(name):
                     return False, f"would take them to {total:g}h, past their {ot:g}h weekly cap"
                 return False, f"would take them to {total:g}h, past their {ot:g}h overtime line"
+        return True, ""
+
+    def limit_maps(self) -> tuple:
+        """(role_windows, role_caps) as schedule_requirements.
+        shift_requirements reads them (PROMPT-1): keyed by every job code of
+        a family and by the family, {weekday: {"earliest", "latest"}} and
+        {weekday: {"morning" | "night" | "any": most}}. ({}, {}) when the
+        owner's hours notes state neither."""
+        if not self.role_windows and not self.role_caps:
+            return {}, {}
+        codes = {}
+        for r in _all_roles(self):
+            codes.setdefault(self.family(r), set()).add(r)
+        windows, caps = {}, {}
+        for fam, by_day in (self.role_windows or {}).items():
+            spec = {d: {"earliest": w.get("earliest"), "latest": w.get("latest")} for d, w in by_day.items()}
+            for k in {fam} | codes.get(fam, set()):
+                windows[k] = spec
+        for fam, items in (self.role_caps or {}).items():
+            spec = {}
+            for cap in items:
+                for d in (cap.get("days") or DAYS):
+                    part = cap.get("daypart") or "any"
+                    cur = spec.setdefault(d, {})
+                    cur[part] = min(int(cap["max"]), cur.get(part, int(cap["max"])))
+            for d, parts in spec.items():
+                if "any" in parts:
+                    for p in ("morning", "night", "late"):
+                        parts[p] = min(parts.get(p, parts["any"]), parts["any"])
+            for k in {fam} | codes.get(fam, set()):
+                caps[k] = spec
+        return windows, caps
+
+    def role_window_for(self, role, date_str) -> dict:
+        """The owner's hours for `role` on `date_str`'s weekday
+        ({"earliest", "latest", "source"}, minutes) — read from the RESTAURANT
+        HOURS & SHIFT RULES (apply_hours_rules, PROMPT-1) — or {}."""
+        if not self.role_windows:
+            return {}
+        try:
+            day = datetime.strptime(str(date_str)[:10], "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            return {}
+        return (self.role_windows.get(self.family(role)) or {}).get(day) or {}
+
+    def role_window_ok(self, row) -> tuple:
+        """(ok, why): whether a row of a role starts and ends inside the
+        hours the owner's rules give that role on that day."""
+        w = self.role_window_for(row.get("role"), row.get("date"))
+        if not w:
+            return True, ""
+        s_, e_ = start_minutes(row), end_minutes(row)
+        if s_ is None or e_ is None:
+            return True, ""
+        src = f" (your hours & shift rules: “{str(w.get('source') or '')[:120]}”)" if w.get("source") else ""
+        if w.get("earliest") is not None and s_ < w["earliest"]:
+            return False, (f"{row.get('role')} starts {row.get('shift_start')} — no earlier than "
+                           f"{_fmt_minutes(w['earliest'])}{src}")
+        if w.get("latest") is not None and e_ > w["latest"]:
+            return False, (f"{row.get('role')} ends {row.get('shift_end')} — done by "
+                           f"{_fmt_minutes(w['latest'] % (24 * 60))}{src}")
         return True, ""
 
     def window_ok(self, name: str, date_str: str, start: str, end: str) -> tuple:
@@ -1961,6 +2047,15 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         schedule_note_rules.apply_note_rules(c, restaurant_id, db_path=db_path)
     except Exception as exc:
         _input_problem(c, "schedule note rules", exc)
+    # The RESTAURANT HOURS & SHIFT RULES the owner wrote (hours_notes): the
+    # floors, the hours each role works, the ceilings and the stays after
+    # close they state, held like any other (schedule re-audit 10/4/26
+    # PROMPT-1) — after the Studio's rules, so a start the owner confirmed
+    # there stands.
+    try:
+        apply_hours_rules(c, restaurant)
+    except Exception as exc:
+        _input_problem(c, "your hours & shift rules", exc)
     # A person's scheduling notes the owner confirmed as holds ("no Tuesdays
     # until 10/31", "out 12/20-12/28") are unavailability like any other
     # (person_note_holds, 10/2/26).
@@ -2313,6 +2408,8 @@ INPUT_PROBLEM_WORDS = {
                           "two weeks weren't checked",
     "your staffing rules": "Your staffing rules couldn't be read, so their floors weren't checked",
     "schedule note rules": "The notes you confirmed as rules couldn't be read, so they weren't checked",
+    "your hours & shift rules": "Your hours & shift rules couldn't be read, so their floors and arrival times "
+                                "weren't checked",
     "scheduling note holds": "The staff notes you confirmed as holds couldn't be read, so they weren't checked",
     "staff notes": "Staff notes couldn't be read",
     "closed dates": "Your closed dates couldn't be read, so a closed day wasn't checked as closed",
@@ -2669,6 +2766,403 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
                     c.rule_floor_sources.pop((key.strip().lower(), day, rule["daypart"]), None)
                 else:
                     c.rule_floor_sources[(key.strip().lower(), day, rule["daypart"])] = rule["text"]
+
+
+# ── the RESTAURANT HOURS & SHIFT RULES, read into rules (PROMPT-1) ─────────
+#
+# The owner's hours notes (restaurants.hours_notes — "Bartenders: evening
+# only, no earlier than 3:00pm", "Hosts: minimum 1 whenever the dining room
+# is open", "Bussers cut 30 minutes before close") reached the model as free
+# text ranked above SHIFT REQUIREMENTS, while that table — built from
+# punches — said the owner's floors were already inside its numbers. They
+# were not: nothing parsed the notes, the table asked for a Wednesday-lunch
+# bartender the owner forbids and no host at Tuesday lunch, and nothing
+# checked the draft against either (schedule re-audit 10/4/26 PROMPT-1).
+#
+# Each line is now read in the shapes owners write, every count through the
+# owner-rule parser (parse_owner_rule: its roles and role families, days,
+# ranges, exceptions and dayparts — one reader, not two):
+#   * a count — "minimum 2", "3 Thu-Sat", "one from 10:00am", "a second
+#     from 4:00pm", "Keep 2 servers through close" — is a floor for that
+#     role, days and half of the day (both halves when it names neither:
+#     "whenever the dining room is open"), raising role_floors: the
+#     requirements table carries it, the floor fill builds to it and the
+#     sweep holds the draft to it (coverage_floor, naming the line);
+#   * "no earlier than 3:00pm", "evening only", "first arrives 2:00pm",
+#     "done by 9pm", "cut 30 minutes before close" are the hours the role
+#     works (role_windows): the table asks nothing of it outside them, no
+#     pass adds a shift outside them (can_add), a row outside them is the
+#     hard role_window breach, and the retime pass moves a row into them;
+#   * "maximum 5 at once" is a ceiling (role_caps): the table never asks
+#     for more, and a minute with more on is flagged (over_role_max);
+#   * "stay 30 minutes after close", "through close", "close together" is
+#     how long the role's last person stays (close_mins);
+#   * "arrive 8:00am" is the role's start on that half of the day
+#     (role_times, built to by apply_role_times);
+#   * a manager's line is the manager rule, which the code already holds.
+# What is left — "others stagger from 3:00pm", the shift lengths, "cut the
+# rest about an hour after the dinner rush drops" — is not guessed at: it is
+# named (hours_rules_unchecked), the prompt tells the model to follow it as
+# written over the table, and the review lists it as not checked.
+
+_HOURS_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "a second": 2, "second": 2,
+                  "a third": 3, "third": 3}
+_HOURS_COUNT = r"(\d+|one|two|three|four|five|six|a second|a third|second|third)"
+# A number that is a time, a length or a duration is not a count.
+_NOT_A_COUNT = re.compile(r"\s*(?::\d|h\b|hrs?\b|hours?\b|minutes?\b|mins?\b|am\b|pm\b|%|-\s*\d|\d|\.\d)")
+_HOURS_TIME = r"(\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight)"
+_COUNT_LEAD = r"(?:(?:minimum(?: of)?|min\.?|at least|no fewer than|not fewer than|keep|always)\s+)?"
+_DAY_WORD = r"(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*\.?"
+_LEAD_DAYS = re.compile(r"^((?:" + _DAY_WORD + r"\s*(?:[-–&/,]|\bthrough\b|\bthru\b|\bto\b|\band\b)?\s*)+)")
+# A clause none of the shapes reads is named as not checked when it says
+# something that looks like a rule.
+_HOURS_SIGNAL = re.compile(r"\d|\b(?:cut|stagger\w*|only|never|always|minimum|maximum|at least|at most|no more|"
+                           r"no earlier|no later|first|last|close|closes|until|before|after)\b")
+_HOURS_CUTOVER = 15 * 60          # the schedule's own 3pm split (daypart_of)
+
+
+def _hours_minutes(text):
+    t = str(text or "").strip().lower().replace(" ", "")
+    if t == "noon":
+        return 12 * 60
+    if t == "midnight":
+        return 24 * 60
+    return parse_minutes(t)
+
+
+def _rule_or_none(rule):
+    return rule if rule and not rule.get("unclear") else None
+
+
+def _hours_role(low, roles, families):
+    """(rule, start): the first role a clause names, read by the owner-rule
+    parser, and where its word starts — or (None, None)."""
+    for m in re.finditer(r"\b[a-z]", low):
+        k = m.start()
+        # The role's words alone: a number or a second clause later in the
+        # line is not this probe's to read.
+        probe = " ".join(re.findall(r"[a-z]+", low[k:])[:4])
+        rule = _rule_or_none(parse_owner_rule("at least 1 " + probe, roles, families))
+        if not rule:
+            continue
+        words = {str(rule["role"]).lower()} | {w for w in str(rule["role"]).lower().split() if len(w) > 3}
+        if rule.get("family"):
+            words |= {rule["family"], rule["family"].split()[-1]}
+        if any(low[k:].startswith(w) for w in words):
+            return rule, k
+    return None, None
+
+
+def _days_of(text):
+    """The weekdays `text` names, read as an owner rule's days are
+    (_rule_days), or None for every day."""
+    return _rule_days(" ".join(str(text or "").lower().split()))
+
+
+def parse_hours_rules(text, roles, families=None) -> dict:
+    """`text` (restaurants.hours_notes) read line by line against the
+    restaurant's `roles` (see the block comment). Pure. {"floors": [owner
+    rule dicts, "text" the line], "windows": [{"role", "family",
+    "earliest"|"latest"|"before_close", "days", "text"}], "caps": [{"role",
+    "family", "max", "days", "daypart", "text"}], "stays": [{"role",
+    "family", "minutes", "text"}], "starts": [{"role", "family", "start",
+    "daypart", "days", "text"}], "managers": [{"role", "text"}],
+    "weekly_caps": [{"max", "text"}], "unchecked": [str]} — a line's text
+    is "Role: clause" where the line has a head, else the line."""
+    out = {"floors": [], "windows": [], "caps": [], "stays": [], "starts": [], "managers": [],
+           "weekly_caps": [], "unchecked": []}
+
+    def unchecked(words):
+        words = " ".join(str(words).split()).strip(" -•*")
+        if words and words not in out["unchecked"]:
+            out["unchecked"].append(words)
+
+    for raw in str(text or "").splitlines():
+        line = " ".join(raw.split()).lstrip("-•* ").strip()
+        if not line or re.match(r"^[^:]+:$", line):
+            continue                                    # empty, or a heading ("STAFF ARRIVAL TIMES:")
+        low_line = line.lower().replace("’", "'")
+        hm = re.match(r"^([^:]*?[^\d\s:]):\s+(.+)$", line)
+        head, body = (hm.group(1).strip(), hm.group(2)) if hm else ("", line)
+        head_rule = _hours_role(head.lower(), roles, families)[0] if head else None
+        head_days = None
+        if head and not head_rule and not re.sub(_DAY_WORD + r"|[-–,&/\s]|\bthrough\b|\bthru\b|\bto\b|\band\b", "",
+                                                 head.lower()):
+            head_days = head.lower()                    # "Thu-Sat: 2 bartenders close together"
+        if head and not head_rule and not head_days:
+            head, body = "", line                       # "Nobody past 40 hours in a week: …" — one sentence
+        if not head_rule and not _hours_role(low_line, roles, families)[0]:
+            # About nobody's role: the weekly hours rule, the restaurant's own
+            # hours (open_times / close_times hold those), or unread.
+            m = re.search(r"\b(?:nobody|no one|no-one)\s+(?:works\s+)?(?:past|over|more than|above)\s+(\d+)\s*"
+                          r"(?:hours?|h|hrs?)\b", low_line)
+            if m:
+                out["weekly_caps"].append({"max": int(m.group(1)), "text": line})
+            elif not (re.search(r"\b(?:open|opens|close|closes)\b", low_line) and re.search(_HOURS_TIME, low_line)) \
+                    and _HOURS_SIGNAL.search(low_line):
+                unchecked(line)
+            continue
+        prev_rule, prev_part = head_rule, None
+        for clause in [x.strip() for x in re.split(r";|,(?!\d)|\.\s+|\.$", body) if x and x.strip()]:
+            low = clause.lower().replace("’", "'")
+            # How a line part is named: "Role: clause" under a head; a
+            # clause of a line with none is read as itself, and named with
+            # its whole line when part of it is not read.
+            label = f"{head}: {clause}" if head else clause
+            whole = f"{head}: {clause}" if head else line
+            lead = _LEAD_DAYS.match(low)
+            lead_days = lead.group(1) if lead and _days_of(lead.group(1)) else ""
+            rest = low[len(lead_days):].strip() if lead_days else low
+            # A clause's own days ("Sun-Wed one is enough") replace the head's.
+            days_words = lead_days or head_days or ""
+            own, own_k = _hours_role(rest, roles, families)
+            rule = own or prev_rule
+            if rule is None:
+                if _HOURS_SIGNAL.search(low):
+                    unchecked(whole)
+                continue
+            if own is not None:
+                prev_rule = own if not head_rule else prev_rule
+            role, fam = rule["role"], rule.get("family")
+            if manager_role_kind(role) in ("owner", "manager", "lead"):
+                # Every manager line is the manager rule: a manager on the
+                # floor every minute anyone is, the night one through close.
+                out["managers"].append({"role": role, "text": label})
+                continue
+            read = False
+            # 1. a count: a floor (said with "close", the last one stays to close)
+            if own is not None:
+                cm = re.search(r"(?:^|\s)" + _COUNT_LEAD + _HOURS_COUNT + r"\s+$", rest[:own_k])
+                after = rest[own_k:]
+            else:
+                cm = re.match(r"^" + _COUNT_LEAD + _HOURS_COUNT + r"\b", rest)
+                if cm is not None and _NOT_A_COUNT.match(rest[cm.end(1):]):
+                    cm = None
+                after = rest[cm.end():] if cm else ""
+            if cm is not None and not re.search(r"\b(?:max(?:imum)?|at most|no more than)\b", rest[:cm.end()]):
+                tok = cm.group(1)
+                n = int(tok) if tok.isdigit() else _HOURS_NUMBERS.get(tok)
+                when = re.findall(r"\b(?:from|after|starting|at)\s+" + _HOURS_TIME, after)
+                words = re.sub(_HOURS_TIME, " ", re.sub(r"\b(?:from|after|starting|at)\s+" + _HOURS_TIME, " ", after))
+                part = ""
+                if when:
+                    part = " at dinner" if (_hours_minutes(when[0]) or 0) >= _HOURS_CUTOVER else " at lunch"
+                elif re.search(r"\bat open\b|\bwhen (?:we|the doors) open\b", after):
+                    part = " at lunch"
+                canon = (f"at least {n} " + (words if own is not None else f"{role.lower()} {words}")
+                         + part + " " + days_words)
+                if not part and not _rule_daypart(canon) and prev_part and own is None and not re.sub(
+                        r"[^a-z]", "", re.sub(_DAY_WORD + r"|\band\b|\bthrough\b|\bthru\b|\bto\b|\bis\b|\benough\b|"
+                                          r"\bon\b|\btoo\b", "", words)):
+                    # "3 Thu-Sat" after "minimum 2 for dinner": the same half.
+                    canon += " at dinner" if prev_part == "night" else " at lunch"
+                fl = _rule_or_none(parse_owner_rule(canon, roles, families)) if n else None
+                if fl is not None and fl.get("min") == min(int(n), _RULE_MAX):
+                    out["floors"].append(dict(fl, text=label))
+                    prev_part = fl.get("daypart")
+                    read = True
+                    if re.search(r"\b(?:through|until|till|to) close\b|\bclose together\b|\bcloses\b", after):
+                        out["stays"].append({"role": role, "family": fam, "minutes": 0, "text": label})
+            # 2. the hours the role works
+            days = _days_of(days_words + " " + low)
+            for pat, edge in ((r"\b(?:no earlier than|not before|never before|earliest(?: start)?(?: is| at)?|"
+                               r"first (?:one )?(?:arrives?|in|on|starts?)(?: at)?)\s+" + _HOURS_TIME, "earliest"),
+                              (r"\b(?:no later than|not after|done by|out by|off by|gone by|finish(?:es|ed)? by|"
+                               r"leaves? by)\s+" + _HOURS_TIME, "latest")):
+                for m in re.finditer(pat, low):
+                    mins = _hours_minutes(m.group(1))
+                    if mins is None:
+                        continue
+                    if edge == "latest" and mins < 5 * 60:
+                        mins += 24 * 60                 # a 1am finish is that night's
+                    out["windows"].append({"role": role, "family": fam, edge: mins, "days": days, "text": label})
+                    read = True
+            if re.search(r"\b(?:evening|evenings|night|nights|dinner)\s+only\b|\bonly\s+(?:at\s+|for\s+)?"
+                         r"(?:night|nights|dinner|evenings?)\b", low):
+                out["windows"].append({"role": role, "family": fam, "earliest": _HOURS_CUTOVER, "days": days,
+                                       "text": label})
+                read = True
+            if re.search(r"\b(?:lunch|days|morning|mornings|daytime)\s+only\b|\bonly\s+(?:at\s+|for\s+)?"
+                         r"(?:lunch|days|mornings?)\b", low):
+                out["windows"].append({"role": role, "family": fam, "latest": _HOURS_CUTOVER, "days": days,
+                                       "text": label})
+                read = True
+            m = re.search(r"\b(?:cut|out|leaves?|gone|off)\s+(\d+)\s*(?:minutes|mins?|min)\s+before\s+close\b", low)
+            if m:
+                out["windows"].append({"role": role, "family": fam, "before_close": int(m.group(1)), "days": days,
+                                       "text": label})
+                read = True
+            # 3. a ceiling
+            m = re.search(r"\b(?:maximum(?: of)?|max\.?|no more than|at most|never more than)\s+" + _HOURS_COUNT
+                          + r"\b", low)
+            if m and not _NOT_A_COUNT.match(low[m.end(1):]):
+                n = int(m.group(1)) if m.group(1).isdigit() else _HOURS_NUMBERS.get(m.group(1))
+                if n:
+                    out["caps"].append({"role": role, "family": fam, "max": n, "days": days,
+                                        "daypart": _rule_daypart(low), "text": label})
+                    read = True
+            # 4. how long the last of the role stays after close
+            m = re.search(r"\bstays?\s+(\d+)\s*(minutes|mins?|min|hours?|hrs?)\s+(?:after|past)\s+close\b", low)
+            if m:
+                mins = int(m.group(1)) * (60 if m.group(2).startswith("h") else 1)
+                out["stays"].append({"role": role, "family": fam, "minutes": mins, "text": label})
+                read = True
+            # 5. the role's start on that half of the day: "arrive 8:00am"
+            m = re.search(r"\b(?:arrives?|starts?|comes? in)\s+(?:at\s+)?" + _HOURS_TIME, low)
+            if m and not re.search(r"\bfirst\b", low[:m.start()]):
+                mins = _hours_minutes(m.group(1))
+                if mins is not None:
+                    out["starts"].append({"role": role, "family": fam, "start": mins,
+                                          "daypart": "night" if mins >= _HOURS_CUTOVER else "morning",
+                                          "days": days, "text": label})
+                    read = True
+            if not read:
+                unchecked(whole)
+    return out
+
+
+def _window_allows(w, part) -> bool:
+    from schedule_requirements import window_allows
+    return window_allows(w, part)
+
+
+def _close_minutes_on(c, day):
+    m = parse_minutes((c.close_times or {}).get(day, "") or "")
+    if m is None:
+        return None
+    return m + 24 * 60 if m < 5 * 60 else m
+
+
+def apply_hours_rules(c: "Constraints", restaurant, roles=None) -> dict:
+    """Read the restaurant's RESTAURANT HOURS & SHIFT RULES into `c` (see
+    the block comment above parse_hours_rules): role_windows first, then
+    the floors where the role works, the ceilings, the stays after close,
+    the starts (never over a start the owner confirmed in the Studio), and
+    c.hours_rules / c.hours_rules_unchecked. Floors are only ever raised.
+    Returns the parse."""
+    text = getattr(restaurant, "hours_notes", None) if restaurant is not None else None
+    if not text or not str(text).strip():
+        return {}
+    roles = set(roles or ()) | {str(r).strip() for r in (c.role_names or {}).values()} \
+        | {str(r).strip() for r in (c.role_floors or {})}
+    roles.discard("")
+    parsed = parse_hours_rules(text, roles, c.role_families)
+    reads, unread = [], list(parsed["unchecked"])
+
+    def label(rule):
+        return _family_label(c, c.family(rule.get("family") or rule["role"]))
+
+    def days_word(days):
+        return "" if not days else " on " + "/".join(d[:3] for d in days)
+
+    for w in parsed["windows"]:
+        fam = c.family(w.get("family") or w["role"])
+        bits = []
+        for day in (w.get("days") or DAYS):
+            spec = c.role_windows.setdefault(fam, {}).setdefault(day, {"earliest": None, "latest": None,
+                                                                       "source": w["text"]})
+            if w.get("earliest") is not None:
+                spec["earliest"] = max(spec["earliest"] or 0, int(w["earliest"]))
+            latest = w.get("latest")
+            if w.get("before_close") is not None:
+                close = _close_minutes_on(c, day)
+                if close is None:
+                    continue
+                latest = close - int(w["before_close"])
+            if latest is not None:
+                spec["latest"] = int(latest) if spec["latest"] is None else min(spec["latest"], int(latest))
+            bits.append(day)
+        if not bits:
+            unread.append(w["text"])
+            continue
+        what = (f"starts no earlier than {_fmt_minutes(w['earliest'])}" if w.get("earliest") is not None else
+                f"ends {int(w['before_close'])} min before close at the latest" if w.get("before_close") is not None
+                else f"ends by {_fmt_minutes(int(w['latest']) % (24 * 60))}")
+        reads.append({"text": w["text"], "kind": "role_window",
+                      "reads_as": f"every {label(w)} shift {what}{days_word(w.get('days'))}"})
+    for fl in parsed["floors"]:
+        fam = c.family(fl.get("family") or fl["role"])
+        key = next((r for r in c.role_floors if r.strip().lower() == fl["role"].strip().lower()), fl["role"])
+        parts = [fl["daypart"]] if fl.get("daypart") else ["morning", "night"]
+        held = set()
+        for day in (fl.get("days") or DAYS):
+            for part in parts:
+                if not _trades_part(c, day, part):
+                    continue
+                if not _window_allows((c.role_windows.get(fam) or {}).get(day), part):
+                    continue                            # an evening-only role has no lunch floor
+                spec = c.role_floors.setdefault(key, {"morning": 0, "night": 0, "days": {}})
+                if floor_for(c.role_floors, key, day, part) < fl["min"]:
+                    spec.setdefault("days", {}).setdefault(day, {})[part] = fl["min"]
+                    c.rule_floor_sources[(key.strip().lower(), day, part)] = fl["text"]
+                held.add(part)
+        if held:
+            # Said as held: "whenever the bar is open" for an evening-only
+            # bar is a dinner floor.
+            r = dict(fl, daypart=next(iter(held)) if len(held) == 1 else None)
+            reads.append({"text": fl["text"], "kind": "coverage_floor", "floor": True,
+                          "reads_as": rule_reads_as(dict(r, role=label(fl)))
+                          + (" at lunch/day and dinner/night" if len(held) > 1 else "")})
+    for cap in parsed["caps"]:
+        fam = c.family(cap.get("family") or cap["role"])
+        c.role_caps.setdefault(fam, []).append({"max": int(cap["max"]), "days": cap.get("days"),
+                                                "daypart": cap.get("daypart"), "source": cap["text"]})
+        reads.append({"text": cap["text"], "kind": "over_role_max",
+                      "reads_as": f"at most {int(cap['max'])} {label(cap)} on at once{days_word(cap.get('days'))}"})
+    for st in parsed["stays"]:
+        fam = c.family(st.get("family") or st["role"])
+        c.close_mins[fam] = max(int(c.close_mins.get(fam, 0) or 0), int(st["minutes"]))
+    for st in parsed["stays"]:
+        fam = c.family(st.get("family") or st["role"])
+        mins = int(c.close_mins.get(fam, 0) or 0)          # the longest stay the role is held to
+        reads.append({"text": st["text"], "kind": "ends_before_role_close",
+                      "reads_as": f"the last {label(st)} on until "
+                                  + (f"{mins} min after close" if mins else "close")})
+    for sr_ in parsed["starts"]:
+        fam = c.family(sr_.get("family") or sr_["role"])
+        codes = sorted({r for r in _all_roles(c) if c.family(r) == fam
+                        and role_daypart(r) in (None, sr_["daypart"])}) or [sr_["role"].strip().lower()]
+        for day in (sr_.get("days") or DAYS):
+            if not _trades_part(c, day, sr_["daypart"]):
+                continue
+            for code in codes:
+                spec = c.role_times.setdefault((code, day, sr_["daypart"]), {})
+                if spec.get("start") is None:
+                    spec["start"] = int(sr_["start"])
+                    spec.setdefault("source", {})["start"] = sr_["text"]
+        reads.append({"text": sr_["text"], "kind": "role_time",
+                      "reads_as": f"every {label(sr_)} shift at "
+                                  f"{'lunch/day' if sr_['daypart'] == 'morning' else 'dinner/night'} starts at "
+                                  f"{_fmt_minutes(sr_['start'])}{days_word(sr_.get('days'))}"})
+    for m in parsed["managers"]:
+        reads.append({"text": m["text"], "kind": "no_manager",
+                      "reads_as": "a manager on the floor every minute anyone is (the manager rule)"})
+    for wk in parsed["weekly_caps"]:
+        over = [n for n in (c.roster_names or []) if (c.max_hours(n) or 0) > wk["max"] + 0.05]
+        if over:
+            # The code lets some of them past it (a salaried cap, an owner's
+            # own maximum): not a rule it holds as written.
+            unread.append(wk["text"])
+            continue
+        reads.append({"text": wk["text"], "kind": "over_max_hours",
+                      "reads_as": f"nobody past {wk['max']}h in a payroll week (each person's weekly maximum)"})
+    seen, c.hours_rules = set(), []
+    for r in reads:
+        if (r["text"], r["reads_as"]) not in seen:
+            seen.add((r["text"], r["reads_as"]))
+            c.hours_rules.append(r)
+    c.hours_rules_unchecked = list(dict.fromkeys(unread))
+    return parsed
+
+
+def _trades_part(c, day, part) -> bool:
+    """Whether the restaurant serves `part` on `day` by its own hours
+    (schedule_note_rules._trades — the one reading of it)."""
+    try:
+        import schedule_note_rules
+        return schedule_note_rules._trades(c, day, part)
+    except Exception:
+        return True
 
 
 def parse_pair_rule(text: str, names, aliases=None, display=None) -> dict:
@@ -3095,6 +3589,16 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         ok, why = c.cert_ok(name, r.get("role", ""))
         if not ok:
             out.append(_v("missing_cert", i, r, why))
+        # The hours the owner's RESTAURANT HOURS & SHIFT RULES give the role
+        # ("Bartenders: evening only, no earlier than 3:00pm" — PROMPT-1).
+        if c.role_windows:
+            ok, why = c.role_window_ok(r)
+            if not ok:
+                w = c.role_window_for(r.get("role"), r.get("date"))
+                s_, e_ = start_minutes(r), end_minutes(r)
+                off = max(0, (w.get("earliest") or 0) - (s_ or 0)) if w.get("earliest") is not None else 0
+                off += max(0, (e_ or 0) - w["latest"]) if w.get("latest") is not None else 0
+                out.append(_v("role_window", i, r, why, severity=round(off / 60.0, 2)))
         # A role written for somebody who holds no role of its family — the
         # model's guess treated as theirs (schedule audit 10/3/26 D-15).
         if not c.holds(name, r.get("role", ""), r.get("date")):
@@ -3192,6 +3696,12 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
             if peak > int(c.section_cap) and worst:
                 latest = max(worst, key=lambda i: parse_minutes(rows[i].get("shift_start", "")) or 0)
                 out.append(_v("over_section_cap", latest, rows[latest], f"{peak} on the floor at once, {int(c.section_cap)} sections"))
+
+    # The most of a role on at once by the owner's RESTAURANT HOURS & SHIFT
+    # RULES ("Servers: maximum 5 at once" — PROMPT-1), per date and family,
+    # in the order of each one's first row (IncrementalSweep phase 7.5).
+    if getattr(c, "role_caps", None) and not person_only:
+        out.extend(_role_cap_violations(rows, c))
 
     # per-person rules: overlap, rest, hours, days off
     for key, items in by_person.items():
@@ -3468,6 +3978,50 @@ def role_time_for(c, row) -> dict:
     return times.get((role, _weekday_of(row.get("date") or ""), daypart_of(row.get("shift_start", "")))) or {}
 
 
+def _role_cap_violations(rows: list, c: Constraints) -> list:
+    """over_role_max: a date with more of a capped role family on at once
+    than the owner's ceiling (Constraints.role_caps), pinned to the latest
+    starter of the busiest moment. Soft and day-level."""
+    from shift_quality import present_dayparts as _present
+    groups = {}
+    for i, r in enumerate(rows or []):
+        if not r.get("date") or not (r.get("employee") or "").strip() or c.training_row(r):
+            continue
+        fam = c.family(r.get("role"))
+        if fam in c.role_caps:
+            groups.setdefault((r["date"], fam), []).append((i, r))
+    out = []
+    for (d, fam), items in groups.items():
+        try:
+            day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            continue
+        for cap in c.role_caps.get(fam) or []:
+            if cap.get("days") and day not in cap["days"]:
+                continue
+            mine = [(i, r) for i, r in items if not cap.get("daypart") or cap["daypart"] in _present(r)]
+            events = []
+            for i, r in mine:
+                s_, e_ = start_minutes(r), end_minutes(r)
+                if s_ is not None and e_ is not None and e_ > s_:
+                    events += [(s_, 1, i), (e_, -1, i)]
+            events.sort(key=lambda ev: (ev[0], ev[1]))
+            running, peak, active, worst = 0, 0, [], []
+            for _t, delta, i in events:
+                active = active + [i] if delta > 0 else [x for x in active if x != i]
+                running += delta
+                if running > peak:
+                    peak, worst = running, list(active)
+            if peak > int(cap["max"]) and worst:
+                latest = max(worst, key=lambda i: start_minutes(rows[i]) or 0)
+                out.append(_v("over_role_max", latest, rows[latest],
+                              f"{peak} {_family_label(c, fam)} on at once — your rule is at most {int(cap['max'])}"
+                              + (f" (“{str(cap.get('source'))[:120]}”)" if cap.get("source") else ""),
+                              floor_role=fam, day_level=True, severity=float(peak - int(cap["max"]))))
+                break
+    return out
+
+
 def _role_time_violations(rows: list, c: Constraints) -> list:
     """A row of a role whose start or end is off the owner's time rule for
     that weekday and daypart (schedule audit 10/3/26 L-33), naming the rule."""
@@ -3506,7 +4060,7 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
     reason}], left: [{index, employee, date, reason}]}."""
     out_rows = [dict(r) for r in rows or []]
     retimed, left = [], []
-    if not getattr(c, "role_times", None):
+    if not getattr(c, "role_times", None) and not getattr(c, "role_windows", None):
         return {"rows": out_rows, "retimed": retimed, "left": left}
     sweep = IncrementalSweep(c)          # each retime re-sweeps its person and date only (P-37)
     for i in range(len(out_rows)):
@@ -3516,13 +4070,27 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
         if editable is not None and r.get("date") not in editable:
             continue
         spec = role_time_for(c, r)
-        if not spec:
+        # The hours the owner's RESTAURANT HOURS & SHIFT RULES give the
+        # role (PROMPT-1): a row starting before them starts when they do,
+        # one ending after them ends then.
+        win = c.role_window_for(r.get("role"), r.get("date")) if getattr(c, "role_windows", None) else {}
+        if not spec and not win:
             continue
         s0, e0 = parse_minutes(r.get("shift_start", "")), parse_minutes(r.get("shift_end", ""))
         if s0 is None or e0 is None:
             continue
         s1 = spec["start"] if spec.get("start") is not None else s0
         e1 = spec["end"] if spec.get("end") is not None else e0
+        why_win = None
+        if win:
+            probe = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
+            sa, ea = start_minutes(probe), end_minutes(probe)
+            if sa is not None and ea is not None:
+                if win.get("earliest") is not None and sa < win["earliest"]:
+                    sa, why_win = win["earliest"], win.get("source")
+                if win.get("latest") is not None and ea > win["latest"]:
+                    ea, why_win = win["latest"], win.get("source")
+                s1, e1 = sa % (24 * 60), ea % (24 * 60)
         if s1 % (24 * 60) == s0 % (24 * 60) and e1 % (24 * 60) == e0 % (24 * 60):
             continue
         span = (e1 - s1) % (24 * 60)
@@ -3542,7 +4110,7 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
         if not ok:
             left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"), "reason": why})
             continue
-        src = (spec.get("source") or {}).get("start" if spec.get("start") is not None else "end")
+        src = why_win or (spec.get("source") or {}).get("start" if spec.get("start") is not None else "end")
         retimed.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
                         "from": hours_label(r),
                         "to": f"{new['shift_start']}–{new['shift_end']}",
@@ -3920,7 +4488,11 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                "under_min_hours": TIER_MIN_HOURS,
                # the owner's start/end rule for a role (L-33): below every
                # tier that keeps people legal, managed, covered and paid right
-               "role_time": TIER_QUALITY}
+               "role_time": TIER_QUALITY,
+               # the hours a role works and the most of it on at once, by the
+               # owner's RESTAURANT HOURS & SHIFT RULES (PROMPT-1): the
+               # owner's staffing rules, ranked with the floors
+               "role_window": TIER_COVERAGE, "over_role_max": TIER_COVERAGE}
 # Breaches named on several rows that are one breach at its worst row.
 _WORST_OF = frozenset({"over_max_hours", "long_run", "under_min_hours", "minor_week_hours", "minor_hours",
                        "daily_ot", "payroll_tail_full"})
@@ -3965,6 +4537,8 @@ def breach_id(v) -> tuple:
         return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower(), v.get("daypart") or "")
     if kind in ("owner_rule", "ends_before_role_close"):
         return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower())
+    if kind == "over_role_max":
+        return (kind, d, v.get("floor_role") or "")
     if kind in ("nobody_at_close", "keyholder_until_close", "over_section_cap", "closer_unavailable"):
         return (kind, d, v.get("close_role") or "")
     if kind == "no_manager":
@@ -4057,7 +4631,8 @@ _PERSON_WEEK_KINDS = frozenset({"over_max_hours", "payroll_tail_full", "under_mi
 # violations()' order of the day-level blocks.
 _DAY_PHASE = {"ends_before_role_close": 2, "role_time": 3, "coverage_floor": 4, "owner_rule": 4,
               "nobody_at_close": 4, "keyholder_until_close": 4, "closer_unavailable": 4,
-              "trainee_unpaired": 4, "no_manager": 5, "no_manager_on_duty": 6, "over_section_cap": 7}
+              "trainee_unpaired": 4, "no_manager": 5, "no_manager_on_duty": 6, "over_section_cap": 7,
+              "over_role_max": 7.5}
 # The two about the whole week, not a person or a date.
 _WEEK_KINDS = frozenset({"no_manager_roster", "manager_rule_unusable"})
 SWEEP_CACHE_LIMIT = 20000
@@ -4140,6 +4715,11 @@ class IncrementalSweep:
                 elif phase == 7:
                     counted = {c.family(x) for x in (c.foh_roles or ()) if str(x).strip()} or {"server"}
                     sk = (7, self._first(firsts, items, ("cap",), lambda r: c.family(r.get("role")) in counted))
+                elif phase == 7.5:
+                    fam = v.get("floor_role")
+                    sk = (7.5, self._first(firsts, items, ("rolemax", fam),
+                                           lambda r, fam=fam: c.family(r.get("role")) == fam
+                                           and (r.get("employee") or "").strip() and not c.training_row(r)))
                 else:
                     sk = (phase, 1, d, seq)
                 out.append((sk, dict(v, index=gi)))
@@ -4342,6 +4922,26 @@ def _acting_prompt_lines(c) -> list:
                   + "; ".join(bits) + ".")] if bits else []
 
 
+def _role_window_text(c, fam, by_day) -> str:
+    """"Bartender: from 3:00pm" / "Busser: until 9:30pm Sun-Wed, until
+    11:30pm Thu-Sat" — one family's hours, days with the same hours named
+    together."""
+    groups = {}
+    for day in DAYS:
+        w = by_day.get(day)
+        if not w:
+            continue
+        bits = []
+        if w.get("earliest") is not None:
+            bits.append(f"from {_fmt_minutes(w['earliest'])}")
+        if w.get("latest") is not None:
+            bits.append(f"until {_fmt_minutes(w['latest'] % (24 * 60))}")
+        if bits:
+            groups.setdefault(" ".join(bits), []).append(day)
+    parts = [k + ("" if len(ds) == 7 else " " + "/".join(d[:3] for d in ds)) for k, ds in groups.items()]
+    return f"{_family_label(c, fam)}: " + ", ".join(parts)
+
+
 def _closer_prompt_lines(c) -> list:
     """The closers, by role (D-9): who may close each role, and what
     closing means."""
@@ -4514,6 +5114,21 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     if c.role_floors:
         lines.append(_rule("coverage_floor", "The staffing floors below are hard: a day under a floor is flagged to the "
                            "owner", why="the fewest people the owner says a shift can run with"))
+    # The hours each role works and the most of it on at once, by the
+    # owner's RESTAURANT HOURS & SHIFT RULES (PROMPT-1).
+    if getattr(c, "role_windows", None):
+        lines.append(_rule("role_window", "Hours by role — no shift of the role starts before or ends after them: "
+                           + "; ".join(_role_window_text(c, fam, by_day)
+                                       for fam, by_day in sorted(c.role_windows.items())),
+                           why="the owner's RESTAURANT HOURS & SHIFT RULES"))
+    if getattr(c, "role_caps", None):
+        bits = []
+        for fam, items in sorted(c.role_caps.items()):
+            for cap in items:
+                when = ("" if not cap.get("days") else " on " + "/".join(d[:3] for d in cap["days"])) + \
+                    {"morning": " at lunch/day", "night": " at dinner/night"}.get(cap.get("daypart") or "", "")
+                bits.append(f"{_family_label(c, fam)} at most {int(cap['max'])} on at once{when}")
+        lines.append(_rule("over_role_max", "Most of a role on at once: " + "; ".join(bits) + "."))
     lines.append(_rule("under_min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
                        "full-time line): fill from the people below theirs first."))
     if c.stations:
@@ -4528,29 +5143,43 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         # 10-hour rest is the Chicago ordinance's, not the state's (NS5 L13).
         block += (f"\n  Starting values from the {pack.get('label')} pack (set in Cavnar AI, not a statement of the "
                   "law): " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in pack["applied"].items()) + ".")
+    # Each role's floor per weekday, the days with the same floor said
+    # together ("1 lunch/day, 1 dinner/night on Mon/Tue/Wed/Fri/Sun; 1
+    # lunch/day, 2 dinner/night on Thu/Sat") — the hours notes' floors are
+    # set per day, and seven "Monday: 1 morning, 1 night" groups said one
+    # thing (schedule re-audit 10/4/26 PROMPT-1).
     floors = []
     for role, spec in (c.role_floors or {}).items():
-        base = []
-        if spec.get("morning"):
-            base.append(f"{spec['morning']} lunch/day")
-        if spec.get("night"):
-            base.append(f"{spec['night']} dinner/night")
-        days = "; ".join(f"{d}: " + ", ".join(f"{n} {p}" for p, n in ds.items() if n) for d, ds in (spec.get("days") or {}).items())
-        if base or days:
-            floors.append(f"  {role}: at least " + ", ".join(base) + (f" — {days}" if days else ""))
+        groups = {}
+        for d in DAYS:
+            n_m, n_n = floor_for(c.role_floors, role, d, "morning"), floor_for(c.role_floors, role, d, "night")
+            if n_m or n_n:
+                groups.setdefault((n_m, n_n), []).append(d)
+        if not groups:
+            continue
+        bits = []
+        for (n_m, n_n), ds in sorted(groups.items(), key=lambda kv: (-len(kv[1]), DAYS.index(kv[1][0]))):
+            what = ", ".join(x for x in ((f"{n_m} lunch/day" if n_m else ""), (f"{n_n} dinner/night" if n_n else ""))
+                             if x)
+            bits.append(f"{what} " + ("every day" if len(ds) == 7 else "on " + "/".join(d[:3] for d in ds)))
+        floors.append(f"  {role}: at least " + "; ".join(bits))
     if floors:
         block += (f"\n\nSTAFFING FLOORS BY ROLE AND DAYPART {rule_tag('coverage_floor')} (never below these, whatever "
                   "the hours ceiling says):\n" + "\n".join(floors))
     # The owner's start and end rules (schedule audit 10/3/26 L-33): the
     # code retimes the draft to them afterwards, so the model is told them.
     times = []
+    grouped = {}
     for (role, day, part), spec in sorted((getattr(c, "role_times", None) or {}).items(),
                                           key=lambda kv: (kv[0][0], DAYS.index(kv[0][1]) if kv[0][1] in DAYS else 7,
                                                           kv[0][2])):
         bits = [f"{edge} at {_fmt_minutes(spec[edge])}" for edge in ("start", "end") if spec.get(edge) is not None]
         if bits:
-            times.append(f"  {role.title()} on {day} {'lunch/day' if part == 'morning' else 'dinner/night'}: "
-                         + " and ".join(bits))
+            grouped.setdefault((role, part, " and ".join(bits)), []).append(day)
+    for (role, part, bits), ds in grouped.items():
+        # The days with the same rule said once (PROMPT-1).
+        when = "every day" if len(ds) == 7 else "on " + "/".join(d[:3] for d in ds)
+        times.append(f"  {role.title()} {when} at {'lunch/day' if part == 'morning' else 'dinner/night'}: {bits}")
     if times:
         block += (f"\n\nSTARTS AND ENDS BY ROLE {rule_tag('role_time')} (the owner's rules — every shift of that role "
                   "on that daypart):\n" + "\n".join(times))
