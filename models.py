@@ -9561,13 +9561,14 @@ def get_shift_leader_rules(restaurant_id: int, db_path: str = DB_PATH) -> list:
 
 
 def leader_rule_daypart(role):
-    """'morning' for a role named "... AM", 'night' for "... PM", else None."""
-    words = str(role or "").strip().lower().split()
-    if words and words[-1] == "am":
-        return "morning"
-    if words and words[-1] == "pm":
-        return "night"
-    return None
+    """'morning' for a role naming the day half ("Server AM", "Server-AM",
+    "AM Server", "Lunch Server"), 'night' for the evening ("Host (PM)",
+    "Dinner Host"), else None: shift_quality.role_daypart, the one reader —
+    this copy read only a last word of exactly "am"/"pm", so the other
+    spellings bound both halves of the day (schedule re-audit 10/4/26
+    RULES-3, SQ-1)."""
+    from shift_quality import role_daypart
+    return role_daypart(role)
 
 
 def get_staff_availability(restaurant_id: int, db_path: str = DB_PATH) -> list:

@@ -80,7 +80,7 @@ def role_words(role, count: int = 1, default: str = "") -> str:
 # owner's "two servers Saturday" (schedule audit 10/3/26 D-13, D-14, SQ-10).
 # The restaurant's own map (restaurants.role_families_json, {role: family})
 # wins; a role the words would empty keeps its name.
-_DAYPART_WORDS = frozenset({"am", "pm", "a.m.", "p.m.", "lunch", "dinner", "brunch", "breakfast", "day", "night",
+_DAYPART_WORDS = frozenset({"am", "pm", "a.m.", "p.m.", "a.m", "p.m", "lunch", "dinner", "brunch", "breakfast", "day", "night",
                             "morning", "evening", "late", "overnight", "weekend", "weekday", "wknd", "open",
                             "opening", "opener", "close", "closing", "closer"})
 
@@ -103,12 +103,48 @@ def _family_words(low: str) -> str:
     """The family a role name's own words give (role_family without the
     restaurant's map) — pure, so remembered: the scorer asks it for every
     person on every shift it scores."""
-    cleaned = []
-    for w in low.replace("(", " ").replace(")", " ").replace("/", " ").replace("-", " ").replace("_", " ").split():
-        if w.strip(".,:;") in _DAYPART_WORDS:
-            continue
-        cleaned.append(w.strip(".,:;"))
-    return " ".join(w for w in cleaned if w) or low
+    cleaned = [w for w in role_tokens(low) if w not in _DAYPART_WORDS]
+    return " ".join(cleaned) or low
+
+
+# The one reading of the words in a job code, for its family and for its
+# half of the day. role_family split on "( ) / - _" while the daypart reader
+# took only a last word of exactly "am"/"pm", so "Server-AM", "Server (PM)",
+# "AM Server", "Lunch Server" and "Dinner Host" were servers and hosts with
+# no half of the day: a leader rule or strength target on them bound lunch
+# and dinner both (schedule re-audit 10/4/26 RULES-3, SQ-1).
+_ROLE_SPLIT = str.maketrans({c: " " for c in "()[]/-_\u2013\u2014"})
+_MORNING_WORDS = frozenset({"am", "a.m", "lunch", "brunch", "breakfast", "morning", "day", "open", "opening",
+                            "opener"})
+_NIGHT_WORDS = frozenset({"pm", "p.m", "dinner", "night", "evening", "late", "overnight", "close", "closing",
+                          "closer"})
+
+
+@lru_cache(maxsize=4096)
+def _role_words_cached(low: str) -> tuple:
+    return tuple(t for t in (w.strip(".,:;") for w in low.translate(_ROLE_SPLIT).split()) if t)
+
+
+def role_tokens(role) -> list:
+    """A job code's words, lower case, split on spaces and "( ) / - _" (and
+    the like), trailing punctuation off: "Server (A.M.)" → ["server",
+    "a.m"]."""
+    return list(_role_words_cached(" ".join(str(role or "").lower().split())))
+
+
+def role_daypart(role):
+    """'morning' for a job code naming the day half ("Server AM",
+    "Server-AM", "AM Server", "Lunch Bartender", "Server (A.M.)"), 'night'
+    for the evening ("Barback PM", "PM Host", "Dinner Host", "Server_PM"),
+    else None — also when it names both ("Lunch/Dinner Server"). The ONE
+    reader: schedule_rules.role_daypart, models.leader_rule_daypart, the
+    scorer's leader and strength checks, the solver, the requirements table
+    and the floors all ask it."""
+    words = set(role_tokens(role))
+    morning, night = bool(words & _MORNING_WORDS), bool(words & _NIGHT_WORDS)
+    if morning == night:
+        return None
+    return "morning" if morning else "night"
 
 
 def name_key(name) -> str:
@@ -119,16 +155,11 @@ def name_key(name) -> str:
 
 
 def job_code_daypart(role):
-    """'morning' for a job code named "... AM", 'night' for "... PM", else
-    None: a rule or a target on an AM or PM job keeps to its own half of
-    the day (owner, 10/2/26 — "Host AM" at dinner is nobody's). The same
-    reading as models.leader_rule_daypart, here for the pure layer."""
-    words = str(role or "").strip().lower().split()
-    if words and words[-1] == "am":
-        return "morning"
-    if words and words[-1] == "pm":
-        return "night"
-    return None
+    """'morning' / 'night' / None for a job code — role_daypart, the one
+    reader (kept under this name for its callers): a rule or a target on an
+    AM or PM job keeps to its own half of the day (owner, 10/2/26 — "Host
+    AM" at dinner is nobody's), however the code spells it."""
+    return role_daypart(role)
 
 
 # Demand levels, weakest to strongest. Profiles name one of these; the
@@ -2431,11 +2462,13 @@ def floor_shortfall(rows: list, role: str, need: int, daypart: str, open_minutes
     row that does not count (the scorer's flagged rows).
 
     {"held", "window": (lo, hi) | None, "slots", "short_slots",
-    "short_minutes", "worst_at": minute | None, "on_at_worst", "need"}.
+    "short_minutes", "worst_at": minute | None, "on_at_worst", "need",
+    "missing": people short summed over the short half hours}.
     No window (no service in the core) is held."""
     slots = floor_slots(daypart, open_minutes, close_minutes)
     out = {"held": True, "window": floor_window(daypart, open_minutes, close_minutes), "slots": len(slots),
-           "short_slots": 0, "short_minutes": 0, "worst_at": None, "on_at_worst": None, "need": int(need or 0)}
+           "short_slots": 0, "short_minutes": 0, "worst_at": None, "on_at_worst": None, "need": int(need or 0),
+           "missing": 0}
     if out["need"] <= 0 or not slots:
         return out
     fam = role_family(role, families)
@@ -2451,6 +2484,7 @@ def floor_shortfall(rows: list, role: str, need: int, daypart: str, open_minutes
         on = _on_at(spans, t, fam)
         if on < out["need"]:
             out["short_slots"] += 1
+            out["missing"] += out["need"] - on
             if out["on_at_worst"] is None or on < out["on_at_worst"]:
                 out["worst_at"], out["on_at_worst"] = t, on
     out["short_minutes"] = out["short_slots"] * SLOT_MINUTES

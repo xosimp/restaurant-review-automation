@@ -1369,10 +1369,6 @@ class Problem:
             for r, sp in zip(u.rows, (_rules._span(x) for x in u.rows)):
                 if sp and not (u.draft is not None and c.training_row(r)):
                     by.setdefault((u.date, self.family(r.get("role"))), []).append((sp[1], u.id))
-        ends_all = {}
-        for u in self.units:
-            for sp in u.bspans:
-                ends_all[u.date] = max(ends_all.get(u.date, -1), sp[1])
         for (d, fam), items in by.items():
             closers = (c.closers_by_role or {}).get(fam)
             if not closers or not _rules._closer_rule_runs(c, fam, d):
@@ -1382,10 +1378,9 @@ class Problem:
             # who may work the date.
             ok = {self.pidx[k] for k in closers if k in self.pidx}
             day = sq._day_name(d)
-            close_m = _rules.close_minutes(c, day)
-            close_at = close_m if close_m is not None else ends_all.get(d, -1)
-            need = close_at + int((c.close_mins or {}).get(fam, 0) or 0)
             e_last = max(e for e, _u in items)
+            # The sweep's own target for the role (closer_need, RULES-6).
+            need, _until = _rules.closer_need(c, fam, day, e_last)
             full = max(need - 15, e_last - 15)
             draft_best = max((e for e, uid in items if self.units[uid].draft in ok), default=None)
             members_full = [uid for e, uid in items if e >= full]
