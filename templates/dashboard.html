@@ -9662,8 +9662,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    schedule tools as rows. The three staffing tables keep their own look. */
 #studio{--ss-dayrow:rgba(14,12,10,.06);--hb-inner:rgba(14,12,10,.035)}
 [data-theme="dark"] #studio{--ss-dayrow:rgba(0,0,0,.3);--hb-inner:rgba(255,255,255,.04)}
-#panel-labor,#studio,#sfw1-modal{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-labor,[data-theme="dark"] #studio,[data-theme="dark"] #sfw1-modal{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-labor,#studio{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-labor,[data-theme="dark"] #studio{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-labor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 .lb2-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center}
 .lb2-hero{margin-top:30px}
@@ -21658,10 +21658,14 @@ function renderQualityOptimizer() {
         h += '<details><summary>What changed and why</summary><div>';
         for (i = 0; i < ch.length; i++) {
           var c = ch[i] || {};
-          h += '<div class="sr-line fix"><span class="d"></span><span>' + num(c.reason || c.kind || '') + '</span>'
-             + (c.gain ? '<span class="gain">+' + _sqN(Math.round(+c.gain)) + '</span>' : '') + '</div>';
+          // A trade is a swap within one day (⇄); each change's labor dollars
+          // beside its points (schedule audit 10/3/26 P-32, D2-3).
+          h += '<div class="sr-line fix"><span class="d"></span><span>' + (c.kind === 'trade' ? '<span class="arrow">&#8644;</span> ' : '') + num(c.reason || c.kind || '') + '</span>'
+             + (c.gain ? '<span class="gain">+' + _sqN(Math.round(+c.gain)) + '</span>' : '')
+             + (window.sfw1Dollars && sfw1Dollars(c.dollars) ? '<span class="sr-note" style="margin-left:8px;white-space:nowrap" title="Labor dollars, overtime at its premium"><span class="hb-num">' + _escHtml(sfw1Dollars(c.dollars)) + '</span></span>' : '') + '</div>';
         }
         h += '</div></details>';
+        if (o.dollars_before != null && o.dollars_after != null) h += '<div class="sr-note" style="margin-top:6px">Labor for the week: <span class="hb-num">$' + Math.round(+o.dollars_before).toLocaleString() + '</span> → <span class="hb-num">$' + Math.round(+o.dollars_after).toLocaleString() + '</span>, overtime at its premium.</div>';
       } else if (o.verdict) {
         h += '<div class="hd">' + num(o.verdict) + '</div>';
       }
@@ -21792,7 +21796,8 @@ function renderQualityConfidence(confidence, detail) {
   var k1 = (detail && typeof detail === 'object' && window.cavConf) ? cavConf.norm(detail) : null;
   if (k1 && k1.k1) {
     if (prov && k1.band === 'low') prov.innerHTML = '<span class="sq-prov">provisional</span>';
-    el.innerHTML = cavConfLine(detail, {surface: 'schedule_review', module: 'schedule', cls: 'on-dark'});
+    el.innerHTML = cavConfLine(detail, {surface: 'schedule_review', module: 'schedule', cls: 'on-dark'})
+      + (window.sfw1ConfWhy ? sfw1ConfWhy(confidence) : '');
     return;
   }
   if (!confidence) { el.innerHTML = ''; return; }
@@ -21810,7 +21815,9 @@ function renderQualityConfidence(confidence, detail) {
   el.innerHTML = '<span class="sq-comp" title="' + _escAttr(confidence.summary || '') + '">'
     + '<span class="sq-comp-dot" style="background:' + tone + '"></span>'
     + (sc == null ? 'Read completeness not measured' : 'Read completeness <span class="hb-num">' + sc + '%</span>') + '</span>'
-    + (low && top ? '<div class="sq-prov-why">' + num(top) + '</div>' : '');
+    + (low && top && !confidence.top_reason ? '<div class="sq-prov-why">' + num(top) + '</div>' : '')
+    // Its biggest deduction beside it, and each with what it cost (SQ, D1a-5).
+    + (window.sfw1ConfWhy ? sfw1ConfWhy(confidence) : '');
 }
 
 function _qDimRow(label, score) {
@@ -21847,6 +21854,9 @@ function renderQualityDimensions(dimensions, weekDims) {
         html += '<div style="margin:-2px 0 8px 158px;font-size:13px;line-height:1.5;color:var(--ink3)">'
           + _escHtml(why) + (share ? ' <span class="hb-num">' + share + '%</span> of the week score.' : '') + '</div>';
       }
+      // Overtime by person, staff preferences missed, the habits broken
+      // (D1b-1, D2-2; cav-sfw1).
+      if (window.sfw1WeekDimExtra) html += sfw1WeekDimExtra(w);
     }
   }
   el.innerHTML = html;
@@ -21862,6 +21872,15 @@ function renderQualityWarnings(quality) {
   // recommendation_items carries each sentence with its kind, key and K1
   // confidence; an older server sends only the sentences.
   var recs = (quality.recommendation_items && quality.recommendation_items.length) ? quality.recommendation_items : (quality.recommendations || []);
+  // Most valuable first (SQ-28): what each is worth, in points, when the
+  // server priced it; unpriced ones keep their order after.
+  if (recs.length && typeof recs[0] === 'object') {
+    recs = recs.slice();
+    recs = recs.map(function (r, k) { return {r: r, k: k}; }).sort(function (a, b) {
+      var pa = +a.r.points > 0 ? +a.r.points : -1, pb = +b.r.points > 0 ? +b.r.points : -1;
+      return pb - pa || a.k - b.k;
+    }).map(function (x) { return x.r; });
+  }
   var hidden = quality.suppressed_recommendation_kinds || [];
   if (!below.length && !recs.length && !hidden.length) { el.innerHTML = ''; return; }
   // Two short lists, not a paragraph of sentences (owner, 10/2/26: "WAY too
@@ -21873,8 +21892,10 @@ function renderQualityWarnings(quality) {
     html += '<div class="sq-k">Below the bar</div>';
     for (i = 0; i < Math.min(below.length, 5); i++) {
       var b = below[i];
-      html += '<div class="sq-below"><span class="nm">' + _escHtml(_qTitle(b)) + '</span>'
-        + '<span class="sc"><b class="hb-num">' + _escHtml(String(b.score)) + '</b> / <span class="hb-num">' + _escHtml(String(b.min_quality)) + '</span></span></div>';
+      html += '<div class="sq-below"><span class="nm">' + _escHtml(_qTitle(b)) + (b.no_shift_written ? ' <span class="sfw1-badge">No shift written</span>' : '') + '</span>'
+        + '<span class="sc"><b class="hb-num">' + _escHtml(String(b.score)) + '</b> / <span class="hb-num">' + _escHtml(String(b.min_quality)) + '</span></span></div>'
+        // Why it is under (D1a-1): the cap holding it, or its costliest weakness.
+        + (b.reason ? '<div class="sfw1-dim-f" style="margin:-2px 0 6px 0">' + num(b.reason) + '</div>' : '');
     }
   }
   if (recs.length) html += '<div class="sq-k">Suggestions</div>';
@@ -21882,7 +21903,7 @@ function renderQualityWarnings(quality) {
     var recObj = recs[i], recConf = (recObj && typeof recObj === 'object') ? (recObj.confidence_detail || recObj.confidence) : null;
     var rec = (recObj && typeof recObj === 'object') ? String(recObj.text || recObj.title || '') : String(recObj || ''), st = _recState[rec];
     html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
-      + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? ' ' + cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', pill: true}) : '') + '</span>'
+      + '<span class="tx">' + _escHtml(rec) + (recObj && recObj.points && window.sfw1Points && sfw1Points(recObj.points) ? '<span class="sfw1-pts">' + _escHtml(sfw1Points(recObj.points)) + '</span>' : '') + (recConf && window.cavConfLine ? ' ' + cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', pill: true}) : '') + '</span>'
       + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'passed') + '</span>'
             : '<span class="acts">' + (/^Fill the gap on /.test(rec) ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-rec-fill="' + _escAttr(rec) + '">Fill it</button>' : '') + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
               + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Pass" aria-label="Pass" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
@@ -21893,7 +21914,7 @@ function renderQualityWarnings(quality) {
     // quiet_kinds: suppression_state's review_on).
     var hidWords = [];
     for (i = 0; i < hidden.length; i++) hidWords.push(window.memSuppressionNote ? memSuppressionNote(hidden[i], (window._sqSupp || {})[hidden[i]]) : hidden[i]);
-    html += '<div class="sq-hidden">' + hidden.length + ' recommendation kind' + (hidden.length === 1 ? '' : 's') + ' hidden (' + (window.memNum ? memNum(hidWords.join(', ')) : _escHtml(hidWords.join(', '))) + ') — you set them aside. Coverage, leadership and fatigue are never hidden. ';
+    html += '<div class="sq-hidden">' + hidden.length + ' recommendation kind' + (hidden.length === 1 ? '' : 's') + ' hidden (' + (window.memNum ? memNum(hidWords.join(', ')) : _escHtml(hidWords.join(', '))) + ') — you set them aside. Coverage, leadership, fatigue and hard rules are never hidden. ';
     for (i = 0; i < hidden.length; i++) {
       html += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-restore-kind="' + _escAttr(hidden[i]) + '" onclick="restoreRecKind(this.getAttribute(\'data-restore-kind\'), this)">Show ' + _escHtml(hidden[i]) + ' again</button> ';
     }
@@ -21911,7 +21932,9 @@ function _recKind(text) {
   var items = (_quality && _quality.recommendation_items) || [], j;
   for (j = 0; j < items.length; j++) if (items[j] && items[j].text === text) return items[j].kind || 'other';
   var t = String(text || '');
-  if (t.indexOf('Fill the gap') === 0) return 'coverage';
+  if (t.indexOf('Fill the gap') === 0 || t.indexOf('Cover the gap') === 0) return 'coverage';
+  if (t.indexOf('Put a stronger') === 0) return 'strength';
+  if (t.indexOf('Fix the rule') === 0) return 'rules';
   if (t.indexOf('Move somebody') === 0) return 'leadership';
   if (t.indexOf('Pair ') === 0) return 'strength';
   if (t.indexOf('Trim about') === 0) return 'hours';
@@ -22062,6 +22085,8 @@ function _qualityShiftDetail(shift, tone) {
           + _escHtml(shift.profile.label || 'a standard shift')
           + (shift.profile.min_quality ? ', which wants ' + shift.profile.min_quality + '+' : '') + '.</div>';
   }
+  // Every measure as a bar, its floor marked (D1a-3, D1b-2; cav-sfw1).
+  if (window.sfw1ShiftDims) html += sfw1ShiftDims(shift);
   // The dimension that caps the shift is what decides its number, so its
   // weakness leads, under a line that says so; the rest follow.
   var capLines = [], rest = shift.weaknesses || [], k2;
@@ -22073,6 +22098,10 @@ function _qualityShiftDetail(shift, tone) {
       for (k2 = 0; k2 < (shift.weaknesses || []).length; k2++) if (capLines.indexOf(shift.weaknesses[k2]) === -1) rest.push(shift.weaknesses[k2]);
       html += '<div style="margin-bottom:9px"><div class="sq-cap">This is what’s holding the shift at <span class="hb-num">' + _sqN(shift.score) + '</span></div>'
             + _qualityLines(capLines, 'var(--amber)', '&#8226;', 2) + '</div>';
+    } else if (shift.held_by && shift.held_by.text) {
+      // A hard rule or an unwritten daypart has no dimension of its own
+      // to list: the server's sentence says what holds it (D1a-2).
+      html += '<div style="margin-bottom:9px"><div class="sq-cap">' + num(shift.held_by.text) + '</div></div>';
     }
   }
   html += _qualityGroup('Working well', shift.strengths, 'var(--green)', 3);
@@ -22096,7 +22125,7 @@ function _qualityShiftDetail(shift, tone) {
   }
   if (shift.capped_by) {
     html += '<div style="font-size:13px;color:var(--ink3);margin-top:9px;font-style:italic">Capped by '
-          + _escHtml(String(shift.capped_by).replace(/_/g, ' '))
+          + _escHtml(shift.held_by && shift.held_by.label ? shift.held_by.label.toLowerCase() : String(shift.capped_by).replace(/_/g, ' '))
           + ' — a shift is never better than its weakest critical part.</div>';
   }
   html += _sqWhatIfHtml(shift);
@@ -22511,7 +22540,7 @@ function toggleQualityReasoning() {
 function renderQualityReasoning() {
   var box = document.getElementById('sq-reasoning');
   if (!box || !_quality) return;
-  var html = '';
+  var html = window.sfw1WhatIfHead ? sfw1WhatIfHead(_whatIf) : '';
   if (_whatIf && _whatIf.ran && _whatIf.verdict) {
     html += '<div style="font-size:14px;color:rgba(255,255,255,.78);line-height:1.6;margin-bottom:10px">'
           + _escHtml(_whatIf.verdict) + '</div>';
@@ -22659,7 +22688,7 @@ function generateSchedule(btn, opts) {
       // (wait_seconds, on a join too); a pending poll says what is left
       // (seconds_left). The page waits exactly that long - it used to give up
       // at a guessed 15 minutes (schedule audit 10/3/26 P-22).
-      var _waitMs = (+startData.wait_seconds > 0 ? +startData.wait_seconds : 900) * 1000;
+      var _waitMs = +startData.wait_seconds > 0 ? +startData.wait_seconds * 1000 : 900000;
       function _giveUp() {
         clearInterval(_elapsedTimer);
         clearInterval(_schedPollInterval);
@@ -22948,10 +22977,16 @@ function _schedRenderEconomics(data) {
   if (ddt && ddt.blind) h += '<div class="notice"><span>&#9888;</span><span>Demand blind since <span class="hb-num">' + mdy(ddt.date) + '</span>: the forecast has no sales newer than that.</span></div>';
   var tr = data.trimmed || [];
   if (tr.length) {
-    h += '<details><summary>Trimmed <span class="hb-num">' + _schedHrs(data.hours_trimmed) + 'h</span> to fit the budget — ' + tr.length + ' shift' + (tr.length === 1 ? '' : 's') + ' removed</summary><div>';
+    // A trim ends a shift early before it removes one (schedule audit
+    // 10/3/26 P-27): the summary counts both, and a cut says where it ends.
+    var _cut = 0; for (i = 0; i < tr.length; i++) if (tr[i].kind === 'cut') _cut++;
+    var _rem = tr.length - _cut, _bits = [];
+    if (_cut) _bits.push('<span class="hb-num">' + _cut + '</span> ended early');
+    if (_rem) _bits.push('<span class="hb-num">' + _rem + '</span> removed');
+    h += '<details><summary>Trimmed <span class="hb-num">' + _schedHrs(data.hours_trimmed) + 'h</span> to fit the budget — ' + _bits.join(', ') + '</summary><div>';
     for (i = 0; i < tr.length; i++) {
       var t = tr[i];
-      h += '<div class="sr-line"><span class="d"></span><span><b>' + _escHtml(t.employee) + '</b>, ' + _escHtml((t.day || _schedDayOf(t.date)).slice(0, 3)) + ' <span class="hb-num">' + mdy(t.date) + '</span> ' + _escHtml(t.shift_start) + '–' + _escHtml(t.shift_end) + (t.role ? ' · ' + _escHtml(t.role) : '') + ' (<span class="hb-num">' + _schedHrs(t.hours) + 'h</span>)' + (t.reason ? ' <span class="why">— ' + _escHtml(t.reason) + '</span>' : '') + '</span></div>';
+      h += '<div class="sr-line"><span class="d"></span><span><b>' + _escHtml(t.employee) + '</b>, ' + _escHtml((t.day || _schedDayOf(t.date)).slice(0, 3)) + ' <span class="hb-num">' + mdy(t.date) + '</span> ' + _escHtml(t.shift_start) + '–' + _escHtml(t.shift_end) + (t.kind === 'cut' && t.to ? ', ended at <span class="hb-num">' + _escHtml(t.to) + '</span>' : '') + (t.role ? ' · ' + _escHtml(t.role) : '') + ' (<span class="hb-num">' + _schedHrs(t.hours) + 'h</span>)' + (t.reason ? ' <span class="why">— ' + _escHtml(t.reason) + '</span>' : '') + '</span></div>';
     }
     h += '</div></details>';
   }
@@ -35425,6 +35460,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 .sfw1-req .why{font-size:12.5px;color:var(--ink3);margin-top:2px}
 /* A sheet over the Studio: Redo some days (reason chips + words) and
    "Why this change?" after a save. The supplier confirm's frame (.so-card). */
+/* Labor's line and status tokens, on the sheet too: it sits on <body>,
+   outside #studio (dark only, as the page is). */
+#sfw1-modal{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red)}
 .sfw1-sheet .so-card{width:520px}
 .sfw1-sheet .chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 12px}
 .sfw1-sheet textarea{width:100%;box-sizing:border-box;min-height:72px;resize:vertical}
@@ -35533,7 +35571,7 @@ function sfw1G(v) { var n = +v; return isFinite(n) ? String(Math.round(n * 10) /
 
 // ── The generation's notices ──────────────────────────────────────────────
 /* Days the generation could not write (P-34): "Saturday 10/10/26 and
-   Sunday 10/11/26 weren't written — the model ran out of time. The rest of
+   Sunday 10/11/26 weren't written — <the cause>. The rest of
    the week is here." One cause per group of days. */
 function sfw1PartialLine(items) {
   var groups = {}, order = [], i;
@@ -35648,7 +35686,7 @@ function sfw1CapConflictLine(c) {
   return sfw1LongDay(c.date, c.day) + (c.at ? ' at ' + c.at : '') + ': ' + (c.on != null ? c.on : '?') + ' on for ' + (c.cap != null ? c.cap : '?') + ' sections' + (why.length ? ' — held by ' + why.join('; ') : '') + '.';
 }
 /* A fix line's shift (B1-1): the row it points at, or — once the row was
-   edited away (`index` null) — the row as the fix left it. */
+   edited away (index null) — the row as the fix left it. */
 function sfw1FixRow(fix, rows) {
   rows = rows || [];
   var i;
@@ -36346,6 +36384,100 @@ function sfw1RatingLine(s) {
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw1-rate-pick]') : null;
     if (t && !t.disabled) rateConfirm(t);
   });
+
+  // ── Shift Quality (D1a, D1b, D2) ───────────────────────────────────────
+  function tone(score) { return score >= 80 ? 'var(--hb-good)' : (score >= 60 ? 'var(--ember2)' : 'var(--hb-bad)'); }
+  function rowIndexOf(r) {
+    var rs = rows(), i;
+    for (i = 0; i < rs.length; i++) if (rs[i].date === r.date && String(rs[i].employee || '').toLowerCase() === String(r.employee || '').toLowerCase() && String(rs[i].shift_start || '') === String(r.shift_start || '')) return i;
+    return -1;
+  }
+  /* A week measure's own facts (D1b-1, D2-2): who is in overtime and what it
+     costs, the preferences missed, the habits the week breaks (each row one
+     tap from the grid). */
+  window.sfw1WeekDimExtra = function (w) {
+    var f = (w && w.facts) || {}, out = '', i, j;
+    function line(t, extra) { return '<div class="sfw1-dim-f">' + n(t) + (extra || '') + '</div>'; }
+    if (w.key === 'overtime') {
+      var ppl = f.people || [];
+      for (i = 0; i < Math.min(ppl.length, 4); i++) out += line(sfw1OvertimeLine(ppl[i], f.priced));
+      if (ppl.length && f.share_pct != null) out += line((f.priced ? 'Overtime premium is ' + sfw1G(f.share_pct) + '% of the week’s pay.' : 'No pay rates on file, so overtime is counted in hours, not dollars.'));
+    }
+    if (w.key === 'preferences') {
+      var ms = (f.misses || []).concat(f.learned_misses || []);
+      for (i = 0; i < Math.min(ms.length, 3); i++) out += line(ms[i] + '.');
+    }
+    if (w.key === 'learned') {
+      var lm = f.misses || [];
+      for (i = 0; i < Math.min(lm.length, 4); i++) {
+        var btns = '';
+        for (j = 0; j < (lm[i].rows || []).length && j < 2; j++) { var ix = rowIndexOf(lm[i].rows[j]); if (ix >= 0) btns += ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw1-sel="' + ix + '">Show ' + e(lm[i].rows[j].employee) + '</button>'; }
+        out += line(lm[i].text || '', btns);
+      }
+    }
+    return out;
+  };
+  /* Every measure of one shift as a bar with its floor marked (D1a-3), the
+     facts each can say (D1b-2, D1b-3) and a leadership miss's offer (D1a-8). */
+  window.sfw1ShiftDims = function (shift) {
+    var dims = (shift && shift.dimensions) || [], h = '', i, j;
+    if (!dims.length) return '';
+    for (i = 0; i < dims.length; i++) {
+      var d = dims[i]; if (!d.customer_facing && d.key !== 'stations') continue;
+      var sc = Math.max(0, Math.min(100, +d.score || 0)), fl = (d.floor != null && +d.floor > 0) ? +d.floor : null;
+      h += '<div class="sfw1-dim"><span>' + e(d.label) + '</span><span class="tr" title="' + e(fl !== null ? 'Caps the shift under ' + fl : 'Never caps the shift') + '"><i style="width:' + Math.max(3, sc) + '%;background:' + tone(sc) + '"></i>'
+        + (fl !== null ? '<span class="fl" style="left:' + fl + '%"></span>' : '') + '</span><span class="v">' + sc + '</span></div>';
+      var facts = sfw1DimFacts(d);
+      if (fl !== null && sc < fl) facts.unshift('Under its floor of ' + fl + ' — it caps the shift.');
+      for (j = 0; j < facts.length; j++) h += '<div class="sfw1-dim-f">' + n(facts[j]) + '</div>';
+      if (d.key === 'leadership') {
+        var ms = (d.facts && d.facts.misses) || [];
+        for (j = 0; j < ms.length; j++) {
+          var a = sfw1MissAction(ms[j]); if (!a) continue;
+          h += '<div class="sfw1-dim-f">' + n('Needs ' + ms[j].rule + '.') + ' ' + (a.kind === 'add'
+            ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw1-add-role="' + e(ms[j].role) + '" data-date="' + e(shift.date) + '" data-part="' + e(shift.daypart) + '">' + e(a.label) + '</button>'
+            : '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sfw1-swap-role="' + e(ms[j].role) + '">' + e(a.label) + '</button>') + '</div>';
+        }
+      }
+    }
+    return h ? '<div class="sfw1-dims" data-quality-shift-box="1">' + h + '</div>' : '';
+  };
+  /* Beside the read's percentage (D1a-5): its biggest deduction, and every
+     deduction with what it cost; the rules fewer people can meet (D1b-6). */
+  window.sfw1ConfWhy = function (c) {
+    if (!c) return '';
+    var bd = c.breakdown || [], i, li = '', said = {};
+    for (i = 0; i < bd.length; i++) { said[bd[i].reason] = 1; li += '<div>' + n(bd[i].reason) + ' <span class="hb-num">−' + e(bd[i].points) + '</span></div>'; }
+    for (i = 0; i < (c.reasons || []).length; i++) if (!said[c.reasons[i]] && /^(Only \d|Nobody on the roster can meet)/.test(c.reasons[i])) li += '<div>' + n(c.reasons[i]) + '</div>';
+    if (!c.top_reason && !li) return '';
+    return '<div class="sfw1-cf-why">' + (c.top_reason ? n(c.top_reason) : '') + (li ? '<details><summary>What it rests on</summary>' + li + '</details>' : '') + '</div>';
+  };
+  /* "Look for a better arrangement" (D2-1): the rows on screen re-scored with
+     the arrangement search on; nothing is saved. */
+  window.sfw1LookBetter = function (btn) {
+    var done = busy(btn, 'Looking…');
+    jpost('/api/labor/schedule/score', {rows: rows(), daily_target_hours: window._schedTargets || {}, save: false, what_if: true}, function (d) {
+      done();
+      if (!d.ok) { say(d.error || 'Couldn’t look for a better arrangement', 'error'); return; }
+      if (window.renderShiftQuality) renderShiftQuality(d.quality, d.what_if);
+      var wi = d.what_if || {};
+      say(wi.ran && wi.improvement > 0 ? 'Found a better arrangement — see Why this schedule' : (wi.reason || wi.verdict || 'No legal rearrangement scores better'));
+      var box = $id('sq-reasoning'); if (box && box.style.display === 'none' && window.toggleQualityReasoning) toggleQualityReasoning();
+    });
+  };
+  window.sfw1WhatIfHead = function (wi) {
+    if (!wi) return '';
+    var h = '';
+    if (!wi.ran) h += '<div class="sr-actions" style="margin:0 0 10px"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="sfw1LookBetter(this)">Look for a better arrangement</button>'
+      + (wi.reason ? '<span class="sr-note">' + n(wi.on_demand ? 'Trades people between shifts to see if the week scores higher. Nothing is saved.' : wi.reason) + '</span>' : '') + '</div>';
+    else if (wi.checked_with === 'availability and hours') h += '<div class="sr-note" style="margin-bottom:8px">Checked against availability and hours only.</div>';
+    return h;
+  };
+  /* What Cavnar AI's changes moved in labor dollars (D2-3). */
+  window.sfw1Dollars = function (v) {
+    var x = +v; if (v == null || v === '' || !isFinite(x) || Math.round(x) === 0) return '';
+    return (x > 0 ? '+$' : '−$') + Math.abs(Math.round(x)).toLocaleString();
+  };
 
   /* The two rows open on a deep link too: the action queue's "Review"
      (labor/ratings) and the calibration's (labor/intel). */

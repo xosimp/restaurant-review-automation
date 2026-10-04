@@ -1400,6 +1400,27 @@ row.
 answer shows the server's `message` — what the answer does — in place of
 the buttons.
 
+### Schedule fix round (web, 10/4/26 — UI wave W1)
+
+The Studio's generate screen, the draft, the review, the publish check,
+Shift Quality and the learning rows, built on the schedule fix round's
+payloads (`dashboard.html` `<style id="cav-sfw1-css">` and
+`<script id="cav-sfw1">`: pure `sfw1*` helpers turn a payload into words,
+the IIFE draws them). New patterns, each the smallest step from one that
+existed:
+
+| Piece | Class / host | Reads | Look |
+|---|---|---|---|
+| Week notice | `.sfw1-notes` > `.sfw1-n` (`.warn` / `.bad` / `.ai`) in `#sfw1-week` (under the week's header) and `#sfw1-sum` (the Summary) | `unwritten_dates`, `unstaffable_dates`, `manager_plan`, `manager_coverage.left` / `.shortfall`, `min_hours.left`, `starting_point`, `demand_data_through`, `review.setup` | The `.snr` state stripe as a recessed notice: a 3px inset rail (ink3 / amber / red; ember on the ai tone), the sentence at 14.5px, its actions at the end (`cbtn-sm`). One per thing; the setup's quiet items fold into one "How this week was set up" list |
+| Owner question | `.sfw1-q` (ai tone, `--glow-ember`) | `manager_plan.question`, `unknown_pattern` | Orange kicker "A question for you", the question as a Clash 21px title, the why, then per name a seven-day grid (`.sfw1-wk .d`: a day toggle and two `cavTimeOptions` selects; a ticked day takes the ember outline) and one soft Save → standing shifts (`POST labor/staff-settings`) |
+| Manager plan chip | `.swg-chip .sfw1-pin` | a row's `_pinned == "manager_plan"`, `_pin_reason` | A 10px uppercase pill in ember2 on the recess, inside the week chip; the reason is its title and the shift pane's flag. `.sfw1-dst` is the same pill in ink3 for `dst_hours` |
+| Day-header lines | `.swg-d .sfw1-mw` / `.sfw1-hd` / `.sfw1-nw` | `manager_plan.windows`, `review.hard_days`, `unwritten_dates` | "Manager on 11:00am–11:00pm" in ink3 11px; a day-level breach as a small red-tinted note on the day (never on a person's chip); "Not written" as the header's own `.st` pill in amber |
+| Sheet | `#sfw1-modal.so-modal` + `.so-card` (`cModal`) | Redo some days; "Why this change?" after a save | The supplier confirm's frame at 520px. Redo: reason chips (`.chip-tog .ct`, one lit), "What's wrong? (optional)" 300 characters with a count, Not now / Redo N days. Why: the change in a sentence, one secondary button per answer, Skip |
+| Review groups | `.sfw1-rv` inside `#sched-review` | `review.stage_failures`, `review.unmet`, `review.budget_conflict`, `review.cap_floor_conflicts`, `review.unmatched_names` | `.sr-k` + `.sr-line`s. "What this week doesn't meet" groups by day ("Fri 10/16/26", "This week" last): `.hard` (ember dot) for manager / floor / rule / close, ember2 dot for coverage / leadership / strength / station / ask, plain for minimum hours / budget, "check it yourself" on a rule no code checks; the what in bold over the why |
+| Measure bars | `.sfw1-dims .sfw1-dim` in an expanded shift | `shifts[].dimensions[]` (`score`, `floor`, `facts`) | Every counting measure as a 6px bar, its floor a 2px ink3 tick; facts lines under it at 12.5px; a leadership miss offers "Add a …" / "Swap in a …" |
+| Points | `.sfw1-pts` | `recommendation_items[].points` | "up to +6 points" in green, Space Grotesk, after the suggestion; the list sorts most valuable first |
+| Memory row | `.sfw1-mem .r` | `GET labor/schedule-memory`, `GET labor/ratings/suggested` | The learned-pattern row grown: sentence, `.mem-pill` status, a caption ("72% sure · 2 of 3 · last confirmed by hand 9/28/26"), actions at the end (Keep / Let it go / Make it a rule; Confirm N + a 1–5 `.chip-tog`) |
+
 ## 12c. The admin console (internal, `templates/admin.html`)
 
 Rebuilt 9/28/26 as five places, each answering what needs attention, what

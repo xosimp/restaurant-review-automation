@@ -5265,6 +5265,60 @@ def schedule_experiments():
                 "error": "The experiment tables are not on this database yet."}
 
 
+def schedule_generations(limit=20, db_path=None):
+    """The recent schedule generations as engineering reads them (schedule
+    audit 10/3/26 B1-3): per week its total and per-stage seconds
+    (schedule_history.stage_seconds_json / total_seconds), the repair loop's
+    record from the saved review (cycles, whether it settled, the changes it
+    refused, the stages it skipped, the budget reconcile, hours by stage)
+    and the stages that failed; plus the platform check's generation
+    latency (ops.schedule_generation_latency: p50/p95/max over the last 20
+    in 14 days, and whether it pages). Internal only - read-only."""
+    import json as _json
+    import ops as _ops_g
+    out = {"ok": True, "latency": None, "weeks": []}
+    try:
+        out["latency"] = _ops_g.schedule_generation_latency(db_path)
+    except Exception as e:
+        log.warning("schedule generation latency unavailable: %s", e)
+        out["latency_error"] = "The generation timings could not be read."
+    conn = get_conn(db_path)
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+        want = [c for c in ("stage_seconds_json", "total_seconds", "review_json") if c in cols]
+        rows = conn.execute(
+            "SELECT h.id, h.restaurant_id, h.week_start, h.generated_at, h.hours_scheduled, h.hours_budget"
+            + "".join(", h." + c for c in want)
+            + ", r.name AS restaurant FROM schedule_history h LEFT JOIN restaurants r ON r.id = h.restaurant_id "
+            "ORDER BY h.id DESC LIMIT ?", (max(1, min(100, int(limit or 20))),)).fetchall()
+    finally:
+        conn.close()
+
+    def _load(raw):
+        try:
+            return _json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            return {}
+    for r in rows:
+        d = dict(r)
+        review = _load(d.get("review_json")) if "review_json" in d else {}
+        repair = review.get("repair") or {}
+        out["weeks"].append({
+            "id": d["id"], "restaurant_id": d["restaurant_id"], "restaurant": d.get("restaurant"),
+            "week_start": d.get("week_start"), "generated_at": d.get("generated_at"),
+            "total_seconds": d.get("total_seconds"), "stage_seconds": _load(d.get("stage_seconds_json")),
+            "hours_scheduled": d.get("hours_scheduled"), "hours_budget": d.get("hours_budget"),
+            "repair": {"cycles": repair.get("cycles"), "converged": repair.get("converged"),
+                       "restored_best": repair.get("restored_best"),
+                       "refused": len(repair.get("refused") or []), "refused_items": (repair.get("refused") or [])[:5],
+                       "skipped": repair.get("skipped") or [], "budget": repair.get("budget") or {},
+                       "hours_by_stage": repair.get("hours_by_stage") or {}} if repair else None,
+            "stage_failures": [{"stage": f.get("stage"), "blocks_publish": bool(f.get("blocks_publish"))}
+                               for f in (review.get("stage_failures") or []) if isinstance(f, dict)],
+        })
+    return out
+
+
 def set_schedule_experiment_pin(restaurant_id, experiment, arm, by="admin"):
     """Pin one restaurant to an arm ('off' = the control), or unpin (arm
     None) — the per-restaurant kill switch."""

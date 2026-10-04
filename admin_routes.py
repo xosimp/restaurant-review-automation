@@ -3696,6 +3696,20 @@ def admin_api_schedule_experiments(current_user):
     return jsonify(**admin_ops.schedule_experiments())
 
 
+@admin_bp.route("/admin/api/schedule-generations")
+@admin_required
+def admin_api_schedule_generations(current_user):
+    """Recent schedule generations for engineering (internal only, read-only;
+    schedule audit 10/3/26 B1-3): stage timings, the repair loop's record,
+    failed stages and the generation latency."""
+    import admin_ops
+    try:
+        limit = int(request.args.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+    return jsonify(**admin_ops.schedule_generations(limit=limit))
+
+
 @admin_bp.route("/admin/api/schedule-experiments/pin", methods=["POST"])
 @admin_required
 def admin_api_schedule_experiment_pin(current_user):
