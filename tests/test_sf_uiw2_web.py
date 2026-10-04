@@ -283,7 +283,12 @@ def test_the_rules_screen_says_back_the_setup_and_saves_the_new_settings(page):
     assert "['min_shift_hours','Shortest shift'" in page and "['full_time_min_hours','Full-time means at least'" in page
     save = page[page.index("window.saveRules=function"):]
     save = save[:save.index("\n  };")]
-    assert "if(v===''){if(rk==='min_shift_hours')rules[rk]=null;continue;}" in save, "a blank keeps the default"
+    # A blank goes back to the default by name: a save changes only what it
+    # sends (schedule re-audit 10/4/26 UI-2), so leaving it out now keeps
+    # the stored value instead of resetting it.
+    assert "if(v===''){if(rk==='min_shift_hours')rules[rk]=null;else reset.push(rk);continue;}" in save, \
+        "a blank goes back to the default"
+    assert "rules_default:reset" in save
     assert "body.role_close_mins=sm" in save and "body.salaried_cap=" in save
     b = _block(page, "cav-sfw2")
     top = _fn(b, "sfw2RulesTop")

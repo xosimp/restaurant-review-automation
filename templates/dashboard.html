@@ -10739,6 +10739,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .sched-conflict b{font-weight:700}
 .sched-conflict .ln{color:var(--ink2);padding:2px 0}
 .sched-conflict .sr-actions{margin-top:8px}
+/* A replaced copy of a week is read-only (schedule re-audit 10/4/26 UI-3). */
+.sched-ro #sched-edit-bar,.sched-ro [data-sched-add],.sched-ro [data-sched-edit],.sched-ro [data-sched-remove],.sched-ro [data-shift-row],.sched-ro #schedule-preview-panel .sw-view .cbtn-soft{display:none!important}
 /* Recommendation ✓ / ✕ */
 .sq-warn{padding:14px 16px;border-radius:12px;background:var(--hb-tint2)}
 .sq-warn .sq-k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin:0 0 8px}
@@ -11406,6 +11408,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            written, days nobody can work, the managers' question, stretches
            with no manager, the setup it was drafted against (cav-sfw1). -->
       <div id="sfw1-week" class="sfw1-notes" aria-live="polite"></div>
+      <!-- A copy of the week a newer one replaced: read-only, with the way
+           to the newer one (schedule re-audit 10/4/26 UI-3). -->
+      <div id="sched-replaced" class="sched-conflict" style="margin:0 0 14px" hidden></div>
       <div class="sw-view">
         <div class="lb2-range sw-seg" role="tablist" aria-label="View">
           <button type="button" class="on" data-sw-view="week" role="tab" aria-selected="true">Week</button>
@@ -21116,7 +21121,12 @@ function _schedHandleResult(data) {
   _schedSetDirty(false);
   _schedSnapshot();
   _schedHideConflict();
-  _schedLoadVersion();
+  // The version these rows are, handed over WITH them by the generation
+  // and the history detail (schedule re-audit 10/4/26 UI-1): it used to be
+  // fetched after the table drew, so a save landing between the two paired
+  // these rows with a newer number and overwrote that save.
+  _schedVersion = (data.version === undefined || data.version === null) ? null : data.version;
+  _schedSetReplaced(data.replaced_reason ? {by: data.superseded_by || null, text: data.replaced_reason} : null);
   var psb = document.getElementById('ps-blockers'); if (psb) { psb.style.display = 'none'; psb.innerHTML = ''; }
   var psr = document.getElementById('ps-result'); if (psr) psr.textContent = '';
   // What the generation could not do or wants answered — the week's
@@ -22324,6 +22334,7 @@ function openShiftSwap(index, anchorEl) {
 }
 
 function applyShiftSwap(index, name) {
+  if (_schedReadOnly()) { _schedRenderTable(); return; }
   _schedRows[index].employee = name;
   _schedRows[index].needs_review = false;
   _schedRows[index].review_reason = '';
@@ -22340,13 +22351,15 @@ function applyShiftSwap(index, name) {
 // generation time — so staff received the week the manager had just fixed,
 // unfixed, with nothing on screen to say so.
 function rescoreSchedule(btn, after) {
+  if (_schedReadOnly()) return;
   var prevScore = _quality ? _quality.score : null;
   _setQualityState('saving');
   var done = btn ? cbtnBusy(btn, 'Saving\u2026') : function () {};
   var body = {rows: _schedRows, daily_target_hours: _schedTargets, save: true};
   // Saving appends an "edited" version to the row the preview came from,
   // rather than minting a second history entry for the same week. The
-  // version the page loaded goes with it: a newer one on file is a 409.
+  // version these rows came from goes with it: rows somebody else changed
+  // since are a 409.
   if (_schedHistoryId) body.history_id = _schedHistoryId;
   if (_schedVersion !== null && _schedVersion !== undefined) body.version = _schedVersion;
   // Rows Cavnar AI took out (apply-fixes / Improve's cavnar_removed): kept
@@ -22374,7 +22387,8 @@ function rescoreSchedule(btn, after) {
         _schedSetDirty(false);
         _schedSnapshot();
         _schedHideConflict();
-        _schedLoadVersion();
+        // The version just written, from the answer itself (UI-1, UI-4).
+        if (d.version !== undefined && d.version !== null) _schedVersion = d.version;
         // A week staff already have: a save tells nobody. Who Send would
         // tell is unsent_changes (F2-2).
         var cs = d.unsent_changes;
@@ -22401,6 +22415,9 @@ function rescoreSchedule(btn, after) {
     } else if (d && d.conflict) {
       _schedShowConflict(d);
       _setQualityState('stale', d.error || 'Somebody saved this week first.');
+    } else if (d && d.replaced) {
+      _schedSetReplaced({by: d.superseded_by || null, text: d.error});
+      _setQualityState('stale', d.error);
     } else {
       _setQualityState('stale', (d && d.error) || (status === 403 ? 'Your login can view labor but not change the schedule.' : 'Could not save that change.'));
     }
@@ -22795,6 +22812,7 @@ function savePsContact(input){
 // out. A week with rule warnings is sent knowingly — the button names them
 // once the list is on screen, and that press is the acknowledgement.
 function saveAndSendSchedule(btn){
+  if (_schedReadOnly()) return;
   var result = document.getElementById('ps-result');
   if (_schedEditIdx !== null) { toast('Finish the row you are editing first', 'error'); return; }
   if (_schedDirty) {
@@ -22806,6 +22824,7 @@ function saveAndSendSchedule(btn){
 }
 
 function publishScheduleNow(ack){
+  if (_schedReadOnly()) return;
   var btn = document.getElementById('ps-send-btn');
   var result = document.getElementById('ps-result');
   var bl = document.getElementById('ps-blockers');
@@ -22824,6 +22843,10 @@ function publishScheduleNow(ack){
       if(d.ok){
         if (bl) { bl.style.display = 'none'; bl.innerHTML = ''; }
         if (window.psDisarm) psDisarm();
+        // The Send's own version, kept with the rows on screen: the next
+        // save names it and is never refused as a conflict with yourself
+        // (schedule re-audit 10/4/26 UI-4).
+        if (d.version !== undefined && d.version !== null && +d.schedule_id === +_schedHistoryId && !_schedDirty) _schedVersion = d.version;
         result.style.color = 'var(--hb-good)';
         if (d.queued) {
           result.textContent = 'Goes to staff in ' + d.undo_minutes + ' min — undo from the Cavnar AI strip';
@@ -22867,6 +22890,8 @@ function publishScheduleNow(ack){
         result.textContent = '';
         return;
       }
+      // A newer copy of this week replaced this one: it cannot be sent (UI-3).
+      if (d.replaced) _schedSetReplaced({by: d.superseded_by || null, text: d.error});
       result.style.color = 'var(--hb-bad)';
       // 403: this login can draft the week but not send it. The server's
       // sentence says exactly that; show it rather than "Nothing sent".
@@ -23003,35 +23028,66 @@ function _schedRenderEconomics(data) {
   el.style.display = h ? 'block' : 'none';
 }
 
-// The version number the page is working from. Sent with every save so a
-// second manager's save refuses instead of overwriting the first.
-function _schedLoadVersion() {
-  _schedVersion = null;
-  if (!_schedHistoryId) return;
-  var hid = _schedHistoryId;
-  fetch('/api/labor/schedule-history/' + hid + '/versions').then(apiJson).then(function (d) {
-    if (_schedHistoryId !== hid || !d || !d.ok) return;
-    var vs = d.versions || [];
-    _schedVersion = vs.length ? vs[vs.length - 1].version : null;
-  }).catch(function () { });
-}
+// The version number the rows on screen came from (_schedVersion) arrives
+// with them — the generation, the history detail, every save and Send —
+// and is sent with every save, so a second manager's save refuses instead
+// of overwriting the first (schedule re-audit 10/4/26 UI-1, UI-4).
 
-function _schedHideConflict() { var c = document.getElementById('sched-conflict'); if (c) { c.style.display = 'none'; c.innerHTML = ''; } }
+function _schedHideConflict() { var c = document.getElementById('sched-conflict'); if (c) { c.style.display = 'none'; c.innerHTML = ''; } window._schedConflictAt = null; }
 
+// Somebody else changed the rows: refused, and the edit is never thrown
+// away — reload theirs, or keep yours (saved over theirs, as the newest).
 function _schedShowConflict(d) {
   var c = document.getElementById('sched-conflict');
   if (!c) return;
-  var h = '<b>' + _escHtml(d.saved_by || 'Somebody') + ' saved this week after you opened it.</b> Your edits are still here; nothing was overwritten. Reload to see their version (v' + _escHtml(String(d.latest_version || '')) + '), then make your changes again.', i;
+  window._schedConflictAt = (d.latest_version === undefined || d.latest_version === null) ? null : d.latest_version;
+  var h = '<b>' + _escHtml(d.saved_by || 'Somebody') + ' changed this week after you opened it.</b> Your edits are still here; nothing was overwritten.', i;
   var lines = d.lines || [];
-  if (lines.length) { h += '<div style="margin-top:6px">'; for (i = 0; i < lines.length; i++) h += '<div class="ln">' + num(lines[i]) + '</div>'; h += '</div>'; }
-  h += '<div class="sr-actions"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="reloadScheduleFromHistory(this)">Reload their version</button></div>';
+  if (lines.length) { h += '<div style="margin-top:6px">What they changed:'; for (i = 0; i < lines.length; i++) h += '<div class="ln">' + num(lines[i]) + '</div>'; h += '</div>'; }
+  h += '<div class="sr-actions">'
+    + (window._schedConflictAt !== null ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="schedKeepMine(this)">Keep my edits</button> ' : '')
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="reloadScheduleFromHistory(this, true)">Reload theirs</button></div>'
+    + '<div class="ln" style="margin-top:6px">Keep my edits saves what is on your screen over their change. Reload theirs drops your edits.</div>';
   c.innerHTML = h; c.style.display = 'block';
+}
+
+// "Keep my edits": the owner saw what the other save changed and chose
+// theirs to go — saved against the version the refusal named.
+function schedKeepMine(btn) {
+  if (window._schedConflictAt === null || window._schedConflictAt === undefined) return;
+  _schedVersion = window._schedConflictAt;
+  rescoreSchedule(btn);
+}
+
+// A copy of the week a newer one replaced is read-only (UI-3): the banner
+// says so and opens the newer one; editing, Save and Send refuse.
+var _schedReplaced = null;
+function _schedSetReplaced(r) {
+  _schedReplaced = r || null;
+  if (document.body) {
+    var cls = ' ' + (document.body.className || '') + ' ';
+    cls = cls.replace(' sched-ro ', ' ');
+    document.body.className = (cls + (r ? 'sched-ro' : '')).replace(/^\s+|\s+$/g, '');
+  }
+  var el = document.getElementById('sched-replaced');
+  if (!el) return;
+  if (!r) { el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = '<b>' + _escHtml(r.text || 'A newer copy of this week replaced this one.') + '</b>'
+    + (r.by ? '<div class="sr-actions"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="openScheduleDraft(' + (+r.by) + ')">Open the newer one</button></div>' : '');
+  el.hidden = false;
+  if (window.psLabel) psLabel();
+}
+function _schedReadOnly() {
+  if (!_schedReplaced) return false;
+  toast(_schedReplaced.text || 'A newer copy of this week replaced this one.', 'error');
+  return true;
 }
 
 // Take the stored week back onto the screen — after a conflict, or when
 // a manager simply wants what is on file.
-function reloadScheduleFromHistory(btn) {
+function reloadScheduleFromHistory(btn, dropsEdits) {
   if (!_schedHistoryId) return;
+  if (dropsEdits && _schedDirty && !window.confirm('Reload their version? The edits on your screen will be dropped.')) return;
   var done = btn ? cbtnBusy(btn, 'Reloading…') : function () {};
   fetch('/api/labor/schedule-history/' + _schedHistoryId).then(apiJson).then(function (d) {
     done();
@@ -23043,7 +23099,9 @@ function reloadScheduleFromHistory(btn) {
     _schedSetDirty(false);
     _setQualityState('');
     _schedHideConflict();
-    _schedLoadVersion();
+    // The rows and their version, from the one read (UI-1).
+    _schedVersion = (d.version === undefined || d.version === null) ? null : d.version;
+    _schedSetReplaced(d.replaced_reason ? {by: d.superseded_by || null, text: d.replaced_reason} : null);
     _sqOptimizerProposed = false;
     _sqOptimizer = (d.quality && d.quality.optimizer) || null;
     _sqWhatIfResult = {}; _sqWhatIfStage = null;
@@ -23152,6 +23210,11 @@ function _schedRenderCost(c) {
 }
 
 function schedAfterEdit() {
+  // Backstop for any editor: a replaced copy keeps its saved rows (UI-3).
+  if (_schedReplaced) {
+    try { _schedRows = JSON.parse(_schedSaved) || []; } catch (e) { }
+    _schedRenderTable(); _schedReadOnly(); return;
+  }
   _schedRenderTable();
   _schedSetDirty(true);
   _setQualityState('edited');
@@ -23239,6 +23302,7 @@ function _schedEditRowHtml(i, row) {
 }
 
 function schedEditRow(i) {
+  if (_schedReadOnly()) return;
   if (_schedAddedIdx !== null && _schedAddedIdx !== i) { _schedRows.splice(_schedAddedIdx, 1); if (i > _schedAddedIdx) i--; }
   _schedAddedIdx = null;
   _schedEditIdx = i; _schedEditOpts = []; _schedWhyOpen = null;
@@ -23284,6 +23348,7 @@ function schedCancelEdit(i) {
 }
 
 function schedRemoveRow(i) {
+  if (_schedReadOnly()) return;
   if (!_schedRows[i] || _schedRemoving) return;
   // The row fades out where it is, then the rows below close up; nothing
   // else on the table is redrawn (9/26/26).
@@ -23312,6 +23377,7 @@ function _schedRemoveRowNow(i) {
 }
 
 function schedAddRow() {
+  if (_schedReadOnly()) return;
   if (_schedAddedIdx !== null) return;
   // Defaults from the row being looked at (its day and times), not always
   // day one at 4-10pm (Friction #44).
@@ -24681,6 +24747,7 @@ function _schedPatchChildren(host, html) {
 // ── the grid's editor: one popover, the list editor's fields and rules ──
 var _swJustOpened = false;
 function swEdit(i, anchor) {
+  if (_schedReadOnly()) return;
   // The click that opened the editor (Edit in the Shift tab, + Add a
   // shift) bubbles to the outside-click check below; it used to close the
   // editor it had just opened, so Edit looked dead (owner, 9/26/26).
@@ -24728,6 +24795,7 @@ function swCloseEdit(discard) {
   if (was !== null) { var c = document.querySelector('[data-swg-chip="' + was + '"]'); if (c) c.className = c.className.replace(/\s*editing/g, ''); }
 }
 function swAddShift(name, date) {
+  if (_schedReadOnly()) return;
   if (_swView === 'list' && !window._ssOpen) { schedAddRow(); return; }
   if (_swAddedIdx !== null) return;
   var days = _swDays(), d0 = date || days[0] || '', emp = name || (_schedRosterNames || [])[0] || '';
@@ -34434,14 +34502,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     add.hidden=!add.hidden;if(!add.hidden){var d=add.querySelector('[data-ov-newday]');if(d)d.focus();}
   });
   window.saveRules=function(btn){
-    var rules={},floors={},ins=document.querySelectorAll('#rules-body [data-rule]'),i;
-    // A blank field keeps the default shown in it: it is left out of the
-    // save, so the server's default stands. Sent as null it read as "not
-    // tracked", and a blank rest or weekly-ceiling box turned that rule off
-    // (schedule fix round 10/3/26). The shortest shift is the one setting a
-    // save that leaves it out keeps (schedule_rules._KEPT_WHEN_NOT_SENT), so
-    // its blank — no shortest — is sent.
-    for(i=0;i<ins.length;i++){var v=ins[i].value.trim(),rk=ins[i].getAttribute('data-rule');if(v===''){if(rk==='min_shift_hours')rules[rk]=null;continue;}rules[rk]=rk==='minor_latest_end'?v:+v;}
+    var rules={},floors={},reset=[],ins=document.querySelectorAll('#rules-body [data-rule]'),i;
+    // A save changes only what it sends (schedule re-audit 10/4/26 UI-2), so
+    // a blank field — the default shown in it — is named in rules_default
+    // and goes back to the default. Sent as null it read as "not tracked",
+    // and a blank rest or weekly-ceiling box turned that rule off (schedule
+    // fix round 10/3/26). The shortest shift's blank is no shortest: null.
+    for(i=0;i<ins.length;i++){var v=ins[i].value.trim(),rk=ins[i].getAttribute('data-rule');if(v===''){if(rk==='min_shift_hours')rules[rk]=null;else reset.push(rk);continue;}rules[rk]=rk==='minor_latest_end'?v:+v;}
     var fls=document.querySelectorAll('#rules-body .rul-floor');
     for(i=0;i<fls.length;i++){
       var mEl=fls[i].querySelector('[data-floor="morning"]'),nEl=fls[i].querySelector('[data-floor="night"]');
@@ -34451,11 +34518,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       for(j=0;j<chips.length;j++){var dy=chips[j].getAttribute('data-ov-day'),pt=chips[j].getAttribute('data-ov-part');days[dy]=days[dy]||{};days[dy][pt]=+chips[j].getAttribute('data-ov-n')||0;}
       var anyDay=false;for(j in days)if(days.hasOwnProperty(j))anyDay=true;
       if(anyDay)spec.days=days;
-      if(spec.morning!==undefined||spec.night!==undefined||anyDay)floors[role]=spec;
+      // A role whose boxes are all blank is sent as null: removed. A role
+      // not on the screen is not sent and keeps its floor (UI-2).
+      floors[role]=(spec.morning!==undefined||spec.night!==undefined||anyDay)?spec:null;
     }
     rules.manager_on_duty=false;
     var kh=document.getElementById('rul-kh');if(kh)rules.keyholder_until_close=!!kh.checked;
-    var body={rules:rules,role_floors:floors};
+    var body={rules:rules,role_floors:floors,rules_default:reset};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
     var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;
     var secIn=document.getElementById('rul-sections');
@@ -34469,13 +34538,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       body.cut_floor_default=cutNum;
     }
     var arrs=document.querySelectorAll('#rules-body [data-arr-role]'),arrivals={};
-    for(i=0;i<arrs.length;i++){var an=arrs[i].querySelector('[data-arr-n]').value;if(an==='')continue;arrivals[arrs[i].getAttribute('data-arr-role')]=Math.min(120,Math.abs(Math.round(+an)));}
+    for(i=0;i<arrs.length;i++){var an=arrs[i].querySelector('[data-arr-n]').value;arrivals[arrs[i].getAttribute('data-arr-role')]=an===''?null:Math.min(120,Math.abs(Math.round(+an)));}
     body.role_arrivals=arrivals;
     var cts=document.querySelectorAll('#rules-body [data-ct-role]'),cross={};
-    for(i=0;i<cts.length;i++){var cn=cts[i].querySelector('[data-ct-n]').value;if(cn==='')continue;cross[cts[i].getAttribute('data-ct-role')]=Math.max(0,Math.min(100,+cn));}
+    for(i=0;i<cts.length;i++){var cn=cts[i].querySelector('[data-ct-n]').value;cross[cts[i].getAttribute('data-ct-role')]=cn===''?null:Math.max(0,Math.min(100,+cn));}
     body.role_cross_training=cross;
     var crs=document.querySelectorAll('#rules-body [data-cert-role]'),reqs={};
-    for(i=0;i<crs.length;i++){var picked=_chipVals(crs[i],'data-cert');if(picked.length)reqs[crs[i].getAttribute('data-cert-role')]=picked;}
+    for(i=0;i<crs.length;i++){var picked=_chipVals(crs[i],'data-cert');reqs[crs[i].getAttribute('data-cert-role')]=picked.length?picked:null;}
     body.role_requirements=reqs;
     body.foh_roles=_chipVals(document.getElementById('rul-foh'),'data-foh');
     body.patio_roles=_chipVals(document.getElementById('rul-patio'),'data-patio');
@@ -34486,7 +34555,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Stays until close + N, one per role (D-43): sent only once the roles
     // have loaded, so a screen that couldn't read them never clears them.
     var stays=document.querySelectorAll('#rules-body [data-sfw2-stay]');
-    if(stays.length){var sm={};for(i=0;i<stays.length;i++){var sv=stays[i].value.trim();if(sv==='')continue;sm[stays[i].getAttribute('data-sfw2-stay')]=Math.max(0,Math.min(240,Math.round(+sv)));}body.role_close_mins=sm;}
+    if(stays.length){var sm={};for(i=0;i<stays.length;i++){var sv=stays[i].value.trim();sm[stays[i].getAttribute('data-sfw2-stay')]=sv===''?null:Math.max(0,Math.min(240,Math.round(+sv)));}body.role_close_mins=sm;}
     // The salaried weekly cap (E-12): blank is the default.
     var sc=document.getElementById('sfw2-salcap');
     if(sc&&!sc.disabled){var scv=sc.value.trim(),lo=+(sc.getAttribute('min')||20),hi=+(sc.getAttribute('max')||84);
@@ -36794,6 +36863,12 @@ window.cavPalette = cavPalette;
       b.title = c && c.published_at ? 'Sent to staff ' + (window.mdyAt ? mdyAt(c.published_at) : md(c.published_at)) : '';
       return;
     }
+    var rep = _schedReplaced || (c && c.replaced_reason && (c.schedule_id == null || +c.schedule_id === +_schedHistoryId) ? {text: c.replaced_reason} : null);
+    if (rep) {
+      // A copy a newer one replaced is never sent (schedule re-audit 10/4/26 UI-3).
+      b.textContent = 'Replaced by a newer copy'; b.className = 'cbtn cbtn-secondary'; b.disabled = true; b.title = rep.text || '';
+      return;
+    }
     if (armed) b.textContent = 'Send with ' + window._psArmed.n + ' rule warning' + (window._psArmed.n === 1 ? '' : 's') + '…';
     else b.textContent = (_schedDirty ? 'Save & send' : 'Send') + (n ? ' to ' + n + ' staff' : ' to staff');
     b.className = 'cbtn ' + (armed ? 'cbtn-danger' : 'cbtn-primary');
@@ -36913,6 +36988,9 @@ window.cavPalette = cavPalette;
         demand_data_through: (d.economics || {}).demand_data_through || null,
         detail_thinned_at: d.detail_thinned_at || null,
         roster: names, daily_target_hours: (d.economics || {}).daily_target_hours || (d.quality || {}).daily_target_hours || {},
+        // The rows' version, and whether a newer copy replaced this one
+        // (schedule re-audit 10/4/26 UI-1, UI-3).
+        version: d.version, superseded_by: d.superseded_by || null, replaced_reason: d.replaced_reason || null,
         pending_time_off: undefined});
       if (!opts.quiet && panel) panel.scrollIntoView({behavior: 'smooth', block: 'start'});
     });

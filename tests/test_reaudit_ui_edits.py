@@ -381,3 +381,60 @@ def test_deciding_a_part_day_request_returns_its_label(db_path):
     out = r.get_json()
     assert out["ok"] and out["request"]["span_label"] == listed["span_label"]
     assert "until 4:00pm" in out["request"]["span_label"]
+
+
+# ── The web client: the wiring each fix needs (dashboard.html) ─────────────
+
+def _dash():
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / "templates" / "dashboard.html").read_text()
+
+
+def _fn(src, name):
+    i = src.index("function " + name + "(")
+    j = src.find("\nfunction ", i + 10)
+    return src[i:j if j > 0 else i + 6000]
+
+
+def test_web_keeps_the_version_that_came_with_its_rows():
+    src = _dash()
+    # Never fetched after the rows drew (the race UI-1 names).
+    assert "_schedLoadVersion" not in src
+    hr = _fn(src, "_schedHandleResult")
+    assert "_schedVersion = (data.version === undefined || data.version === null) ? null : data.version;" in hr
+    assert "version: d.version, superseded_by: d.superseded_by" in src            # openScheduleDraft
+    rs = _fn(src, "rescoreSchedule")
+    assert "_schedVersion = d.version" in rs and "body.version = _schedVersion" in rs
+    assert "_schedVersion = (d.version === undefined || d.version === null) ? null : d.version;" in \
+        _fn(src, "reloadScheduleFromHistory")
+    assert "_schedVersion = d.version" in _fn(src, "publishScheduleNow")         # UI-4: the Send's version
+
+
+def test_web_conflict_offers_keep_or_reload_and_never_discards():
+    src = _dash()
+    sc = _fn(src, "_schedShowConflict")
+    assert "schedKeepMine(this)" in sc and "reloadScheduleFromHistory(this, true)" in sc
+    km = _fn(src, "schedKeepMine")
+    assert "_schedVersion = window._schedConflictAt" in km and "rescoreSchedule(btn)" in km
+    rl = _fn(src, "reloadScheduleFromHistory")
+    assert "window.confirm(" in rl and "_schedDirty" in rl
+
+
+def test_web_replaced_copy_is_read_only():
+    src = _dash()
+    assert 'id="sched-replaced"' in src and ".sched-ro #sched-edit-bar" in src
+    for name in ("rescoreSchedule", "saveAndSendSchedule", "publishScheduleNow", "schedEditRow", "schedRemoveRow",
+                 "schedAddRow", "swEdit", "swAddShift", "applyShiftSwap"):
+        assert "_schedReadOnly()" in _fn(src, name)[:400], name
+    assert "if (_schedReplaced)" in _fn(src, "schedAfterEdit")
+    assert "d.replaced" in _fn(src, "rescoreSchedule") and "d.replaced" in _fn(src, "publishScheduleNow")
+    assert "c.replaced_reason" in src                                            # psLabel reads publish-check
+
+
+def test_web_rules_save_is_partial():
+    src = _dash()
+    i = src.index("window.saveRules=function")
+    body = src[i:src.index("jsend('/api/labor/rules',body", i)]
+    assert "rules_default:reset" in body and "reset.push(rk)" in body
+    assert "floors[role]=(spec.morning!==undefined||spec.night!==undefined||anyDay)?spec:null" in body
+    assert "an===''?null" in body and "cn===''?null" in body and "picked.length?picked:null" in body
