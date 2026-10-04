@@ -205,7 +205,7 @@ struct LaborView: View {
                 // of under the whole table (Friction #19, U3-9).
                 .safeAreaInset(edge: .bottom) {
                     if subTab == .overview, let result = viewModel.scheduleResult, result.ok,
-                       result.historyId != nil {
+                       result.historyId != nil, viewModel.weekReadOnlyReason == nil {
                         LaborSendBar(issues: (result.review?.hardCount ?? 0) + (result.review?.softCount ?? 0),
                                      unsaved: viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved,
                                      onReview: {
@@ -365,6 +365,10 @@ struct LaborView: View {
                 viewModel.configureCaching(restaurantId: restaurantId)
                 analyticsViewModel.configureCaching(restaurantId: restaurantId)
             }
+            // The week restored from the cache is re-read against the
+            // server before it is taken as current (schedule re-audit
+            // 10/4/26 UI-1) — another device may have changed or replaced it.
+            await viewModel.revalidateWeek()
             await viewModel.load()
         }
         .task { await analyticsViewModel.load() }
@@ -399,7 +403,8 @@ struct LaborView: View {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,
                                  hoursBudget: viewModel.scheduleResult?.hoursBudget,
-                                 onSent: { viewModel.unsentChanges = [] })
+                                 onSent: { viewModel.unsentChanges = [] },
+                                 onVersion: { viewModel.adoptSentVersion($0) })
         }
         .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
             PublishScheduleSheet(scheduleId: draft.id)
@@ -452,6 +457,7 @@ struct LaborView: View {
             guard newPhase == .active, let restaurantId = sessionStore.currentUser?.restaurantId else { return }
             viewModel.configureCaching(restaurantId: restaurantId)
             analyticsViewModel.configureCaching(restaurantId: restaurantId)
+            Task { await viewModel.revalidateWeek() }
         }
     }
 
@@ -958,6 +964,21 @@ struct LaborView: View {
             isExpanded: $viewModel.scheduleResultExpanded
         ) {
             VStack(alignment: .leading, spacing: 16) {
+                // A copy of the week a newer one replaced is read-only, and
+                // says so before anything else (schedule re-audit 10/4/26
+                // UI-3); a week re-read from the server says when it changed.
+                if let why = viewModel.weekReadOnlyReason {
+                    ScheduleNotice(text: why, symbol: "lock.fill")
+                }
+                if let note = viewModel.weekNotice {
+                    ScheduleNotice(text: note, tone: .cavnarInk2, symbol: "arrow.triangle.2.circlepath") {
+                        Button("Got it") { viewModel.weekNotice = nil }
+                            .font(.cavnarBody(13.5, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .buttonStyle(.plain)
+                            .frame(minHeight: 44)
+                    }
+                }
                 // What the generation could not do leads the draft: days it
                 // could not write, days nobody can work, a starting point,
                 // the managers' plan (schedule audit 10/3/26 B2, M, E).
@@ -1264,21 +1285,24 @@ struct LaborView: View {
                 // Moved here from the summary card above — sitting next to
                 // the table it actually exports reads far more directly
                 // than floating next to an unrelated "hours scheduled" line.
-                // The web editor's "+ Add a shift" (web parity, 9/25/26).
-                Button {
-                    Haptic.light()
-                    editingShift = .add
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus").font(.system(size: 11, weight: .bold))
-                        Text("Add a shift").font(.cavnarBody(13, weight: 700))
+                // The web editor's "+ Add a shift" (web parity, 9/25/26);
+                // none on a replaced copy (UI-3).
+                if viewModel.weekReadOnlyReason == nil {
+                    Button {
+                        Haptic.light()
+                        editingShift = .add
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus").font(.system(size: 11, weight: .bold))
+                            Text("Add a shift").font(.cavnarBody(13, weight: 700))
+                        }
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    .foregroundStyle(Color.cavnarEmber2)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 8)
                 }
-                .buttonStyle(.plain)
-                .padding(.trailing, 8)
                 if let csv {
                     ShareLink(item: csv, preview: SharePreview("Schedule.csv", image: Image("LaunchSeal"))) {
                         Image(systemName: "square.and.arrow.up")
@@ -1310,48 +1334,55 @@ struct LaborView: View {
         let candidates = rowReplacements[row.id]
         let flagged = row.needsReview == true && !(row.reviewReason ?? "").isEmpty
         return Menu {
-            if let candidates {
-                if candidates.isEmpty {
-                    Text("Nobody else can take this shift")
+            if viewModel.weekReadOnlyReason == nil {
+                if let candidates {
+                    if candidates.isEmpty {
+                        Text("Nobody else can take this shift")
+                    } else {
+                        ForEach(candidates) { member in
+                            Button {
+                                Task { await viewModel.overrideEmployee(rowId: row.id, to: member.name) }
+                            } label: { Text(member.label) }
+                        }
+                    }
                 } else {
-                    ForEach(candidates) { member in
-                        Button {
-                            Task { await viewModel.overrideEmployee(rowId: row.id, to: member.name) }
-                        } label: { Text(member.label) }
-                    }
+                    // Eligibility is the server's answer, not a guess made
+                    // here — the same check the what-if pass uses, so
+                    // availability, staff notes, double booking and the
+                    // forty-hour ceiling all apply.
+                    Button {
+                        Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
+                    } label: { Label("Find a replacement", systemImage: "person.2") }
                 }
-            } else {
-                // Eligibility is the server's answer, not a guess made
-                // here — the same check the what-if pass uses, so
-                // availability, staff notes, double booking and the
-                // forty-hour ceiling all apply.
                 Button {
-                    Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
-                } label: { Label("Find a replacement", systemImage: "person.2") }
+                    Haptic.light()
+                    explainingRow = row
+                } label: { Label("Why this person?", systemImage: "questionmark.circle") }
+                // The web editor's pencil and ✕ (web parity, 9/25/26): saved
+                // like a swap — re-scored and stored at once.
+                Button {
+                    Haptic.light()
+                    editingShift = .edit(row)
+                } label: { Label("Change the times", systemImage: "pencil") }
+                if !viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role) {
+                    Menu {
+                        ForEach(viewModel.sections.sections, id: \.self) { name in
+                            Button(name) { Task { await viewModel.assignSection(row, section: name) } }
+                        }
+                        if viewModel.sections.section(for: row) != nil {
+                            Button("No section") { Task { await viewModel.assignSection(row, section: "") } }
+                        }
+                    } label: { Label("Section", systemImage: "square.grid.2x2") }
+                }
+                Button(role: .destructive) {
+                    removingRow = row
+                } label: { Label("Remove this shift", systemImage: "trash") }
+            } else {
+                Button {
+                    Haptic.light()
+                    explainingRow = row
+                } label: { Label("Why this person?", systemImage: "questionmark.circle") }
             }
-            Button {
-                Haptic.light()
-                explainingRow = row
-            } label: { Label("Why this person?", systemImage: "questionmark.circle") }
-            // The web editor's pencil and ✕ (web parity, 9/25/26): saved
-            // like a swap — re-scored and stored at once.
-            Button {
-                Haptic.light()
-                editingShift = .edit(row)
-            } label: { Label("Change the times", systemImage: "pencil") }
-            if !viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role) {
-                Menu {
-                    ForEach(viewModel.sections.sections, id: \.self) { name in
-                        Button(name) { Task { await viewModel.assignSection(row, section: name) } }
-                    }
-                    if viewModel.sections.section(for: row) != nil {
-                        Button("No section") { Task { await viewModel.assignSection(row, section: "") } }
-                    }
-                } label: { Label("Section", systemImage: "square.grid.2x2") }
-            }
-            Button(role: .destructive) {
-                removingRow = row
-            } label: { Label("Remove this shift", systemImage: "trash") }
         } label: {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {

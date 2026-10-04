@@ -1279,6 +1279,19 @@ struct EditCostDelta: Codable, Equatable {
     }
 }
 
+/// The 409 a save or a Send answers with when a newer copy of the week
+/// replaced the one on screen (schedule re-audit 10/4/26 UI-3).
+struct ReplacedRefusal: Decodable, Equatable {
+    let replaced: Bool?
+    let supersededBy: Int?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case replaced, error
+        case supersededBy = "superseded_by"
+    }
+}
+
 /// The 409 a save answers with when somebody saved the week first.
 struct SaveConflict: Decodable, Equatable {
     let conflict: Bool?
@@ -1671,6 +1684,10 @@ struct RuleViolation: Codable, Identifiable, Equatable {
     let hard: Bool?
     let noShow: Bool?
     let label: String?
+    /// A breach about the day (no manager on, a floor short) rather than a
+    /// row: shown on the day, never as "needs review" on whoever's row it
+    /// is pinned to (schedule audit 10/3/26 E-13). Absent on older payloads.
+    var dayLevel: Bool? = nil
 
     var id: String { "\(kind ?? "")-\(index ?? -1)-\(employee ?? "")" }
     var isHard: Bool { hard ?? false }
@@ -1679,6 +1696,7 @@ struct RuleViolation: Codable, Identifiable, Equatable {
         case kind, index, employee, date, day, role, detail, hard, label
         case shiftStart = "shift_start"
         case noShow = "no_show"
+        case dayLevel = "day_level"
     }
 }
 
@@ -1747,7 +1765,14 @@ struct GeneratedSchedule: Codable {
     // History detail only: a save after sending re-emailed the people
     // whose shifts moved; a newer draft of the same week replaced this one.
     let republishedAt: String?
-    let supersededBy: Int?
+    var supersededBy: Int?
+    /// The version of the rows above (generation, history detail): what the
+    /// next save names, kept with the rows — and with them in the on-device
+    /// cache (schedule re-audit 10/4/26 UI-1). Updated by each save and Send.
+    var version: Int? = nil
+    /// Set when a newer copy of this week replaced this one: why it is
+    /// read-only (UI-3). History detail only.
+    var replacedReason: String? = nil
     // The stored what-if, as the column holds it (a JSON string).
     let whatIfJson: String?
 
@@ -1860,6 +1885,8 @@ struct GeneratedSchedule: Codable {
         case publishedBy = "published_by"
         case republishedAt = "republished_at"
         case supersededBy = "superseded_by"
+        case version
+        case replacedReason = "replaced_reason"
         case whatIfJson = "what_if_json"
         case hoursTrimmed = "hours_trimmed"
         case projectedCost = "projected_cost"
@@ -2089,10 +2116,18 @@ final class LaborViewModel {
             stats = cached
             statsCachedAt = SecureCache.modifiedAt(key: Self.statsCacheKey(restaurantId))
         }
-        guard let data = SecureCache.read(key: Self.scheduleCacheKey(restaurantId)),
+        // Only when no week is on screen: a foreground return used to put
+        // the cached copy over the one on screen, and an edit whose save had
+        // failed vanished with the app switch. The week restored carries the
+        // version its rows are, and is re-read against the server
+        // (revalidateWeek) before it is trusted as current (schedule
+        // re-audit 10/4/26 UI-1).
+        guard scheduleResult == nil,
+              let data = SecureCache.read(key: Self.scheduleCacheKey(restaurantId)),
               let cached = try? Self.cacheDecoder.decode(GeneratedSchedule.self, from: data),
               !Self.isStale(cached) else { return }
         scheduleResult = cached
+        latestVersion = cached.version
         if baselineRows == nil { baselineRows = cached.previewRows }
     }
 
@@ -2295,7 +2330,14 @@ final class LaborViewModel {
                 "/mobile/api/labor/time-off/\(id)/decide", method: .post,
                 body: TimeOffDecideBody(decision: approve ? "approve" : "deny"))
             if r.ok, let updated = r.request {
-                if let i = timeOff.firstIndex(where: { $0.id == id }) { timeOff[i] = updated }
+                if let i = timeOff.firstIndex(where: { $0.id == id }) {
+                    // The decided row carries its "until 4:00pm" label now
+                    // (schedule re-audit 10/4/26 UI-10); an older server's
+                    // answer without one keeps the label it was listed with.
+                    var decided = updated
+                    if (decided.spanLabel ?? "").isEmpty { decided.spanLabel = timeOff[i].spanLabel }
+                    timeOff[i] = decided
+                }
                 timeOffWarning = r.warning
                 // An approval over days the open draft puts that person on
                 // offers to redo just those days (the web's lb2AfterTimeOff).
@@ -2368,9 +2410,10 @@ final class LaborViewModel {
         let dailyTargetHours: [String: Double]
         let save: Bool
         let historyId: Int?
-        // The version the rows were loaded from. The server refuses with a
-        // 409 when a newer one is on file, so two managers editing the
-        // same week never silently overwrite each other.
+        // The version the rows came from — kept with them since they
+        // arrived (schedule re-audit 10/4/26 UI-1). The server refuses with
+        // a 409 when somebody else changed the rows since, so two managers
+        // editing the same week never silently overwrite each other.
         let version: Int?
         /// Rows Cavnar AI took out (apply fixes / Improve), so the save
         /// credits Cavnar AI rather than the manager's habit (L-5).
@@ -2410,8 +2453,10 @@ final class LaborViewModel {
         let lateChangeWarning: String?
         /// The one-tap "why" a big change asks in the first weeks (L-35).
         var whyQuestions: HomeLenientList<EditWhyQuestion>? = nil
+        /// The version a save just wrote — the next save names it (UI-1, UI-4).
+        var version: Int? = nil
         enum CodingKeys: String, CodingKey {
-            case ok, quality, error, saved, violations, review
+            case ok, quality, error, saved, violations, review, version
             case whatIf = "what_if"
             case pendingTimeOff = "pending_time_off"
             case changedSinceSent = "changed_since_sent"
@@ -2433,9 +2478,20 @@ final class LaborViewModel {
 
     // MARK: - Versions, conflicts and the change notice
 
-    // The newest version on file for the week on screen — what a save
-    // sends so the server can tell whether somebody else got there first.
+    // The version the rows on screen came from — set with the rows (the
+    // generation, the history detail, each save and Send) and sent with the
+    // next save, so the server can tell whether somebody else changed them
+    // since. It used to be fetched as the newest on file at save time,
+    // which let cached rows overwrite a newer edit from another device
+    // (schedule re-audit 10/4/26 UI-1).
     var latestVersion: Int?
+    /// The rows on screen hold an edit no save has stored yet (a failed
+    /// save, a staged fix). A re-read of the week never replaces them.
+    var rowsUnsaved = false
+    /// Re-reading a week restored from the cache against the server.
+    var isRevalidatingWeek = false
+    /// Said once when the week on screen was replaced by the server's copy.
+    var weekNotice: String?
     // Set from a 409: somebody saved after this draft was opened. The
     // sheet shows their lines and offers Reload; nothing is overwritten.
     var saveConflict: SaveConflict?
@@ -2447,27 +2503,97 @@ final class LaborViewModel {
     var unsentChanges: [String] = []
     var isReloadingAfterConflict = false
 
-    private struct VersionsEnvelope: Decodable {
-        let ok: Bool
-        let versions: [ScheduleVersion]?
+    /// Why the week on screen cannot be edited or sent: a newer copy of it
+    /// replaced this one (schedule re-audit 10/4/26 UI-3). Nil when it can.
+    var weekReadOnlyReason: String? {
+        guard let r = scheduleResult else { return nil }
+        if let why = r.replacedReason, !why.isEmpty { return why }
+        guard let newer = r.supersededBy, newer > 0 else { return nil }
+        return (r.publishedAt != nil
+            ? "A newer copy of this week went to staff since, so this one can't be changed or sent."
+            : "A newer draft of this week replaced this one, so it can't be changed or sent.")
     }
 
-    /// The latest version number for the week on screen. Silent on
-    /// failure: a save then goes without one and the server skips the
-    /// check, which is the pre-versions behaviour, not a new failure.
-    func loadLatestVersion() async {
-        guard let id = scheduleResult?.historyId else { latestVersion = nil; return }
+    /// Refuse an edit on a replaced copy, saying why. True when refused.
+    private func refuseReadOnly() -> Bool {
+        guard let why = weekReadOnlyReason else { return false }
+        overrideState = .failed(why)
+        Haptic.error()
+        return true
+    }
+
+    /// Take the server's copy of a week as the one on screen: its rows,
+    /// the version they are, and fresh rule flags.
+    private func adoptWeek(_ fresh: GeneratedSchedule) async {
+        scheduleResult = fresh
+        latestVersion = fresh.version
+        baselineRows = fresh.previewRows
+        editCost = nil
+        overriddenRows = []
+        hasUnsavedFixes = false
+        rowsUnsaved = false
+        scoreDelta = nil
+        optimizerUnsaved = false
+        cavnarRemoved = []
+        overrideState = .idle
+        saveConflict = nil
+        cacheSchedule(fresh)
+        // The rows are flagged from the live rule check, as the web re-marks
+        // a reopened week (UI-7): the stored rows carry no flags.
+        await refreshOvertimeMoves(reflag: true)
+    }
+
+    /// Re-read a week the phone restored from its cache (or kept while the
+    /// app was away) against the server. Same version: the copy on screen
+    /// is the server's. A newer version or a newer draft: the server's copy
+    /// replaces it — unless the screen holds an edit no save has stored, which
+    /// is never thrown away (its save then meets the conflict check, which
+    /// offers keep or reload). Silent on failure: the version the rows carry
+    /// still guards the next save (schedule re-audit 10/4/26 UI-1).
+    func revalidateWeek() async {
+        guard let held = scheduleResult, var id = held.historyId, !isRevalidatingWeek else { return }
+        isRevalidatingWeek = true
+        defer { isRevalidatingWeek = false }
         do {
-            let r: VersionsEnvelope = try await client.send(
-                "/mobile/api/labor/schedule-history/\(id)/versions", hapticOnError: false)
-            latestVersion = (r.versions ?? []).map(\.version).max()
+            var fresh: GeneratedSchedule = try await client.send(
+                "/mobile/api/labor/schedule-history/\(id)", hapticOnError: false)
+            // A copy a newer one replaced: the week in force is the newer one.
+            var hops = 0
+            while let newer = fresh.supersededBy, newer > 0, newer != id, hops < 3 {
+                let next: GeneratedSchedule = try await client.send(
+                    "/mobile/api/labor/schedule-history/\(newer)", hapticOnError: false)
+                id = newer
+                fresh = next
+                hops += 1
+            }
+            guard scheduleResult?.historyId == held.historyId else { return }   // a new week landed meanwhile
+            let unchanged = id == held.historyId && held.version != nil && fresh.version == held.version
+            if unchanged {
+                if latestVersion == nil { latestVersion = fresh.version }
+                return
+            }
+            if rowsUnsaved || hasUnsavedFixes || optimizerUnsaved {
+                weekNotice = "This week changed on another device. Your edits are still here \u{2014} saving them asks whether to keep yours or reload theirs."
+                return
+            }
+            let rowsSame = (fresh.previewRows ?? []).map(\.signature) == (held.previewRows ?? []).map(\.signature)
+            await adoptWeek(fresh)
+            if hops > 0 {
+                weekNotice = "A newer draft of this week replaced the one on this phone \u{2014} showing it now."
+            } else if !rowsSame {
+                weekNotice = "This week changed on another device \u{2014} showing the latest."
+            }
+        } catch let error as APIClient.APIError where error.status == 404 {
+            // The week was deleted on another device: nothing to edit.
+            guard scheduleResult?.historyId == held.historyId, !rowsUnsaved else { return }
+            weekNotice = "That week was deleted on another device."
         } catch {
-            // Keep whatever was known.
+            // Offline: the rows keep their version, which still guards a save.
         }
     }
 
     /// Throw away the local edits and take the week as it is on file —
-    /// the only way out of a conflict that never overwrites.
+    /// the owner's choice from a conflict.
     func reloadAfterConflict() async {
         guard let id = scheduleResult?.historyId else { saveConflict = nil; return }
         isReloadingAfterConflict = true
@@ -2475,27 +2601,39 @@ final class LaborViewModel {
         do {
             let fresh: GeneratedSchedule = try await client.send(
                 "/mobile/api/labor/schedule-history/\(id)", hapticOnError: false)
-            scheduleResult = fresh
-            baselineRows = fresh.previewRows
-            editCost = nil
-            overriddenRows = []
-            hasUnsavedFixes = false
-            scoreDelta = nil
             // A conflict forced this, not the owner: the proposal is left
             // unanswered (it expires as ignored), not logged as declined.
             optimizerRecKey = nil
-            optimizerUnsaved = false
-            cavnarRemoved = []
-            overrideState = .idle
-            saveConflict = nil
-            cacheSchedule(fresh)
-            await loadLatestVersion()
+            await adoptWeek(fresh)
             Haptic.success()
         } catch let error as APIClient.APIError {
             overrideState = .failed(error.message)
         } catch {
             overrideState = .failed("Couldn't reload this week.")
         }
+    }
+
+    /// A Send of the week on screen wrote a version that changed no row:
+    /// kept with the rows, so the next save names it and is never refused as
+    /// a conflict with the owner themself (schedule re-audit 10/4/26 UI-4).
+    /// Not while an edit no save has stored is on screen — its base is
+    /// still the version before.
+    func adoptSentVersion(_ version: Int) {
+        guard !rowsUnsaved, !hasUnsavedFixes, !optimizerUnsaved, var current = scheduleResult else { return }
+        latestVersion = version
+        current.version = version
+        scheduleResult = current
+        cacheSchedule(current)
+    }
+
+    /// Keep the edits on screen: the owner saw what the other save changed
+    /// and chose theirs to go. Saved against the version the refusal named,
+    /// so it lands as the newest; nothing on screen is thrown away (UI-1).
+    func keepMineAfterConflict() async {
+        guard let conflict = saveConflict, let v = conflict.latestVersion else { return }
+        latestVersion = v
+        saveConflict = nil
+        await rescoreQuality()
     }
 
     // MARK: - Cost of an edit
@@ -2518,18 +2656,74 @@ final class LaborViewModel {
         let ok: Bool
         let cost: EditCostDelta?
         let overtimeMoves: [OvertimeMove]?
+        // The live rule check over the rows sent — what flags each row
+        // (UI-7). Lenient: an unreadable list never fails the readout.
+        var violations: [RuleViolation]? = nil
+        var review: ScheduleReview? = nil
         enum CodingKeys: String, CodingKey {
-            case ok, cost
+            case ok, cost, violations, review
             case overtimeMoves = "overtime_moves"
         }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            cost = try? c.decodeIfPresent(EditCostDelta.self, forKey: .cost)
+            overtimeMoves = try? c.decodeIfPresent([OvertimeMove].self, forKey: .overtimeMoves)
+            violations = try? c.decodeIfPresent([RuleViolation].self, forKey: .violations)
+            review = try? c.decodeIfPresent(ScheduleReview.self, forKey: .review)
+        }
+    }
+
+    /// Mark each row the rule check faults as needing review, with why —
+    /// the phone's twin of the web's _rvMarkRows (schedule re-audit 10/4/26
+    /// UI-7): a reopened week's rows carried no flags, and an edit that
+    /// fixed or made a breach left the old mark. A breach about the day is
+    /// never put on whoever's row it is pinned to. `replace` clears the mark
+    /// on a row the check no longer faults; a fresh generation's rows keep
+    /// the engine's own marks (a scrambled row has no rule behind it).
+    nonisolated static func flaggedRows(_ rows: [ScheduleRow], violations: [RuleViolation],
+                                        hardRows: [Int]?, replace: Bool) -> [ScheduleRow] {
+        var hard = Set(hardRows ?? [])
+        var reason: [Int: String] = [:]
+        for v in violations where v.isHard && v.dayLevel != true {
+            guard let i = v.index else { continue }
+            hard.insert(i)
+            if reason[i] == nil { reason[i] = v.detail ?? v.label ?? v.kind ?? "" }
+        }
+        var out = rows
+        for i in out.indices {
+            if hard.contains(i) {
+                out[i].needsReview = true
+                if let r = reason[i], !r.isEmpty { out[i].reviewReason = r }
+            } else if replace {
+                out[i].needsReview = false
+                out[i].reviewReason = nil
+            }
+        }
+        return out
+    }
+
+    /// Apply a rule check to the week on screen, only while its rows are
+    /// still the ones that were checked.
+    private func applyFlags(checked rows: [ScheduleRow], violations: [RuleViolation]?, review: ScheduleReview?,
+                            replace: Bool) {
+        guard let violations, var current = scheduleResult,
+              (current.previewRows ?? []).map(\.signature) == rows.map(\.signature) else { return }
+        current.previewRows = Self.flaggedRows(current.previewRows ?? [], violations: violations,
+                                               hardRows: review?.hardRows, replace: replace)
+        current.ruleViolations = violations
+        if let review { current.review = review }
+        scheduleResult = current
     }
 
     // Overtime the rows on screen create, each with a same-role person who
     // has room and what moving the shift saves. Refreshed with every check.
     var overtimeMoves: [OvertimeMove] = []
 
-    /// The overtime moves for the week as it stands, before any edit.
-    func refreshOvertimeMoves() async {
+    /// The overtime moves for the week as it stands, before any edit — and,
+    /// with `reflag`, each row's rule flags from the same check (a week
+    /// reopened or re-read, UI-7).
+    func refreshOvertimeMoves(reflag: Bool = false) async {
         guard let rows = scheduleResult?.previewRows, !rows.isEmpty else {
             overtimeMoves = []
             return
@@ -2538,7 +2732,10 @@ final class LaborViewModel {
             let r: ViolationsResponse = try await client.send(
                 "/mobile/api/labor/schedule/violations", method: .post,
                 body: ViolationsBody(rows: rows, baselineRows: nil), hapticOnError: false)
-            if r.ok { overtimeMoves = r.overtimeMoves ?? [] }
+            if r.ok {
+                overtimeMoves = r.overtimeMoves ?? []
+                if reflag { applyFlags(checked: rows, violations: r.violations, review: r.review, replace: true) }
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -2653,6 +2850,8 @@ final class LaborViewModel {
             if r.ok {
                 editCost = r.cost
                 overtimeMoves = r.overtimeMoves ?? []
+                // The edit moved the flags: re-marked from this check (UI-7).
+                applyFlags(checked: rows, violations: r.violations, review: r.review, replace: true)
             }
         } catch {
             // The readout is a courtesy; the save path reports its own errors.
@@ -2906,6 +3105,7 @@ final class LaborViewModel {
     /// until the owner saves: the rows on screen change, the score and the
     /// review re-render, and Save is what commits them.
     func applyFixes() async {
+        if let why = weekReadOnlyReason { applyFixesError = why; return }
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
         isApplyingFixes = true
         applyFixesError = nil
@@ -2940,7 +3140,13 @@ final class LaborViewModel {
                 review.unfixed = response.unfixed ?? review.unfixed
                 result.review = review
             }
-            if let violations = response.violations { result.ruleViolations = violations }
+            if let violations = response.violations {
+                result.ruleViolations = violations
+                // The rows the fixes moved are re-marked from this check (UI-7).
+                result.previewRows = Self.flaggedRows(result.previewRows ?? [], violations: violations,
+                                                      hardRows: response.review?.hardRows ?? result.review?.hardRows,
+                                                      replace: true)
+            }
             scheduleResult = result
             hasUnsavedFixes = !(response.fixes ?? []).isEmpty
             overrideState = .idle
@@ -3008,6 +3214,7 @@ final class LaborViewModel {
     /// every change and why, and Save (the same one Apply fixes uses) is
     /// what keeps them. Rows Cavnar AI touched carry a note starting "Cavnar AI:".
     func optimize() async {
+        if let why = weekReadOnlyReason { optimizeError = why; return }
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
         isOptimizing = true
         optimizeError = nil
@@ -3121,9 +3328,11 @@ final class LaborViewModel {
     /// Put a what-if on the week: the rows replace the draft and are saved
     /// exactly like any other override.
     func applyWhatIf(_ rows: [ScheduleRow], who: String, date: String) async {
+        guard !refuseReadOnly() else { return }
         guard !rows.isEmpty, var result = scheduleResult else { return }
         result.previewRows = rows
         scheduleResult = result
+        rowsUnsaved = true
         for row in rows where row.employee == who && row.date == date { overriddenRows.insert(row.id) }
         Haptic.light()
         await rescoreQuality()
@@ -3298,11 +3507,18 @@ final class LaborViewModel {
     /// trip and the manager sees what their change cost or bought before
     /// they have taken their finger off the screen.
     func overrideEmployee(rowId: String, to name: String) async {
+        guard !refuseReadOnly() else { return }
         guard var result = scheduleResult, var rows = result.previewRows,
               let index = rows.firstIndex(where: { $0.id == rowId }) else { return }
         rows[index].employee = name
+        // The old person's breach is not the new person's: the mark comes
+        // off now and the save's rule check puts back any that still hold
+        // (UI-7), as the web's swap does.
+        rows[index].needsReview = false
+        rows[index].reviewReason = nil
         result.previewRows = rows
         scheduleResult = result
+        rowsUnsaved = true
         overriddenRows.insert(rows[index].id)
         Haptic.light()
         await rescoreQuality()
@@ -3357,6 +3573,7 @@ final class LaborViewModel {
     /// refused the same collision. Nil when the edit was made.
     @discardableResult
     func editShiftTimes(rowId: String, start: String, end: String) async -> String? {
+        if let why = weekReadOnlyReason { return why }
         guard var result = scheduleResult, var rows = result.previewRows,
               let index = rows.firstIndex(where: { $0.id == rowId }) else { return "That shift is no longer on the week." }
         guard let hours = Self.shiftHours(start, end) else { return "Times read like 4:00pm." }
@@ -3374,6 +3591,7 @@ final class LaborViewModel {
         overriddenRows.insert(rows[index].id)
         result.previewRows = rows
         scheduleResult = result
+        rowsUnsaved = true
         Haptic.light()
         await rescoreQuality()
         await refreshEditCost()
@@ -3382,12 +3600,14 @@ final class LaborViewModel {
 
     /// Take one shift off the week.
     func removeShift(rowId: String) async {
+        guard !refuseReadOnly() else { return }
         guard var result = scheduleResult, var rows = result.previewRows,
               let index = rows.firstIndex(where: { $0.id == rowId }) else { return }
         rows.remove(at: index)
         overriddenRows.remove(rowId)
         result.previewRows = rows
         scheduleResult = result
+        rowsUnsaved = true
         Haptic.light()
         await rescoreQuality()
         await refreshEditCost()
@@ -3397,6 +3617,7 @@ final class LaborViewModel {
     /// person already has a shift starting then that day.
     @discardableResult
     func addShift(date: String, employee: String, role: String?, start: String, end: String) async -> String? {
+        if let why = weekReadOnlyReason { return why }
         guard var result = scheduleResult, var rows = result.previewRows else { return "Open a drafted week first." }
         guard let hours = Self.shiftHours(start, end) else { return "Times read like 4:00pm." }
         let name = employee.trimmingCharacters(in: .whitespaces)
@@ -3409,6 +3630,7 @@ final class LaborViewModel {
         overriddenRows.insert(row.id)
         result.previewRows = rows
         scheduleResult = result
+        rowsUnsaved = true
         Haptic.light()
         await rescoreQuality()
         await refreshEditCost()
@@ -3451,14 +3673,16 @@ final class LaborViewModel {
 
     private func performRescore(save: Bool) async {
         guard var result = scheduleResult, let rows = result.previewRows, !rows.isEmpty else { return }
+        if save, refuseReadOnly() { return }
         isRescoringQuality = true
         overrideState = .saving
         saveNotice = nil
         defer { isRescoringQuality = false }
-        // A save names the version it started from. Fetched fresh when
-        // none is known yet (a week restored from the cache, or an older
-        // backend that never sent versions).
-        if save, latestVersion == nil, result.historyId != nil { await loadLatestVersion() }
+        // A save names the version its rows came from (latestVersion, set
+        // with the rows). Never fetched here: the newest number on file let
+        // stale rows overwrite somebody else's newer edit (UI-1). None known
+        // (an older cached week) is refused by the server as a conflict,
+        // which offers keep or reload — never a silent overwrite.
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
@@ -3486,14 +3710,28 @@ final class LaborViewModel {
                 // when the server sent one, so an older backend leaves the
                 // last review standing rather than blanking it.
                 if let review = response.review { current.review = review }
-                if let violations = response.violations { current.ruleViolations = violations }
+                if let violations = response.violations {
+                    current.ruleViolations = violations
+                    // Each row's flag follows the check of these rows (UI-7).
+                    current.previewRows = Self.flaggedRows(current.previewRows ?? [], violations: violations,
+                                                           hardRows: response.review?.hardRows, replace: true)
+                }
                 if let pending = response.pendingTimeOff { current.pendingTimeOff = pending }
             }
+            if response.saved ?? false {
+                // The version just written, from the answer (UI-1, UI-4); an
+                // older backend that sends none moved one on.
+                latestVersion = response.version ?? latestVersion.map { $0 + 1 }
+                current.version = latestVersion
+            }
             scheduleResult = current
-            cacheSchedule(current)
+            // The cache holds rows the server has: the week as just saved,
+            // never an edit still in flight behind it.
+            if sameRows { cacheSchedule(current) }
             if save && sameRows {
                 if optimizerUnsaved { postRecEvent(optimizerRecKey, "accepted"); optimizerRecKey = nil }
                 hasUnsavedFixes = false; optimizerUnsaved = false
+                if response.saved ?? false { rowsUnsaved = false }
             }
             overrideState = .idle
             if response.saved ?? false {
@@ -3504,9 +3742,6 @@ final class LaborViewModel {
                     whyQuestions = asked
                     whyHistoryId = result.historyId
                 }
-                // The version just written is now the latest; the next
-                // save must name it or it would read as a conflict.
-                if let v = latestVersion { latestVersion = v + 1 } else { await loadLatestVersion() }
                 if let unsent = response.unsentChanges {
                     unsentChanges = unsent
                     saveNotice = Self.unsentNotice(unsent)
@@ -3527,7 +3762,20 @@ final class LaborViewModel {
             if error.status == 409, let body = error.body,
                let conflict = try? JSONDecoder().decode(SaveConflict.self, from: body), conflict.conflict == true {
                 saveConflict = conflict
-                overrideState = .failed(conflict.error ?? "Somebody saved this week after you opened it.")
+                overrideState = .failed(conflict.error ?? "Somebody changed this week after you opened it.")
+                Haptic.error()
+                return
+            }
+            // A newer copy of this week replaced this one: read-only from
+            // here, with why (UI-3). The edit stays on screen.
+            if error.status == 409, let body = error.body,
+               let replaced = try? JSONDecoder().decode(ReplacedRefusal.self, from: body), replaced.replaced == true {
+                if var current = scheduleResult {
+                    current.supersededBy = replaced.supersededBy ?? current.supersededBy
+                    current.replacedReason = replaced.error
+                    scheduleResult = current
+                }
+                overrideState = .failed(replaced.error ?? "A newer draft of this week replaced this one.")
                 Haptic.error()
                 return
             }
@@ -4075,12 +4323,15 @@ final class LaborViewModel {
                     cacheSchedule(result)
                     baselineRows = result.previewRows
                     editCost = nil
-                    latestVersion = nil
+                    // The version these rows were stored as, from the result
+                    // itself — never fetched afterwards (UI-1).
+                    latestVersion = result.version
+                    rowsUnsaved = false
+                    weekNotice = nil
                     scoreDelta = nil
                     optimizerUnsaved = false
                     ratedInPrompt = [:]
                     suppressedRecommendationKinds = result.quality?.suppressedRecommendationKinds ?? []
-                    await loadLatestVersion()
                     await refreshOvertimeMoves()
                     await loadSections()
                 }

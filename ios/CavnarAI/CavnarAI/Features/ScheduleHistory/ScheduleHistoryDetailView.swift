@@ -31,17 +31,22 @@ struct ScheduleHistoryDetailView: View {
             if let detail = viewModel.detail {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        Button {
-                            Haptic.light()
-                            showingPublish = true
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
-                                Text("Send to staff")
+                        // A copy a newer one replaced is never sent: no Send,
+                        // and the line below says it was replaced (schedule
+                        // re-audit 10/4/26 UI-3; the server refuses it too).
+                        if (detail.supersededBy ?? 0) <= 0 && (detail.replacedReason ?? "").isEmpty {
+                            Button {
+                                Haptic.light()
+                                showingPublish = true
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+                                    Text("Send to staff")
+                                }
+                                .frame(maxWidth: .infinity)
                             }
-                            .frame(maxWidth: .infinity)
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
 
                         // A draft replaced by a newer draft of the same
                         // week — kept for the record, read as history.
@@ -272,7 +277,10 @@ struct ScheduleHistoryDetailView: View {
             Image(systemName: "doc.on.doc")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.cavnarInk3)
-            HomeMixedText.make("Replaced by a newer draft (#\(newer)) — kept for the record.",
+            // Why it can't be sent, in the server's words when it sent them
+            // (UI-3); never the row's internal id.
+            HomeMixedText.make((viewModel.detail?.replacedReason).flatMap { $0.isEmpty ? nil : $0 }
+                               ?? "Replaced by a newer draft of this week \u{2014} kept for the record, and it can't be sent.",
                                size: 13.5, weight: 600, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }

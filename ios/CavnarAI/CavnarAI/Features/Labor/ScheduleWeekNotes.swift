@@ -312,8 +312,10 @@ struct EditCostReadout: View {
     private var tone: Color { (cost.dollarsDelta ?? 0) > 0 ? .cavnarEmber : .cavnarInk2 }
 }
 
-/// Somebody saved this week after it was opened. Their lines, and one way
-/// out: Reload. The edit on screen is never written over theirs.
+/// Somebody changed this week after it was opened. Their lines, and the
+/// owner's choice: keep their own edits (saved over theirs, as the newest)
+/// or reload theirs. Nothing is decided for them, and the edit on screen is
+/// never thrown away unasked (schedule re-audit 10/4/26 UI-1).
 struct SaveConflictSheet: View {
     @Bindable var viewModel: LaborViewModel
     let conflict: SaveConflict
@@ -324,11 +326,11 @@ struct SaveConflictSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("\(conflict.savedBy ?? "Somebody") saved this week first")
+                        Text("\(conflict.savedBy ?? "Somebody") changed this week first")
                             .font(.cavnarHeadline(22))
                             .foregroundStyle(Color.cavnarInk)
                         HomeMixedText.make(
-                            conflict.error ?? "This week changed after you opened it. Reload to see their version — your edit was not written over it.",
+                            conflict.error ?? "This week changed after you opened it. Your edits are still here \u{2014} keep yours, or reload theirs.",
                             size: 14.5, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                         if let v = conflict.latestVersion {
@@ -356,6 +358,19 @@ struct SaveConflictSheet: View {
                                 .fill(Color.cavnarBlue.opacity(0.07)))
                     }
                     VStack(spacing: 10) {
+                        if conflict.latestVersion != nil {
+                            // Saved against the version this refusal named:
+                            // the owner read what it replaces above.
+                            Button {
+                                Haptic.medium()
+                                Task {
+                                    await viewModel.keepMineAfterConflict()
+                                    dismiss()
+                                }
+                            } label: { Text("Keep my edits").frame(maxWidth: .infinity) }
+                                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isReloadingAfterConflict))
+                                .disabled(viewModel.isReloadingAfterConflict)
+                        }
                         Button {
                             Haptic.medium()
                             Task {
@@ -367,17 +382,17 @@ struct SaveConflictSheet: View {
                                 if viewModel.isReloadingAfterConflict {
                                     CavnarShimmerText(text: "Reloading…")
                                 } else {
-                                    Text("Reload their version")
+                                    Text("Reload theirs \u{2014} drops your edits")
                                 }
                             }
                             .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isReloadingAfterConflict))
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                         .disabled(viewModel.isReloadingAfterConflict)
                         Button {
                             viewModel.saveConflict = nil
                             dismiss()
-                        } label: { Text("Keep looking, don't save").frame(maxWidth: .infinity) }
+                        } label: { Text("Decide later \u{2014} keep my edits on screen").frame(maxWidth: .infinity) }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     if case .failed(let message) = viewModel.overrideState, viewModel.isReloadingAfterConflict == false,
@@ -388,7 +403,7 @@ struct SaveConflictSheet: View {
                 }
                 .padding(20)
             }
-            .accountSheetChrome("Saved elsewhere")
+            .accountSheetChrome("Changed elsewhere")
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)

@@ -109,9 +109,13 @@ struct PublishCheck: Decodable, Equatable {
     var notes: [PublishNote] = []
     var hours: PublishHours? = nil
     var likelyToChange: LikelyToChange? = nil
+    /// Why this copy cannot be sent: a newer copy of the week replaced it
+    /// (schedule re-audit 10/4/26 UI-3). Nil when it can.
+    var replacedReason: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok, blockers, reach, notes, hours
+        case replacedReason = "replaced_reason"
         case likelyToChange = "likely_to_change"
         case scheduleId = "schedule_id"
         case weekStart = "week_start"
@@ -139,6 +143,7 @@ struct PublishCheck: Decodable, Equatable {
         notes = c.sfList(PublishNote.self, .notes)
         hours = (try? c.decodeIfPresent(PublishHours.self, forKey: .hours)) ?? nil
         likelyToChange = (try? c.decodeIfPresent(LikelyToChange.self, forKey: .likelyToChange)) ?? nil
+        replacedReason = (try? c.decodeIfPresent(String.self, forKey: .replacedReason)) ?? nil
     }
 
     /// The lines to show and the keys they carry, items first.
@@ -186,9 +191,12 @@ struct PublishResult: Decodable {
     /// A week staff already had: only the people whose shifts changed were
     /// told (the save no longer emails anyone; Send does).
     let changesSent: Bool?
+    /// The version the Send wrote: the Labor screen keeps it with its rows,
+    /// so the owner's next save names it (schedule re-audit 10/4/26 UI-4).
+    var version: Int? = nil
 
     enum CodingKeys: String, CodingKey {
-        case ok, sent, unreachable, failed, error, status, acknowledged, note
+        case ok, sent, unreachable, failed, error, status, acknowledged, note, version
         case alreadyPublished = "already_published"
         case changesSent = "changes_sent"
     }
@@ -206,6 +214,7 @@ struct PublishResult: Decodable {
         alreadyPublished = try? c.decodeIfPresent(Bool.self, forKey: .alreadyPublished)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
         changesSent = try? c.decodeIfPresent(Bool.self, forKey: .changesSent)
+        version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? nil
     }
 
     struct Sent: Decodable, Identifiable {
@@ -276,6 +285,10 @@ final class PublishScheduleViewModel {
 
     /// Told once a send went through (Labor clears its unsent-changes list).
     var onSent: (() -> Void)?
+    /// The Send's version, for the screen holding the week's rows (UI-4).
+    var onVersion: ((Int) -> Void)?
+    /// Why this copy cannot be sent (publish-check's replaced_reason, UI-3).
+    var replacedReason: String?
 
     var editingContact: StaffContact?
     var isSavingContact = false
@@ -356,6 +369,7 @@ final class PublishScheduleViewModel {
             hapticOnError: false), c.ok else { return }
         check = c
         canPublish = c.canPublish
+        replacedReason = c.replacedReason
         if c.publishedAt == nil {
             let shown = c.shown
             // Replace what is on screen only when the list changed, so a
@@ -483,6 +497,7 @@ final class PublishScheduleViewModel {
                 acknowledgeBlockers = false
                 unsentChanges = []
                 onSent?()
+                if let v = result.version { onVersion?(v) }
             } else {
                 publishError = result.error ?? "Couldn't send the schedule."
             }
@@ -522,12 +537,13 @@ struct PublishScheduleSheet: View {
     var hoursBudget: Double? = nil
 
     init(scheduleId: Int? = nil, unsentChanges: [String] = [], hoursBudget: Double? = nil,
-         onSent: (() -> Void)? = nil) {
+         onSent: (() -> Void)? = nil, onVersion: ((Int) -> Void)? = nil) {
         self.hoursBudget = hoursBudget
         let vm = PublishScheduleViewModel()
         vm.scheduleId = scheduleId
         vm.unsentChanges = unsentChanges
         vm.onSent = onSent
+        vm.onVersion = onVersion
         _viewModel = State(initialValue: vm)
     }
 
@@ -660,11 +676,16 @@ struct PublishScheduleSheet: View {
     private var sendBlocked: Bool {
         viewModel.contacts.isEmpty || viewModel.isPublishing || !viewModel.canPublish
             || (!viewModel.blockers.isEmpty && !viewModel.acknowledgeBlockers)
+            || viewModel.replacedReason != nil
     }
 
     @ViewBuilder
     private var publishButton: some View {
-        if !viewModel.unsentChanges.isEmpty {
+        if let why = viewModel.replacedReason {
+            // A copy a newer one replaced is never sent (UI-3): why, in place
+            // of Send.
+            ScheduleNotice(text: why, symbol: "lock.fill")
+        } else if !viewModel.unsentChanges.isEmpty {
             // A week staff already have, changed since: Send tells only
             // the people whose shifts moved.
             Button {

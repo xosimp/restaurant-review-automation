@@ -1453,6 +1453,10 @@ final class ScheduleSetupViewModel {
     var isLoadingRules = false
     var isSavingRules = false
     var rulesError: String?
+    /// Set only by a successful read of the rules. Until then the sheet
+    /// shows the error and Retry, never a form of blanks to save over the
+    /// owner's rules (schedule re-audit 10/4/26 UI-2).
+    var rulesLoaded = false
     // The second batch: where the restaurant is, what that pack set, the
     // per-role arrivals and certifications, which roles are front of
     // house or on the patio, the budget trim, the reservation feed.
@@ -1538,28 +1542,34 @@ final class ScheduleSetupViewModel {
     }
 
     /// Everything the rules sheet can save. Encoded by hand so a field
-    /// that was not touched is absent, and the server leaves it alone.
+    /// that was not touched is absent, and the server leaves it alone. The
+    /// server merges: `rules` key by key (`rulesDefault` names the rules
+    /// that go back to their default), each per-role map role by role — a
+    /// role sent as null is removed, a role not sent is kept (schedule
+    /// re-audit 10/4/26 UI-2).
     struct RulesPatch: Encodable {
         var rules: [String: LooseValue]? = nil
-        var roleFloors: [String: RoleFloor]? = nil
+        var rulesDefault: [String]? = nil
+        var roleFloors: [String: RoleFloor?]? = nil
         var jurisdiction: String?? = nil
-        var roleArrivals: [String: Int]? = nil
-        var roleRequirements: [String: [String]]? = nil
+        var roleArrivals: [String: Int?]? = nil
+        var roleRequirements: [String: [String]?]? = nil
         var fohRoles: [String]? = nil
         var patioRoles: [String]? = nil
-        var roleCrossTraining: [String: Int]? = nil
+        var roleCrossTraining: [String: Int?]? = nil
         var trimToBudget: Bool? = nil
         var cutFloorDefault: Int? = nil
         var reservationProvider: String?? = nil
         var reservationApiKey: String?? = nil
         /// One "stays until close + N min" per role (schedule audit 10/3/26
         /// D-43) — the server writes it to both close settings.
-        var roleCloseMins: [String: Int]? = nil
+        var roleCloseMins: [String: Int?]? = nil
         /// The salaried weekly cap: `.some(nil)` goes back to the default.
         var salariedCap: Double?? = nil
 
         enum CodingKeys: String, CodingKey {
             case rules, jurisdiction
+            case rulesDefault = "rules_default"
             case roleFloors = "role_floors"
             case roleArrivals = "role_arrivals"
             case roleRequirements = "role_requirements"
@@ -1577,6 +1587,7 @@ final class ScheduleSetupViewModel {
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encodeIfPresent(rules, forKey: .rules)
+            try c.encodeIfPresent(rulesDefault, forKey: .rulesDefault)
             try c.encodeIfPresent(roleFloors, forKey: .roleFloors)
             // A double optional: `.some(nil)` means "clear it" and goes
             // over the wire as null; `nil` means untouched and is absent.
@@ -1637,6 +1648,7 @@ final class ScheduleSetupViewModel {
             reservationFeed = r.reservationFeed
             reservationProviders = r.reservationProviders ?? []
             rulesError = nil
+            rulesLoaded = true
         } catch is CancellationError {
         } catch let error as APIClient.APIError {
             rulesError = error.message
@@ -1647,7 +1659,7 @@ final class ScheduleSetupViewModel {
 
     @discardableResult
     func saveRules(_ newRules: [String: LooseValue], roleFloors newFloors: [String: RoleFloor]) async -> Bool {
-        await saveRules(RulesPatch(rules: newRules, roleFloors: newFloors))
+        await saveRules(RulesPatch(rules: newRules, roleFloors: newFloors.mapValues { Optional($0) }))
     }
 
     /// Save whatever the patch names, then read the rules back so the

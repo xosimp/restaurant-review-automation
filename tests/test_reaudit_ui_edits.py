@@ -438,3 +438,89 @@ def test_web_rules_save_is_partial():
     assert "rules_default:reset" in body and "reset.push(rk)" in body
     assert "floors[role]=(spec.morning!==undefined||spec.night!==undefined||anyDay)?spec:null" in body
     assert "an===''?null" in body and "cn===''?null" in body and "picked.length?picked:null" in body
+
+
+# ── The iOS client: the wiring each fix needs (source-level, like
+#    tests/test_sf_uii2_ios_wiring.py; the app itself is compiled by
+#    xcodebuild in the fix round) ──────────────────────────────────────────
+
+def _swift(rel):
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / "ios" / "CavnarAI" / "CavnarAI" / rel).read_text()
+
+
+def _swift_fn(src, name):
+    i = src.index("func " + name + "(")
+    j = src.find("\n    func ", i + 10)
+    k = src.find("\n    private func ", i + 10)
+    ends = [x for x in (j, k) if x > 0]
+    return src[i:min(ends) if ends else i + 6000]
+
+
+def test_ios_keeps_the_version_that_came_with_its_rows():
+    vm = _swift("Features/Labor/LaborViewModel.swift")
+    assert "func loadLatestVersion" not in vm                      # never fetched at save time (UI-1)
+    assert "case version" in vm and "var version: Int? = nil" in vm
+    assert "latestVersion = result.version" in vm                  # generation
+    assert "latestVersion = cached.version" in vm                  # cache restore
+    assert "latestVersion = fresh.version" in _swift_fn(vm, "adoptWeek")
+    rescore = vm[vm.index("private func performRescore"):vm.index("// MARK: - Operational Score")]
+    assert "latestVersion = response.version" in rescore and "current.version = latestVersion" in rescore
+    assert "loadLatestVersion" not in rescore
+    assert "if sameRows { cacheSchedule(current) }" in rescore      # the cache holds saved rows only
+    # A week restored from the cache is re-read, and never put over the one on screen.
+    assert "guard scheduleResult == nil," in _swift_fn(vm, "configureCaching")
+    reval = _swift_fn(vm, "revalidateWeek")
+    assert "supersededBy" in reval and "rowsUnsaved || hasUnsavedFixes || optimizerUnsaved" in reval
+    view = _swift("Features/Labor/LaborView.swift")
+    assert view.count("viewModel.revalidateWeek()") == 2
+    # The Send's version comes back to the Labor screen (UI-4).
+    sheet = _swift("Features/Labor/PublishScheduleSheet.swift")
+    assert "if let v = result.version { onVersion?(v) }" in sheet
+    assert "onVersion: { viewModel.adoptSentVersion($0) }" in view
+
+
+def test_ios_conflict_offers_keep_or_reload():
+    vm = _swift("Features/Labor/LaborViewModel.swift")
+    keep = _swift_fn(vm, "keepMineAfterConflict")
+    assert "latestVersion = v" in keep and "await rescoreQuality()" in keep
+    notes = _swift("Features/Labor/ScheduleWeekNotes.swift")
+    assert "await viewModel.keepMineAfterConflict()" in notes and "await viewModel.reloadAfterConflict()" in notes
+
+
+def test_ios_replaced_copy_is_read_only():
+    vm = _swift("Features/Labor/LaborViewModel.swift")
+    assert "struct ReplacedRefusal" in vm and "case replacedReason = \"replaced_reason\"" in vm
+    for name in ("overrideEmployee", "removeShift", "applyWhatIf"):
+        assert "refuseReadOnly()" in _swift_fn(vm, name), name
+    for name in ("editShiftTimes", "addShift", "applyFixes", "optimize"):
+        assert "weekReadOnlyReason" in _swift_fn(vm, name), name
+    assert "if save, refuseReadOnly() { return }" in vm
+    view = _swift("Features/Labor/LaborView.swift")
+    assert "result.historyId != nil, viewModel.weekReadOnlyReason == nil" in view   # no Send bar
+    hist = _swift("Features/ScheduleHistory/ScheduleHistoryDetailView.swift")
+    assert "(detail.supersededBy ?? 0) <= 0 && (detail.replacedReason ?? \"\").isEmpty" in hist
+    sheet = _swift("Features/Labor/PublishScheduleSheet.swift")
+    assert "case replacedReason = \"replaced_reason\"" in sheet and "|| viewModel.replacedReason != nil" in sheet
+
+
+def test_ios_rows_are_reflagged_from_the_rule_check():
+    vm = _swift("Features/Labor/LaborViewModel.swift")
+    flag = _swift_fn(vm, "flaggedRows")
+    assert "v.isHard && v.dayLevel != true" in flag and "out[i].needsReview = false" in flag
+    assert 'case dayLevel = "day_level"' in vm
+    assert "applyFlags(checked: rows, violations: r.violations, review: r.review, replace: true)" in \
+        _swift_fn(vm, "refreshEditCost")
+    assert "refreshOvertimeMoves(reflag: true)" in _swift_fn(vm, "adoptWeek")
+    assert vm.count("Self.flaggedRows(") >= 2                       # the save and apply-fixes answers
+
+
+def test_ios_rules_sheet_never_saves_unloaded_blanks_and_sends_only_changes():
+    svm = _swift("Features/Labor/ScheduleSetupViewModel.swift")
+    assert "var rulesLoaded = false" in svm and "rulesLoaded = true" in svm
+    assert 'case rulesDefault = "rules_default"' in svm and "var roleFloors: [String: RoleFloor?]?" in svm
+    sheet = _swift("Features/Labor/ScheduleRulesSheet.swift")
+    assert "if !viewModel.rulesLoaded {" in sheet and "if viewModel.rulesLoaded {\n                        Button {" in sheet
+    p = _swift_fn(sheet, "patch")
+    assert "guard let base = syncedPatch else { return p }" in p and "p.rulesDefault" in p
+    assert "out.updateValue(isNow, forKey: key)" in sheet

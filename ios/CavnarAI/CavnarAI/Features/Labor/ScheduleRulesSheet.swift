@@ -70,8 +70,26 @@ struct ScheduleRulesSheet: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if viewModel.isLoadingRules && viewModel.rules.isEmpty && viewModel.ruleDefaults.isEmpty {
-                        CavnarSkeletonLines(widths: [1.0, 0.8, 0.9, 0.6])
+                    if !viewModel.rulesLoaded {
+                        // Never a form of blanks: Save over it once wiped
+                        // every rule the owner had set (schedule re-audit
+                        // 10/4/26 UI-2). Loading, or why it could not and
+                        // a way to try again.
+                        if viewModel.isLoadingRules || viewModel.rulesError == nil {
+                            CavnarSkeletonLines(widths: [1.0, 0.8, 0.9, 0.6])
+                        } else {
+                            ScheduleNotice(text: "Your rules couldn\u{2019}t be loaded, so nothing here can be saved yet.",
+                                           tone: .cavnarRed) {
+                                Button {
+                                    Haptic.light()
+                                    Task {
+                                        await viewModel.loadRules()
+                                        syncUnlessEdited()
+                                    }
+                                } label: { Text("Try again").frame(maxWidth: .infinity) }
+                                    .buttonStyle(CavnarSecondaryButtonStyle())
+                            }
+                        }
                     } else {
                         jurisdictionSection
                         rulesSection
@@ -113,26 +131,33 @@ struct ScheduleRulesSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    Button {
-                        focused = nil
-                        Haptic.medium()
-                        Task {
-                            if await viewModel.saveRules(patch()) {
-                                posted = "Rules saved"
+                    if viewModel.rulesLoaded {
+                        Button {
+                            focused = nil
+                            Haptic.medium()
+                            let changes = patch()
+                            if Self.isEmpty(changes) {
+                                posted = "Nothing changed"
+                                return
                             }
-                        }
-                    } label: {
-                        Group {
-                            if viewModel.isSavingRules {
-                                CavnarShimmerText(text: "Saving…")
-                            } else {
-                                Text("Save rules")
+                            Task {
+                                if await viewModel.saveRules(changes) {
+                                    posted = "Rules saved"
+                                }
                             }
+                        } label: {
+                            Group {
+                                if viewModel.isSavingRules {
+                                    CavnarShimmerText(text: "Saving…")
+                                } else {
+                                    Text("Save rules")
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .frame(maxWidth: .infinity)
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingRules))
+                        .disabled(viewModel.isSavingRules)
                     }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingRules))
-                    .disabled(viewModel.isSavingRules)
                 }
                 .padding(20)
             }
@@ -145,7 +170,7 @@ struct ScheduleRulesSheet: View {
         }
         .task {
             await viewModel.loadRules()
-            syncUnlessEdited()
+            if viewModel.rulesLoaded { syncUnlessEdited() }
             // The salaried list is the owner's alone; another login is sent none.
             if viewModel.canEditRules { await viewModel.teamSetup.loadSalaried() }
             if viewModel.roster.isEmpty { await viewModel.loadRoster() }
@@ -154,7 +179,7 @@ struct ScheduleRulesSheet: View {
         // the fields only while the manager hasn't touched them. It used to
         // re-sync unconditionally whenever nothing had been synced into
         // `drafts` yet, replacing a jurisdiction or floor mid-edit (CLIENT-60).
-        .onChange(of: viewModel.rules) { _, _ in syncUnlessEdited() }
+        .onChange(of: viewModel.rules) { _, _ in if viewModel.rulesLoaded { syncUnlessEdited() } }
         .sheet(isPresented: $showingClosers, onDismiss: {
             Task { await viewModel.loadRules(); await viewModel.loadRoster() }
         }) {
@@ -822,17 +847,25 @@ struct ScheduleRulesSheet: View {
     private var fieldsSignature: Data? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
-        return try? encoder.encode(patch())
+        return try? encoder.encode(fullPatch())
     }
 
+    /// Every field as it stood right after the last sync — what `patch()`
+    /// compares against, so a save sends only what the owner changed.
+    @State private var syncedPatch: ScheduleSetupViewModel.RulesPatch?
+
     private func syncUnlessEdited() {
+        guard viewModel.rulesLoaded else { return }
         if synced, fieldsSignature != syncedSignature { return }
         sync()
     }
 
     private func sync() {
         synced = true
-        defer { syncedSignature = fieldsSignature }
+        defer {
+            syncedSignature = fieldsSignature
+            syncedPatch = fullPatch()
+        }
         var next: [String: String] = [:]
         for field in Self.fields {
             if let v = viewModel.rules[field.key]?.display { next[field.key] = v }
@@ -867,24 +900,23 @@ struct ScheduleRulesSheet: View {
         floorNote = nil
     }
 
-    /// Everything on the sheet, in one body. A setting that matches what
-    /// the server already holds is still sent — the server treats each
-    /// key as the whole value, and the sheet is its source of truth.
-    private func patch() -> ScheduleSetupViewModel.RulesPatch {
+    /// Every field on the sheet as one body — the state `patch()` compares
+    /// with the state at the last sync.
+    private func fullPatch() -> ScheduleSetupViewModel.RulesPatch {
         var rules = parsedRules()
         rules["manager_on_duty"] = .bool(false)
         rules["keyholder_until_close"] = .bool(keyholderUntilClose)
-        var arrivalMinutes: [String: Int] = [:]
+        var arrivalMinutes: [String: Int?] = [:]
         for (role, text) in arrivals {
             if let n = Int(text.trimmingCharacters(in: .whitespaces)) { arrivalMinutes[role] = min(120, abs(n)) }
         }
-        var p = ScheduleSetupViewModel.RulesPatch(rules: rules, roleFloors: cleanedFloors())
+        var p = ScheduleSetupViewModel.RulesPatch(rules: rules, roleFloors: cleanedFloors().mapValues { Optional($0) })
         p.jurisdiction = .some(jurisdiction.isEmpty ? nil : jurisdiction)
         p.roleArrivals = arrivalMinutes
-        p.roleRequirements = requirements.filter { !$0.value.isEmpty }
+        p.roleRequirements = requirements.filter { !$0.value.isEmpty }.mapValues { Optional($0) }
         p.fohRoles = fohRoles
         p.patioRoles = patioRoles
-        var crossPercents: [String: Int] = [:]
+        var crossPercents: [String: Int?] = [:]
         for (role, text) in crossTraining {
             if let n = Int(text.trimmingCharacters(in: .whitespaces)) { crossPercents[role] = max(0, min(100, n)) }
         }
@@ -895,19 +927,70 @@ struct ScheduleRulesSheet: View {
             p.reservationProvider = .some(reservationProvider.isEmpty ? nil : reservationProvider)
             if !reservationKey.isEmpty { p.reservationApiKey = .some(reservationKey) }
         }
-        if staysEdited {
-            var minutes: [String: Int] = [:]
-            for (role, text) in stays {
-                if let n = Int(text.trimmingCharacters(in: .whitespaces)), n > 0 { minutes[role] = min(240, n) }
-            }
-            p.roleCloseMins = minutes
+        var minutes: [String: Int?] = [:]
+        for (role, text) in stays {
+            if let n = Int(text.trimmingCharacters(in: .whitespaces)), n > 0 { minutes[role] = min(240, n) }
         }
-        if capEdited {
-            let text = salariedCap.trimmingCharacters(in: .whitespaces)
-            p.salariedCap = .some(text.isEmpty ? nil
-                                  : (NumberFormatter.cavnarDecimal.number(from: text)?.doubleValue ?? Double(text)))
-        }
+        p.roleCloseMins = minutes
+        let capText = salariedCap.trimmingCharacters(in: .whitespaces)
+        p.salariedCap = .some(capText.isEmpty ? nil
+                              : (NumberFormatter.cavnarDecimal.number(from: capText)?.doubleValue ?? Double(capText)))
         return p
+    }
+
+    /// Only what the owner changed since the rules loaded (schedule
+    /// re-audit 10/4/26 UI-2). The sheet used to send everything on it, and
+    /// the server took each key as the whole value: a value the owner never
+    /// touched was re-sent (a default shown in a box became the owner's),
+    /// and a sheet that failed to load sent blanks over every rule. A rule
+    /// cleared goes back to its default (`rulesDefault`); a role cleared is
+    /// sent as null; a role or rule untouched is not sent at all.
+    private func patch() -> ScheduleSetupViewModel.RulesPatch {
+        let now = fullPatch()
+        var p = ScheduleSetupViewModel.RulesPatch()
+        guard let base = syncedPatch else { return p }
+        let a = base.rules ?? [:], b = now.rules ?? [:]
+        var rules: [String: LooseValue] = [:]
+        var reset: [String] = []
+        for key in Set(a.keys).union(b.keys) where a[key] != b[key] {
+            if let v = b[key] { rules[key] = v } else { reset.append(key) }
+        }
+        if !rules.isEmpty { p.rules = rules }
+        if !reset.isEmpty { p.rulesDefault = reset.sorted() }
+        p.roleFloors = Self.changedRoles(base.roleFloors, now.roleFloors)
+        p.roleArrivals = Self.changedRoles(base.roleArrivals, now.roleArrivals)
+        p.roleRequirements = Self.changedRoles(base.roleRequirements, now.roleRequirements)
+        p.roleCrossTraining = Self.changedRoles(base.roleCrossTraining, now.roleCrossTraining)
+        p.roleCloseMins = Self.changedRoles(base.roleCloseMins, now.roleCloseMins)
+        if (now.jurisdiction ?? nil) != (base.jurisdiction ?? nil) { p.jurisdiction = now.jurisdiction }
+        if now.fohRoles != base.fohRoles { p.fohRoles = now.fohRoles }
+        if now.patioRoles != base.patioRoles { p.patioRoles = now.patioRoles }
+        if now.trimToBudget != base.trimToBudget { p.trimToBudget = now.trimToBudget }
+        if now.cutFloorDefault != base.cutFloorDefault { p.cutFloorDefault = now.cutFloorDefault }
+        if (now.salariedCap ?? nil) != (base.salariedCap ?? nil) { p.salariedCap = now.salariedCap }
+        // Already only when the owner changed the feed or typed a key.
+        p.reservationProvider = now.reservationProvider
+        p.reservationApiKey = now.reservationApiKey
+        return p
+    }
+
+    /// The roles whose value differs between two maps: the new value, or
+    /// null for a role the owner cleared. Nil when no role changed.
+    nonisolated static func changedRoles<V: Equatable>(_ base: [String: V?]?, _ now: [String: V?]?) -> [String: V?]? {
+        let a = base ?? [:], b = now ?? [:]
+        var out: [String: V?] = [:]
+        for key in Set(a.keys).union(b.keys) {
+            let was: V? = a[key] ?? nil, isNow: V? = b[key] ?? nil
+            // updateValue keeps a nil value (a cleared role) in the map.
+            if was != isNow { out.updateValue(isNow, forKey: key) }
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    /// True when a patch names nothing to change.
+    nonisolated static func isEmpty(_ p: ScheduleSetupViewModel.RulesPatch) -> Bool {
+        guard let data = try? JSONEncoder().encode(p) else { return false }
+        return String(data: data, encoding: .utf8) == "{}"
     }
 
     /// A number where one was typed, the text otherwise (the minors'
