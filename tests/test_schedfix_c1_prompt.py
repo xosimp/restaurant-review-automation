@@ -174,7 +174,10 @@ def test_pr2_every_owner_channel_sits_in_one_block_at_its_rank(monkeypatch):
     at = week.index("THE OWNER'S STANDING RULES — everything the owner and the managers have told the schedule")
     assert week.index("THIS RESTAURANT'S WEEK") < at < week.index("ROSTER — ")
     block = week[at:week.index("ROSTER — ")]
-    for head in ("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening, closing and arrival times",
+    # The hours notes' staffing rules (floors, arrival times, who stays to
+    # close) rank with the floors at 2, its opening and closing at 1b
+    # (schedule re-audit 10/4/26 PROMPT-5).
+    for head in ("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening and closing times",
                  "THE OWNER'S STANDING RULES (OWNER_RULE) — priority 2, beside the staffing floors",
                  "STAFF CONSTRAINTS — priority 1b (hard constraints)",
                  "ADDITIONAL SCHEDULING NOTES — priority 5",
@@ -182,8 +185,8 @@ def test_pr2_every_owner_channel_sits_in_one_block_at_its_rank(monkeypatch):
         assert head in block, head
     # PRIORITIES ranks every channel in one line, and the system prompt
     # defers to it rather than ranking OWNER_RULE on its own.
-    assert ("Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for opening, closing and arrival "
-            "times") in static
+    assert ("Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for the opening and closing times, 2 "
+            "for every staffing rule in them") in static
     assert "the owner's standing rules (OWNER_RULE) 2; ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST" in static
     assert "it ranks where the request's PRIORITIES put the owner's standing rules" in kw["system"]
     assert "follow it unless" not in kw["system"]

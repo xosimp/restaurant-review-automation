@@ -1765,7 +1765,7 @@ def _ensure_usage_columns(conn):
 # 'repriced-2026-09-22' where init_ai_ops corrected them once (Sonnet 5 at
 # the $3/$15 Sonnet-4 rate until 9/22; Perplexity tokens at the Sonnet-4 or
 # unknown-model rate).
-PRICE_VERSION = "2026-09-29"
+PRICE_VERSION = "2026-10-04"   # cache reads priced per model (PROMPT-9)
 REPRICED_VERSION = "repriced-2026-09-22"
 
 # $ per million tokens (input, output), Anthropic list prices — update here if
@@ -1852,8 +1852,9 @@ def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_
 
 
 # Prompt caching is billed at its own rates, as a multiple of the model's
-# input rate: writing a cache entry costs 1.25x, reading one 0.1x. Neither is
-# included in `input_tokens`, which counts only the uncached remainder.
+# input rate: writing a 5-minute cache entry costs 1.25x, reading one 0.1x on
+# most models. Neither is included in `input_tokens`, which counts only the
+# uncached remainder.
 #
 # This matters beyond reporting. Ask Cavnar now caches ~9,600 tokens of tools
 # and static prompt, so a cache WRITE is a real charge the ledger recorded as
@@ -1864,6 +1865,28 @@ def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_
 # regression nothing would otherwise surface.
 _CACHE_WRITE_MULTIPLIER = 1.25
 _CACHE_READ_MULTIPLIER = 0.10
+# A cache read is not 0.1x on every model (schedule re-audit 10/4/26
+# PROMPT-9): Claude Opus 5.5 lists cache reads at $0.20/MTok against $4
+# input — 0.05x — and Claude Fable 5.1 / Mythos 5.1 at $0.25 against $10 —
+# 0.025x. Every cached schedule read was booked at twice its price, and that
+# ledger is what ai_budget_exceeded sums. Longest prefix first; anything
+# else reads at _CACHE_READ_MULTIPLIER. Verified against Anthropic's model
+# reference of 9/25/26: Opus 5.5 $0.20, Fable 5.1 $0.25, Sonnet 5.5 $0.20 on
+# $2 (0.1x), Fable 5 $1 on $10 (0.1x). The 1.25x write is the 5-minute TTL
+# (every cache_control here is ephemeral 5m); a 1-hour TTL writes at 2x.
+_CACHE_READ_BY_FAMILY = (
+    ("claude-opus-5-5", 0.05),
+    ("claude-fable-5-1", 0.025),
+    ("claude-mythos-5-1", 0.025),
+)
+
+
+def _cache_read_multiplier(model) -> float:
+    m = (model or "").lower()
+    for prefix, mult in _CACHE_READ_BY_FAMILY:
+        if m.startswith(prefix):
+            return mult
+    return _CACHE_READ_MULTIPLIER
 
 
 # A model id the table does not name exactly — an alias (claude-haiku-4-5), a
@@ -1907,7 +1930,7 @@ def _estimate_cost(model, input_tokens, output_tokens,
     return (((input_tokens or 0) / 1_000_000) * in_rate
             + ((output_tokens or 0) / 1_000_000) * out_rate
             + ((cache_write_tokens or 0) / 1_000_000) * in_rate * _CACHE_WRITE_MULTIPLIER
-            + ((cache_read_tokens or 0) / 1_000_000) * in_rate * _CACHE_READ_MULTIPLIER)
+            + ((cache_read_tokens or 0) / 1_000_000) * in_rate * _cache_read_multiplier(model))
 
 
 def _log_usage_safe(message, model, restaurant_id, action, latency_ms=None, attempts=None, call_id=None,

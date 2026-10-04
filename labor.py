@@ -3944,7 +3944,8 @@ def _usage_of(msg) -> dict:
 
 
 def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_id=None, week_start=None,
-                          dates=None, contract=None, outcome=None, error=None, seconds=None, rows=None):
+                          dates=None, contract=None, outcome=None, error=None, seconds=None, rows=None,
+                          call_kind=None):
     """Store one schedule call's full input and answer (schedule audit
     10/3/26 PR-31: the trace keeps 40k characters of a 55-70k prompt, so no
     real week could be replayed). Returns the record id, or None. A failure
@@ -3961,7 +3962,7 @@ def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_i
             model=(call or {}).get("model"), effort=oc.get("effort"), contract=contract,
             stop_reason=getattr(msg, "stop_reason", None) if msg is not None else None,
             outcome=outcome, error=error, seconds=seconds, usage=_usage_of(msg) if msg is not None else None,
-            rows=rows, answer_chars=len(raw or "") if raw is not None else None)
+            rows=rows, answer_chars=len(raw or "") if raw is not None else None, call_kind=call_kind)
     except Exception as e:
         print(f"[schedule] model call not recorded rid={restaurant_id}: {e!r}")
         try:
@@ -4283,7 +4284,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  owner_rules_text: str = None,
                                  owner_rule_reads: list = None,
                                  prior_week: dict = None,
-                                 payroll_weeks: dict = None) -> dict:
+                                 payroll_weeks: dict = None,
+                                 call_kind: str = None,
+                                 cache_ttls: tuple = None,
+                                 hours_rule_reads: list = None,
+                                 role_windows: dict = None,
+                                 role_caps: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -4315,6 +4321,19 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     focus         — named weaknesses of the previous draft of these days,
                     for a regeneration of chosen dates (schedule_requirements
                     .focus_block), which names those dates.
+    call_kind     — what this call writes: "week", "slice", "redo" or
+                    "gate" (schedule_output.CALL_KINDS), recorded with the
+                    call so its cost is read beside calls like it (PROMPT-3).
+    cache_ttls    — (standing instructions, the restaurant's week): each
+                    block's cache breakpoint TTL, "5m", "1h" or None for no
+                    breakpoint (schedule_prompt.cache_ttls — PROMPT-8);
+                    None keeps a 5-minute breakpoint on both.
+    hours_rule_reads — how the code reads each line of hours_notes
+                    (schedule_rules.apply_hours_rules — PROMPT-1):
+                    [{"reads_as", "kind", "floor"} | {"unchecked": text}].
+    role_windows / role_caps — the hours each role works and the most of
+                    it on at once by those rules (Constraints.limit_maps):
+                    SHIFT REQUIREMENTS asks nothing outside them.
     structured    — ask for JSON against the schema built for this
                     generation (schedule_output.schedule_schema); when the
                     API refuses that schema it is asked once more against
@@ -4581,8 +4600,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # a second set of numbers pulling against the first.
         _headcount_block = ("\n\nTYPICAL HEADCOUNT PER DAY — the crew this restaurant usually runs by weekday, counted "
                             "by who is present (morning and night are separate numbers: \"6 night\" is 6 people on "
-                            "the floor at night). Context: SHIFT REQUIREMENTS have already turned these, the owner's "
-                            "floors and each date's demand into the number to schedule to.\n" + "\n".join(_hc_lines))
+                            "the floor at night). Context, from punches: SHIFT REQUIREMENTS have turned these, the "
+                            "owner's floors, hours and ceilings by role that the code reads, and each date's demand "
+                            "into the number to schedule to; where they differ from the owner's own rules, the "
+                            "rules win.\n" + "\n".join(_hc_lines))
 
     # Next Monday as schedule start — in the restaurant's local week, not ours
     from time_utils import restaurant_now
@@ -4602,9 +4623,39 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _owner_parts = []
     if hours_notes and str(hours_notes).strip():
         from ai_guard import _neutralise_markers as _neut_h
-        _owner_parts.append("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening, closing and arrival times; "
-                            "any other rule in them sits with the standing rules at priority 2):\n"
-                            + _neut_h(str(hours_notes).strip()))
+        # How the code holds each line, and which it could not read
+        # (schedule_rules.apply_hours_rules — schedule re-audit 10/4/26
+        # PROMPT-1): the model was told these rules were inside SHIFT
+        # REQUIREMENTS when nothing had read them.
+        _h_reads = [r for r in (hours_rule_reads or []) if r.get("reads_as")]
+        _h_unread = [str(r["unchecked"]) for r in (hours_rule_reads or []) if r.get("unchecked")]
+        _h_checked = ""
+        if _h_reads:
+            # One clause per kind of rule, pointing at the rule lines that
+            # carry the numbers — each figure is said once, there.
+            _h_kinds = {r.get("kind") for r in _h_reads}
+            _h_said = [(k, w) for k, w in (
+                ("coverage_floor", "each count is a staffing floor (STAFFING FLOORS BY ROLE AND DAYPART, inside "
+                                   "SHIFT REQUIREMENTS)"),
+                ("role_window", "the arrival and finishing times are the Hours by role in the rules below"),
+                ("over_role_max", "each maximum is Most of a role on at once below"),
+                ("ends_before_role_close", "who stays to close and how long is held at close"),
+                ("role_time", "a start time is STARTS AND ENDS BY ROLE below"),
+                ("no_manager", "the managers' lines are the manager rule"),
+                ("over_max_hours", "the weekly hours line is each person's weekly maximum")) if k in _h_kinds]
+            _h_checked = ("\n  How the code checks them: "
+                          + "; ".join(f"{_sr_p.rule_tag(k)} {w}" for k, w in _h_said) + ".")
+        if _h_unread:
+            _h_checked += ("\n  Not read by the code — follow each as written; it is not in SHIFT REQUIREMENTS, and "
+                           "where it says otherwise it wins over the table (the owner is told it is not checked): "
+                           + "; ".join(f"\"{_neut_h(t)[:200]}\"" for t in _h_unread) + ".")
+        elif hours_rule_reads is None:
+            _h_checked = ("\n  The code has not read these into SHIFT REQUIREMENTS: follow each as written; where one "
+                          "says otherwise, it wins over the table.")
+        _owner_parts.append("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening and closing times; every "
+                            "staffing rule in them — floors, arrival times, who stays to close — priority 2, with the "
+                            "staffing floors):\n"
+                            + _neut_h(str(hours_notes).strip()) + _h_checked)
     if owner_rules_text and str(owner_rules_text).strip():
         # How the code reads each standing rule, so the model knows which
         # are already numbers (a floor in SHIFT REQUIREMENTS, [HARD]; a
@@ -4964,8 +5015,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _strength_block += (
                 "\nSHIFT STRENGTH TARGETS — the scores of everyone in that role on that shift, added up:\n"
                 + "\n".join(_thr_lines) + "\n"
-                "  Two people scoring 5 make 10. So do a 5, a 3 and a 2 — but that is a weaker team, so prefer fewer "
-                "stronger people over more weaker ones when both clear the bar.\n"
+                "  Two people scoring 5 make 10; so do a 5, a 3 and a 2. The headcount is SHIFT REQUIREMENTS', never "
+                "this target's: at the same headcount prefer the stronger mix (three servers scoring 5, 4 and 3 over "
+                "5, 2 and 2), and never drop a person a shift needs because the rest already clear the bar.\n"
                 "  Hit these on the busiest shifts first — SHIFT REQUIREMENTS give each shift's demand level; the day's "
                 "name does not.\n")
         if _rule_lines:
@@ -5091,8 +5143,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         adjustments=requirement_adjustments or None,
         late_headcount=_patterns.get("late_headcount") or None,
         standard_needs=(labor_standards or {}).get("needs") or None,
+        # The owner's RESTAURANT HOURS & SHIFT RULES, read by the code: no
+        # number outside the hours a role works, none over its ceiling
+        # (schedule re-audit 10/4/26 PROMPT-1).
+        role_windows=role_windows or None,
+        role_caps=role_caps or None,
     )
-    _requirements_block = _req.requirements_block(_req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs))
+    _requirements_block = _req.requirements_block(
+        _req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs),
+        unread_rules=any(r.get("unchecked") for r in (hours_rule_reads or [])))
     # The whole week's numbers, every role, from the same call with the same
     # inputs: what the coverage score judges the draft against and what the
     # fill passes fill to (P-19) — never a second reading of "typical".
@@ -5237,7 +5296,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         times=_sched_out.clock_values(_sched_out.stated_times(open_times, close_times, hours_notes)),
     ) if schema_enums else _sched_out.schedule_schema()
     _note_words = ", ".join(v for v in _sched_out.NOTE_VALUES if v)
-    static_text = _sp.static_block(structured, _note_words)
+    static_text = _sp.static_block(structured, _note_words, enums=schema_enums)
 
     # The readiness gate before the call (DH5-2): a schedule rests on the
     # shifts, the POS, sales and the weather. The owner asked for it, so a
@@ -5256,7 +5315,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # inside a fence stay theirs.
     week_text = _sp.iso_dates(_with_ds_sched(week_text.lstrip("\n"), _ready_sched))
     request_text = _sp.iso_dates(request_text)
-    _content = _sp.request_content(static_text, week_text, request_text)
+    _content = _sp.request_content(static_text, week_text, request_text, ttls=cache_ttls)
     prompt = _sp.prompt_text(_content)
 
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
@@ -5274,18 +5333,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # model actually generates, not the ceiling. A thinking model's
         # reasoning shares the ceiling with the rows, so it gets far more.
         max_tokens=SCHEDULE_MAX_TOKENS_THINKING if _thinks else 16000,
-        # A captured generation once opened with a literal "<think>...</think>"
-        # block of plain-text step-by-step reasoning — not the API's own
-        # (disabled) structured thinking feature, just prose the model chose
-        # to write — that alone consumed the entire max_tokens budget and
-        # left zero room for actual CSV rows (stop_reason: max_tokens,
-        # hours_scheduled: 0). An assistant-message prefill would have
-        # blocked this structurally, but this model rejects prefill outright
-        # ("This model does not support assistant message prefill" — a hard
-        # model constraint). The fix is prompt-only: the explicit
-        # no-preamble/no-"<think>" instruction in SCHEDULING RULES below.
-        # Verified live (2026-08-14): stop_reason=end_turn, ~3.7-4k output
-        # tokens (well under the ceiling), real non-empty CSV output.
+        # A captured generation (8/14/26, a model with thinking off) once
+        # opened with a literal "<think>...</think>" block of prose that
+        # used the whole max_tokens and left no rows. The schedule model
+        # now thinks in its own thinking blocks (adaptive, it cannot be
+        # turned off), answers against a JSON schema, and the standing
+        # instructions name no "<think>" (schedule audit 10/3/26 PR-6,
+        # PR-14); the old no-preamble instruction is gone with them
+        # (schedule re-audit 10/4/26 PROMPT-8).
         # The one standing rule about the manager's notes (INT #42): stated
         # where the model takes instructions from, not only beside the notes.
         system=SCHEDULE_SYSTEM_RULES,
@@ -5313,7 +5368,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _call["output_config"] = _oc
     _cut = None
     _contract = ("schema" if schema_enums else "plain_schema") if structured else "csv"
-    _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract)
+    _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract,
+                call_kind=call_kind)
     try:
         # Background job, long output: minutes of generation, well past the
         # request-path default. The timeout is the longest silence between
@@ -5419,9 +5475,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             # The notes column is printed on the employee's schedule: only
             # one of the fixed notes survives (PR-15), here as in the JSON.
             _cols = _l.split(",", 7)
+            # A date written as the request names it ("Mon 2026-10-05") is
+            # the ISO date it carries (schedule re-audit 10/4/26 PROMPT-7):
+            # every reader of these rows keys on the bare ISO date.
+            _cols[0] = _sched_out.iso_date_of(_cols[0]) or _cols[0]
             if len(_cols) == 8:
                 _cols[7] = _sched_out.vocabulary_note(_cols[7])
-                _l = ",".join(_cols)
+            _l = ",".join(_cols)
             _data_rows.append(_l)
         if week_slice:
             _keep = set(_gen_dates)
@@ -5465,6 +5525,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                     rows=_rows_written, **_rec)
     _usage = _usage_of(msg)
     _model_call = {"id": _rec_id, "model": _model, "effort": _oc.get("effort"), "contract": _contract,
+                   "call_kind": call_kind,
                    "stop_reason": _stop, "seconds": _seconds, **_usage, "rows": _rows_written,
                    "answer_chars": len(raw),
                    # Every output token — thinking included — per row written:

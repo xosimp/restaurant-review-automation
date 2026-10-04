@@ -39,6 +39,61 @@ DEMAND_SCALE_BOUNDS = (0.75, 1.4)
 LATE_PART = "late"
 
 
+def window_allows(w, part) -> bool:
+    """Whether a role whose hours are `w` ({"earliest", "latest"} minutes,
+    either None) can be on the floor for `part` — present for the
+    daypart's core window as the scorer counts presence (shift_quality.
+    present_dayparts): "evening only, no earlier than 3:00pm" rules out
+    lunch, "first arrives 10:30am" does not (schedule re-audit 10/4/26
+    PROMPT-1). The late segment needs an hour of it after LATE_WINDOW_START."""
+    if not w:
+        return True
+    if part == LATE_PART:
+        lo, hi = _sq.LATE_WINDOW_START, 48 * 60
+    else:
+        lo, hi = _sq.CORE_WINDOWS.get(part, (0, 48 * 60))
+    a = max(lo, w["earliest"]) if w.get("earliest") is not None else lo
+    b = min(hi, w["latest"]) if w.get("latest") is not None else hi
+    return b - a >= min(_sq.PRESENCE_MIN_OVERLAP, hi - lo)
+
+
+def _limit_for(limits, role, day):
+    """The owner's limit for `role` on `day` from {role or family lower:
+    {weekday: value}} — the job code's own, else its family's."""
+    if not limits:
+        return None
+    key = " ".join(str(role or "").lower().split())
+    got = limits.get(key)
+    if got is None:
+        got = limits.get(_sq.role_family(role))
+    return (got or {}).get(day) if isinstance(got, dict) else None
+
+
+def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=1, idx_floor=2, idx_why=5):
+    """Hold one shift's numbers to the owner's RESTAURANT HOURS & SHIFT
+    RULES (PROMPT-1): a role outside the hours they give it is asked for
+    only its floor (none, normally — a floor is never set outside them), and
+    no role for more than their ceiling — never below its floor. `need` is
+    {key: [display, required, floor, ...]}, changed in place."""
+    for k in list(need):
+        v = need[k]
+        w = _limit_for(role_windows, v[idx_name], day)
+        if w and not window_allows(w, part):
+            if v[idx_floor]:
+                v[idx_req] = int(v[idx_floor])
+            else:
+                del need[k]
+                continue
+        caps = _limit_for(role_caps, v[idx_name], day) or {}
+        cap = caps.get(part) if isinstance(caps, dict) else None
+        if cap is None and isinstance(caps, dict):
+            cap = caps.get("any")
+        if cap is not None and v[idx_req] > int(cap):
+            v[idx_req] = max(int(cap), int(v[idx_floor] or 0))
+            if idx_why is not None:
+                v[idx_why].append(f"held to your maximum of {int(cap)} on at once")
+
+
 def demand_factor(ratio=1.0, hold=1.0) -> float:
     """The factor the usual crew is scaled by on one shift: the date's
     demand against a typical one (schedule_economics.date_demand's ratio)
@@ -182,7 +237,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        skip_dates=(), role_minimums: dict = None, borrowed: dict = None,
                        demand_curve: dict = None, open_times: dict = None, close_times: dict = None,
                        section_cap: int = 0, cap_roles=None, date_demand: dict = None, splh_hold: dict = None,
-                       adjustments: list = None, late_headcount: dict = None, standard_needs: dict = None) -> list:
+                       adjustments: list = None, late_headcount: dict = None, standard_needs: dict = None,
+                       role_windows: dict = None, role_caps: dict = None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -233,6 +289,15 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     standard_needs — {(date, daypart): {role lower: {"people", "reason"}}}:
                 the owner's own labor standard for a role (labor_standards),
                 which replaces the usual crew for it on that shift (D-25).
+    role_windows / role_caps — the owner's RESTAURANT HOURS & SHIFT RULES
+                read by the code (schedule_rules.apply_hours_rules,
+                Constraints.limit_maps — schedule re-audit 10/4/26 PROMPT-1):
+                {role or family lower: {weekday: {"earliest", "latest"}}}
+                and {role or family lower: {weekday: {daypart | "any":
+                most}}}. A role is asked for nothing outside its hours (only
+                a floor stands there) and never more than its ceiling. The
+                usual crew from punches used to ask for an evening-only
+                bartender at Wednesday lunch.
     """
     import staffing_curve as _curve
     from shift_quality import shift_role_requirements
@@ -302,6 +367,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     v[4] += delta
                 if a.get("reason"):
                     v[5].append(f"{delta:+d} {a['reason']}")
+            # Held to the owner's hours and ceilings by role (PROMPT-1).
+            _apply_limits(need, day, part, role_windows, role_caps)
             # Held under the section cap, as the scorer holds it.
             held = {}
             if section_cap:
@@ -334,7 +401,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     needs = {m: _curve.cap_requirement(n, section_cap, cap_roles)[0] for m, n in needs.items()}
                 if roles is not None:
                     needs = {m: {r: n for r, n in rn.items() if r.strip().lower() in roles} for m, rn in needs.items()}
-                half = {r: pts for r, pts in _curve.ramp_runs(needs).items() if len(pts) > 1}
+                half = {r: pts for r, pts in _curve.ramp_runs(needs).items() if len(pts) > 1
+                        and r.strip().lower() in need}
             profile = shift_profile(day, part, d, profiles, demand_by_day, demand_by_date)
             demand = profile.demand
             leader = []
@@ -382,7 +450,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             out.append(row)
         late = _late_row(d, day, (late_headcount or {}).get(day) or {}, close_times, ratio,
                          ((splh_hold or {}).get(day) or {}).get(LATE_PART), why_date, roles, section_cap, cap_roles,
-                         (daily_targets or {}).get(d))
+                         (daily_targets or {}).get(d), role_windows=role_windows, role_caps=role_caps)
         if late:
             out.append(late)
     return out
@@ -419,7 +487,7 @@ def _row_reasons(factor, ratio, hold, why_date, held) -> list:
 
 
 def _late_row(d, day, late_typical, close_times, ratio, hold, why_date, roles, section_cap, cap_roles,
-              target_hours):
+              target_hours, role_windows=None, role_caps=None):
     """The late segment's row (D-32): from LATE_WINDOW_START to close, on a
     date whose close is past LATE_CLOSE_AFTER — its own usual crew from the
     history, scaled by the date's demand like the others. None otherwise."""
@@ -435,6 +503,11 @@ def _late_row(d, day, late_typical, close_times, ratio, hold, why_date, roles, s
         v = _scaled(n, factor) if factor != 1.0 else int(n or 0)
         if v > 0 and (roles is None or r.strip().lower() in roles):
             need[r.strip()] = [v, int(n or 0)]
+    if role_windows or role_caps:
+        # [display, required, floor] for the shared limits (PROMPT-1).
+        view = {r: [r, v[0], 0] for r, v in need.items()}
+        _apply_limits(view, day, LATE_PART, role_windows, role_caps, idx_why=None)
+        need = {r: [view[r][1], v[1]] for r, v in need.items() if r in view}
     if not need:
         return None
     held = {}
@@ -496,12 +569,16 @@ def _service_window(day: str, part: str, open_times: dict = None, close_times: d
     return split, (close_m if close_m is not None and close_m > split else 24 * 60)
 
 
-def requirements_block(rows: list) -> str:
+def requirements_block(rows: list, unread_rules: bool = False) -> str:
     """The SHIFT REQUIREMENTS table: one line per shift. How coverage is
     counted, the half-hour ramp and the late-night line are standing
     instructions (schedule_prompt, the same on every call); the table is
     this request's numbers and why they moved, each said once (schedule
-    audit 10/3/26 PR-7, PR-8, PR-24)."""
+    audit 10/3/26 PR-7, PR-8, PR-24). It carries the owner's floors, hours
+    and ceilings the code read; `unread_rules` — a line of the owner's
+    RESTAURANT HOURS & SHIFT RULES it could not read — says that line wins
+    over the table, never that the table already holds it (schedule
+    re-audit 10/4/26 PROMPT-1)."""
     if not rows:
         return ""
     lines = []
@@ -533,8 +610,12 @@ def requirements_block(rows: list) -> str:
             "it (\"(floor N)\" the owner's hard minimum inside the number, \"(borrowed)\" a figure lent by similar "
             "restaurants, \"(usual N)\" what the number was before this date's demand moved it), the date's hours "
             "target, the demand level the shift is scored at, who it needs to run it, its half-hour numbers and why "
-            "a number moved. Schedule to these numbers — they already carry every event, holiday, measured volume "
-            "change and staffing ask on the date — and never above them to use up hours. The day target is the hours "
+            "a number moved. Schedule to these numbers — they carry every event, holiday, measured volume change and "
+            "staffing ask on the date, and every staffing floor, hour a role starts or ends and ceiling of the owner's "
+            "that the code reads — and never above them to use up hours."
+            + (" A line of the RESTAURANT HOURS & SHIFT RULES that the code could not read (named there) is not in "
+               "these numbers: where it says otherwise, it wins over this table." if unread_rules else "")
+            + " The day target is the hours "
             "that date's shifts are expected to take: use up to it when the day's shifts need the hours to meet these "
             "numbers, and leave it unspent when they do not — a day under its target with every shift covered is a "
             "good day.\n" + "\n".join(lines))

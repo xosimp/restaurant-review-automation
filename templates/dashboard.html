@@ -34440,6 +34440,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(window.sfw2RulesClosed)h+=sfw2RulesClosed(d);
     // Which job codes are one role (D-13), before the floors that use them.
     if(window.sfw2RulesFamilies)h+=sfw2RulesFamilies();
+    // The hours & shift rules as the schedule reads them (PROMPT-1).
+    if(window.sfw2RulesHours)h+=sfw2RulesHours(d);
     h+='<div class="lb2-sub">Role floors<small>how many of each role a morning and a night needs</small></div>'+(window.sfw2RulesFloorsHead?sfw2RulesFloorsHead(d,ro):'')+'<div id="rul-floors">';
     if(!roles.length)h+='<div class="hb-empty">Roles appear once your shifts carry one, or add one below.</div>';
     for(i=0;i<roles.length;i++)h+=_rulFloorHtml(roles[i],floors[roles[i]]||{},ro);
@@ -35751,7 +35753,7 @@ function sfw1HoursLine(hourly, budget, salaried) {
 // ── The review ────────────────────────────────────────────────────────────
 /* What the week doesn't meet (C2-1): the tone each kind wears. */
 var SFW1_UNMET_TONE = {manager: 'hard', floor: 'hard', owner_rule: 'hard', closer: 'hard', close: 'hard', role_close: 'hard',
-  coverage: 'soft', leadership: 'soft', strength: 'soft', station: 'soft', ask: 'soft',
+  coverage: 'soft', leadership: 'soft', strength: 'soft', station: 'soft', ask: 'soft', role_max: 'soft',
   min_hours: 'neutral', budget: 'neutral', unchecked_rule: 'neutral'};
 function sfw1UnmetTone(kind) { return SFW1_UNMET_TONE[kind] || 'neutral'; }
 /* Grouped under each date ("Fri 10/16/26"), in the server's order; items
@@ -40174,6 +40176,17 @@ function sfw2RuleCheck(chk) {
     if (!miss.length) return '';
     return '<div class="ts-note warn sfw2-warn">No close time for ' + e(sfw2And(miss)) + ' — nobody at close, the closers and stays after close aren’t checked on '
       + (miss.length === 1 ? 'that day' : 'those days') + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set the hours</button></div>';
+  };
+  /* The restaurant's hours & shift rules as every draft is checked against
+     them, and the lines Cavnar AI can't read (schedule re-audit 10/4/26
+     PROMPT-1): floors, the hours a role works, the most on at once. */
+  window.sfw2RulesHours = function (d) {
+    var reads = d.hours_rules || [], un = d.hours_rules_unchecked || [], h = '', i;
+    if (!reads.length && !un.length) return '';
+    h += '<div class="lb2-sub">Your hours &amp; shift rules<small>how every draft is checked against them</small></div>';
+    for (i = 0; i < reads.length; i++) h += '<div class="sr-line"><span class="d"></span><span>' + n(reads[i].text || '') + ' — checked as ' + n(reads[i].reads_as || '') + '</span></div>';
+    for (i = 0; i < un.length; i++) h += '<div class="sr-line warn"><span class="d"></span><span>' + n(un[i]) + ' — not checked by the schedule: a draft is asked to follow it; check the week yourself</span></div>';
+    return h;
   };
   /* Floors: the history's suggestion (D-42) and the section-count clash
      (A1 P-29). */

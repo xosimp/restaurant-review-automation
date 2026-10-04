@@ -23,6 +23,7 @@ import time
 from models import get_restaurant
 
 import schedule_output as _sched_out
+import schedule_prompt as _sp
 import schedule_rules as _rules
 import schedule_versions as _versions
 import staff_settings as _staff
@@ -84,7 +85,35 @@ MAX_EXTRA_CALLS = 8
 # post-model allowance; each call waits at most the time left; the job store
 # reads the job dead past the deadline (ops.set_async_job_deadline), and a
 # job that finds itself declared dead saves nothing.
-SCHEDULE_CALL_SECONDS = 360
+#
+# A call's time is mostly its thinking (schedule re-audit 10/4/26 PROMPT-4):
+# the 360 seconds every planned call used to add was what a 160-row slice of
+# the old ~60-token rows took on a model that did not think, so a one-call
+# week got about 11 minutes of model time for up to 64,000 output tokens,
+# and a deadline that landed mid-thought kept nothing. A call's seconds are
+# now planned as what it writes — its thinking reserve, the summary and its
+# rows — over an output speed: the restaurant's own, measured from its
+# recorded calls (schedule_output.call_costs: seconds fitted on rows, else
+# output tokens over seconds), held to CALL_SECONDS_HEADROOM; until a call
+# has run, ASSUMED_OUTPUT_TOKENS_PER_SECOND. That figure is NOT a measured
+# Opus 5.5 speed: no schedule call had been recorded where this was written
+# (the local database holds none, and production's schedule_model_calls is
+# not read from here) — it is the code's only recorded rate, the old
+# calibration's 9,600 tokens in 360 seconds, and it errs long: a deadline
+# too long costs only a hung job found later, one too short kills a call
+# that is still thinking.
+ASSUMED_OUTPUT_TOKENS_PER_SECOND = ROW_TOKENS_PER_CALL / 360.0
+CALL_SECONDS_HEADROOM = 1.25
+
+
+def _assumed_call_seconds(rows) -> float:
+    return ((THINKING_TOKENS_RESERVED + SUMMARY_TOKENS + max(0.0, float(rows or 0)) * OUTPUT_TOKENS_PER_ROW)
+            / ASSUMED_OUTPUT_TOKENS_PER_SECOND)
+
+
+# One planned call of a full chunk at the assumed speed: what a call adds to
+# the job when nothing about it is known.
+SCHEDULE_CALL_SECONDS = int(round(_assumed_call_seconds(CHUNK_ROWS_PER_CALL)))
 SCHEDULE_POST_MODEL_SECONDS = 240
 SCHEDULE_JOB_MIN_SECONDS = 15 * 60
 SCHEDULE_JOB_MAX_SECONDS = 40 * 60
@@ -116,10 +145,13 @@ class GenerationClock:
         self.deadline = self.started + SCHEDULE_JOB_MIN_SECONDS
         self._record()
 
-    def plan(self, calls: int) -> None:
-        """Size the deadline for `calls` planned model calls. Never shortens
-        it: the quality gate's rewrite re-plans inside the same job."""
-        want = int(calls or 1) * SCHEDULE_CALL_SECONDS + SCHEDULE_POST_MODEL_SECONDS
+    def plan(self, calls: int, seconds: float = None) -> None:
+        """Size the deadline for `calls` planned model calls — `seconds`,
+        their planned length summed (call_seconds), or SCHEDULE_CALL_SECONDS
+        each. Never shortens it: the quality gate's rewrite re-plans inside
+        the same job."""
+        model = float(seconds) if seconds else int(calls or 1) * SCHEDULE_CALL_SECONDS
+        want = int(model) + SCHEDULE_POST_MODEL_SECONDS
         sized = self.started + max(SCHEDULE_JOB_MIN_SECONDS, min(SCHEDULE_JOB_MAX_SECONDS, want))
         if sized > self.deadline:
             self.deadline = sized
@@ -667,6 +699,7 @@ _INPUT_WORDS = {
     "forecast_preview salaries": "the salaried staff's share of the budget",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
+    "measured call cost": "what a schedule call has cost before", "cache read rate": "the AI model's cache price",
     "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
 }
 
@@ -1235,6 +1268,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     owner_rule_reads = [{"reads_as": r.get("reads_as") or _rules.rule_reads_as(r), "floor": bool(r.get("floor_role"))}
                         for r in (constraints.owner_rules or []) if not r.get("private")]
     owner_rule_reads += [{"unchecked": True} for _t in (constraints.owner_rules_unchecked or [])]
+    # The RESTAURANT HOURS & SHIFT RULES, line by line as the code holds them
+    # and the ones it could not read (schedule_rules.apply_hours_rules,
+    # PROMPT-1).
+    hours_rule_reads = [dict(r) for r in (getattr(constraints, "hours_rules", None) or [])]
+    hours_rule_reads += [{"unchecked": t} for t in (getattr(constraints, "hours_rules_unchecked", None) or [])]
     extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
                   + _pairs_block(pairs, roster_pairs)
                   + learned_blk
@@ -1303,6 +1341,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # The SHIFT REQUIREMENTS table and the people blocks: the same
         # floors, demand, tenure and patterns the quality pass scores with.
         role_floors=constraints.role_floors or {},
+        # The owner's RESTAURANT HOURS & SHIFT RULES as the code reads them
+        # (PROMPT-1): the hours each role works and its ceiling for the
+        # requirements table, and each line's reading for the prompt.
+        **_limit_kwargs(constraints),
+        hours_rule_reads=hours_rule_reads or None,
         demand_by_date=signals_by_date,
         demand_by_day=_demand_by_day,
         tenure=_people["tenure"],
@@ -1343,6 +1386,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # nobody can work (E-20), and the rules apart from the rest so a
         # department call gets its own (E-29).
         redo_dates=sorted(set(dates)) if dates else None,
+        # What these calls write, recorded with each (PROMPT-3): the quality
+        # gate's rewrite (it alone passes `focus`), an owner's redo, else a
+        # week or its slices (set per call).
+        call_kind=("gate" if focus else "redo") if dates else None,
         prior_rows=[dict(r) for r in (prior_rows or [])] or None,
         unstaffable_dates=unstaffable,
         rules_constraints=constraints,
@@ -1711,10 +1758,33 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
 
     managers = set((getattr(rules_c, "managers", None) or {}).keys())
     expected = _expected_rows(shifts, roster_pairs)
-    per_call = rows_per_call(kwargs.get("restaurant_id"))
+    # What a call costs here, measured (PROMPT-3, PROMPT-4): the rows a call
+    # carries, how long each planned call is given, and whether a cache
+    # breakpoint is read before it expires (PROMPT-8).
+    kind_base = kwargs.pop("call_kind", None)
+    costs = call_cost_model(kwargs.get("restaurant_id"))
+    per_call = rows_per_call(kwargs.get("restaurant_id"), costs=costs)
     plan = _plan_tasks(expected * len(want) / max(1, len(open_dates)), want, roster_pairs, managers, per_call)
+    per_date = expected / max(1, len(open_dates))
+    heads = max(1, len(roster_pairs or []))
+
+    def task_rows(task):
+        share = (len(task["people"]) / heads) if task.get("people") is not None else 1.0
+        return per_date * len(task["dates"]) * share
     if clock is not None:
-        clock.plan(len(plan))
+        clock.plan(len(plan), seconds=sum(call_seconds(task_rows(t), costs) for t in plan))
+    try:
+        import ai_utils as _ai_c
+        read_rate = _ai_c._cache_read_multiplier(_ai_c.model_for("schedule"))
+    except Exception as _rx:
+        _soft_fail("cache read rate", _rx, kwargs.get("restaurant_id"))
+        read_rate = 0.1
+
+    def week_key(task):
+        return (task.get("label"), tuple(task.get("group") or ()))
+    sharing = {}
+    for t0 in plan:
+        sharing[week_key(t0)] = sharing.get(week_key(t0), 0) + 1
     call_cap = len(plan) + MAX_EXTRA_CALLS
     no_one = sorted(set(unstaffable) & set(all_dates))
 
@@ -1733,7 +1803,14 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     labels = []
     while queue:
         t = queue.pop(0)
-        if calls >= call_cap or (clock is not None and clock.model_seconds_left() < MIN_CALL_SECONDS):
+        # A call is not started with less model time left than it is
+        # measured to take: cut while still thinking, it keeps nothing and
+        # its tokens are billed (PROMPT-4). Before any measurement, the
+        # floor alone — the assumed speed is a guess, not a reason to refuse.
+        need = MIN_CALL_SECONDS
+        if _call_measured(costs):
+            need = max(need, call_seconds(task_rows(t), costs, headroom=False))
+        if calls >= call_cap or (clock is not None and clock.model_seconds_left() < need):
             why = "calls" if calls >= call_cap else "time"
             for task in [t] + queue:
                 for d in _required(task["dates"]):
@@ -1744,6 +1821,9 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             labels.append(t["label"])
         dk = _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, redo, no_one, clock)
         whole = redo is None and t["people"] is None and t["dates"] == open_dates and not kept
+        dk["call_kind"] = kind_base or ("week" if whole else "slice")
+        dk["cache_ttls"] = _sp.cache_ttls(len(plan), sharing.get(week_key(t), 1), call_seconds(task_rows(t), costs),
+                                          read_rate)
         entry = {"dates": list(t["dates"]), "part": t["what"], "retried": False}
         try:
             if whole:
@@ -1903,31 +1983,69 @@ MIN_CALL_SECONDS = 60
 _PART_WORDS = {"KITCHEN": "Kitchen", "FRONT OF HOUSE": "Front of house", "STAFF": "Staff"}
 
 
-def rows_per_call(restaurant_id=None) -> int:
+def call_cost_model(restaurant_id=None) -> dict:
+    """schedule_output.call_costs for the restaurant on the schedule model
+    in force; the estimate when there is no restaurant or the store cannot
+    be read (a store failure never fails the week)."""
+    empty = {"fixed": None, "per_row": None, "source": "estimate", "calls": 0, "seconds_fixed": None,
+             "seconds_per_row": None, "seconds_source": "estimate", "tokens_per_second": None, "by_kind": {}}
+    if not restaurant_id:
+        return empty
+    try:
+        import ai_utils as _ai
+        return _sched_out.call_costs(restaurant_id=restaurant_id, model=_ai.model_for("schedule"))
+    except Exception as e:
+        _soft_fail("measured call cost", e, restaurant_id)
+        return empty
+
+
+def rows_per_call(restaurant_id=None, costs=None) -> int:
     """The rows one call of a generation is planned to carry:
     CHUNK_ROWS_PER_CALL, or fewer once the restaurant's own finished calls
-    show a row costs more than that leaves room for — every output token,
-    thinking included, per row written (schedule_output.
-    measured_tokens_per_row, the median over the schedule model's calls of
-    the last 60 days), held to MEASURED_HEADROOM of the ceiling. Never more
-    than CHUNK_ROWS_PER_CALL (a call's minutes are not what it measures), nor
-    fewer than MIN_ROWS_PER_CALL. A median read off small calls (a one-day
-    redo) spreads their thinking over few rows and reads high: it errs
-    toward more, smaller calls, never toward a cut one."""
+    show a call costs more than that leaves room for. A call costs a fixed
+    part — its thinking, which every call pays whatever it writes — and a
+    part per row (schedule_output.call_costs, fitted over the restaurant's
+    calls of the last 60 days), so a call fits (MEASURED_HEADROOM x the
+    ceiling - fixed) / per_row rows. One median of tokens per row over every
+    call read a one-day gate rewrite's thinking as a dear row and split
+    every later week that fitted one call (schedule re-audit 10/4/26
+    PROMPT-3); until the calls spread far enough to fit, the median is read
+    over whole-week and slice calls only. Never more than
+    CHUNK_ROWS_PER_CALL, nor fewer than MIN_ROWS_PER_CALL."""
     per_call = CHUNK_ROWS_PER_CALL
     if not restaurant_id:
         return per_call
-    try:
-        import ai_utils as _ai
-        measured = _sched_out.measured_tokens_per_row(restaurant_id=restaurant_id, model=_ai.model_for("schedule"))
-    except Exception as e:
-        _soft_fail("measured row cost", e, restaurant_id)
+    costs = costs if costs is not None else call_cost_model(restaurant_id)
+    per_row = float(costs.get("per_row") or 0) if costs.get("source") in ("fit", "comparable") else 0.0
+    if per_row <= 0:
         return per_call
-    cost = float(measured.get("output_tokens_per_row") or 0) if measured.get("source") == "measured" else 0.0
-    if cost <= 0:
-        return per_call
-    fits = int(SCHEDULE_TOKEN_CEILING * MEASURED_HEADROOM // cost)
+    room = SCHEDULE_TOKEN_CEILING * MEASURED_HEADROOM - float(costs.get("fixed") or 0)
+    fits = int(room // per_row) if room > 0 else 0
     return max(min(per_call, MIN_ROWS_PER_CALL), min(per_call, fits))
+
+
+def call_seconds(rows, costs=None, headroom: bool = True) -> float:
+    """How long a call writing `rows` rows is planned to take (PROMPT-4):
+    the restaurant's measured seconds for that many rows (a fixed part and a
+    part per row, fitted over its calls), else its measured output speed
+    over what the call writes — its thinking reserve, summary and rows —
+    times CALL_SECONDS_HEADROOM; before any call, the assumed speed."""
+    costs = costs or {}
+    rows = max(0.0, float(rows or 0))
+    if costs.get("seconds_source") == "fit":
+        sec = float(costs.get("seconds_fixed") or 0) + float(costs.get("seconds_per_row") or 0) * rows
+    elif costs.get("tokens_per_second"):
+        writes = (float(costs["fixed"]) + float(costs["per_row"]) * rows
+                  if costs.get("source") in ("fit", "comparable") and costs.get("per_row") else
+                  THINKING_TOKENS_RESERVED + SUMMARY_TOKENS + rows * OUTPUT_TOKENS_PER_ROW)
+        sec = writes / float(costs["tokens_per_second"])
+    else:
+        return _assumed_call_seconds(rows)
+    return sec * (CALL_SECONDS_HEADROOM if headroom else 1.0)
+
+
+def _call_measured(costs) -> bool:
+    return (costs or {}).get("seconds_source") in ("fit", "rate")
 
 
 def _plan_tasks(rows: float, dates: list, roster_pairs, managers=(), per_call: int = None) -> list:
@@ -2074,6 +2192,23 @@ def _chunk_rules_block(c, people, manager_plan=None) -> str:
     view.role_floors = {r: s for r, s in (c.role_floors or {}).items() if mine(r)}
     view.close_mins = {r: m for r, m in (c.close_mins or {}).items() if mine(r)}
     view.role_requirements = {r: v for r, v in (c.role_requirements or {}).items() if mine(r)}
+    # The closers, trainees and acting managers are people, and the owner's
+    # start, end and arrival rules are roles: a kitchen part was told every
+    # role's closers — the bartenders' and the managers' among them — beside
+    # "do not schedule anyone not on this list" (schedule re-audit 10/4/26
+    # PROMPT-11). Only this part's people, in this part's roles.
+    closers = {}
+    for fam, keys in (c.closers_by_role or {}).items():
+        here = {k for k in (keys or ()) if key(k) in low}
+        if here and (fam in fams or mine(fam)):
+            closers[fam] = here
+    view.closers_by_role = closers
+    view.trainees = {k: t for k, t in (c.trainees or {}).items() if key(k) in low}
+    view.acting_managers = {k: v for k, v in (c.acting_managers or {}).items() if key(k) in low}
+    view.role_times = {k: v for k, v in (getattr(c, "role_times", None) or {}).items() if mine(k[0])}
+    for attr in ("role_windows", "role_caps"):
+        if getattr(c, attr, None):
+            setattr(view, attr, {r: v for r, v in getattr(c, attr).items() if mine(r)})
     if not any(w in r for r in roles for w in _BOH_WORDS):
         view.stations = {}
     return _rules.prompt_block(view, manager_plan=manager_plan)
@@ -3287,10 +3422,20 @@ def week_requirements(restaurant_id, result, constraints=None, curve=None) -> li
             open_times=(getattr(c, "open_times", None) or None) if c is not None else None,
             close_times=(getattr(c, "close_times", None) or None) if c is not None else None,
             section_cap=int(getattr(c, "section_cap", 0) or 0) if c is not None else 0,
-            cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else None)
+            cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else None,
+            # The hours and ceilings the owner's hours notes state (PROMPT-1).
+            **_limit_kwargs(c))
     except Exception as exc:
         print(f"[schedule] shift requirements unavailable: {exc}")
         return []
+
+
+def _limit_kwargs(c) -> dict:
+    """shift_requirements' role_windows / role_caps from the Constraints."""
+    if c is None or not hasattr(c, "limit_maps"):
+        return {}
+    windows, caps = c.limit_maps()
+    return {"role_windows": windows or None, "role_caps": caps or None}
 
 
 def _legal_fills(c, rows, options, date, coverage=True, limit=None) -> tuple:
@@ -4453,7 +4598,7 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         close_times=c.close_times or None, section_cap=int(getattr(c, "section_cap", 0) or 0),
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
-        standard_needs=standard_needs or None)
+        standard_needs=standard_needs or None, **_limit_kwargs(c))
 
 
 def learned_worse_levers(restaurant_id) -> dict:
@@ -7441,7 +7586,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # named, so the owner checks the draft against it — the model was
             # asked to follow it, and nothing else checked (memory re-audit
             # 9/29/26, PROMPTS-1).
-            _unchecked = list(getattr(_constraints, "owner_rules_unchecked", None) or [])
+            # The lines of the RESTAURANT HOURS & SHIFT RULES the code could
+            # not read are named the same way (PROMPT-1).
+            _unchecked = list(dict.fromkeys(list(getattr(_constraints, "owner_rules_unchecked", None) or [])
+                                            + list(getattr(_constraints, "hours_rules_unchecked", None) or [])))
             result["review"]["owner_rules_unchecked"] = _unchecked
             for _txt in _unchecked[:3]:
                 result["review"]["lines"].append(

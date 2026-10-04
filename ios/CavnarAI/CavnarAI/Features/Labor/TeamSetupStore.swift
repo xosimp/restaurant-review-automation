@@ -13,6 +13,10 @@ struct RulesSetupFields: Decodable {
     var closers: CloserReview? = nil
     var ownerRules: [OwnerRuleReadback] = []
     var ownerRulesUnchecked: [String] = []
+    /// The RESTAURANT HOURS & SHIFT RULES as every draft is checked against
+    /// them, and the lines the schedule can't read (PROMPT-1).
+    var hoursRules: [OwnerRuleReadback] = []
+    var hoursRulesUnchecked: [String] = []
     var closeTimesMissing: [String] = []
     var roleCloseMins: [String: Int] = [:]
     var roleCloseConflicts: [RoleCloseConflict] = []
@@ -34,6 +38,8 @@ struct RulesSetupFields: Decodable {
         case managersLine = "managers_line"
         case ownerRules = "owner_rules"
         case ownerRulesUnchecked = "owner_rules_unchecked"
+        case hoursRules = "hours_rules"
+        case hoursRulesUnchecked = "hours_rules_unchecked"
         case closeTimesMissing = "close_times_missing"
         case roleCloseMins = "role_close_mins"
         case roleCloseConflicts = "role_close_conflicts"
@@ -56,6 +62,8 @@ struct RulesSetupFields: Decodable {
         closers = (try? c.decodeIfPresent(CloserReview.self, forKey: .closers)) ?? nil
         ownerRules = c.setupList(OwnerRuleReadback.self, .ownerRules)
         ownerRulesUnchecked = c.setupTexts(.ownerRulesUnchecked)
+        hoursRules = c.setupList(OwnerRuleReadback.self, .hoursRules)
+        hoursRulesUnchecked = c.setupTexts(.hoursRulesUnchecked)
         closeTimesMissing = c.setupTexts(.closeTimesMissing)
         roleCloseMins = ((try? c.decodeIfPresent([String: Double].self, forKey: .roleCloseMins)) ?? nil)?
             .compactMapValues { $0.isFinite ? Int($0.rounded()) : nil } ?? [:]
@@ -112,6 +120,8 @@ final class TeamSetupStore {
     var closerSummary: CloserReview?
     var ownerRules: [OwnerRuleReadback] = []
     var ownerRulesUnchecked: [String] = []
+    var hoursRules: [OwnerRuleReadback] = []
+    var hoursRulesUnchecked: [String] = []
     var closeTimesMissing: [String] = []
     var roleCloseMins: [String: Int] = [:]
     var roleCloseConflicts: [RoleCloseConflict] = []
@@ -131,6 +141,8 @@ final class TeamSetupStore {
         closerSummary = f.closers
         ownerRules = f.ownerRules
         ownerRulesUnchecked = f.ownerRulesUnchecked
+        hoursRules = f.hoursRules
+        hoursRulesUnchecked = f.hoursRulesUnchecked
         closeTimesMissing = f.closeTimesMissing
         roleCloseMins = f.roleCloseMins
         roleCloseConflicts = f.roleCloseConflicts

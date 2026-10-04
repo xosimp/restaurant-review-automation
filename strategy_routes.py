@@ -2324,6 +2324,12 @@ def _setup_payload(rid, principal=False) -> dict:
                 "owner_rules": [{"text": x.get("text"), "reads_as": x.get("reads_as")} for x in c.owner_rules
                                 if principal or not x.get("private")],
                 "owner_rules_unchecked": list(c.owner_rules_unchecked),
+                # The RESTAURANT HOURS & SHIFT RULES as the schedule checks
+                # them, and the lines it can't (schedule re-audit 10/4/26
+                # PROMPT-1).
+                "hours_rules": [{"text": r.get("text"), "reads_as": r.get("reads_as")}
+                                for r in (getattr(c, "hours_rules", None) or [])],
+                "hours_rules_unchecked": list(getattr(c, "hours_rules_unchecked", None) or []),
                 "close_times_missing": _setup.close_times_missing(c),
                 "role_families": dict(c.role_families)}
     except Exception as e:

@@ -9,12 +9,17 @@ The request is one user message in three content blocks, in this order:
      (one text per output contract): how rules are marked, how coverage is
      counted, the defaults used where a restaurant's own data says nothing,
      the notes and times rules, the output, one worked example, and the
-     ranked PRIORITIES. A cache breakpoint closes it.
+     ranked PRIORITIES. A cache breakpoint may close it.
   2. THIS RESTAURANT'S WEEK — the owner's standing rules, the managers'
      fixed shifts, the rules the week is checked against, one ROSTER line
-     per person, and the context. Identical for every call of one generation
-     (its slices, a missing-day retry, the quality gate's rewrite), so a
-     second breakpoint closes it.
+     per person, and the context. Identical for the date slices of one
+     generation (one department's, when it is written by department) and
+     their missing-day retries — not for another department's call (its
+     roster, rules and schema enum are its own) nor the quality gate's
+     rewrite (its manager plan is re-made for its dates). A second
+     breakpoint may close it. Whether each breakpoint is set, and for how
+     long, is cache_ttls: only where the calls sharing the block read it
+     before it expires (schedule re-audit 10/4/26 PROMPT-8).
   3. THIS REQUEST — what this call writes: its dates, what each shift on
      them needs, what the rest of the week already gives each person, and
      anything said to this call alone.
@@ -163,8 +168,9 @@ LAYOUT = (
     "budget and what it has learned.\n"
     "3. THIS REQUEST — the dates to write now, what each shift on them needs (SHIFT REQUIREMENTS), and what the rest "
     "of the week already gives each person.\n"
-    "Every date in this request reads as a weekday and an ISO date (\"Fri 2026-10-09\"); write each date exactly as "
-    "THIS REQUEST lists it. Work the week out before you answer: count, check and compare as much as you need.")
+    "Every date in this request reads as a weekday and an ISO date (\"Fri 2026-10-09\"), so you know the day; in "
+    "your answer a date is the ISO date alone, without its weekday, as OUTPUT says. Work the week out before you "
+    "answer: count, check and compare as much as you need.")
 
 RULE_MARKS = (
     "HOW RULES ARE MARKED\n"
@@ -236,21 +242,27 @@ def _notes_rule(structured: bool, note_words: str) -> str:
             "anything about another person in a note.")
 
 
-def _times_rule(structured: bool) -> str:
-    if structured:
+def _times_rule(structured: bool, enums: bool = True) -> str:
+    if structured and enums:
         return ("- Times: `start` and `end` are clock times from the schema's list, 12-hour with am/pm (\"11:00am\", "
                 "\"9:30pm\").")
+    if structured:
+        # The shape without enums (schema_enums=False, a roster too large to
+        # compile): there is no list of times to pick from (PROMPT-7).
+        return ("- Times: `start` and `end` are 12-hour US clock times with am/pm — \"11:00am\", \"4:00pm\", "
+                "\"9:30pm\" — never 24-hour time.")
     return ("- Times: shift_start and shift_end are 12-hour US clock times with am/pm — \"11:00am\", \"4:00pm\", "
             "\"9:30pm\" — never 24-hour time.")
 
 
-def _output_text(structured: bool) -> str:
+def _output_text(structured: bool, enums: bool = True) -> str:
     if structured:
         spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date of THIS REQUEST "
-                "that you staff: its `date` and its `shifts`, each shift's `employee` exactly as the ROSTER spells "
-                "them, its `role`, and its `start` and `end` from the schema's clock times (an end at or before the "
-                "start runs past midnight) — the weekday and the hours are worked out from the date and the times, so "
-                "write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use it "
+                "that you staff: its `date` — the ISO date alone, without its weekday — and its `shifts`, each shift's "
+                "`employee` exactly as the ROSTER spells them, its `role`, and its `start` and `end` "
+                + ("from the schema's clock times" if enums else "as 12-hour clock times with am/pm")
+                + " (an end at or before the start runs past midnight) — the weekday and the hours are worked out "
+                "from the date and the times, so write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use it "
                 "to report what the week misses — every requirement, target, floor and request the finished week does "
                 "not meet is checked in code and shown to the owner. Write the JSON object and nothing else.")
     else:
@@ -258,8 +270,9 @@ def _output_text(structured: bool) -> str:
                 "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
                 "2026-MM-DD,Day,Employee Name,Role,start,end,hours,note\n(one row for every shift)\n---SUMMARY---\n"
                 "- bullet 1\n- bullet 2\n- bullet 3\n"
-                "Start the response with \"date,day,employee\" and keep that format to the end: the date, a real "
-                "weekday, a ROSTER name, then the role, times, hours and note, in that order, on every row.")
+                "Start the response with \"date,day,employee\" and keep that format to the end: the date as the ISO "
+                "date alone (2026-MM-DD, never with its weekday in front), a real weekday, a ROSTER name, then the role, "
+                "times, hours and note, in that order, on every row.")
     return (spec + "\nEach summary bullet: one short clause, 10 words or fewer, plain language — the concrete change "
             "and its one-line reason, nothing more. A restaurant owner should be able to read all 3 in under 5 "
             "seconds. No full sentences, no restating these rules back, no generic scheduling advice, no emoji. Name "
@@ -342,11 +355,14 @@ PRIORITIES = (
     "exactly and write no second shift for those managers on those dates; a stretch it says no manager can legally "
     "cover is staffed as usual, and the owner is told.\n"
     "     1b. Employee availability and approved time off (the person cannot be there), STAFF CONSTRAINTS, closed "
-    "dates, every [HARD] rule and each person's limits in the ROSTER (a minor's hours and a short rest are the "
-    "owner's legal exposure), and the RESTAURANT HOURS & SHIFT RULES' opening, closing and arrival times.\n"
-    "  2. SHIFT REQUIREMENTS — the people each role needs on each shift, with the owner's staffing floors the hard "
-    "minimum inside them and the owner's standing rules (OWNER_RULE) beside the floors. Fill them from the people "
-    "still under their minimum hours first (MIN in the ROSTER; a full-timer's is the full-time line), then from "
+    "dates, and each person's own limits in the ROSTER and the rules — the roles they may work, a minor's hours, rest "
+    "between shifts, shift length, their weekly maximum, days in a row (a minor's hours and a short rest are the "
+    "owner's legal exposure) — and each date's opening and closing times.\n"
+    "  2. SHIFT REQUIREMENTS and the owner's staffing rules — below every item of 1. First the staffing rules: the "
+    "staffing floors, each role's closer and somebody on until close, and the hours a role may start and end by the "
+    "RESTAURANT HOURS & SHIFT RULES (all [HARD]), and the owner's standing rules (OWNER_RULE, as their tags say). "
+    "Then SHIFT REQUIREMENTS, the people each role needs on each shift, with the floors the hard minimum inside them. "
+    "Fill them from the people still under their minimum hours first (MIN in the ROSTER; a full-timer's is the full-time line), then from "
     "those with the most room before their overtime line. Nobody goes past their overtime line (OT in the ROSTER) "
     "while a teammate in the same role has room: overtime is a cost the owner does not want, only for a shift "
     "nobody else in the role can legally work.\n"
@@ -357,27 +373,32 @@ PRIORITIES = (
     "first, then every [SOFT] preference: strength and pairing, the experience mix, a fair share of closes, "
     "weekends and busy shifts, people's usual days, dayparts and hours, what staff want — and last the defaults "
     "above, which apply only where this restaurant's own data says nothing.\n"
-    "  Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for opening, closing and arrival times (any "
-    "other rule in them sits with the standing rules at 2); STAFF CONSTRAINTS 1b; the owner's standing rules "
-    "(OWNER_RULE) 2; ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT 5. CAVNAR AI QUESTIONS are "
+    "  Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for the opening and closing times, 2 for "
+    "every staffing rule in them (floors, arrival times, who stays to close); STAFF CONSTRAINTS 1b; the owner's "
+    "standing rules (OWNER_RULE) 2; ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT 5. CAVNAR AI "
+    "QUESTIONS are "
     "questions to weigh, never instructions, and notes staff wrote about their own availability are context.")
 
 
 _STATIC = {}
 
 
-def static_block(structured: bool = True, note_words: str = "") -> str:
+def static_block(structured: bool = True, note_words: str = "", enums: bool = True) -> str:
     """The standing instructions — byte-identical for every restaurant and
     every call on one output contract, so it is cached (PR-26) — ending in
     PRIORITIES, which the restaurant's own standing rules follow (PR-2).
     `note_words` is the output contract's fixed note list
-    (schedule_output.NOTE_VALUES), passed by the caller."""
-    key = (bool(structured), note_words)
+    (schedule_output.NOTE_VALUES), passed by the caller. `enums` False is
+    the structured shape without its lists (labor's schema_enums=False
+    fallback): the times are not "from the schema's list" there, since
+    there is none (schedule re-audit 10/4/26 PROMPT-7)."""
+    enums = bool(enums) or not structured
+    key = (bool(structured), note_words, enums)
     if key not in _STATIC:
         _STATIC[key] = "\n\n".join([
             LAYOUT, RULE_MARKS, _coverage_text(), DEFAULTS,
-            "NOTES AND TIMES\n" + _notes_rule(structured, note_words) + "\n" + _times_rule(structured),
-            _output_text(structured), _example_text(), PRIORITIES])
+            "NOTES AND TIMES\n" + _notes_rule(structured, note_words) + "\n" + _times_rule(structured, enums),
+            _output_text(structured, enums), _example_text(), PRIORITIES])
     return _STATIC[key]
 
 
@@ -445,14 +466,77 @@ WEEK_HEAD = "THIS RESTAURANT'S WEEK"
 REQUEST_HEAD = "THIS REQUEST"
 
 
-def request_content(static: str, week: str, request: str) -> list:
+def _marker(ttl):
+    if ttl is None:
+        return None
+    return dict(CACHE_CONTROL, ttl="1h") if ttl == "1h" else dict(CACHE_CONTROL)
+
+
+def request_content(static: str, week: str, request: str, ttls=None) -> list:
     """The user message's content: the three parts as text blocks, a cache
     breakpoint after the standing instructions and after the week (PR-26,
-    P-23) — at most two of the four the API allows. Every call of one
-    generation then shares the first two blocks byte for byte."""
-    return [{"type": "text", "text": static, "cache_control": dict(CACHE_CONTROL)},
-            {"type": "text", "text": week, "cache_control": dict(CACHE_CONTROL)},
-            {"type": "text", "text": request}]
+    P-23) — at most two of the four the API allows. The date slices of one
+    generation and its missing-day retries share the first two blocks byte
+    for byte; a department call shares only the first (its roster and rules
+    are its own), and the quality gate's rewrite only the first (its manager
+    plan is re-made for its dates). `ttls` — (standing, week), each "5m",
+    "1h" or None for no breakpoint (cache_ttls) — defaults to a 5-minute
+    breakpoint on both."""
+    t0, t1 = ttls if ttls is not None else ("5m", "5m")
+    out = []
+    for text, ttl in ((static, t0), (week, t1)):
+        block = {"type": "text", "text": text}
+        if _marker(ttl):
+            block["cache_control"] = _marker(ttl)
+        out.append(block)
+    out.append({"type": "text", "text": request})
+    return out
+
+
+# ── when a cache breakpoint pays (schedule re-audit 10/4/26 PROMPT-8) ──────
+#
+# A cache entry lives CACHE_TTL_SECONDS from the start of the request that
+# wrote or last read it, and a schedule call that thinks runs for minutes:
+# calls started one after another more than five minutes apart each WROTE
+# the 5-minute entry again (1.25x input) and never read it — dearer than no
+# breakpoint at all. A breakpoint is set only where the calls that share the
+# block read it before it expires, at the TTL that costs least:
+#     none:  n x 1        5m: 1.25 + (n-1) x read  (only if gap < 5m)
+#     1h:    2 + (n-1) x read  (only if gap < 1h)
+# n calls sharing the block, `gap` the seconds between their starts (a call's
+# predicted length), `read` the model's cache-read rate (0.05x on Opus 5.5).
+CACHE_WRITE_5M, CACHE_WRITE_1H = 1.25, 2.0
+CACHE_TTL_SECONDS = {"5m": 300, "1h": 3600}
+# Starts closer to the edge than this are not counted on: a call that runs a
+# little long would find the entry gone.
+CACHE_TTL_MARGIN = 0.8
+
+
+def _cheapest_ttl(n: int, gap: float, read: float):
+    if n <= 1:
+        return None
+    best, cost = None, float(n)
+    for ttl, write in (("5m", CACHE_WRITE_5M), ("1h", CACHE_WRITE_1H)):
+        if gap < CACHE_TTL_SECONDS[ttl] * CACHE_TTL_MARGIN:
+            c = write + (n - 1) * read
+            if c < cost - 1e-9:
+                best, cost = ttl, c
+    return best
+
+
+def cache_ttls(static_calls: int, week_calls: int, call_seconds: float, read_rate: float = 0.1) -> tuple:
+    """(standing, week) breakpoint TTLs for a call: "5m", "1h" or None.
+    `static_calls` — how many of the generation's planned calls share the
+    standing instructions (every one); `week_calls` — how many share this
+    call's week block (its own department's date slices); `call_seconds`
+    — the planned length of one call. A one-hour entry must come before a
+    five-minute one in the prompt, so a week block on "1h" puts the standing
+    block on "1h" too."""
+    t0 = _cheapest_ttl(int(static_calls or 0), float(call_seconds or 0), float(read_rate))
+    t1 = _cheapest_ttl(int(week_calls or 0), float(call_seconds or 0), float(read_rate))
+    if t1 == "1h" and t0 == "5m":
+        t0 = "1h"
+    return t0, t1
 
 
 def prompt_text(content) -> str:

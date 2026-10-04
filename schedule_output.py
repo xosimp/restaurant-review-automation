@@ -152,15 +152,35 @@ def _enum(values) -> dict:
     return {"type": "string", "enum": vals} if vals else {"type": "string"}
 
 
+_ISO_IN = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)")
+
+
+def iso_date_of(text) -> str:
+    """The ISO date a date cell carries — "2026-10-05" from "2026-10-05",
+    "Mon 2026-10-05" or "Monday, 2026-10-05" — or "" when it carries none or
+    more than one. The request names each date with its weekday; an answer
+    that copies that form is the same date (schedule re-audit 10/4/26
+    PROMPT-7: such a row was dropped and the day read as missing)."""
+    found = _ISO_IN.findall(str(text or ""))
+    if len(found) != 1:
+        return ""
+    try:
+        _datetime.strptime(found[0], "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return found[0]
+
+
 def schedule_schema(employees=None, roles=None, dates=None, times=None) -> dict:
     """The JSON schema one generation answers against. Each argument that
     is given becomes an enum (an empty one is left a plain string): the
     roster, the roles, the dates, the clock times. `dates` is the whole
     week for every call of a generation — a slice is told its own dates in
     the prompt — so the schema, and with it the prompt cache, is the same
-    for every call of one generation (structured outputs compile a schema
-    once and keep it 24 hours; a changed output format invalidates a cached
-    prompt).
+    for every date slice of one generation (structured outputs compile a
+    schema once and keep it 24 hours; a changed output format invalidates a
+    cached prompt). A department call's roster and roles are its own, so
+    its schema is too (schedule re-audit 10/4/26 PROMPT-8).
 
     Rows are grouped under their date, and the weekday and the hours are not
     asked for: the code derives both (the hours from the times — times win
@@ -304,7 +324,7 @@ def parse_answer(raw, dates=None) -> dict:
     for idx, day in enumerate(days):
         if not isinstance(day, dict):
             continue
-        d = str(day.get("date") or "").strip()[:10]
+        d = iso_date_of(day.get("date")) or str(day.get("date") or "").strip()[:10]
         try:
             weekday = _datetime.strptime(d, "%Y-%m-%d").strftime("%A")
         except ValueError:
@@ -359,7 +379,7 @@ _PART_WORDS = {"morning": "lunch/day", "night": "dinner/night"}
 # around first (schedule_rules' tiers), then targets and asks, then the
 # budget, then what code cannot check.
 _UNMET_RANK = {"manager": 0, "floor": 1, "owner_rule": 1, "closer": 1, "close": 1, "role_close": 1,
-               "coverage": 2, "leadership": 3, "strength": 3, "station": 3, "ask": 4, "min_hours": 5,
+               "role_max": 2, "coverage": 2, "leadership": 3, "strength": 3, "station": 3, "ask": 4, "min_hours": 5,
                "budget": 6, "unchecked_rule": 7}
 
 
@@ -432,6 +452,11 @@ def unmet_items(rows, constraints=None, violations=None, quality=None, soft_requ
         elif kind == "ends_before_role_close":
             out.append(_item("role_close", f"{v.get('role') or 'The role'} on past close",
                              detail[:1].upper() + detail[1:], d, "night"))
+        elif kind == "over_role_max":
+            # The most of a role on at once by the owner's hours & shift
+            # rules (schedule re-audit 10/4/26 PROMPT-1).
+            out.append(_item("role_max", f"Your {_role_label(v, v.get('floor_role') or '')} maximum",
+                             detail[:1].upper() + detail[1:], d, over=v.get("severity")))
     c = constraints
     if c is not None:
         hours = {}
@@ -556,7 +581,9 @@ def week_review_extras(restaurant_id, rows, constraints, violations=None, qualit
         gaps = (station_report(rows, constraints, list(constraints.week_dates or [])) or {}).get("gaps")
     return {"unmet": unmet_items(rows, constraints=constraints, violations=violations, quality=quality,
                                  soft_requirements=asks, hours_budget=budget, station_gaps=gaps,
-                                 owner_rules_unchecked=getattr(constraints, "owner_rules_unchecked", None)),
+                                 owner_rules_unchecked=list(dict.fromkeys(
+                                     list(getattr(constraints, "owner_rules_unchecked", None) or [])
+                                     + list(getattr(constraints, "hours_rules_unchecked", None) or []))) or None),
             "soft_requirements": asks}
 
 
@@ -593,8 +620,17 @@ _CALLS_DDL = """CREATE TABLE IF NOT EXISTS schedule_model_calls (
     request_z      BLOB,
     inputs_z       BLOB,
     shared_z       BLOB,
-    answer_z       BLOB
+    answer_z       BLOB,
+    call_kind      TEXT
 )"""
+
+# What a call wrote (schedule re-audit 10/4/26 PROMPT-3): a whole week, a
+# date or department slice of a fresh generation, an owner's redo of some
+# days, or the quality gate's rewrite of the weakest ones. A small call
+# carries the same thinking as a big one, so its tokens per row read high;
+# the call planner models a call as a fixed cost plus a cost per row
+# (call_costs) instead of one median over every kind.
+CALL_KINDS = ("week", "slice", "redo", "gate")
 
 
 def init_schedule_output(db_path=None):
@@ -603,6 +639,9 @@ def init_schedule_output(db_path=None):
     conn = get_conn(db_path)
     try:
         conn.execute(_CALLS_DDL)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_model_calls)").fetchall()}
+        if "call_kind" not in cols:
+            conn.execute("ALTER TABLE schedule_model_calls ADD COLUMN call_kind TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_created ON schedule_model_calls(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_gen ON schedule_model_calls(generation_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_hist ON schedule_model_calls(history_id)")
@@ -698,7 +737,7 @@ SHARED_INPUTS = ("analysis", "shifts")
 def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=None, week_start=None,
                 dates=None, ai_call_id=None, model=None, effort=None, contract=None, stop_reason=None,
                 outcome=None, error=None, seconds=None, usage=None, rows=None, answer_chars=None,
-                db_path=None):
+                db_path=None, call_kind=None):
     """Store one schedule call: the exact request (model, max_tokens, system,
     messages, thinking, output_config with its schema), the generator's
     arguments (`inputs`, encoded so a replay rebuilds them), and the answer
@@ -727,13 +766,14 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
         cur = conn.execute(
             "INSERT INTO schedule_model_calls (restaurant_id, generation_id, week_start, dates_json, ai_call_id, "
             "model, effort, contract, stop_reason, outcome, error, seconds, usage_json, rows, answer_chars, "
-            "request_z, inputs_z, shared_z, answer_z) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "request_z, inputs_z, shared_z, answer_z, call_kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (restaurant_id, generation_id, week_start, json.dumps(list(dates or [])), ai_call_id, model, effort,
              contract, stop_reason, outcome, (str(error)[:500] if error else None), seconds,
              json.dumps(usage or {}), rows, answer_chars, _z(req),
              _z(enc_inputs) if enc_inputs is not None else None,
              _z(shared) if shared else None,
-             zlib.compress(_scrub(str(answer), names).encode("utf-8", "replace")) if answer else None))
+             zlib.compress(_scrub(str(answer), names).encode("utf-8", "replace")) if answer else None,
+             call_kind if call_kind in CALL_KINDS else None))
         conn.commit()
         return cur.lastrowid
     finally:
@@ -790,7 +830,8 @@ def load_calls(generation_id=None, history_id=None, db_path=None) -> list:
                     "model": r["model"], "effort": r["effort"], "contract": r["contract"],
                     "stop_reason": r["stop_reason"], "outcome": r["outcome"], "error": r["error"],
                     "seconds": r["seconds"], "usage": json.loads(r["usage_json"] or "{}"), "rows": r["rows"],
-                    "answer_chars": r["answer_chars"], "request": decode(_unz(r["request_z"]) or {}),
+                    "answer_chars": r["answer_chars"], "call_kind": r["call_kind"] if "call_kind" in r.keys() else None,
+                    "request": decode(_unz(r["request_z"]) or {}),
                     "inputs": inputs,
                     "answer": zlib.decompress(r["answer_z"]).decode("utf-8") if r["answer_z"] else ""})
     return out
@@ -827,6 +868,121 @@ def generations(restaurant_ids=None, history_ids=None, limit=20, linked_only=Tru
                                       "created_at")})
         if len(out) >= int(limit or 20):
             break
+    return out
+
+
+# A fit of a call's cost on its rows needs this many finished calls, and
+# their row counts this far apart (the largest at least SPREAD x the
+# smallest): calls all of one size say nothing about the fixed part.
+FIT_MIN_CALLS = 3
+FIT_MIN_SPREAD = 1.5
+
+
+def _median(xs):
+    xs = sorted(xs)
+    if not xs:
+        return None
+    mid = len(xs) // 2
+    return xs[mid] if len(xs) % 2 else (xs[mid - 1] + xs[mid]) / 2
+
+
+def _fit(points):
+    """(intercept, slope) of the least-squares line through [(rows, y)], or
+    None when the rows do not spread far enough to tell a fixed cost from a
+    cost per row."""
+    pts = [(float(x), float(y)) for x, y in points if x and y is not None]
+    if len(pts) < FIT_MIN_CALLS:
+        return None
+    xs = [x for x, _y in pts]
+    if max(xs) < FIT_MIN_SPREAD * min(xs):
+        return None
+    n = len(pts)
+    mx, my = sum(xs) / n, sum(y for _x, y in pts) / n
+    var = sum((x - mx) ** 2 for x in xs)
+    if var <= 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in pts) / var
+    return my - slope * mx, slope
+
+
+def call_costs(restaurant_id=None, model=None, days=60, db_path=None) -> dict:
+    """What a schedule call really costs, from the stored calls of the last
+    `days` that finished (end_turn) on the structured contract (schedule
+    re-audit 10/4/26 PROMPT-3, PROMPT-4).
+
+    Adaptive thinking is mostly a cost per CALL — every call reads the same
+    roster, rules and week — so one median of output tokens per row over
+    every call read a one-day gate rewrite as a very expensive row and split
+    every later week that fitted one call. A call is modelled as
+        output_tokens = fixed + per_row x rows,   seconds = s_fixed + s_row x rows
+    fitted over the restaurant's calls once FIT_MIN_CALLS of them spread
+    over FIT_MIN_SPREAD x in rows ("fit"); before that, the median tokens a
+    row over whole-week and slice calls only, the kinds a plan is made of
+    ("comparable"); before any call, None ("estimate" — the caller's
+    constants). Seconds: the fit, else output tokens over seconds measured
+    across the calls (`tokens_per_second`), else None.
+
+    {"fixed", "per_row", "source", "calls", "seconds_fixed",
+    "seconds_per_row", "seconds_source", "tokens_per_second", "by_kind":
+    {kind: {"calls", "rows", "tokens_per_row", "tokens_per_call",
+    "seconds", "tokens_per_second", "cache_read_tokens"}}} — by_kind keys
+    are CALL_KINDS, and "unknown" for calls recorded before kinds were."""
+    where, args = ["stop_reason='end_turn'", "rows > 0", "contract IN ('schema', 'plain_schema')",
+                   "created_at >= datetime('now', ?)"], [f"-{int(days)} days"]
+    if restaurant_id:
+        where.append("restaurant_id=?")
+        args.append(restaurant_id)
+    if model:
+        where.append("model=?")
+        args.append(model)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT usage_json, rows, seconds, call_kind FROM schedule_model_calls WHERE "
+                            + " AND ".join(where) + " ORDER BY id DESC LIMIT 200", args).fetchall()
+    finally:
+        conn.close()
+    calls = []
+    for r in rows:
+        try:
+            usage = json.loads(r["usage_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            usage = {}
+        out_tokens = int(usage.get("output_tokens") or 0)
+        if not out_tokens:
+            continue
+        calls.append({"rows": int(r["rows"]), "tokens": out_tokens, "seconds": float(r["seconds"] or 0) or None,
+                      "kind": r["call_kind"] if r["call_kind"] in CALL_KINDS else "unknown",
+                      "cache_read": int(usage.get("cache_read_tokens") or 0)})
+    by_kind = {}
+    for k in sorted({c["kind"] for c in calls}):
+        mine = [c for c in calls if c["kind"] == k]
+        timed = [c for c in mine if c["seconds"]]
+        by_kind[k] = {
+            "calls": len(mine), "rows": _median([c["rows"] for c in mine]),
+            "tokens_per_row": round(_median([c["tokens"] / c["rows"] for c in mine]), 1),
+            "tokens_per_call": _median([c["tokens"] for c in mine]),
+            "seconds": _median([c["seconds"] for c in timed]),
+            "tokens_per_second": (round(sum(c["tokens"] for c in timed) / sum(c["seconds"] for c in timed), 1)
+                                  if timed else None),
+            "cache_read_tokens": _median([c["cache_read"] for c in mine])}
+    out = {"fixed": None, "per_row": None, "source": "estimate", "calls": len(calls), "seconds_fixed": None,
+           "seconds_per_row": None, "seconds_source": "estimate", "tokens_per_second": None, "by_kind": by_kind}
+    fit = _fit([(c["rows"], c["tokens"]) for c in calls])
+    if fit and fit[1] > 0:
+        out.update(fixed=round(max(0.0, fit[0]), 1), per_row=round(fit[1], 2), source="fit")
+    else:
+        plan_kinds = [c for c in calls if c["kind"] in ("week", "slice")]
+        if plan_kinds:
+            out.update(fixed=0.0, per_row=round(_median([c["tokens"] / c["rows"] for c in plan_kinds]), 1),
+                       source="comparable")
+    timed = [c for c in calls if c["seconds"]]
+    if timed:
+        out["tokens_per_second"] = round(sum(c["tokens"] for c in timed) / sum(c["seconds"] for c in timed), 1)
+    sfit = _fit([(c["rows"], c["seconds"]) for c in timed])
+    if sfit and sfit[1] > 0:
+        out.update(seconds_fixed=round(max(0.0, sfit[0]), 1), seconds_per_row=round(sfit[1], 3), seconds_source="fit")
+    elif out["tokens_per_second"]:
+        out["seconds_source"] = "rate"
     return out
 
 
