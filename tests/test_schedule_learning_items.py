@@ -604,9 +604,13 @@ def _obj():
             "daypart_sales": {wd: {"morning": 1000.0, "night": 3000.0} for wd in SPLH}, "basis": "your own pace"}
 
 
-def test_the_prompt_is_told_the_hours_each_shift_carries_at_its_target():
+def test_the_prompt_is_told_each_shifts_target_pace_and_no_second_hours_figure():
+    # The hours a shift carries are its SHIFT REQUIREMENTS row's, said once
+    # (schedule audit 10/3/26 PR-24: the "≈ Nh" here was a fifth competing
+    # hours anchor); this block is the pace each shift is scored against.
     block = econ.splh_objective_block(_obj(), ["2026-10-10"], {"2026-10-10": {"lift_pct": 20}})
-    assert "SALES PER LABOR HOUR" in block and "Sat 10/10/26: lunch $100/labor-hour ≈ 12h, dinner $60/labor-hour ≈ 60h" in block
+    assert "SALES PER LABOR HOUR" in block and "Sat 2026-10-10: lunch $100/labor-hour, dinner $60/labor-hour" in block
+    assert "≈" not in block
 
 
 def _splh_score(rows, obj=None):

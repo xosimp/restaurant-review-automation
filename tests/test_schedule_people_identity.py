@@ -224,7 +224,12 @@ def test_a_salaried_name_that_is_an_alias_holds_for_every_spelling():
     assert models.salaried_matches(r)[0]["matched"] == "Gabe Huerta"
     c = sr.build_constraints(rid, WEEK, DAYS)
     assert c.is_salaried("Gabe Huerta") and sr.overtime_line(c, "Gabe Huerta") == sr.SALARIED_HOURS_CAP
-    assert "Salaried (the same pay whatever the hours): Gabe Huerta" in sr.prompt_block(c)
+    # Salaried in their own ROSTER line, under the roster's spelling (C1, PR-33).
+    import labor
+    import schedule_prompt
+    line = schedule_prompt.roster_table(labor._roster_people([("Gabe Huerta", "Manager")],
+                                                             facts=sr.person_facts(c, ["Gabe Huerta"])))
+    assert "Gabe Huerta | Manager" in line and "salaried, at most 55h" in line
     # His punches leave the hourly analysis.
     shifts = [{"employee": "Gabe Huerta", "date": "2026-09-01", "scheduled_hours": "6", "shift_start": "16:00",
                "shift_end": "22:00"}, {"employee": "Ana B.", "date": "2026-09-01", "scheduled_hours": "6",

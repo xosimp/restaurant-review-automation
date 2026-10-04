@@ -11,6 +11,7 @@ limit, the days each manager usually works, then a fair split — as real
 opener and closer shifts with a handoff, hands them to the model as fixed
 rows under PRIORITIES 1a, merges them into its answer by code and keeps them
 pinned through the job."""
+import schedule_prompt
 import datetime as dt
 import json
 import sys
@@ -445,7 +446,7 @@ def test_the_rules_block_states_the_rule_at_its_rank():
     # the acting manager is named once, on its own line, with the date as the
     # owner reads it (schedule_rules._acting_prompt_lines, F1)
     assert "Somebody standing in as the manager counts on their dates" in line
-    assert "Standing in as the manager (counts as the manager on the floor those days only): Ana on Wed 10/7/26" in block
+    assert "Standing in as the manager (counts as the manager on the floor those days only): Ana on Wed 2026-10-07" in block
     assert "MANAGER COVERAGE" not in line
     planned = sr.prompt_block(c, manager_plan=sk.plan_manager_coverage(c, WEEK))
     assert "MANAGER COVERAGE, at the top, is fixed" in planned
@@ -492,7 +493,7 @@ def test_the_model_is_told_the_rule_first_and_handed_the_plan_as_fixed_rows(monk
         _ANALYSIS, _history(), restaurant_name="EJ", hourly_rate=20.0, labor_target=30.0, week_start="2026-10-05",
         roster=[(n, (MANAGERS.get(n.lower()) or "Server")) for n in ROSTER],
         extra_blocks=sr.prompt_block(c, manager_plan=plan), pinned_rows=plan["rows"], manager_plan=plan)
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     pri = prompt[prompt.index("PRIORITIES —"):prompt.index("CONTEXT:")]
     assert "  1. Hard constraints — never broken for anything below:\n     1a. A manager or owner on the floor" in pri
     assert pri.index("1a.") < pri.index("1b. Employee availability and approved time off")
@@ -568,7 +569,7 @@ def test_the_csv_fallback_keeps_the_plan(monkeypatch):
         _ANALYSIS, _history(), restaurant_name="EJ", hourly_rate=20.0, labor_target=30.0, week_start="2026-10-05",
         roster=[(n, (MANAGERS.get(n.lower()) or "Server")) for n in ROSTER], pinned_rows=plan["rows"],
         manager_plan=plan)
-    assert len(calls) == 3 and "MANAGER COVERAGE — ALREADY SCHEDULED" in calls[-1]["messages"][0]["content"]
+    assert len(calls) == 3 and "MANAGER COVERAGE — ALREADY SCHEDULED" in schedule_prompt.prompt_text(calls[-1]["messages"][0]["content"])
     assert sum(1 for ln in out["schedule_csv"].split("\n") if sk.is_plan_line(ln)) == len(plan["rows"])
 
 
@@ -577,7 +578,7 @@ def test_a_week_written_in_slices_carries_each_planned_row_once(monkeypatch):
     prompts = []
 
     def fake(client, **kwargs):
-        prompts.append(kwargs["messages"][0]["content"])
+        prompts.append(schedule_prompt.prompt_text(kwargs["messages"][0]["content"]))
         # the output contract's shape: rows grouped by date (C2, PR-12/13)
         days = [{"date": d, "shifts": [{"employee": "Ana", "role": "Server", "start": "4:00pm", "end": "10:00pm",
                                         "note": ""}]} for d in WEEK]
@@ -597,9 +598,14 @@ def test_a_week_written_in_slices_carries_each_planned_row_once(monkeypatch):
     planned = [ln for ln in out["schedule_csv"].split("\n") if sk.is_plan_line(ln)]
     assert sorted(planned) == sorted(sk._row_line(r) for r in plan["rows"])
     assert out["closed_dates"] == []                      # every day was written by the model too
-    # Each slice is shown its own days' manager rows, and the week's hours.
-    first = prompts[0][prompts[0].index("MANAGER COVERAGE"):prompts[0].index("CONTEXT:")]
-    assert "Mon 2026-10-05" in first and "Sun 2026-10-11" not in first and "Planned manager hours" in first
+    # MANAGER COVERAGE is THIS RESTAURANT'S WEEK (C1, PR-26): every slice
+    # reads the whole week's planned rows, identically, so the week part is
+    # read from the cache; THIS REQUEST names the slice's own dates.
+    blocks = [p[p.index("MANAGER COVERAGE"):p.index("CONTEXT:")] for p in prompts]
+    assert blocks[0] == blocks[1]
+    assert "Mon 2026-10-05" in blocks[0] and "Sun 2026-10-11" in blocks[0] and "Planned manager hours" in blocks[0]
+    first_request = prompts[0][prompts[0].index("THIS REQUEST — write shifts for these dates only:"):]
+    assert "- Mon 2026-10-05" in first_request and "- Sun 2026-10-11" not in first_request
 
 
 def test_a_day_with_only_planned_rows_still_counts_as_missing():
@@ -681,7 +687,8 @@ def test_generation_plans_the_managers_first_and_hands_the_plan_to_the_model(db,
     assert [(r["shift_start"], r["shift_end"], r["_plan_source"]) for r in jim_tue] == [("3:00pm", "10:00pm", "usual")]
     assert plan["question"] == "Which days and hours do Erik work?"
     assert result["manager_plan"] is plan
-    assert "MANAGER COVERAGE, at the top, is fixed" in captured["extra_blocks"]
+    # The rules (with the plan's line) travel as the week's rules block (C1).
+    assert "MANAGER COVERAGE, at the top, is fixed" in captured["rules_block"]
 
 
 def _quiet_passes(monkeypatch):

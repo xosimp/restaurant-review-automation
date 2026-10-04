@@ -209,7 +209,9 @@ def test_a_listed_event_takes_its_measured_lift_and_an_owner_figure_stands_besid
     assert by["2026-10-20"]["assumed"] is True                     # no record: still an assumption
     block = ds.prompt_block(by, ["2026-10-06", "2026-10-13", "2026-10-20"])
     assert "measured median over 3 past nights" in block
-    assert "measured +25% here over 3 past nights" in block
+    # The figure itself is said once, in the date's SHIFT REQUIREMENTS row
+    # (C1, PR-8): here, what the night is and how sure its figure is.
+    assert "+25%" not in block and "40%" not in block and "(the owner's own figure)" in block
     assert "ASSUMED" in block
 
 

@@ -799,9 +799,10 @@ def splh_block(splh: dict) -> str:
         lines.append(f"  {wd}: " + ", ".join(bits))
     if not lines:
         return ""
-    return ("\n\nSALES PER LABOR HOUR BY DAYPART (this restaurant's own recent record — a daypart well "
-            "below the others is where hours are being spent for the least return; add there last and "
-            "trim there first):\n" + "\n".join(lines))
+    # Context (schedule audit 10/3/26 PR-7): "add there last and trim there
+    # first" was a lever on numbers SHIFT REQUIREMENTS already set.
+    return ("\n\nSALES PER LABOR HOUR BY DAYPART (this restaurant's own recent record — context: a daypart well "
+            "below the others is where hours have bought the least):\n" + "\n".join(lines))
 
 
 # ── sales per labor hour as the objective ─────────────────────────────────
@@ -974,10 +975,11 @@ def _shift_sales(objective, weekday, part, date, demand_by_date):
 
 def splh_objective_block(objective: dict, dates: list, demand_by_date: dict = None) -> str:
     """The prompt's objective: for each shift of the week, the sales per
-    labor hour it aims for and the labor hours its usual sales carry there."""
+    labor hour it is scored against — context, its date as weekday and ISO
+    (the schedule prompt's one format). `demand_by_date` is kept for the
+    callers that pass it; the hours its sales carry are the day targets'."""
     if not objective or not objective.get("available"):
         return ""
-    from time_utils import mdy
     lines = []
     for d in dates or []:
         try:
@@ -987,19 +989,21 @@ def splh_objective_block(objective: dict, dates: list, demand_by_date: dict = No
         bits = []
         for part in SPLH_PARTS:
             t = splh_target_for(objective, wd, part)
-            s = _shift_sales(objective, wd, part, d, demand_by_date)
-            if not t or not s:
+            if not t:
                 continue
-            bits.append(f"{_dp_label(part)} ${t:,.0f}/labor-hour ≈ {s / float(t):.0f}h")
+            bits.append(f"{_dp_label(part)} ${t:,.0f}/labor-hour")
         if bits:
-            lines.append(f"  {wd[:3]} {mdy(d)}: " + ", ".join(bits))
+            lines.append(f"  {wd[:3]} {d}: " + ", ".join(bits))
     if not lines:
         return ""
-    return ("\n\nSALES PER LABOR HOUR — the productivity objective, ranked below the shift requirements ("
-            + objective.get("basis", "") + "). Each shift's target, and the labor hours its usual sales carry at that "
-            "target (hours counted under the daypart each shift is mostly on the floor for). Staff to the requirements "
-            "table first; past it, add hours where they carry the most sales and hold the rest near these figures:\n"
-            + "\n".join(lines))
+    # Context, one figure per shift (schedule audit 10/3/26 PR-7, PR-24): the
+    # hold already brings each shift's crew to its target inside SHIFT
+    # REQUIREMENTS. The block used to add "≈ 31h" per shift — a third hours
+    # anchor beside the day target and the ceiling — and "past it, add hours
+    # where they carry the most sales".
+    return ("\n\nSALES PER LABOR HOUR — the productivity objective each shift is scored against ("
+            + objective.get("basis", "") + "). Context: SHIFT REQUIREMENTS are already held to it, and the day "
+            "targets carry the hours:\n" + "\n".join(lines))
 
 
 def splh_report(objective: dict, rows: list, demand_by_date: dict = None) -> dict:

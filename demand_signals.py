@@ -668,20 +668,31 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
 
 
 def prompt_block(signals_by_date: dict, week_dates: list) -> str:
-    """The dated facts, as the model should read them."""
+    """The dated facts, as the schedule prompt reads them: what each night
+    is — the owner's events and reservations, the texts and posts sent to
+    fill it, the games nearby — and how sure the figure behind it is. The
+    figure itself is said once, in that date's SHIFT REQUIREMENTS row with
+    its reason (schedule_economics.date_demand → schedule_requirements;
+    schedule audit 10/3/26 PR-8: the YoY line, the events block and this
+    one each stated a date's lift again, so the model could stack them).
+    Dates as weekday and ISO, the prompt's one format (PR-20); the owner's
+    and the catalog's words fenced."""
+    import ai_guard
+
+    def _day_date(d):
+        try:
+            x = date.fromisoformat(str(d)[:10])
+        except Exception:
+            return str(d), ""
+        return f"{x.strftime('%a')} {x.isoformat()}", x.strftime("%A")
     lines = []
     for d in week_dates:
         e = (signals_by_date or {}).get(d)
         if not e:
             continue
-        try:
-            day = date.fromisoformat(d).strftime("%A")
-        except Exception:
-            day = ""
+        when, day = _day_date(d)
         if not e.get("labels") and e.get("context"):
-            import ai_guard
-            from time_utils import mdy
-            lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted('; '.join(e['context']))} — a game or event "
+            lines.append(f"  {when}: {ai_guard.wrap_untrusted('; '.join(e['context']))} — a game or event "
                          f"nearby, not the owner's; no measured effect to plan on: staff a usual {day}")
             continue
         what = "; ".join(e["labels"])
@@ -690,55 +701,35 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
         lift = e.get("lift_pct")
         tail = ""
         if lift is not None:
-            tail = (f" — expect about {lift}% more than a typical {day}" if lift > 0
-                    else f" — expect about {abs(lift)}% less than a typical {day}" if lift < 0
-                    else " — about a typical day")
+            tail = " — already counted in this date's SHIFT REQUIREMENTS"
             if e.get("lift_source") == "measured":
                 tail += (f" (this restaurant's own measured median over {e.get('measured_n')} past nights like it — "
                          "before and after, not proof)")
             elif e.get("lift_source") == "post_measured":
                 tail += (" (the sales change measured after this restaurant's own posts like it — before and "
                          "after, not proof)")
+            elif e.get("covers"):
+                tail = f" — {e['covers']} covers booked; already counted in this date's SHIFT REQUIREMENTS"
             else:
-                seen = [m for m in e.get("measured") or [] if m.get("owner_lift_pct") is not None]
-                if seen:
-                    m = seen[0]
-                    tail += (f"; the same kind of night measured {m['median_lift_pct']:+.0f}% here over "
-                             f"{m['n']} past night{'s' if m['n'] != 1 else ''}")
-            # The date's one demand number (schedule_engine._merge_date_demand)
-            # differs from the signal's own lift when the owner's budget for
-            # the night, a measured forecast effect or measured rain moved it:
-            # the reasons say what made the figure, not the signal alone
-            # (schedule audit 10/3/26 D-23, D-30, PR-8).
-            dem = e.get("demand") or {}
-            if dem.get("reasons") and e.get("signal_lift_pct") != lift:
-                import ai_guard as _ag_dem
-                tail = (f" — expect about {abs(lift)}% {'more' if lift > 0 else 'less'} than a typical {day}"
-                        if lift else " — about a typical day")
-                tail += " (" + _ag_dem.wrap_untrusted("; ".join(dem["reasons"])) + ")"
+                tail += " (the owner's own figure)"
         elif e.get("covers"):
-            tail = f" — {e['covers']} covers booked"
+            tail = (f" — {e['covers']} covers booked (no typical covers on file to compare them with, so this "
+                    f"date's SHIFT REQUIREMENTS are a usual {day}'s)")
         elif e.get("assumed"):
-            tail = (f" — no covers or lift given; ASSUMED busier (about {e.get('assumed_lift_pct')}% is an "
-                    f"assumption, not a figure) — staff it as a normal busy {day}, not above it")
-        # The labels are the owner's words (an event they named, a post's
-        # dish) and the date is M/D/YY (memory reaching a prompt, 9/29/26).
-        import ai_guard
-        from time_utils import mdy
+            tail = (f" — no covers or lift given; ASSUMED busier, an assumption, not a figure — its SHIFT "
+                    f"REQUIREMENTS are a usual {day}'s, never above")
         unmeasured = [p["label"] for p in e.get("posts") or [] if not p.get("measured")]
         if unmeasured:
-            post_tail = (" — a post goes out that day with no measured effect on sales here yet: not a reason "
-                         "to staff above a usual " + day)
+            post_tail = (" — a post goes out that day with no measured effect on sales here yet: its SHIFT "
+                         f"REQUIREMENTS are a usual {day}'s")
             if what:
-                lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted(what)}{tail}")
-            lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted('; '.join(unmeasured))}{post_tail}")
+                lines.append(f"  {when}: {ai_guard.wrap_untrusted(what)}{tail}")
+            lines.append(f"  {when}: {ai_guard.wrap_untrusted('; '.join(unmeasured))}{post_tail}")
             continue
-        lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted(what)}{tail}")
+        lines.append(f"  {when}: {ai_guard.wrap_untrusted(what)}{tail}")
     if not lines:
         return ""
-    return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations they entered, and the "
-            "texts or posts they sent to fill a night — "
-            "a stronger signal than the weekday averages above for the date it names. Each date's figure is "
-            "ALREADY in its SHIFT REQUIREMENTS numbers and its day target (schedule audit 10/3/26 D-23) — do "
-            "not scale that day again; say so in the summary when it is one of the week's biggest decisions):\n"
-            + "\n".join(lines))
+    return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations they entered, and the texts or "
+            "posts they sent to fill a night — context: what each night is; its figure is already in that date's "
+            "SHIFT REQUIREMENTS numbers and day target, so no night is scaled again. The summary may name one when it "
+            "is among the week's biggest decisions):\n" + "\n".join(lines))

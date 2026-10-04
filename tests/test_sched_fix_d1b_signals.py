@@ -259,14 +259,15 @@ def test_sq27_the_tail_no_longer_says_every_day_was_normal(rid, db_path):
 # ── D-6: the prompt's experienced list ────────────────────────────────────
 
 def test_d6_the_prompt_lists_managers_and_salaried_people_as_experienced():
-    import schedule_requirements as req
     c = _constraints(managers={"ann": "Manager"}, salaried={"erik baylis"})
     roster = [("Erik Baylis", "Owner"), ("Ann", "Manager"), ("New", "Server")]
     tenure = {"Erik Baylis": 1, "Ann": 2, "New": 2, "Vet": 40}
     names = se._prompt_experienced([], tenure, c, roster)
     assert names == ["Ann", "Erik Baylis"]
-    block = req.experience_block(tenure, [n for n, _r in roster], {}, names)
-    assert "Still developing — under 6 shifts here: New." in block
+    # Each person's EXPERIENCE column of the ROSTER (C1, PR-33).
+    import labor
+    people = {p["name"]: p["experience"] for p in labor._roster_people(roster, tenure=tenure, experienced=names)}
+    assert people == {"Erik Baylis": "experienced", "Ann": "experienced", "New": "developing (2 shifts)"}
     # a history too short to judge anybody stays unclaimed, as the scorer leaves it
     assert se._prompt_experienced([], {"Ann": 2}, c, roster) == []
 

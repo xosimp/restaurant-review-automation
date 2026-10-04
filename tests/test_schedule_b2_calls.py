@@ -54,6 +54,7 @@ import mobile_api
 import models
 import ops
 import schedule_engine as se
+import schedule_prompt
 import schedule_requirements as sreq
 import schedule_rules as sr
 from models import Restaurant, create_restaurant
@@ -158,8 +159,11 @@ def test_a_redo_of_two_days_is_one_call_for_those_days_with_the_kept_days_in_vie
     # The owner's reason rides the one instruction field (C2's path, PR-18).
     assert calls[0]["kwargs"]["instruction"] == ("What was wrong with the previous draft: Too few people on; "
                                                  "two more on Saturday night")
-    assert "THE REST OF THIS WEEK IS KEPT" in calls[0]["kwargs"]["extra_blocks"]
-    assert "Friday 2026-10-09 until 10:00pm" in calls[0]["kwargs"]["extra_blocks"]   # the kept shift next to Saturday
+    # Said to this call alone, in THIS REQUEST (C1, PR-26: never inside the
+    # week's shared, cached context), its dates weekday and ISO (PR-20).
+    assert "THE REST OF THIS WEEK IS KEPT" in calls[0]["kwargs"]["call_notes"]
+    assert "Fri 2026-10-09 until 10:00pm" in calls[0]["kwargs"]["call_notes"]   # the kept shift next to Saturday
+    assert "THE REST OF THIS WEEK IS KEPT" not in (calls[0]["kwargs"].get("extra_blocks") or "")
     # Only the redone dates come back; the kept days are never written.
     assert se._missing_dates(out["schedule_csv"], WEEK[:5]) == WEEK[:5]
     # ...and are never closed to the passes after (they carry the owner's rows).
@@ -168,7 +172,7 @@ def test_a_redo_of_two_days_is_one_call_for_those_days_with_the_kept_days_in_vie
 
 def test_the_focus_block_names_its_dates():
     block = sreq.focus_block(["Saturday 2026-10-10 dinner: 2 servers short"], dates=["2026-10-10"])
-    assert "THE PREVIOUS DRAFT OF SATURDAY 2026-10-10 SCORED WEAK ON" in block
+    assert "THE PREVIOUS DRAFT OF Sat 2026-10-10 SCORED WEAK ON" in block    # the one date format (C1, PR-20)
     assert "Saturday 2026-10-10 dinner: 2 servers short" in block
     assert sreq.focus_block(None) == "" and sreq.focus_block([]) == ""
 
@@ -202,8 +206,10 @@ def _prompt_harness(monkeypatch):
             self.text, self.stop_reason = text, "end_turn"
 
     def fake_create(client, **kw):
-        prompts.append({"prompt": kw["messages"][0]["content"], "deadline": kw.get("deadline")})
-        dates = re.findall(r"- (\d{4}-\d{2}-\d{2}): ", kw["messages"][0]["content"])
+        # The user message is the request's three blocks (schedule_prompt, C1).
+        prompts.append({"prompt": schedule_prompt.prompt_text(kw["messages"][0]["content"]),
+                        "deadline": kw.get("deadline")})
+        dates = schedule_prompt.request_dates(kw["messages"][0]["content"])
         return _Msg(json.dumps({"days": [{"date": d, "shifts": [{"employee": "Ana", "role": "Server",
                                                              "start": "11:00am", "end": "3:00pm", "note": ""}]}
                                      for d in dates],
@@ -231,11 +237,13 @@ def test_the_redo_prompt_names_the_dates_and_says_the_owners_words_once(db, monk
                                       focus=["Saturday 2026-10-10 dinner: short"], instruction=reason,
                                       deadline=time.time() + 600)
     p = prompts[-1]["prompt"]
-    assert "SATURDAY 2026-10-10 SCORED WEAK ON" in p and "ALREADY WRITTEN FOR THE OTHER DAYS" in p
+    assert "Sat 2026-10-10 SCORED WEAK ON" in p and "ALREADY WRITTEN FOR THE OTHER DAYS" in p
     # One owner-reason path: the instruction block, once, priority 5, its
     # markers neutralised so it can never open a fence.
-    assert p.count("THE OWNER'S REQUEST FOR THIS DRAFT") == 1 and p.count("Saturday is slammed") == 1
-    said = p[p.index("THE OWNER'S REQUEST FOR THIS DRAFT"):]
+    # (The standing instructions name the channel to rank it — C1, PR-2; the
+    # owner's words themselves are said once, in its own block.)
+    assert p.count("THE OWNER'S REQUEST FOR THIS DRAFT —") == 1 and p.count("Saturday is slammed") == 1
+    said = p[p.index("THE OWNER'S REQUEST FOR THIS DRAFT —"):]
     said = said[:said.index("Saturday is slammed") + 60]
     assert "priority 5" in said and "Too few people on" in said and ai_guard.OWNER_RULE_OPEN not in said
     assert "WHY THE OWNER IS REDOING" not in p
@@ -529,7 +537,7 @@ def test_a_structured_answer_is_never_kept_past_what_its_parse_finished(monkeypa
     ], calls))
     out = se._generate_in_parts({}, [], [("Ana", "Server"), ("Bo", "Server")], {"tz_name": None})
     assert calls[1]["slice"] == WEEK[5:]
-    assert "WROTE NO SHIFTS FOR 2026-10-10, 2026-10-11" in calls[1]["kwargs"]["extra_blocks"]
+    assert "WROTE NO SHIFTS FOR Sat 2026-10-10, Sun 2026-10-11" in calls[1]["kwargs"]["call_notes"]
     assert [ln.split(",")[2] for ln in out["schedule_csv"].split("\n") if ln.startswith(WEEK[5])] == ["Bo"]
 
 
@@ -853,7 +861,7 @@ def test_a_day_nobody_can_work_is_never_asked_for_and_is_named(monkeypatch):
     out = se._generate_in_parts({}, [], [("Ana", "Server"), ("Bo", "Server")],
                                 {"tz_name": None, "unstaffable_dates": {WEEK[5]: {"unavailable": 2}}})
     assert len(calls) == 1 and WEEK[5] not in (calls[0]["slice"] or [])
-    assert "NOBODY ON THE ROSTER CAN WORK Saturday 2026-10-10" in calls[0]["kwargs"]["extra_blocks"]
+    assert "NOBODY ON THE ROSTER CAN WORK Sat 2026-10-10" in calls[0]["kwargs"]["call_notes"]
     assert not out["unwritten_dates"] and WEEK[5] in out["closed_dates"]
 
 
@@ -947,7 +955,10 @@ def test_a_department_call_gets_only_its_own_managers_floors_and_people(monkeypa
 
     def fake(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
         names = [n for n, _r in kwargs["roster"]]
-        calls.append({"names": names, "extra": kwargs["extra_blocks"], "slice": week_slice,
+        # What the part is told: its rules, the week's context and what is
+        # said to it alone (C1 keeps the three apart: PR-26).
+        told = (kwargs.get("rules_block") or "") + (kwargs.get("extra_blocks") or "") + (kwargs.get("call_notes") or "")
+        calls.append({"names": names, "extra": told, "slice": week_slice, "rules": kwargs.get("rules_block") or "",
                       "pins": kwargs.get("pinned_rows"), "plan": kwargs.get("manager_plan")})
         # The kitchen call also writes a server it was told not to.
         lines = [_line(d, names[0], role=kwargs["roster"][0][1]) for d in week_slice]
@@ -968,7 +979,9 @@ def test_a_department_call_gets_only_its_own_managers_floors_and_people(monkeypa
     k = kitchen[0]["extra"]
     assert "NON-NEGOTIABLE" not in k and "schedule no manager here" in k
     assert "Line Cook: at least" in k and "Server: at least" not in k
-    assert "Cy: at most 30h" in k and "Ana:" not in k.split("PER-PERSON LIMITS")[-1].split("STAFFING FLOORS")[0]
+    # Each person's own limits are their ROSTER line now (C1, PR-33), built
+    # from the part's own roster — never a per-person list in the rules.
+    assert "PER-PERSON LIMITS" not in kitchen[0]["rules"] and "FULL" not in k
     f = front[0]["extra"]
     assert "NON-NEGOTIABLE" in f and "Mo (Manager)" in f and "Line Cook: at least" not in f
     assert "Their shifts are already planned: MANAGER COVERAGE, at the top, is fixed." in f
@@ -1028,7 +1041,7 @@ def test_the_quality_gate_rewrites_only_its_dates_with_the_rest_of_the_week_in_v
     se._run_schedule_job("gate-job", rid)
     assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
     assert sorted({r["date"] for r in calls[1]["prior"]}) == sorted(set(WEEK) - {WEEK[5]})
-    assert "THE REST OF THIS WEEK IS KEPT" in calls[1]["kwargs"]["extra_blocks"]
+    assert "THE REST OF THIS WEEK IS KEPT" in calls[1]["kwargs"]["call_notes"]
     assert calls[1]["kwargs"]["focus"] == ["Saturday 2026-10-10 dinner: 2 servers short"]
     assert finished["status"] == "done" and finished["result"]["redo"]["by"] == "gate"
 
@@ -1095,7 +1108,7 @@ def test_the_manager_plan_reaches_every_call_as_it_is_and_lands_once(monkeypatch
         assert "FIXED SHIFTS" not in (call["kwargs"].get("extra_blocks") or "")
     # Saturday and Sunday carried only planned rows: asked again, alone.
     assert calls[1]["slice"] == WEEK[5:]
-    assert "YOUR PREVIOUS ANSWER WROTE NO SHIFTS FOR 2026-10-10, 2026-10-11" in calls[1]["kwargs"]["extra_blocks"]
+    assert "YOUR PREVIOUS ANSWER WROTE NO SHIFTS FOR Sat 2026-10-10, Sun 2026-10-11" in calls[1]["kwargs"]["call_notes"]
     lines = out["schedule_csv"].split("\n")[1:]
     planned = [ln for ln in lines if sk.is_plan_line(ln)]
     assert sorted(planned) == sorted(sk._row_line(r) for r in plan_rows)          # each planned row once

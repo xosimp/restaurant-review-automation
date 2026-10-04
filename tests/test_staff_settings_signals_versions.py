@@ -143,7 +143,11 @@ def test_by_date_turns_covers_into_a_lift_against_the_typical_day(db_path, rid, 
     assert by["2026-10-11"]["lift_pct"] == -30
     assert "2026-10-12" not in by
     block = ds.prompt_block(by, ["2026-10-10", "2026-10-11"])
-    assert "50% more than a typical Saturday" in block and "30% less" in block
+    # The lift is the date's SHIFT REQUIREMENTS number, said there once (C1,
+    # PR-8); here, the covers booked and where the figure is counted.
+    assert "150 covers booked; already counted in this date's SHIFT REQUIREMENTS" in block
+    assert "already counted in this date's SHIFT REQUIREMENTS (the owner's own figure)" in block
+    assert "50%" not in block and "30%" not in block
     assert ds.prompt_block({}, ["2026-10-10"]) == ""
 
 

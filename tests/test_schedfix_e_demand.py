@@ -16,6 +16,7 @@ D-32            a late segment (10pm to a close past 11pm) has its own usual
 D-33            freshness on the restaurant's own date; 14+ trading days of
                 no sales stop a generation.
 """
+import schedule_prompt
 import json
 import types
 from datetime import date, timedelta
@@ -151,7 +152,7 @@ def test_the_generator_hands_the_scaled_week_to_the_score(monkeypatch):
     out = labor.generate_optimized_schedule(
         analysis, [], roster=[("Ana", "Server")], week_start="2026-10-05", hourly_rate=20.0, labor_target=30.0,
         staffing_patterns=patterns, date_demand={FRI: {"ratio": 1.3, "pct": 30, "reasons": ["Homecoming: +30%"]}})
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     assert "Fri 2026-10-09 night | Server 5 (usual 4)" in prompt and "Homecoming: +30%" in prompt
     assert out["requirements_by_date"]["2026-10-09|night"] == {"Server": 5}
     assert any(r["date"] == FRI and r["daypart"] == "night" for r in out["requirements"])
@@ -342,7 +343,10 @@ def test_one_number_per_date_reaches_every_reader(db_path):
     assert signals[FRI]["signal_lift_pct"] == 30 and "Rain forecast (70%)" in signals[FRI]["labels"]
     import demand_signals
     block = demand_signals.prompt_block(signals, WEEK)
-    assert "expect about 10% more than a typical Friday" in block and "rain forecast (70%)" in block
+    # The figure is said once, in the date's SHIFT REQUIREMENTS (C1, PR-8):
+    # the dated facts name what is known and where it is counted.
+    assert "Rain forecast (70%)" in block and "already counted in this date's SHIFT REQUIREMENTS" in block
+    assert "expect about" not in block and "10%" not in block
 
 
 # ── D-32: the late segment ───────────────────────────────────────────────
@@ -501,7 +505,7 @@ def test_the_draft_is_built_on_the_net_budget_the_scaled_week_and_the_late_night
     def fake(client, **kwargs):
         import re as _re
         captured.update(kwargs)
-        dates = _re.findall(r"- (\d{4}-\d{2}-\d{2}): ", kwargs["messages"][0]["content"])
+        dates = schedule_prompt.request_dates(kwargs["messages"][0]["content"])
         # the output contract's JSON (schedule_output, C2): a structured
         # answer is never read as CSV
         answer = {"days": [{"date": d, "shifts": [{"employee": "Ana", "role": "Server", "start": "5:00pm",
@@ -515,7 +519,7 @@ def test_the_draft_is_built_on_the_net_budget_the_scaled_week_and_the_late_night
     result = schedule_engine._build_schedule_result(rid, week_start=nxt.isoformat())
     mine = {"salaried_week", "date_demand", "staffing_baseline", "labor_standards"}
     assert not [f for f in failures if f[0] in mine], failures
-    prompt = captured["messages"][0]["content"]
+    prompt = schedule_prompt.prompt_text(captured["messages"][0]["content"])
     # D-1/D-2: the net budget at the measured wage, said.
     assert result["budget_basis"]["kind"] == "all_in_less_salaries"
     assert "salaried_week_cost" not in result["budget_basis"]

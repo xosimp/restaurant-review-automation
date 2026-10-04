@@ -108,8 +108,11 @@ def test_a_long_day_is_covered_end_to_end():
 def test_the_rule_leads_the_models_instructions():
     c = _c()
     block = sr.prompt_block(c)
-    assert block.index("NON-NEGOTIABLE") < block.index("hours in the payroll week")
-    assert "Andrew (Manager FOH)" in block and "Erik (Owner)" in block
+    # The first rule line, tagged [HARD] (C1, PR-5).
+    first = next(ln for ln in block.splitlines() if ln.startswith("- ["))
+    assert first.startswith("- [HARD] NON-NEGOTIABLE")
+    assert block.index("NON-NEGOTIABLE") < block.index("Nobody past their weekly maximum in a payroll week")
+    assert "Andrew (Manager FOH)" in first and "Erik (Owner)" in first
 
 
 def test_generation_runs_the_backstop_and_checks_the_finished_rows_again():

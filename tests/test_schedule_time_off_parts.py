@@ -79,7 +79,11 @@ def test_off_until_four_blocks_the_morning_and_leaves_the_evening():
     assert "approved_time_off" in kinds and "outside_window" not in kinds
     assert not sr.violations([_row("Ana", "4:30pm", "10:00pm")], c, person_only=True)
     assert not c.can_add(_row("Ana", "2:00pm", "8:00pm"), [])[0]       # a fill can't reach into it either
-    assert "Wed 10/7: off until 4:00pm (approved time off)" in sr.prompt_block(c)
+    # Part of a day off is the person's AVAILABLE column (C1, PR-33, PR-20).
+    import labor
+    import schedule_prompt
+    line = schedule_prompt.roster_table(labor._roster_people([("Ana", "Server")], facts=sr.person_facts(c, ["Ana"])))
+    assert "Wed 2026-10-07 off until 4:00pm (time off)" in line
     # The availability block lists whole days only.
     assert time_off.approved_in_window(rid, WED, WED, whole_days_only=True) == {}
     assert time_off.approved_in_window(rid, WED, WED) == {"Ana": [WED]}
