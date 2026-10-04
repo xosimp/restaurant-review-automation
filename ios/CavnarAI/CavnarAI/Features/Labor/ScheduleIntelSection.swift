@@ -59,7 +59,9 @@ struct ScheduleIntelSection: View {
                     }
                     if let outcomes = intel.outcomes, !outcomes.isEmpty { outcomesBlock(outcomes) }
                     if let splh = intel.splh, !splh.isEmpty { splhBlock(splh, objective: intel.splhObjective) }
-                    if let lines = intel.rotation?.lines, !lines.isEmpty { rotationPlanBlock(lines, weeks: intel.rotation?.weeks) }
+                    if let lines = intel.rotation?.lines, !lines.isEmpty {
+                        rotationPlanBlock(lines, weeks: intel.rotation?.weeks, fromPunches: intel.rotation?.fromPunches)
+                    }
                     if let ledger = intel.ledger, !ledger.isEmpty { ledgerBlock(ledger) }
                     if let behaviour = intel.behaviour, !behaviour.isEmpty { behaviourBlock(behaviour) }
                     if let could = intel.couldHold, !could.isEmpty { trainedUpBlock(could) }
@@ -223,6 +225,16 @@ struct ScheduleIntelSection: View {
                         .padding(.vertical, 3)
                     }
                 }
+                // Each shift profile's bar and floors, read against what
+                // its own shifts did (schedule audit 10/3/26 SQ-22).
+                profileCalibration(c)
+                if !c.leftOut.isEmpty {
+                    HomeMixedText.make("Left out of this fit: " + c.leftOut.map { $0.replacingOccurrences(of: "_", with: " ") }
+                                        .joined(separator: ", ")
+                                       + " \u{2014} one dimension per ten shifts, the better-observed first.",
+                                       size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text(c.note ?? "Suggestions only — the engine keeps its current weights until someone changes them.")
                     .font(.cavnarBody(12.5))
                     .foregroundStyle(Color.cavnarInk3)
@@ -230,13 +242,63 @@ struct ScheduleIntelSection: View {
                 Button {
                     Task { await viewModel.applySuggestedWeights() }
                 } label: {
-                    Text(viewModel.isApplyingWeights ? "Applying…" : "Apply suggested weights")
+                    Group {
+                        if viewModel.isApplyingWeights { CavnarShimmerText(text: "Applying") }
+                        else { Text((c.movingProfiles ?? []).isEmpty ? "Apply suggested weights" : "Apply weights, floors and bars") }
+                    }
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 .disabled(viewModel.isApplyingWeights)
                 if let note = viewModel.calibrationNotice {
                     Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                 }
+            }
+        }
+    }
+
+    /// Per shift profile: its quality bar and critical floors, current →
+    /// suggested with why and on how many shifts — or why it is left alone.
+    @ViewBuilder
+    private func profileCalibration(_ c: WeightCalibration) -> some View {
+        let profiles = (c.profiles ?? [:]).sorted { ($0.value.label ?? $0.key) < ($1.value.label ?? $1.key) }
+        if !profiles.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("SHIFT PROFILES")
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(1)
+                    .foregroundStyle(Color.cavnarEmber2)
+                ForEach(profiles, id: \.key) { key, p in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HomeMixedText.make((p.label ?? key) + (p.shifts.map { " \u{00B7} \($0) shifts" } ?? ""),
+                                           size: 14, weight: 600, color: .cavnarInk)
+                        if p.ready != true {
+                            HomeMixedText.make(p.explanation ?? "Too few of its own shifts to read yet.", size: 12.5,
+                                               color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            if let bar = p.bar { readingLine("Quality bar", bar) }
+                            ForEach((p.floors ?? [:]).sorted { $0.key < $1.key }, id: \.key) { dim, r in
+                                readingLine(dim.replacingOccurrences(of: "_", with: " ").capitalized + " floor", r)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+        }
+    }
+
+    private func readingLine(_ name: String, _ r: LineReading) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Text(name).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                Spacer(minLength: 4)
+                HomeMixedText.make(r.moves ? "\(r.current ?? 0) \u{2192} \(r.suggested ?? 0)" : "stays \(r.current ?? 0)",
+                                   size: 13, weight: 600, color: r.moves ? .cavnarInk : .cavnarInk3)
+            }
+            if let why = r.explanation {
+                HomeMixedText.make(why, size: 12, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -287,7 +349,7 @@ struct ScheduleIntelSection: View {
     }
 
     /// Who is next for a weekend off, a close and a holiday, per role.
-    private func rotationPlanBlock(_ lines: [String], weeks: Int?) -> some View {
+    private func rotationPlanBlock(_ lines: [String], weeks: Int?, fromPunches: Int?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             kicker("Up next in the rotation")
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
@@ -301,7 +363,8 @@ struct ScheduleIntelSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text(weeks.map { "Planned from the last \($0) published weeks. The draft follows it where the rules allow, and fairness is scored against it." }
+            // Weeks the time clock stands in for say so (schedule audit 10/3/26 D-21).
+            Text(weeks.map { "Planned from the last \(RecordWeeksWords.say($0, fromPunches: fromPunches)). The draft follows it where the rules allow, and fairness is scored against it." }
                  ?? "The draft follows it where the rules allow, and fairness is scored against it.")
                 .font(.cavnarBody(12.5))
                 .foregroundStyle(Color.cavnarInk3)
@@ -490,9 +553,10 @@ struct ScheduleIntelSection: View {
         let byWeekend = rows.sorted { ($0.1.weekend ?? 0, $0.0) > ($1.1.weekend ?? 0, $1.0) }
         let byClosing = rows.sorted { ($0.1.closing ?? 0, $0.0) > ($1.1.closing ?? 0, $1.0) }
         let weeks = rows.compactMap { $0.1.weeks }.max()
+        let punched = rows.compactMap { $0.1.fromPunches }.max()
         return VStack(alignment: .leading, spacing: 8) {
             kicker("Rotation")
-            Text(weeks.map { "Weekend and closing shifts over the last \($0) weeks — who has carried the most, and the least." }
+            Text(weeks.map { "Weekend and closing shifts over the last \(RecordWeeksWords.say($0, fromPunches: punched)) — who has carried the most, and the least." }
                  ?? "Weekend and closing shifts lately — who has carried the most, and the least.")
                 .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)

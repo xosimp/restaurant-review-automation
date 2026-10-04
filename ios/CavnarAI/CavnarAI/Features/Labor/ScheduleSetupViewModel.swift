@@ -669,6 +669,25 @@ struct IntelLedgerEntry: Codable, Equatable {
     let holiday: Int?
     let shifts: Int?
     let weeks: Int?
+    /// How many of those weeks are the time clock's, not a published
+    /// schedule (schedule audit 10/3/26 D-21). Absent on an older server.
+    var fromPunches: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case weekend, closing, holiday, shifts, weeks
+        case fromPunches = "from_punches"
+    }
+}
+
+/// "8 published weeks" / "8 weeks (5 from punches — the time clock, not a
+/// published schedule)" — where the record came from, said (D-21).
+enum RecordWeeksWords {
+    static func say(_ weeks: Int, fromPunches: Int?) -> String {
+        let punched = fromPunches ?? 0
+        guard punched > 0 else { return "\(weeks) published week\(weeks == 1 ? "" : "s")" }
+        return "\(weeks) week\(weeks == 1 ? "" : "s") (\(punched >= weeks ? "all" : String(punched)) from punches "
+            + "\u{2014} the time clock, not a published schedule)"
+    }
 }
 
 /// What somebody keeps dropping and picking up.
@@ -808,6 +827,13 @@ struct EditPredictionSummary: Codable, Equatable {
 struct RotationPlan: Codable, Equatable {
     let weeks: Int?
     let lines: [String]?
+    /// The weeks of record that came from punches (D-21).
+    var fromPunches: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case weeks, lines
+        case fromPunches = "from_punches"
+    }
 }
 
 /// A sales-per-labor-hour target for one daypart across the week.
@@ -859,6 +885,99 @@ struct WeightCalibration: Codable, Equatable {
     let reason: String?
     let dimensions: [String: CalibrationDimension]?
     let note: String?
+    /// Each shift profile's bar and floors read against what its own
+    /// shifts did (schedule audit 10/3/26 SQ-22), which of them move, and
+    /// per outcome the dimensions left out of the fit. Absent on an older
+    /// server; an odd shape is empty, never a failed intel read.
+    var profiles: [String: ProfileCalibration]? = nil
+    var movingProfiles: [String]? = nil
+    var fit: [String: CalibrationFit]? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case ready, reason, dimensions, note, profiles, fit
+        case movingProfiles = "moving_profiles"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ready = c.setupBool(.ready)
+        reason = c.setupText(.reason)
+        dimensions = (try? c.decodeIfPresent([String: CalibrationDimension].self, forKey: .dimensions)) ?? nil
+        note = c.setupText(.note)
+        profiles = (try? c.decodeIfPresent([String: ProfileCalibration].self, forKey: .profiles)) ?? nil
+        movingProfiles = c.contains(.movingProfiles) ? c.setupTexts(.movingProfiles) : nil
+        fit = (try? c.decodeIfPresent([String: CalibrationFit].self, forKey: .fit)) ?? nil
+    }
+
+    /// The dimensions any outcome's fit left out — read better-observed
+    /// ones first, one per ten shifts.
+    var leftOut: [String] {
+        Array(Set((fit ?? [:]).values.flatMap(\.leftOut))).sorted()
+    }
+}
+
+/// One floor's or bar's reading: where it stands, the bounded next step,
+/// and why (schedule_learning._line_reading).
+struct LineReading: Codable, Equatable {
+    var current: Int?
+    var suggested: Int?
+    var shifts: Int?
+    var explanation: String?
+
+    enum CodingKeys: String, CodingKey { case current, suggested, shifts, explanation }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        current = c.setupInt(.current)
+        suggested = c.setupInt(.suggested)
+        shifts = c.setupInt(.shifts)
+        explanation = c.setupText(.explanation)
+    }
+
+    var moves: Bool { current != nil && suggested != nil && current != suggested }
+}
+
+/// A shift profile's calibration: its bar and each critical floor, or why
+/// it is left alone (too few of its own shifts).
+struct ProfileCalibration: Codable, Equatable {
+    var label: String?
+    var shifts: Int?
+    var ready: Bool?
+    var explanation: String?
+    var bar: LineReading?
+    var floors: [String: LineReading]?
+
+    enum CodingKeys: String, CodingKey { case label, shifts, ready, explanation, bar, floors }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = c.setupText(.label)
+        shifts = c.setupInt(.shifts)
+        ready = c.setupBool(.ready)
+        explanation = c.setupText(.explanation)
+        bar = (try? c.decodeIfPresent(LineReading.self, forKey: .bar)) ?? nil
+        floors = (try? c.decodeIfPresent([String: LineReading].self, forKey: .floors)) ?? nil
+    }
+}
+
+/// One outcome's joint fit: its shifts, how many dimensions it carried,
+/// and the ones it left out.
+struct CalibrationFit: Codable, Equatable {
+    var shifts: Int?
+    var dimensions: Int?
+    var leftOut: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case shifts, dimensions
+        case leftOut = "left_out"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        shifts = c.setupInt(.shifts)
+        dimensions = c.setupInt(.dimensions)
+        leftOut = c.setupTexts(.leftOut)
+    }
 }
 
 /// The offer to auto-publish, when the drafts have been going out
@@ -1868,8 +1987,12 @@ final class ScheduleSetupViewModel {
         do {
             let r: OKResponse = try await client.send(
                 "/mobile/api/labor/quality/calibration/apply", method: .post, body: EmptyBody(), hapticOnError: false)
-            calibrationNotice = r.ok ? "Applied — the next score uses these weights." : (r.error ?? "Couldn't apply them.")
-            if r.ok { Haptic.success() }
+            calibrationNotice = r.ok ? "Applied \u{2014} the next score uses these weights, floors and bars."
+                : (r.error ?? "Couldn't apply them.")
+            if r.ok {
+                Haptic.success()
+                await loadIntel()
+            }
         } catch let error as APIClient.APIError {
             calibrationNotice = error.message
         } catch {
@@ -1934,7 +2057,51 @@ final class ScheduleSetupViewModel {
         let skipped: Int?
         let errors: [String]?
         let error: String?
+        /// A reservation system's booking export, read (schedule audit
+        /// 10/3/26 D-31): bookings, covers, what was skipped. Absent for a
+        /// date,covers paste and on an older server.
+        var report: ImportReport? = nil
     }
+
+    /// demand_signals.parse_reservation_export's report.
+    struct ImportReport: Decodable, Equatable {
+        var dates: Int = 0
+        var bookings: Int = 0
+        var covers: Int = 0
+        var skippedStatus: Int = 0
+        var skippedUnreadable: Int = 0
+        var lateCovers: Int = 0
+
+        enum CodingKeys: String, CodingKey {
+            case dates, bookings, covers
+            case skippedStatus = "skipped_status"
+            case skippedUnreadable = "skipped_unreadable"
+            case lateCovers = "late_covers"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            dates = c.setupInt(.dates) ?? 0
+            bookings = c.setupInt(.bookings) ?? 0
+            covers = c.setupInt(.covers) ?? 0
+            skippedStatus = c.setupInt(.skippedStatus) ?? 0
+            skippedUnreadable = c.setupInt(.skippedUnreadable) ?? 0
+            lateCovers = c.setupInt(.lateCovers) ?? 0
+        }
+
+        /// "Read 212 bookings, 640 covers over 14 dates · 9 cancelled or
+        /// no-shows left out · 3 rows unreadable · 48 covers after 10pm".
+        var sentence: String {
+            var s = "Read \(bookings) booking\(bookings == 1 ? "" : "s"), \(covers) covers over \(dates) date\(dates == 1 ? "" : "s")"
+            if skippedStatus > 0 { s += " \u{00B7} \(skippedStatus) cancelled or no-shows left out" }
+            if skippedUnreadable > 0 { s += " \u{00B7} \(skippedUnreadable) row\(skippedUnreadable == 1 ? "" : "s") unreadable" }
+            if lateCovers > 0 { s += " \u{00B7} \(lateCovers) covers late at night" }
+            return s
+        }
+    }
+
+    /// What the last booking-export import read.
+    var importReport: ImportReport?
 
     private static let isoDay: DateFormatter = {
         let f = DateFormatter()
@@ -1984,11 +2151,13 @@ final class ScheduleSetupViewModel {
         isSavingSignal = true
         signalError = nil
         signalOutcome = nil
+        importReport = nil
         defer { isSavingSignal = false }
         do {
             let r: SignalWriteResponse = try await client.send(
                 "/mobile/api/labor/demand-signals", method: .post, body: body)
             guard r.ok else { signalError = r.error ?? "Couldn't save that."; return false }
+            importReport = r.report
             var parts: [String] = []
             parts.append("\(r.written ?? 0) written")
             if let s = r.skipped, s > 0 { parts.append("\(s) skipped") }
