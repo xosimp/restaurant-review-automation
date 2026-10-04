@@ -2468,6 +2468,7 @@ def _roster_signals(facts, restaurant_id, display=None, reliability=None, stated
     put("wants", wants)
     put("could_hold", could_hold, merge=lambda a, b: sorted(set(a or []) | set(b or [])))
     put("role_scores", role_scores)
+    import schedule_intel as _intel
     try:
         counts = _intel.role_shifts(restaurant_id)
     except Exception as e:
@@ -6300,7 +6301,7 @@ def _stage_min_hours(rows, x):
                                 hours_budget=x.budget or None)
     fixes = [{"index": m["index"], "from": m["from"], "to": m["to"], "kind": "min_hours", "reason": m["reason"]}
              for m in out["moves"]]
-    fixes += [{"index": a["index"], "from": "", "to": a["employee"], "kind": "min_hours", "reason": a["reason"]}
+    fixes += [{"index": a["index"], "from": _rules.NO_ONE, "to": a["employee"], "kind": "min_hours", "reason": a["reason"]}
               for a in out["added"]]
     return {"rows": out["rows"], "fixes": fixes,
             "report": {"moved": len(out["moves"]), "added": len(out["added"]), "left": out.get("left") or []}}

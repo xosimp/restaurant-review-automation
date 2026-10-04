@@ -3513,7 +3513,7 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
             continue
         src = (spec.get("source") or {}).get("start" if spec.get("start") is not None else "end")
         retimed.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
-                        "from": f"{r.get('shift_start')}–{r.get('shift_end')}",
+                        "from": hours_label(r),
                         "to": f"{new['shift_start']}–{new['shift_end']}",
                         "reason": "your rule" + (f": “{str(src)[:120]}”" if src else "")})
         out_rows = trial
@@ -3735,6 +3735,14 @@ def is_manager_role(role) -> bool:
     Manager" ran the floor and "AGM", "MOD" and "Shift Lead" did not
     (schedule audit 10/3/26 P-7); the owner's yes or no now wins over it."""
     return manager_role_kind(role) in ("owner", "manager", "lead")
+
+
+NO_ONE = ""   # a fix record's "from" when the shift was added, not moved
+
+
+def hours_label(r) -> str:
+    """A row's hours as a fix record names them: "4:00pm–11:00pm"."""
+    return f"{r.get('shift_start')}–{r.get('shift_end')}"
 
 
 def _span(r):
@@ -5367,7 +5375,7 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
                     if worse or not improved(bid, after):
                         continue
                     rep.take(trial, after)
-                    fixes.append({"index": i, "from": f"{name} {r.get('shift_start')}–{r.get('shift_end')}",
+                    fixes.append({"index": i, "from": name + " " + hours_label(r),
                                   "to": f"{cut['shift_start']}–{cut['shift_end']}", "kind": "minor",
                                   "reason": (f"{name} is a minor: {why} — the shift now keeps inside the limit"
                                              + (f"; {cover}." if cover else "."))})
@@ -5381,7 +5389,7 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
                 if worse or not improved(bid, after):
                     continue
                 rep.take(trial, after)
-                fixes.append({"index": i, "from": f"{name} {r.get('shift_start')}–{r.get('shift_end')}",
+                fixes.append({"index": i, "from": name + " " + hours_label(r),
                               "to": f"{cut['shift_start']}–{cut['shift_end']}", "kind": "minor",
                               "reason": (f"{name} is a minor: {why} — cut to the limit; nobody in the role could "
                                          f"take {_fmt_minutes(stretch[0] % 1440)}–{_fmt_minutes(stretch[1] % 1440)}, "
@@ -5696,10 +5704,10 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
             now = f"{new['shift_start']}–{new['shift_end']}"
             if kind == "extend":
                 extended.append({"index": idx, "employee": nm, "day": day, "date": d,
-                                 "from": f"{was.get('shift_start')}–{was.get('shift_end')}", "to": now, "kind": "manager",
+                                 "from": hours_label(was), "to": now, "kind": "manager",
                                  "reason": f"No manager was on {day} {span_txt}: {nm} stays on to cover it{ot}."})
             else:
-                added.append({"index": idx, "employee": nm, "day": day, "date": d, "from": "", "to": now,
+                added.append({"index": idx, "employee": nm, "day": day, "date": d, "from": NO_ONE, "to": now,
                               "kind": "manager", "leg": kind == "leg",
                               "reason": (f"No manager was on {day} {span_txt}: added {nm} {now}"
                                          + (" as a second shift that day" if kind == "leg" else "") + f"{ot}.")})

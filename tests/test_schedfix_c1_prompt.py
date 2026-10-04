@@ -642,3 +642,19 @@ def test_sq30_a_leader_rule_asks_only_for_what_the_roster_can_meet(monkeypatch):
     assert "at least 1 Bartender scoring 5 or above (the rule asks 3; only 1 on the roster can)" in prompt
     row = next(ln for ln in prompt.splitlines() if ln.startswith(f"  Fri {WEEK[4]} night"))
     assert "1 Bartender scoring 5+" in row and "3 Bartender" not in row
+
+
+def test_roster_signals_reads_role_shifts_into_the_facts(monkeypatch):
+    """The year's shifts per role reach each person's line: the reader was
+    called through a name that was never imported, so the NameError was
+    soft-failed and every roster went without CAN WORK's evidence."""
+    import schedule_engine
+    import schedule_intel
+    monkeypatch.setattr(schedule_intel, "role_shifts",
+                        lambda rid, *a, **k: {"Ana": {"Server": 12}, "ana": {"Server": 3, "Host": 2}})
+    failed = []
+    monkeypatch.setattr(schedule_engine, "_soft_fail", lambda *a, **k: failed.append(a))
+    facts = {"Ana": {}}
+    schedule_engine._roster_signals(facts, 1, display=lambda n: "Ana" if n.lower() == "ana" else n)
+    assert not failed
+    assert facts["Ana"]["role_shifts"] == {"Server": 15, "Host": 2}

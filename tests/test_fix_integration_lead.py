@@ -32,7 +32,11 @@ def test_schedule_generation_and_the_ask_stream_start_attributed_threads():
     import inspect
     import client_api
     import mobile_api
-    assert "_ai_attributed(_run_sched)" in inspect.getsource(mobile_api)
+    import schedule_engine
+    # Both twins queue generation through one door, which takes the
+    # requester's attribution on the request thread.
+    assert "_se.submit_generation(" in inspect.getsource(mobile_api)
+    assert "_ai.attributed(_run)" in inspect.getsource(schedule_engine.submit_generation)
     assert "_ai_attributed(work)" in inspect.getsource(client_api)
 
 
