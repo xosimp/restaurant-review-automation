@@ -4,7 +4,7 @@ What's open, what's next and what's deliberately on hold. Update it when an
 item ships or a new one is committed to. Keep it short enough to read in one
 pass: it is not a changelog (git is).
 
-Last refreshed 10/2/26.
+Last refreshed 10/4/26.
 
 ## Active client
 
@@ -87,9 +87,6 @@ restaurant 5; restaurant 4 is Will's demo copy.
     (it expires when the shift passes) — accepting there would run the cover;
   - no retention entry for `shift_change_requests` (it predates the round;
     the learners read it);
-  - B3's minimal change to `schedule_engine.replacement_is_legal` (a gap the
-    shift already had is not charged to the cover) awaits the schedule
-    owner's review;
   - `shifts_for_employee` and `/staff/api/colleagues` could read the narrow
     `models.get_published_week_csv(with_stations=True)` (PERF-12);
   - not built: ranking cover candidates by a running-late ETA (AI-09);
@@ -104,11 +101,101 @@ restaurant 5; restaurant 4 is Will's demo copy.
     `uq_memberships_active_employee_name` index is not created until an
     owner resolves them (`ops.capture` names them, job
     `memberships_name_index`).
+- **Schedule fix round — left open (10/4/26).** What code cannot do:
+  - **Simple EJ's setup (Erik and Will):** Team → Closers: apply the
+    cleanup (47 of 64 marked) and choose the roles that close; confirm
+    "Managers: …" (Floor manager yes/no; a food-safety card moves to the
+    food-protection certificate); standing shifts for Erik, Jim, Anthony
+    and Andrew (the generate screen asks); opening times for every trading
+    day and close times for Sun–Wed (only Thu–Sat are set); confirm role
+    families and save floors from the history suggestion; check the
+    strength targets read as a full crew's total and the leader rules at
+    min_score 5; link Gabriel Huerta (salaried, on no roster) to the name
+    he punches as; review the dormant list and the open "same person?"
+    questions; set role and person pay rates; name the floor sections;
+    count Will's view-as ratings, closer flags and schedule saves as Erik's
+    where they were his decisions ("Count them as mine").
+  - **Model cost:** on Opus 5.5 at high effort one generation can cost
+    several dollars against the $2/day unpaid and $5/day trial ceilings.
+    Once weeks are stored, run `scripts/schedule_model_eval.py
+    --restaurant <id>` (the production arm is free) and decide whether to
+    keep the ceilings or use Sonnet 5.5 for trial and unpaid accounts.
+    `ai_utils._CACHE_READ_MULTIPLIER` is 0.10 for every model; check it
+    against Opus 5.5's cache-read price before trusting the ledger's cost.
+  - **Replay:** `python3 scripts/schedule_eval.py --restaurant 5` (and 4)
+    after the merge, as `MODULE_OVERVIEW.md` asks of any scoring change.
+  - **External:** a live reservation feed needs Cavnar AI admitted to a
+    provider's partner program (OpenTable, Resy, Tock); until then the
+    owner imports the booking export weekly. Temperature's effect on demand
+    is not measured yet (rain is). Server-side refusal fallbacks for Opus
+    5.5 are not enabled (unverifiable from here; an unsupported beta would
+    fail every schedule).
+  - **Code found in passing, not fixed:** `models.Restaurant` has no
+    `organization_id` field and `_restaurant_from_row` never hydrates it, so
+    `preferences.org_key` / `org_location_ids` always take the group +
+    owner-email path (a 4-touch-point fix); `shift_requests` and
+    `labor_replacements` still check each candidate without
+    `prepare_replacements`; `task_sheets._MANAGER_WORDS` and
+    `dsr/block_labor._MANAGER_RE` read manager titles apart from the floor
+    rule; `schedule_rules` has two 55-hour constants (`SALARIED_HOURS_CAP`,
+    `SALARIED_CAP_DEFAULT`) — each a candidate for future cleanup after
+    additional verification.
+  - **Still building:** the Schedule Studio, generate, review, publish and
+    Shift Quality screens (web and iOS) for the round.
 - **Apollo.io upgrade.** No longer held for Gia Mia, who is not becoming a
   client. Decide on its own merits.
 
 ## Recently shipped (newest first; trim entries older than ~2 months)
 
+- **10/3–10/4 — The schedule fix round** (the 10/3/26 audit of the AI
+  schedule generator: 223 findings, all fixed in code; branch
+  `schedfix-1003`).
+  - The call: Opus 5.5 with adaptive thinking at high effort, 64k tokens,
+    streamed; one prompt in three blocks (standing instructions with a
+    worked example and ranked PRIORITIES, the restaurant's week with one
+    ROSTER line per person, the request), the first two cached; the answer
+    against a per-generation enum schema, salvaged to every complete day;
+    every call's input and answer stored for replay
+    (`schedule_model_calls`, `scripts/schedule_model_eval.py`).
+  - A manager every minute: the managers' shifts planned in code before
+    the call and pinned through the job, a manager stage that runs on,
+    extends or adds, acting managers on their dates, and what nobody can
+    legally cover said on the day.
+  - The owner's setup said back: who runs the floor (explicit, with why),
+    acting managers, standing shifts, closers per role, role families,
+    held roles, trainees, a salaried weekly cap, an owner paid hourly.
+  - One ranked repair loop (legality, the manager, coverage, overtime,
+    minimum hours, budget, quality) where no stage may worsen a rule
+    ranked above it, judged by what each breach is about, never by row;
+    pinned rows untouched; a stage that fails is said and holds the
+    publish; every stage timed, with a p95 watchdog.
+  - Calls sized from their rows and the job's one wall clock; a redo or
+    the quality gate writes only its days; at most two generations at
+    once; a first week with no history drafts from the role floors.
+  - Demand and budget: the hourly budget is the all-in target less the
+    week's salaries at the measured wage; one demand number per date
+    scales the usual crew; a late-night segment; sales gone stale stop a
+    generation; labor standards; a reservation system's booking export.
+  - People: one key per person across every input, part-day time off,
+    dormant people left off, one weekly maximum, overtime handed to a
+    teammate before it is trimmed, minors repaired, minimum hours filled.
+  - Shift Quality: leadership earns credit per rule where the role works,
+    strength per person over a full crew, a hard breach caps its shift,
+    overtime, stations, minimum hours and learned patterns as measures,
+    per-profile floors; the solver keeps a manager on every minute and
+    weighs labor dollars; the optimizer has a move for every dimension.
+  - Learning: the week as the draft plus only the manager's own changes
+    before the first publish (admin and Cavnar AI changes kept apart), the
+    one-tap why, redos and discards recorded, one scheduling memory with
+    confidence, decay and status that binds the passes when active, the
+    owner's keep / let go / rule, measured ratings the owner confirms.
+  - Publishing and the live week: the quality verdict a note, never a
+    hold; the hours split hourly and salaried; one coverage issue per
+    date and role with a cover per gap; late and call-out rates; approved
+    drops excused; a night counts as watched only when its clock-ins were
+    read.
+  - The web and iOS setup screens (Team, Rules, Forecast, Account, Home,
+    the staff app) for it.
 - **10/2 — The employee app, fix round** (from the staff app audit; server
   B1–B8 and S9, iOS I1–I4).
   - Sign-in and identity: one active login per name, a common-PIN denylist,
@@ -242,6 +329,8 @@ restaurant 5; restaurant 4 is Will's demo copy.
 - **A schema migration or version-table system.** Additive `ALTER TABLE`
   is enough at this scale; revisit only if a destructive change becomes
   unavoidable.
+- **A days-off-in-a-row rule** for the schedule. Retired by the owner
+  on 10/2/26; the settings ignore a stored value.
 - **More than one gunicorn worker**, until the process-local state in
   `docs/plans/POSTGRES_AND_WORKERS_PLAN.md` moves into the database.
 

@@ -303,6 +303,8 @@ The per-call table is in `PROMPT_LIBRARY.md`.
 - **Anthropic Claude** is used for everything except AI visibility:
   - Haiku for the high-volume classifiers;
   - Sonnet for anything an owner reads as advice;
+  - Opus 5.5 for the week's schedule (a constraint problem, run with
+    adaptive thinking at high effort);
   - Opus for invoice transcription.
 - **Perplexity (`sonar`)** is used for Intel's AI-visibility check only.
 - **Every Anthropic call** routes through `ai_utils.create_with_retry()`.
