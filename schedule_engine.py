@@ -13,13 +13,13 @@ imported by client_api, mobile_api, strategy_jobs and delayed alike.
 """
 import contextlib
 import contextvars
+import copy
 import json
 import os
 import re
 import threading
 import time
 
-from ai_guard import safe_error as _safe_err
 from models import get_restaurant
 
 import schedule_output as _sched_out
@@ -207,6 +207,97 @@ def job_wait_seconds(calls: int = None) -> int:
     want = (int(calls) * SCHEDULE_CALL_SECONDS + SCHEDULE_POST_MODEL_SECONDS) if calls else 0
     return int(max(SCHEDULE_JOB_MIN_SECONDS, min(SCHEDULE_JOB_MAX_SECONDS, want))
                + _ops.ASYNC_DEADLINE_GRACE_SECONDS)
+
+
+# ── One frozen context per generation (schedule audit 10/3/26 P-36) ───────
+#
+# A generation read the same inputs again and again: the Shift Quality
+# signals five times (about a dozen reads each, 56 days of hourly sales among
+# them), the tail of last week three times, the sales curve three times, and
+# every model call re-read attendance, the data-health readiness and who
+# holds which role. Inside a generation (_run_schedule_job) every read made
+# through frozen_read happens once and is handed out as a copy after that, so
+# the prompt, the repair loop and the score see one snapshot of the inputs.
+# The rules the week is checked against are deliberately not frozen: they are
+# rebuilt after the model call (P-41), so time off approved while the model
+# was writing is in the draft. Outside a generation — the Studio's rescore, a
+# script — frozen_read is simply the read.
+#
+# The same store collects the inputs that could not be read (_soft_fail), so
+# the review names what the draft was made without (P-17).
+_FROZEN = contextvars.ContextVar("schedule_generation_frozen", default=None)
+
+
+@contextlib.contextmanager
+def frozen_inputs():
+    """The generation's read-once store ({"reads", "failed"}), entered by
+    _run_schedule_job. A nested run — the quality gate's rewrite inside the
+    same job — shares the outer run's store."""
+    store = _FROZEN.get()
+    if store is not None:
+        yield store
+        return
+    store = {"reads": {}, "failed": []}
+    token = _FROZEN.set(store)
+    try:
+        yield store
+    finally:
+        _FROZEN.reset(token)
+
+
+def frozen_read(key, fn):
+    """fn() once per generation for `key` (a tuple naming the read and its
+    arguments) and a copy of that first answer for every later read; outside
+    a generation simply fn(). A read that raises is not stored, so the
+    caller's own fallback runs, as before."""
+    store = _FROZEN.get()
+    if store is None:
+        return fn()
+    reads = store["reads"]
+    if key not in reads:
+        reads[key] = fn()
+    return copy.deepcopy(reads[key])
+
+
+def _note_input_failure(what) -> None:
+    """An input the draft went ahead without, for the review (P-17)."""
+    store = _FROZEN.get()
+    if store is not None and what not in store["failed"]:
+        store["failed"].append(what)
+
+
+def _inputs_failed() -> list:
+    store = _FROZEN.get()
+    return list(store["failed"]) if store is not None else []
+
+
+class _StageClock:
+    """Wall-clock seconds per stage of one generation (schedule audit
+    10/3/26 P-24): `generation_seconds` was the model's time alone, so the
+    real latency — the inputs, the repair loop, the scoring and the what-if,
+    the save — was unknown. Stored with the week (_annotate_history) and read
+    by the platform check's p95 (ops.check_platform_sla)."""
+
+    def __init__(self):
+        self.t0 = time.monotonic()
+        self.seconds = {}
+
+    @contextlib.contextmanager
+    def stage(self, name):
+        t = time.monotonic()
+        try:
+            yield
+        finally:
+            self.add(name, time.monotonic() - t)
+
+    def add(self, name, secs) -> None:
+        self.seconds[name] = round(self.seconds.get(name, 0.0) + max(0.0, float(secs or 0)), 3)
+
+    def total(self) -> float:
+        return round(time.monotonic() - self.t0, 3)
+
+    def as_dict(self) -> dict:
+        return dict(self.seconds, total=self.total())
 
 
 def _labor_ot_line() -> float:
@@ -482,12 +573,75 @@ def _quality_tuning(restaurant_id) -> dict:
 def _soft_fail(what, exc, restaurant_id):
     """An input the draft can do without failed to load: the draft still
     goes ahead, but the failure is said — a silent {} made "keep these two
-    apart" vanish from both the prompt and the score with nobody told."""
+    apart" vanish from both the prompt and the score with nobody told.
+    Inside a generation it is also listed for the review (P-17:
+    _input_failure_line)."""
     print(f"[schedule] {what} unavailable for restaurant {restaurant_id}: {exc}")
+    _note_input_failure(what)
     try:
         _ops.capture(exc, job="schedule_inputs", context=f"restaurant_id={restaurant_id} input={what}")
     except Exception as _cx:
         print(f"[schedule] could not record that failure: {_cx}")
+
+
+# What each input a generation can go without is, in the owner's words, for
+# the review's one line about what the draft was made without (P-17). An
+# input not named here reads as its own name.
+_INPUT_WORDS = {
+    "staff_availability": "staff availability", "staffing_baseline": "the usual crew from past weeks",
+    "salaried_week": "the salaried staff's share of the budget", "signals_by_date": "the week's dated events",
+    "pairs": "who works well together", "reliability": "attendance", "learned": "the habits learned from your edits",
+    "date_demand": "each day's demand", "splh": "sales per labor hour", "outcomes": "how past weeks went",
+    "ledger": "who has carried the weekends and closes", "stated_preferences": "staff preferences",
+    "learned_preferences": "what staff drop and pick up", "could_hold": "who could hold a station",
+    "last_nights": "the nightly reports", "soft_requirements": "the staffing asks from reviews and reports",
+    "labor_standards": "your labor standards", "memory_context": "what Cavnar AI remembers for this restaurant",
+    "manager_plan": "the managers' plan", "leader_rules_status": "the leader rules' status",
+    "upcoming_events": "upcoming holidays", "weather": "the weather forecast",
+    "prior_week": "the last published week", "demand_forecast": "each weekday's demand level",
+    "revenue": "your sales budget for the week", "labor_target_source": "which labor target applies",
+    "reservation_feed": "the reservation feed", "quality tuning": "the quality tuning you applied",
+    "schedule_memory": "Cavnar AI's scheduling memory", "load_ledger": "the weeks before this one",
+    "rotation_plan": "the weekend and close rotation", "splh_objective": "the sales-per-labor-hour objective",
+    "overtime rates": "pay rates for overtime", "learned preferences": "what staff drop and pick up",
+    "leader rule check": "who can meet the leader rules", "hard breaches": "the rule check behind the score",
+    "shifts_file": "the uploaded shifts file", "tenure": "how long each person has worked here",
+    "leader_flags": "who is authorized to close", "prior_pattern": "who usually works when",
+    'people["experienced"]': "who is experienced", 'people["experienced"] defaults': "who is experienced",
+    "availability": "staff availability", "experienced": "who is experienced",
+    "quality weights": "your Shift Quality weights", "staff notes": "staff notes",
+    "cross-training targets": "your cross-training targets", "fairness ledger": "who has carried the weekends",
+    "demand curve": "the sales curve by the hour", "salaried staff": "the salaried staff list",
+    "pricing": "the week's labor cost", "quality signals": "the Shift Quality inputs",
+    "other sites' shifts": "shifts at your other locations", "experiment arm": "which assignment the week uses",
+    "rules after the model": "the rules as they stand now (the ones from the start were used)",
+    "role_scores": "ratings by role", "identity": "who goes by which name",
+    "overtime forecast": "the overtime forecast and standby days", "likely edits": "which rows you're likely to change",
+    "demand accuracy": "how accurate past forecasts were", "splh report": "the sales-per-labor-hour check",
+    "setup review": "the setup check", "section cap check": "the section count against past weeks",
+    "soft requirement check": "which staffing asks the week carries", "station report": "each cook's station",
+    "unmet list": "what the week doesn't meet",
+    "forecast_preview revenue": "your sales budget for the week",
+    "forecast_preview salaries": "the salaried staff's share of the budget",
+    "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
+    "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
+    "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
+}
+
+
+def _input_failure_line(failed) -> str:
+    """One review line naming every input the draft was made without (P-17)
+    — "" when none failed."""
+    words = []
+    for w in failed or []:
+        t = _INPUT_WORDS.get(w) or str(w).replace("_", " ")
+        if t not in words:
+            words.append(t)
+    if not words:
+        return ""
+    shown = ", ".join(words[:6]) + (f" and {len(words) - 6} more" if len(words) > 6 else "")
+    return (f"Some of what Cavnar AI reads for a draft couldn't be read, so this one was made and checked without "
+            f"it: {shown}. We've been alerted; generate again later to include it.")
 
 
 def _no_history_analysis() -> dict:
@@ -544,7 +698,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     if no_history:
         try:
             _stored = ((get_client_data(restaurant_id) or {}).get("shifts_csv") or "").strip()
-        except Exception:
+        except Exception as _sfx:
+            _soft_fail("shifts_file", _sfx, restaurant_id)
             _stored = ""
         if _stored and len([ln for ln in _stored.splitlines() if ln.strip()]) > 1:
             raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant, missing="unreadable"))
@@ -561,7 +716,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     from notify import labor_target_for as _labor_target_for
     target   = _labor_target_for(restaurant)
     owner    = restaurant.owner_name if restaurant else None
-    staff_notes = get_staff_notes(restaurant_id) or None
+    staff_notes = frozen_read(("staff_notes", restaurant_id), lambda: get_staff_notes(restaurant_id)) or None
 
     # Employee availability
     # The table is created at boot (init_db); no DDL on a generation.
@@ -659,16 +814,19 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                                 "days_away": days_away
                             })
                     except Exception:
-                        pass
-    except Exception:
-        pass
+                        pass              # one unreadable holiday line, not the list
+    except Exception as _sfx:
+        # A silent `pass` (schedule audit 10/3/26 P-17): the holidays are said
+        # missing now, in the review, like every other input.
+        _soft_fail("upcoming_events", _sfx, restaurant_id)
 
     # Weather forecast for the schedule week — never blocks generation if
     # geocoding/NWS is unavailable (see weather.get_forecast_for_week).
     try:
         from weather import get_forecast_for_week
         weather_forecast = get_forecast_for_week(restaurant, next_week_dates)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail("weather", _sfx, restaurant_id)
         weather_forecast = []
 
     # The last PUBLISHED week before this one — never a discarded draft of
@@ -680,7 +838,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         if _prior_csv:
             prior_schedule_summary = _summarize_schedule_csv_by_day_role(_prior_csv)
             prior_published_rows = _versions.rows_from_csv(_prior_csv)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail("prior_week", _sfx, restaurant_id)
         prior_schedule_summary = None
 
     # Operational Score, its targets, and any shift leader rules. The score
@@ -718,7 +877,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
             from thresholds import DEMAND_LEVEL_MIN_READINGS as _MINR
             _demand_by_day = {d["day"]: d["vs_average_pct"] for d in _forecast["days"]
                               if (d.get("samples") or 0) >= _MINR}
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail("demand_forecast", _sfx, restaurant_id)
         _demand_by_day = {}
     # Always built, from the restaurant's own profiles or the built-ins,
     # each weekday's demand from its own sales and any calibration the
@@ -834,7 +994,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # Read on their own: the learned slots now bind the scorer and the
     # solver too (L-19), and a failed stated read used to drop them silently.
     try:
-        stated_prefs = _staff.stated_preferences(restaurant_id)
+        stated_prefs = frozen_read(("stated_preferences", restaurant_id),
+                                   lambda: _staff.stated_preferences(restaurant_id))
     except Exception as _sfx:
         _soft_fail('stated_preferences', _sfx, restaurant_id)
     try:
@@ -852,8 +1013,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # The week's own DSR budget when the owner set one for most of its
         # nights (memory audit 9/29/26, owner_goals); the source says which.
         revenue = _econ.projected_weekly_revenue(restaurant_id, week_dates=next_week_dates)
-    except Exception:
-        pass
+    except Exception as _sfx:
+        # The budget is then built on the forecast instead of the owner's
+        # own week, and the review says so (P-17: this was a silent pass).
+        _soft_fail("revenue", _sfx, restaurant_id)
     # Who is experienced, who can run a shift and who usually works when —
     # the same reads the quality pass makes (_quality_signals), handed to
     # the prompt so the model is told the facts it is scored on. Any one of
@@ -863,12 +1026,14 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     for _key, _fn in (("tenure", get_employee_tenure), ("leader_flags", get_leader_flags),
                       ("prior_pattern", get_prior_shift_pattern)):
         try:
-            _people[_key] = _fn(restaurant_id) or {}
+            # The same reads the quality signals make, made once (P-36).
+            _people[_key] = frozen_read((_key, restaurant_id, None), lambda _fn=_fn: _fn(restaurant_id) or {})
         except Exception as _sfx:
-            _soft_fail('people[_key]', _sfx, restaurant_id)
+            _soft_fail(_key, _sfx, restaurant_id)
             _people[_key] = {}
     try:
-        _people["experienced"] = sorted(_staff.experienced_names(restaurant_id))
+        _people["experienced"] = sorted(frozen_read(("experienced", restaurant_id),
+                                                    lambda: _staff.experienced_names(restaurant_id)))
     except Exception as _sfx:
         _soft_fail('people["experienced"]', _sfx, restaurant_id)
         _people["experienced"] = []
@@ -1140,12 +1305,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         _t = _thr_s.target_for(restaurant, "labor")
         result["labor_target_source"] = _t.get("source")
         result["labor_target_label"] = _t.get("label")
-    except Exception:
-        pass
+    except Exception as _sfx:
+        _soft_fail("labor_target_source", _sfx, restaurant_id)
     try:
         import reservation_feeds as _rf
         result["reservation_feed"] = _rf.status(restaurant)
-    except Exception:
+    except Exception as _sfx:
+        _soft_fail("reservation_feed", _sfx, restaurant_id)
         result["reservation_feed"] = None
     # How current the sales behind this week are, for the banner and the
     # summary (D-33): the read the gate above made.
@@ -4348,7 +4514,7 @@ def _overtime_inputs(restaurant_id, c, rules=None) -> dict:
     rates, default = {}, None
     try:
         from models import get_role_rates, get_restaurant
-        rates = get_role_rates(restaurant_id) or {}
+        rates = frozen_read(("role_rates", restaurant_id), lambda: get_role_rates(restaurant_id) or {})
         default = getattr(get_restaurant(restaurant_id), "hourly_rate", None) or rates.get("_default")
     except Exception as _rx:
         _soft_fail("overtime rates", _rx, restaurant_id)
@@ -4429,21 +4595,25 @@ def _quality_signals(restaurant_id, result, **extra):
         signals["section_cap"] = int(getattr(c, "section_cap", 0) or 0)
         signals["cap_roles"] = sorted(getattr(c, "foh_roles", None) or {"server"})
         signals["role_families"] = dict(getattr(c, "role_families", None) or {})
+    # Inside a generation each read below is made once (frozen_read, P-36),
+    # and one that fails is said (P-17) — it used to be a silent {}.
     try:
         from models import get_restaurant as _gr_ct
-        signals["cross_training_targets"] = _rules.role_cross_training(_gr_ct(restaurant_id))
-    except Exception:
+        signals["cross_training_targets"] = frozen_read(
+            ("cross_training_targets", restaurant_id), lambda: _rules.role_cross_training(_gr_ct(restaurant_id)))
+    except Exception as _sx:
+        _soft_fail("cross-training targets", _sx, restaurant_id)
         signals["cross_training_targets"] = {}
     try:
         import schedule_intel as _si
-        signals["ledger"] = result.get("fairness_ledger") if result.get("fairness_ledger") is not None else _si.fairness_ledger(restaurant_id)
-        signals["history_weeks"] = _si.history_weeks(restaurant_id)
-    except Exception:
+        signals["ledger"] = result.get("fairness_ledger") if result.get("fairness_ledger") is not None else \
+            frozen_read(("fairness_ledger", restaurant_id), lambda: _si.fairness_ledger(restaurant_id))
+        signals["history_weeks"] = frozen_read(("history_weeks", restaurant_id),
+                                               lambda: _si.history_weeks(restaurant_id))
+    except Exception as _sx:
+        _soft_fail("fairness ledger", _sx, restaurant_id)
         signals["ledger"], signals["history_weeks"] = {}, 0
-    try:
-        signals["demand_curve"] = _hourly_profile(restaurant_id)
-    except Exception:
-        signals["demand_curve"] = {}
+    signals["demand_curve"] = _safe_hourly_profile(restaurant_id)
     # The rotation the week is judged against, and the sales-per-labor-hour
     # objective — the generation's own when it carries them, so a live
     # re-score judges an edit by what the draft was written against.
@@ -4459,16 +4629,21 @@ def _quality_signals(restaurant_id, result, **extra):
                     ("prior_pattern", get_prior_shift_pattern),
                     ("availability", lambda rid: get_unavailability_map(rid, week_dates=_sig_week))):
         try:
-            signals[key] = fn(restaurant_id) or {}
-        except Exception:
+            signals[key] = frozen_read((key, restaurant_id, tuple(_sig_week or ()) if key == "availability" else None),
+                                       lambda fn=fn: fn(restaurant_id) or {})
+        except Exception as _sx:
+            _soft_fail(key, _sx, restaurant_id)
             signals[key] = {}
     try:
-        signals["experienced"] = _staff.experienced_names(restaurant_id)
-    except Exception:
+        signals["experienced"] = frozen_read(("experienced", restaurant_id),
+                                             lambda: _staff.experienced_names(restaurant_id))
+    except Exception as _sx:
+        _soft_fail("experienced", _sx, restaurant_id)
         signals["experienced"] = set()
     try:
-        stated = _staff.stated_preferences(restaurant_id)
-    except Exception:
+        stated = frozen_read(("stated_preferences", restaurant_id), lambda: _staff.stated_preferences(restaurant_id))
+    except Exception as _sx:
+        _soft_fail("stated_preferences", _sx, restaurant_id)
         stated = {}
     _people_signals(restaurant_id, result, signals, stated)
     _reconcile_to_roster(signals, c, restaurant_id)
@@ -4486,20 +4661,23 @@ def _quality_signals(restaurant_id, result, **extra):
     except Exception as _lx:
         _soft_fail("leader rule check", _lx, restaurant_id)
     try:
-        weights = get_quality_weights(restaurant_id)
-    except Exception:
+        weights = frozen_read(("quality_weights", restaurant_id), lambda: get_quality_weights(restaurant_id))
+    except Exception as _sx:
+        _soft_fail("quality weights", _sx, restaurant_id)
         weights = {}
     if not signals.get("constraints"):
         try:
             from models import get_staff_notes as _gsn
             signals["constraints"] = {n["employee_name"]: n["notes"]
-                                      for n in (_gsn(restaurant_id) or [])
+                                      for n in (frozen_read(("staff_notes", restaurant_id),
+                                                            lambda: _gsn(restaurant_id)) or [])
                                       if n.get("employee_name")}
             if signals["constraints"] and signals.get("roster"):
                 # Under the roster's spelling, like every other signal (D-8).
                 signals["constraints"] = _rekey(signals["constraints"],
                                                 _identity_view(restaurant_id, signals["roster"], c), "join")
-        except Exception:
+        except Exception as _sx:
+            _soft_fail("staff notes", _sx, restaurant_id)
             signals["constraints"] = {}
     # The hard breaches of the rows being scored (SQ-14, the cap is D1a's):
     # only a caller holding those rows can say (_score_schedule_quality
@@ -4654,14 +4832,17 @@ def _learning_signals(restaurant_id, result) -> dict:
     # that cannot be read costs only itself.
     try:
         import schedule_memory as _smem
-        learned = _smem.enforced_signals(restaurant_id, week, roster_names=list(result.get("roster") or []) or None)
+        _names = list(result.get("roster") or []) or None
+        learned = frozen_read(("enforced_signals", restaurant_id, tuple(week), tuple(_names or ())),
+                              lambda: _smem.enforced_signals(restaurant_id, week, roster_names=_names))
         out["learned"] = [dict(x) for x in (learned or []) if isinstance(x, dict)]
     except Exception as _mx:
         _soft_fail("schedule_memory", _mx, restaurant_id)
     # The published weeks before this one: what fatigue and fairness read
     # across weeks (SQ-27).
     if week:
-        out["load_ledger"] = load_ledger(restaurant_id, sorted(week)[0])
+        out["load_ledger"] = frozen_read(("load_ledger", restaurant_id, sorted(week)[0]),
+                                         lambda: load_ledger(restaurant_id, sorted(week)[0]))
     try:
         rot = result.get("rotation_plan")
         if rot is None:
@@ -4807,13 +4988,18 @@ def _reconcile_to_roster(signals: dict, c=None, restaurant_id=None) -> None:
             signals[key] = {n: v for n, v in d.items() if str(n).strip().lower() in roster}
 
 
-def _score_schedule_quality(restaurant_id, rows, result, **extra):
+def _score_schedule_quality(restaurant_id, rows, result, frozen=None, **extra):
     """Score the finished schedule, then see whether a better one existed.
 
     The what-if pass only ever trades two people between shifts of the same
     role, so headcount, hours and coverage cannot move. That restriction is
     what makes running it on every generation affordable and its answers
     explainable: exactly two names changed, and here is what it bought.
+
+    `frozen` — (signals, weights) a generation already read for these rows'
+    week (schedule audit 10/3/26 P-36): scored on them, with `extra` (the
+    rows' own hard breaches, flags) laid over, instead of reading every
+    signal again.
     """
     import shift_quality as _sq
     profiles = result.get("shift_profiles") or None
@@ -4825,7 +5011,12 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
             extra = dict(extra, hard_breaches=_hard_breaches_for(rows, result))
         except Exception as _hx:
             _soft_fail("hard breaches", _hx, restaurant_id)
-    signals, weights = _quality_signals(restaurant_id, result, **extra)
+    if frozen is not None:
+        signals, weights = dict(frozen[0] or {}), frozen[1] or {}
+        signals["flagged"] = result.get("flagged_rows") or set()
+        signals.update(extra)
+    else:
+        signals, weights = _quality_signals(restaurant_id, result, **extra)
     quality = _sq.score_rows(rows, profiles=profiles, weights=weights, **signals)
 
     what_if = {"ran": False, "reason": "Nothing to compare."}
@@ -5080,42 +5271,244 @@ def _pattern_likely_edits(restaurant_id, rows: list, patterns: list = None) -> l
     return out
 
 
-# The quality gate: a draft whose busy shifts are still capped by a staffing
-# hole after the repair loop has its weakest days written again, once, with
-# what was wrong named in the prompt. Only coverage holes qualify — a missing
-# leader or a weak team is the roster's limit and a rewrite cannot fix it.
+# The quality gate: a draft that still breaks a hard rule, leaves a stretch
+# with no manager, or holds a busy shift under GATE_BELOW for want of a person
+# after the repair loop has its weakest days written again, once, with what
+# was wrong named in the prompt (schedule audit 10/3/26 P-43, SQ-20). It used
+# to fire only on coverage caps of busy shifts — never on a manager gap or a
+# leftover breach — and to keep the rewrite on the score alone. A rule broken
+# or a leader or strength cap qualifies only when somebody who could put it
+# right is free that day (on the roster, not on that day's rows, able to work
+# it and whom code may choose): a missing leader nobody qualified could fill
+# is the roster's limit, and a rewrite cannot fix it. The rewrite is kept only
+# when it has no more hard breaches and no more unmanaged minutes than the
+# draft (_gate_keeps).
 GATE_BELOW = 60
 GATE_MAX_DATES = 3
 # The gate's rewrite is one more model call inside the same job: it starts
 # only with at least this much of the job's model time left (P-22).
 GATE_MIN_MODEL_SECONDS = 180
+# Breaches a rewrite cannot change: about the roster, not the week.
+_GATE_NOT_THE_WEEKS = frozenset({"no_manager_roster", "manager_rule_unusable", "minor_age_unknown"})
 
 
 def _quality_gate(result: dict):
-    """{dates, focus, reason} when the finished draft should have its weakest
-    days regenerated, else None."""
+    """{dates, focus, reason, triggers} when the finished draft should have
+    its weakest days regenerated, else None. Reads the finished week from
+    `result`: its quality, its rule sweep (rule_violations), its rows
+    (`rows`) and its rules (`constraints`)."""
     q = result.get("quality") or {}
-    if not q.get("checked"):
+    rows = result.get("rows") or []
+    c = result.get("constraints")
+    found = {}            # date -> {"rank", "lines", "kinds"}
+
+    def note(d, rank, kind, line):
+        e = found.setdefault(d, {"rank": rank, "lines": [], "kinds": []})
+        e["rank"] = min(e["rank"], rank)
+        if kind not in e["kinds"]:
+            e["kinds"].append(kind)
+        if line and line not in e["lines"]:
+            e["lines"].append(line)
+    # 1. A hard rule the loop left broken (P-43), when somebody who could
+    #    put it right is free that day.
+    if c is not None and rows:
+        for v in result.get("rule_violations") or []:
+            if not v.get("hard") or v.get("kind") in _GATE_NOT_THE_WEEKS or not v.get("date"):
+                continue
+            if _gate_someone_free(v, rows, c):
+                note(v["date"], 0, "manager" if v.get("kind") == "no_manager" else "rules",
+                     f"{v.get('day') or _weekday_name(v['date'])} {v['date']}: a hard rule is broken — "
+                     f"{_rules.breach_text(v)}")
+    # 2. A busy shift capped by a staffing hole (coverage); 3. capped by its
+    #    leader rule or its strength target when a qualified person is free
+    #    that day (SQ-20 — Erik's "Monday dinner 25 / 70" never qualified).
+    if q.get("checked"):
+        people = _gate_people(result) if (c is not None and rows) else None
+        for s in q.get("shifts") or []:
+            if not s.get("scored") or (s.get("score") or 0) >= GATE_BELOW or sq_demand_rank(s) < 2:
+                continue
+            cap = s.get("capped_by")
+            dims = {d["key"]: d for d in s.get("dimensions") or []}
+            if cap in ("coverage", "coverage_curve"):
+                rank = 1
+            elif cap in ("leadership", "operational_strength") and people is not None \
+                    and _gate_qualified_free(cap, dims.get(cap) or {}, s["date"], rows, c, people):
+                rank = 2
+            else:
+                continue
+            part = "lunch" if s.get("daypart") == "morning" else "dinner"
+            for w in ((dims.get(cap) or {}).get("weaknesses") or [])[:2]:
+                note(s["date"], rank, cap, f"{s['day']} {s['date']} {part}: {w}")
+    if not found:
         return None
-    weak = {}
-    for s in q.get("shifts") or []:
-        if not s.get("scored") or (s.get("score") or 0) >= GATE_BELOW:
+    dates = sorted(found, key=lambda d: (found[d]["rank"], -len(found[d]["lines"]), d))[:GATE_MAX_DATES]
+    kinds = sorted({k for d in dates for k in found[d]["kinds"]})
+    what = ("a hard rule broken or a stretch with no manager" if found[dates[0]]["rank"] == 0
+            else "a staffing hole" if all(found[d]["rank"] == 1 for d in dates)
+            else "a staffing hole or a leader or strength gap somebody free could fill")
+    return {"dates": sorted(dates), "focus": [f for d in sorted(dates) for f in found[d]["lines"]][:12],
+            "triggers": {d: found[d]["kinds"] for d in sorted(dates)}, "kinds": kinds,
+            "reason": f"{len(dates)} {'day' if len(dates) == 1 else 'days'} still had {what} after repair"}
+
+
+def _gate_free(c, rows, d) -> list:
+    """Roster people free on `d`: not on that day's rows, able to work it,
+    and somebody code may choose (Constraints.fillable)."""
+    on = {(r.get("employee") or "").strip().lower() for r in rows if r.get("date") == d}
+    out = []
+    for n in (getattr(c, "roster_names", None) or []):
+        if not n or str(n).strip().lower() in on:
             continue
-        if s.get("capped_by") not in ("coverage", "coverage_curve"):
+        try:
+            if not c.can_work(n, d)[0]:
+                continue
+            if hasattr(c, "fillable") and not c.fillable(n, d)[0]:
+                continue
+        except Exception:
             continue
-        if sq_demand_rank(s) < 2:
-            continue
-        lines = []
-        for d in s.get("dimensions") or []:
-            if d["key"] == s["capped_by"]:
-                lines = d.get("weaknesses") or []
-        part = "lunch" if s["daypart"] == "morning" else "dinner"
-        weak.setdefault(s["date"], []).extend(f"{s['day']} {s['date']} {part}: {w}" for w in lines[:2])
-    if not weak:
-        return None
-    dates = sorted(weak, key=lambda d: -len(weak[d]))[:GATE_MAX_DATES]
-    return {"dates": sorted(dates), "focus": [f for d in sorted(dates) for f in weak[d]][:12],
-            "reason": f"{len(dates)} busy {'day' if len(dates) == 1 else 'days'} still had a staffing hole after repair"}
+        out.append(n)
+    return out
+
+
+def _gate_someone_free(v, rows, c) -> bool:
+    """Whether somebody free that day could legally put breach `v` right: a
+    manager who could take the unmanaged stretch, somebody holding the role
+    who could take the row a person can't legally work (Constraints.can_add —
+    the shift, their week swept with it), the role's people for a floor,
+    its closers for the close. The repair loop already tried; a rewrite is
+    worth a model call only when such a person exists."""
+    d = v["date"]
+    free = _gate_free(c, rows, d)
+    if not free:
+        return False
+    kind = v.get("kind")
+
+    def takes(n, row, others):
+        try:
+            return bool(c.can_add(dict(row, employee=n), others)[0])
+        except Exception:
+            return False
+    if kind == "no_manager":
+        managers = [n for n in free if c.manages(n, d)]
+        gs, ge = v.get("gap_start"), v.get("gap_end")
+        if gs is None or ge is None:
+            return bool(managers)
+        role = next((r for k, r in (c.managers or {}).items()), "Manager") or "Manager"
+        stretch = {"date": d, "day": _weekday_name(d), "role": role, "notes": "",
+                   "shift_start": _rules._fmt_minutes(int(gs) % (24 * 60)),
+                   "shift_end": _rules._fmt_minutes(int(ge) % (24 * 60)),
+                   "scheduled_hours": str(round((int(ge) - int(gs)) / 60.0, 2))}
+        return any(takes(n, dict(stretch, role=(c.managers or {}).get(str(n).strip().lower()) or role), rows)
+                   for n in managers)
+    if kind in ("keyholder_until_close", "nobody_at_close"):
+        fam = v.get("close_role") or ""
+        closers = (getattr(c, "closers_by_role", None) or {}).get(fam)
+        if kind == "keyholder_until_close" and closers is not None:
+            keys = {(getattr(c, "key", None) or (lambda x: str(x).strip().lower()))(n) for n in free}
+            return bool(keys & set(closers))
+        return True
+    idx = v.get("index")
+    if not v.get("day_level") and isinstance(idx, int) and 0 <= idx < len(rows):
+        row = rows[idx]
+        others = rows[:idx] + rows[idx + 1:]
+        return any(_gate_holds(c, n, row.get("role") or "", d) and takes(n, row, others) for n in free)
+    role = v.get("role") or v.get("floor_role") or ""
+    if not role:
+        return True
+    return any(_gate_holds(c, n, role, d) for n in free)
+
+
+def _gate_holds(c, name, role, d) -> bool:
+    try:
+        return bool(c.holds(name, role, d)) if hasattr(c, "holds") else True
+    except Exception:
+        return False
+
+
+def _gate_people(result) -> dict:
+    """The ratings and closer flags the leader and strength checks read —
+    the generation's own reads (frozen, P-36)."""
+    flags = {}
+    try:
+        from models import get_leader_flags
+        rid = getattr(result.get("constraints"), "restaurant_id", None)
+        if rid:
+            flags = frozen_read(("leader_flags", rid, None), lambda: get_leader_flags(rid) or {}) or {}
+    except Exception as _fx:
+        print(f"[schedule] gate: leader flags unavailable: {_fx}")
+    scores = {str(k).strip().lower(): v for k, v in (result.get("operational_scores") or {}).items()}
+    return {"scores": scores, "flags": {str(k).strip().lower(): v for k, v in flags.items() if v}}
+
+
+def _gate_qualified_free(cap, dim, d, rows, c, people) -> bool:
+    """Whether somebody free on `d` would answer the leader or strength gap
+    that caps a shift: for a leader rule, somebody of its role with the flag
+    or the score it asks for (anybody of the role for a plain headcount);
+    for the profile's "somebody able to run it", a manager or a flagged or
+    strong person; for strength, somebody of the role rated at its bar."""
+    free = _gate_free(c, rows, d)
+    if not free:
+        return False
+    facts = dim.get("facts") or {}
+    scores, flags = people["scores"], people["flags"]
+
+    def low(n):
+        return str(n).strip().lower()
+    if cap == "leadership":
+        for miss in facts.get("misses") or []:
+            role = miss.get("role") or ""
+            for n in free:
+                if role and not _gate_holds(c, n, role, d):
+                    continue
+                if miss.get("attribute"):
+                    if flags.get(low(n)):
+                        return True
+                elif miss.get("min_score") is not None:
+                    if float(scores.get(low(n)) or 0) >= float(miss["min_score"]):
+                        return True
+                else:
+                    return True
+        if facts.get("profile_leader_missing"):
+            bar = float(facts.get("leader_min_score") or 4)
+            return any(c.manages(n, d) or flags.get(low(n)) or float(scores.get(low(n)) or 0) >= bar for n in free)
+        return False
+    for e in facts.get("shortfalls") or []:
+        role, bar = e.get("role") or "", float(e.get("bar") or 0)
+        if any((not role or _gate_holds(c, n, role, d)) and float(scores.get(low(n)) or 0) >= bar for n in free):
+            return True
+    return False
+
+
+def _gate_rules(result) -> dict:
+    """{"hard", "unmanaged"}: the finished week's distinct hard breaches
+    (a stretch with no manager counted in minutes instead) and its minutes
+    with nobody managing — what a rewrite must not make worse (P-43)."""
+    rows, c = result.get("rows") or [], result.get("constraints")
+    viols = result.get("rule_violations")
+    if c is None or viols is None:
+        return {}
+    try:
+        prof = _rules.breach_profile(rows, c, viols=viols)
+    except Exception as _gx:
+        print(f"[schedule] gate: breach profile unavailable: {_gx}")
+        return {}
+    hard = sum(1 for bid in (prof.get("by_id") or {}) if bid[0] in _rules.HARD)
+    return {"hard": hard, "unmanaged": int(sum((prof.get("manager") or {}).values()))}
+
+
+def _gate_keeps(before_local, after_local, score_after, score_before, rules_before, rules_after) -> tuple:
+    """(keep, why) for the gate's rewrite (P-43): never one with more hard
+    breaches or more unmanaged minutes than the draft; one with fewer is kept
+    (the rules rank above the score); otherwise only a better score on the
+    rewritten days with the week no worse."""
+    if rules_before and rules_after:
+        if rules_after["hard"] > rules_before["hard"] or rules_after["unmanaged"] > rules_before["unmanaged"]:
+            return False, "rules"
+        if rules_after["hard"] < rules_before["hard"] or rules_after["unmanaged"] < rules_before["unmanaged"]:
+            return True, "rules"
+    better = (after_local is not None and before_local is not None and after_local > before_local
+              and (score_after or 0) >= (score_before or 0) - 1)
+    return better, "score"
 
 
 def _gate_local(quality: dict, dates) -> float:
@@ -5163,6 +5556,999 @@ def sq_demand_rank(shift: dict) -> int:
     return _sq.DEMAND_RANK.get(((shift.get("profile") or {}).get("demand") or "normal"), 1)
 
 
+# ── The ranked repair loop (schedule audit 10/3/26 P-47, E-18, P-3, P-15) ──
+#
+# The deterministic passes used to run once each in a fixed order, and a
+# later one could undo an earlier one: the top-up added "coverage top-up"
+# rows the budget trim then removed first, the trim cut rows the manager pass
+# had to add back, a second trim cut others and a second manager pass re-added
+# them, and the fill passes made breaches the person repairs then undid
+# (P-47). There is one loop now. Every pass is a stage at the rank of the rule
+# it repairs — a person's legality, then a manager on the floor every minute,
+# then the floors, stations and closers, then overtime, the minimum hours, the
+# budget, and last Shift Quality — run in that order, cycle after cycle, until
+# a whole cycle changes nothing (at most REPAIR_MAX_CYCLES and
+# REPAIR_MAX_SECONDS). A stage's change is kept only when nothing ranked above
+# it got new or worse and no hard breach anywhere did (schedule_rules.
+# regressions: by what each breach is about, never by row); a legality repair
+# may cost a lower rank only when it leaves the week more legal (a person's
+# own legality outranks the manager rule — owner, 10/2/26). A row the manager
+# plan or the owner pinned, and every row of a day a partial redo keeps, stays
+# exactly as it was whatever a pass hands back. The loop ends by checking the
+# manager and hard ranks against the best state it saw, and the budget is
+# reconciled after the last stage that could add hours, an overrun named with
+# what put it there (E-18). Each stage runs in its own try: one that raises is
+# captured and said, and a hard-rule or manager stage that did not run holds
+# the publish (P-3, P-17). Rows carry a stable id ("_rid") from the parse to
+# the save, so every "Fixed by Cavnar AI" line points at the row it changed,
+# whatever ran after it (P-15).
+REPAIR_MAX_CYCLES = 4
+REPAIR_MAX_SECONDS = 120.0
+# What the job's clock keeps back for the score, the what-if and the save.
+REPAIR_RESERVE_SECONDS = 75.0
+# Below this much loop time the solver and the optimizer sit a cycle out
+# (said in `repair.skipped`); the hard-rule stages always run.
+REPAIR_MIN_SEARCH_SECONDS = 3.0
+
+# (key, rank, what it is, what is left to check when it does not run). The
+# order is the order a cycle runs them in.
+REPAIR_STAGES = (
+    ("person", _rules.TIER_PERSON, "The repair of minors' hours and long runs of days",
+     "check minors' hours and anyone working too many days in a row"),
+    ("replace", _rules.TIER_PERSON, "The replacement of people who can't work their shift",
+     "check every shift marked NEEDS REVIEW"),
+    ("manager", _rules.TIER_MANAGER, "The manager-every-minute repair",
+     "check a manager is on from open to close every day"),
+    ("floors", _rules.TIER_COVERAGE, "The staffing-floor fill", "check each role's staffing floor"),
+    ("stations", _rules.TIER_COVERAGE, "The kitchen-station fill", "check each kitchen station has a trained cook"),
+    ("close_out", _rules.TIER_COVERAGE, "The closer repair", "check each role's closer stays until close"),
+    ("overtime", _rules.TIER_OVERTIME, "The overtime rebalance", "overtime a teammate could take may still be in it"),
+    ("min_hours", _rules.TIER_MIN_HOURS, "The minimum-hours fill",
+     "people under the minimum you set may still be short"),
+    # Closes that measurably run late, ended when they really end (L-16) —
+    # counted against the budget before the trim makes room for them.
+    ("pad_overruns", _rules.TIER_BUDGET, "The pass that ends late-running closes when they really end",
+     "the closes that usually run late still end at their scheduled time"),
+    ("section_cap", _rules.TIER_BUDGET, "The section-count trim", "a night may have more servers than sections"),
+    ("budget", _rules.TIER_BUDGET, "The trim to the hours budget", "the week may be over its hours budget"),
+    ("top_up", _rules.TIER_QUALITY, "The fill to the shift requirements", "a shift may be short of its usual crew"),
+    ("stagger", _rules.TIER_QUALITY, "The staggered-start pass", "starts weren't spread along the sales curve"),
+    ("solver", _rules.TIER_QUALITY, "The assignment solver", "who works each shift is as the model wrote it"),
+    ("optimizer", _rules.TIER_QUALITY, "The Shift Quality optimizer", "the draft wasn't tuned for Shift Quality"),
+    ("role_times", _rules.TIER_QUALITY, "The pass that applies your start and end times by role",
+     "check those times yourself"),
+)
+_STAGE_TIER = {k: t for k, t, _w, _c in REPAIR_STAGES}
+# Run once per generation: the solver re-solves the whole assignment, and
+# solving its own answer again finds nothing new; the top-up fills at most a
+# quarter of a day's target (its own cap, P-20), which a second cycle would
+# have doubled.
+_REPAIR_ONCE = frozenset({"solver", "top_up"})
+_REPAIR_SEARCHES = frozenset({"solver", "optimizer"})
+_COLS_ROW = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
+
+
+def stage_failure_line(key, blocks=None) -> str:
+    """The review line for a stage that did not run: "⚠ … before you
+    publish" for a hard-rule or manager stage (it holds the publish, P-3),
+    a plain sentence for the rest."""
+    stage = next((s for s in REPAIR_STAGES if s[0] == key), None)
+    if stage is None:
+        return ""
+    _k, tier, what, check = stage
+    if blocks is None:
+        blocks = tier <= _rules.TIER_COVERAGE
+    if blocks:
+        return f"⚠ {what} didn't run on this draft — {check} before you publish."
+    return f"{what} didn't run on this draft — {check}."
+
+
+class RepairContext:
+    """What every stage of the repair loop reads, built once per generation
+    (P-36): the week's rules (rebuilt after the model call, P-41), the frozen
+    quality signals, the SHIFT REQUIREMENTS, the sales curve, the budget and
+    the job's clock."""
+
+    def __init__(self, restaurant_id, result, constraints, editable=None, restaurant=None, close_times=None,
+                 role_buffers=None, signals=None, weights=None, requirements=None, curve=None, clock=None,
+                 solver_on=True, max_seconds=REPAIR_MAX_SECONDS, searches=True):
+        self.rid = restaurant_id
+        self.result = result
+        self.c = constraints
+        self.editable = set(editable) if editable is not None else None
+        self.restaurant = restaurant
+        self.close_times = close_times or {}
+        self.role_buffers = role_buffers or {}
+        self.signals = dict(signals or {})
+        self.weights = weights or {}
+        self.requirements = requirements or []
+        self.curve = curve or {}
+        self.clock = clock
+        self.solver_on = bool(solver_on)
+        # False: the solver and the optimizer sit out (repair_rows — a replay
+        # has the rules, not the generation's signals they score with).
+        self.searches = bool(searches)
+        self.max_seconds = float(max_seconds)
+        self.week_dates = list(result.get("week_dates") or getattr(constraints, "week_dates", None) or [])
+        self.week_days = list(result.get("week_days") or [_weekday_name(d) for d in self.week_dates])
+        self.roster_roles = result.get("roster_roles") or {}
+        self.roster = list(result.get("roster") or [])
+        self.profiles = result.get("shift_profiles") or None
+        self.budget = float(result.get("hours_budget") or 0)
+        self.trim_on = bool(int(getattr(restaurant, "trim_to_budget", 1) or 0)) if restaurant is not None else True
+        # A budget mostly priced at the assumed wage is not cut to (E-24):
+        # budget_basis.trim_ok, said in the review.
+        self.trim_ok = (result.get("budget_basis") or {}).get("trim_ok") is not False
+        self.section_count = getattr(restaurant, "section_count", None) if restaurant is not None else None
+        self.rainy = set()
+        for _w in (result.get("weather_forecast") or []):
+            # A stale forecast copy never trims a shift for rain (re-audit B3#6).
+            if _w.get("stale"):
+                continue
+            try:
+                if int(_w.get("precip_pct") or 0) >= 60:
+                    self.rainy.add(_w.get("date"))
+            except (TypeError, ValueError):
+                pass
+        self.scorer_for = _pass_scorer(restaurant_id, result, self.signals, self.weights) \
+            if signals is not None else None
+        self.started = time.monotonic()
+        # Seconds each search has spent across the loop's cycles: the
+        # optimizer gets its own budget once per generation, however many
+        # cycles it runs in (the old single pass's latency, P-24).
+        self.search_spent = {}
+        # Why a row nobody could take was left (apply_fixes), by person,
+        # date and kind — the final review's `unfixed` reads it.
+        self.unfixed_why = {}
+        # {row id: the stage that made the row} for rows the loop added.
+        self.origin = {}
+        self._n = 0
+
+    def new_rid(self, stage=None) -> str:
+        self._n += 1
+        rid = f"r{self._n}"
+        if stage:
+            self.origin[rid] = stage
+        return rid
+
+    def give_ids(self, rows) -> None:
+        """A stable id on every row that has none (P-15)."""
+        for r in rows:
+            if not r.get("_rid"):
+                r["_rid"] = self.new_rid()
+
+    def loop_seconds(self) -> float:
+        return time.monotonic() - self.started
+
+    def search_seconds(self) -> float:
+        """What the loop may still spend: its own bound, and the job's clock
+        less what the score and the save need."""
+        left = self.max_seconds - self.loop_seconds()
+        if self.clock is not None:
+            left = min(left, self.clock.seconds_left() - REPAIR_RESERVE_SECONDS)
+        return max(0.0, left)
+
+    def hourly(self, rows) -> float:
+        return _hourly_hours_sum(rows, self.c)
+
+    def over_budget(self, rows) -> float:
+        """Hourly hours past the budget and the trim's own tolerance."""
+        if self.budget <= 0:
+            return 0.0
+        import schedule_economics as _econ
+        return round(max(0.0, self.hourly(rows) - self.budget * (1 + _econ.TRIM_TOLERANCE)), 2)
+
+
+def _full_sig(r) -> tuple:
+    return tuple(str(r.get(k) or "") for k in _COLS_ROW) + (str(r.get("_pinned") or ""),)
+
+
+def _person_day(r) -> tuple:
+    return ((r.get("employee") or "").strip().lower(), r.get("date") or "")
+
+
+def _same_rows(a, b) -> bool:
+    return len(a) == len(b) and sorted(map(_full_sig, a)) == sorted(map(_full_sig, b))
+
+
+def _flagged_rows(viols) -> set:
+    """The rows a person is not really on (time off, a double booking): the
+    scorer does not count them as coverage."""
+    return {((v.get("employee") or "").strip().lower(), v.get("date") or "", v.get("shift_start") or "")
+            for v in viols or [] if v.get("no_show")}
+
+
+def _hard_total(prof, tier) -> float:
+    return sum(sev for bid, sev in (prof.get("by_id") or {}).items()
+               if bid[0] in _rules.HARD and _rules.BREACH_TIER.get(bid[0]) == tier)
+
+
+def _hard_key(prof) -> tuple:
+    """The ranks the loop may never end worse on than the best state it saw:
+    legality, unmanaged minutes, the hard coverage rules."""
+    return (round(_hard_total(prof, _rules.TIER_PERSON), 3), int(sum((prof.get("manager") or {}).values())),
+            round(_hard_total(prof, _rules.TIER_COVERAGE), 3))
+
+
+def _kept_rows_moved(before, after, editable) -> str:
+    """'' when every row a partial redo keeps and every pinned row (the
+    manager plan's, the owner's) is exactly as it was and nothing was added
+    on a kept day; else what moved."""
+    from collections import Counter
+    if editable is not None:
+        kb = sorted(_full_sig(r) for r in before if r.get("date") not in editable)
+        ka = sorted(_full_sig(r) for r in after if r.get("date") not in editable)
+        if kb != ka:
+            return "a day you kept"
+    pb = Counter(_full_sig(r) for r in before if r.get("_pinned"))
+    pa = Counter(_full_sig(r) for r in after if r.get("_pinned"))
+    if any(pa[k] < n for k, n in pb.items()):
+        return "a shift the manager plan or you kept"
+    return ""
+
+
+def _judge(tier, before_rows, after_rows, before_prof, x) -> tuple:
+    """(worse, after_profile): what a stage's change made worse that ranks
+    above the stage, and any hard breach it made new or worse anywhere — []
+    when the change may be kept."""
+    moved = _kept_rows_moved(before_rows, after_rows, x.editable)
+    if moved:
+        return [{"id": ("kept",), "label": f"changed {moved}", "tier": -1, "before": 0, "after": 1}], None
+    after = _rules.breach_profile(after_rows, x.c)
+    if tier == _rules.TIER_PERSON:
+        worse = _rules.regressions(before_prof, after, upto=_rules.TIER_PERSON, hard_only=False)
+        if not worse:
+            lower = _rules.regressions(before_prof, after, upto=_rules.TIER_COVERAGE, hard_only=True)
+            # Legality outranks a manager on the floor and the floors (owner,
+            # 10/2/26): a repair that leaves the week more legal may cost them
+            # — a minor cut to their limit with nobody to take the stretch —
+            # and one that does not may not.
+            if lower and not (_hard_total(after, _rules.TIER_PERSON)
+                              < _hard_total(before_prof, _rules.TIER_PERSON) - 0.01):
+                worse = lower
+        return worse, after
+    worse = _rules.regressions(before_prof, after, upto=tier - 1, hard_only=False)
+    worse += [w for w in _rules.regressions(before_prof, after, upto=_rules.TIER_COVERAGE, hard_only=True)
+              if w["tier"] >= tier]
+    if not worse and tier > _rules.TIER_BUDGET:
+        was, now = x.over_budget(before_rows), x.over_budget(after_rows)
+        if now > was + 0.05:
+            worse = [{"id": ("hours_budget",), "label": "the week further over its hours budget",
+                      "tier": _rules.TIER_BUDGET, "before": was, "after": now}]
+    return worse, after
+
+
+def _settle_ids(before, after, stage, x) -> None:
+    """After a kept stage: a row the stage made gets a new id; when a stage
+    copied a row to make another, the copy that is still the same person's
+    shift that day keeps the id (P-15)."""
+    prev = {r.get("_rid"): r for r in before if r.get("_rid")}
+    owner = {}
+    for i, r in enumerate(after):
+        rid = r.get("_rid")
+        if rid not in prev:
+            r["_rid"] = x.new_rid(stage)
+            continue
+        if rid not in owner:
+            owner[rid] = i
+            continue
+        j, orig = owner[rid], prev[rid]
+        if _person_day(r) == _person_day(orig) and _person_day(after[j]) != _person_day(orig):
+            after[j]["_rid"] = x.new_rid(stage)
+            owner[rid] = i
+        else:
+            r["_rid"] = x.new_rid(stage)
+
+
+def _row_for(rows, entry, time_key="shift_start"):
+    """The row an entry (a trim, a stagger) is about: same person, date and
+    the entry's start (or its new start, `time_key`)."""
+    who = (entry.get("employee") or "").strip().lower()
+    for r in rows:
+        if ((r.get("employee") or "").strip().lower() == who and r.get("date") == entry.get("date")
+                and (not entry.get(time_key) or r.get("shift_start") == entry.get(time_key))):
+            return r
+    return None
+
+
+def _stage_record(seq, key, before, after, out, x) -> dict:
+    """What one kept stage did, keyed by row id: its fix lines (each with the
+    id of the row it changed), its trims, its staggers, and the hourly hours
+    it added or took out."""
+    fixes = []
+    for f in out.get("fixes") or []:
+        i = f.get("index")
+        rid = after[i].get("_rid") if isinstance(i, int) and 0 <= i < len(after) else None
+        row = after[i] if rid else {}
+        fixes.append(dict(f, row_id=rid, stage=key, seq=seq,
+                          row={k: row.get(k) for k in ("employee", "date", "role", "shift_start", "shift_end")}))
+    trimmed = []
+    for t in out.get("trimmed") or []:
+        r = _row_for(before, t)
+        trimmed.append(dict(t, row_id=(r or {}).get("_rid"), stage=key, seq=seq))
+    staggered = []
+    for s in ((out.get("report") or {}).get("staggered") or []):
+        r = _row_for(after, s, time_key="to")
+        staggered.append(dict(s, row_id=(r or {}).get("_rid"), seq=seq))
+    return {"seq": seq, "stage": key, "fixes": fixes, "trimmed": trimmed, "staggered": staggered,
+            "hourly_delta": round(x.hourly(after) - x.hourly(before), 2), "report": out.get("report") or {}}
+
+
+# ── the stages: each takes its own copy of the rows and the context ────────
+
+def _stage_person(rows, x):
+    out = _rules.fix_person_breaches(rows, x.c, roster_roles=x.roster_roles, editable=x.editable)
+    return {"rows": out["rows"], "fixes": list(out.get("fixes") or []), "report": {"sweeps": out.get("sweeps")}}
+
+
+def _stage_replace(rows, x):
+    """Rows a person cannot legally work — time off, availability, a double
+    booking, their hours — handed to somebody who can (shift_quality.
+    apply_fixes), the replacement that costs the week the least score. A
+    breach about a day (no manager on, a floor short) is no row's to fix by
+    changing its person (E-13) and is left to its own stage."""
+    viols = _rules.violations(rows, x.c)
+    todo = [v for v in viols if v.get("hard") and not v.get("day_level")
+            and _rules.BREACH_TIER.get(v.get("kind")) == _rules.TIER_PERSON
+            and isinstance(v.get("index"), int)
+            and (x.editable is None or rows[v["index"]].get("date") in x.editable)]
+    if not todo:
+        return {"rows": rows}
+    import shift_quality as _sqf
+    # The candidate budget grows with the roster: sized for ~20 people, a
+    # 55-person week ran out before its fixes were tried (9/26/26).
+    out = _sqf.apply_fixes(rows, todo, profiles=x.profiles, weights=x.weights, rule_constraints=x.c,
+                           only_dates=x.editable,
+                           max_evaluations=max(_sqf.MAX_CANDIDATE_EVALUATIONS, 3 * len(x.roster)),
+                           **dict(x.signals, flagged=_flagged_rows(viols)))
+    for u in out.get("unfixed") or []:
+        i = u.get("index")
+        r = rows[i] if isinstance(i, int) and 0 <= i < len(rows) else {}
+        x.unfixed_why[((u.get("employee") or "").strip().lower(), r.get("date"), u.get("kind"))] = u.get("reason")
+    if not out.get("fixes"):
+        return {"rows": rows}
+    return {"rows": out["rows"], "fixes": list(out["fixes"])}
+
+
+def _stage_manager(rows, x):
+    out = _rules.cover_manager_gaps(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e.get("from") or "no manager", "to": e["employee"] + " " + e["to"],
+              "kind": "manager", "reason": e["reason"]} for e in out["extended"] + out["added"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"extended": len(out["extended"]), "added": len(out["added"]), "left": out.get("left") or [],
+                       "shortfall": out.get("shortfall")}}
+
+
+def _stage_floors(rows, x):
+    new, n, dates = _ensure_role_floors(rows, x.week_dates, x.week_days, x.rid, x.close_times, x.role_buffers,
+                                        floors=x.c.role_floors, constraints=x.c, scorer_for=x.scorer_for,
+                                        only_dates=x.editable)
+    return {"rows": new, "report": {"added": n, "dates": dates}}
+
+
+def _stage_stations(rows, x):
+    if not getattr(x.c, "stations", None):
+        return {"rows": rows}
+    new, n, unfilled = _ensure_station_coverage(rows, x.week_dates, x.week_days, x.close_times, x.role_buffers,
+                                                constraints=x.c, scorer_for=x.scorer_for, only_dates=x.editable)
+    return {"rows": new, "report": {"added": n, "unfilled": unfilled}}
+
+
+def _stage_close_out(rows, x):
+    out = _rules.close_out_gaps(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"] + " " + e["from"], "to": e["to"], "kind": "close",
+              "reason": e["reason"]} for e in out["extended"]]
+    return {"rows": out["rows"], "fixes": fixes}
+
+
+def _stage_overtime(rows, x):
+    out = _rules.rebalance_overtime(rows, x.c, roster_roles=x.roster_roles, editable=x.editable)
+    fixes = [{"index": m["index"], "from": m["from"], "to": m["to"], "kind": m.get("kind") or "overtime",
+              "reason": m["reason"]} for m in out["moves"]]
+    fixes += [{"index": t["index"], "from": t["employee"] + " " + t["was"], "to": t["now"],
+               "kind": t.get("kind") or "overtime", "reason": t["reason"]} for t in out["trims"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"over_before": out.get("over_before"), "moved": len(out["moves"]),
+                       "trimmed": len(out["trims"]), "left": out.get("left") or [], "sweeps": out.get("sweeps")}}
+
+
+def _stage_min_hours(rows, x):
+    out = _rules.fill_min_hours(rows, x.c, roster_roles=x.roster_roles, editable=x.editable,
+                                hours_budget=x.budget or None)
+    fixes = [{"index": m["index"], "from": m["from"], "to": m["to"], "kind": "min_hours", "reason": m["reason"]}
+             for m in out["moves"]]
+    fixes += [{"index": a["index"], "from": "", "to": a["employee"], "kind": "min_hours", "reason": a["reason"]}
+              for a in out["added"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"moved": len(out["moves"]), "added": len(out["added"]), "left": out.get("left") or []}}
+
+
+def _stage_pad_overruns(rows, x):
+    """The closes of a role that measurably run past their scheduled end,
+    ended when they really end (schedule_memory.pad_overruns — schedule audit
+    10/3/26 L-16): an active end_overrun memory pads them where the person
+    can legally take it (their overtime line included), never a pinned row
+    or a kept day, never over the owner's own end-time rule. A stage of the
+    budget's rank, ahead of the trim: the week's hours are the ones it will
+    really run, and the trim makes room among the discretionary ones."""
+    learned = [m for m in (x.signals.get("learned") or []) if m.get("kind") == "end_overrun"]
+    if not learned:
+        return {"rows": rows}
+    import schedule_memory as _smem_pad
+    out = _smem_pad.pad_overruns(rows, learned, c=x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"] + " " + str(e["from"]), "to": e["to"],
+              "kind": "end_overrun", "reason": e["reason"]} for e in out.get("padded") or []]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"padded": len(out.get("padded") or []), "left": out.get("left") or []}}
+
+
+def _stage_section_cap(rows, x):
+    rep = {}
+    new, n, dates = _trim_server_overlap_cap(
+        rows, x.close_times, x.role_buffers, max_overlap=x.section_count,
+        roles=getattr(x.c, "foh_roles", None), scorer_for=x.scorer_for, constraints=x.c,
+        floors=x.c.role_floors, only_dates=x.editable, report=rep, requirements=x.requirements)
+    return {"rows": new, "report": {"trimmed": n, "dates": dates, "conflicts": rep.get("conflicts") or []}}
+
+
+def _stage_budget(rows, x):
+    """The trim back to the hourly budget (schedule_economics.trim_to_budget):
+    tails first, then whole shifts, never under the requirements, a floor, a
+    closer, a manager or a minimum. Off when the owner turned the trim off
+    or the budget is mostly priced at the assumed wage (E-24)."""
+    if not (x.trim_on and x.trim_ok and x.budget > 0) or x.over_budget(rows) <= 0:
+        return {"rows": rows}
+    import schedule_economics as _econ
+    score_fn = None
+    try:
+        sc = x.scorer_for(rows) if x.scorer_for else None
+        score_fn = sc.score if sc is not None else None
+    except Exception as _tx:
+        print(f"[schedule] score-aware trim unavailable: {_tx}")
+    rep = {}
+    new, trimmed, hours = _econ.trim_to_budget(
+        rows, x.budget, x.result.get("daily_target_hours") or {}, constraints=x.c, floors=x.c.role_floors,
+        splh=x.result.get("splh_by_daypart") or {}, rainy_dates=x.rainy, patio_roles=x.c.patio_roles,
+        score_fn=score_fn, only_dates=x.editable, requirements=x.requirements,
+        learned_worse=x.result.get("learned_worse"), outcomes=x.result.get("outcomes_by_daypart"),
+        soft_asks=x.result.get("soft_requirements"), report=rep)
+    return {"rows": new, "trimmed": trimmed, "report": {"hours": hours, "conflict": rep.get("conflict")}}
+
+
+def _stage_top_up(rows, x):
+    new, hours, dates = _top_up_hours_gap(
+        rows, x.result.get("daily_target_hours") or {}, x.budget, x.hourly(rows), x.rid, x.close_times,
+        x.role_buffers, constraints=x.c, scorer_for=x.scorer_for, requirements=x.requirements,
+        only_dates=x.editable)
+    return {"rows": new, "report": {"hours": hours, "dates": dates}}
+
+
+def _stage_stagger(rows, x):
+    if not x.curve:
+        return {"rows": rows}
+    import schedule_economics as _econ
+    sc = x.scorer_for(rows) if x.scorer_for else None
+    new, changes = _econ.stagger_same_starts(rows, x.curve, score_fn=sc.score if sc is not None else None,
+                                             constraints=x.c, only_dates=x.editable, requirements=x.requirements)
+    return {"rows": new, "report": {"staggered": changes}}
+
+
+def _stage_solver(rows, x):
+    """Who works each shift, solved over the hard rules and judged by Shift
+    Quality (schedule_solver) — this week's experiment arm says whether it
+    runs (schedule_experiments; pinned on until the experiment can conclude,
+    P-21)."""
+    if not (x.solver_on and x.searches):
+        return {"rows": rows, "report": {"summary": None}}
+    import schedule_solver as _solver
+    viols = _rules.violations(rows, x.c)
+    x.result["flagged_rows"] = _flagged_rows(viols)
+    res = _solver.improve(rows, x.result, signals=dict(x.signals, flagged=x.result["flagged_rows"]),
+                          weights=x.weights, constraints=x.c, only_dates=x.editable,
+                          max_seconds=max(0.5, min(_solver.DEFAULT_SECONDS, x.search_seconds())))
+    summary = _solver.summary(res)
+    print(f"[schedule] solver {summary['status']} {res['before_score']} -> {res['after_score']} "
+          f"kept={summary['kept']} ({summary['seconds']}s)")
+    return {"rows": res["rows"] if res.get("applied") else rows, "report": {"summary": summary}}
+
+
+def _stage_optimizer(rows, x):
+    """Shift Quality as the objective (schedule_optimizer): legal adds,
+    stretches, replacements, swaps and trims aimed at the weakest
+    dimensions, each listed with why."""
+    if not x.searches:
+        return {"rows": rows}
+    import schedule_optimizer as _opt
+    # One search budget for the generation, spread over the cycles it runs
+    # in: a later cycle continues the search where the first stopped.
+    budget = _opt.DEFAULT_SECONDS - x.search_spent.get("optimizer", 0.0)
+    if budget < REPAIR_MIN_SEARCH_SECONDS:
+        return {"rows": rows}
+    viols = _rules.violations(rows, x.c)
+    x.result["flagged_rows"] = _flagged_rows(viols)
+    x.result["pending_time_off"] = x.result.get("pending_time_off") or {
+        n: sorted(d) for n, d in (getattr(x.c, "pending_off", None) or {}).items()}
+    sig = dict(x.signals, flagged=x.result["flagged_rows"])
+    t0 = time.monotonic()
+    res = _opt.optimize(rows, x.result, signals=sig, weights=x.weights, constraints=x.c,
+                        hours_budget=(x.budget or 0) if x.trim_on else None,
+                        max_server_overlap=x.section_count, only_dates=x.editable,
+                        max_seconds=max(0.5, min(budget, x.search_seconds())))
+    x.search_spent["optimizer"] = x.search_spent.get("optimizer", 0.0) + (time.monotonic() - t0)
+    if res.get("changes"):
+        print(f"[schedule] optimizer {res['before_score']} -> {res['after_score']} "
+              f"({len(res['changes'])} changes, {res['seconds']}s)")
+    return {"rows": res["rows"] if res.get("changes") else rows, "report": {"summary": _opt.summary(res, sig)}}
+
+
+def _stage_role_times(rows, x):
+    out = _rules.apply_role_times(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"] + " " + e["from"], "to": e["to"], "kind": "role_time",
+              "reason": e["reason"]} for e in out["retimed"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"retimed": len(out["retimed"]), "left": out.get("left") or []}}
+
+
+_STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _stage_manager,
+              "floors": _stage_floors, "stations": _stage_stations, "close_out": _stage_close_out,
+              "overtime": _stage_overtime, "min_hours": _stage_min_hours, "pad_overruns": _stage_pad_overruns,
+              "section_cap": _stage_section_cap,
+              "budget": _stage_budget, "top_up": _stage_top_up, "stagger": _stage_stagger,
+              "solver": _stage_solver, "optimizer": _stage_optimizer, "role_times": _stage_role_times}
+
+
+def _stage_failure(key, exc, x) -> dict:
+    """A stage that raised: captured for engineering, said to the owner, and
+    — for a hard-rule or manager stage — a publish blocker (P-3, P-17)."""
+    tier = _STAGE_TIER.get(key, _rules.TIER_QUALITY)
+    blocks = tier <= _rules.TIER_COVERAGE
+    print(f"[schedule] repair stage {key} failed: {exc!r}")
+    try:
+        _ops.capture(exc, job=f"schedule_stage_{key}", context=f"restaurant_id={x.rid} stage={key}")
+    except Exception as _cx:
+        print(f"[schedule] could not record that failure: {_cx}")
+    return {"stage": key, "tier": tier, "blocks_publish": blocks, "error": type(exc).__name__,
+            "line": stage_failure_line(key, blocks)}
+
+
+def _run_stage(key, state, prof, x, ledger) -> tuple:
+    """Run one stage on a copy of `state` and judge what it hands back:
+    (state, profile, outcome) with outcome "kept", "same", "refused",
+    "failed" or "skipped"."""
+    t0 = time.monotonic()
+    try:
+        out = _STAGE_FNS[key]([dict(r) for r in state], x)
+    except Exception as e:
+        ledger["failures"].append(_stage_failure(key, e, x))
+        return state, prof, "failed"
+    finally:
+        ledger["seconds"][key] = round(ledger["seconds"].get(key, 0.0) + time.monotonic() - t0, 3)
+    ledger["first"].setdefault(key, out.get("report") or {})
+    new = out.get("rows")
+    if new is None or _same_rows(state, new):
+        ledger["last"][key] = out.get("report") or {}
+        if key in _REPAIR_SEARCHES:
+            ledger["runs"].setdefault(key, []).append((out.get("report") or {}, True, None))
+        return state, prof, "same"
+    worse, after = _judge(_STAGE_TIER[key], state, new, prof, x)
+    if worse:
+        ledger["refused"].append({"stage": key, "cycle": ledger["cycle"], "worse": [
+            {"label": w.get("label"), "tier": w.get("tier"), "before": w.get("before"), "after": w.get("after")}
+            for w in worse[:3]]})
+        if key in _REPAIR_SEARCHES:
+            ledger["runs"].setdefault(key, []).append((out.get("report") or {}, False, worse[0].get("label")))
+        return state, prof, "refused"
+    ledger["seq"] += 1
+    _settle_ids(state, new, key, x)
+    ledger["records"].append(_stage_record(ledger["seq"], key, state, new, out, x))
+    ledger["last"][key] = out.get("report") or {}
+    if key in _REPAIR_SEARCHES:
+        ledger["runs"].setdefault(key, []).append((out.get("report") or {}, True, None))
+    return new, after, "kept"
+
+
+def repair_week(rows, x: RepairContext) -> dict:
+    """The ranked repair loop over the parsed rows (see the block comment
+    above). Returns {rows, fixes, trimmed, hours_trimmed, staggered, reports,
+    first_reports, records, failures, refused, skipped, seconds, cycles,
+    converged, restored, budget, rows_added, hours_added_by, searches}: every
+    fix line, trim and stagger is of a row still in the week, with its
+    final index (P-15); `budget` is the reconcile (E-18)."""
+    state = [dict(r) for r in rows or []]
+    x.give_ids(state)
+    prof = _rules.breach_profile(state, x.c)
+    ledger = {"failures": [], "refused": [], "skipped": [], "records": [], "seconds": {}, "first": {}, "last": {},
+              "runs": {}, "seq": 0, "cycle": 0, "cycles": 0}
+    best = {"key": _hard_key(prof), "seq": 0, "rows": [dict(r) for r in state], "prof": prof}
+    seen = {tuple(sorted(map(_full_sig, state)))}
+    failed, ran = set(), set()
+    converged = False
+    for cycle in range(1, REPAIR_MAX_CYCLES + 1):
+        ledger["cycle"] = ledger["cycles"] = cycle
+        changed = False
+        for key, _tier, _what, _check in REPAIR_STAGES:
+            if key in failed or (key in _REPAIR_ONCE and key in ran):
+                continue
+            if key in _REPAIR_SEARCHES and x.search_seconds() < REPAIR_MIN_SEARCH_SECONDS:
+                if not any(s["stage"] == key for s in ledger["skipped"]):
+                    ledger["skipped"].append({"stage": key, "cycle": cycle, "why": "time"})
+                continue
+            ran.add(key)
+            state, prof, outcome = _run_stage(key, state, prof, x, ledger)
+            if outcome == "failed":
+                failed.add(key)
+            elif outcome == "kept":
+                changed = True
+                if _hard_key(prof) <= best["key"]:
+                    best = {"key": _hard_key(prof), "seq": ledger["seq"], "rows": [dict(r) for r in state],
+                            "prof": prof}
+        if not changed:
+            converged = True
+            break
+        sig = tuple(sorted(map(_full_sig, state)))
+        if sig in seen:
+            break               # back where an earlier cycle ended: stages are trading the same change
+        seen.add(sig)
+        if x.loop_seconds() > x.max_seconds:
+            break
+    # The manager and hard ranks are never left worse than the best state
+    # the loop saw (P-47). Every kept stage already passed that test, so
+    # this restores only if a stage's own report was wrong about its rows.
+    restored = False
+    if _hard_key(prof) > best["key"]:
+        state, prof, restored = best["rows"], best["prof"], True
+        ledger["records"] = [r for r in ledger["records"] if r["seq"] <= best["seq"]]
+    # The budget, reconciled after the last stage that could add hours
+    # (E-18): the stages ranked above it (a manager every minute, the floors,
+    # the minimum hours) and the quality stages' adds within the ceiling all
+    # ran before it in the final cycle, but a loop stopped by its bound may
+    # have ended on one of them. The trim runs once more, by the same test.
+    if "budget" not in failed and x.trim_on and x.trim_ok and x.over_budget(state) > 0:
+        ledger["cycle"] = "reconcile"
+        state, prof, _outcome = _run_stage("budget", state, prof, x, ledger)
+    return _net_repair(state, prof, x, ledger, converged, restored)
+
+
+def repair_rows(rows, c, roster_roles=None, hours_budget=None) -> list:
+    """The job's ranked repair loop as one call over `rows` with the week's
+    rules `c` and nothing else a generation reads — what the model-replay
+    script repairs a stored answer with (scripts/schedule_model_eval.py's
+    default, `--repair schedule_engine:repair_rows`): the legality, manager,
+    floor, station, closer, overtime and minimum-hours stages, and the
+    budget trim when a budget is given. Shift Quality's searches score with
+    a generation's signals and sit out."""
+    week = list(getattr(c, "week_dates", None) or [])
+    result = {"week_dates": week, "week_days": [_weekday_name(d) for d in week],
+              "roster_roles": dict(roster_roles or getattr(c, "roster_roles", None) or {}),
+              "roster": list(getattr(c, "roster_names", None) or []), "hours_budget": float(hours_budget or 0)}
+    if result["roster_roles"] and not getattr(c, "roster_roles", None):
+        c.roster_roles = dict(result["roster_roles"])
+    x = RepairContext(getattr(c, "restaurant_id", None), result, c, close_times=getattr(c, "close_times", None),
+                      role_buffers=getattr(c, "role_buffers", None), searches=False)
+    return [{k: v for k, v in r.items() if k != "_rid"} for r in repair_week(rows, x)["rows"]]
+
+
+def _net_repair(state, prof, x, ledger, converged, restored) -> dict:
+    """The loop's records netted against the week as it ends (P-15): a fix
+    line whose row is gone is dropped, a row the loop added and later took
+    away is no trim, and every line carries its row's final index."""
+    final = {r.get("_rid"): i for i, r in enumerate(state)}
+    records = ledger["records"]
+    fixes = []
+    for rec in records:
+        for f in rec["fixes"]:
+            if f.get("row_id") in final:
+                r = state[final[f["row_id"]]]
+                fixes.append(dict(f, index=final[f["row_id"]],
+                                  row={k: r.get(k) for k in ("employee", "date", "role", "shift_start", "shift_end")}))
+    trimmed, by_row = [], {}
+    for rec in records:
+        for t in rec["trimmed"]:
+            rid = t.get("row_id")
+            if rid in x.origin:
+                continue        # the loop made the row and took it away again: nothing happened to the week
+            if rid and rid in by_row:
+                prev = by_row[rid]
+                prev["hours"] = round(float(prev.get("hours") or 0) + float(t.get("hours") or 0), 2)
+                if t.get("kind") == "removed" or rid not in final:
+                    prev["kind"] = "removed"
+                    prev.pop("to", None)
+                    prev["reason"] = t.get("reason") or prev.get("reason")
+                elif t.get("to"):
+                    prev["to"] = t["to"]
+                continue
+            e = dict(t)
+            if rid in final:
+                e["index"] = final[rid]
+            trimmed.append(e)
+            if rid:
+                by_row[rid] = e
+    staggered = [dict(s, index=final[s["row_id"]]) for rec in records for s in rec["staggered"]
+                 if s.get("row_id") in final]
+    # Rows each stage added that are still in the week, and the hourly hours
+    # each stage added or took out (for the budget line).
+    rows_added, hours_added = {}, {}
+    for r in state:
+        st = x.origin.get(r.get("_rid"))
+        if st:
+            rows_added.setdefault(st, {})
+            rows_added[st][r.get("date")] = rows_added[st].get(r.get("date"), 0) + 1
+            hours_added[st] = round(hours_added.get(st, 0.0) + _rules.row_hours(r), 2)
+    delta = {}
+    for rec in records:
+        delta[rec["stage"]] = round(delta.get(rec["stage"], 0.0) + rec["hourly_delta"], 2)
+    counts = {}
+    for rec in records:
+        c = counts.setdefault(rec["stage"], {})
+        for k, v in (rec["report"] or {}).items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and k in ("moved", "trimmed", "added",
+                                                                               "extended", "retimed", "hours",
+                                                                               "padded"):
+                c[k] = round(c.get(k, 0) + v, 2)
+    cap_dates = {}
+    for rec in records:
+        if rec["stage"] == "section_cap":
+            for d, n in ((rec["report"] or {}).get("dates") or {}).items():
+                cap_dates[d] = cap_dates.get(d, 0) + int(n or 0)
+    hourly = x.hourly(state)
+    over = x.over_budget(state)
+    above = {k: v for k, v in delta.items() if v > 0.05 and _STAGE_TIER.get(k, 99) < _rules.TIER_BUDGET}
+    budget = {"hourly": round(hourly, 1), "budget": x.budget, "over_by": round(max(0.0, hourly - x.budget), 1)
+              if x.budget > 0 else 0.0, "over": over > 0, "added_above_budget": above,
+              "trim_on": x.trim_on, "trim_ok": x.trim_ok,
+              "conflict": (ledger["last"].get("budget") or {}).get("conflict") if over > 0 else None}
+    return {"rows": state, "profile": prof, "fixes": fixes, "trimmed": trimmed,
+            "hours_trimmed": round(sum(float(t.get("hours") or 0) for t in trimmed), 1), "staggered": staggered,
+            "reports": ledger["last"], "first_reports": ledger["first"], "counts": counts,
+            "failures": ledger["failures"], "refused": ledger["refused"], "skipped": ledger["skipped"],
+            "seconds": ledger["seconds"], "cycles": ledger["cycles"], "converged": converged, "restored": restored,
+            "budget": budget, "rows_added": rows_added, "hours_added": hours_added, "hourly_delta": delta,
+            "section_cap_dates": cap_dates, "searches": ledger["runs"]}
+
+
+def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
+    """(constraints, newly_off): the week's rules once the model has written
+    (schedule audit 10/3/26 P-41). They were built before two to four model
+    calls — minutes on a big roster — and reused, so time off approved, a
+    request made or a person deactivated while the model wrote was missing
+    from the draft and caught only at publish. The rules are read again now
+    and what changed about who can work is taken in: approved time off
+    (whole days and parts of days), pending requests, deactivations. The
+    rest of the week's rules stay the ones the prompt stated, so the repair
+    loop judges the draft by what the model was told. newly_off is the time
+    off approved since, [{name, dates}], for the review. The rows are checked
+    against the roster the prompt was built from, with every date the
+    generation accepted as closed. When the rules cannot be read again the
+    ones the generation started with stand (said, P-17)."""
+    before = result.get("constraints")
+    fresh = None
+    try:
+        fresh = _rules.build_constraints(restaurant_id, result.get("week_dates", []), result.get("week_days", []),
+                                         restaurant)
+    except Exception as e:
+        if before is None:
+            raise
+        _soft_fail("rules after the model", e, restaurant_id)
+    c = before if before is not None else fresh
+    if not getattr(c, "roster_roles", None):
+        c.roster_roles = result.get("roster_roles") or {}
+    if "roster" in result:
+        # The staff list the prompt was built from is the list the rows are
+        # checked against — one roster, one answer. An explicitly empty list
+        # means "no roster on file", which is no opinion (the same reading
+        # Constraints.can_work gives).
+        c.roster_names = list(result["roster"] or [])
+        c.active = {str(n).strip().lower() for n in (result["roster"] or []) if n}
+    # Closed dates and days the generation accepted as not trading.
+    c.closed_dates = set(getattr(c, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
+    newly = _take_new_time_off(c, fresh) if (fresh is not None and fresh is not c) else []
+    if fresh is not None and fresh is not c:
+        # A setting that has become unreadable since is named too (P-1).
+        for p in getattr(fresh, "input_problems", None) or []:
+            if p not in c.input_problems:
+                c.input_problems.append(p)
+    if newly or (fresh is not None and fresh is not c):
+        result["pending_time_off"] = {n: sorted(d) for n, d in (getattr(c, "pending_off", None) or {}).items()}
+    return c, newly
+
+
+def _take_new_time_off(c, fresh) -> list:
+    """Into `c`, what `fresh` (the same week's rules read again) says about
+    who can work that `c` did not: approved time off, whole days and parts
+    of days, pending requests, a weekday or daypart marked unavailable, and
+    deactivations — never taking a fact away (a request cancelled meanwhile
+    stays the stricter reading until the next check). Returns [{name,
+    dates}] of the newly approved days off."""
+    week = set(c.week_dates or [])
+    display = getattr(c, "display", None) or {}
+    newly = []
+    blocked = c.blocked_dates if isinstance(c.blocked_dates, dict) else {}
+    for key, days in (getattr(fresh, "blocked_dates", None) or {}).items():
+        mine = blocked.setdefault(key, {})
+        new = sorted(d for d in (days or {}) if d in week and d not in mine)
+        for d in new:
+            mine[d] = days[d]
+        if new:
+            newly.append({"name": display.get(key) or str(key).title(), "dates": new})
+            # An approved request is no longer a pending one.
+            if key in (c.pending_off or {}):
+                c.pending_off[key] = set(c.pending_off[key]) - set(new)
+    if hasattr(c, "blocked_parts") and getattr(fresh, "blocked_parts", None):
+        for key, by_date in fresh.blocked_parts.items():
+            mine = c.blocked_parts.setdefault(key, {})
+            for d, parts in (by_date or {}).items():
+                if d not in week:
+                    continue
+                have = mine.setdefault(d, [])
+                for p in parts or []:
+                    if p not in have:
+                        have.append(p)
+                        newly.append({"name": display.get(key) or str(key).title(), "dates": [d]})
+    for key, ds in (getattr(fresh, "pending_off", None) or {}).items():
+        add = {d for d in (ds or ()) if d in week and d not in (blocked.get(key) or {})}
+        if add:
+            c.pending_off.setdefault(key, set()).update(add)
+    for key, days in (getattr(fresh, "unavailable_days", None) or {}).items():
+        if days:
+            c.unavailable_days[key] = set(c.unavailable_days.get(key) or ()) | set(days)
+    parts = {"any": {"morning", "night"}, "morning": {"morning"}, "night": {"night"}, "off": set()}
+    for key, by_day in (getattr(fresh, "daypart_avail", None) or {}).items():
+        mine = c.daypart_avail.setdefault(key, {})
+        for day, now in (by_day or {}).items():
+            # The narrower of the two readings: a daypart free in both.
+            both = parts.get(mine.get(day, "any"), parts["any"]) & parts.get(now, parts["any"])
+            mine[day] = next((k for k, v in parts.items() if v == both), "any")
+    gone = set(getattr(fresh, "inactive", None) or ()) - set(c.inactive or ())
+    if gone:
+        c.inactive = set(c.inactive or ()) | gone
+        c.active = set(c.active or ()) - gone
+    merged = {}
+    for e in newly:
+        merged.setdefault(e["name"], set()).update(e["dates"])
+    return [{"name": n, "dates": sorted(ds)} for n, ds in merged.items()]
+
+
+def _time_off_since_line(newly) -> str:
+    """"Time off approved while this draft was written is in it: Ana
+    10/7/26." (P-41)"""
+    if not newly:
+        return ""
+    from time_utils import mdy
+    parts = [f"{e['name']} {', '.join(mdy(d) for d in e['dates'][:3])}" for e in newly[:4]]
+    return ("Time off approved while this draft was being written is in it: " + "; ".join(parts)
+            + ("…" if len(newly) > 4 else "") + ".")
+
+
+def _apply_repair_reports(result, loop) -> None:
+    """The loop's stages as the review and both clients read them — the
+    keys each pass used to write when it ran on its own."""
+    rep, first, counts = loop.get("reports") or {}, loop.get("first_reports") or {}, loop.get("counts") or {}
+
+    def n(stage, k):
+        return int((counts.get(stage) or {}).get(k) or 0)
+    mgr = rep.get("manager") or {}
+    result["manager_coverage"] = {"extended": n("manager", "extended"), "added": n("manager", "added"),
+                                  "left": mgr.get("left") or [], "shortfall": mgr.get("shortfall")}
+    result["overtime_rebalance"] = {"over_before": (first.get("overtime") or {}).get("over_before"),
+                                    "moved": n("overtime", "moved"), "trimmed": n("overtime", "trimmed"),
+                                    "left": (rep.get("overtime") or {}).get("left") or []}
+    result["min_hours"] = {"moved": n("min_hours", "moved"), "added": n("min_hours", "added"),
+                           "left": (rep.get("min_hours") or {}).get("left") or []}
+    result["role_times"] = {"retimed": n("role_times", "retimed"), "left": (rep.get("role_times") or {}).get("left") or []}
+    result["end_overruns"] = {"padded": n("pad_overruns", "padded"),
+                              "left": (rep.get("pad_overruns") or {}).get("left") or []}
+    result["cap_floor_conflicts"] = (rep.get("section_cap") or {}).get("conflicts") or []
+    result["trimmed"] = list(loop.get("trimmed") or [])
+    result["hours_trimmed"] = float(loop.get("hours_trimmed") or 0.0)
+    result["budget_conflict"] = (loop.get("budget") or {}).get("conflict")
+    result["staggered"] = list(loop.get("staggered") or [])
+    result["solver"] = _merge_search("solver", (loop.get("searches") or {}).get("solver") or [])
+    result["optimizer"] = _merge_search("optimizer", (loop.get("searches") or {}).get("optimizer") or [])
+    # The solver's changes lead "what Cavnar AI changed" (#47; web and iOS
+    # read optimizer.changes).
+    if (result.get("solver") or {}).get("ran"):
+        import schedule_solver as _solver_m
+        result["optimizer"] = _solver_m.merge_into_optimizer(result.get("optimizer"), result["solver"])
+    result["stage_failures"] = list(loop.get("failures") or [])
+    result["repair"] = {"cycles": loop.get("cycles"), "converged": bool(loop.get("converged")),
+                        "restored_best": bool(loop.get("restored")), "refused": list(loop.get("refused") or []),
+                        "skipped": list(loop.get("skipped") or []), "budget": loop.get("budget") or {},
+                        "hours_by_stage": loop.get("hourly_delta") or {},
+                        "seconds": loop.get("seconds") or {}}
+
+
+def _added_above_budget_line(added: dict) -> str:
+    """"The rules that come before the budget added 14h: a manager every
+    minute 10h, your staffing floors 4h." — why a week the trim could not
+    bring back is over (E-18)."""
+    words = {"person": "a person's legal limits", "replace": "replacing people who couldn't work",
+             "manager": "a manager every minute", "floors": "your staffing floors", "stations": "kitchen stations",
+             "close_out": "closers until close", "overtime": "moving overtime to teammates",
+             "min_hours": "the minimum hours you set"}
+    parts = [(words.get(k, k), v) for k, v in sorted((added or {}).items(), key=lambda kv: -kv[1]) if v >= 0.5]
+    if not parts:
+        return ""
+    total = sum(v for _w, v in parts)
+    return (f"The rules that come before the budget added {total:,.0f}h: "
+            + ", ".join(f"{w} {v:,.0f}h" for w, v in parts) + ".")
+
+
+def _merge_search(key, runs) -> dict:
+    """One summary for a search stage that ran in several cycles (the
+    optimizer), or the solver's one run; a run the loop refused is said."""
+    if not runs:
+        return {"ran": False}
+    if key == "solver":
+        report, kept, worse = runs[0]
+        summary = dict(report.get("summary") or {})
+        if not summary:
+            return {"ran": False}
+        if not kept and summary.get("applied"):
+            summary.update(applied=False, kept="draft", changes=[], after_score=summary.get("before_score"),
+                           reason=f"the solver's arrangement would have made {worse} worse, so the draft's was kept")
+        return summary
+    summaries = [(dict(r.get("summary") or {}), kept, worse) for r, kept, worse in runs if r.get("summary")]
+    if not summaries:
+        return {"ran": False}
+    kept = [s for s, k, _w in summaries if k]
+    first = summaries[0][0]
+    if not kept:
+        out = dict(first)
+        refused = next((w for _s, k, w in summaries if not k and w), None)
+        out.update(applied=False, changes=[], after_score=first.get("before_score"), improvement=0)
+        if refused:
+            out["verdict"] = (f"Cavnar AI's changes to the draft were not kept: they would have made {refused} "
+                              "worse.")
+        return out
+    out = dict(kept[-1])
+    before, after = kept[0].get("before_score"), kept[-1].get("after_score")
+    changes = [c for s in kept for c in (s.get("changes") or [])]
+    out.update(ran=True, applied=bool(changes), before_score=before, after_score=after, changes=changes,
+               improvement=(after or 0) - (before or 0) if before is not None and after is not None else 0,
+               evaluations=sum(int(s.get("evaluations") or 0) for s, _k, _w in summaries),
+               seconds=round(sum(float(s.get("seconds") or 0) for s, _k, _w in summaries), 1))
+    if changes:
+        out["verdict"] = (f"Cavnar AI made {len(changes)} change{'s' if len(changes) != 1 else ''} to the draft, "
+                          f"raising Shift Quality from {before} to {after}. Each is listed with why.")
+    return out
+
+
+def _unfixed_from(viols, rows, editable, why) -> list:
+    """What the week still breaks on a row after the loop, from the FINAL
+    sweep (P-15: it came from the first fix pass and was reported after
+    later passes had changed the rows), each with why it was left."""
+    import shift_quality as _sq
+    out = []
+    for v in viols or []:
+        if not v.get("hard") or v.get("day_level") or not isinstance(v.get("index"), int):
+            continue
+        r = rows[v["index"]]
+        if editable is not None and r.get("date") not in editable:
+            continue
+        label = v.get("label") or v.get("kind")
+        reason = (why or {}).get(((v.get("employee") or "").strip().lower(), r.get("date"), v.get("kind")))
+        if not reason:
+            reason = (f"{label} — nobody who could legally take the shift was found"
+                      if v.get("kind") in _sq.PERSON_FIXABLE
+                      else f"{label} — not something a different person on the shift would change.")
+        out.append({"index": v["index"], "row_id": r.get("_rid"), "employee": v.get("employee"),
+                    "date": v.get("date"), "shift_start": v.get("shift_start"), "kind": v.get("kind"),
+                    "reason": reason})
+    return out
+
+
+def _in_frozen_inputs(fn):
+    """Run a generation inside its read-once store (frozen_inputs, P-36)."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*a, **k):
+        with frozen_inputs():
+            return fn(*a, **k)
+    return run
+
+
+@_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
                       focus=None, gate=True, _fallback=None, instruction=None):
     """week_start picks the week (any date in it); dates + base_history_id
@@ -5175,11 +6561,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
 
     Run inside generation_scope (submit_generation, the auto-draft) it has
     one wall clock (P-22): its model calls stop in time for the rest of the
-    job, and a job its poll has already declared dead saves nothing."""
+    job, and a job its poll has already declared dead saves nothing.
+
+    After the model: the rows parsed (each with a stable id, P-15), the
+    rules read again (P-41), one frozen context (P-36), the ranked repair
+    loop (repair_week — P-47, E-18), then one sweep, the review and the score
+    of the rows that are saved (P-11), every stage timed (P-24) and every
+    stage that failed said (P-3, P-17)."""
     if dates and not focus:
         gate = False
     import csv as _csv_mod, traceback as _tb, datetime as _dt_sched
     clock = current_clock()
+    _timer = _StageClock()
     try:
         _pinned, _base_rows = [], []
         redo = bool(dates and base_history_id)
@@ -5203,7 +6596,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _build_kw["instruction"] = instruction
         if redo:
             _build_kw.update(dates=sorted(set(dates)), prior_rows=_pinned)
-        result = _build_schedule_result(restaurant_id, **_build_kw)
+        with _timer.stage("inputs_and_model"):
+            result = _build_schedule_result(restaurant_id, **_build_kw)
         # A partial redo rewrites only these days; the passes below that can
         # change rows (fixes, the repair loop, the budget trim) leave the
         # owner's kept days exactly as they were.
@@ -5228,7 +6622,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["redo"] = {"dates": sorted(set(dates)), "base_history_id": int(base_history_id),
                               "by": "gate" if focus else "owner"}
         from models import get_staff_notes as _gsn_sched, get_close_times as _gct_sched, get_role_close_buffers as _grcb_sched
-        _raw_notes = _gsn_sched(restaurant_id) or []
+        _raw_notes = frozen_read(("staff_notes", restaurant_id), lambda: _gsn_sched(restaurant_id)) or []
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
         _close_times = _gct_sched(restaurant_id)
         _role_close_buffers = _grcb_sched(restaurant_id)
@@ -5243,6 +6637,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         trimmed_dates = {}
         pizza_added_dates = {}
         try:
+            _t_parse = time.monotonic()
             _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
             _csv_lines = result["schedule_csv"].split("\n")
             # The planned manager rows of the dates this run planned come
@@ -5393,264 +6788,79 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 preview_rows = _skeleton.restore_pinned(preview_rows, _plan_rows,
                                                         closed=result.get("closed_dates") or ())
                 hours_scheduled = _safe_hours_sum(preview_rows)
+            _timer.add("parse", time.monotonic() - _t_parse)
 
-            _constraints = result.get("constraints")
-            if _constraints is None:
-                _constraints = _rules.build_constraints(restaurant_id, result.get("week_dates", []),
-                                                        result.get("week_days", []), _restaurant_for_sched)
-                result["constraints"] = _constraints
-            if not getattr(_constraints, "roster_roles", None):
-                _constraints.roster_roles = result.get("roster_roles") or {}
-            if "roster" in result:
-                # The staff list the prompt was built from is the list the
-                # rows are checked against — one roster, one answer. An
-                # explicitly empty list means "no roster on file", which is
-                # no opinion (the same reading Constraints.can_work gives).
-                _constraints.roster_names = list(result["roster"] or [])
-                _constraints.active = {str(n).strip().lower() for n in (result["roster"] or []) if n}
-
-            # Closed dates and days the generation accepted as not trading.
-            _constraints.closed_dates = set(getattr(_constraints, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
-            # Every fill-in and trim pass below chooses among its legal
-            # options by what each costs the week's Shift Quality, scored
-            # locally (only the dates a move touches). The signals are read
-            # once here and shared.
-            _pass_sig, _pass_w = None, None
-            try:
-                _pass_sig, _pass_w = _quality_signals(restaurant_id, result)
-            except Exception as _psx:
-                print(f"[schedule] pass signals unavailable: {_psx}")
-            _scorer_for = _pass_scorer(restaurant_id, result, _pass_sig, _pass_w) if _pass_sig is not None else None
-            # The SHIFT REQUIREMENTS the draft was written to, built once from
-            # the generation's own inputs and shared: the top-up fills only
-            # what is short of them and no trim cuts under them (schedule
-            # audit 10/3/26 P-20, SQ-7). Every pass below keeps to the days a
-            # partial redo rewrites (`only_dates`, P-10).
+            # The rules the week is checked against, read again now the model
+            # has written (schedule audit 10/3/26 P-41): they were built
+            # before two to four model calls and reused, so time off approved
+            # while the model wrote was missing from the draft and caught only
+            # at publish. The roster the prompt was built from stays the
+            # roster the rows are checked against.
+            with _timer.stage("rules"):
+                _constraints, _newly_off = _rules_after_the_model(restaurant_id, result, _restaurant_for_sched)
+            result["constraints"] = _constraints
+            result["time_off_since_inputs"] = _newly_off
             import schedule_economics as _econ
-            _curve = _safe_hourly_profile(restaurant_id)
-            _reqs = week_requirements(restaurant_id, result, _constraints, curve=_curve)
-            result["shift_requirements"] = _reqs
-            preview_rows, pizza_rows_added, pizza_added_dates = _ensure_role_floors(
-                preview_rows, result.get("week_dates", []), result.get("week_days", []),
-                restaurant_id, _close_times, _role_close_buffers,
-                floors=_constraints.role_floors, constraints=_constraints, scorer_for=_scorer_for,
-                only_dates=_editable,
-            )
-            if pizza_rows_added:
-                hours_scheduled = _safe_hours_sum(preview_rows)
-                print(f"[schedule] role floors added {pizza_rows_added} row(s) across {pizza_added_dates}")
-            # Kitchen stations (kitchen_stations): each required station on
-            # each daypart gets a cook trained on it.
-            preview_rows, _st_added, _st_unfilled = _ensure_station_coverage(
-                preview_rows, result.get("week_dates", []), result.get("week_days", []),
-                _close_times, _role_close_buffers, constraints=_constraints, scorer_for=_scorer_for,
-                only_dates=_editable)
-            if _st_added:
-                hours_scheduled = _safe_hours_sum(preview_rows)
-                print(f"[schedule] station coverage added {_st_added} row(s); {len(_st_unfilled)} left open")
+            # One frozen context for the loop, the score and the review
+            # (P-36): the quality signals, last week's tail and the other
+            # sites' shifts are read once here; only what depends on the rows
+            # in hand — the rows a person is not really on, the hard breaches
+            # — is worked out again for them.
+            result["staff_constraints"] = staff_constraints
+            with _timer.stage("signals"):
+                result["prior_week_assignments"] = _prior_week_assignments(
+                    restaurant_id, before=(result.get("week_dates") or [None])[0])
+                try:
+                    from models import sibling_location_shifts as _sibs
+                    result["elsewhere"] = _sibs(restaurant_id, sorted(set(result.get("week_dates") or [])))
+                except Exception as _sbx:
+                    _soft_fail("other sites' shifts", _sbx, restaurant_id)
+                    result["elsewhere"] = {}
+                _pass_sig, _pass_w = None, None
+                try:
+                    _pass_sig, _pass_w = _quality_signals(restaurant_id, result)
+                except Exception as _psx:
+                    _soft_fail("quality signals", _psx, restaurant_id)
+                # The sales curve and the SHIFT REQUIREMENTS the draft was
+                # written to, built once from the generation's own inputs and
+                # shared: the top-up fills only what is short of them and no
+                # trim cuts under them (P-20, SQ-7).
+                _curve = _safe_hourly_profile(restaurant_id)
+                result["hourly_profile_ready"] = bool(_curve)
+                _reqs = week_requirements(restaurant_id, result, _constraints, curve=_curve)
+                result["shift_requirements"] = _reqs
+            # This week's arm of the live experiment (schedule_experiments):
+            # whether the solver re-solves who works each shift — pinned on
+            # until the experiment can reach a verdict (P-21, L-11).
+            _solver_on = True
+            try:
+                import schedule_experiments as _sx
+                result["experiment_arms"] = _sx.arms_for(restaurant_id, (result.get("week_dates") or [None])[0])
+                _solver_on = _sx.flag(result["experiment_arms"], "solver")
+            except Exception as _arx:
+                _soft_fail("experiment arm", _arx, restaurant_id)
+            # The ranked repair loop (P-47, E-18): every pass a stage at the
+            # rank of the rule it repairs, cycle after cycle until nothing
+            # changes, no change ever paid for by a rule ranked above it.
+            _repair_ctx = RepairContext(restaurant_id, result, _constraints, editable=_editable,
+                               restaurant=_restaurant_for_sched, close_times=_close_times,
+                               role_buffers=_role_close_buffers, signals=_pass_sig, weights=_pass_w,
+                               requirements=_reqs, curve=_curve, clock=clock, solver_on=_solver_on)
+            with _timer.stage("repair"):
+                _loop = repair_week(preview_rows, _repair_ctx)
+            for _k, _s in (_loop.get("seconds") or {}).items():
+                _timer.add(f"repair.{_k}", _s)
+            preview_rows = _loop["rows"]
+            hours_scheduled = _safe_hours_sum(preview_rows)
+            _apply_repair_reports(result, _loop)
+            hours_added = round(float((_loop.get("hours_added") or {}).get("top_up") or 0.0), 1)
+            added_dates = dict((_loop.get("rows_added") or {}).get("top_up") or {})
+            pizza_added_dates = dict((_loop.get("rows_added") or {}).get("floors") or {})
+            trimmed_dates = dict(_loop.get("section_cap_dates") or {})
+            print(f"[schedule] repair loop: {_loop['cycles']} cycle(s), "
+                  f"{'converged' if _loop['converged'] else 'stopped at its bound'}, {len(_loop['fixes'])} fixes, "
+                  f"{len(_loop['refused'])} refused, {len(_loop['failures'])} failed")
 
-            _hourly_so_far = _hourly_hours_sum(preview_rows, _constraints)
-            preview_rows, hours_added, added_dates = _top_up_hours_gap(
-                preview_rows, result.get("daily_target_hours", {}),
-                result.get("hours_budget", 0), _hourly_so_far, restaurant_id,
-                _close_times, _role_close_buffers, constraints=_constraints, scorer_for=_scorer_for,
-                requirements=_reqs, only_dates=_editable,
-            )
-            if hours_added:
-                hours_scheduled = round(hours_scheduled + hours_added, 1)
-                print(f"[schedule] coverage top-up added {hours_added}h across {added_dates}")
-            # Nothing extends shifts to spend the hours budget: the prompt calls
-            # it a ceiling. The pass that pushed closers later to consume it
-            # (_extend_shifts_to_close_gap) had no caller left and was removed
-            # (schedule audit 10/3/26 P-46).
-
-            _cap_report = {}
-            preview_rows, rows_trimmed, trimmed_dates = _trim_server_overlap_cap(
-                preview_rows, _close_times, _role_close_buffers,
-                max_overlap=getattr(_restaurant_for_sched, 'section_count', None),
-                roles=getattr(_constraints, "foh_roles", None), scorer_for=_scorer_for,
-                constraints=_constraints, floors=_constraints.role_floors, only_dates=_editable,
-                report=_cap_report, requirements=_reqs,
-            )
-            # Nights the cap could not be met without going under a floor or
-            # breaking a rule: named once in the review (P-29).
-            result["cap_floor_conflicts"] = _cap_report.get("conflicts") or []
-            if rows_trimmed:
-                hours_scheduled = _safe_hours_sum(preview_rows)
-                print(f"[schedule] trimmed {rows_trimmed} row(s) over the server cap across {trimmed_dates}")
-
-            # Staggered starts along the day's sales curve and the trim back
-            # to the budget, each reported in the review. A role's arrival
-            # is a clock-in lead before each person's own shift
-            # (attendance.clock_in_leads), never a reason to move a shift.
-            _stagger_scorer = _scorer_for(preview_rows) if (_scorer_for and _curve) else None
-            preview_rows, _staggered = _econ.stagger_same_starts(
-                preview_rows, _curve, score_fn=_stagger_scorer.score if _stagger_scorer else None,
-                constraints=_constraints, only_dates=_editable, requirements=_reqs)
-            result["staggered"] = _staggered
-            result["hourly_profile_ready"] = bool(_curve)
-            result["trimmed"] = []
-            result["hours_trimmed"] = 0.0
-            result["budget_conflict"] = None
-            _rainy = set()
-            for _w in (result.get("weather_forecast") or []):
-                # A stale forecast copy never trims a shift for rain
-                # (re-audit B3#6).
-                if _w.get("stale"):
-                    continue
-                try:
-                    if int(_w.get("precip_pct") or 0) >= 60:
-                        _rainy.add(_w.get("date"))
-                except (TypeError, ValueError):
-                    pass
-            if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0):
-                # The same local scorer the fill-in passes use: a removal
-                # re-scores only its own date (it used to re-score the week).
-                _score_fn = None
-                try:
-                    _trim_scorer = _scorer_for(preview_rows) if _scorer_for else None
-                    _score_fn = _trim_scorer.score if _trim_scorer is not None else None
-                except Exception as _tx:
-                    print(f"[schedule] score-aware trim unavailable: {_tx}")
-                # Never a cut under the requirements, on a day cuts measured
-                # worse, or in a daypart that has gone wrong before (L-24);
-                # what it could not trim is said once in the review (SQ-7).
-                _trim_report = {}
-                preview_rows, _trimmed, _hours_trimmed = _econ.trim_to_budget(
-                    preview_rows, result.get("hours_budget", 0), result.get("daily_target_hours") or {},
-                    constraints=_constraints, floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
-                    rainy_dates=_rainy, patio_roles=_constraints.patio_roles, score_fn=_score_fn,
-                    only_dates=_editable, requirements=_reqs, learned_worse=result.get("learned_worse"),
-                    outcomes=result.get("outcomes_by_daypart"), soft_asks=result.get("soft_requirements"),
-                    report=_trim_report)
-                result["trimmed"] = _trimmed
-                result["hours_trimmed"] = _hours_trimmed
-                result["budget_conflict"] = _trim_report.get("conflict")
-                if _trimmed:
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    print(f"[schedule] trimmed {_hours_trimmed}h to the budget ({len(_trimmed)} rows)")
-            # Overtime first (schedule_rules.rebalance_overtime): a person
-            # over the 40h line hands shifts to a same-role teammate with
-            # room, or has the last shift trimmed where the role is covered,
-            # before any other fix runs. Each move is a "Fixed by Cavnar AI"
-            # line; what could not be moved is named in the review.
-            _ot_fixes = []
-            try:
-                _ot = _rules.rebalance_overtime(preview_rows, _constraints,
-                                                roster_roles=result.get("roster_roles") or {}, editable=_editable)
-                if _ot["moves"] or _ot["trims"]:
-                    preview_rows = _ot["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _m in _ot["moves"]:
-                        _ot_fixes.append({"index": _m["index"], "from": _m["from"], "to": _m["to"],
-                                          "kind": _m.get("kind") or "overtime", "reason": _m["reason"]})
-                    for _t in _ot["trims"]:
-                        _ot_fixes.append({"index": _t["index"], "from": _t["employee"] + " " + _t["was"],
-                                          "to": _t["now"], "kind": _t.get("kind") or "overtime", "reason": _t["reason"]})
-                # A night nobody who can lock up is on to close: a keyholder
-                # already on runs on to it, inside the same overtime line.
-                _co = _rules.close_out_gaps(preview_rows, _constraints, editable=_editable)
-                if _co["extended"]:
-                    preview_rows = _co["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _x in _co["extended"]:
-                        _ot_fixes.append({"index": _x["index"], "from": _x["employee"] + " " + _x["from"],
-                                          "to": _x["to"], "kind": "close", "reason": _x["reason"]})
-                # A manager on the floor every minute anyone is (owner,
-                # 10/2/26 — the highest rule): each stretch without one gets
-                # a manager, by extending one already on or adding one.
-                _mg = _rules.cover_manager_gaps(preview_rows, _constraints, editable=_editable)
-                if _mg["extended"] or _mg["added"]:
-                    preview_rows = _mg["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _x in _mg["extended"] + _mg["added"]:
-                        _ot_fixes.append({"index": _x["index"], "from": _x["from"] or "no manager",
-                                          "to": _x["employee"] + " " + _x["to"], "kind": "manager", "reason": _x["reason"]})
-                result["manager_coverage"] = {"extended": len(_mg["extended"]), "added": len(_mg["added"]),
-                                              "left": _mg["left"], "shortfall": _mg.get("shortfall")}
-                # A minor past their limit is cut to it; a run of days past
-                # the rule hands one of its shifts to a teammate (10/2/26:
-                # both stayed hard flags in Erik's first week).
-                _pb = _rules.fix_person_breaches(preview_rows, _constraints,
-                                                 roster_roles=result.get("roster_roles") or {}, editable=_editable)
-                if _pb["fixes"]:
-                    preview_rows = _pb["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    _ot_fixes.extend(_pb["fixes"])
-                result["overtime_rebalance"] = {"over_before": _ot["over_before"], "moved": len(_ot["moves"]),
-                                                "trimmed": len(_ot["trims"]), "left": _ot["left"]}
-                print(f"[schedule] overtime pass: {len(_ot['moves'])} moved, {len(_ot['trims'])} trimmed, "
-                      f"{len(_ot['left'])} still over ({_ot['sweeps']} checks)")
-            except Exception as _otx:
-                print(f"[schedule] overtime pass failed: {_otx}")
-            # Somebody under the minimum hours the owner set gets legal shifts
-            # in their roles — from a teammate above their own target, or
-            # added inside the hours budget — after overtime, the manager rule
-            # and the person repairs, never undoing any of them (schedule
-            # audit 10/3/26 P-4: a full-time cook set to 40-45h got 7h).
-            try:
-                _mh = _rules.fill_min_hours(preview_rows, _constraints,
-                                            roster_roles=result.get("roster_roles") or {}, editable=_editable,
-                                            hours_budget=float(result.get("hours_budget") or 0) or None)
-                if _mh["moves"] or _mh["added"]:
-                    preview_rows = _mh["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _x in _mh["moves"]:
-                        _ot_fixes.append({"index": _x["index"], "from": _x["from"], "to": _x["to"],
-                                          "kind": "min_hours", "reason": _x["reason"]})
-                    for _x in _mh["added"]:
-                        _ot_fixes.append({"index": _x["index"], "from": "", "to": _x["employee"],
-                                          "kind": "min_hours", "reason": _x["reason"]})
-                result["min_hours"] = {"moved": len(_mh["moves"]), "added": len(_mh["added"]), "left": _mh["left"]}
-            except Exception as _mhx:
-                print(f"[schedule] minimum-hours pass failed: {_mhx}")
-                try:
-                    _ops.capture(_mhx, job="schedule_min_hours", context=f"restaurant_id={restaurant_id}")
-                except Exception:
-                    pass
-            # The owner's start/end rules for a role (schedule audit 10/3/26
-            # L-33 — a retime the manager kept making, made a rule): every row
-            # of that role on that daypart is retimed to it where that is
-            # legal and makes nothing above quality worse. Last, so no fill,
-            # stagger or trim moves it again.
-            try:
-                _rt = _rules.apply_role_times(preview_rows, _constraints, editable=_editable)
-                if _rt["retimed"]:
-                    preview_rows = _rt["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _x in _rt["retimed"]:
-                        _ot_fixes.append({"index": _x["index"], "from": _x["employee"] + " " + _x["from"],
-                                          "to": _x["to"], "kind": "role_time", "reason": _x["reason"]})
-                result["role_times"] = {"retimed": len(_rt["retimed"]), "left": _rt["left"]}
-            except Exception as _rtx:
-                print(f"[schedule] role time rules not applied: {_rtx}")
-            # The closes of a role that measurably run past their scheduled
-            # end, ended when they really end (schedule audit 10/3/26 L-16 —
-            # who overruns never shaped the draft): an active end_overrun
-            # memory pads them where the person can legally take it
-            # (can_add, their overtime line included), never a pinned row or
-            # an undrafted day, never over the owner's own end-time rule.
-            # Before the solver, the optimizer and the pricing, so the week's
-            # hours and overtime are the ones it will really run.
-            try:
-                import schedule_memory as _smem_pad
-                _pad = _smem_pad.pad_overruns(
-                    preview_rows, _smem_pad.enforced_signals(restaurant_id, result.get("week_dates") or [],
-                                                             roster_names=list(result.get("roster") or []) or None),
-                    c=_constraints, editable=_editable)
-                if _pad["padded"]:
-                    preview_rows = _pad["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _x in _pad["padded"]:
-                        _ot_fixes.append({"index": _x["index"], "from": _x["employee"] + " " + str(_x["from"]),
-                                          "to": _x["to"], "kind": "end_overrun", "reason": _x["reason"]})
-                result["end_overruns"] = {"padded": len(_pad["padded"]), "left": _pad["left"]}
-            except Exception as _pdx:
-                print(f"[schedule] closing overruns not padded: {_pdx}")
-                try:
-                    _ops.capture(_pdx, job="schedule_end_overrun", context=f"restaurant_id={restaurant_id}")
-                except Exception as _cx:
-                    print(f"[schedule] capture failed: {_cx}")
             def _price_week(_rows):
                 try:
                     from models import get_role_rates as _grr
@@ -5672,200 +6882,26 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _lbd = float(result.get("labor_budget_dollars") or 0)
                     result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None
                 except Exception as _px:
-                    print(f"[schedule] pricing failed: {_px}")
-            # Priced here and again on the final rows (below): the fix pass,
-            # the solver and the optimizer all change rows after this point,
-            # and a cost priced before them showed overtime the week no
-            # longer had (9/26/26).
-            _price_week(preview_rows)
+                    # Said, not printed (schedule audit 10/3/26 P-17): the
+                    # review has no cost line and engineering knows why.
+                    _soft_fail("pricing", _px, restaurant_id)
 
-            # Every rule the week is checked against, in one sweep
-            # (schedule_rules.violations): the roster, the week, double
-            # bookings, approved time off, availability by day and daypart,
-            # the hours ceiling on the PAYROLL week including what is
-            # already published, shift length, rest between shifts, minors,
-            # days off, pending time off. Hard breaches that a legal
-            # replacement can fix are fixed and tagged; the rest are flagged
-            # for the owner and never counted as coverage.
-            _viols = _rules.violations(preview_rows, _constraints)
-            _fixes, _unfixed = list(_ot_fixes), []
-            # A breach about a day (no manager on, a floor short) is no row's
-            # to fix by changing its person: it stays a day-level item in the
-            # review, never an "unfixed" line on whoever's row it is pinned to
-            # (schedule audit 10/3/26 E-13).
-            _hard = [v for v in _viols if v["hard"] and not v.get("day_level")
-                     and (_editable is None or (preview_rows[v["index"]].get("date") in _editable))]
-            # A missed run of days off is fixed here too (one of the person's
-            # shifts to a legal teammate, least score cost); which rows may
-            # move is limited to the editable days inside apply_fixes. The
-            # other soft fixable breach, under_min_hours, has its own pass
-            # (fill_min_hours, above).
-            _days_off = [v for v in _rules.fixable(_viols) if not v["hard"] and v["kind"] == "days_off"]
-            if _hard or _days_off:
-                try:
-                    _sig, _w = _quality_signals(restaurant_id, result)
-                    _profiles_for_fix = result.get("shift_profiles") or None
-                    import shift_quality as _sqf
-                    # The candidate budget grows with the roster: sized for ~20
-                    # people, a 55-person week ran out before its days-off
-                    # fixes were tried (9/26/26).
-                    _out = _sqf.apply_fixes(preview_rows, _hard + _days_off, profiles=_profiles_for_fix, weights=_w,
-                                            rule_constraints=_constraints, only_dates=_editable,
-                                            max_evaluations=max(_sqf.MAX_CANDIDATE_EVALUATIONS,
-                                                                3 * len(result.get("roster") or [])), **_sig)
-                    if _out.get("fixes"):
-                        preview_rows = _out["rows"]
-                        _fixes = _ot_fixes + _out["fixes"]
-                        hours_scheduled = _safe_hours_sum(preview_rows)
-                        _viols = _rules.violations(preview_rows, _constraints)
-                    _unfixed = _out.get("unfixed") or []
-                except Exception as _fx:
-                    print(f"[schedule] fix pass failed: {_fx}")
-            # The fix pass staffs rows the budget trim counted as nobody (a
-            # person on time off): a week the trim had brought under budget
-            # can be back over it. Trimmed again, by the same rules.
-            try:
-                _hb2 = float(result.get("hours_budget") or 0)
-                if _fixes and _hb2 > 0 and int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) \
-                        and _hourly_hours_sum(preview_rows, _constraints) > _hb2 * (1 + _econ.TRIM_TOLERANCE):
-                    # The same trim as the first, with its scorer and the rain
-                    # it was given — it used to run with neither — and the
-                    # same refusals: nothing it removes can take away the
-                    # night's closer or a manager after close-out ran (P-13).
-                    _t2_score = None
-                    try:
-                        _t2_scorer = _scorer_for(preview_rows) if _scorer_for else None
-                        _t2_score = _t2_scorer.score if _t2_scorer is not None else None
-                    except Exception as _t2sx:
-                        print(f"[schedule] score-aware post-fix trim unavailable: {_t2sx}")
-                    _t2_report = {}
-                    preview_rows, _t2, _h2 = _econ.trim_to_budget(
-                        preview_rows, _hb2, result.get("daily_target_hours") or {}, constraints=_constraints,
-                        floors=_constraints.role_floors, splh=result.get("splh_by_daypart") or {},
-                        rainy_dates=_rainy, patio_roles=_constraints.patio_roles, score_fn=_t2_score,
-                        only_dates=_editable, requirements=_reqs, learned_worse=result.get("learned_worse"),
-                        outcomes=result.get("outcomes_by_daypart"), soft_asks=result.get("soft_requirements"),
-                        report=_t2_report)
-                    result["budget_conflict"] = _t2_report.get("conflict")
-                    if _t2:
-                        result["trimmed"] = (result.get("trimmed") or []) + _t2
-                        result["hours_trimmed"] = round((result.get("hours_trimmed") or 0) + _h2, 1)
-                        hours_scheduled = _safe_hours_sum(preview_rows)
-                        _viols = _rules.violations(preview_rows, _constraints)
-            except Exception as _t2x:
-                print(f"[schedule] post-fix trim failed: {_t2x}")
-            # ── audit #47/#50 integration point: schedule_solver + schedule_experiments ──
-            # The model decided which shifts exist; who works each is solved
-            # (schedule_solver) over the hard rules and judged by Shift
-            # Quality, kept only when the week scores higher and breaks no
-            # rule the draft did not. Whether it runs is this week's arm of
-            # the live experiment (schedule_experiments) — no model call.
-            result["solver"] = {"ran": False}
-            try:
-                import schedule_experiments as _sx
-                result["experiment_arms"] = _sx.arms_for(restaurant_id, (result.get("week_dates") or [None])[0])
-                if _sx.flag(result["experiment_arms"], "solver"):
-                    import schedule_solver as _solver
-                    result["flagged_rows"] = {
-                        ((_v.get("employee") or "").strip().lower(), _v.get("date") or "", _v.get("shift_start") or "")
-                        for _v in _viols if _v.get("no_show")}
-                    result["prior_week_assignments"] = _prior_week_assignments(
-                        restaurant_id, before=(result.get("week_dates") or [None])[0])
-                    result["staff_constraints"] = staff_constraints
-                    _ssig, _sw = _quality_signals(restaurant_id, result)
-                    _sres = _solver.improve(preview_rows, result, signals=_ssig, weights=_sw,
-                                            constraints=_constraints, only_dates=_editable)
-                    result["solver"] = _solver.summary(_sres)
-                    if _sres.get("applied"):
-                        preview_rows = _sres["rows"]
-                        hours_scheduled = _safe_hours_sum(preview_rows)
-                        _viols = _rules.violations(preview_rows, _constraints)
-                    print(f"[schedule] solver {result['solver']['status']} {_sres['before_score']} -> "
-                          f"{_sres['after_score']} kept={result['solver']['kept']} ({result['solver']['seconds']}s)")
-            except Exception as _svx:
-                print(f"[schedule] solver failed: {_svx}")
-                try:
-                    _ops.capture(_svx, job="schedule_solver", context=f"restaurant_id={restaurant_id}")
-                except Exception:
-                    pass
-            # ── end #47/#50 integration point ──
-            # The score as the objective (schedule_optimizer): legal adds,
-            # stretches, replacements, swaps and trims aimed at the weakest
-            # dimensions, each re-checked against the rule sweep, applied
-            # before the owner sees the draft and listed with why. The draft
-            # was never shown, so this is Cavnar finishing it, not rewriting
-            # a week the owner has read.
-            result["optimizer"] = {"ran": False}
-            try:
-                import schedule_optimizer as _opt
-                result["flagged_rows"] = {
-                    ((_v.get("employee") or "").strip().lower(), _v.get("date") or "", _v.get("shift_start") or "")
-                    for _v in _viols if _v.get("no_show")}
-                result["prior_week_assignments"] = _prior_week_assignments(
-                    restaurant_id, before=(result.get("week_dates") or [None])[0])
-                result["staff_constraints"] = staff_constraints
-                _osig, _ow = _quality_signals(restaurant_id, result)
-                result["pending_time_off"] = result.get("pending_time_off") or {
-                    n: sorted(d) for n, d in (getattr(_constraints, "pending_off", None) or {}).items()}
-                _ores = _opt.optimize(preview_rows, result, signals=_osig, weights=_ow, constraints=_constraints,
-                                      hours_budget=(result.get("hours_budget") or 0)
-                                      if int(getattr(_restaurant_for_sched, "trim_to_budget", 1) or 0) else None,
-                                      max_server_overlap=getattr(_restaurant_for_sched, "section_count", None),
-                                      only_dates=_editable)
-                result["optimizer"] = _opt.summary(_ores, _osig)
-                if _ores.get("changes"):
-                    preview_rows = _ores["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    _viols = _rules.violations(preview_rows, _constraints)
-                    print(f"[schedule] optimizer {_ores['before_score']} -> {_ores['after_score']} "
-                          f"({len(_ores['changes'])} changes, {_ores['seconds']}s)")
-            except Exception as _ox:
-                print(f"[schedule] optimizer failed: {_ox}")
-                try:
-                    _ops.capture(_ox, job="schedule_optimizer", context=f"restaurant_id={restaurant_id}")
-                except Exception:
-                    pass
-            # The manager rule once more on the finished rows: the fix pass,
-            # the solver and the optimizer are refused a move that opens a
-            # new gap, but a gap one of them could not close is closed here,
-            # and the violations are read again from the rows the owner sees.
-            try:
-                _mg2 = _rules.cover_manager_gaps(preview_rows, _constraints, editable=_editable)
-                if _mg2["extended"] or _mg2["added"]:
-                    preview_rows = _mg2["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _x in _mg2["extended"] + _mg2["added"]:
-                        _fixes.append({"index": _x["index"], "from": _x["from"] or "no manager",
-                                       "to": _x["employee"] + " " + _x["to"], "kind": "manager", "reason": _x["reason"]})
-                    _viols = _rules.violations(preview_rows, _constraints)
-                    _price_week(preview_rows)
-                _mc = result.setdefault("manager_coverage", {"extended": 0, "added": 0, "left": []})
-                _mc["extended"] = _mc.get("extended", 0) + len(_mg2["extended"])
-                _mc["added"] = _mc.get("added", 0) + len(_mg2["added"])
-                _mc["left"] = _mg2["left"]
-                _mc["shortfall"] = _mg2.get("shortfall")
-            except Exception as _mgx:
-                print(f"[schedule] manager coverage pass failed: {_mgx}")
-            # The owner's start/end rules once more on the finished rows
-            # (schedule audit 10/3/26 L-33): the optimizer may stretch a shift
-            # after the first pass; a rule is the owner's word, so it has the
-            # last say on any start or end nothing ranked above it needs.
-            try:
-                _rt2 = _rules.apply_role_times(preview_rows, _constraints, editable=_editable)
-                if _rt2["retimed"]:
-                    preview_rows = _rt2["rows"]
-                    hours_scheduled = _safe_hours_sum(preview_rows)
-                    for _x in _rt2["retimed"]:
-                        _fixes.append({"index": _x["index"], "from": _x["employee"] + " " + _x["from"],
-                                       "to": _x["to"], "kind": "role_time", "reason": _x["reason"]})
-                    _viols = _rules.violations(preview_rows, _constraints)
-                    _price_week(preview_rows)
-            except Exception as _rtx2:
-                print(f"[schedule] role time rules not re-applied: {_rtx2}")
-            # #47: the solver's changes lead "what Cavnar changed" (web and iOS read optimizer.changes).
-            if (result.get("solver") or {}).get("ran"):
-                import schedule_solver as _solver_m
-                result["optimizer"] = _solver_m.merge_into_optimizer(result.get("optimizer"), result["solver"])
+            # Every rule the week is checked against, in one sweep of the
+            # FINISHED rows (schedule_rules.violations): nothing changes a
+            # row after this — the last station pass ran inside the loop —
+            # so the review, the NEEDS REVIEW marks and the score all
+            # describe the week that is saved (schedule audit 10/3/26 P-11,
+            # SQ-21).
+            with _timer.stage("sweep"):
+                _viols = _rules.violations(preview_rows, _constraints)
+            # Priced once, on the rows that are saved: the overtime line and
+            # the over-budget dollars the review states are this week's.
+            _price_week(preview_rows)
+            _fixes = list(_loop["fixes"])
+            # What is still broken on a row comes from that final sweep, each
+            # with why it was left (P-15: it came from the first fix pass,
+            # reported after later passes had changed the rows).
+            _unfixed = _unfixed_from(_viols, preview_rows, _editable, _repair_ctx.unfixed_why)
             for _v in _viols:
                 # A breach about a DAY (no manager on, a floor short) is shown
                 # on the day (review.hard_days), never as "needs review" on
@@ -5877,14 +6913,32 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _r["review_reason"] = _v["detail"] if _v["kind"] == "over_max_hours" else _v["label"]
             result["rule_violations"] = _viols
             result["review"] = _rules.summarize(_viols)
+            # Which lines are the rule sweep's, so a Studio save refreshes
+            # them and keeps the rest (P-26: refresh_review).
+            result["review"]["rule_lines"] = list(result["review"]["lines"])
             result["review"]["fixes"] = _fixes
             result["review"]["unfixed"] = _unfixed
+            # Each flagged row by its id as well as its place (P-15).
+            result["review"]["needs_review"] = [
+                {"row_id": _r.get("_rid"), "index": _i, "reason": _r.get("review_reason") or "could not be auto-checked"}
+                for _i, _r in enumerate(preview_rows) if _r.get("needs_review")]
             # What the generation itself has to say leads the review: days it
             # could not write (P-34), days nobody could work (E-20), a first
-            # week drafted with no history (E-30). A "⚠" line holds the
-            # publish gate (client_api.publish_review reads the first six).
-            for _gn in reversed(result.get("generation_notes") or []):
-                result["review"]["lines"].insert(0, _gn)
+            # week drafted with no history (E-30), a repair stage of a hard
+            # rule or the manager rule that did not run (P-3, P-17) and a
+            # setting the rules could not read (P-1 — in the publish gate's
+            # own words, schedule_rules.input_problem_text). A "⚠" line holds
+            # the publish gate (client_api.publish_review reads the first six;
+            # it reads review.stage_failures and the settings itself too).
+            _lead = list(result.get("generation_notes") or [])
+            _lead += [_f["line"] for _f in (result.get("stage_failures") or []) if _f.get("blocks_publish")]
+            _inprob = [dict(_p) for _p in (getattr(_constraints, "input_problems", None) or [])]
+            _lead += ["⚠ " + _rules.input_problem_text(_p) for _p in _inprob]
+            result["review"]["lines"][0:0] = _lead
+            result["review"]["lead_lines"] = _lead
+            result["review"]["stage_failures"] = list(result.get("stage_failures") or [])
+            result["review"]["input_problems"] = [{k: _p.get(k) for k in ("source", "name")} for _p in _inprob]
+            result["review"]["repair"] = {k: v for k, v in (result.get("repair") or {}).items() if k != "seconds"}
             result["review"]["unwritten_dates"] = result.get("unwritten_dates") or []
             result["review"]["unstaffable_dates"] = result.get("unstaffable_dates") or []
             # A staffing rule the owner set that the code could not read is
@@ -5924,6 +6978,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _short = ((result.get("manager_coverage") or {}).get("shortfall") or {}).get("text")
             if _short:
                 result["review"]["lines"].append(_short)
+            # Kept with the saved review, so a reopened or edited week still
+            # says what the backstops could not do (P-26).
+            result["review"]["manager_coverage"] = _json_safe(result.get("manager_coverage") or {})
+            result["review"]["min_hours"] = _json_safe(result.get("min_hours") or {})
             for _x in ((result.get("min_hours") or {}).get("left") or [])[:4]:
                 result["review"]["lines"].append(
                     f"{_x['employee']} is {_x['short_by']:g}h under the {_x['min']:g}h minimum you set — {_x['reason']}")
@@ -5940,7 +6998,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["review"]["setup"] = _setup_r["items"]
                 result["review"]["lines"].extend(_setup_r["lines"])
             except Exception as _stx:
-                print(f"[schedule] setup review failed: {_stx}")
+                _soft_fail("setup review", _stx, restaurant_id)
             # Who on the roster got nothing, and ratings that name nobody on
             # it — both silent before, both the owner's to know.
             _on = {(_r.get("employee") or "").strip().lower() for _r in preview_rows}
@@ -5998,7 +7056,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 if _line:
                     result["review"]["lines"].append(_line)
             except Exception as _scx:
-                print(f"[schedule] section cap check failed: {_scx}")
+                _soft_fail("section cap check", _scx, restaurant_id)
                 result["section_cap_conflicts"] = []
             if _off:
                 result["review"]["lines"].append(
@@ -6015,10 +7073,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _hb = float(result.get("hours_budget") or 0)
             except (TypeError, ValueError):
                 _hs = _hb = 0.0
+            _budget_lines = []
             if _hb > 0 and _hs > _hb * 1.02:
                 result["review"]["over_budget_hours"] = round(_hs - _hb, 1)
-                result["review"]["lines"].insert(
-                    0, f"⚠ {_hs:,.0f}h scheduled against a {_hb:,.0f}h budget — {_hs - _hb:,.0f}h over the ceiling")
+                _budget_lines.append(
+                    f"⚠ {_hs:,.0f}h scheduled against a {_hb:,.0f}h budget — {_hs - _hb:,.0f}h over the ceiling")
                 # Why the trim left it there — the shifts' requirement, days
                 # kept from cuts, the rules — said once, beside it (SQ-7).
                 _bc = result.get("budget_conflict")
@@ -6026,7 +7085,24 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     result["review"]["budget_conflict"] = _bc
                     _bcl = _econ.budget_conflict_line(_bc, over_by=round(_hs - _hb, 1), budget=_hb)
                     if _bcl:
-                        result["review"]["lines"].insert(1, _bcl)
+                        _budget_lines.append(_bcl)
+                # And what put the hours there: the rules ranked above the
+                # budget add what they need after any trim, and the loop
+                # reconciles the budget after the last of them — so a week
+                # over its budget says which rules spent the hours (E-18).
+                _above = _added_above_budget_line(((result.get("repair") or {}).get("budget") or {})
+                                                  .get("added_above_budget"))
+                if _above:
+                    _budget_lines.append(_above)
+            result["review"]["lines"][0:0] = _budget_lines
+            result["review"]["budget_lines"] = _budget_lines
+            # A budget mostly priced at the assumed wage is not trimmed to
+            # (E-24) — said, with what to set, and held for the owner then.
+            _basis = result.get("budget_basis") or {}
+            if _basis.get("caveat"):
+                _cav = ("⚠ " if _basis.get("trim_ok") is False else "") + str(_basis["caveat"])
+                result["review"]["lines"].insert(len(_budget_lines), _cav)
+                result["review"]["lead_lines"] = [_cav] + list(result["review"].get("lead_lines") or [])
             # Nights left over the section count because a cut would have
             # gone under a floor or broken a rule (P-29), named once.
             result["review"]["cap_floor_conflicts"] = result.get("cap_floor_conflicts") or []
@@ -6066,7 +7142,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         + (f" {_who['employee']} ({_who['role'] or 'same role'}) is off and could be on call."
                            if _who.get("employee") else ""))
             except Exception as _slx:
-                print(f"[schedule] overtime/standby read failed: {_slx}")
+                # Said, not printed (schedule audit 10/3/26 P-17).
+                _soft_fail("overtime forecast", _slx, restaurant_id)
             # Rows the manager has repeatedly edited away and the draft put
             # back anyway: said before they have to do it again.
             # Then every other row the manager's own edit history says they
@@ -6078,7 +7155,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 for _le in [x for x in result["likely_edits"] if x.get("kind") != "predicted"][:3]:
                     result["review"]["lines"].append(_le["text"])
             except Exception as _lex:
-                print(f"[schedule] likely-edit read failed: {_lex}")
+                _soft_fail("likely edits", _lex, restaurant_id)
             # How far this restaurant's demand forecasts have been off (K8):
             # the draft is staffed to that forecast, so the review says it.
             try:
@@ -6086,7 +7163,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["demand_accuracy"] = _demand_acc.demand_accuracy(restaurant_id)
                 result["week_projection_accuracy"] = _demand_acc.week_projection_accuracy(restaurant_id)
             except Exception as _dax:
-                print(f"[schedule] demand accuracy read failed: {_dax}")
+                _soft_fail("demand accuracy", _dax, restaurant_id)
             # Sales per labor hour against the objective the draft was
             # written to, and the borrowed starting headcount, said.
             try:
@@ -6097,7 +7174,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 if _sr.get("line"):
                     result["review"]["lines"].append(_sr["line"])
             except Exception as _srx:
-                print(f"[schedule] splh report failed: {_srx}")
+                _soft_fail("splh report", _srx, restaurant_id)
             _start = result.get("starting_headcount") or {}
             if _start.get("available"):
                 result["review"]["lines"].append(
@@ -6111,6 +7188,25 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             if _pc.get("overtime_hours"):
                 result["review"]["lines"].append(
                     f"{_pc['overtime_hours']:g}h of overtime priced at {_pc['multiplier']}× — ${_pc['overtime_premium']:,.0f} of premium in a ${_pc['total']:,.0f} week")
+            # The repair stages that did not run but hold nothing (P-17), the
+            # time off approved while the model wrote (P-41), a search the
+            # job's clock left no time for, and how current the sales behind
+            # the week are (D-33) — said at the end of the review.
+            for _f in result.get("stage_failures") or []:
+                if not _f.get("blocks_publish") and _f.get("line"):
+                    result["review"]["lines"].append(_f["line"])
+            _tos = _time_off_since_line(result.get("time_off_since_inputs"))
+            if _tos:
+                result["review"]["lines"].append(_tos)
+            _skipped = [s["stage"] for s in ((result.get("repair") or {}).get("skipped") or [])]
+            if _skipped:
+                result["review"]["lines"].append(
+                    "To finish in time, " + " and ".join(
+                        {"solver": "the assignment solver", "optimizer": "the Shift Quality optimizer"}.get(k, k)
+                        for k in _skipped) + " didn't run on this draft.")
+            _ddt = (result.get("demand_data_through") or {}).get("line")
+            if _ddt:
+                result["review"]["lines"].append(_ddt)
             result["rows_needing_review"] = sum(1 for _r in preview_rows if _r.get("needs_review"))
             # Shift strength, checked against the finished schedule rather
             # than trusted to the prompt. The same discipline close times and
@@ -6131,6 +7227,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # generated fine must never be lost because a scoring dimension
             # raised, so a failure here degrades to "not scored" and the week
             # still ships.
+            _t_score = time.monotonic()
             try:
                 result["staff_constraints"] = staff_constraints
                 # Only the flags that mean the person is not really on that
@@ -6148,17 +7245,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 #   not available for that daypart · already scheduled at another location
                 # A row over the hours ceiling is NOT here: the person is
                 # still on the floor.
-                result["flagged_rows"] = {
-                    ((_v.get("employee") or "").strip().lower(), _v.get("date") or "",
-                     _v.get("shift_start") or "")
-                    for _v in (result.get("rule_violations") or []) if _v.get("no_show")}
-                result["prior_week_assignments"] = _prior_week_assignments(
-                    restaurant_id, before=(result.get("week_dates") or [None])[0])
-                from models import sibling_location_shifts as _sibs
-                result["elsewhere"] = _sibs(
-                    restaurant_id, sorted({(_r.get("date") or "") for _r in preview_rows}))
+                result["flagged_rows"] = _flagged_rows(result.get("rule_violations"))
+                # The signals read once for the loop (P-36); last week's tail
+                # and the other sites' shifts are already in `result`.
                 _quality, _whatif = _score_schedule_quality(
                     restaurant_id, preview_rows, result,
+                    frozen=(_pass_sig, _pass_w) if _pass_sig is not None else None,
                     rows_needing_review=result.get("rows_needing_review", 0),
                     dropped_rows=len(_dropped_rows),
                 )
@@ -6178,9 +7270,25 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                           f"({_quality['band']}), confidence {_quality['confidence']['level']}"
                           + (f", what-if {_whatif['improvement']:+d}" if _whatif.get("ran") else ""))
             except Exception as _qx:
-                print(f"[schedule] quality engine failed: {_qx}")
-                result["quality"] = {"checked": False, "error": _safe_err(_qx)}
+                # A week that could not be scored is a stage failure, captured
+                # and said (schedule audit 10/3/26 P-16), and its quality says
+                # why in the owner's words — the publish gate holds it
+                # ("quality_unchecked") and prints that cause.
+                print(f"[schedule] quality engine failed: {_qx!r}")
+                try:
+                    _ops.capture(_qx, job="schedule_stage_quality", context=f"restaurant_id={restaurant_id}")
+                except Exception as _cqx:
+                    print(f"[schedule] could not record that failure: {_cqx}")
+                result["quality"] = {"checked": False,
+                                     "error": "the scoring engine hit an error on this week — we've been alerted"}
                 result["what_if"] = {"ran": False}
+                _qf = {"stage": "quality", "tier": None, "blocks_publish": False, "error": type(_qx).__name__,
+                       "line": "Shift Quality couldn't score this draft — read it yourself before it goes to staff."}
+                result.setdefault("stage_failures", []).append(_qf)
+                if isinstance(result.get("review"), dict):
+                    result["review"].setdefault("stage_failures", []).append(_qf)
+                    result["review"]["lines"].append(_qf["line"])
+            _timer.add("score", time.monotonic() - _t_score)
 
             _flagged = sum(1 for _r in preview_rows if _r.get("needs_review"))
             result["rows_needing_review"] = _flagged
@@ -6221,23 +7329,19 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # marking it. It rides in the notes column now, which is the one
             # field a human actually reads on the printed schedule.
             if preview_rows:
-                # Stations last: the fix pass, the solver and the optimizer
-                # may have moved cooks since the first pass. Close what they
-                # opened, then name each cook's station for the screens.
+                # Each cook's station named for the screens — a read of the
+                # finished rows. The station pass itself runs inside the
+                # repair loop, so no row changes after the sweep and the score
+                # (schedule audit 10/3/26 P-11, SQ-21: it used to add rows here
+                # that were never swept or scored).
                 try:
                     if getattr(_constraints, "stations", None):
-                        preview_rows, _st2, _ = _ensure_station_coverage(
-                            preview_rows, result.get("week_dates", []), result.get("week_days", []),
-                            _close_times, _role_close_buffers, constraints=_constraints, only_dates=_editable)
-                        if _st2:
-                            hours_scheduled = _safe_hours_sum(preview_rows)
                         _stations = station_report(preview_rows, _constraints, result.get("week_dates", []))
                         result["stations"] = _stations
                         if isinstance(result.get("review"), dict):
                             result["review"]["stations"] = _stations
                 except Exception as _stx:
-                    print(f"[schedule] station assignment skipped: {_stx}")
-                _price_week(preview_rows)
+                    _soft_fail("station report", _stx, restaurant_id)
                 _lines_out = [",".join(_COLS)]
                 for _r in preview_rows:
                     if _r.get("needs_review"):
@@ -6272,7 +7376,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # (staffing_signals.record_published, re-audit CROSSMODULE-10).
             _stsig_ap.present_requirements(restaurant_id, result["soft_requirements"])
         except Exception as _sax:
-            print(f"[schedule] soft requirement check skipped: {_sax}")
+            _soft_fail("soft requirement check", _sax, restaurant_id)
             result.pop("_soft_typical", None)
         # Everything the finished week does not meet — a manager minute, a
         # floor, a closer, a target or leader rule, an ask, a minimum, the
@@ -6292,8 +7396,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     station_gaps=(result.get("stations") or {}).get("gaps"),
                     owner_rules_unchecked=result["review"].get("owner_rules_unchecked"))
         except Exception as _ux:
-            print(f"[schedule] unmet list failed: {_ux}")
-            _ops.capture(_ux, job="schedule_unmet", context=f"restaurant_id={restaurant_id}")
+            _soft_fail("unmet list", _ux, restaurant_id)
+        # Everything the draft was made or checked without, in one line at
+        # the end of the review (P-17): each was captured as it failed.
+        _ifl = _input_failure_line(_inputs_failed())
+        if _ifl and isinstance(result.get("review"), dict):
+            result["review"]["lines"].append(_ifl)
+            result["review"]["inputs_missing"] = _inputs_failed()
         # A job past its own deadline, or one a poll has already called dead,
         # saves nothing (P-22): the owner was told it didn't finish, and a
         # draft turning up in history afterwards contradicted that. Checked
@@ -6304,15 +7413,37 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             raise ScheduleGenerationError("The schedule didn't finish in the time a generation is given, so "
                                           "nothing was saved. Try again.")
         _history_id = None
+        # The week's hours split by pay (schedule audit 10/3/26 E-7, P-6):
+        # the hourly part is what the hourly budget is held to; the
+        # salaried part is never spent from it. Saved with the week and
+        # returned beside hours_scheduled.
+        _split = {"hourly": None, "salaried": None}
+        try:
+            _split = _rules.hours_split(preview_rows, result.get("constraints"))
+        except Exception as _hsx:
+            _soft_fail("hours split", _hsx, restaurant_id)
+        result["hours_hourly"], result["hours_salaried"] = _split.get("hourly"), _split.get("salaried")
         try:
             from models import save_schedule_history
             _wd = result.get("week_dates", [])
+            _t_save = time.monotonic()
             _history_id = save_schedule_history(
                 restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
                 round(hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
                 result["schedule_csv"], result.get("summary", []),
                 quality=result.get("quality"), what_if=result.get("what_if"),
+                hours_hourly=_split.get("hourly"), hours_salaried=_split.get("salaried"),
             )
+            _timer.add("save", time.monotonic() - _t_save)
+            # How long each stage took, end to end (P-24): the inputs, the
+            # model, the rules, the repair loop stage by stage, the sweep,
+            # the score and the save — kept with the week; the platform
+            # check alerts on their p95 (ops.check_platform_sla).
+            _model_s = float(result.get("generation_seconds") or 0)
+            _timer.add("model", _model_s)
+            _timer.seconds["inputs"] = round(max(0.0, _timer.seconds.get("inputs_and_model", 0.0) - _model_s), 3)
+            _timer.seconds.pop("inputs_and_model", None)
+            result["stage_seconds"] = _timer.as_dict()
             _annotate_history(_history_id, restaurant_id, review=result.get("review"),
                               seconds=result.get("generation_seconds"),
                               weather=result.get("weather_forecast"),
@@ -6320,7 +7451,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                          "projected_revenue_source": result.get("projected_revenue_source"),
                                          "labor_budget_dollars": result.get("labor_budget_dollars"),
                                          "daily_target_hours": result.get("daily_target_hours") or {},
-                                         "demand_data_through": result.get("demand_data_through")})
+                                         "demand_data_through": result.get("demand_data_through")},
+                              stages=result["stage_seconds"])
             # Every model call this generation made — its full input and
             # answer — keyed to the week it produced, so the week can be
             # replayed against another model, effort or prompt (schedule
@@ -6497,23 +7629,59 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             unstaffable_dates=result.get("unstaffable_dates") or [],
             starting_point=result.get("starting_point") or {"no_history": False},
             redo=result.get("redo"),
+            # The hours split by pay (E-7, P-6): what the hourly budget is
+            # held to, and the salaried hours it never pays for.
+            hours_hourly=result.get("hours_hourly"),
+            hours_salaried=result.get("hours_salaried"),
+            # Which budget the hours are and how it was built (D-1, D-2,
+            # E-24), each day's target and why it moved (D-24), each date's
+            # demand number (D-23), the SHIFT REQUIREMENTS the week was
+            # written and scored to (P-19), the labor standards (D-25).
+            budget_basis=_json_safe(result.get("budget_basis")),
+            daily_target_basis=_json_safe(result.get("daily_target_basis")),
+            daily_target_reasons=_json_safe(result.get("daily_target_reasons") or {}),
+            date_demand=_json_safe(result.get("date_demand") or {}),
+            requirements=_json_safe(result.get("requirements") or []),
+            requirements_by_date=_json_safe(result.get("requirements_by_date") or {}),
+            labor_standards=_json_safe(result.get("labor_standards") or {}),
+            # Whether the leader rules judge anybody, and ratings entered
+            # through support waiting on the owner (D-10).
+            leader_rules_status=_json_safe(result.get("leader_rules_status")),
+            # The repair loop (P-47, E-18): its cycles, whether it settled,
+            # each change it refused and why, the budget reconcile; the
+            # stages that did not run (P-3, P-17 — review.stage_failures
+            # holds the publish when one is a hard-rule or manager stage);
+            # and how long each stage took (P-24).
+            repair=_json_safe(result.get("repair") or {}),
+            stage_failures=_json_safe(result.get("stage_failures") or []),
+            stage_seconds=result.get("stage_seconds") or {},
         )
         _q_now = (result.get("quality") or {}).get("score")
+        # The finished week as the gate reads it (P-43): its rows beside its
+        # sweep, its rules and its quality.
+        result["rows"] = preview_rows
+        _rules_now = _gate_rules(result)
         if _fallback:
-            # Kept only if the days it was asked to fix got better, judged on
-            # those days alone (a shift the rewrite dropped counts as 0), and
-            # the week as a whole is not worse. The whole-week average alone
-            # kept a rewrite with ONE Saturday server over one with five.
+            # Kept only with no more hard breaches and no more unmanaged
+            # minutes than the draft (P-43: it was kept on the score alone);
+            # one that fixes a rule is kept; otherwise only when the days it
+            # was asked to fix got better, judged on those days alone (a
+            # shift the rewrite dropped counts as 0), and the week as a whole
+            # is not worse. The whole-week average alone kept a rewrite with
+            # ONE Saturday server over one with five.
             before_local = _gate_local(_fallback["quality"], _fallback["dates"])
             after_local = _gate_local(result.get("quality") or {}, _fallback["dates"])
-            better = (after_local is not None and before_local is not None and after_local > before_local
-                      and (_q_now or 0) >= (_fallback["score"] or 0) - 1)
+            better, _why_kept = _gate_keeps(before_local, after_local, _q_now, _fallback["score"],
+                                            _fallback.get("rules"), _rules_now)
             if not better:
                 _restore_draft(restaurant_id, _fallback["history_id"], _history_id)
                 _fb = dict(_fallback["payload"])
                 _fb["gate"] = {"ran": True, "kept": "original", "dates": _fallback["dates"],
-                               "reason": (f"Cavnar AI rewrote the weakest days to fix them, but the rewrite was no better "
-                                          f"on those days, so your original draft was kept.")}
+                               "reason": ("Cavnar AI rewrote the weakest days to fix them, but the rewrite broke more "
+                                          "of your rules or left more time with no manager, so your original draft "
+                                          "was kept." if _why_kept == "rules" else
+                                          "Cavnar AI rewrote the weakest days to fix them, but the rewrite was no "
+                                          "better on those days, so your original draft was kept.")}
                 _ops.finish_async_job(job_id, "done", _fb)
                 return
         _gate = _quality_gate(result) if gate else None
@@ -6531,11 +7699,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         job_id, restaurant_id, week_start=week_start, dates=_gate["dates"],
                         base_history_id=_history_id, focus=_gate["focus"], gate=False,
                         _fallback={"score": _q_now, "history_id": _history_id, "dates": _gate["dates"],
-                                   "quality": result.get("quality") or {},
+                                   "quality": result.get("quality") or {}, "rules": _rules_now,
                                    "payload": dict(_payload, gate={"ran": True, **_gate})},
                         instruction=instruction)
             except Exception as _gx:
-                print(f"[schedule] quality gate failed: {_gx}")
+                # The draft stands; the failed rewrite is captured (P-17).
+                print(f"[schedule] quality gate failed: {_gx!r}")
+                _ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={restaurant_id}")
         if focus:
             _payload["gate"] = {"ran": True, "kept": "regenerated", "focus": list(focus)[:12],
                                 "dates": list(dates or []),
@@ -6606,11 +7776,145 @@ def generation_error_message(exc, clock=None) -> str:
 _COLS_PINNED = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 
 
-def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weather=None, economics=None):
+# ── A Studio save keeps the generation's review (schedule audit 10/3/26 P-26) ──
+#
+# The Studio's save overwrote the week's review with a bare summarize() of
+# the edited rows, so what the generation did and found — the fix lines, the
+# optimizer's changes, the trims, the manager stretches nobody could cover
+# and why, the owner's rules it could not check, the over-budget line —
+# vanished at the first save. refresh_review keeps all of it and refreshes
+# only what the rows decide.
+_REVIEW_RULE_KEYS = ("hard", "soft", "by_kind", "hard_rows", "hard_days")
+
+
+def _fix_sig(r) -> tuple:
+    return ((r.get("employee") or "").strip().lower(), r.get("date") or "", r.get("shift_start") or "",
+            r.get("shift_end") or "")
+
+
+def _span_of(frm, to):
+    s, e = _rules.parse_minutes(frm or ""), _rules.parse_minutes(to or "")
+    if s is None or e is None:
+        return None
+    return (s, e + 24 * 60 if e <= s else e)
+
+
+def refresh_review(saved, violations, rows, constraints=None, hours_budget=None, extras=None) -> dict:
+    """The review a Studio save stores for edited `rows`: the generation's
+    own — what Cavnar AI fixed, trimmed, staggered and optimized, the
+    manager plan and its question, the setup, the rules it could not check,
+    the repair stages that did not run, the settings it could not read —
+    kept, and only what the rows decide refreshed from `violations` (their
+    sweep): the counts and the rule lines, the rows still broken, the
+    rows needing review, the hours over the budget, the manager stretches
+    and minimum hours still short, and `extras` (what the week does not
+    meet, its staffing asks — schedule_output.week_review_extras). A fix
+    line keeps pointing at its row while the shift it describes is still in
+    the week and points at none once the edit took it out. A review saved
+    before its lines were told apart keeps its non-⚠ lines; its ⚠ lines were
+    the sweep's and the budget's, and are read fresh."""
+    saved = dict(saved or {})
+    fresh = _rules.summarize(violations or [])
+    out = dict(saved)
+    for k in _REVIEW_RULE_KEYS:
+        out[k] = fresh.get(k)
+    out.update(extras or {})
+    out["unfixed"] = _unfixed_from(violations, rows, None, {})
+    out["needs_review"] = [{"index": u["index"], "row_id": None, "reason": u["reason"]} for u in out["unfixed"]]
+    at = {}
+    for i, r in enumerate(rows or []):
+        at.setdefault(_fix_sig(r), i)
+    fixes = []
+    for f in saved.get("fixes") or []:
+        f = dict(f)
+        f["index"] = at.get(_fix_sig(f.get("row") or {})) if f.get("row") else None
+        f.pop("row_id", None)            # ids live with a generation's rows, not a saved CSV
+        fixes.append(f)
+    out["fixes"] = fixes
+    # What the backstops could not do, while it is still so.
+    if constraints is not None and isinstance(saved.get("manager_coverage"), dict):
+        gaps = _rules.manager_gaps(rows or [], constraints)
+        mc = dict(saved["manager_coverage"])
+        still = []
+        for e in mc.get("left") or []:
+            want = _span_of(e.get("from"), e.get("to"))
+            if want and any(gs < want[1] and want[0] < ge for gs, ge, _i in gaps.get(e.get("date"), [])):
+                still.append(e)
+        mc["left"] = still
+        if not still:
+            mc["shortfall"] = None
+        out["manager_coverage"] = mc
+    if isinstance(saved.get("min_hours"), dict):
+        short = {(v.get("employee") or "").strip().lower() for v in violations or [] if v.get("kind") == "under_min_hours"}
+        mh = dict(saved["min_hours"])
+        mh["left"] = [e for e in mh.get("left") or [] if (e.get("employee") or "").strip().lower() in short]
+        out["min_hours"] = mh
+    # The lines: the budget's, then what the generation had to say first,
+    # then the sweep's, then the rest of what it said.
+    told_apart = "rule_lines" in saved
+    rule_lines = set(saved.get("rule_lines") or [])
+    budget_old = list(saved.get("budget_lines") or [])
+    lead = list(saved.get("lead_lines") or []) if told_apart else []
+    if told_apart:
+        tail = [ln for ln in saved.get("lines") or []
+                if ln not in rule_lines and ln not in set(budget_old) and ln not in set(lead)]
+    else:
+        tail = [ln for ln in saved.get("lines") or [] if not str(ln).startswith("⚠")]
+    # A day the generation could not write, or nobody could work, that the
+    # owner has since filled is not said as empty any more.
+    on = {r.get("date") for r in rows or [] if (r.get("employee") or "").strip()}
+    for key, line_of in (("unwritten_dates", _unwritten_line), ("unstaffable_dates", _unstaffable_line)):
+        items = list(saved.get(key) or [])
+        if not items:
+            continue
+        try:
+            old = line_of(items)
+        except Exception:
+            continue
+        left = [u for u in items if u.get("date") not in on]
+        out[key] = left
+        if old in lead:
+            i = lead.index(old)
+            if left:
+                lead[i] = line_of(left)
+            else:
+                lead.pop(i)
+    budget = []
+    try:
+        hb = float(hours_budget or 0)
+        hs = _rules.hours_split(rows or [], constraints)["hourly"] if constraints is not None else \
+            _safe_hours_sum(rows or [])
+    except (TypeError, ValueError, KeyError):
+        hb = hs = 0.0
+    if hb > 0 and hs > hb * 1.02:
+        out["over_budget_hours"] = round(hs - hb, 1)
+        budget.append(f"⚠ {hs:,.0f}h scheduled against a {hb:,.0f}h budget — {hs - hb:,.0f}h over the ceiling")
+        if saved.get("budget_conflict"):
+            try:
+                import schedule_economics as _econ
+                bcl = _econ.budget_conflict_line(saved["budget_conflict"], over_by=round(hs - hb, 1), budget=hb)
+                if bcl:
+                    budget.append(bcl)
+            except Exception as _bx:
+                print(f"[schedule] budget conflict line unavailable: {_bx}")
+        budget += [ln for ln in budget_old[1:] if ln.startswith("The rules that come before the budget")]
+    else:
+        out.pop("over_budget_hours", None)
+    out["lines"] = budget + lead + list(fresh.get("lines") or []) + tail
+    out["rule_lines"], out["budget_lines"], out["lead_lines"] = list(fresh.get("lines") or []), budget, lead
+    out["edited"] = True
+    return out
+
+
+def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weather=None, economics=None,
+                      stages=None):
     """The columns save_schedule_history predates: the review verdict, how
     long generation took, the weather forecast it was written against, and
     its economics (forecast sales and basis, labor budget, daily hour
-    targets) so a reopened week can state its labor %."""
+    targets) so a reopened week can state its labor %. `stages` is the
+    generation's seconds per stage with its end-to-end `total` (P-24):
+    stored as stage_seconds_json, the total as total_seconds (the platform
+    check's p95 reads it)."""
     if not history_id:
         return
     from models import get_conn, _ensure_history_columns
@@ -6618,13 +7922,38 @@ def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weat
     try:
         _ensure_history_columns(conn)
         conn.execute("UPDATE schedule_history SET review_json=?, generation_seconds=?, weather_json=?, "
-                     "economics_json=? WHERE id=? AND restaurant_id=?",
-                     (json.dumps(review) if review else None, seconds,
+                     "economics_json=?, stage_seconds_json=?, total_seconds=? WHERE id=? AND restaurant_id=?",
+                     (json.dumps(review, default=_jsonable) if review else None, seconds,
                       json.dumps(weather) if weather else None,
-                      json.dumps(economics, default=str) if economics else None, history_id, restaurant_id))
+                      json.dumps(economics, default=str) if economics else None,
+                      json.dumps(stages) if stages else None,
+                      (stages or {}).get("total"), history_id, restaurant_id))
         conn.commit()
     finally:
         conn.close()
+
+
+def _jsonable(x):
+    """json.dumps' default for what a review or a payload can carry that
+    JSON cannot: a set (sorted), a tuple key's value, anything else as text."""
+    if isinstance(x, (set, frozenset)):
+        try:
+            return sorted(x)
+        except TypeError:
+            return [str(v) for v in x]
+    return str(x)
+
+
+def _json_safe(x):
+    """`x` as JSON can carry it — sets as sorted lists, tuple keys joined
+    with "|" — for a payload the job store serializes (ops.finish_async_job)."""
+    if isinstance(x, dict):
+        return {("|".join(str(p) for p in k) if isinstance(k, tuple) else k): _json_safe(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_json_safe(v) for v in x]
+    if isinstance(x, (set, frozenset)):
+        return _json_safe(_jsonable(x))
+    return x
 
 
 def _rows_to_csv_text(rows: list) -> str:
@@ -6802,11 +8131,13 @@ def _parts_for_swaps(c):
 
 
 def _safe_hourly_profile(restaurant_id) -> dict:
-    """_hourly_profile, or {} (today's behaviour) when it cannot be read."""
+    """_hourly_profile, or {} (today's behaviour) when it cannot be read —
+    read once per generation (P-36: the prompt, the stagger and the scorer
+    each read the ticket archive again) and said when it fails (P-17)."""
     try:
-        return _hourly_profile(restaurant_id) or {}
+        return frozen_read(("hourly_profile", int(restaurant_id)), lambda: _hourly_profile(restaurant_id) or {})
     except Exception as _hx:
-        print(f"[schedule] hourly profile unavailable: {_hx}")
+        _soft_fail("demand curve", _hx, restaurant_id)
         return {}
 
 

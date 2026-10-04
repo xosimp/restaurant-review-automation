@@ -113,10 +113,16 @@ def test_the_rule_leads_the_models_instructions():
 
 
 def test_generation_runs_the_backstop_and_checks_the_finished_rows_again():
+    import schedule_engine as se
+    # The manager rule is the second rank of the repair loop (schedule audit
+    # 10/3/26 P-47): it runs every cycle — after the optimizer's cycle too —
+    # until a whole cycle changes nothing, and no other stage's change that
+    # leaves a day with more unmanaged minutes is kept.
+    order = [k for k, *_rest in se.REPAIR_STAGES]
+    assert se._STAGE_TIER["manager"] == sr.TIER_MANAGER
+    assert order.index("person") < order.index("manager") < order.index("close_out") < order.index("optimizer")
     src = open(sr.__file__.replace("schedule_rules.py", "schedule_engine.py")).read()
-    assert src.count("_rules.cover_manager_gaps(preview_rows, _constraints, editable=_editable)") == 2
-    assert src.index("_rules.close_out_gaps(") < src.index("_rules.cover_manager_gaps(")
-    assert src.index("_opt.optimize(") < src.rindex("_rules.cover_manager_gaps(")
+    assert src.count("_rules.cover_manager_gaps(") == 1
 
 
 # ── the person breaches the replace pass left (Erik's first week, 10/2/26) ──

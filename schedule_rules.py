@@ -2257,6 +2257,40 @@ def _input_problem(c: "Constraints", source: str, exc, name: str = None):
         pass   # the capture is a report about a failure, never one of its own
 
 
+# What each source the rules could not read means for the week, in the
+# owner's words — one wording for the generation's review and the publish
+# gate (schedule audit 10/3/26 P-1; client_api.publish_review reads it).
+# A source not named here reads as "<source> couldn't be read".
+INPUT_PROBLEM_WORDS = {
+    "roster": "The team list couldn't be read, so nobody's own rules (hours, minors, availability, certificates) "
+              "were checked",
+    "availability": "Staff availability couldn't be read, so nobody's days off were checked",
+    "time off": "Time off couldn't be read, so approved days off weren't checked",
+    "open and close times": "Opening and closing times couldn't be read, so the close rules weren't checked",
+    "closers": "Who closes couldn't be read, so the closer rule wasn't checked",
+    "salaried staff": "The salaried staff list couldn't be read, so everyone was checked as hourly",
+    "last week's shifts": "The week before's published shifts couldn't be read, so overtime and rest across the "
+                          "two weeks weren't checked",
+    "your staffing rules": "Your staffing rules couldn't be read, so their floors weren't checked",
+    "schedule note rules": "The notes you confirmed as rules couldn't be read, so they weren't checked",
+    "scheduling note holds": "The staff notes you confirmed as holds couldn't be read, so they weren't checked",
+    "staff notes": "Staff notes couldn't be read",
+    "closed dates": "Your closed dates couldn't be read, so a closed day wasn't checked as closed",
+    "kitchen stations": "Kitchen stations couldn't be read, so station coverage wasn't checked",
+}
+
+
+def input_problem_text(p) -> str:
+    """One line for a setting or source the rules could not read
+    (Constraints.input_problems): a person's settings name the person and
+    where to fix them."""
+    if p.get("name"):
+        return (f"Settings for {p['name']} couldn't be read — fix them in Team; this week wasn't checked against "
+                "their rules")
+    src = str(p.get("source") or "a setting")
+    return INPUT_PROBLEM_WORDS.get(src) or f"{src[:1].upper()}{src[1:]} couldn't be read, so the rules check ran without it"
+
+
 def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, worked=None):
     """One roster person's settings onto the Constraints (build_constraints'
     per-person step, each person on their own — see P-1 there). `held` and

@@ -424,6 +424,13 @@ def test_only_the_called_winner_can_be_promoted_and_it_becomes_every_restaurants
     assert sx.arms_for(rid, "2026-10-05", db_path=db)[0]["arm"] == sx.EXPERIMENTS[0]["control"]
     monkeypatch.delenv(sx.PIN_ENV)
     assert sx.revert(key, reverted_by="will", db_path=db)["ok"]
+    # Reverted: no longer the promotion. One restaurant can never reach a
+    # verdict, so the experiment's own arm holds, pinned (schedule audit
+    # 10/3/26 P-21); with enough restaurants the experiment randomises again.
+    a = sx.arms_for(rid, "2026-10-05", db_path=db)[0]
+    assert a["pin_source"] == "underpowered" and a["arm"] == "solver"
+    monkeypatch.setattr(sx, "powered", lambda db_path=None: {"powered": True, "restaurants": 5, "need": 5,
+                                                              "window_days": 56})
     assert not sx.arms_for(rid, "2026-10-05", db_path=db)[0]["pinned"]
     assert sx.promotions(key, db_path=db)[0]["reverted_by"] == "will"                  # the trail stays
 

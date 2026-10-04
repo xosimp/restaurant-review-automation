@@ -52,8 +52,16 @@ def _restaurant(db_path, name="Arm Grill"):
 
 # ── assignment ─────────────────────────────────────────────────────────────
 
-def test_the_arm_is_a_pure_function_of_restaurant_and_week(db):
+def _powered(monkeypatch, on=True, n=None):
+    """Enough restaurants generating schedules for a verdict (P-21), or not."""
+    n = (sx.MIN_RESTAURANTS_PER_ARM if on else 1) if n is None else n
+    monkeypatch.setattr(sx, "powered", lambda db_path=None: {"powered": on, "restaurants": n,
+                                                              "need": sx.MIN_RESTAURANTS_PER_ARM, "window_days": 56})
+
+
+def test_the_arm_is_a_pure_function_of_restaurant_and_week(db, monkeypatch):
     rid = _restaurant(db)
+    _powered(monkeypatch)
     first = sx.arms_for(rid, "2026-10-05")
     assert first == sx.arms_for(rid, "2026-10-05")          # a regeneration keeps its arm
     assert [a["experiment"] for a in first] == [EXP["key"]] and not first[0]["pinned"]
@@ -78,6 +86,7 @@ def test_a_new_experiment_is_one_registry_entry(monkeypatch):
 
 def test_the_kill_switches_pin_every_restaurant_or_one(db, monkeypatch):
     rid = _restaurant(db)
+    _powered(monkeypatch)
     monkeypatch.setenv(sx.PIN_ENV, "off")
     [a] = sx.arms_for(rid, "2026-10-05")
     assert a["arm"] == EXP["control"] and a["pinned"] and a["pin_source"] == "env" and not sx.flag([a], "solver")
@@ -218,12 +227,19 @@ def test_the_readout_means_and_intervals_are_the_stated_maths(db):
     assert read["method"] == sx.VERDICT_METHOD
 
 
-def test_below_the_minimum_sample_no_winner_is_called(db):
+def test_below_the_minimum_sample_no_winner_is_called(db, monkeypatch):
     _world(db, 2, 3, {"model": lambda r, w: 2, "solver": lambda r, w: 10})
     read = sx.readout(db_path=db)
     v = read["experiments"][0]["verdict"]
-    assert v["call"] is None and v["state"] == "insufficient" and v["text"].startswith("No call")
+    # Two restaurants can never reach a verdict: the experiment is paused,
+    # the solver pinned on, and the readout says so (P-21, L-11).
+    assert v["call"] is None and v["state"] == "paused" and v["text"].startswith("Paused")
+    assert read["experiments"][0]["power"]["restaurants"] == 2
     assert str(sx.MIN_WEEKS_PER_ARM) in read["rule"] and str(sx.MIN_RESTAURANTS_PER_ARM) in read["rule"]
+    # With enough restaurants generating but too few weeks yet: no call.
+    _powered(monkeypatch, n=sx.MIN_RESTAURANTS_PER_ARM)
+    v = sx.readout(db_path=db)["experiments"][0]["verdict"]
+    assert v["call"] is None and v["state"] == "insufficient" and v["text"].startswith("No call")
 
 
 def test_enough_weeks_from_enough_restaurants_calls_the_leader(db):

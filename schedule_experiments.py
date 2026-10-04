@@ -49,6 +49,17 @@ Kill switches: the env var SCHEDULE_EXPERIMENT_PIN ("off", an arm key, or
 pins one. A pinned week records the arm it was pinned to and is left out of
 the comparison, since it was not randomised. "off" is the control arm.
 
+An experiment that cannot conclude does not run (schedule audit 10/3/26
+P-21, L-11): while fewer than MIN_RESTAURANTS_PER_ARM restaurants that may
+teach (models.learning_eligible) generated a schedule in the last
+POWER_WINDOW_DAYS, every week takes the experiment's `until_powered` arm —
+for assign_v1 the solver, the only pass that weighs fairness, experience
+and minimum hours across the whole assignment — recorded as pinned with
+pin_source "underpowered", so it never counts in the comparison, and the
+readout says the experiment is paused and why. The 50/50 hash gave Simple
+EJ's (the only live client) the model's assignment on three of its first
+four weeks for a readout that could never arrive.
+
 Promotion (ROI audit #46): once the readout calls a winner, an admin
 promotes it — a reviewed step, recorded in schedule_experiment_promotions
 with who promoted it, when, the verdict it rested on and a note. From then
@@ -56,7 +67,8 @@ every restaurant gets the promoted arm's flags from that stored row (no
 code edit), as a pin with pin_source "promoted" (so those weeks stay out of
 the comparison), and it holds even after the experiment is retired in code.
 revert() ends it and the experiment randomises again. Precedence: the env
-kill switch, then a restaurant's own pin, then a promotion, then the hash.
+kill switch, then a restaurant's own pin, then a promotion, then the
+experiment's own pin while it cannot conclude, then the hash.
 """
 import hashlib
 import json
@@ -79,6 +91,8 @@ EXPERIMENTS = (
      "started": "2026-09-23",
      "question": "Does the constraint solver's assignment beat the model's own?",
      "control": "model",
+     # Every week runs the solver until the experiment can conclude (P-21).
+     "until_powered": "solver",
      "arms": ({"key": "model", "label": "Model assignment", "weight": 1, "flags": {"solver": False}},
               {"key": "solver", "label": "Solver assignment", "weight": 1, "flags": {"solver": True}})},
 )
@@ -89,6 +103,9 @@ OFF = "off"
 
 MIN_WEEKS_PER_ARM = 20
 MIN_RESTAURANTS_PER_ARM = 5
+# How far back "generating schedules" looks when deciding whether an
+# experiment can conclude (powered): eight weeks.
+POWER_WINDOW_DAYS = 56
 # No one restaurant carries an arm (PLATFORM-13): its most recent published
 # weeks per arm, at most this many.
 MAX_WEEKS_PER_RESTAURANT = 8
@@ -102,7 +119,9 @@ RULE = (f"A winner is called only when every arm has at least {MIN_WEEKS_PER_ARM
         f"{MIN_RESTAURANTS_PER_ARM} restaurants, the 90% interval for the difference in acceptance excludes zero, "
         "and the leader's issues and labor % are not significantly worse. Intervals are clustered by restaurant, "
         f"each restaurant counts at most {MAX_WEEKS_PER_RESTAURANT} weeks per arm, demo and test accounts are "
-        "left out, and pinned weeks are not counted.")
+        "left out, and pinned weeks are not counted. Until "
+        f"{MIN_RESTAURANTS_PER_ARM} restaurants that may teach generate schedules (the last {POWER_WINDOW_DAYS} "
+        "days), an experiment that cannot conclude is paused: every week runs its stated arm, pinned.")
 
 
 def experiment(key):
@@ -151,12 +170,50 @@ def _restaurant_pins(restaurant_id, db_path):
     return {r["experiment"]: r["arm"] for r in rows}
 
 
+def powered(db_path=DB_PATH) -> dict:
+    """{"powered", "restaurants", "need", "window_days"}: whether enough
+    restaurants generate schedules for an experiment to conclude — at least
+    MIN_RESTAURANTS_PER_ARM that may teach (models.learning_eligible,
+    through intelligence.jobs.excluded_learning_ids) with a schedule
+    generated in the last POWER_WINDOW_DAYS (schedule audit 10/3/26 P-21).
+    Raises when it cannot be read; arms_for then keeps the experiment's own
+    arm, the safe reading."""
+    excluded = _excluded(db_path)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT DISTINCT restaurant_id FROM schedule_history WHERE generated_at >= datetime('now', ?)",
+                            (f"-{int(POWER_WINDOW_DAYS)} days",)).fetchall()
+    finally:
+        conn.close()
+    n = len({int(r[0]) for r in rows} - set(excluded))
+    return {"powered": n >= MIN_RESTAURANTS_PER_ARM, "restaurants": n, "need": MIN_RESTAURANTS_PER_ARM,
+            "window_days": POWER_WINDOW_DAYS}
+
+
+def _power_or_pin(db_path) -> dict:
+    """powered(), or — when it cannot be read — not powered, said: the
+    experiment's own arm is the safe reading, never a coin flip."""
+    try:
+        return powered(db_path)
+    except Exception as e:
+        print(f"[experiments] whether the experiment can conclude is unreadable: {e}")
+        try:
+            import ops
+            ops.capture(e, job="schedule_experiment_power", context="arms_for")
+        except Exception as _cx:
+            print(f"[experiments] could not record that failure: {_cx}")
+        return {"powered": False, "restaurants": None, "need": MIN_RESTAURANTS_PER_ARM,
+                "window_days": POWER_WINDOW_DAYS, "unreadable": True}
+
+
 def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
     """[{experiment, arm, pinned, pin_source, flags}] for every active
     experiment, for this restaurant's week — and, for an experiment retired
     in code whose winner was promoted, the promoted arm, so its flags keep
-    holding."""
+    holding. An experiment that cannot conclude yet gives every week its
+    `until_powered` arm, pinned ("underpowered"; P-21, L-11)."""
     out = []
+    power = None
     try:
         pins = _restaurant_pins(restaurant_id, db_path)
     except Exception as e:           # a pin that cannot be read never breaks generation
@@ -177,6 +234,13 @@ def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
             source = "restaurant"
         if arm is None and exp["key"] in promoted and _arm_def(exp, promoted[exp["key"]]["arm"]):
             arm, source = promoted[exp["key"]]["arm"], "promoted"
+        if arm is None and exp.get("until_powered") and _arm_def(exp, exp["until_powered"]):
+            # Not enough restaurants for a verdict ever to arrive: no week is
+            # spent on the coin flip (P-21, L-11), and none of them counts.
+            if power is None:
+                power = _power_or_pin(db_path)
+            if not power.get("powered"):
+                arm, source = exp["until_powered"], "underpowered"
         if arm is None:
             arm, source = hashed_arm(exp, restaurant_id, week_start), None
         out.append({"experiment": exp["key"], "arm": arm, "pinned": source is not None, "pin_source": source,
@@ -670,11 +734,21 @@ def readout(db_path=DB_PATH) -> dict:
             a["vs_control"] = ({k: cluster_diff(series[a["arm"]][k], series[control["arm"]][k])
                                 for k in ("acceptance", "quality", "issues", "labor_pct")}
                                if control is not None and a is not control else None)
+        call = verdict(exp, arms) if exp.get("control") else \
+            {"call": None, "state": "retired", "text": "Retired experiment."}
+        power = None
+        if exp.get("active") and exp.get("until_powered"):
+            power = _power_or_pin(db_path)
+            if not power.get("powered") and call.get("state") != "winner":
+                label = (_arm_def(exp, exp["until_powered"]) or {}).get("label") or exp["until_powered"]
+                have = power.get("restaurants")
+                call = {"call": None, "state": "paused",
+                        "text": (f"Paused: every restaurant runs {label} until {power['need']} restaurants generate "
+                                 f"schedules (now {have if have is not None else 'unknown'}); those weeks are pinned "
+                                 "and not counted.")}
         exps.append({"key": key, "active": bool(exp.get("active")), "question": exp.get("question") or "",
                      "started": exp.get("started"), "control": exp.get("control"), "arms": arms,
-                     "method": VERDICT_METHOD,
-                     "verdict": verdict(exp, arms) if exp.get("control") else
-                     {"call": None, "state": "retired", "text": "Retired experiment."}})
+                     "method": VERDICT_METHOD, "power": power, "verdict": call})
     env = (os.environ.get(PIN_ENV) or "").strip() or None
     try:
         promoted = active_promotions(db_path)
