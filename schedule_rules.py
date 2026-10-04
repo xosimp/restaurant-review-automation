@@ -355,6 +355,28 @@ def compliance(restaurant) -> dict:
 DAYS_OFF_RETIRED = ("min_consecutive_days_off", "part_time_days_off")
 
 
+def compliance_set_by(restaurant) -> dict:
+    """{rule key: "owner" | "pack"} — which of compliance()'s values the
+    owner set, and which a jurisdiction pack started them at; a key in
+    neither is the code's default. The prompt said "the owner's limit on
+    days in a row" for a DEFAULTS value the owner never set (schedule
+    re-audit 10/4/26 PROMPT-10)."""
+    if restaurant is None:
+        return {}
+    if not hasattr(restaurant, "compliance_json"):
+        from models import get_restaurant
+        restaurant = get_restaurant(restaurant)
+    try:
+        data = json.loads(getattr(restaurant, "compliance_json", None) or "{}") or {}
+    except Exception:
+        data = {}
+    out = {k: "owner" for k, v in data.items() if v not in (None, "") and not str(k).startswith("_")}
+    pack = (compliance(restaurant).get("_pack") or {}) if restaurant else {}
+    for k in (pack.get("applied") or {}):
+        out.setdefault(k, "pack")
+    return out
+
+
 def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
     """A jurisdiction pack sits UNDER the owner's own values."""
     code = (getattr(restaurant, "jurisdiction", None) or "").strip() if restaurant else ""
@@ -1056,6 +1078,11 @@ class Constraints:
     # kind start/end): {(role lower, weekday, daypart): {"start": minutes,
     # "end": minutes, "source": {"start"|"end": the rule's words}}}.
     role_times: dict = field(default_factory=dict)
+    # Which compliance values the owner set ("owner") or a jurisdiction pack
+    # started ("pack"); a key in neither is the code's default
+    # (compliance_set_by, PROMPT-10). None — a Constraints built by hand —
+    # reads every value as the owner's.
+    compliance_set: dict = None
 
     # ── lookups ────────────────────────────────────────────────────────
     def key(self, name) -> str:
@@ -1689,6 +1716,10 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     restaurant = restaurant or get_restaurant(restaurant_id, db_path)
     c = Constraints(restaurant_id=restaurant_id, week_dates=list(week_dates or []), week_days=list(week_days or []))
     c.compliance = compliance(restaurant)
+    try:
+        c.compliance_set = compliance_set_by(restaurant)
+    except Exception as exc:
+        _input_problem(c, "compliance rules", exc)
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
     c.tz = (getattr(restaurant, "timezone", None) or "").strip()
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
@@ -4359,6 +4390,18 @@ def _minor_band_lines(c) -> list:
     return out
 
 
+def _whose_limit(c, key, owner_words, default_words) -> str:
+    """Why a limit holds, said as whose it is (PROMPT-10): the owner's only
+    when the owner set it; a jurisdiction pack's starting value; else the
+    code's default — never an invented owner rule."""
+    by = getattr(c, "compliance_set", None)
+    if by is None or by.get(key) == "owner":
+        return owner_words
+    if by.get(key) == "pack":
+        return "the starting value from the restaurant's jurisdiction pack"
+    return default_words
+
+
 def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     """The rules the week is checked against, as the model reads them —
     the same facts the code checks afterwards, each line marked [HARD] or
@@ -4419,7 +4462,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                        + f": MAX in their ROSTER line — the {_ceiling:g}h ceiling, or their own maximum where the owner "
                          f"set one (above {float(_OT):g}h, that is the owner allowing them that overtime). Hours already "
                          "published in the same payroll week count toward it",
-                       why="the most hours the owner allows anyone"))
+                       why=_whose_limit(c, "weekly_hours_ceiling", "the most hours the owner allows anyone",
+                                        "the default ceiling: the owner has set none")))
     # A payroll week that runs on into next week's days (E-10): next week's
     # draft schedules them inside the same overtime line.
     _tails = [c.bucket_tail(b) for b in sorted({c.bucket(d) for d in (c.week_dates or [])})]
@@ -4438,7 +4482,9 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                            "break; leave room for it."))
     if comp.get("max_consecutive_days"):
         lines.append(_rule("long_run", f"Nobody works more than {int(comp['max_consecutive_days'])} days in a row, "
-                           "counting days already published last week", why="the owner's limit on days in a row"))
+                           "counting days already published last week",
+                           why=_whose_limit(c, "max_consecutive_days", "the owner's limit on days in a row",
+                                            "the default limit on days in a row: the owner has set none")))
     if c.minors:
         lines.append(_rule("minor_late", "MINORS (marked minor in the ROSTER) — the limits the code checks, as "
                            "starting values, not legal advice", why="child-labor law is the owner's legal exposure"))
