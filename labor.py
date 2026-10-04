@@ -4602,8 +4602,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _owner_parts = []
     if hours_notes and str(hours_notes).strip():
         from ai_guard import _neutralise_markers as _neut_h
-        _owner_parts.append("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening, closing and arrival times; "
-                            "any other rule in them sits with the standing rules at priority 2):\n"
+        _owner_parts.append("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening and closing times; every "
+                            "staffing rule in them — floors, arrival times, who stays to close — priority 2, with the "
+                            "staffing floors):\n"
                             + _neut_h(str(hours_notes).strip()))
     if owner_rules_text and str(owner_rules_text).strip():
         # How the code reads each standing rule, so the model knows which
@@ -4964,8 +4965,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _strength_block += (
                 "\nSHIFT STRENGTH TARGETS — the scores of everyone in that role on that shift, added up:\n"
                 + "\n".join(_thr_lines) + "\n"
-                "  Two people scoring 5 make 10. So do a 5, a 3 and a 2 — but that is a weaker team, so prefer fewer "
-                "stronger people over more weaker ones when both clear the bar.\n"
+                "  Two people scoring 5 make 10; so do a 5, a 3 and a 2. The headcount is SHIFT REQUIREMENTS', never "
+                "this target's: at the same headcount prefer the stronger mix (three servers scoring 5, 4 and 3 over "
+                "5, 2 and 2), and never drop a person a shift needs because the rest already clear the bar.\n"
                 "  Hit these on the busiest shifts first — SHIFT REQUIREMENTS give each shift's demand level; the day's "
                 "name does not.\n")
         if _rule_lines:
@@ -5233,7 +5235,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         times=_sched_out.clock_values(_sched_out.stated_times(open_times, close_times, hours_notes)),
     ) if schema_enums else _sched_out.schedule_schema()
     _note_words = ", ".join(v for v in _sched_out.NOTE_VALUES if v)
-    static_text = _sp.static_block(structured, _note_words)
+    static_text = _sp.static_block(structured, _note_words, enums=schema_enums)
 
     # The readiness gate before the call (DH5-2): a schedule rests on the
     # shifts, the POS, sales and the weather. The owner asked for it, so a
@@ -5415,9 +5417,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             # The notes column is printed on the employee's schedule: only
             # one of the fixed notes survives (PR-15), here as in the JSON.
             _cols = _l.split(",", 7)
+            # A date written as the request names it ("Mon 2026-10-05") is
+            # the ISO date it carries (schedule re-audit 10/4/26 PROMPT-7):
+            # every reader of these rows keys on the bare ISO date.
+            _cols[0] = _sched_out.iso_date_of(_cols[0]) or _cols[0]
             if len(_cols) == 8:
                 _cols[7] = _sched_out.vocabulary_note(_cols[7])
-                _l = ",".join(_cols)
+            _l = ",".join(_cols)
             _data_rows.append(_l)
         if week_slice:
             _keep = set(_gen_dates)

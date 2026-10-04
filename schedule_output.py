@@ -152,6 +152,25 @@ def _enum(values) -> dict:
     return {"type": "string", "enum": vals} if vals else {"type": "string"}
 
 
+_ISO_IN = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)")
+
+
+def iso_date_of(text) -> str:
+    """The ISO date a date cell carries — "2026-10-05" from "2026-10-05",
+    "Mon 2026-10-05" or "Monday, 2026-10-05" — or "" when it carries none or
+    more than one. The request names each date with its weekday; an answer
+    that copies that form is the same date (schedule re-audit 10/4/26
+    PROMPT-7: such a row was dropped and the day read as missing)."""
+    found = _ISO_IN.findall(str(text or ""))
+    if len(found) != 1:
+        return ""
+    try:
+        _datetime.strptime(found[0], "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return found[0]
+
+
 def schedule_schema(employees=None, roles=None, dates=None, times=None) -> dict:
     """The JSON schema one generation answers against. Each argument that
     is given becomes an enum (an empty one is left a plain string): the
@@ -304,7 +323,7 @@ def parse_answer(raw, dates=None) -> dict:
     for idx, day in enumerate(days):
         if not isinstance(day, dict):
             continue
-        d = str(day.get("date") or "").strip()[:10]
+        d = iso_date_of(day.get("date")) or str(day.get("date") or "").strip()[:10]
         try:
             weekday = _datetime.strptime(d, "%Y-%m-%d").strftime("%A")
         except ValueError:

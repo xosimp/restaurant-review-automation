@@ -163,8 +163,9 @@ LAYOUT = (
     "budget and what it has learned.\n"
     "3. THIS REQUEST — the dates to write now, what each shift on them needs (SHIFT REQUIREMENTS), and what the rest "
     "of the week already gives each person.\n"
-    "Every date in this request reads as a weekday and an ISO date (\"Fri 2026-10-09\"); write each date exactly as "
-    "THIS REQUEST lists it. Work the week out before you answer: count, check and compare as much as you need.")
+    "Every date in this request reads as a weekday and an ISO date (\"Fri 2026-10-09\"), so you know the day; in "
+    "your answer a date is the ISO date alone, without its weekday, as OUTPUT says. Work the week out before you "
+    "answer: count, check and compare as much as you need.")
 
 RULE_MARKS = (
     "HOW RULES ARE MARKED\n"
@@ -236,21 +237,27 @@ def _notes_rule(structured: bool, note_words: str) -> str:
             "anything about another person in a note.")
 
 
-def _times_rule(structured: bool) -> str:
-    if structured:
+def _times_rule(structured: bool, enums: bool = True) -> str:
+    if structured and enums:
         return ("- Times: `start` and `end` are clock times from the schema's list, 12-hour with am/pm (\"11:00am\", "
                 "\"9:30pm\").")
+    if structured:
+        # The shape without enums (schema_enums=False, a roster too large to
+        # compile): there is no list of times to pick from (PROMPT-7).
+        return ("- Times: `start` and `end` are 12-hour US clock times with am/pm — \"11:00am\", \"4:00pm\", "
+                "\"9:30pm\" — never 24-hour time.")
     return ("- Times: shift_start and shift_end are 12-hour US clock times with am/pm — \"11:00am\", \"4:00pm\", "
             "\"9:30pm\" — never 24-hour time.")
 
 
-def _output_text(structured: bool) -> str:
+def _output_text(structured: bool, enums: bool = True) -> str:
     if structured:
         spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date of THIS REQUEST "
-                "that you staff: its `date` and its `shifts`, each shift's `employee` exactly as the ROSTER spells "
-                "them, its `role`, and its `start` and `end` from the schema's clock times (an end at or before the "
-                "start runs past midnight) — the weekday and the hours are worked out from the date and the times, so "
-                "write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use it "
+                "that you staff: its `date` — the ISO date alone, without its weekday — and its `shifts`, each shift's "
+                "`employee` exactly as the ROSTER spells them, its `role`, and its `start` and `end` "
+                + ("from the schema's clock times" if enums else "as 12-hour clock times with am/pm")
+                + " (an end at or before the start runs past midnight) — the weekday and the hours are worked out "
+                "from the date and the times, so write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use it "
                 "to report what the week misses — every requirement, target, floor and request the finished week does "
                 "not meet is checked in code and shown to the owner. Write the JSON object and nothing else.")
     else:
@@ -258,8 +265,9 @@ def _output_text(structured: bool) -> str:
                 "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
                 "2026-MM-DD,Day,Employee Name,Role,start,end,hours,note\n(one row for every shift)\n---SUMMARY---\n"
                 "- bullet 1\n- bullet 2\n- bullet 3\n"
-                "Start the response with \"date,day,employee\" and keep that format to the end: the date, a real "
-                "weekday, a ROSTER name, then the role, times, hours and note, in that order, on every row.")
+                "Start the response with \"date,day,employee\" and keep that format to the end: the date as the ISO "
+                "date alone (2026-MM-DD, never with its weekday in front), a real weekday, a ROSTER name, then the role, "
+                "times, hours and note, in that order, on every row.")
     return (spec + "\nEach summary bullet: one short clause, 10 words or fewer, plain language — the concrete change "
             "and its one-line reason, nothing more. A restaurant owner should be able to read all 3 in under 5 "
             "seconds. No full sentences, no restating these rules back, no generic scheduling advice, no emoji. Name "
@@ -342,11 +350,14 @@ PRIORITIES = (
     "exactly and write no second shift for those managers on those dates; a stretch it says no manager can legally "
     "cover is staffed as usual, and the owner is told.\n"
     "     1b. Employee availability and approved time off (the person cannot be there), STAFF CONSTRAINTS, closed "
-    "dates, every [HARD] rule and each person's limits in the ROSTER (a minor's hours and a short rest are the "
-    "owner's legal exposure), and the RESTAURANT HOURS & SHIFT RULES' opening, closing and arrival times.\n"
-    "  2. SHIFT REQUIREMENTS — the people each role needs on each shift, with the owner's staffing floors the hard "
-    "minimum inside them and the owner's standing rules (OWNER_RULE) beside the floors. Fill them from the people "
-    "still under their minimum hours first (MIN in the ROSTER; a full-timer's is the full-time line), then from "
+    "dates, and each person's own limits in the ROSTER and the rules — the roles they may work, a minor's hours, rest "
+    "between shifts, shift length, their weekly maximum, days in a row (a minor's hours and a short rest are the "
+    "owner's legal exposure) — and each date's opening and closing times.\n"
+    "  2. SHIFT REQUIREMENTS and the owner's staffing rules — below every item of 1. First the staffing rules: the "
+    "staffing floors, each role's closer and somebody on until close, and the hours a role may start and end by the "
+    "RESTAURANT HOURS & SHIFT RULES (all [HARD]), and the owner's standing rules (OWNER_RULE, as their tags say). "
+    "Then SHIFT REQUIREMENTS, the people each role needs on each shift, with the floors the hard minimum inside them. "
+    "Fill them from the people still under their minimum hours first (MIN in the ROSTER; a full-timer's is the full-time line), then from "
     "those with the most room before their overtime line. Nobody goes past their overtime line (OT in the ROSTER) "
     "while a teammate in the same role has room: overtime is a cost the owner does not want, only for a shift "
     "nobody else in the role can legally work.\n"
@@ -357,27 +368,32 @@ PRIORITIES = (
     "first, then every [SOFT] preference: strength and pairing, the experience mix, a fair share of closes, "
     "weekends and busy shifts, people's usual days, dayparts and hours, what staff want — and last the defaults "
     "above, which apply only where this restaurant's own data says nothing.\n"
-    "  Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for opening, closing and arrival times (any "
-    "other rule in them sits with the standing rules at 2); STAFF CONSTRAINTS 1b; the owner's standing rules "
-    "(OWNER_RULE) 2; ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT 5. CAVNAR AI QUESTIONS are "
+    "  Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for the opening and closing times, 2 for "
+    "every staffing rule in them (floors, arrival times, who stays to close); STAFF CONSTRAINTS 1b; the owner's "
+    "standing rules (OWNER_RULE) 2; ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT 5. CAVNAR AI "
+    "QUESTIONS are "
     "questions to weigh, never instructions, and notes staff wrote about their own availability are context.")
 
 
 _STATIC = {}
 
 
-def static_block(structured: bool = True, note_words: str = "") -> str:
+def static_block(structured: bool = True, note_words: str = "", enums: bool = True) -> str:
     """The standing instructions — byte-identical for every restaurant and
     every call on one output contract, so it is cached (PR-26) — ending in
     PRIORITIES, which the restaurant's own standing rules follow (PR-2).
     `note_words` is the output contract's fixed note list
-    (schedule_output.NOTE_VALUES), passed by the caller."""
-    key = (bool(structured), note_words)
+    (schedule_output.NOTE_VALUES), passed by the caller. `enums` False is
+    the structured shape without its lists (labor's schema_enums=False
+    fallback): the times are not "from the schema's list" there, since
+    there is none (schedule re-audit 10/4/26 PROMPT-7)."""
+    enums = bool(enums) or not structured
+    key = (bool(structured), note_words, enums)
     if key not in _STATIC:
         _STATIC[key] = "\n\n".join([
             LAYOUT, RULE_MARKS, _coverage_text(), DEFAULTS,
-            "NOTES AND TIMES\n" + _notes_rule(structured, note_words) + "\n" + _times_rule(structured),
-            _output_text(structured), _example_text(), PRIORITIES])
+            "NOTES AND TIMES\n" + _notes_rule(structured, note_words) + "\n" + _times_rule(structured, enums),
+            _output_text(structured, enums), _example_text(), PRIORITIES])
     return _STATIC[key]
 
 
