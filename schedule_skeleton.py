@@ -67,7 +67,7 @@ SINGLE_SHIFT_MAX_MIN = 10 * 60          # a day this long or shorter is one mana
 MIN_SHIFT_MIN = _rules.MANAGER_MIN_SHIFT_MIN   # no planned manager shift is shorter (4h)
 # A salaried manager with no weekly cap of their own, when the restaurant
 # set none either (E-17: SALARIED_HOURS_CAP is seven 12-hour days).
-SALARIED_WEEK_CAP = 55.0
+SALARIED_WEEK_CAP = _rules.SALARIED_HOURS_CAP   # the one default (Constraints.salaried_limit)
 HISTORY_WEEKS = 12                      # the window "usually works" is read over (models.USUAL_WEEKS)
 USUAL_MIN_WEEKS = 2                     # a weekday is usual once it recurs in two weeks ...
 USUAL_SHARE = 0.5                       # ... and in half the weeks the person appears in
@@ -381,16 +381,8 @@ def _week_cap(c, name, line=None) -> float:
     """The most a manager is planned in a payroll week: a salaried person's
     own limit, else the restaurant's salaried cap, else SALARIED_WEEK_CAP —
     never the 84h ceiling (E-17); an hourly person's overtime line."""
-    key = (name or "").strip().lower()
-    lim = (c.hours_limits or {}).get(key)
     if c.is_salaried(name):
-        if lim and lim[1]:
-            return float(lim[1])
-        cap = getattr(c, "salaried_cap", None)
-        try:
-            return float(cap) if cap else SALARIED_WEEK_CAP
-        except (TypeError, ValueError):
-            return SALARIED_WEEK_CAP
+        return float(c.salaried_limit(name))
     return float(_rules.overtime_line(c, name, line))
 
 

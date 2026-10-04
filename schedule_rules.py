@@ -1429,7 +1429,8 @@ import re as _re_roles
 # A salaried person's weekly cap when the owner set no limit of their own
 # (E-12, E-17): seven 12-hour days (SALARIED_HOURS_CAP) let the manager gap
 # filler load a salaried owner to 66h. restaurants.salaried_cap overrides.
-SALARIED_CAP_DEFAULT = 55.0
+# One number: the same default Constraints.salaried_limit falls back to.
+SALARIED_CAP_DEFAULT = SALARIED_HOURS_CAP
 SALARIED_CAP_BOUNDS = (20.0, 84.0)
 # How far back a manager role someone worked still makes them a manager
 # automatically (E-14: an hourly manager whose last punch was Bartender
