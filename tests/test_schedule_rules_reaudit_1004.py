@@ -225,6 +225,38 @@ def test_randomised_days_the_sweep_floor_and_floor_shortfall_agree():
         same_as_sweep(rows, c)
 
 
+def _scorer_floor_short(rows, floors, c, day):
+    """Whether the scorer's coverage by the hour finds the dinner floor short."""
+    flagged = {((v.get("employee") or "").strip().lower(), v.get("date") or "", v.get("shift_start") or "")
+               for v in sr.violations(rows, c) if v.get("no_show")}
+    q = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="std", source="restaurant")], role_floors=floors,
+                      open_times={day: "4:00pm"}, close_times={day: "11:00pm"}, flagged=flagged,
+                      trainees=dict(c.trainees))
+    night = [x for x in q["shifts"] if x.get("daypart") == "night"][0]
+    dim = next(d for d in night["dimensions"] if d["key"] == "coverage_curve")
+    return bool((dim.get("facts") or {}).get("gaps"))
+
+
+def test_a_training_shift_and_a_shift_on_time_off_count_toward_neither_floor():
+    tue = WEEK[1]
+    floors = {"Server": {"night": 2}}
+    base = [R(1, "Mo", "4:00pm", "11:00pm", role="Manager"), R(1, "Ann", "4:00pm", "11:00pm")]
+    for extra, kw in ((R(1, "Tia", "4:00pm", "11:00pm", role="Server Trainee"), {}),
+                      (R(1, "Tia", "4:00pm", "11:00pm"),
+                       {"trainees": {"tia": {"target_role": "Server", "trainer": "Ann", "from": None, "until": None}}}),
+                      (R(1, "Tia", "4:00pm", "11:00pm"), {"blocked_dates": {"tia": {tue: "on approved time off"}}})):
+        c = C(managers={"mo": "Manager"}, roster=["Mo", "Ann", "Tia"], role_floors=floors,
+              open_times={"Tuesday": "4:00pm"}, close_times={"Tuesday": "11:00pm"}, **kw)
+        rows = base + [extra]
+        sweep = any(v["kind"] == "coverage_floor" for v in sr.violations(rows, c))
+        assert sweep and _scorer_floor_short(rows, floors, c, "Tuesday"), kw
+    c = C(managers={"mo": "Manager"}, roster=["Mo", "Ann", "Tia"], role_floors=floors,
+          open_times={"Tuesday": "4:00pm"}, close_times={"Tuesday": "11:00pm"})
+    rows = base + [R(1, "Tia", "4:00pm", "11:00pm")]
+    assert not any(v["kind"] == "coverage_floor" for v in sr.violations(rows, c))
+    assert not _scorer_floor_short(rows, floors, c, "Tuesday")
+
+
 # ── RULES-4 ───────────────────────────────────────────────────────────────
 
 def test_the_rebalance_keeps_the_owners_rule_and_the_engine_keeps_the_stage():

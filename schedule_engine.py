@@ -4893,6 +4893,9 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         signals["managers"] = dict(getattr(c, "managers", None) or {})
         signals["acting_managers"] = {k: set(v or ()) for k, v in (getattr(c, "acting_managers", None) or {}).items()}
         signals["role_families"] = dict(getattr(c, "role_families", None) or {})
+        # Who is training: the scorer's floor count leaves their training
+        # shifts out, as the rules do (schedule re-audit 10/4/26 SQ-8).
+        signals["trainees"] = dict(getattr(c, "trainees", None) or {})
         signals["held_roles"] = {k: set(v or ()) for k, v in (getattr(c, "held_roles", None) or {}).items()}
         signals["closers_by_role"] = {k: set(v or ()) for k, v in (getattr(c, "closers_by_role", None) or {}).items()}
         signals["stations"] = dict(getattr(c, "stations", None) or {})

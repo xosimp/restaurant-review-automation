@@ -1252,12 +1252,10 @@ class Constraints:
         """A training shift (D-16): a training job code, or a trainee in the
         role they are learning while training lasts. It is never coverage —
         floors, the owner's rules and "somebody at close" do not count it —
-        and no pass hands one out."""
-        if is_training_role(row.get("role")):
-            return True
-        t = self.trainees.get(self.key(row.get("employee")))
-        return bool(t) and self.family(row.get("role")) == self.family(t.get("target_role")) \
-            and self._training_on(t, row.get("date"))
+        and no pass hands one out. shift_quality.is_training_row, the one
+        test the scorer's floor count asks too (SQ-8)."""
+        from shift_quality import is_training_row
+        return is_training_row(row, self.trainees.get(self.key(row.get("employee"))), self.role_families)
 
     def fillable(self, name: str, date_str: str, daypart: str = None) -> tuple:
         """(ok, reason): whether a pass may CHOOSE `name` to fill a gap on
@@ -1515,8 +1513,9 @@ _FLOOR_TITLES = _re_roles.compile(
 _DEPARTMENT_WORDS = _re_roles.compile(
     r"\b(?:kitchen|km|boh|back of house|bar|beverage|wine|catering|events?|office|marketing|culinary|pastry|prep|"
     r"dish|sous|chef|sales|bakery|banquets?|retail|purchasing|facilities|maintenance)\b", _re_roles.I)
-# "MIT" is a Manager in Training (schedule re-audit 10/4/26 RULES-2).
-_TRAINING_ROLE = _re_roles.compile(r"\b(?:train(?:ing|ees?)|mits?)\b", _re_roles.I)
+# "MIT" is a Manager in Training (schedule re-audit 10/4/26 RULES-2); the
+# pattern is shift_quality's, read by the scorer's floor test too (SQ-8).
+from shift_quality import _TRAINING_ROLE  # noqa: E402
 # The daypart words and the word split are shift_quality's — one reader of
 # a job code's half of the day for the rules, the scorer, the solver, the
 # prompt and the floors (schedule re-audit 10/4/26 RULES-3, SQ-1).
@@ -3754,7 +3753,7 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
         # neither is a row its person cannot work that day (time off, off the
         # roster) — the scorer leaves those out too (schedule re-audit
         # 10/4/26 SQ-8).
-        counted = [(i, r) for i, r in items if not c.training_row(r) and c.can_work(r.get("employee"), d)[0]]
+        counted = [(i, r) for i, r in items if _on_the_floor(c, r)]
         out.extend(_floor_breaches(c, d, day, items, counted))
         # the owner's rules checked per day: those that name no daypart (the
         # role on the day at all) and a daypart rule about a role whose job
@@ -3806,6 +3805,24 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
         # A trainee beside nobody who can train them (D-16).
         out.extend(_trainee_breaches(c, day, items))
     return out
+
+
+def _on_the_floor(c, r) -> bool:
+    """Whether a row puts its person on the floor for coverage: not a
+    training shift, and nothing about the row itself says it will not stand
+    — the day or a daypart it reaches into off, outside their window, a
+    certificate the role needs missing that date. The scorer leaves the
+    same rows out (the sweep's no-show rows, `flagged`), so the two count
+    one crew (SQ-8)."""
+    if c.training_row(r):
+        return False
+    name, d = r.get("employee"), r.get("date") or ""
+    from shift_quality import touched_dayparts
+    if not all(c.can_work(name, d, p)[0] for p in touched_dayparts(r)):
+        return False
+    if not c.window_ok(name, d, r.get("shift_start", ""), r.get("shift_end", ""))[0]:
+        return False
+    return c.cert_ok(name, r.get("role", ""), d)[0]
 
 
 def _floor_test(c, day, rows, role, need, part) -> dict:

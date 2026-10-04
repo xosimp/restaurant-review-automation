@@ -41,6 +41,7 @@ Two rules run through the whole file and are easy to break by accident:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -130,6 +131,34 @@ def role_tokens(role) -> list:
     the like), trailing punctuation off: "Server (A.M.)" → ["server",
     "a.m"]."""
     return list(_role_words_cached(" ".join(str(role or "").lower().split())))
+
+
+# A training job code ("Training", "Server Trainee", "Manager in Training",
+# "MIT"): its shifts are never coverage (D-16). The one pattern the rules
+# (schedule_rules.is_training_role) and the scorer's floor test read.
+_TRAINING_ROLE = re.compile(r"\b(?:train(?:ing|ees?)|mits?)\b", re.I)
+
+
+def is_training_role(role) -> bool:
+    return bool(_TRAINING_ROLE.search(str(role or "")))
+
+
+def is_training_row(row: dict, trainee: dict = None, families: dict = None) -> bool:
+    """A training shift (D-16): a training job code, or the row of a trainee
+    (`trainee`: their {target_role, from, until}) in the role they are
+    learning while training lasts — Constraints.training_row and the
+    scorer's floor test ask this one question (schedule re-audit 10/4/26
+    SQ-8: the score counted a training shift toward a floor the sweep did
+    not)."""
+    if is_training_role(row.get("role")):
+        return True
+    t = trainee or {}
+    if not t or role_family(row.get("role"), families) != role_family(t.get("target_role"), families):
+        return False
+    d = row.get("date") or ""
+    if not d:
+        return True
+    return (not t.get("from") or d >= t["from"]) and (not t.get("until") or d <= t["until"])
 
 
 def role_daypart(role):
@@ -344,6 +373,9 @@ class ShiftContext:
     # Rows the repair pass could not vouch for. A double-booked or
     # off-roster row must not be counted as coverage.
     flagged: set = field(default_factory=set)          # {(employee, date, start)}
+    # Who is training, for what, until when ({name_key: {target_role, from,
+    # until}}): a training shift is never counted toward a floor (D-16, SQ-8).
+    trainees: dict = field(default_factory=dict)
     # True for the last shift to end on this date, so a closing requirement
     # can name the shift it actually means.
     is_closing: bool = False
@@ -553,6 +585,10 @@ class ShiftContext:
                 clashing.setdefault(n, {seen[key]}).add(role)
             seen.setdefault(key, role)
         return [{"name": n, "roles": sorted(rs)} for n, rs in sorted(clashing.items())]
+
+    def training_row(self, row: dict) -> bool:
+        """is_training_row with this week's trainees and role families."""
+        return is_training_row(row, (self.trainees or {}).get(name_key(row.get("employee"))), self.role_families)
 
     def _is_flagged(self, row: dict) -> bool:
         if not self.flagged:
@@ -2525,7 +2561,9 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     spans = []
     for r in rows:
         sp = _row_span(r)
-        if sp is None or ctx._is_flagged(r):
+        # Who is really on: not a row that will not stand, not a training
+        # shift — the rules' own floor count (SQ-8).
+        if sp is None or ctx._is_flagged(r) or ctx.training_row(r):
             continue
         spans.append((ctx.family(r.get("role")), (r.get("employee") or "").strip().lower(), sp[0], sp[1]))
     if not spans:
@@ -5041,6 +5079,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             elsewhere=signals.get("elsewhere") or {},
             constraints=signals.get("constraints") or {},
             flagged=signals.get("flagged") or set(),
+            trainees={name_key(k): v for k, v in (signals.get("trainees") or {}).items()},
             scores=_scores_for(shift_rows),
             tenure=signals.get("tenure") or {},
             leader_flags=signals.get("leader_flags") or {},
