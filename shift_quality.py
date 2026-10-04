@@ -41,6 +41,7 @@ Two rules run through the whole file and are easy to break by accident:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -80,7 +81,7 @@ def role_words(role, count: int = 1, default: str = "") -> str:
 # owner's "two servers Saturday" (schedule audit 10/3/26 D-13, D-14, SQ-10).
 # The restaurant's own map (restaurants.role_families_json, {role: family})
 # wins; a role the words would empty keeps its name.
-_DAYPART_WORDS = frozenset({"am", "pm", "a.m.", "p.m.", "lunch", "dinner", "brunch", "breakfast", "day", "night",
+_DAYPART_WORDS = frozenset({"am", "pm", "a.m.", "p.m.", "a.m", "p.m", "lunch", "dinner", "brunch", "breakfast", "day", "night",
                             "morning", "evening", "late", "overnight", "weekend", "weekday", "wknd", "open",
                             "opening", "opener", "close", "closing", "closer"})
 
@@ -103,12 +104,76 @@ def _family_words(low: str) -> str:
     """The family a role name's own words give (role_family without the
     restaurant's map) — pure, so remembered: the scorer asks it for every
     person on every shift it scores."""
-    cleaned = []
-    for w in low.replace("(", " ").replace(")", " ").replace("/", " ").replace("-", " ").replace("_", " ").split():
-        if w.strip(".,:;") in _DAYPART_WORDS:
-            continue
-        cleaned.append(w.strip(".,:;"))
-    return " ".join(w for w in cleaned if w) or low
+    cleaned = [w for w in role_tokens(low) if w not in _DAYPART_WORDS]
+    return " ".join(cleaned) or low
+
+
+# The one reading of the words in a job code, for its family and for its
+# half of the day. role_family split on "( ) / - _" while the daypart reader
+# took only a last word of exactly "am"/"pm", so "Server-AM", "Server (PM)",
+# "AM Server", "Lunch Server" and "Dinner Host" were servers and hosts with
+# no half of the day: a leader rule or strength target on them bound lunch
+# and dinner both (schedule re-audit 10/4/26 RULES-3, SQ-1).
+_ROLE_SPLIT = str.maketrans({c: " " for c in "()[]/-_\u2013\u2014"})
+_MORNING_WORDS = frozenset({"am", "a.m", "lunch", "brunch", "breakfast", "morning", "day", "open", "opening",
+                            "opener"})
+_NIGHT_WORDS = frozenset({"pm", "p.m", "dinner", "night", "evening", "late", "overnight", "close", "closing",
+                          "closer"})
+
+
+@lru_cache(maxsize=4096)
+def _role_words_cached(low: str) -> tuple:
+    return tuple(t for t in (w.strip(".,:;") for w in low.translate(_ROLE_SPLIT).split()) if t)
+
+
+def role_tokens(role) -> list:
+    """A job code's words, lower case, split on spaces and "( ) / - _" (and
+    the like), trailing punctuation off: "Server (A.M.)" → ["server",
+    "a.m"]."""
+    return list(_role_words_cached(" ".join(str(role or "").lower().split())))
+
+
+# A training job code ("Training", "Server Trainee", "Manager in Training",
+# "MIT"): its shifts are never coverage (D-16). The one pattern the rules
+# (schedule_rules.is_training_role) and the scorer's floor test read.
+_TRAINING_ROLE = re.compile(r"\b(?:train(?:ing|ees?)|mits?)\b", re.I)
+
+
+def is_training_role(role) -> bool:
+    return bool(_TRAINING_ROLE.search(str(role or "")))
+
+
+def is_training_row(row: dict, trainee: dict = None, families: dict = None) -> bool:
+    """A training shift (D-16): a training job code, or the row of a trainee
+    (`trainee`: their {target_role, from, until}) in the role they are
+    learning while training lasts — Constraints.training_row and the
+    scorer's floor test ask this one question (schedule re-audit 10/4/26
+    SQ-8: the score counted a training shift toward a floor the sweep did
+    not)."""
+    if is_training_role(row.get("role")):
+        return True
+    t = trainee or {}
+    if not t or role_family(row.get("role"), families) != role_family(t.get("target_role"), families):
+        return False
+    d = row.get("date") or ""
+    if not d:
+        return True
+    return (not t.get("from") or d >= t["from"]) and (not t.get("until") or d <= t["until"])
+
+
+def role_daypart(role):
+    """'morning' for a job code naming the day half ("Server AM",
+    "Server-AM", "AM Server", "Lunch Bartender", "Server (A.M.)"), 'night'
+    for the evening ("Barback PM", "PM Host", "Dinner Host", "Server_PM"),
+    else None — also when it names both ("Lunch/Dinner Server"). The ONE
+    reader: schedule_rules.role_daypart, models.leader_rule_daypart, the
+    scorer's leader and strength checks, the solver, the requirements table
+    and the floors all ask it."""
+    words = set(role_tokens(role))
+    morning, night = bool(words & _MORNING_WORDS), bool(words & _NIGHT_WORDS)
+    if morning == night:
+        return None
+    return "morning" if morning else "night"
 
 
 def name_key(name) -> str:
@@ -119,16 +184,11 @@ def name_key(name) -> str:
 
 
 def job_code_daypart(role):
-    """'morning' for a job code named "... AM", 'night' for "... PM", else
-    None: a rule or a target on an AM or PM job keeps to its own half of
-    the day (owner, 10/2/26 — "Host AM" at dinner is nobody's). The same
-    reading as models.leader_rule_daypart, here for the pure layer."""
-    words = str(role or "").strip().lower().split()
-    if words and words[-1] == "am":
-        return "morning"
-    if words and words[-1] == "pm":
-        return "night"
-    return None
+    """'morning' / 'night' / None for a job code — role_daypart, the one
+    reader (kept under this name for its callers): a rule or a target on an
+    AM or PM job keeps to its own half of the day (owner, 10/2/26 — "Host
+    AM" at dinner is nobody's), however the code spells it."""
+    return role_daypart(role)
 
 
 # Demand levels, weakest to strongest. Profiles name one of these; the
@@ -322,6 +382,9 @@ class ShiftContext:
     # Rows the repair pass could not vouch for. A double-booked or
     # off-roster row must not be counted as coverage.
     flagged: set = field(default_factory=set)          # {(employee, date, start)}
+    # Who is training, for what, until when ({name_key: {target_role, from,
+    # until}}): a training shift is never counted toward a floor (D-16, SQ-8).
+    trainees: dict = field(default_factory=dict)
     # True for the last shift to end on this date, so a closing requirement
     # can name the shift it actually means.
     is_closing: bool = False
@@ -531,6 +594,10 @@ class ShiftContext:
                 clashing.setdefault(n, {seen[key]}).add(role)
             seen.setdefault(key, role)
         return [{"name": n, "roles": sorted(rs)} for n, rs in sorted(clashing.items())]
+
+    def training_row(self, row: dict) -> bool:
+        """is_training_row with this week's trainees and role families."""
+        return is_training_row(row, (self.trainees or {}).get(name_key(row.get("employee"))), self.role_families)
 
     def _is_flagged(self, row: dict) -> bool:
         if not self.flagged:
@@ -2440,11 +2507,13 @@ def floor_shortfall(rows: list, role: str, need: int, daypart: str, open_minutes
     row that does not count (the scorer's flagged rows).
 
     {"held", "window": (lo, hi) | None, "slots", "short_slots",
-    "short_minutes", "worst_at": minute | None, "on_at_worst", "need"}.
+    "short_minutes", "worst_at": minute | None, "on_at_worst", "need",
+    "missing": people short summed over the short half hours}.
     No window (no service in the core) is held."""
     slots = floor_slots(daypart, open_minutes, close_minutes)
     out = {"held": True, "window": floor_window(daypart, open_minutes, close_minutes), "slots": len(slots),
-           "short_slots": 0, "short_minutes": 0, "worst_at": None, "on_at_worst": None, "need": int(need or 0)}
+           "short_slots": 0, "short_minutes": 0, "worst_at": None, "on_at_worst": None, "need": int(need or 0),
+           "missing": 0}
     if out["need"] <= 0 or not slots:
         return out
     fam = role_family(role, families)
@@ -2460,6 +2529,7 @@ def floor_shortfall(rows: list, role: str, need: int, daypart: str, open_minutes
         on = _on_at(spans, t, fam)
         if on < out["need"]:
             out["short_slots"] += 1
+            out["missing"] += out["need"] - on
             if out["on_at_worst"] is None or on < out["on_at_worst"]:
                 out["worst_at"], out["on_at_worst"] = t, on
     out["short_minutes"] = out["short_slots"] * SLOT_MINUTES
@@ -2500,7 +2570,9 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     spans = []
     for r in rows:
         sp = _row_span(r)
-        if sp is None or ctx._is_flagged(r):
+        # Who is really on: not a row that will not stand, not a training
+        # shift — the rules' own floor count (SQ-8).
+        if sp is None or ctx._is_flagged(r) or ctx.training_row(r):
             continue
         spans.append((ctx.family(r.get("role")), (r.get("employee") or "").strip().lower(), sp[0], sp[1]))
     if not spans:
@@ -4488,12 +4560,35 @@ def present_dayparts(row: dict) -> list:
     return [p for _o, _pr, p in covered]
 
 
+def touched_dayparts(row: dict) -> list:
+    """The dayparts a row reaches into at all — each whose core service
+    window it overlaps by any minute, the start's daypart first — for a
+    block on a half of the day (part-day time off, morning-only or
+    night-only availability). present_dayparts' hour of presence is right
+    for counting coverage and wrong for a block: a 10:30am-6:25pm shift ran
+    55 minutes into an approved dinner off, and 1:35-10pm into the lunch of
+    somebody available for dinner only, and neither was flagged (schedule
+    re-audit 10/4/26 RULES-11). A row touching neither core window is its
+    start's daypart."""
+    primary = daypart_of(row.get("shift_start", ""))
+    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
+    if s is None or e is None or primary == "unknown":
+        return [primary]
+    if e <= s:
+        e += 24 * 60
+    hit = [part for part, (lo, hi) in CORE_WINDOWS.items() if min(e, hi) - max(s, lo) > 0]
+    if not hit:
+        return [primary]
+    return sorted(hit, key=lambda p: p != primary)
+
+
 def works_daypart_ok(row: dict, choice: str) -> bool:
     """Whether a row fits somebody's morning-only / night-only availability:
-    every daypart the shift is on the floor for must be the one they chose."""
+    every daypart the shift reaches into (touched_dayparts — the sweep's
+    test, RULES-11) must be the one they chose."""
     if choice not in ("morning", "night"):
         return True
-    parts = [p for p in present_dayparts(row) if p != "unknown"]
+    parts = [p for p in touched_dayparts(row) if p != "unknown"]
     return all(p == choice for p in parts)
 
 
@@ -5038,6 +5133,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             elsewhere=signals.get("elsewhere") or {},
             constraints=signals.get("constraints") or {},
             flagged=signals.get("flagged") or set(),
+            trainees={name_key(k): v for k, v in (signals.get("trainees") or {}).items()},
             scores=_scores_for(shift_rows),
             tenure=signals.get("tenure") or {},
             leader_flags=signals.get("leader_flags") or {},

@@ -148,7 +148,7 @@ def manager_status(restaurant_id, week_dates=None, c=None) -> dict:
             managers.append({"name": name, "role": c.managers[key], "basis": b.get("basis"), "why": b.get("why"),
                              "salaried": c.is_salaried(name), "standing_shifts": list(c.standing_shifts.get(key) or []),
                              "acting_dates": []})
-        elif b.get("basis") in ("department", "set_not"):
+        elif b.get("basis") in ("department", "set_not", "trainee"):
             not_counted.append({"name": name, "role": b.get("role"), "basis": b["basis"], "why": b.get("why")})
     acting = []
     for key, days in sorted(c.acting_managers.items()):
@@ -552,6 +552,12 @@ def owner_rule_preview(restaurant_id, text, c=None) -> dict:
     except Exception:
         pass
     rule = _sr.parse_owner_rule(text, roles, c.role_families)
+    if rule is not None and rule.get("unclear"):
+        # Read back as a rule Cavnar AI couldn't read, and why — never a
+        # guess held as a floor (schedule re-audit 10/4/26 RULES-8).
+        return {"checked": False, "reads_as": None, "unclear": rule["unclear"],
+                "text": f"Cavnar AI couldn't read this rule — {rule['unclear']}. Until then a draft is asked to "
+                        "follow it and the review reminds you to check the week against it."}
     if rule is None:
         # A rule about two people ("keep Ana and Ben apart") is held too —
         # apply_owner_rules reads it into the pairings (D-38) — and was said
@@ -696,7 +702,9 @@ def setup_review(c, leader_status=None, omit=()) -> dict:
     managers work?" question, say)."""
     items = []
     ms = manager_status(c.restaurant_id, c=c)
-    items.append({"kind": "managers", "text": ms["line"], "line": False, "managers": ms["managers"]})
+    # Nobody counted as a manager is the highest rule unmet on every shift:
+    # said in the review's lines, not only on the managers card (RULES-13).
+    items.append({"kind": "managers", "text": ms["line"], "line": not ms["managers"], "managers": ms["managers"]})
     if ms["not_counted"]:
         items.append({"kind": "managers_unconfirmed", "line": True,
                       "text": "Not counted as floor managers: " + "; ".join(

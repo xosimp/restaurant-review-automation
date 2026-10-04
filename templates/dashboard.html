@@ -34800,6 +34800,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       done();
       if(!d.ok){toast(d.error||'Could not decide that','error');return;}
       var rq=d.request||{},st=rq.status;
+      /* A drop that leaves the floor without a manager says so (re-audit RULES-15). */
+      if(d.warning){toast('Approved \u2014 '+d.warning,'warning');loadShiftRequests();return;}
       toast(st==='covered'?((rq.kind||'drop')==='swap'?'Swapped — both shifts moved':'Covered by '+(rq.replacement_name||'them')):(st==='open'?'Approved — the shift is open to claim':(st==='approved'?'Approved — waiting on '+(rq.target_name||'the colleague')+' to accept':'Denied')),'success');
       loadShiftRequests();
     });
@@ -37096,7 +37098,9 @@ window.cavPalette = cavPalette;
       done();
       if (!d.ok) { toast(d.error || 'Could not decide that', 'error'); return; }
       var st = (d.request || {}).status;
-      toast(st === 'covered' ? 'Covered' : (st === 'open' ? 'Approved — the shift is open to claim' : (st === 'approved' ? 'Approved — waiting on the colleague' : 'Denied')), 'success');
+      /* A drop that leaves the floor without a manager says so (re-audit RULES-15). */
+      if (d.warning) toast('Approved \u2014 ' + d.warning, 'warning');
+      else toast(st === 'covered' ? 'Covered' : (st === 'open' ? 'Approved — the shift is open to claim' : (st === 'approved' ? 'Approved — waiting on the colleague' : 'Denied')), 'success');
       lb2LoadWaiting();
       if (window.loadShiftRequests) loadShiftRequests();
     });

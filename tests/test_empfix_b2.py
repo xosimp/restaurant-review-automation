@@ -99,8 +99,12 @@ def _restaurant(db_path, roster=()):
     c.execute("UPDATE restaurants SET module_labor=1, timezone='America/Chicago' WHERE id=?", (rid,))
     c.commit()
     c.close()
+    import staff_settings as _ss_fx
     for name in roster:
         models.add_manual_team_member(rid, name, role="Server", db_path=db_path)
+        # Everyone here runs the floor: a roster with nobody counted as a
+        # floor manager holds the publish (schedule re-audit 10/4/26 RULES-13).
+        _ss_fx.upsert(rid, name, floor_manager=True, db_path=db_path)
     return rid
 
 

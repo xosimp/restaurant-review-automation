@@ -59,22 +59,25 @@ def _hard(rows, c):
 
 def test_a_forty_to_forty_five_cook_is_held_to_45_by_the_code_and_the_prompt():
     c = _c(roster_names=["Cook"], active={"cook"}, hours_limits={"cook": (40, 45)})
-    assert c.max_hours("Cook") == 45 and sr.overtime_line(c, "Cook") == 45
+    # The owner's 45h is a ceiling, not the overtime line (schedule re-audit
+    # 10/4/26 RULES-9 — this test pinned 45 as the line, so the rebalance
+    # left overtime a teammate could take).
+    assert c.max_hours("Cook") == 45 and sr.overtime_line(c, "Cook") == 40
     week44 = [_row(i, "Cook", "8:00am", "4:00pm", "Line Cook") for i in range(5)] + \
              [_row(5, "Cook", "8:00am", "12:00pm", "Line Cook")]
     assert _hours(week44, "Cook") == 44
     assert "over_max_hours" not in _kinds(week44, c)
-    # the rebalance leaves overtime the owner allowed alone
+    # nobody else in the role: the overtime stays, inside the maximum, and is named
     out = sr.rebalance_overtime(week44, c, roster_roles={"Cook": "Line Cook"})
-    assert not out["moves"] and not out["trims"] and not out["left"]
+    assert not out["moves"] and not out["trims"] and [x["employee"] for x in out["left"]] == ["Cook"]
     week46 = week44[:-1] + [_row(5, "Cook", "8:00am", "2:00pm", "Line Cook")]
     assert "over_max_hours" in _kinds(week46, c)
     block = sr.prompt_block(c)
     # One weekly line per person, the code's own (C1, PR-3, PR-33): the
-    # cook's ROSTER line says 40-45h with the overtime allowed, the rule what
+    # cook's ROSTER line says 40-45h and where overtime starts, the rule what
     # a maximum above the line means — never a bare "nobody over 40".
-    assert "40-45h, overtime past 40h allowed for them" in _roster_line(c, "Cook", "Line Cook")
-    assert "above 40h, that is the owner allowing them that overtime" in block and "Nobody over 40" not in block
+    assert "40-45h, OT 40h" in _roster_line(c, "Cook", "Line Cook")
+    assert "above 40h it is a ceiling, not their overtime line" in block and "Nobody over 40" not in block
 
 
 def test_the_swap_index_reads_the_same_maximum():

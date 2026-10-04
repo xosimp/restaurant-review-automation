@@ -854,14 +854,16 @@ class Problem:
             if not ok:
                 return why
         for r in u.rows:
-            for part in sq.present_dayparts(r):
+            # Any minute in a blocked half of the day (RULES-11), the card as
+            # it stands that date (RULES-14) — the sweep's own tests.
+            for part in sq.touched_dayparts(r):
                 ok, why = c.can_work(name, u.date, part)
                 if not ok:
                     return why
             ok, why = c.window_ok(name, u.date, r.get("shift_start", ""), r.get("shift_end", ""))
             if not ok:
                 return why
-            ok, why = c.cert_ok(name, r.get("role", ""))
+            ok, why = c.cert_ok(name, r.get("role", ""), u.date)
             if not ok:
                 return why
             if not c.holds(name, r.get("role", ""), u.date):
@@ -1374,10 +1376,6 @@ class Problem:
             for r, sp in zip(u.rows, (_rules._span(x) for x in u.rows)):
                 if sp and not (u.draft is not None and c.training_row(r)):
                     by.setdefault((u.date, self.family(r.get("role"))), []).append((sp[1], u.id))
-        ends_all = {}
-        for u in self.units:
-            for sp in u.bspans:
-                ends_all[u.date] = max(ends_all.get(u.date, -1), sp[1])
         for (d, fam), items in by.items():
             closers = (c.closers_by_role or {}).get(fam)
             if not closers or not _rules._closer_rule_runs(c, fam, d):
@@ -1387,10 +1385,9 @@ class Problem:
             # who may work the date.
             ok = {self.pidx[k] for k in closers if k in self.pidx}
             day = sq._day_name(d)
-            close_m = _rules.close_minutes(c, day)
-            close_at = close_m if close_m is not None else ends_all.get(d, -1)
-            need = close_at + int((c.close_mins or {}).get(fam, 0) or 0)
             e_last = max(e for e, _u in items)
+            # The sweep's own target for the role (closer_need, RULES-6).
+            need, _until = _rules.closer_need(c, fam, day, e_last)
             full = max(need - 15, e_last - 15)
             draft_best = max((e for e, uid in items if self.units[uid].draft in ok), default=None)
             members_full = [uid for e, uid in items if e >= full]

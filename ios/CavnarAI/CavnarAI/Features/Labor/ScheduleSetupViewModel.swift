@@ -2310,6 +2310,9 @@ final class ScheduleSetupViewModel {
     var isLoadingRequests = false
     var requestBusyId: Int?
     var requestError: String?
+    /// An approved drop that leaves the floor without a manager (re-audit
+    /// RULES-15) — said beside the requests, never silently.
+    var requestWarning: String?
     var pendingRequests: [ShiftRequest] { shiftRequests.filter { $0.status == "pending" } }
 
     private struct RequestsResponse: Decodable {
@@ -2328,6 +2331,7 @@ final class ScheduleSetupViewModel {
         let ok: Bool
         let request: ShiftRequest?
         let error: String?
+        let warning: String?
     }
 
     func loadShiftRequests() async {
@@ -2352,12 +2356,14 @@ final class ScheduleSetupViewModel {
     func decideShiftRequest(_ id: Int, approve: Bool, replacement: String? = nil) async {
         requestBusyId = id
         requestError = nil
+        requestWarning = nil
         defer { requestBusyId = nil }
         do {
             let r: DecideResponse = try await client.send(
                 "/mobile/api/labor/shift-requests/\(id)/decide", method: .post,
                 body: DecideBody(decision: approve ? "approve" : "deny", replacement: replacement))
             if r.ok, let updated = r.request {
+                requestWarning = r.warning
                 if let i = shiftRequests.firstIndex(where: { $0.id == id }) { shiftRequests[i] = updated }
                 Haptic.success()
                 await loadShiftRequests()

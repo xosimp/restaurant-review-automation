@@ -58,6 +58,9 @@ def _restaurant(db_path, roster=(), **cols):
     c.close()
     for name, role in roster:
         models.add_manual_team_member(rid, name, role=role, db_path=db_path)
+        # Everyone here runs the floor: a roster with nobody counted as a
+        # floor manager holds the publish (schedule re-audit 10/4/26 RULES-13).
+        staff_settings.upsert(rid, name, floor_manager=True, db_path=db_path)
     return rid
 
 

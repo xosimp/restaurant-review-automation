@@ -4990,6 +4990,9 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         signals["managers"] = dict(getattr(c, "managers", None) or {})
         signals["acting_managers"] = {k: set(v or ()) for k, v in (getattr(c, "acting_managers", None) or {}).items()}
         signals["role_families"] = dict(getattr(c, "role_families", None) or {})
+        # Who is training: the scorer's floor count leaves their training
+        # shifts out, as the rules do (schedule re-audit 10/4/26 SQ-8).
+        signals["trainees"] = dict(getattr(c, "trainees", None) or {})
         signals["held_roles"] = {k: set(v or ()) for k, v in (getattr(c, "held_roles", None) or {}).items()}
         signals["closers_by_role"] = {k: set(v or ()) for k, v in (getattr(c, "closers_by_role", None) or {}).items()}
         signals["stations"] = dict(getattr(c, "stations", None) or {})
@@ -5345,7 +5348,7 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=dict(targets), week_rows=rows)
     c = inputs.get("constraints")
     if c is not None and inputs.get("roster"):
-        c.active = {n.lower() for n in inputs["roster"]}
+        c.active = {c.key(n) for n in inputs["roster"] if c.key(n)}
         c.roster_names = list(inputs["roster"])
     signals, weights = _quality_signals(restaurant_id, inputs)
     import threading as _threading
@@ -6781,14 +6784,19 @@ def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
         # checked against — one roster, one answer. An explicitly empty list
         # means "no roster on file", which is no opinion (the same reading
         # Constraints.can_work gives).
-        c.roster_names = list(result["roster"] or [])
-        c.active = {str(n).strip().lower() for n in (result["roster"] or []) if n}
-        if c.active and result.get("dormant"):
-            # Somebody left out of the prompt for having no shift in weeks
-            # is still on the staff list (re-audit 10/4/26 PIPE-5): a row the
-            # owner wrote for them — a redo's kept day — is legal, as publish
-            # reads it. Code never chooses them (Constraints.fillable).
-            c.active |= {str(n).strip().lower() for n in result["dormant"] if n}
+        # The people left off the prompt as dormant are still on the roster:
+        # a row the owner keeps or writes for them — a redo's kept day — is
+        # legal, and code never chooses them (Constraints.fillable). Reading
+        # the roster without them made an owner's kept row for a returning
+        # server "not on the staff list" in the review, while the publish
+        # gate passed it (schedule re-audit 10/4/26 RULES-16, PIPE-5). Keyed
+        # by c.key, as every other rule keys a person; an empty roster stays
+        # empty (no roster on file is no opinion).
+        names = list(result["roster"] or [])
+        if names:
+            names += [n for n in sorted(result.get("dormant") or {}) if n not in names]
+        c.roster_names = names
+        c.active = {c.key(n) for n in names if n and c.key(n)}
     # Closed dates and days the generation accepted as not trading.
     c.closed_dates = set(getattr(c, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
     newly = _take_new_time_off(c, fresh) if (fresh is not None and fresh is not c) else []
