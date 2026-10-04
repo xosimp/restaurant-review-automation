@@ -1717,10 +1717,14 @@ def test_an_over_hours_row_still_counts_as_somebody_on_the_floor():
     hours is a cost problem; the person is still there."""
     job = _source("schedule_engine.py")
     block = job[job.index("_NO_SHOW_REASONS"):]
-    block = block[:block.index("result[\"prior_week_assignments\"]")]
+    block = block[:block.index("_score_schedule_quality(")]
     assert "over 40h" not in block
     assert "double-booked at the same start time" in block
     assert "not on the staff list" in block
+    # The flagged rows are the no-show breaches only (_flagged_rows).
+    assert "_flagged_rows(result.get(\"rule_violations\"))" in block
+    flagged = job[job.index("def _flagged_rows("):]
+    assert "if v.get(\"no_show\")" in flagged[:flagged.index("\ndef ", 10)]
 
 
 # ── The demo account ──────────────────────────────────────────────────────
