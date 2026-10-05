@@ -29,6 +29,7 @@ reviews — as things that moved together, never as a cause.
 """
 import base64
 import json
+import re
 import logging
 import os
 import statistics
@@ -261,10 +262,14 @@ def clean_property_id(raw) -> str:
 
 def clean_site_url(raw) -> str:
     """A Search Console property: "sc-domain:example.com" or a URL prefix
-    ending in "/". '' when it is neither."""
+    ending in "/". A bare domain ("simpleejs.com", what Danny sent 10/5/26)
+    is the Domain property, Search Console's default kind. '' when it is
+    none of these."""
     text = str(raw or "").strip()
     if not text:
         return ""
+    if re.fullmatch(r"(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", text):
+        text = "sc-domain:" + (text[4:] if text.lower().startswith("www.") else text)
     if text.lower().startswith("sc-domain:"):
         host = text.split(":", 1)[1].strip().lower()
         return f"sc-domain:{host}" if host and "." in host and "/" not in host else ""

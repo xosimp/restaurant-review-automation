@@ -17286,7 +17286,7 @@ function waRender(checks){
     + '<div class="wa-step"><span class="n">4</span><div><b>Tell Cavnar AI which ones</b>'
     + '<div class="wa-fields">'
     + '<div class="ac-field"><label for="wa-ga4">GA4 property ID</label><input class="ac-input" id="wa-ga4" inputmode="numeric" autocomplete="off" placeholder="412345678" value="' + e(d.ga4_property_id || '') + '"><small>Google Analytics → Admin → Property details. A number, not the G- ID.</small></div>'
-    + '<div class="ac-field"><label for="wa-gsc">Search Console property</label><input class="ac-input" id="wa-gsc" autocomplete="off" placeholder="sc-domain:yoursite.com" value="' + e(d.gsc_site_url || '') + '"><small>Exactly as Search Console shows it, e.g. sc-domain:yoursite.com or https://yoursite.com/.</small></div>'
+    + '<div class="ac-field"><label for="wa-gsc">Search Console property</label><input class="ac-input" id="wa-gsc" autocomplete="off" placeholder="sc-domain:yoursite.com" value="' + e(d.gsc_site_url || '') + '"><small>Your domain (yoursite.com), or exactly as Search Console shows it: sc-domain:yoursite.com or https://yoursite.com/.</small></div>'
     + '</div>'
     + '<div class="wa-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="wa-save" onclick="waSave(this)">Save and check</button>'
     + ((d.ga4_property_id || d.gsc_site_url) ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-sm" onclick="waDisconnect(this)">Disconnect</button>' : '')

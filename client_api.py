@@ -12310,8 +12310,8 @@ def _do_web_analytics_set(current_user):
         raw = data.get("gsc_site_url")
         site = _wa.clean_site_url(raw)
         if str(raw or "").strip() and not site:
-            return {"ok": False, "error": "Paste the Search Console property exactly as it shows there: "
-                                          "\"sc-domain:yoursite.com\" or a full URL like https://yoursite.com/."}, 400
+            return {"ok": False, "error": "Paste your domain (yoursite.com) or the Search Console property exactly as it shows "
+                                          "there: \"sc-domain:yoursite.com\" or a full URL like https://yoursite.com/."}, 400
         fields["gsc_site_url"] = site or None
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400

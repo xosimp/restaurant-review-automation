@@ -109,7 +109,9 @@ def test_a_property_id_and_a_site_url_are_read_strictly():
     assert wa.clean_property_id("G-ABC123") == "" and wa.clean_property_id("12") == ""
     assert wa.clean_site_url("sc-domain:SimpleEJs.com") == "sc-domain:simpleejs.com"
     assert wa.clean_site_url("https://simpleejs.com") == "https://simpleejs.com/"
-    assert wa.clean_site_url("simpleejs.com") == "" and wa.clean_site_url("sc-domain:") == ""
+    assert wa.clean_site_url("simpleejs.com") == "sc-domain:simpleejs.com", "a bare domain is the Domain property"
+    assert wa.clean_site_url("www.SimpleEJs.com") == "sc-domain:simpleejs.com"
+    assert wa.clean_site_url("simple ejs") == "" and wa.clean_site_url("sc-domain:") == ""
 
 
 def test_outbound_domains_are_grouped_by_what_a_click_means():
