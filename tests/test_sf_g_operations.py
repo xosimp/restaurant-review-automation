@@ -316,6 +316,87 @@ def test_a_large_call_off_keeps_its_meta_whole():
     assert issues.meta_text(None) is None
 
 
+# Simple EJ's, 10/5/26: issues 7-10 were one per person, three texts in four
+# seconds for two servers on the same 11am start. They were opened by the
+# 10/3 build (144005c3, person-keyed) in the half hour before the grouping
+# deploy (cbab37bc) went live at 16:32 UTC — not by any path the current
+# check has. These replay that morning on the current check, and the hand-
+# over from the person-keyed rows that were still open when it went live.
+MON = date(2026, 10, 5)
+EJS_MORNING = [("Antonio Corona Martinez", "Kitchen", "10:00am", "4:00pm", 6),
+               ("Mia Martin", "Host AM", "11:00am", "4:00pm", 5),
+               ("Marissa Kalamaris", "Server AM", "11:00am", "4:00pm", 5),
+               ("Evan Price", "Server AM", "11:00am", "4:00pm", 5),
+               ("Zoe Lind", "Server AM", "11:00am", "4:00pm", 5),
+               ("Nia Park", "Server AM", "11:30am", "4:00pm", 4.5),
+               ("Omar Ruiz", "Server PM", "12:00pm", "9:00pm", 9)]
+
+
+def _ejs_morning(db_path, monkeypatch):
+    import labor_replacements
+    rid = _rid(db_path)
+    _routed(db_path, rid)
+    _publish(db_path, rid, MON, EJS_MORNING)
+    monkeypatch.setattr(labor_replacements, "for_gap", lambda *a, **k: [])
+    return rid
+
+
+def test_ejs_call_off_is_one_issue_and_one_text_per_role_family(db_path, monkeypatch, texts):
+    import issues, strategy_jobs
+    rid = _ejs_morning(db_path, monkeypatch)
+    _clocked(monkeypatch, ["Zoe Lind", "Nia Park", "Omar Ruiz"])
+    _at(monkeypatch, datetime(2026, 10, 5, 11, 3))
+    assert strategy_jobs.run_coverage_check(db_path=db_path)["opened"] == 1          # the kitchen
+    _at(monkeypatch, datetime(2026, 10, 5, 11, 24))
+    assert strategy_jobs.run_coverage_check(db_path=db_path)["opened"] == 2          # hosts, servers
+    by_key = {i["source_key"]: i for i in _coverage(db_path, rid)}
+    day = MON.isoformat()
+    assert set(by_key) == {issues.coverage_key(day, f) for f in ("kitchen", "host", "server")}
+    server = by_key[issues.coverage_key(day, "server")]
+    assert sorted(p["employee"] for p in issues.coverage_people(server)) == ["Evan Price", "Marissa Kalamaris"]
+    assert server["title"] == "2 of 5 servers haven't clocked in"
+    assert len([t for t in texts if "clocked in" in t[1]]) == 3, "one text per role family, not per person"
+
+
+def test_person_keyed_issues_open_at_the_deploy_are_honoured_by_the_grouped_check(db_path, monkeypatch, texts):
+    """What production held at 16:32 UTC: four person-keyed issues, open.
+    The grouped check raises none of those people again, an arrival closes
+    their own issue, and somebody new in the role opens the role's issue
+    ("@server", then "@server#2" once a manager has closed it)."""
+    import issues, staff_settings, strategy_jobs
+    rid = _ejs_morning(db_path, monkeypatch)
+    day = MON.isoformat()
+    for name, role, start, _end, _h in EJS_MORNING[:4]:                            # as the 10/3 build wrote them
+        issues.create_issue(rid, "coverage", f"{name} hasn't clocked in", severity="high", notify=False,
+                            source_key=f"coverage:{day}:{staff_settings.name_key(name)}",
+                            meta={"missing": name, "role": role, "shift_start": start, "covers": []},
+                            db_path=db_path)
+    _clocked(monkeypatch, ["Zoe Lind", "Omar Ruiz"])
+    _at(monkeypatch, datetime(2026, 10, 5, 11, 42))
+    assert strategy_jobs.run_coverage_check(db_path=db_path)["opened"] == 0
+    assert len(_coverage(db_path, rid)) == 4 and not texts, "nobody already on an issue is raised twice"
+
+    # Marissa arrives; Nia (11:30am) is now past the grace: her own role issue.
+    _clocked(monkeypatch, ["Zoe Lind", "Omar Ruiz", "Marissa Kalamaris"])
+    _at(monkeypatch, datetime(2026, 10, 5, 11, 50))
+    assert strategy_jobs.run_coverage_check(db_path=db_path)["opened"] == 1
+    by_key = {i["source_key"]: i for i in _coverage(db_path, rid)}
+    marissa = by_key[f"coverage:{day}:marissa kalamaris"]
+    assert marissa["status"] == "resolved" and marissa["resolution_note"] == issues.AUTO_ARRIVED_NOTE
+    assert by_key[f"coverage:{day}:evan price"]["status"] != "resolved"
+    group = by_key[issues.coverage_key(day, "server")]
+    assert [p["employee"] for p in issues.coverage_people(group)] == ["Nia Park"]
+    assert len([t for t in texts if "clocked in" in t[1]]) == 1
+
+    # A manager closes it; Omar's punch is lost and he reads as missing: "#2".
+    issues.resolve(rid, group["id"], note="Handled", db_path=db_path)
+    _clocked(monkeypatch, ["Zoe Lind", "Marissa Kalamaris"])
+    _at(monkeypatch, datetime(2026, 10, 5, 12, 20))
+    assert strategy_jobs.run_coverage_check(db_path=db_path)["opened"] == 1
+    second = {i["source_key"]: i for i in _coverage(db_path, rid)}[issues.coverage_key(day, "server", 2)]
+    assert [p["employee"] for p in issues.coverage_people(second)] == ["Omar Ruiz"]
+
+
 def test_ask_to_cover_offers_the_gap_the_suggestion_was_for(db_path, monkeypatch, texts):
     import intraday, issues, strategy_jobs
     rid = _call_off_world(db_path, monkeypatch)
