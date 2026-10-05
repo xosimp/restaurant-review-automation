@@ -5900,9 +5900,30 @@ def _do_dsr_category(u):
     if cat.lower() == _dsr.UNMAPPED.lower():
         return {"ok": False, "error": "Pick one of your categories."}, 400
     cat = {c.lower(): c for c in _dsr.DEFAULT_CATEGORIES}.get(cat.lower(), cat)
-    store.set_category(_rid(u), name, cat)
+    # What the department holds as the owner maps it (the latest night's POS
+    # item categories inside it): anything new inside it later is asked
+    # about, not counted here (block_sales.categorize, owner 10/5/26).
+    store.set_category(_rid(u), name, cat, held=_dsr_contents(_rid(u)).get(name))
     return {"ok": True, "pos_name": name, "category": cat,
             "note": f"Nights already reported keep their split; from the next report on, {name} counts as {cat}."}, 200
+
+
+def _dsr_contents(rid):
+    """{department: [POS item categories]} the latest report saw inside each
+    department, {} before any night recorded them."""
+    from dsr import store
+    latest = store.list_reports(rid, limit=1)
+    if not latest:
+        return {}
+    sales = ((latest[0].get("facts") or {}).get("blocks") or {}).get("sales") or {}
+    detail = sales.get("detail") or {}
+    # The POS's catalog (every item category under the department) where it
+    # was recorded, else what sold inside it that night.
+    catalog = detail.get("department_catalog") or {}
+    if catalog:
+        return {dep: sorted(cats) for dep, cats in catalog.items() if cats}
+    inside = detail.get("department_contents") or {}
+    return {dep: sorted(cats) for dep, cats in inside.items() if isinstance(cats, dict) and cats}
 
 
 def _dsr_unmapped(rid):
@@ -5919,7 +5940,14 @@ def _dsr_unmapped(rid):
     # showed it as Unmapped with "Pick a category" straight after each pick -
     # the save had worked, the list hadn't moved (owner, 9/28/26).
     mapped = store.category_map(rid)
-    return ([{"department": x.get("department"), "net": x.get("net")} for x in rows
+    # Something new inside a mapped department ("Other › Pool") says where
+    # its department counts, so the owner can keep it there or move it.
+    def _row(x):
+        out = {"department": x.get("department"), "net": x.get("net")}
+        if x.get("new_in"):
+            out.update(new_in=x["new_in"], mapped_to=x.get("mapped_to"))
+        return out
+    return ([_row(x) for x in rows
              if isinstance(x, dict) and x.get("department")
              and str(x.get("department")).strip().lower() not in mapped], latest[0]["business_date"])
 
@@ -5961,6 +5989,9 @@ def _do_dsr_settings_get(u):
     return {"ok": True, "can_edit": True, "settings": _dsr_settings_payload(r),
             "categories": list(_dsr.DEFAULT_CATEGORIES),
             "category_map": store.category_rows(_rid(u)),
+            # What each mapped department holds ({pos_name: [categories]}),
+            # said under its row so "Other" reads as what it is.
+            "held": store.held_rows(_rid(u)), "contents": _dsr_contents(_rid(u)),
             "unmapped": unmapped, "unmapped_as_of": mdy(as_of) if as_of else None}, 200
 
 

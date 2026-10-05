@@ -159,6 +159,15 @@ def init_dsr(db_path=DB_PATH):
             last_at         TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, business_date)
         )""")
+        # What a mapped POS department held when the owner mapped it - the
+        # POS's own item categories inside it (RPOWER's "Other" held only
+        # "Darts" at Simple EJ's, 10/5/26). Anything new inside it later is
+        # not counted toward the mapping until the owner says so
+        # (block_sales.categorize). NULL: not known yet - the first night that
+        # reports the department's contents sets it.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(dsr_category_map)")}
+        if "held_json" not in cols:
+            conn.execute("ALTER TABLE dsr_category_map ADD COLUMN held_json TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -682,19 +691,90 @@ def budget_prefill(restaurant_id, week_dates, source, pct=0.0, db_path=DB_PATH) 
     return {"days": days, "missing": missing, "basis": basis}
 
 
-def set_category(restaurant_id, pos_name, category, db_path=DB_PATH):
+# A POS item category inside a department, as one name: "Other › Pool".
+# Mapped like a department (set_category), and it wins over its department's
+# own mapping (block_sales.categorize).
+SUB_SEP = " \u203a "
+
+
+def sub_name(department, category):
+    return f"{str(department or '').strip()}{SUB_SEP}{str(category or '').strip()}"
+
+
+def split_sub(name):
+    """(department, category) of "Other › Pool", or (name, None)."""
+    parts = str(name or "").split(SUB_SEP.strip(), 1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        return parts[0].strip(), parts[1].strip()
+    return str(name or "").strip(), None
+
+
+def set_category(restaurant_id, pos_name, category, db_path=DB_PATH, held=None):
+    """Map a POS department (or "Department › Category") to a category.
+    `held`: the department's own item categories as the owner saw them when
+    mapping - what it may carry without asking again; None leaves what is
+    stored (or lets the next night set it)."""
     name = str(pos_name or "").strip()
     cat = str(category or "").strip()
     if not name or not cat:
         raise ValueError("both a POS name and a category are required")
+    held_json = json.dumps(sorted({str(h).strip() for h in held if str(h).strip()})) if held else None
     conn = get_conn(db_path)
     try:
-        conn.execute("INSERT INTO dsr_category_map (restaurant_id, pos_name, category, updated_at) VALUES (?,?,?,datetime('now')) "
-                     "ON CONFLICT(restaurant_id, pos_name) DO UPDATE SET category=excluded.category, updated_at=excluded.updated_at",
-                     (restaurant_id, name[:120], cat[:60]))
+        conn.execute("INSERT INTO dsr_category_map (restaurant_id, pos_name, category, updated_at, held_json) "
+                     "VALUES (?,?,?,datetime('now'),?) "
+                     "ON CONFLICT(restaurant_id, pos_name) DO UPDATE SET category=excluded.category, "
+                     "updated_at=excluded.updated_at, held_json=COALESCE(excluded.held_json, dsr_category_map.held_json)",
+                     (restaurant_id, name[:120], cat[:60], held_json))
         conn.commit()
     finally:
         conn.close()
+
+
+def held_map(restaurant_id, db_path=DB_PATH):
+    """{department lower: {item category lower}} for every mapped department
+    whose contents are known; a department not in it is not checked yet."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT pos_name, held_json FROM dsr_category_map WHERE restaurant_id=? "
+                            "AND held_json IS NOT NULL", (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        try:
+            out[r["pos_name"].strip().lower()] = {str(x).strip().lower() for x in json.loads(r["held_json"]) or []}
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def note_held(restaurant_id, contents, db_path=DB_PATH):
+    """A mapped department reported with its contents for the first time:
+    what it holds now is what the owner mapped (they mapped it knowing what
+    it sells). `contents` is {department: names} - the POS's catalog of item
+    categories under it where it has one, else a night's {category: net}.
+    Only fills a department whose contents were unknown - a later night
+    never widens what was recorded. Returns the departments set."""
+    if not contents:
+        return []
+    conn = get_conn(db_path)
+    done = []
+    try:
+        rows = conn.execute("SELECT pos_name FROM dsr_category_map WHERE restaurant_id=? AND held_json IS NULL",
+                            (restaurant_id,)).fetchall()
+        unknown = {r["pos_name"].strip().lower(): r["pos_name"] for r in rows}
+        for dep, cats in contents.items():
+            key = str(dep or "").strip().lower()
+            if key not in unknown or not cats:
+                continue
+            conn.execute("UPDATE dsr_category_map SET held_json=? WHERE restaurant_id=? AND pos_name=? AND held_json IS NULL",
+                         (json.dumps(sorted(str(c).strip() for c in cats if str(c).strip())), restaurant_id, unknown[key]))
+            done.append(unknown[key])
+        conn.commit()
+    finally:
+        conn.close()
+    return done
 
 
 def category_map(restaurant_id, db_path=DB_PATH):
@@ -719,6 +799,23 @@ def category_rows(restaurant_id, db_path=DB_PATH):
     finally:
         conn.close()
     return [{"pos_name": r["pos_name"], "category": r["category"]} for r in rows]
+
+
+def held_rows(restaurant_id, db_path=DB_PATH):
+    """{pos_name: [item categories]} as recorded, for the settings screen."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT pos_name, held_json FROM dsr_category_map WHERE restaurant_id=? "
+                            "AND held_json IS NOT NULL", (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        try:
+            out[r["pos_name"]] = list(json.loads(r["held_json"]) or [])
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def category_for(pos_name, mapping):

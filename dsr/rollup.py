@@ -207,9 +207,19 @@ def _day_categories(rid, m, facts, db_path):
     from dsr.block_sales import categorize, live_categories
     net = m.get("sales.net")
     deps = {k[len("sales.dep:"):]: v for k, v in m.items() if k.startswith("sales.dep:")}
+    # The POS item categories inside each department (sales.depcat:"Other ›
+    # Darts", nights since 10/5/26): something new inside a mapped
+    # department is not counted toward it here either (categorize).
+    contents = {}
+    for k, v in m.items():
+        if k.startswith("sales.depcat:"):
+            dep, sub = store.split_sub(k[len("sales.depcat:"):])
+            if sub:
+                contents.setdefault(dep, {})[sub] = v
     try:
         if deps:
-            cats, unmapped = categorize(store.category_map(rid, db_path=db_path), deps, net)
+            cats, unmapped = categorize(store.category_map(rid, db_path=db_path), deps, net,
+                                        contents=contents, held=store.held_map(rid, db_path=db_path))
         else:
             sales = ((facts or {}).get("blocks") or {}).get("sales") or {}
             if sales.get("status") != _dsr.READY or not sales.get("detail"):

@@ -736,6 +736,18 @@ def menu_lookup(restaurant_id: int) -> dict:
 # dropped, and the DSR shows it as unmapped.
 UNASSIGNED_DEPARTMENT = "Unassigned"
 
+
+def _department_catalog(cats, deps):
+    """{department: [item category names]} from the sales category and
+    department catalogs."""
+    out = {}
+    for cat in (cats or {}).values():
+        name = (cat.get("name") or "").strip()
+        dep = ((deps or {}).get(str(cat.get("slsdep_mid"))) or {}).get("name") or UNASSIGNED_DEPARTMENT
+        if name:
+            out.setdefault(dep.strip() or UNASSIGNED_DEPARTMENT, set()).add(name)
+    return {d: sorted(v) for d, v in out.items()}
+
 # How far back a closeday row may start and still cover the day asked about
 # (a store that missed a close and closed two days at once: from_date is the
 # earlier day, thru_date the later).
@@ -847,6 +859,12 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
         dep = deps.get(str(cat.get("slsdep_mid"))) or {}
         return (dep.get("name") or "").strip() or UNASSIGNED_DEPARTMENT
 
+    def sales_category(item):
+        # The item category inside its department ("Darts" in "Other"):
+        # what a mapped department holds (dsr block_sales.categorize).
+        cat = cats.get(str((item or {}).get("slscat_mid"))) or {}
+        return (cat.get("name") or "").strip() or None
+
     live = {}
     for t in tickets:
         if _biz_date(t.get("date")) != day or t.get("is_cancelled"):
@@ -855,7 +873,7 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
 
     total = _parts()
     voids = refunds = 0.0
-    by_dep, by_hour, items = {}, {}, {}
+    by_dep, by_hour, items, by_dep_cat = {}, {}, {}, {}
     sale_tickets = set()
     checks = {"lines": 0, "lines_sale": 0.0, "lines_discount": 0.0, "lines_comp_sales": 0.0,
               "unknown_type_lines": 0, "unknown_type_sales": 0.0, "excluded_lines": 0}
@@ -896,6 +914,9 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             delta["comps"] = value
             checks["lines_comp_sales"] = round(checks["lines_comp_sales"] + sales, 2)
         buckets = [total, by_dep.setdefault(dep, _parts())]
+        sub = sales_category(item)
+        if sub:
+            buckets.append(by_dep_cat.setdefault(dep, {}).setdefault(sub, _parts()))
         if hour:
             buckets.append(by_hour.setdefault(hour, _parts()))
         if kind != "discount" and not item.get("is_mod"):
@@ -927,6 +948,11 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
         # partial feed cannot report covers honestly.
         "guests": guests if guests and len(counted) == len(sale_tickets) else None,
         "by_department": by_dep, "by_hour": by_hour,
+        "by_department_category": by_dep_cat,
+        # Every item category the POS files under each department, sold
+        # tonight or not: what a department holds when it is mapped
+        # (dsr store.note_held), so a rarely sold category is never "new".
+        "department_catalog": _department_catalog(cats, deps),
         # Sold at least once; an item that was only ever comped was served,
         # not sold, and its value is already in comps.
         "items": [it for it in items.values() if it["qty"] > 0],

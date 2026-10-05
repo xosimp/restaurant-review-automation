@@ -114,26 +114,60 @@ def _arrange(cats, net):
     return out
 
 
-def categorize(mapping, by_department, net):
+def categorize(mapping, by_department, net, contents=None, held=None):
     """(categories, unmapped) for {department: net} under a category map -
-    one rule for a night being collected and a stored night being shown."""
+    one rule for a night being collected and a stored night being shown.
+
+    `contents` ({department: {POS item category: net}}, where the POS says
+    what is inside a department) and `held` (store.held_map: what each
+    mapped department held when the owner mapped it) keep a mapping honest
+    as the menu changes: an item category the owner mapped by name ("Other ›
+    Pool") counts where they put it; one the department held all along
+    counts with the department; one NEW inside a mapped department is not
+    counted toward that mapping - it is listed unmapped, named "Other ›
+    Pool" and marked `new_in`, until the owner places it. A department
+    mapped as Darts that later rings pool time would otherwise have counted
+    pool as darts with nobody told (owner, 10/5/26)."""
     cats, unmapped = {}, []
-    for dep, amount in sorted(by_department.items(), key=lambda kv: -kv[1]):
-        cat = store.category_for(dep, mapping)
-        if cat == dsr.UNMAPPED:
-            unmapped.append({"department": dep, "net": round(amount, 2)})
-            continue
+    contents, held = contents or {}, held or {}
+
+    def _add(cat, name, amount):
         c = cats.setdefault(cat, {"category": cat, "net": 0.0, "departments": []})
         c["net"] = round(c["net"] + amount, 2)
-        c["departments"].append(dep)
+        if name not in c["departments"]:
+            c["departments"].append(name)
+
+    for dep, amount in sorted(by_department.items(), key=lambda kv: -kv[1]):
+        dep_cat = store.category_for(dep, mapping)
+        inside = contents.get(dep) or {}
+        rest = float(amount or 0)
+        known = held.get(str(dep).strip().lower())
+        for sub, sub_amount in sorted(inside.items(), key=lambda kv: -kv[1]):
+            sub_amount = float(sub_amount or 0)
+            named = store.category_for(store.sub_name(dep, sub), mapping)
+            if named != dsr.UNMAPPED:
+                _add(named, store.sub_name(dep, sub), sub_amount)
+            elif dep_cat != dsr.UNMAPPED and known is not None and str(sub).strip().lower() not in known:
+                unmapped.append({"department": store.sub_name(dep, sub), "net": round(sub_amount, 2),
+                                 "new_in": dep, "mapped_to": dep_cat, "pos_category": sub})
+            else:
+                continue                      # counts with its department, below
+            rest -= sub_amount
+        rest = round(rest, 2)
+        if not inside or abs(rest) >= 0.01:
+            if dep_cat == dsr.UNMAPPED:
+                unmapped.append({"department": dep, "net": rest})
+            else:
+                _add(dep_cat, dep, rest)
     return _arrange(cats, net), unmapped
 
 
-def _categories(ctx, by_department, net):
+def _categories(ctx, by_department, net, contents=None):
     """(categories, unmapped, unallocated). Categories in Erik's order, then
     any the owner named themselves, then nothing guessed."""
     mapping = store.category_map(ctx.restaurant_id, db_path=ctx.db_path)
-    out, unmapped = categorize(mapping, by_department, net)
+    out, unmapped = categorize(mapping, by_department, net, contents=contents,
+                               held=store.held_map(ctx.restaurant_id, db_path=ctx.db_path))
     unallocated = round(net - sum(by_department.values()), 2) if net is not None else None
     return out, unmapped, (unallocated if unallocated and abs(unallocated) >= 0.01 else None)
 
@@ -150,7 +184,9 @@ def live_categories(detail, restaurant_id, net, db_path=None):
     mapping = store.category_map(restaurant_id, **kw)
     by_dep = (detail or {}).get("by_department")
     if isinstance(by_dep, dict) and by_dep:
-        return categorize(mapping, {k: float(v or 0) for k, v in by_dep.items()}, net)
+        return categorize(mapping, {k: float(v or 0) for k, v in by_dep.items()}, net,
+                          contents=(detail or {}).get("department_contents"),
+                          held=store.held_map(restaurant_id, **kw))
     cats = {c["category"]: {"category": c["category"], "net": float(c.get("net") or 0),
                             "departments": list(c.get("departments") or [])}
             for c in (detail or {}).get("categories") or [] if c.get("category")}
@@ -345,13 +381,27 @@ def _ready(ctx, data, provider, closed_by):
     })
 
     hourly = [{"hour": h, "net": v} for h, v in sorted(data["by_hour"].items(), key=lambda kv: _service_order(kv[0]))]
-    cats, unmapped, unallocated = _categories(ctx, data["by_department"], net)
+    contents = data.get("by_department_category") or {}
+    cats, unmapped, unallocated = _categories(ctx, data["by_department"], net, contents=contents)
+    try:
+        # A mapped department seen with its contents for the first time:
+        # what it holds tonight is what the owner mapped (store.note_held).
+        # The POS's catalog where it has one (every item category filed under
+        # the department, sold tonight or not), else tonight's contents.
+        store.note_held(ctx.restaurant_id, data.get("department_catalog") or contents, db_path=ctx.db_path)
+    except Exception as e:
+        log.warning("dsr sales: department contents not recorded rid=%s: %s", ctx.restaurant_id, e)
     for c in cats:
         metrics[f"cat:{c['category']}"] = c["net"]
     # Each department's own dollars too: categories are derived from these
-    # whenever a night is shown, under the map as it stands then.
+    # whenever a night is shown, under the map as it stands then - and each
+    # POS item category inside one ("depcat:Other › Darts"), so a week or a
+    # period sees what came in new inside a mapped department.
     for dep, amount in data["by_department"].items():
         metrics[f"dep:{dep}"] = round(float(amount or 0), 2)
+    for dep, inside in contents.items():
+        for sub, amount in (inside or {}).items():
+            metrics[f"depcat:{store.sub_name(dep, sub)}"] = round(float(amount or 0), 2)
     if unmapped:
         metrics[f"cat:{dsr.UNMAPPED}"] = round(sum(u["net"] for u in unmapped), 2)
     metrics["evening_share_pct"] = evening_share(hourly, net)
@@ -376,6 +426,9 @@ def _ready(ctx, data, provider, closed_by):
         "categories": cats,
         "unmapped": unmapped,
         "by_department": {dep: round(float(v or 0), 2) for dep, v in data["by_department"].items()},
+        "department_contents": {dep: {sub: round(float(v or 0), 2) for sub, v in (inside or {}).items()}
+                                for dep, inside in contents.items()},
+        "department_catalog": data.get("department_catalog") or {},
         "unallocated": unallocated,
         "top_items": top,
         "bottom_items": bottom,

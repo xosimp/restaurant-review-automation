@@ -264,7 +264,7 @@ reports a status instead of a zero:
 
 | Block | What it reads |
 |---|---|
-| `block_sales.py` | The POS night (`pos.fetch_day_sales`) against yesterday, last week, last year, the forecast and the budget |
+| `block_sales.py` | The POS night (`pos.fetch_day_sales`) against yesterday, last week, last year, the forecast and the budget; categories through the owner's map, with each department's POS item categories (`department_contents`) checked against what the department held when mapped — something new inside it is listed on its own, not counted toward the mapping (`categorize`, 10/5/26) |
 | `block_labor.py` | `labor_daily_history`, overtime, the evening split, attendance; salaried pay for the owner (`access._live_salaries`); labor by department (`department_of`: the POS's payroll category, the bar and management named apart) scaled to the night's labor, and labor hours in every clock hour |
 | `block_service.py` | The night's checks, read from the POS when the report runs (`common.night_archive` archives the night once per pass after Sales is in, so the figures are in version 1, not the 4am archive): meal periods, rooms, drinks per guest, servers, the loss ledger by reason and approver, punch edits, the cash-and-cards register (tenders by method, card tips, payouts and pay-ins with their approver). Never holds the night (`pipeline.NEVER_HOLDS`); a POS without check detail is quiet, not missing |
 | `block_food.py` | Theoretical food cost from recipes × dishes sold, plus waste |

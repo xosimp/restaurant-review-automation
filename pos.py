@@ -695,6 +695,11 @@ def _net_day(raw):
         "refunds": _money(raw.get("refunds")),
         "tax": _money(raw.get("tax")),
         "by_department": {k: net_of(v) for k, v in (raw.get("by_department") or {}).items()},
+        # The POS's item categories inside each department, where it has
+        # that level (RPOWER): {department: {category: net}}.
+        "by_department_category": {k: {c: net_of(p) for c, p in (v or {}).items()}
+                                   for k, v in (raw.get("by_department_category") or {}).items()},
+        "department_catalog": {k: list(v or []) for k, v in (raw.get("department_catalog") or {}).items()},
         "by_hour": {k: net_of(v) for k, v in sorted((raw.get("by_hour") or {}).items())},
         "items": items,
         "net_deductions": list(NET_DEDUCTIONS),
