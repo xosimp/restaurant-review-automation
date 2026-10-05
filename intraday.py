@@ -479,6 +479,8 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
                    None)
         if not gap or gap.get("status") != "missing":
             return {"ok": False, "error": "That shift is already covered or they've clocked in."}
+        if gap.get("shift_over"):
+            return {"ok": False, "error": "That shift has already ended."}
         missing, role, start = gap["employee"], gap.get("role") or meta.get("role") or "", gap.get("shift_start") or ""
     else:
         missing, role, start = meta.get("missing") or "A teammate", meta.get("role") or "", meta.get("shift_start") or ""

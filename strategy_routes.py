@@ -120,6 +120,8 @@ def askable_covers(issue) -> list:
         return []
     import issues as _issues_gaps
     gaps = _issues_gaps.cover_gaps(issue)
+    if gaps and not any(g.get("status") == "missing" and not g.get("shift_over") for g in gaps):
+        return []                         # every gap's shift is over: nothing left to cover
     if len(gaps) > 1:
         return [g["cover"] for g in gaps if g.get("cover")]
     meta = issue.get("meta") or {}

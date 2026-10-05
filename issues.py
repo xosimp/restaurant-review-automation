@@ -1168,6 +1168,70 @@ _LATE_CLAUSE = re.compile(r" They said(?: at [^ ]+)? they'd be about \d+ minutes
 # is still read by every reader through coverage_people.
 COVERAGE_GROUP_MARK = "@"
 AUTO_ARRIVED_NOTE = "Closed automatically: they clocked in."
+# A gap whose shift ended with no clock-in. While the day runs, the person is
+# marked `shift_over` on the issue and nobody is offered their shift any
+# more; once the business day is over the issue closes with this note, and
+# the nightly attendance read still records them as a no-show from it.
+# Before, an unresolved coverage issue stayed on Home as "hasn't clocked in",
+# with "Ask … to cover" buttons, until someone resolved it by hand — the
+# morning after, a shift that ended at 3:30pm still asked for a cover.
+AUTO_ENDED_NOTE = "Closed automatically: the shift ended with no clock-in on the POS."
+
+
+def gap_open(p) -> bool:
+    """A person on a coverage issue still worth covering: missing, and their
+    shift not over."""
+    return isinstance(p, dict) and p.get("status") == "missing" and not p.get("shift_over")
+
+
+def _end_minutes(p):
+    """A gap's shift end in minutes past its business date's midnight (an
+    end at or before the start is after midnight), or None when unknown."""
+    from schedule_rules import parse_minutes
+    start, end = parse_minutes(p.get("shift_start") or ""), parse_minutes(p.get("shift_end") or "")
+    if end is None:
+        return None
+    if start is not None and end <= start:
+        end += 24 * 60
+    return end
+
+
+def close_ended_coverage(restaurant_id, business_date, now_local, db_path=DB_PATH) -> dict:
+    """Keep coverage issues true to the clock (run by every coverage check
+    pass, open hours or not): on `business_date`'s open role issues, a
+    missing person whose shift has ended is marked `shift_over` (the title
+    becomes "didn't come in" and no cover is offered for it); every coverage
+    issue still open from an EARLIER business date closes with
+    AUTO_ENDED_NOTE. Returns {"ended": [names], "closed": [issue ids]}."""
+    from datetime import date as _date, datetime as _dt
+    day = str(business_date)[:10]
+    now_min = (now_local - _dt.combine(_date.fromisoformat(day), _dt.min.time())).total_seconds() / 60.0
+    stamp = now_local.strftime("%Y-%m-%d %H:%M")
+    ended = []
+    for issue in coverage_issues_for(restaurant_id, day, db_path=db_path):
+        if issue.get("status") == "resolved" or not is_group_coverage(issue.get("source_key")):
+            continue
+        over = []
+
+        def _over(meta, over=over):
+            for p in meta.get("people") or []:
+                end = _end_minutes(p) if gap_open(p) else None
+                if end is not None and now_min >= end:
+                    p["shift_over"], p["over_at"] = True, stamp
+                    over.append(p["employee"])
+            return bool(over)
+        update_coverage(restaurant_id, issue["id"], _over, db_path=db_path)
+        ended += over
+    conn = get_conn(db_path)
+    try:
+        stale = [r["id"] for r in conn.execute(
+            "SELECT id FROM ops_issues WHERE restaurant_id=? AND kind='coverage' AND status!='resolved' "
+            "AND substr(source_key, 10, 10) < ?", (restaurant_id, day))]
+    finally:
+        conn.close()
+    for iid in stale:
+        _resolve(restaurant_id, iid, AUTO_ENDED_NOTE, db_path)
+    return {"ended": ended, "closed": stale}
 
 
 def _role_key(role) -> str:
@@ -1225,8 +1289,10 @@ def coverage_people(issue) -> list:
     if not str(name or "").strip():
         return []
     note = str(_get("resolution_note") or "")
+    # Closed at the day's end with nobody clocked in is still a miss
+    # (close_ended_coverage), not a close by hand.
     status = ("arrived" if note.startswith(AUTO_ARRIVED_NOTE.rstrip(".")) else
-              "missing" if _get("status") != "resolved" else "closed")
+              "missing" if _get("status") != "resolved" or note.startswith(AUTO_ENDED_NOTE) else "closed")
     return [{"employee": name, "role": meta.get("role"), "shift_start": meta.get("shift_start") or "",
              "status": status, "business_date": day, "calendar_keyed": not meta.get("business_date")}]
 
@@ -1248,6 +1314,24 @@ def coverage_texts(meta) -> tuple:
     missing = [p for p in people if p.get("status") == "missing"]
     role = (meta.get("role") or "").strip()
     on = meta.get("scheduled_in_role")
+    # A gap whose shift is over is a miss to record, not a shift to cover
+    # (close_ended_coverage): said as "didn't come in", and offered to nobody.
+    live = [p for p in missing if not p.get("shift_over")]
+    gone = [p for p in missing if p.get("shift_over")]
+    if gone and not live:
+        n = len(gone)
+        p = gone[0]
+        title = (f"{p['employee']} didn't come in" if n == 1
+                 else f"{n} {role_words(role or 'staff', n)} didn't come in")
+        detail = " ".join(f"{g['employee']} — scheduled {g.get('shift_start') or 'today'}"
+                          + (f"–{g['shift_end']}" if g.get("shift_end") else "")
+                          + (f" as {g['role']}" if g.get("role") and n == 1 else "")
+                          + "; the shift ended with no clock-in on the POS." for g in gone)
+        back = [x["employee"] for x in people if x.get("status") == "arrived"]
+        if back:
+            detail += f" Arrived: {', '.join(back)}."
+        return title[:200], detail[:2000]
+    missing = live
     shown = missing or people
     covers = [c for c in (meta.get("covers") or []) if isinstance(c, dict) and c.get("name")]
     if len(shown) == 1:
@@ -1278,6 +1362,8 @@ def coverage_texts(meta) -> tuple:
              for p in people if p.get("status") == "covered"]
     if taken:
         detail += f" Covered: {'; '.join(taken)}."
+    if gone:
+        detail += f" Didn't come in (shift over): {', '.join(p['employee'] for p in gone)}."
     gaps = {(p["employee"], p.get("shift_start")) for p in missing}
     open_covers = [c for c in covers if not c.get("for") or (c.get("for"), c.get("shift_start")) in gaps]
     if open_covers:
@@ -1324,9 +1410,9 @@ def cover_gaps(issue) -> list:
                 not c.get("shift_start") or not start or c.get("shift_start") == start)
         mine = [c for c in covers if _mine(c)]
         gap = {"employee": who, "role": p.get("role"), "shift_start": start, "status": p.get("status"),
-               "covered_by": p.get("covered_by"),
+               "shift_over": bool(p.get("shift_over")), "covered_by": p.get("covered_by"),
                "asked": [c["name"] for c in mine if _person_key(c["name"]) in asked], "cover": None}
-        if not resolved and p.get("status") == "missing":
+        if not resolved and gap_open(p):
             for c in mine:
                 k = _person_key(c["name"])
                 if k in asked or k in offered:

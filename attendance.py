@@ -474,7 +474,11 @@ def from_coverage_issues(restaurant_id, today=None, days=JOIN_DAYS, db_path=None
             notice = None
             if p.get("status") == "arrived":
                 outcome = "late"
-            elif p.get("status") == "missing" and r["status"] != "resolved" and day < today.isoformat():
+            elif (p.get("status") == "missing" and day < today.isoformat()
+                  and (r["status"] != "resolved"
+                       or str(r["resolution_note"] or "").startswith(issues.AUTO_ENDED_NOTE))):
+                # Still open, or closed at the day's end with nobody clocked
+                # in (issues.close_ended_coverage): a miss either way.
                 outcome = "called_out" if p.get("asked_off") else "no_show"
                 notice = p.get("notice_minutes") if p.get("asked_off") else None
             else:

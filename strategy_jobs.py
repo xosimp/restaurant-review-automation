@@ -2157,6 +2157,13 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
         if not getattr(r, "module_labor", 0):
             continue
         local = restaurant_now(r, naive=True)
+        # Every pass, open or not: a gap whose shift has ended stops asking
+        # for a cover, and an earlier day's issue closes as a miss (it stayed
+        # on Home as "hasn't clocked in" until someone resolved it by hand).
+        try:
+            issues.close_ended_coverage(r.id, business_date(r, local).isoformat(), local, db_path=db_path)
+        except Exception as ce:
+            ops.capture(ce, job="coverage_check", context=f"restaurant_id={r.id} ended shifts")
         if not _open_now(r, local):
             continue
         if "manager" not in issues.get_routing(r.id, db_path):
