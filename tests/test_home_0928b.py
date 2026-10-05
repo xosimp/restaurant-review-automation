@@ -69,7 +69,7 @@ def test_every_role_on_the_donut_has_its_own_colour(tmp_path):
     roles = ["Kitchen", "Server PM", "Dishwasher", "Bartender PM", "Bartender AM", "Server AM", "Host PM", "Host AM",
              "Utility PM", "Barback PM", "Busser PM", "Utility AM", "Training", "Manager FOH", "Busser AM", "Barback AM"]
     js = SRC[a:b] + "\nconsole.log(JSON.stringify(_roleColorList(%s.map(function(n){return {name:n};}))));" % json.dumps(roles)
-    cols = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20).stdout)
+    cols = json.loads(subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20).stdout)
     assert len(set(cols)) == len(roles)                                  # Simple EJ's sixteen jobs, sixteen colours
     fam = dict(zip(roles, cols))
     assert fam["Server AM"] == "#5b9dff" and fam["Server PM"] != fam["Server AM"]    # a pair: one hue, two shades

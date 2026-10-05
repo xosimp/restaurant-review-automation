@@ -102,7 +102,7 @@ def _run(js_body):
     if not shutil.which("node"):
         pytest.skip("node is not installed")
     js = STUB + _block("cav-nav") + "\n" + js_body
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip().splitlines()[-1])
 

@@ -124,7 +124,7 @@ var frames=0;
 while(q.length && frames<2000){var f=q.shift(); now += (frames===30 ? 600 : 16); frames++; f(now);}
 console.log(JSON.stringify({seen:seen, frames:frames}));
 """
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout.strip())
     vals = [int(v.rstrip("%")) for v in got["seen"][2:]]      # after the width reservation

@@ -290,7 +290,7 @@ def test_the_web_card_draws_context_stale_and_the_profile_action():
     if not shutil.which("node"):
         pytest.skip("node is not installed")
     js = re.search(r'<script id="cav-bench">(.*?)</script>', _read("templates", "dashboard.html"), re.S).group(1)
-    out = subprocess.run(["node", "-e", _HARNESS % js], capture_output=True, text=True, timeout=20)
+    out = subprocess.run(["node", "-"], input=_HARNESS % js, capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr[-1500:]
     got = json.loads(out.stdout.strip().splitlines()[-1])
     card = got["card"]

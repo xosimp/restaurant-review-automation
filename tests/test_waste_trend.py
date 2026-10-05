@@ -552,7 +552,7 @@ wtDrawObs({
         "var box={innerHTML:''}; var document = {getElementById:function(){return box;}};"
     )
     js += "\nconsole.log(JSON.stringify({shown: seen, html: box.innerHTML}));\n"
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
     import json
     result = json.loads(out.stdout.strip())
@@ -585,7 +585,7 @@ function wtShow(id, on){}
 wtDrawObs({weeks:[1,2], observations:[{tone:'good', text:'all good'}]});
 console.log(JSON.stringify(box.innerHTML));
 """)
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
     import json
     result_html = json.loads(out.stdout.strip())
@@ -644,7 +644,7 @@ def test_the_target_band_and_bar_labels_fade_in_together_with_the_bars():
 
     stmt = re.search(r"var fadeIn=animate\?.*?:'';", body).group(0)
     js = "var animate=true;" + stmt + "console.log(fadeIn);"
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
     assert "opacity:0" in out.stdout and "hbFillIn" in out.stdout
 

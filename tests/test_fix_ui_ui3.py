@@ -135,7 +135,7 @@ def _node(js):
     # The page's own formatting (toLocaleString, local dates) in a fixed
     # locale and zone, so "2,000" and "9/29/26" don't depend on the machine.
     env = dict(os.environ, LC_ALL="en_US.UTF-8", LANG="en_US.UTF-8", TZ="America/Chicago")
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30, env=env)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=30, env=env)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip().splitlines()[-1])
 

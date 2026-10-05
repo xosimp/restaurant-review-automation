@@ -395,7 +395,7 @@ function FormData() { this.d = []; } FormData.prototype.append = function (k, v)
 
 def _run_page(script, actions):
     js = _HARNESS + script + "\n" + actions
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip().splitlines()[-1])
 

@@ -492,7 +492,7 @@ results.body = isTextEditable(elt('BODY'));
 results.null_el = isTextEditable(null);
 console.log(JSON.stringify(results));
 """
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
     import json
     r = json.loads(out.stdout.strip())

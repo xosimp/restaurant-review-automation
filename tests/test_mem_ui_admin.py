@@ -169,7 +169,7 @@ def _node(js):
     if not shutil.which("node"):
         pytest.skip("node is not installed")
     env = dict(os.environ, LC_ALL="en_US.UTF-8", LANG="en_US.UTF-8", TZ="America/Chicago")
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30, env=env)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=30, env=env)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip().splitlines()[-1])
 

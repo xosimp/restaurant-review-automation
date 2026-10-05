@@ -547,7 +547,7 @@ setTimeout(function () {
   for (var i = 0; i < ids.length; i++) out[ids[i]] = document.getElementById(ids[i]).innerHTML;
   console.log(JSON.stringify(out));
 }, 50);"""
-    run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+    run = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stderr
     out = json.loads(run.stdout.strip().splitlines()[-1])
     for key, markup in out.items():

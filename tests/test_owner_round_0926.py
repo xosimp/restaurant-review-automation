@@ -17,7 +17,7 @@ def test_the_escape_helper_takes_numbers():
     s = _src()
     fn = s[s.index("function _escHtml(s) {"):]
     fn = fn[:fn.index("\n}\n") + 3]
-    out = subprocess.run(["node", "-e", fn + "console.log(_escHtml(72)+'|'+_escHtml(0)+'|'+_escHtml(null)+'|'+_escHtml('<b>'))"],
+    out = subprocess.run(["node", "-"], input=fn + "console.log(_escHtml(72)+'|'+_escHtml(0)+'|'+_escHtml(null)+'|'+_escHtml('<b>'))",
                          capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "72|0||&lt;b&gt;"

@@ -121,7 +121,7 @@ def test_the_live_math_rounds_for_display_only():
     console.log(JSON.stringify([tgRev('monthly_revenue_target', 50000 * TG_WPM),
       tgRev('weekly_revenue_target', 365000 / TG_WPM), tgRev('weekly_revenue_target', 0),
       tgRev('monthly_revenue_target', null), tgRev('weekly_revenue_target', 50000)]));"""
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == ["216667", "84230.77", "", "", "50000"]
 

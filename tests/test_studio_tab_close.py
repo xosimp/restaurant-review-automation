@@ -34,7 +34,7 @@ function swCloseEdit() {} function ssTipHide() {} function ssDock() {} function 
 %s;
 console.log(JSON.stringify({calls: calls, open: _ssOpen, fromDash: _ssFromDash}));
 """ % ("true" if from_dash else "false", _studio_close(), call)
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip().splitlines()[-1])
 

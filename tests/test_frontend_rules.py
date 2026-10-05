@@ -66,3 +66,19 @@ def test_no_css_selector_opens_a_jinja_comment():
         for m in re.finditer(r"\{#[A-Za-z_.-]", src):
             bad.append(f"{os.path.basename(path)}:{src.count(chr(10), 0, m.start()) + 1}")
     assert not bad, bad
+
+
+def test_no_test_hands_node_its_script_as_an_argument():
+    """Linux caps one argv string at 128 KiB (MAX_ARG_STRLEN); macOS has no
+    such cap. `node -e <the dashboard's script>` passed on a Mac and failed on
+    the CI runner from 10/5/26, when the DSR script outgrew it. The script goes
+    in on stdin: `subprocess.run(["node", "-"], input=js, ...)`."""
+    tests_dir = os.path.join(ROOT, "tests")
+    offenders = []
+    for name in sorted(os.listdir(tests_dir)):
+        if not name.endswith(".py") or name == os.path.basename(__file__):
+            continue
+        with open(os.path.join(tests_dir, name)) as f:
+            if re.search(r"""["']node["']\s*,\s*["']-e["']""", f.read()):
+                offenders.append(name)
+    assert not offenders, "pass the script on stdin, not with -e: %s" % offenders

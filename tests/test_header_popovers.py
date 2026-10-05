@@ -67,7 +67,7 @@ def test_one_time_formatter_reads_bare_server_stamps_as_utc():
           + "console.log(JSON.stringify([window.hpAgo(%s), window.hpAgo(%s), window.hpAgo(''), window.hpAgo('2026-01-05 10:00:00')]));"
           % (json.dumps(bare), json.dumps(iso)))
     # A zone west of UTC is where the old local read said "just now" for hours.
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20,
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20,
                          env=dict(os.environ, TZ="America/Chicago"))
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout.strip())

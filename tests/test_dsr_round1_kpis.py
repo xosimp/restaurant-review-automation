@@ -522,7 +522,7 @@ def _hx_node(rows_js):
                                "var cs=hxCallouts(rows,peak,'Tuesday');"
                                "console.log(JSON.stringify({c:cs.list.map(function(x){return [x.kind,rows[x.i].hour];}),"
                                "s:hxStory(rows,peak,cs,'Tuesday')}));")
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 

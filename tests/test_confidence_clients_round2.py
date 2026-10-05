@@ -37,7 +37,7 @@ def _fn(src, name, indent=r"\s*"):
 def _node(js):
     if not shutil.which("node"):
         pytest.skip("node is not installed")
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip())
 

@@ -366,12 +366,20 @@ def test_submissions_are_paced_when_they_reach_a_carrier(db_path, clock, texts, 
     assert gm._submit_interval() == pytest.approx(0.5)
     monkeypatch.setenv("GUEST_SMS_PER_SECOND", "4")
     assert gm._submit_interval() == pytest.approx(0.25)
-    naps = []
-    monkeypatch.setattr(time, "sleep", lambda s: naps.append(s))
+    naps, now = [], [1000.0]
+
+    def _sleep(s):
+        # The clock moves only when the sender sleeps, so a slow runner can't
+        # spend the interval for it and leave nothing to wait for (CI, 10/5/26).
+        naps.append(s)
+        now[0] += s
+
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(time, "sleep", _sleep)
     rid = _rid(db_path)
     _guests(db_path, rid, 4)
     gm.send_campaign(rid, "Pasta night", db_path=db_path)
-    assert len(texts) == 4 and len(naps) >= 3 and all(0 < s <= 0.25 for s in naps)
+    assert len(texts) == 4 and naps == [pytest.approx(0.25)] * 3
 
 
 # ── MB-10 / #10 / #11: refused before queueing; a durable queue ─────────────
@@ -699,7 +707,7 @@ def _node(script):
         pytest.skip("node is not installed")
     esc = _between("function _escHtml(s) {", "\n}\n") + "\n}\n"
     js = _HARNESS + esc + STUDIO + "\n(async function(){\nvar tick = function() { return new Promise(function(r) { setImmediate(r); }); };\n" + script + "\n})().catch(function(e) { console.error(e && e.stack || e); process.exit(1); });"
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr[-3000:]
     return json.loads(out.stdout.strip().splitlines()[-1])
 

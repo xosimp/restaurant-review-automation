@@ -421,7 +421,7 @@ def test_the_web_card_draws_the_servers_words():
     if not shutil.which("node"):
         pytest.skip("node is not installed")
     js = re.search(r'<script id="cav-bench">(.*?)</script>', _read("templates", "dashboard.html"), re.S).group(1)
-    out = subprocess.run(["node", "-e", _WEB_HARNESS % js], capture_output=True, text=True, timeout=20)
+    out = subprocess.run(["node", "-"], input=_WEB_HARNESS % js, capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr[-1500:]
     got = json.loads(out.stdout.strip().splitlines()[-1])
     assert "How you compare" in got["card"] and "hb-row important" in got["card"] and 'data-ask="' in got["card"]

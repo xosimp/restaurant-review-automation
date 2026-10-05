@@ -47,7 +47,7 @@ def test_a_sent_date_is_the_viewers_day_not_utcs():
     at = SRC[j:SRC.index("\n", j)]
     js = ("function esc(v){return String(v);} var window={};" + mdy + at
           + "console.log(JSON.stringify([window.mdyAt('2026-09-27 00:35:12'), window.mdyAt('2026-09-27')]));")
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20,
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20,
                          env=dict(os.environ, TZ="America/Chicago"))
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout.strip()) == ["9/26/26", "9/27/26"]

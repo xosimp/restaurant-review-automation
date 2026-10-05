@@ -55,7 +55,7 @@ def _node(script, search="", here=3, fetch=None, tail=""):
     js = (HARNESS.replace("SEARCH", json.dumps(search)).replace("HERE", json.dumps(here))
           .replace("FETCH", json.dumps(fetch or {"ok": False}))
           + _dsr_script() + script + tail)
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20)
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr
     return out.stdout
 
