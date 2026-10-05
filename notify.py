@@ -59,6 +59,10 @@ TWILIO_GUEST_MESSAGING_SERVICE_SID = os.getenv("TWILIO_GUEST_MESSAGING_SERVICE_S
 # back to another service — people.staff_sms_ready() is False until this is
 # set, and the publish emails instead (Friction audit #17).
 TWILIO_STAFF_MESSAGING_SERVICE_SID = os.getenv("TWILIO_STAFF_MESSAGING_SERVICE_SID", "")
+# Staff texts held back although the campaign is approved (Will, 10/5/26:
+# employees see their schedule in the app, which isn't live for them yet).
+# "1": no staff text is sent and the opt-in stays hidden (people.staff_sms_ready).
+STAFF_SMS_HOLD = os.getenv("STAFF_SMS_HOLD", "").strip().lower() in ("1", "true", "yes", "on")
 _guest_service_warned = False
 # Twilio's ValidityPeriod ceiling for a guest text: four hours (MB-13).
 GUEST_SMS_MAX_VALIDITY = 4 * 3600
@@ -455,6 +459,11 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
     if use_case == "otp":
         service_sid = TWILIO_OTP_MESSAGING_SERVICE_SID
     elif use_case == "staff":
+        if STAFF_SMS_HOLD:
+            log_id = _log_sms(rid, use_case, phone, "not_configured", None,
+                              "staff texts are on hold (STAFF_SMS_HOLD)", db_path=db_path)
+            return _done(SmsResult(False, status="not_configured",
+                                   error="staff texts are on hold (STAFF_SMS_HOLD)", log_id=log_id))
         if not TWILIO_STAFF_MESSAGING_SERVICE_SID:
             print("[notify] TWILIO_STAFF_MESSAGING_SERVICE_SID unset: staff text not sent")
             log_id = _log_sms(rid, use_case, phone, "not_configured", None,

@@ -520,6 +520,8 @@ def staff_sms_ready() -> bool:
     campaign is the mixed use carriers filter. Unset → no texts, email is
     the fallback."""
     import notify
+    if notify.STAFF_SMS_HOLD:
+        return False                      # approved, but held until the staff app is live (10/5/26)
     return bool(notify.TWILIO_SID and notify.TWILIO_TOKEN and notify.TWILIO_STAFF_MESSAGING_SERVICE_SID)
 
 

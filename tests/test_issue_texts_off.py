@@ -69,3 +69,20 @@ def test_the_switch_is_a_restaurant_setting_with_its_four_touch_points(db_path):
     assert models.get_restaurant(rid).issue_texts == 1
     models.update_restaurant(rid, {"issue_texts": 0})
     assert models.get_restaurant(rid).issue_texts == 0
+
+
+def test_staff_texts_on_hold_send_nothing_and_hide_the_opt_in(monkeypatch):
+    """Will, 10/5/26: the staff campaign is approved, but employees read their
+    schedule in the app, which isn't live for them yet."""
+    import notify, people
+    monkeypatch.setattr(notify, "TWILIO_SID", "AC1"); monkeypatch.setattr(notify, "TWILIO_TOKEN", "t")
+    monkeypatch.setattr(notify, "TWILIO_FROM", "+13125550000")
+    monkeypatch.setattr(notify, "TWILIO_STAFF_MESSAGING_SERVICE_SID", "MG1")
+    monkeypatch.setattr(notify, "STAFF_SMS_HOLD", True)
+    import requests
+    monkeypatch.setattr(requests, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no text may go")))
+    assert people.staff_sms_ready() is False
+    res = notify.send_sms_outcome("+13125550199", "Your week is posted", use_case="staff")
+    assert res.ok is False and "on hold" in (res.error or "")
+    monkeypatch.setattr(notify, "STAFF_SMS_HOLD", False)
+    assert people.staff_sms_ready() is True
