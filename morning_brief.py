@@ -423,19 +423,25 @@ def _carry_today_line(carry, today, show_forecast=True):
             text += ", with " + ", ".join(effect_words(e, figure=figure(e)) for e in effects)
         if conf and conf.get("pct") is not None:
             text += f"; its range has held {conf['pct']}% of the time"
+    head = text.rstrip(".") + "."
     if items:
         text += (". " if fc else ": ") + " · ".join(items)
     hol = _holiday_today(today)
     if hol:
         text += f" · {hol}"
     text = text.rstrip(".") + "."      # an item's own full stop (a staffing sentence) is not doubled
+    # The same line as its lead and one row per item, for a screen that
+    # lists them (Home: "each on its own row - it's wordy and crowded",
+    # owner 10/5/26). `text` stays the one sentence for a text or a push.
+    rows = [str(x).strip().rstrip(".") + "." for x in items + ([hol] if hol else []) if str(x).strip()]
     if carry.get("provisional"):
         text += " From a provisional report."
     preds = [p["text"] for p in carry.get("predictions") or []] if show_forecast else []
     return {"key": "today", "tone": "neutral", "source": "dsr", "dsr_date": carry.get("report_date"),
             "forecast": bool(fc), "claim_kind": "forecast" if fc else None, "outside": bool(items or hol),
             "confidence_pct": (conf or {}).get("pct"), "predictions": preds,
-            "text": text, "ask": "What should I focus on before service today?", "_items": shown, "_said": said}
+            "text": text, "head": head if rows else None, "rows": rows or None,
+            "ask": "What should I focus on before service today?", "_items": shown, "_said": said}
 
 
 def _prime_stamp(pp, health):

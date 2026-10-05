@@ -1068,11 +1068,11 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
             # the stated one (restaurant_thresholds, memory audit 9/29/26).
             import restaurant_thresholds as _rthr_iss
             _over = _rthr_iss.margin(restaurant_id, "labor_over_period", stated=LABOR_OVER_TARGET_PTS)
-            if labor.get("is_live") and pct is not None and float(pct) - target >= _over \
-                    and _thr_t.target_alerts_allowed(r, "labor"):
-                _open("labor", f"Labor {float(pct):.1f}% against a {target:.0f}% target",
-                      "The latest labor data ran over. Trim the overstaffed days in next week's "
-                      "schedule before it is published.", key=f"labor:{today.strftime('%G-W%V')}")
+            if labor.get("is_live") and pct is not None and _thr_t.target_alerts_allowed(r, "labor"):
+                issue = _sync_labor_issue(restaurant_id, float(pct), float(target), float(pct) - target >= _over,
+                                          f"labor:{today.strftime('%G-W%V')}", db_path)
+                if issue:
+                    opened.append(issue)
         except Exception as e:
             _capture(e, "issue_signals_labor", restaurant_id)
     return opened
@@ -1081,6 +1081,52 @@ def open_from_signals(restaurant_id, db_path=DB_PATH, today=None):
 def _open_issue_of_kind(conn, restaurant_id, kind):
     return conn.execute("SELECT * FROM ops_issues WHERE restaurant_id=? AND kind=? AND status!='resolved' "
                         "ORDER BY id DESC LIMIT 1", (restaurant_id, kind)).fetchone()
+
+
+def _target_words(target) -> str:
+    """35 -> "35%", 31.5 -> "31.5%"."""
+    return f"{float(target):g}%"
+
+
+def _sync_labor_issue(restaurant_id, pct, target, over, week_key, db_path=DB_PATH):
+    """ONE open labor issue, kept current - as stock is.
+
+    It was one per ISO week, written once: a restaurant over target for two
+    weeks carried two open issues, each with the target as it stood the day
+    it opened ("Labor 42.2% against a 32% target" beside "41.7% against a
+    32% target", under Home's own "6.7 pts over the 35% target" - Simple
+    EJ's, 10/5/26). Now: while labor runs over, the newest open one is
+    updated in place with today's figure and target (no text - the manager
+    has it) and any older one closes as carried on; back under, they close
+    themselves. Only when none is open does a new one open (and text), keyed
+    by the week, so one a manager closed stays closed until the next.
+    Returns the newly opened issue, else None."""
+    conn = get_conn(db_path)
+    try:
+        open_ = conn.execute("SELECT * FROM ops_issues WHERE restaurant_id=? AND kind='labor' AND status!='resolved' "
+                             "ORDER BY id DESC", (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    if not over:
+        for row in open_:
+            _resolve(restaurant_id, row["id"], f"Closed automatically: labor is back near the "
+                                               f"{_target_words(target)} target ({pct:.1f}%).", db_path)
+        return None
+    title = f"Labor {pct:.1f}% against a {_target_words(target)} target"
+    detail = ("The latest labor data ran over. Trim the overstaffed days in next week's "
+              "schedule before it is published.")
+    if open_:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE ops_issues SET title=?, detail=? WHERE id=?", (title, detail, open_[0]["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        for row in open_[1:]:
+            _resolve(restaurant_id, row["id"], "Closed automatically: carried on in the newer labor issue.", db_path)
+        return None
+    issue, token = create_issue(restaurant_id, "labor", title, detail=detail, source_key=week_key, db_path=db_path)
+    return issue if token else None
 
 
 def _sync_stock_issue(restaurant_id, low, stamp, db_path=DB_PATH):

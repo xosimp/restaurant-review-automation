@@ -112,14 +112,20 @@ struct StandingShift: Codable, Equatable, Hashable, Identifiable {
     var role: String? = nil
     var from: String? = nil
     var until: String? = nil
+    /// Only on the days this event calendar plays ("nfl-chicago-bears"):
+    /// Erik's Sunday is a Bears Sunday only (10/5/26). Kept on every save,
+    /// or an edit here would turn it into every Sunday.
+    var whenEvent: String? = nil
 
-    init(day: String, start: String, end: String, role: String? = nil, from: String? = nil, until: String? = nil) {
+    init(day: String, start: String, end: String, role: String? = nil, from: String? = nil, until: String? = nil,
+         whenEvent: String? = nil) {
         self.day = day; self.start = start; self.end = end; self.role = role; self.from = from; self.until = until
+        self.whenEvent = whenEvent
     }
 
     var id: String { "\(day)|\(start)|\(end)|\(role ?? "")" }
 
-    enum CodingKeys: String, CodingKey { case day, start, end, role, from, until }
+    enum CodingKeys: String, CodingKey { case day, start, end, role, from, until, whenEvent = "when_event" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -129,6 +135,13 @@ struct StandingShift: Codable, Equatable, Hashable, Identifiable {
         role = c.setupText(.role)
         from = c.setupText(.from)
         until = c.setupText(.until)
+        whenEvent = c.setupText(.whenEvent)
+    }
+
+    /// "the Bears" from "nfl-chicago-bears": the team the shift waits on.
+    var eventName: String? {
+        guard let slug = whenEvent, let last = slug.split(separator: "-").last, !last.isEmpty else { return nil }
+        return "the " + last.prefix(1).uppercased() + last.dropFirst()
     }
 
     /// "Monday 10:00am–6:00pm · Manager FOH · until 12/15/26".
@@ -138,6 +151,7 @@ struct StandingShift: Codable, Equatable, Hashable, Identifiable {
         if let from, let until { s += " \u{00B7} " + CavnarDate.mdyRange(from, until) }
         else if let from { s += " \u{00B7} from " + CavnarDate.mdy(from) }
         else if let until { s += " \u{00B7} until " + CavnarDate.mdy(until) }
+        if let eventName { s += " \u{00B7} only when \(eventName) play" }
         return s
     }
 }

@@ -13,6 +13,7 @@ Everything is keyed by employee name, like every other staff table — POS
 data has no stable id.
 """
 import json
+import re
 
 from models import get_conn, DB_PATH
 
@@ -330,6 +331,15 @@ def _clean_standing(raw) -> list:
             entry["from"] = f
         if u:
             entry["until"] = u
+        # Only on the days an event series plays (owner, 10/5/26: Erik works
+        # every Sunday the Bears play, and only those): its slug, resolved
+        # against the event calendar week by week (schedule_rules
+        # ._event_standing).
+        if e.get("when_event"):
+            slug = str(e.get("when_event")).strip().lower()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,79}", slug):
+                raise StaffSettingsError(f"{day}: '{e.get('when_event')}' is not an event calendar")
+            entry["when_event"] = slug
         out.append(entry)
     return sorted(out, key=lambda x: (DAYS.index(x["day"]), parse_minutes(x["start"]) or 0))
 

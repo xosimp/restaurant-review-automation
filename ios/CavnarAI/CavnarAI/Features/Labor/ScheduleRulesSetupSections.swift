@@ -30,7 +30,7 @@ struct RulesManagersSection: View {
                         personRow(name: manager.name, role: manager.role, why: manager.why, counts: true,
                                   ownSetting: manager.basis == "set",
                                   extra: manager.standingShifts.isEmpty ? nil
-                                    : "Always works: " + manager.standingShifts.map { "\($0.day.prefix(3)) \($0.start)\u{2013}\($0.end)" }
+                                    : "Always works: " + manager.standingShifts.map { "\($0.day.prefix(3)) \($0.start)\u{2013}\($0.end)" + ($0.eventName.map { " (\($0) days)" } ?? "") }
                                         .joined(separator: ", "))
                     }
                     if !m.notCounted.isEmpty {

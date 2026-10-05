@@ -2627,6 +2627,53 @@ def input_problem_text(p) -> str:
     return INPUT_PROBLEM_WORDS.get(src) or f"{src[:1].upper()}{src[1:]} couldn't be read, so the rules check ran without it"
 
 
+# A standing shift tied to an event series (staff_settings when_event) is
+# worked on each of its weekdays the series plays, and stays on until this
+# long after kickoff when the game runs past the shift's end: an NFL game
+# runs about three and a half hours, and the owner stays half an hour after.
+EVENT_STAND_AFTER_KICKOFF_MIN = 4 * 60
+
+
+def _event_standing(c: "Constraints", x: dict, role, name):
+    """A standing shift that holds only when its event series plays that
+    weekday ({"day": "Sunday", "when_event": "nfl-chicago-bears", ...}): one
+    dated entry (from = until = the date) for each such date this week, its
+    end held to the game's (owner, 10/5/26: "if the Bears play on a Sunday,
+    schedule Erik 100% of the time, no exceptions; ONLY if they play"). A
+    calendar that can't be read is a problem on the week, never a quiet
+    week without them."""
+    from datetime import date as _date
+    day = str(x.get("day") or "").strip().capitalize()
+    dates = [d for d in (c.week_dates or []) if DAYS[_date.fromisoformat(d).weekday()] == day]
+    if not dates:
+        return []
+    try:
+        from event_intel import store as _ev
+        series = _ev.series_by_slug(str(x["when_event"]))
+        if not series:
+            raise LookupError(f"no event series '{x['when_event']}'")
+        games = {}
+        for ev in _ev.events_for([series["id"]], min(dates), max(dates)):
+            if ev.get("event_date") in dates and str(ev.get("status") or "").lower() not in ("cancelled", "postponed"):
+                games.setdefault(ev["event_date"], ev.get("kickoff_local"))
+    except Exception as exc:
+        _input_problem(c, "event standing shift", exc, name=name)
+        return []
+    out = []
+    for d in sorted(games):
+        start, end = parse_minutes(x.get("start") or ""), parse_minutes(x.get("end") or "")
+        if start is None or end is None:
+            continue
+        if end <= start:
+            end += 24 * 60
+        kick = parse_minutes(str(games[d] or "")[:5]) if games[d] else None
+        if kick is not None and kick + EVENT_STAND_AFTER_KICKOFF_MIN > end:
+            end = kick + EVENT_STAND_AFTER_KICKOFF_MIN
+        out.append({"day": day, "start": _fmt_minutes(start), "end": _fmt_minutes(end % (24 * 60)), "role": role,
+                    "from": d, "until": d, "when_event": x["when_event"]})
+    return out
+
+
 def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, worked=None):
     """One roster person's settings onto the Constraints (build_constraints'
     per-person step, each person on their own — see P-1 there). `held` and
@@ -2710,11 +2757,19 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     # The shifts they always work (D-5), in their own role unless the
     # standing shift names one.
     if st.get("standing_shifts"):
-        c.standing_shifts[key] = [dict({"day": x.get("day"), "start": x.get("start"), "end": x.get("end"),
-                                        "role": x.get("role") or (c.managers.get(key) if key in c.managers else None)
-                                        or roster_role},
-                                       **{k: x[k] for k in ("from", "until") if x.get(k)})
-                                  for x in st["standing_shifts"] if isinstance(x, dict)]
+        role_of = lambda x: (x.get("role") or (c.managers.get(key) if key in c.managers else None)  # noqa: E731
+                             or roster_role)
+        out = []
+        for x in st["standing_shifts"]:
+            if not isinstance(x, dict):
+                continue
+            if x.get("when_event"):
+                out += _event_standing(c, x, role_of(x), e["name"])
+                continue
+            out.append(dict({"day": x.get("day"), "start": x.get("start"), "end": x.get("end"), "role": role_of(x)},
+                            **{k: x[k] for k in ("from", "until") if x.get(k)}))
+        if out:
+            c.standing_shifts[key] = out
     # In training (D-16), while it lasts this week.
     t = st.get("trainee") or None
     if isinstance(t, dict) and t.get("target_role"):

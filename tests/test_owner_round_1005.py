@@ -142,3 +142,16 @@ def test_the_late_night_hour_is_the_owners_to_set():
     assert all('<option value="%d">' % h in row for h in range(18, 24))
     assert "late.value = s.dsr_late_night_hour == null ? '' : String(s.dsr_late_night_hour);" in SRC
     assert "else if (field === 'dsr_late_night_hour') { v = document.getElementById('as-dsr-late').value; v = v === '' ? null : parseInt(v, 10); }" in SRC
+
+
+def test_before_service_lists_the_today_items_and_keeps_orange_for_what_matters():
+    sig = SRC[_at("  function briefSig(t){"):]
+    sig = sig[:sig.index("\n  }\n")]
+    assert "return +m[1]>=100;" in sig and "return +m[2]>=5;" in sig
+    assert "l.rows&&l.rows.length?briefNum(l.head||'')+'<span class=\"hb-tl-rows\">'" in SRC
+    assert ".hb-tl .t .hb-num{color:var(--ink)}" in SRC and ".hb-tl .t .hb-num.sig{color:var(--ember)}" in SRC
+    assert ".hb-tl .t .hb-num,.hb-rec" not in SRC, "brief numbers are no longer all ember"
+
+
+def test_the_manager_toggles_clear_the_rule_above_them():
+    assert "row+='<div style=\"display:flex;flex-wrap:wrap;gap:12px 22px;padding:16px 0 18px\">'+bits.join('')+'</div>';" in SRC

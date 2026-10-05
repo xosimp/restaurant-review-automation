@@ -3383,7 +3383,15 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 /* staggered reveal — entrance only, 420ms, no overshoot (DESIGN_SYSTEM §11) */
 .hb-rise{opacity:0;transform:translateY(6px);animation:hbRise .42s cubic-bezier(.2,.9,.3,1) forwards;animation-delay:calc(var(--i,0)*70ms)}
 @keyframes hbRise{to{opacity:1;transform:none}}
-.hb-focus .lead .hb-num,.hb-tl .t .hb-num,.hb-rec .t .hb-num,.hb-rcpt .t .hb-num,.hb-chk .t .hb-num{color:var(--ember)}
+.hb-focus .lead .hb-num,.hb-rec .t .hb-num,.hb-rcpt .t .hb-num,.hb-chk .t .hb-num{color:var(--ember)}
+/* Before service: numbers in the number face, ember only when significant
+   (briefSig, owner 10/5/26). */
+.hb-tl .t .hb-num{color:var(--ink)}
+.hb-tl .t .hb-num.sig{color:var(--ember)}
+/* The Today line's items, one per row under its lead (owner, 10/5/26). */
+.hb-tl .t .hb-tl-rows{display:flex;flex-direction:column;gap:5px;margin:7px 0 2px}
+.hb-tl .t .hb-tl-rows .r{display:block;position:relative;padding-left:14px}
+.hb-tl .t .hb-tl-rows .r:before{content:"";position:absolute;left:2px;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--ink3)}
 .hb-focus .lead .hb-num.plain{color:inherit}
 @media (prefers-reduced-motion:reduce){.hb-rise{animation:none!important;opacity:1;transform:none}.hb-join .ln:before,.hb-join .ln:after{animation:none!important}.hb-join .ln:after{opacity:0}.hb-goal .bar i{transition:none}.hb-card.lift:hover,.hb-sig.cards .hb-sg:hover{transform:none}}
 /* ── Premium pass: three layers, one light source, ember that moves ────
@@ -3564,6 +3572,21 @@ svg:hover .hb-xh{opacity:1}
   var MEANING='How well supported this is — not the chance it works';
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUMRX,'<span class="hb-num">$1</span>');}return out;}
+  // The Before service brief's numbers: every figure in the number face,
+  // but ember only for the ones worth the eye - $100 or more, a change of 5%
+  // or more either way. Counts, zeros, dates, times and degrees stay ink
+  // (owner, 10/5/26: "the 0s don't need to be orange; only significant
+  // things"). briefSig is the one rule.
+  function briefSig(t){
+    var s=String(t).replace(/,/g,''),m;
+    if((m=/^\$(\d+(?:\.\d+)?)/.exec(s)))return +m[1]>=100;
+    if((m=/^([+\-\u2212])(\d+(?:\.\d+)?)(?:\s?pts)?%$/.exec(s)))return +m[2]>=5;
+    return false;
+  }
+  function briefNum(v){
+    return num(v).replace(/<span class="hb-num">([^<]*)<\/span>/g,function(all,t){
+      return briefSig(t.replace(/&#x2212;|&minus;/g,'\u2212'))?'<span class="hb-num sig">'+t+'</span>':all;});
+  }
   function isNum(v){return typeof v==='number'&&isFinite(v);}
   function pctOf(v){
     if(isNum(v))return Math.max(0,Math.min(100,Math.round(v)));
@@ -5189,7 +5212,7 @@ svg:hover .hb-xh{opacity:1}
     return n+' flagged: '+parts.join(', ')+'.';
   }
   function renderAttention(d,used){
-    var items=(d.attention||[]).slice(used&&used.att?1:0).concat(_hbAttnExtra),iss=_hbIssues||[],total=items.length+iss.length;
+    var items=(d.attention||[]).slice(used&&used.att?1:0).concat(_hbAttnExtra),iss=hbIssuesNotShown(_hbIssues||[],items),total=items.length+iss.length;
     _hbAttnItems=items;hbExtraKeep();
     // "+N more" opens the rest of THIS list in place (friction #11). It used
     // to open the bell, which is the alert history, not these items.
@@ -5228,7 +5251,18 @@ svg:hover .hb-xh{opacity:1}
   // maps each surface's key onto one job; a brief line or a Still-open row
   // whose job is already in the focus card or Needs attention is left out.
   var HB_SAME={urgent_reviews:'replies',stale_low_reviews:'replies',awaiting_approval:'replies',low_response_rate:'replies',
-    no_response:'replies',reviews:'replies',critical_low:'stock',stock:'stock',issues:'issues'};
+    no_response:'replies',reviews:'replies',critical_low:'stock',stock:'stock',issues:'issues',
+    labor_over:'labor',labor:'labor'};
+  // An open issue about what Needs attention already says (the labor issue
+  // under "Labor at 41.7% — 6.7 pts over the 35% target") is left off Home:
+  // the same fact twice read as two problems (owner, 10/5/26). It stays on
+  // its manager's list and in the bell.
+  function hbIssuesNotShown(iss,items){
+    var said={},i,out=[];
+    for(i=0;i<(items||[]).length;i++)said[hbSame(items[i].key)]=1;
+    for(i=0;i<(iss||[]).length;i++){var k=iss[i].kind;if(k&&said[hbSame(k)]&&iss[i].kind!=='coverage')continue;out.push(iss[i]);}
+    return out;
+  }
   function hbSame(k){k=String(k||'');if(HB_SAME.hasOwnProperty(k))return HB_SAME[k];if(k.indexOf('stock_low:')===0)return 'stock';return k;}
   function hbShownKeys(d,iss){
     var s={},att=(d&&d.attention)||[],i;
@@ -5264,12 +5298,13 @@ svg:hover .hb-xh{opacity:1}
   function hbAttnSetIssues(iss){
     _hbIssues=iss||[];
     var box=document.getElementById('hb-attn-issues');if(!box)return;
-    box.innerHTML=hbIssueRows(_hbIssues);
-    var card=document.getElementById('hb-attn-card'),n=(card?+card.getAttribute('data-attn-n')||0:0)+_hbIssues.length;
-    var foot=document.getElementById('hb-attn-foot');if(foot)foot.innerHTML=hbAttnMoreBtn(card?+card.getAttribute('data-attn-n')||0:0,_hbIssues.length);
+    var shown=hbIssuesNotShown(_hbIssues,_hbAttnItems);
+    box.innerHTML=hbIssueRows(shown);
+    var card=document.getElementById('hb-attn-card'),n=(card?+card.getAttribute('data-attn-n')||0:0)+shown.length;
+    var foot=document.getElementById('hb-attn-foot');if(foot)foot.innerHTML=hbAttnMoreBtn(card?+card.getAttribute('data-attn-n')||0:0,shown.length);
     var cnt=document.getElementById('hb-attn-cnt');if(cnt){cnt.textContent=n;cnt.hidden=!n;}
-    var aln=document.getElementById('hb-attn-line');if(aln){var al=hbAttnLine(_hbAttnItems,_hbIssues);aln.innerHTML=num(al);aln.hidden=!al;}
-    var clr=document.getElementById('hb-attn-clear');if(clr&&_hbIssues.length)clr.parentNode.removeChild(clr);
+    var aln=document.getElementById('hb-attn-line');if(aln){var al=hbAttnLine(_hbAttnItems,shown);aln.innerHTML=num(al);aln.hidden=!al;}
+    var clr=document.getElementById('hb-attn-clear');if(clr&&shown.length)clr.parentNode.removeChild(clr);
   }
   function renderLocations(d){
     var c=d.context||{};if(!c.locations||c.locations.length<2)return '';
@@ -5959,7 +5994,7 @@ svg:hover .hb-xh{opacity:1}
       // lineActs, never acts: a var is the whole function's, and this loop's
       // last string replaced the Still open list (304 blank rows, 10/2/26).
       var lineActs=(ans||act)?'<span class="hb-tl-acts">'+ans+(ans&&act?'<span class="sep" aria-hidden="true"></span>':'')+act+'</span>':'';
-      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+hbBriefExtra(l)+lineActs+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
+      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+(l.rows&&l.rows.length?briefNum(l.head||'')+'<span class="hb-tl-rows">'+l.rows.map(function(x){return '<span class="r">'+briefNum(x)+'</span>';}).join('')+'</span>':briefNum(l.text))+hbBriefExtra(l)+lineActs+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
     // K8: how far the demand forecast in this brief has been off here,
     // measured against the nights that closed (dsr_metrics vs_forecast).
     var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
@@ -33243,7 +33278,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           // The nightly sales report (10/2/26): on for every manager unless the
           // owner leaves someone off it - a marketer has no use for it.
           bits.push(sw('Nightly report',m.nightly_report!==false,'setTeamReport('+m.id+',this)','The Daily Sales Report email after each night'));
-          row+='<div style="display:flex;flex-wrap:wrap;gap:10px 22px;padding:2px 0 12px">'+bits.join('')+'</div>';
+          // Clear of the rule above them and the next login below (owner, 10/5/26).
+          row+='<div style="display:flex;flex-wrap:wrap;gap:12px 22px;padding:16px 0 18px">'+bits.join('')+'</div>';
         }
         return row;
       }).join('')||'Just you so far.';
@@ -39886,6 +39922,9 @@ function sfw2StandingLabel(s) {
   if (s.from && s.until) t += ' · ' + sfw2Mdy(s.from) + ' – ' + sfw2Mdy(s.until);
   else if (s.from) t += ' · from ' + sfw2Mdy(s.from);
   else if (s.until) t += ' · until ' + sfw2Mdy(s.until);
+  // Only the days an event calendar plays (owner, 10/5/26: Erik's Sunday
+  // is a Bears Sunday only): "nfl-chicago-bears" reads "the Bears".
+  if (s.when_event) { var _ev = String(s.when_event).split('-').pop(); t += ' · only when the ' + _ev.charAt(0).toUpperCase() + _ev.slice(1) + ' play'; }
   return t;
 }
 /* In training (D-16): "Training as Bartender until 11/1/26, with Ana". */

@@ -466,7 +466,7 @@ def test_brief_lines_carry_a_nav_action_and_the_email_links_it_first():
 
 def test_the_web_brief_line_renders_the_action_before_ask():
     follow = SRC[SRC.index("  function renderFollow(g){"):SRC.index("  function renderOpen(")]
-    line = follow[follow.index("var act=(l.action&&l.action.nav)"):][:1000]
+    line = follow[follow.index("var act=(l.action&&l.action.nav)"):][:1800]
     assert "data-nav-go" in line and line.index("+act+") < line.index("Ask →")
 
 
