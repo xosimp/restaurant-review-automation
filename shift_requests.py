@@ -729,7 +729,7 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
             _gate(row["date"], row["shift_start"], row["shift_end"], now)
             _gate(row["target_date"], row["target_start"], row["target_end"], now,
                   what=f"{row['target_name']}'s shift")
-            return _approve_swap(restaurant_id, row, who, db_path, note=note)
+            return _approve_swap(restaurant_id, row, who, db_path, note=note, now=now)
         _gate(row["date"], row["shift_start"], row["shift_end"], now, until="end" if named else "start")
         _vanished(restaurant_id, row, db_path)
         if named:
@@ -981,13 +981,13 @@ def _refresh_task_sheets(restaurant_id, days):
         print(f"[shift_requests] task sheets not refreshed rid={restaurant_id}: {e!r}")
 
 
-def _approve_swap(restaurant_id, row, who, db_path, note=None):
+def _approve_swap(restaurant_id, row, who, db_path, note=None, now=None):
     """The manager's yes to a swap. Checked both ways now, so an illegal one
     is refused while it is still pending; executed only once the colleague
     has also said yes (SCHED-21)."""
     _swap_legal(restaurant_id, row, db_path)
     if row.get("target_accepted_at"):
-        return _execute_swap(restaurant_id, row, who, from_status="pending", db_path=db_path, note=note)
+        return _execute_swap(restaurant_id, row, who, from_status="pending", db_path=db_path, note=note, now=now)
     conn = get_conn(db_path)
     try:
         cur = conn.execute("UPDATE shift_change_requests SET status='approved', decided_by=?, decided_at=datetime('now'), "
@@ -1046,7 +1046,7 @@ def respond_swap(restaurant_id, request_id, colleague, accept, db_path=DB_PATH, 
         if conn is not None:
             conn.close()
     return _execute_swap(restaurant_id, row, row.get("decided_by"), from_status="approved", db_path=db_path,
-                         accepted=True)
+                         accepted=True, now=now)
 
 
 def colleague_agreed(restaurant_id, request_id, actor, db_path=DB_PATH, now=None, today=None):
@@ -1083,7 +1083,8 @@ def colleague_agreed(restaurant_id, request_id, actor, db_path=DB_PATH, now=None
     if row["status"] == "pending":
         _notify(restaurant_id, "swap_agreed", dict(out, agreed_by_manager=True), db_path=db_path)
         return out
-    return _execute_swap(restaurant_id, row, who, from_status="approved", db_path=db_path, accepted=True)
+    return _execute_swap(restaurant_id, row, who, from_status="approved", db_path=db_path, accepted=True,
+                         now=now)
 
 
 def _swap_legal(restaurant_id, req, db_path, rows=None, constraints=None):

@@ -24,9 +24,13 @@ import staff_settings as ss
 from models import create_restaurant, Restaurant, get_conn
 
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
-WEEK = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"]
+# A Monday week always ahead of the real clock: request_drop takes `today`,
+# decide() and claim() read the clock, so a fixed week failed from the
+# afternoon it began (10/5/26). Every other date here is set from it.
+_START = dt.date.today() + dt.timedelta(days=(7 - dt.date.today().weekday()) % 7 + 7)
+WEEK = [(_START + dt.timedelta(days=i)).isoformat() for i in range(7)]
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-TODAY = dt.date(2026, 9, 28)
+TODAY = _START - dt.timedelta(days=7)
 
 
 @pytest.fixture
@@ -56,7 +60,7 @@ def _history(db_path, rid, csv_text, quality=None, review=None, published=False)
         "schedule_csv, summary_json, quality_json, review_json, published_at) VALUES (?,?,?,?,?,?,?,'[]',?,?,?)",
         (rid, WEEK[0], WEEK[6], 12, 40, 30, csv_text,
          json.dumps(quality) if quality else None, json.dumps(review) if review else None,
-         "2026-10-01 10:00:00" if published else None))
+         (_START - dt.timedelta(days=4)).isoformat() + " 10:00:00" if published else None))
     conn.commit()
     hid = cur.lastrowid
     conn.close()
@@ -158,7 +162,7 @@ def test_staff_portal_reads_only_published_weeks(db_path, rid):
     _history(db_path, rid, CLEAN, published=True)
     draft = HEADER + f"{WEEK[0]},Monday,Ana,Server,9:00am,3:00pm,6.0,\n"
     _history(db_path, rid, draft, published=False)
-    data = staff_schedule.shifts_for_employee(rid, "Ana", today=dt.date(2026, 10, 4))
+    data = staff_schedule.shifts_for_employee(rid, "Ana", today=_START - dt.timedelta(days=1))
     assert data["published"] and data["upcoming"]
     blob = json.dumps(data)
     assert "4:00pm" in blob and "9:00am" not in blob
@@ -218,7 +222,7 @@ def test_denied_and_withdrawn_requests_change_nothing(db_path, rid):
 def test_a_past_shift_cannot_be_dropped(db_path, rid):
     _history(db_path, rid, CLEAN, published=True)
     with pytest.raises(srq.ShiftRequestError):
-        srq.request_drop(rid, "Ana", WEEK[0], "4:00pm", db_path=db_path, today=dt.date(2026, 10, 6))
+        srq.request_drop(rid, "Ana", WEEK[0], "4:00pm", db_path=db_path, today=_START + dt.timedelta(days=1))
 
 
 # ── engine backstops honour the constraints ────────────────────────────

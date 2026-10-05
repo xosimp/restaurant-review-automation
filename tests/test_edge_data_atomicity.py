@@ -52,10 +52,14 @@ from models import Restaurant, create_restaurant
 
 CSRF = "edge-data-atom-csrf"
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
-WEEK = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"]
+# A week that is always ahead of the real clock: request_drop takes `today`,
+# but decide() and claim() read the clock, so a fixed week stopped working the
+# afternoon it began ("that shift has already started", 10/5/26).
+_START = dt.date.today() + dt.timedelta(days=(7 - dt.date.today().weekday()) % 7 + 7)   # a Monday 8-14 days out
+WEEK = [(_START + dt.timedelta(days=i)).isoformat() for i in range(7)]
 CLEAN = (HEADER + f"{WEEK[0]},Monday,Ana,Server,4:00pm,10:00pm,6.0,\n"
          f"{WEEK[1]},Tuesday,Bob,Server,4:00pm,10:00pm,6.0,\n")
-TODAY = dt.date(2026, 9, 28)
+TODAY = _START - dt.timedelta(days=7)
 
 
 # ── race gate (same shape as test_edge_data_idempotency.py) ─────────────────

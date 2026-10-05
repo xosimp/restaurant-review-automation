@@ -53,12 +53,16 @@ def test_proposals_are_dated_mdy_on_the_restaurants_own_day():
     rid = _rid(timezone="America/Chicago")
     pid = models.log_ask_action(rid, "send_supplier_order", summary="Order from Fresh Co", outcome="proposed")
     conn = models.get_conn()
-    # 3am UTC on 9/28 is still 9/27 in Chicago.
-    conn.execute("UPDATE ask_cavnar_actions SET created_at='2026-09-28 03:00:00' WHERE id=?", (pid,))
+    # 3am UTC yesterday is still the day before in Chicago. Relative to the
+    # clock: a fixed 9/28 fell out of the open-proposal window (10/5/26).
+    import datetime as _dt
+    from time_utils import mdy
+    utc_day = _dt.datetime.utcnow().date() - _dt.timedelta(days=1)
+    conn.execute("UPDATE ask_cavnar_actions SET created_at=? WHERE id=?", (f"{utc_day.isoformat()} 03:00:00", pid))
     conn.commit()
     conn.close()
     text = ask_cavnar._commitments_context(rid)
-    assert "proposed 9/27/26" in text
+    assert f"proposed {mdy(utc_day - _dt.timedelta(days=1))}" in text
     assert not ISO.search(text)
 
 

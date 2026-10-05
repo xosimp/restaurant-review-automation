@@ -274,7 +274,8 @@ def test_a_manager_posts_an_extra_shift_and_a_teammate_claims_it(db, told):
     assert ("Cara", "5:00pm") in {(r["employee"], r["shift_start"]) for r in _csv(db, rid, W1[1])}
 
 
-def test_an_offer_to_one_person_is_answered_in_the_app_and_writes_the_week(db, told):
+def test_an_offer_to_one_person_is_answered_in_the_app_and_writes_the_week(db, told, clock):
+    # The staff route reads the wall clock itself: pinned like the rest (10/5/26).
     rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(W1[1], "Ana", "Server", "5:00pm", "10:00pm", 5)])
     cara = _member(db, rid, "Cara")

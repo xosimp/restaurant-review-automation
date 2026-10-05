@@ -388,11 +388,16 @@ def test_tenure_survives_the_upload_window(db_path, rid):
 # ── swaps and the reservation frame ────────────────────────────────────
 
 def test_a_swap_moves_both_shifts_only_when_both_are_legal(db_path, rid):
+    # Its own week, always ahead of the real clock: request_swap takes
+    # `today`, decide() reads the clock, so the fixed WEEK stopped working
+    # the afternoon it began (10/5/26).
+    start = dt.date.today() + dt.timedelta(days=(7 - dt.date.today().weekday()) % 7 + 7)
+    WEEK = [(start + dt.timedelta(days=i)).isoformat() for i in range(7)]
     csv_text = HEADER + (f"{WEEK[0]},Monday,Ana,Server,4:00pm,10:00pm,6.0,\n"
                          f"{WEEK[2]},Wednesday,Bob,Server,4:00pm,10:00pm,6.0,\n")
     hid = _publish(db_path, rid, WEEK[0], WEEK[6], csv_text)
     sv.append(rid, hid, "published", csv_text, db_path=db_path)
-    today = dt.date(2026, 9, 28)
+    today = start - dt.timedelta(days=7)
     with pytest.raises(srq.ShiftRequestError):
         srq.request_swap(rid, "Ana", WEEK[0], "4:00pm", "Ana", WEEK[2], "4:00pm", db_path=db_path, today=today)
     with pytest.raises(srq.ShiftRequestError):
