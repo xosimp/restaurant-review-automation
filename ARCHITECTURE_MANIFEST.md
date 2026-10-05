@@ -184,6 +184,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `inventory` | 2 | Food Cost: waste, overstock, reorder, supplier orders |
 | `inventory_ledger` | 2 | the stock ledger, recipes, margins, depletion |
 | `inventory_sync` / `backoffice` | 2 / 2 | the inventory-system seam: a provider contract (`PROVIDERS`, resolved by name) whose items, prices, suppliers, counts and recipes are written into Food Cost's own tables, `status()` for the pages, the nightly sync after the POS job / the Back Office provider (off until `BACKOFFICE_API_BASE` and a key exist; its HTTP calls wait on Buyers Edge's docs) |
+| `plu_map` | 1 | Back Office PLU ↔ POS item map (`pos_item_plus`). Name-first, with quantity as the check; never guesses; manual answers stick |
 | `invoices` | 2 | invoice transcription (model) and the Python proposal/apply; owner-applied lines teach `invoice_aliases`, which `propose` reads first |
 | `issues` | 2 | issues, assignment, escalation, tokenised links |
 | `labor` | 2 | shift ingestion, labor %, schedule generation glue; the labor read is a stored read (`insight_store` kind `labor`, one read for every login, its memory assembled as `TEAM_VIEWER`), with `labor_memory_block` and the target named with whose it is (`labor_target_whose`); `refresh_labor_periods` in `models` keeps calendar payroll weeks |

@@ -3988,6 +3988,28 @@ def init_db(db_path: str = DB_PATH):
             seen_at         TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, provider, item_id, level_id)
         )""",
+        # Back Office's PLU numbers against the POS's own items (plu_map.py,
+        # 10/5/26): RPOWER's API carries no PLU for EJ's items, and Back
+        # Office's cost, recipe and invoice exports are keyed by PLU. A PLU is
+        # not unique at EJ's (2159 is Coors Light and a Woodford add-on), so
+        # the key is the PLU with Back Office's name for it. `how`: name,
+        # name+qty, qty+sales, manual — a manual row is never overwritten.
+        """CREATE TABLE IF NOT EXISTS pos_item_plus (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            plu             TEXT NOT NULL,
+            bo_name         TEXT NOT NULL,
+            bo_category     TEXT,
+            provider        TEXT NOT NULL DEFAULT 'rpower',
+            item_id         TEXT,
+            pos_name        TEXT,
+            how             TEXT,
+            bo_qty          REAL,
+            pos_qty         REAL,
+            source          TEXT,
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, plu, bo_name)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pos_item_plus_item ON pos_item_plus(restaurant_id, item_id)",
         # How far the "what changed since" read has looked (UTC), per store.
         """CREATE TABLE IF NOT EXISTS pos_archive_state (
             restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
