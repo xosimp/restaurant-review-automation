@@ -8448,7 +8448,7 @@ svg:hover .hb-xh{opacity:1}
   function gridCols(g,owner){
     var c=[],cs=g.categories||[];
     for(var i=0;i<cs.length;i++)c.push({h:cs[i],k:'cat:'+cs[i],t:'money',g:'cat'});
-    c.push({h:'Gross',k:'gross',t:'money',g:'tot'},{h:'Net',k:'net',t:'money',g:'tot',strong:1});
+    c.push({h:'Gross',k:'gross',t:'money',g:'tot'},{h:'Net',k:'net',t:'money',g:'tot',strong:1},{h:'Sales tax',k:'tax',t:'money',g:'tot'});
     if(owner)c.push({h:'Budget gross',k:'budget_gross',t:'money',g:'bud'},{h:'Budget net',k:'budget_net',t:'money',g:'bud'},{h:'vs Budget',k:'vs_budget_net',t:'delta',g:'bud',pk:'vs_budget_net_pct'});
     c.push({h:'Last year',k:'last_year_net',t:'money',g:'ly'},{h:'vs LY',k:'vs_last_year_net',t:'delta',g:'ly',pk:'vs_last_year_net_pct'});
     // A login without Labor has the labor figures stripped (access.redact_grid):

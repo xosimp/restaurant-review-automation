@@ -259,7 +259,7 @@ def test_the_week_workbook_is_the_grid_s_layout(db):
     cells, _sheet, _z = _cells(xlsx.week_workbook(grid, "Simple EJ's"))
     assert cells["A1"][0] == "Simple EJ's · Period 9 · Week 4 · 9/16/26 – 9/22/26"
     header = [cells[f"{xlsx.col_letter(i)}2"][0] for i in range(len(xlsx.columns(grid)) + 4)]
-    assert header == ["Day", "Food", "Liquor", "Beer", "Wine", "Retail", "NA Beverage", "Gross", "Net",
+    assert header == ["Day", "Food", "Liquor", "Beer", "Wine", "Retail", "NA Beverage", "Gross", "Net", "Sales tax",
                       "Budget gross", "Budget net", "vs Budget", "vs Budget %", "Last year", "vs LY", "vs LY %",
                       "Labor %", "Weather", "Event", "Influence"]
     col = {h: xlsx.col_letter(i) for i, h in enumerate(header)}
@@ -456,3 +456,18 @@ def test_the_workbook_says_when_gross_covers_fewer_nights_or_mixes_bases():
     cells, _s, _z = _cells(xlsx.week_workbook(grid, "Simple EJ's"))
     notes = [v for v, _st in cells.values() if isinstance(v, str)]
     assert not any("measured nights" in n or "two definitions" in n for n in notes)
+
+
+def test_sales_tax_is_its_own_column_summed_over_the_week():
+    """Erik, 10/5/26: 'separate sales tax because it all goes to 1 account'."""
+    from dsr import rollup, xlsx
+    rows = [{"net": 100.0, "tax": 9.5, "gross": None, "budget_net": None, "last_year_net": None,
+             "labor_cost": None, "budget_gross": None, "cats": {}},
+            {"net": 200.0, "tax": 19.0, "gross": None, "budget_net": None, "last_year_net": None,
+             "labor_cost": None, "budget_gross": None, "cats": {}},
+            {"net": None, "tax": None, "gross": None, "budget_net": None, "last_year_net": None,
+             "labor_cost": None, "budget_gross": None, "cats": {}}]
+    t = rollup._totals(rows, [])
+    assert t["tax"] == 28.5 and t["tax_days"] == 2, "an unmeasured night is left out, never $0"
+    heads = [h for h, _k, _t in xlsx.columns({"categories": [], "withheld": []})]
+    assert heads[heads.index("Net") + 1] == "Sales tax"

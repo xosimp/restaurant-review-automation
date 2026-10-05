@@ -38,7 +38,10 @@ import dsr as _dsr
 from dsr import fiscal, store
 
 LAST_YEAR_DAYS = 364                 # same weekday, 52 weeks back
-_NUMERIC = ("gross", "net", "budget_gross", "budget_net", "last_year_net", "labor_cost")
+# "tax": sales tax collected, its own column (Erik, 10/5/26: "separate sales
+# tax because it all goes to 1 account") - never in net, in gross only on
+# the "everything rung" basis (block_sales.GROSS_BASES).
+_NUMERIC = ("gross", "net", "tax", "budget_gross", "budget_net", "last_year_net", "labor_cost")
 
 
 def _d(day):
@@ -270,7 +273,7 @@ def _rows(restaurant, start, end, db_path):
             "provisional": bool(rep["provisional"]) if rep is not None else False,
             "version": rep["version"] if rep is not None else None,
             "cats": _day_categories(restaurant.id, m, facts, db_path),
-            "gross": m.get("sales.gross"), "net": net,
+            "gross": m.get("sales.gross"), "net": net, "tax": m.get("sales.tax"),
             "gross_basis": _gross_basis(facts) if rep is not None else None,
             "transactions": m.get("sales.transactions"), "guests": m.get("sales.guests"),
             "budget_gross": b.get("gross"), "budget_net": b.get("net"),

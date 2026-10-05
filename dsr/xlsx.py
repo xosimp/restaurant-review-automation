@@ -201,7 +201,7 @@ def columns(grid):
     # dashes (D2-11): labor without LABOR_VIEW, gross without LOSS_VIEW.
     if "gross" not in withheld:
         cols += [("Gross", "gross", "money")]
-    cols += [("Net", "net", "money")]
+    cols += [("Net", "net", "money"), ("Sales tax", "tax", "money")]
     if owner:
         cols += [("Budget gross", "budget_gross", "money"), ("Budget net", "budget_net", "money"),
                  ("vs Budget", "vs_budget_net", "delta"), ("vs Budget %", "vs_budget_net_pct", "pct")]
