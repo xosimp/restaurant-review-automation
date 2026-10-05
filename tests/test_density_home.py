@@ -193,7 +193,7 @@ HELPERS = ("function esc(v){return String(v==null?'':v).replace(/[&<>\"']/g,func
 
 
 def test_the_status_line_says_verdict_score_net_and_budget_in_its_tone():
-    js = HELPERS + _fn("hbDayGap") + _fn("hbStatusHtml") + """
+    js = HELPERS + _fn("hbDayGap") + _fn("hbReportDay") + _fn("hbStatusHtml") + """
 console.log(JSON.stringify([
  hbStatusHtml({ok:true,tonight:'2026-09-20',reports:[{business_date:'2026-09-19',status:'final',verdict:'Good day',tone:'good',overall:78,net:8420,vs_budget:420}]}),
  hbStatusHtml({ok:true,tonight:'2026-09-20',reports:[{business_date:'2026-09-19',status:'final',net:8420,vs_budget:null,verdict:null,tone:null}]}),
@@ -204,6 +204,8 @@ console.log(JSON.stringify([
     assert owner["tone"] == "good"
     # No "Last night" kicker on the line (owner, 9/26/26); Report names the night.
     assert "Last night" not in text and "Good day 78/100" in text and "$8,420 net" in text and "+$420 vs budget" in text
+    # ...but which night it is, first (owner, 10/5/26): it read as today's live score.
+    assert text.startswith("Yesterday Good day 78/100")
     t2 = " ".join(re.sub(r"<[^>]+>", " ", manager["html"]).split())
     # the Report link on its own row, no divider beside the line (9/30/26)
     assert 'class="go"' in owner["html"] and "rdiv" not in owner["html"]

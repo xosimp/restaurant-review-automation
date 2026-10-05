@@ -121,3 +121,24 @@ def test_round_three_layout_calls():
     un = un[:un.index("\n  function _phone(")]
     assert "names.map(_firstInitial)" in un and "seen[short[j]]>1?n:short[j]" in un
     assert "p[0]+' '+p[1].charAt(0).toUpperCase()+'.'" in un and "font-size:11px" not in un
+
+
+def test_home_says_which_night_the_report_line_is():
+    fn = SRC[_at("  function hbReportDay(bd,tonight){"):]
+    fn = fn[:fn.index("\n  }\n")]
+    assert "if(diff===1)return 'Yesterday';" in fn and "if(diff===0)return 'Today';" in fn
+    assert "var now=tonight||" in fn and "_hbData.local_now" in fn, "the restaurant's own date, not the browser's"
+    st = SRC[_at("  function hbStatusHtml(x){"):]
+    st = st[:st.index("\n  }\n")]
+    assert "var dayTag=hbReportDay(r.business_date,x.tonight);" in st
+    assert "(dayTag?'<span class=\"day\">'+esc(dayTag)+'</span>':'')+bits.join(" in st
+    assert ".hb-status .day{display:inline-flex;" in SRC
+
+
+def test_the_late_night_hour_is_the_owners_to_set():
+    row = SRC[_at('<select class="ac-select" id="as-dsr-late"'):]
+    row = row[:row.index("</select>")]
+    assert "saveDsrSetting('dsr_late_night_hour')" in row and '<option value="">Off</option>' in row
+    assert all('<option value="%d">' % h in row for h in range(18, 24))
+    assert "late.value = s.dsr_late_night_hour == null ? '' : String(s.dsr_late_night_hour);" in SRC
+    assert "else if (field === 'dsr_late_night_hour') { v = document.getElementById('as-dsr-late').value; v = v === '' ? null : parseInt(v, 10); }" in SRC

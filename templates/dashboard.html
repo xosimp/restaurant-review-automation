@@ -2777,6 +2777,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-status[hidden]{display:none}
 .hb-status .when{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
 .hb-status .vd{display:inline-flex;align-items:center;gap:7px;font-weight:600;color:var(--ink)}
+/* Which night the report line is (owner, 10/5/26): a tag before the
+   verdict, so last night's score never reads as today's. */
+.hb-status .day{display:inline-flex;align-items:center;font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);border:1px solid var(--hb-line);border-radius:999px;padding:3px 9px;line-height:1}
 .hb-status .vd i{width:9px;height:9px;border-radius:50%;background:var(--ink3);flex-shrink:0}
 .hb-status.good .vd{color:var(--hb-good)}.hb-status.good .vd i{background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
 .hb-status.warn .vd{color:var(--hb-warn)}.hb-status.warn .vd i{background:var(--hb-warn);box-shadow:0 0 8px var(--hb-warn)}
@@ -6069,6 +6072,18 @@ svg:hover .hb-xh{opacity:1}
   // score, net only when Sales was measured, vs budget only in a view that
   // may read the budget). A manager's line has no verdict - their report
   // has no score - and says the net alone.
+  // The night a report is, said against the restaurant's own business
+  // date (the summary's 'tonight', else Home's local clock).
+  function hbReportDay(bd,tonight){
+    bd=String(bd||'').slice(0,10);
+    var now=tonight||(typeof _hbData!=='undefined'&&_hbData&&_hbData.local_now)||'';
+    var m=/^(\d{4})-(\d\d)-(\d\d)$/.exec(bd),t=/^(\d{4})-(\d\d)-(\d\d)/.exec(String(now));
+    if(!m)return '';
+    var day=Date.UTC(+m[1],+m[2]-1,+m[3]),today=t?Date.UTC(+t[1],+t[2]-1,+t[3]):null,diff=today==null?null:Math.round((today-day)/86400000);
+    if(diff===1)return 'Yesterday';
+    if(diff===0)return 'Today';
+    return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(day).getUTCDay()]+' '+(+m[2])+'/'+(+m[3])+'/'+m[1].slice(2);
+  }
   function hbStatusHtml(x){
     if(!x||!x.ok)return null;
     var r=(x.reports||[])[0];if(!r)return null;
@@ -6076,6 +6091,9 @@ svg:hover .hb-xh{opacity:1}
     // No "Last night" kicker (9/26/26): the Report link names the night,
     // and the line reads as the verdict itself.
     var bits=[];
+    // Which night the line is, first: "Mixed day 58/100" read as today's
+    // live score (owner, 10/5/26). Yesterday, Today, else "Sat 10/3/26".
+    var dayTag=hbReportDay(r.business_date,x.tonight);
     if(running)bits.push('<span class="miss">the report is still coming in</span>');
     else{
       if(r.verdict)bits.push('<span class="vd"><i></i>'+esc(r.verdict)+(r.overall!=null?' <span class="hb-num">'+(+r.overall)+'/100</span>':'')+'</span>');
@@ -6084,7 +6102,7 @@ svg:hover .hb-xh{opacity:1}
       if(typeof r.vs_budget==='number'&&isFinite(r.vs_budget)){var vb=Math.round(r.vs_budget);
         bits.push('<span class="nt"><span class="fig hb-num '+(vb>=0?'up':'down')+'">'+(vb>0?'+':(vb<0?'−':''))+'$'+Math.abs(vb).toLocaleString('en-US')+'</span><small>vs budget</small></span>');}
     }
-    return {tone:(!running&&r.tone)||'',html:bits.join('<span class="sep">·</span>')
+    return {tone:(!running&&r.tone)||'',html:(dayTag?'<span class="day">'+esc(dayTag)+'</span>':'')+bits.join('<span class="sep">·</span>')
       // The Report link on its own row under the line, never after a
       // divider beside it (owner, 9/30/26).
       +'<span class="go"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Report')+' →</button></span>'};
@@ -14897,6 +14915,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="c ac-inline"><input class="ac-input" type="text" id="as-dsr-custom" inputmode="numeric" maxlength="60" placeholder="4,4,5,4,4,5,4,4,5,4,4,5" aria-label="Period lengths in weeks" style="width:230px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="saveDsrSetting('fiscal_period_scheme')">Save</button></div></div>
           <div class="ac-row"><div class="l"><b>Gross sales means</b><span id="as-dsr-gross-note">Net is the same either way: items after discounts and comps, never tax or voids.</span></div>
             <div class="c"><select class="ac-select" id="as-dsr-gross" onchange="saveDsrSetting('dsr_gross_basis')" aria-label="What gross sales means"><option value="items">Items at the price rung</option><option value="all">Everything rung (items, tax and voids)</option></select></div></div>
+          {# The owner's own late-night line (10/5/26): it was set for Simple
+             EJ's by hand on 10/2 and had no field. #}
+          <div class="ac-row"><div class="l"><b>Late night starts at</b><span>Checks opened from this hour, or after midnight, are their own Late night line beside lunch and dinner. Off keeps your POS&rsquo;s own meal periods.</span></div>
+            <div class="c"><select class="ac-select" id="as-dsr-late" onchange="saveDsrSetting('dsr_late_night_hour')" aria-label="Late night starts at"><option value="">Off</option><option value="18">6 pm</option><option value="19">7 pm</option><option value="20">8 pm</option><option value="21">9 pm</option><option value="22">10 pm</option><option value="23">11 pm</option></select></div></div>
           <div class="ac-row as-dsr-years"><div class="l"><b>Years that run differently</b><span>A 53-week year, or any year your accounting system splits its own way. Every other year follows the start and periods above, counted on from the end of the last one listed here.</span>
               <div id="as-dsr-years" class="as-dsr-ylist"></div></div>
             <div class="c ac-inline"><input class="ac-input" type="date" id="as-dsr-ystart" aria-label="That year starts" style="width:160px"><input class="ac-input" type="text" id="as-dsr-ylen" inputmode="numeric" maxlength="60" placeholder="4,4,5,4,4,5,4,4,5,4,5,5" aria-label="That year's period lengths" style="width:200px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="dsrAddYear()">Add year</button></div></div>
@@ -27867,6 +27889,8 @@ function loadDsrSettings() {
     cavDateEmpty(document.getElementById('as-dsr-ystart'));
     if (!s.fiscal_year_start) { var _cal = document.getElementById('as-dsr-cal'); if (_cal) _cal.textContent = 'Not set yet \u2014 the report has no period numbers until it is. Leave it blank for weeks only.'; }
     _dsrShowScheme(s.fiscal_period_scheme || '4x13');
+    var late = document.getElementById('as-dsr-late');
+    if (late) late.value = s.dsr_late_night_hour == null ? '' : String(s.dsr_late_night_hour);
     var gb = document.getElementById('as-dsr-gross');
     if (gb) gb.value = s.dsr_gross_basis === 'all' ? 'all' : 'items';
     _dsrYears = s.fiscal_years || [];
@@ -27989,6 +28013,7 @@ function saveDsrSetting(field) {
   if (field === 'dsr_enabled') v = document.getElementById('as-dsr-enabled').checked;
   else if (field === 'dsr_notify') v = document.getElementById('as-dsr-notify').checked;
   else if (field === 'dsr_deadline_hour') v = parseInt(document.getElementById('as-dsr-deadline').value, 10);
+  else if (field === 'dsr_late_night_hour') { v = document.getElementById('as-dsr-late').value; v = v === '' ? null : parseInt(v, 10); }
   else if (field === 'fiscal_week_start_dow') v = parseInt(document.getElementById('as-dsr-dow').value, 10);
   else if (field === 'fiscal_year_start') v = document.getElementById('as-dsr-year').value || '';
   else if (field === 'fiscal_period_scheme') {
