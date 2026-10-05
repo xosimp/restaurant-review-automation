@@ -15103,6 +15103,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
               <div class="c"><select class="ac-select" id="as-mb-hour" onchange="saveMorningBrief()" aria-label="Morning brief hour"></select></div></div>
             <div class="ac-row"><div class="l"><b>Issues go to</b><span>Texted a link when a bad review lands or you open an issue. Pick someone who agreed to texts, or add them here.</span></div>
               <div class="c"><select class="ac-select" id="as-route-manager" onchange="saveIssueRouting('manager')" aria-label="Issues go to"></select></div></div>
+            <div class="ac-row"><div class="l"><b>Text them about new issues</b><span>Off: issues still open and are assigned, and reach you by push on the app and the bell instead. Nobody is texted, an escalation included.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-issue-texts" onchange="saveIssueTexts(this)" aria-label="Text about new issues"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>If nobody responds, escalate to</b><span id="as-route-esc-note">After two hours unacknowledged.</span></div>
               <div class="c"><select class="ac-select" id="as-route-escalation" onchange="saveIssueRouting('escalation')" aria-label="Escalate to"></select></div></div>
             {# Someone new to text, added from the row itself (owner, 9/27/26):
@@ -27990,6 +27992,8 @@ function saveMorningBrief(statusId) {
 // option to add someone (owner, 9/27/26 - with no alert contact on file the
 // lists held only Nobody).
 function paintIssueRouting(d) {
+  var tx = document.getElementById('as-issue-texts');
+  if (tx) tx.checked = d.issue_texts !== false;
   var roles = ['manager', 'escalation'];
   for (var j = 0; j < roles.length; j++) {
     var role = roles[j], cur = (d.routing[role] || {}).contact_id, sel = document.getElementById('as-route-' + role);
@@ -28009,6 +28013,12 @@ function loadIssueRouting() {
   fetch('/api/issues/routing', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (d && d.ok) paintIssueRouting(d);
   }).catch(function() {});
+}
+function saveIssueTexts(box) {
+  asPost('/api/issues/routing', {issue_texts: box.checked}, 'as-ops-status',
+         box.checked ? 'New issues will be texted' : 'New issues go by push and the bell').then(function(d) {
+    if (!d || !d.ok) box.checked = !box.checked;
+  });
 }
 var _routeAddRole = null;
 function saveIssueRouting(role) {

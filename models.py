@@ -545,6 +545,10 @@ class Restaurant:
     skip_holidays:    Optional[str]  = None
     custom_competitors: Optional[str] = None
     login_notify:     int            = 0
+    # Whether a new issue texts the routed manager (1) or reaches them by
+    # push and the bell only (0) - Erik, Simple EJ's, 10/5/26: no texts
+    # once the app is on his phone. Issues open and assign either way.
+    issue_texts:      int            = 1
     # Notify the owner when an employee opens the staff portal. Off by
     # default: the portal is meant to be used every shift, so this is an
     # opt-in for owners who want to watch it, not a default alarm.
@@ -2110,6 +2114,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN skip_holidays TEXT",
         "ALTER TABLE restaurants ADD COLUMN custom_competitors TEXT",
         "ALTER TABLE restaurants ADD COLUMN login_notify INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN issue_texts INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN staff_signin_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN marketing_emails_opt_out INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN mailing_address TEXT",
@@ -4768,7 +4773,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at","labor_standards_json",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
+        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","issue_texts","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_competitor_move","alert_extra_emails","push_sound",
         "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","fiscal_years_json","dsr_enabled","dsr_deadline_hour","dsr_notify","dsr_gross_basis","dsr_late_night_hour",
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
@@ -5464,6 +5469,7 @@ def _restaurant_from_row(row) -> Restaurant:
         skip_holidays=row["skip_holidays"] if "skip_holidays" in row.keys() else None,
         custom_competitors=row["custom_competitors"] if "custom_competitors" in row.keys() else None,
         login_notify=row["login_notify"] if "login_notify" in row.keys() else 0,
+        issue_texts=row["issue_texts"] if "issue_texts" in row.keys() and row["issue_texts"] is not None else 1,
         staff_signin_notify=row["staff_signin_notify"] if "staff_signin_notify" in row.keys() else 0,
         marketing_emails_opt_out=row["marketing_emails_opt_out"] if "marketing_emails_opt_out" in row.keys() else 0,
         mailing_address=row["mailing_address"] if "mailing_address" in row.keys() else None,
@@ -15206,7 +15212,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "name", "location_name", "owner_name", "owner_email", "owner_phone", "timezone",
         "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "menu_notes", "sign_off_name",
         "response_language", "tone_preset", "open_times_json", "close_times_json", "skip_holidays",
-        "digest_day", "digest_enabled", "login_notify", "staff_signin_notify", "marketing_emails_opt_out",
+        "digest_day", "digest_enabled", "login_notify", "issue_texts", "staff_signin_notify", "marketing_emails_opt_out",
         "monthly_review_enabled",
         "alert_1star", "alert_2star", "alert_3star", "alert_health", "alert_neg_spike", "alert_negative_trend",
         "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop", "alert_competitor_move",

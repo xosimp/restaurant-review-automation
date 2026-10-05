@@ -339,6 +339,8 @@ def _notify(issue_id, token=None, db_path=DB_PATH, now=None):
     with backoff, and after MAX_NOTIFY_ATTEMPTS, or on a failure Twilio says
     is permanent, the issue is marked notify_failed_at and the owner is told
     by push and email instead (_fall_back)."""
+    if not texts_on(_issue_restaurant(issue_id, db_path)):
+        return _push_instead(issue_id, db_path, now)
     r = _sendable(issue_id, db_path, now)
     if not r:
         return False
@@ -383,6 +385,60 @@ def _notify(issue_id, token=None, db_path=DB_PATH, now=None):
             conn.commit()
         finally:
             conn.close()
+    return False
+
+
+def texts_on(restaurant_id) -> bool:
+    """Whether new issues text the routed manager (restaurants.issue_texts,
+    on unless the owner turned it off). Off, an issue still opens and is
+    assigned, and reaches people by push and the bell (_push_instead)."""
+    if restaurant_id is None:
+        return True
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    return bool(getattr(r, "issue_texts", 1) if r is not None else 1)
+
+
+def _issue_restaurant(issue_id, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT restaurant_id FROM ops_issues WHERE id=?", (issue_id,)).fetchone()
+    finally:
+        conn.close()
+    return row["restaurant_id"] if row else None
+
+
+def _push_instead(issue_id, db_path=DB_PATH, now=None):
+    """Texts are off: the issue is pushed once to the logins allowed to read
+    it (notify.alert_audience, as the fallback does), claimed by notified_at
+    exactly as a text is so tick() neither retries nor escalates it by text.
+    Returns False — no text went out. Never raises."""
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT * FROM ops_issues WHERE id=?", (issue_id,)).fetchone()
+        if not r or r["status"] == "resolved" or r["notified_at"] \
+                or ("notify_suppressed" in r.keys() and r["notify_suppressed"]):
+            return False
+        won = conn.execute("UPDATE ops_issues SET notified_at=?, notify_error=NULL, notify_next_at=NULL "
+                           "WHERE id=? AND notified_at IS NULL", (_stamp(now), issue_id)).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not won:
+        return False
+    rid = r["restaurant_id"]
+    try:
+        import notify
+        import push
+        audience = notify.alert_audience(rid, ["issue"], db_path)
+        if audience is None or audience:
+            kind = r["kind"] if "kind" in r.keys() else None
+            who = r["assignee_name"] if "assignee_name" in r.keys() else None
+            push.fire_push(rid, "coverage" if kind == "coverage" else "issue", str(r["title"])[:120],
+                           (f"{_restaurant_name(rid)} · assigned to {who}" if who else _restaurant_name(rid))[:220],
+                           data={"issue_id": r["id"], "surface": "issue"}, db_path=db_path, user_ids=audience)
+    except Exception as e:
+        print(f"[issues] push for issue {issue_id} failed: {e}")
     return False
 
 
@@ -863,6 +919,8 @@ def tick(db_path=DB_PATH, now=None):
             continue
         if _coverage_shift_over(s, db_path):
             continue                    # nobody to cover any more (A-28)
+        if not texts_on(s["restaurant_id"]):
+            continue                    # texts off: nobody is texted, an escalation included
         if _escalate(s, db_path, now):
             escalated += 1
     return {"held_sent": sent_held, "escalated": escalated}

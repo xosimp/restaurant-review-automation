@@ -259,7 +259,8 @@ def _do_routing_get(u):
     from notify import get_alert_contacts
     contacts = [{"id": c["id"], "name": c["name"], "sms_consent": bool(c.get("sms_consent"))}
                 for c in (get_alert_contacts(_rid(u)) or [])]
-    return {"ok": True, "routing": issues.get_routing(_rid(u)), "contacts": contacts}, 200
+    return {"ok": True, "routing": issues.get_routing(_rid(u)), "contacts": contacts,
+            "issue_texts": issues.texts_on(_rid(u))}, 200
 
 
 def _do_routing_set(u):
@@ -267,6 +268,13 @@ def _do_routing_set(u):
         return _forbidden()
     import issues
     b = _body()
+    if "issue_texts" in b and "role" not in b:
+        # Texts on or off (Erik, 10/5/26): issues still open and are
+        # assigned; off, they reach people by push and the bell instead.
+        from models import update_restaurant
+        on = 1 if _flag(b.get("issue_texts")) else 0
+        update_restaurant(_rid(u), {"issue_texts": on})
+        return {"ok": True, "routing": issues.get_routing(_rid(u)), "issue_texts": bool(on)}, 200
     role = b.get("role")
     if role not in ("manager", "escalation"):
         return {"ok": False, "error": "role must be manager or escalation"}, 400
