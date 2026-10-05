@@ -392,6 +392,15 @@ meaningful colour — never flat and generic.
 Every label must name a value the chart actually reaches; a missing
 measurement is drawn as a gap, never as zero.
 
+A `glowLine` svg stretches to its box (`preserveAspectRatio="none"`), so
+nothing round is drawn inside it. Its strokes carry
+`vector-effect="non-scaling-stroke"`, and its dots are HTML over the chart,
+placed by `left`/`top` percentages with the line's color as `--c`: the
+endpoint (`.hb-cl-end`), its pulse (`.hb-cl-pt.hb-hot`), the over-target
+marks (`.hb-cl-over`) and the hover dot (`.hb-cl-xd`). Text goes the same
+way (`.hb-cl-target`). Pass `labels` whenever the points are days or weeks:
+the hover tip names the point (M/D/YY, or "Week of M/D/YY").
+
 ---
 
 ## 7. Forms
@@ -1372,7 +1381,8 @@ them. iOS draws the same fields: the advice in "What a card remembers — iOS"
 | What the draft keeps | `.mem-lrn` under "What the draft has learned": the editor clashes first ("Ana B. on Tuesday night: taken off in some weeks and put on in others", Needs you, Keep them off / Keep them on — the other side is set aside), then each standing pattern with its pill and memory line and, when it can be one, Make it a rule |
 | What the draft was asked to do | The Studio's Overview section `data-sw="asked"` (`#sw-asked`): each soft requirement as an `.sr-line` with `.cv-ok` (applied) or `.cv-warn` (not) and "Applied · 3 on (usually 2) · from your reviews · until 10/4/26"; pattern clashes left out of the draft; "Details trimmed after 30 days…" on a thinned stored week |
 | What your nights have taught | `.mem-teach` at the top of Events & reservations — the ai surface (`--sf-ai`), an orange kicker, one line per measured label with an ember2 glowing dot, dimmed below its sample floor. A listed event carries its label's record as a memory line in the table |
-| Your rating over time | `.mem-rating` on Intel's What changed: the latest rating in the number face at card size, the change in green or red since the first week on file, a `glowLine` of the weekly readings (hover names each week, M/D/YY), then "Over the months" — the market's arrivals, departures and rating moves as `.in2-comp` rows, six shown and Show all N |
+| Intel sub-heading | `h3.in2-subh` — a heading inside an Intel section ("What changed", "Over the months"), Clash Display 19px in `--ink`, one step under the section's own `h2`. Not a kicker: in the small orange caps the page had no sections (owner, 10/5/26) | Intel |
+| Your rating over time | `.mem-rating` on Intel's What changed: the latest rating in the number face at card size, the change in green or red since the first week on file, a `glowLine` of the weekly readings (hover names each week, M/D/YY), the sentence under it only when the rating moved, then "Over the months" — the market's arrivals, departures and rating moves as `.in2-comp` rows, six shown and Show all N |
 | Pars to raise | `.mem-pars` inside What to order this week (`data-nav="inventory/pars"`): "Raise the par on Mozzarella to 12", the 86s it rests on as a memory line, Raise par to 12 (secondary) and Pass |
 | Fix tags | A `cbtn-text` Fix tags in each review card's pill row opens `.rv2-retag` under it: the analyser's topics as toggle buttons (one to three), How it reads, How serious ("—" while unknown), the dishes it names; Save the tags sends only what changed |
 

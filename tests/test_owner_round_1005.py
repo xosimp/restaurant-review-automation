@@ -53,3 +53,52 @@ def test_a_target_box_saves_once_it_settles_not_on_every_spinner_step():
     assert "your labor target is now" in studio and "everywhere" in studio, "it says the target is the restaurant's"
     acct = SRC[_at("if (f && body[f] === '') { status('as-tg-status', 'Enter a number', true); return; }"):]
     assert acct.index("cavSettled(t, function () {") < acct.index("postJ('/api/account/targets', body")
+
+
+def _fn(name):
+    i = _at("function " + name + "(")
+    return SRC[i:SRC.index("\n  }\n", i)]
+
+
+def test_a_glowline_draws_round_dots_and_even_strokes_at_any_width():
+    """The svg stretches (preserveAspectRatio none): circles drew as ovals
+    and strokes thickened on slopes (owner, 10/5/26, Intel's rating chart)."""
+    fn = _fn("glowLine")
+    assert "<circle" not in fn, "every dot is HTML over the chart"
+    assert fn.count('vector-effect="non-scaling-stroke"') >= 4    # line, glow, target, crosshair
+    assert "hb-cl-pt hb-hot" in fn and "hb-cl-pt hb-dot hb-cl-end" in fn and 'class="hb-cl-xd"' in fn
+    assert "(p[0]/w*100)" in fn and "(p[1]/h*100)" in fn, "placed by percentage, so they track the stretch"
+    assert "+gl+dots+tgtLbl+" in fn
+    hover = _fn("hbChartHover")
+    assert "querySelector('.hb-cl-xd')" in hover and "d.style.left=" in hover and "setAttribute('cx'" not in hover
+    assert ".hb-cl-end{width:8px;height:8px;" in SRC and ".hb-cl:hover .hb-cl-xd{opacity:1}" in SRC
+
+
+def test_the_rating_chart_says_nothing_under_it_when_the_rating_did_not_move():
+    i = _at("window.memIntelHistoryHtml = function (d) {")
+    body = SRC[i:SRC.index("\n  };", i)]
+    assert "(ch ? '<div class=\"mem-ln\">' + memNum(memOwnRatingLine(own)) + '</div>' : '')" in body
+
+
+def test_what_changed_and_over_the_months_are_headings_not_kickers():
+    assert '<h3 class="in2-subh">What changed</h3>' in SRC
+    assert '<h3 class="in2-subh">Over the months</h3>' in SRC
+    assert "hb-kicker\" style=\"margin-top:22px\">What changed" not in SRC
+    rule = SRC[_at(".in2-subh{"):]
+    rule = rule[:rule.index("}")]
+    assert "Clash Display" in rule and "font-size:19px" in rule and "color:var(--ink)" in rule
+
+
+def test_the_website_and_review_trend_tips_name_their_day():
+    web = SRC[_at("function mktWebsiteHtml(d){"):]
+    web = web[:web.index("\n}\n")]
+    assert "days.push(mdy(line[i].day))" in web and "labels: days" in web
+    assert "labels:weeks.map(function(w){return 'Week of '+lab(w);})" in SRC
+
+
+def test_the_studio_step_rule_has_the_same_space_either_side():
+    nav = SRC[_at('<nav class="ss-steps" role="tablist" aria-label="Schedule Studio steps">'):]
+    nav = nav[:nav.index("</nav>")]
+    assert nav.index('data-ss-go="publish"') < nav.index('class="ss-steps-sep"') < nav.index('data-ss-go="history"')
+    assert "ss-steps-h" not in SRC, "the rule is no longer drawn on History's edge"
+    assert ".ss-steps .ss-steps-sep{flex:none;width:1px;height:18px;margin:0 6px;" in SRC

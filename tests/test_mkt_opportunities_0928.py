@@ -956,10 +956,15 @@ def _between(a, b):
 
 def test_the_feed_leads_marketing_under_the_header():
     # The sub-tabs moved to the top of the page in the Studio's step bar
-    # (owner, 10/2/26); the feed still sits under the header, above Content.
+    # (owner, 10/2/26); the feed leads the Content tab only - it showed above
+    # Campaigns, Scheduled and Analytics too (owner, 10/5/26).
     panel = _between('id="panel-marketing"', '<div id="mkt-tab-content" role="tabpanel"')
-    assert '<section class="mkt-opps" id="mkt-opps" data-nav="marketing/opportunities"' in panel
-    assert panel.index('id="mkt-tab-content-btn"') < panel.index('class="hb-top"') < panel.index('id="mkt-opps"')
+    assert 'id="mkt-opps"' not in panel, "not above the tabs any more"
+    content = _between('<div id="mkt-tab-content" role="tabpanel"', 'id="mkt-tab-campaigns"')
+    assert '<section class="mkt-opps" id="mkt-opps" data-nav="marketing/opportunities"' in content
+    assert panel.index('id="mkt-tab-content-btn"') < panel.index('class="hb-top"')
+    focus = _between("function mktOppFocus() {", "// \"Draft it\"")
+    assert "switchMktTab('content')" in focus, "a link to a card opens the Content tab first"
     assert '<header class="ss-top mkt-top">' in panel and '<span class="ss-name">Marketing Studio</span>' in panel
     assert '<nav class="ss-steps mkt-steps" role="tablist" aria-label="Marketing sections">' in panel
 

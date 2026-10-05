@@ -3493,6 +3493,16 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-xh{pointer-events:none;opacity:0;transition:opacity .15s ease}
 svg:hover .hb-xh{opacity:1}
 [data-own-tip] .hb-xh{display:none}
+/* A glowLine's dots are HTML over the stretched svg, so they stay round
+   (owner, 10/5/26): the endpoint, its pulse, the over-target marks and the
+   crosshair's dot. Placed by left/top percentages; --c is the line's color. */
+.hb-cl-pt,.hb-cl-xd{position:absolute;border-radius:50%;pointer-events:none;transform-origin:center}
+.hb-cl-end{width:8px;height:8px;margin:-4px 0 0 -4px;background:var(--c);box-shadow:0 0 0 1.5px rgba(255,255,255,.9);z-index:3}
+.hb-cl-pt.hb-hot{width:28px;height:28px;margin:-14px 0 0 -14px;background:radial-gradient(closest-side,var(--c),transparent);z-index:2}
+.hb-cl-over{width:6px;height:6px;margin:-3px 0 0 -3px;background:var(--c);box-shadow:0 0 0 6px rgba(227,51,63,.22);z-index:2}
+.hb-cl-xd{width:10px;height:10px;margin:-5px 0 0 -5px;background:var(--c);box-shadow:0 0 0 1.5px rgba(255,255,255,.9);opacity:0;transition:opacity .15s ease;z-index:4}
+.hb-cl:hover .hb-cl-xd{opacity:1}
+[data-own-tip] .hb-cl-xd{display:none}
 .hb-sg:hover svg path[stroke-width="2.2"],.hb-hero:hover svg path[stroke-width="2.2"]{filter:brightness(1.12)}
 .hb-sg svg rect{transition:filter .15s ease}.hb-sg svg rect:hover{filter:brightness(1.2)}
 #hb-tip{position:fixed;z-index:9000;pointer-events:none;background:var(--surface);border:1px solid var(--hb-line);border-radius:10px;padding:7px 11px;font-size:12.5px;line-height:1.35;color:var(--ink2);box-shadow:0 2px 5px rgba(14,12,10,.08),0 16px 32px -14px rgba(14,12,10,.3);opacity:0;transition:opacity .12s ease;transform:translate(-50%,calc(-100% - 12px));white-space:nowrap}
@@ -4023,7 +4033,6 @@ svg:hover .hb-xh{opacity:1}
   }
   var _uid=0;
   function glowDefs(id,col){return '<defs><linearGradient id="'+id+'g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+col+'" stop-opacity=".45"/><stop offset="1" stop-color="'+col+'" stop-opacity="0"/></linearGradient><filter id="'+id+'f" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="3"/></filter></defs>';}
-  function hotDefs(id,col){return '<defs><radialGradient id="'+id+'h"><stop offset="0" stop-color="'+col+'" stop-opacity=".55"/><stop offset="1" stop-color="'+col+'" stop-opacity="0"/></radialGradient></defs>';}
   // Area line with glow stroke, gradient fill, hot endpoint dot. col is a literal (SVG paint servers can't take var()).
   function glowLine(vals,w,h,col,opts){
     opts=opts||{};if(!vals||vals.length<2)return '';
@@ -4039,7 +4048,7 @@ svg:hover .hb-xh{opacity:1}
     // recomputed every frame, for every chart on screen, forever. The
     // fill and the blurred glow now sit in a static svg underneath; the
     // svg that animates carries no filter at all.
-    var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+hotDefs(id,col);
+    var s='<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">';
     var gl='<svg class="hb-cl-glow" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+glowDefs(id,col);
     var hasTarget=opts.target!=null,ty=0;
     if(hasTarget){
@@ -4047,7 +4056,7 @@ svg:hover .hb-xh{opacity:1}
       // The label is HTML over the chart (.hb-cl-target), not SVG text: the
       // svg stretches (preserveAspectRatio none), so its text came out a
       // squashed 10px sliver under the hot endpoint dot (owner, 9/28/26).
-      s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="'+col+'" stroke-opacity=".45" stroke-dasharray="4 5"/>';
+      s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="'+col+'" stroke-opacity=".45" stroke-dasharray="4 5" vector-effect="non-scaling-stroke"/>';
     }
     var fillD=line+' L'+last[0].toFixed(1)+' '+h+' L'+first[0].toFixed(1)+' '+h+' Z';
     if(hasTarget){
@@ -4066,20 +4075,26 @@ svg:hover .hb-xh{opacity:1}
     } else {
       gl+='<path class="hb-fill" d="'+fillD+'" fill="url(#'+id+'g)"/>';
     }
-    gl+='<path class="hb-glow" d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round"/></svg>';
-    s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
-    s+='<circle class="hb-hot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="14" fill="url(#'+id+'h)" style="transform-box:fill-box;transform-origin:center"/>';
-    s+='<circle class="hb-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>';
-    if(hasTarget){for(var q=0;q<pts.length;q++){if(vals[q]>opts.target){s+='<circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="9" fill="#e3333f" fill-opacity=".22" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/><circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="3.2" fill="#e3333f" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/>';}}}
+    // The svg stretches to its box (preserveAspectRatio none), wider than
+    // tall: a stroke would thicken on the slopes and every circle would draw
+    // as an oval (owner, 10/5/26: "looks skewed, like it's stretched"). The
+    // strokes keep their screen width (non-scaling-stroke) and the dots are
+    // HTML over the chart, placed by percentage, round at any width.
+    gl+='<path class="hb-glow" d="'+line+'" fill="none" stroke="'+col+'" stroke-opacity=".55" stroke-width="6" filter="url(#'+id+'f)" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>';
+    s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
+    function at(p){return 'left:'+(p[0]/w*100).toFixed(2)+'%;top:'+(p[1]/h*100).toFixed(2)+'%;';}
+    var dots='<span class="hb-cl-pt hb-hot" style="'+at(last)+'--c:'+col+'"></span><span class="hb-cl-pt hb-dot hb-cl-end" style="'+at(last)+'--c:'+col+'"></span>';
+    if(hasTarget){for(var q=0;q<pts.length;q++){if(vals[q]>opts.target){dots+='<span class="hb-cl-pt hb-dot hb-cl-over" style="'+at(pts[q])+'--c:'+RED+';animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"></span>';}}}
+    dots+='<span class="hb-cl-xd" style="--c:'+col+'"></span>';
     // Crosshair layer, moved by hbChartHover on mousemove. The point list
     // rides on the svg as data so the handler never recomputes the curve.
-    s+='<g class="hb-xh"><line class="hb-xl" x1="0" y1="0" x2="0" y2="'+h+'" stroke="'+col+'" stroke-opacity=".5" stroke-dasharray="3 4"/><circle class="hb-xd" r="5" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/></g>';
+    s+='<g class="hb-xh"><line class="hb-xl" x1="0" y1="0" x2="0" y2="'+h+'" stroke="'+col+'" stroke-opacity=".5" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/></g>';
     var px=[];for(var pi=0;pi<pts.length;pi++)px.push(pts[pi][0].toFixed(1)+','+pts[pi][1].toFixed(1));
     s=s.replace('<svg ','<svg data-pts="'+px.join(';')+'" data-vals="'+vals.map(function(v){return +v;}).join(',')+'" data-lbl="'+esc((opts.labels||[]).join('|'))+'" data-pre="'+esc(opts.prefix||'')+'" data-unit="'+esc(opts.unit||'')+'" ');
     // The animating svg first (querySelector('svg') and closest('svg[data-pts]')
     // keep finding it); the glow layer after it, drawn underneath by CSS.
     var tgtLbl=hasTarget?'<span class="hb-cl-target" style="top:'+(ty/h*100).toFixed(2)+'%">'+esc(opts.targetLabel||('target '+opts.target+'%'))+'</span>':'';
-    return '<div class="hb-cl">'+s+'</svg>'+gl+tgtLbl+'</div>';
+    return '<div class="hb-cl">'+s+'</svg>'+gl+dots+tgtLbl+'</div>';
   }
   // ── charts: crosshair + tooltip ───────────────────────────────────────────
   // One fixed tooltip for every glowLine on the page. The svg is
@@ -4097,8 +4112,9 @@ svg:hover .hb-xh{opacity:1}
     var vb=svg.viewBox.baseVal,r=svg.getBoundingClientRect(),x=(e.clientX-r.left)*vb.width/r.width;
     var best=0,bd=1e9;for(var i=0;i<pts.length;i++){var dd=Math.abs(pts[i][0]-x);if(dd<bd){bd=dd;best=i;}}
     var g=svg.querySelector('.hb-xh');if(!g)return;
-    var l=g.querySelector('.hb-xl'),d=g.querySelector('.hb-xd');
-    l.setAttribute('x1',pts[best][0]);l.setAttribute('x2',pts[best][0]);d.setAttribute('cx',pts[best][0]);d.setAttribute('cy',pts[best][1]);
+    var l=g.querySelector('.hb-xl'),d=svg.parentNode&&svg.parentNode.querySelector('.hb-cl-xd');
+    l.setAttribute('x1',pts[best][0]);l.setAttribute('x2',pts[best][0]);
+    if(d){d.style.left=(pts[best][0]/vb.width*100).toFixed(2)+'%';d.style.top=(pts[best][1]/vb.height*100).toFixed(2)+'%';}
     var v=+vals[best],pre=svg.getAttribute('data-pre')||'',unit=svg.getAttribute('data-unit')||'';
     var shown=pre+(Math.abs(v)>=1000?Math.round(v).toLocaleString():(v%1?v.toFixed(unit==='★'?2:1):v))+unit;
     tip.innerHTML='<b>'+esc(shown)+'</b>'+(lbl[best]?esc(lbl[best]):'');
@@ -10006,7 +10022,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-steps button.on i{background:var(--ember);color:var(--paper)}
 .ss-steps button.done i{background:var(--hb-good);color:var(--paper)}
 .ss-steps button[disabled]{opacity:.4;cursor:default}
-.ss-steps .ss-steps-h{margin-left:6px;box-shadow:inset 1px 0 0 var(--hb-line2);border-radius:0 999px 999px 0}
+/* The rule between the four steps and History · Team is its own element,
+   the same space either side: drawn on History's edge it sat flush against
+   History and a step away from Publish (owner, 10/5/26). */
+.ss-steps .ss-steps-sep{flex:none;width:1px;height:18px;margin:0 6px;background:var(--hb-line2)}
 /* Marketing Studio's sub-header (10/2/26): the Studio's own bar, in the
    page instead of over it - so no back button and no rule before the brand. */
 .mkt-top .ss-brand{padding-left:0;box-shadow:none}
@@ -11332,7 +11351,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <button type="button" role="tab" data-ss-go="summary"><i>2</i>Summary</button>
         <button type="button" role="tab" data-ss-go="schedule"><i>3</i>Schedule</button>
         <button type="button" role="tab" data-ss-go="publish"><i>4</i>Publish</button>
-        <button type="button" role="tab" data-ss-go="history" class="ss-steps-h">History</button>
+        <span class="ss-steps-sep" aria-hidden="true"></span>
+        <button type="button" role="tab" data-ss-go="history">History</button>
         <button type="button" role="tab" data-ss-go="team">Team</button>
       </nav>
       <div class="ss-top-r">
@@ -13241,7 +13261,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </div>
 
-  {# The Marketing Opportunity Feed (9/28/26): what Cavnar AI found worth
+  <div id="mkt-tab-content" role="tabpanel" aria-labelledby="mkt-tab-content-btn">
+
+  {# Inside the Content tab only: it showed above Campaigns, Scheduled and
+     Analytics too (owner, 10/5/26). The Marketing Opportunity Feed (9/28/26): what Cavnar AI found worth
      doing, from measured signals - a reliably slow night, last year's
      holiday, a category falling, a dish that earns but doesn't sell, a dish
      guests praise, a list nobody has contacted, nothing posted lately
@@ -13254,7 +13277,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="mkt-opps-foot" id="mkt-opps-foot"></div>
   </section>
 
-  <div id="mkt-tab-content" role="tabpanel" aria-labelledby="mkt-tab-content-btn">
 
   <!-- AI marketing brief, on the shared card (density round #42) -->
   {# The same AI read box as Food Cost and Labor (owner, 9/28/26): .lb2-ai
@@ -13824,6 +13846,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .in2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
 .in2-sec .hd .sub{font-size:14.5px;color:var(--ink3);margin-top:3px}
+/* A heading inside an Intel section (What changed, Over the months): one
+   step under the section's own h2 (owner, 10/5/26). */
+.in2-subh{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;letter-spacing:-.01em;color:var(--ink);margin:28px 0 2px;text-wrap:balance}
 .in2-sec .hd .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .in2-road .row{display:flex;gap:14px;align-items:flex-start;padding:13px 0 13px 14px;border-top:1px solid var(--hb-line2);position:relative}
 .in2-road .row:first-child{border-top:none}
@@ -14103,7 +14128,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         :(rows?'Since your check on <span class="hb-num">'+when+'</span>: new places that opened near you, places Google marks closed, and ratings that really moved':'No new places, no closures, and no rating moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
       // One flex item: the line's 8px gap put space around the date as if
       // it were a chip (owner, 9/26/26).
-      box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px"><span>'+sub+'</span></div>'
+      // A heading, not a kicker: in the same small orange caps as the text
+      // around it the page had no sections (owner, 10/5/26).
+      box.innerHTML='<h3 class="in2-subh">What changed</h3><div class="in2-upd" style="margin-top:4px"><span>'+sub+'</span></div>'
         +(rows?'<div class="in2-comp">'+rows+'</div>':'')
         // Kept forever (M5 public_history): the restaurant's own rating
         // over time and the market's arrivals, departures and moves.
@@ -17232,10 +17259,12 @@ function mktWebsiteHtml(d){
       h += '</div>';
     }
   }
-  var line = d.line || [], vals = [];
-  for(i = 0; i < line.length; i++) vals.push(line[i].value == null ? 0 : line[i].value);
+  var line = d.line || [], vals = [], days = [];
+  // Each point's day rides with it, so hovering says which day the visits
+  // were (owner, 10/5/26: the tip showed a number and no date).
+  for(i = 0; i < line.length; i++){ vals.push(line[i].value == null ? 0 : line[i].value); days.push(mdy(line[i].day)); }
   if(vals.length > 6 && window.CavnarCharts){
-    h += '<div class="wa-line"><div class="hb-cl">' + CavnarCharts.glowLine(vals, 1000, 120, '#e8956a', {pad: 8, floor: 0}) + '</div>'
+    h += '<div class="wa-line"><div class="hb-cl">' + CavnarCharts.glowLine(vals, 1000, 120, '#e8956a', {pad: 8, floor: 0, labels: days}) + '</div>'
       + '<div class="ax hb-num"><span>' + e(mdy(line[0].day)) + '</span><span>Website visits a day</span><span>' + e(mdy(line[line.length - 1].day)) + '</span></div></div>';
   }
   var ch = d.channels || [], cl = d.clicks || [], q = d.queries || [];
@@ -17540,7 +17569,7 @@ function loadSentimentTrend(){
     var yr=new Date().getFullYear();
     function lab(w,short){var k=w.week_key||'';var y=k.slice(0,4)||yr;var m=(w.label||'').split('/');if(m.length!==2)return w.label||'';return (+m[0])+'/'+(+m[1])+(short?'':'/'+String(y).slice(-2));}
     var avgs=weeks.map(function(w){return w.avg_rating||0;});
-    if(hero&&C){hero.innerHTML=C.glowLine(avgs,1000,170,'#e8956a',{pad:10,floor:Math.min.apply(null,avgs)-0.3,ceil:5})+'<div class="ax hb-num"><span>'+lab(weeks[0])+'</span><span>'+lab(weeks[weeks.length-1])+'</span></div>';}
+    if(hero&&C){hero.innerHTML=C.glowLine(avgs,1000,170,'#e8956a',{pad:10,floor:Math.min.apply(null,avgs)-0.3,ceil:5,unit:'\u2605',labels:weeks.map(function(w){return 'Week of '+lab(w);})})+'<div class="ax hb-num"><span>'+lab(weeks[0])+'</span><span>'+lab(weeks[weeks.length-1])+'</span></div>';}
     // A week against a week says something only when each side has enough
     // reviews to be more than one guest's mood: Home and the SMS alert both
     // want 3 a side, and so does this (CA4 F8). Empty weeks were filtered
@@ -25271,7 +25300,7 @@ function studioGo(stage) {
   var steps = st.querySelectorAll('.ss-steps [data-ss-go]');
   for (i = 0; i < steps.length; i++) {
     var g = steps[i].getAttribute('data-ss-go'), isOn = g === stage || (stage === 'build' && g === 'setup');
-    steps[i].className = (g === 'history' ? 'ss-steps-h' : '') + (isOn ? ' on' : '') + (!isOn && done[g] ? ' done' : '');
+    steps[i].className = (isOn ? 'on' : '') + (!isOn && done[g] ? ' done' : '');
     steps[i].disabled = (g === 'summary' || g === 'schedule' || g === 'publish') && !has;
     steps[i].setAttribute('aria-selected', g === stage ? 'true' : 'false');
   }
@@ -30838,6 +30867,7 @@ function mktOppFocus() {
   for (var i = 0; i < _mktOpps.length; i++) if (_mktOpps[i].key === key) at = i;
   if (at < 0) return;
   _mktOppSt.focused = key;
+  if (window.switchMktTab) switchMktTab('content');     /* the feed lives on Content */
   if (at >= MKT_OPP_VISIBLE && !_mktOppSt.open) { mktOppsMore(null, function() { mktOppFlash(key); }); return; }
   mktOppFlash(key);
 }
@@ -38633,11 +38663,13 @@ function memRetagBody(was, now) {
         + '<span class="chg ' + (ch > 0 ? 'up' : (ch < 0 ? 'down' : 'flat')) + '">' + (ch > 0 ? '+' : (ch < 0 ? '−' : '')) + memEsc(memG(Math.abs(ch))) + '★ since ' + memEsc(memMdy(memIsoWeekDate(own.first.week))) + '</span></div>'
         + (C && C.glowLine ? C.glowLine(vals, 600, 92, '#e8956a', {pad: 8, labels: labels, unit: '★'}) : '')
         + '<div class="ax hb-num"><span>' + memEsc(memMdy(memIsoWeekDate(own.first.week))) + '</span><span>' + memEsc(memMdy(memIsoWeekDate(own.latest.week))) + '</span></div>'
-        + '<div class="mem-ln">' + memNum(memOwnRatingLine(own)) + '</div></div>';
+        // The sentence under the chart only when the rating moved: "4.6★ to
+        // 4.6★ (no change)" repeated the figure above it (owner, 10/5/26).
+        + (ch ? '<div class="mem-ln">' + memNum(memOwnRatingLine(own)) + '</div>' : '') + '</div>';
     }
     var mh = d.market_history || [];
     if (mh.length) {
-      h += '<div class="hb-kicker" style="margin-top:22px">Over the months</div><div class="in2-comp mem-mkt">';
+      h += '<h3 class="in2-subh">Over the months</h3><div class="in2-comp mem-mkt">';
       for (i = 0; i < mh.length; i++) h += '<div class="row"' + (i >= 6 ? ' hidden data-mem-more' : '') + '><div class="t"><div class="tt"><b>' + memEsc(mh[i].name || 'A place nearby') + '</b></div><div class="m">' + memNum(memMarketLine(mh[i])) + '</div></div></div>';
       h += '</div>' + (mh.length > 6 ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-mkt-all="1">Show all ' + mh.length + '</button>' : '');
     }
