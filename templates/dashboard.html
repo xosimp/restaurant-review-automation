@@ -8025,15 +8025,35 @@ svg:hover .hb-xh{opacity:1}
       h+='</section>';}
     return h;
   }
+  // Cash and cards: the night's tenders by method, card tips, and every
+  // payout and pay-in rung on the POS (petty cash, check requests).
+  function registerHtml(svc){
+    if(!svc||svc.status!=='ready')return '';
+    var R=(svc.detail||{}).register;if(!R)return '';
+    var t=R.totals||{},T=R.tenders||[],P=R.payouts||[],h='',i;
+    h+='<section class="hb-card dr-loss" aria-label="Cash and cards"><div class="hb-kicker">Cash and cards</div>'
+      +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(t.all))+'</div><div class="s">taken tonight · cards '+hn(money(t.card))+' · cash '+hn(money(t.cash))+'</div></div>';
+    if(T.length){h+='<div class="dr-loss-g"><h3>By tender</h3>';
+      for(i=0;i<T.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(T[i].method)+(T[i].tips?' <small>tips '+hn(money(T[i].tips))+'</small>':'')+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(T[i].payments))+'</span><span class="a hb-num">'+esc(money(T[i].amount))+'</span></div>';
+      h+='</div>';}
+    if(isNum(t.card_tips)&&t.card_tips)h+='<div class="dr-note">Card tips '+hn(money(t.card_tips))+(t.card_tip_fees?' · tip fees the POS recorded '+hn(money(t.card_tip_fees)):'')+'.</div>';
+    h+='<div class="dr-loss-g"><h3>Paid out and in <small>petty cash, check requests</small></h3>';
+    if(!P.length)h+='<div class="dr-note">'+esc(R.payouts_note||'')+'</div>';
+    else{for(i=0;i<P.length;i++){var x=P[i];
+        h+='<div class="dr-loss-r"><span class="n">'+esc(x.category)+(x.type==='pay-in'?' <small>pay-in</small>':'')+' <small>'+esc(x.approved_by)+(x.at?' · '+hn(esc(clock(x.at))):'')+(x.reference?' · '+esc(x.reference):'')+'</small></span><span class="sp"></span><span class="a hb-num">'+esc(money(x.amount))+'</span></div>';}
+      h+='<div class="dr-note">Paid out '+hn(money(t.payouts))+(t.payins?' · paid in '+hn(money(t.payins)):'')+'.</div>';}
+    return h+'</div></section>';
+  }
   function detailHtml(p){
     var B=(p.facts&&p.facts.blocks)||{},svc=B.service,h='';
-    var hr=hourHtml(p),mo=moneyHtml(svc),lb=laborHtml(B.labor,p),sv=serversHtml(svc),ls=lossHtml(svc);
-    if(!(hr||mo||lb||sv||ls))return '';
+    var hr=hourHtml(p),mo=moneyHtml(svc),lb=laborHtml(B.labor,p),sv=serversHtml(svc),ls=lossHtml(svc),rg=registerHtml(svc);
+    if(!(hr||mo||lb||sv||ls||rg))return '';
     h+='<div class="hb-sh"><div><div class="k">The night in detail</div><h2>Where it came from, and where it went</h2></div></div><div class="dr-detail">';
     h+=hr;
     if(mo&&lb)h+='<div class="dr-two dr-two-lg">'+mo+lb+'</div>';else h+=mo+lb;
     h+=sv;
     if(ls)h+='<div class="dr-two dr-two-lg">'+ls+'</div>';
+    h+=rg;
     return h+'</div>';
   }
   // "All KPIs": every KPI with direction that isn't one of the six above.

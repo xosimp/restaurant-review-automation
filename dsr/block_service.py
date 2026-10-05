@@ -26,6 +26,11 @@ first version, not the 4am archive pass. No model call.
                   void never reached the guest's bill, so it is a control
                   signal, not money given away. Named loss*: a manager sees
                   it only with the comps-and-voids permission (dsr.access)
+  register        cash and cards: the night's tenders by method (payments,
+                  card tips and the tip fees the POS recorded) and every
+                  payout and pay-in rung on the POS — petty cash and check
+                  requests are payouts once rung there (Erik, Simple EJ's,
+                  10/5/26: "pulled from RPower"); each with who approved it
   timeclock_edits punches a manager edited, with who, when and RPOWER's own
                   edit code (its meaning is RPOWER's; it is shown, never
                   interpreted). Owner only (dsr.access OWNER_ONLY_PREFIXES)
@@ -207,6 +212,46 @@ def _edits(punches, names):
     return out
 
 
+# What the register says when nothing was paid out of, or into, the drawer.
+REGISTER_NO_PAYOUTS = ("No payouts or pay-ins were rung on the POS tonight. Petty cash and check requests show "
+                       "here once they're rung as payouts in the POS.")
+
+
+def _register(payments, payouts):
+    """{tenders, totals, payouts, payouts_note} — the night's cash and cards.
+    Tenders by method (card brands apart, as the bank deposits them); the
+    tip fee is what the POS recorded on the payment, never a guessed
+    processor rate. Payouts and pay-ins one line each, with the approver
+    the POS names (a station login like "Office Drawer" as it is)."""
+    by = {}
+    for p in payments:
+        m = (p.get("method") or "").strip() or "Not recorded"
+        b = by.setdefault(m, {"method": m, "kind": "card" if p.get("is_card") else "cash" if p.get("is_cash")
+                              else "other", "payments": 0, "amount": 0.0, "tips": 0.0, "tip_fees": 0.0})
+        b["payments"] += 1
+        b["amount"] += float(p.get("amount") or 0)
+        b["tips"] += float(p.get("tip") or 0)
+        b["tip_fees"] += float(p.get("tip_fee") or 0)
+    tenders = []
+    for b in sorted(by.values(), key=lambda x: (("card", "cash", "other").index(x["kind"]), -x["amount"])):
+        tenders.append(dict(b, amount=round(b["amount"], 2), tips=round(b["tips"], 2), tip_fees=round(b["tip_fees"], 2)))
+
+    def _sum(kind, key="amount"):
+        return round(sum(t[key] for t in tenders if kind is None or t["kind"] == kind), 2)
+    totals = {"card": _sum("card"), "cash": _sum("cash"), "other": _sum("other"), "all": _sum(None),
+              "card_tips": _sum("card", "tips"), "card_tip_fees": _sum("card", "tip_fees")}
+    lines = [{"category": (o.get("category") or "").strip() or "Not recorded",
+              "type": "pay-in" if o.get("is_payin") else "payout",
+              "amount": round(float(o.get("amount") or 0), 2),
+              "approved_by": (o.get("manager_name") or "").strip() or "Not recorded",
+              "at": o.get("paid_at"), "reference": (o.get("reference") or "").strip() or None}
+             for o in sorted(payouts, key=lambda x: str(x.get("paid_at") or ""))]
+    totals["payouts"] = round(sum(x["amount"] for x in lines if x["type"] == "payout"), 2)
+    totals["payins"] = round(sum(x["amount"] for x in lines if x["type"] == "pay-in"), 2)
+    return {"tenders": tenders, "totals": totals, "payouts": lines,
+            "payouts_note": None if lines else REGISTER_NO_PAYOUTS}
+
+
 def collect(ctx):
     arc = common.night_archive(ctx)
     if arc["reason"] == "no_provider":
@@ -227,6 +272,10 @@ def collect(ctx):
                        "WHERE restaurant_id=? AND provider=? AND business_date=? AND kind IN "
                        "('comp','discount','refund','void')", args)
     punches = _rows(ctx, "SELECT * FROM pos_punches WHERE restaurant_id=? AND provider=? AND business_date=?", args)
+    payments = _rows(ctx, "SELECT method, is_cash, is_card, amount, tip, tip_fee FROM pos_payments "
+                          "WHERE restaurant_id=? AND provider=? AND business_date=?", args)
+    payouts = _rows(ctx, "SELECT category, is_payin, amount, manager_name, paid_at, reference FROM pos_payouts "
+                         "WHERE restaurant_id=? AND provider=? AND business_date=?", args)
 
     import pos
     try:
@@ -246,6 +295,7 @@ def collect(ctx):
     sales_m = ((ctx.blocks.get("sales") or {}).get("metrics") or {})
     loss = _loss(lines, names, sales_m)
     edits = _edits(punches, names)
+    register = _register(payments, payouts) if payments or payouts else None
 
     metrics = {"checks": len(tickets), "check_guests": guests, "check_net": total,
                "drinks_per_guest": round(drinks / guests, 2) if guests else None,
@@ -253,6 +303,11 @@ def collect(ctx):
                "loss_given": loss["given"]["total"], "loss_given_pct": loss["given"]["pct_of_gross"],
                "loss_void_lines": loss["voids"]["lines"], "loss_void_amount": loss["voids"]["total"],
                "timeclock_edits": len(edits)}
+    if register:
+        rt = register["totals"]
+        metrics.update({"register_card": rt["card"], "register_cash": rt["cash"],
+                        "register_card_tips": rt["card_tips"], "register_payouts": rt["payouts"],
+                        "register_payins": rt["payins"]})
     for d in dayparts:
         metrics[f"daypart:{d['name']}"] = d["net"]
     for r in rooms:
@@ -268,6 +323,8 @@ def collect(ctx):
                           "the guests on their checks; tip % reads only checks that recorded a card tip; "
                           "station logins aren't people and are left out"),
         "loss": loss,
+        "register": register,
+        "register_basis": "payments and drawer payouts as the POS recorded them for the night",
         "timeclock_edits": edits,
         "timeclock_basis": "punches a manager edited in the POS; the code is RPOWER's own",
         "read_at_report_time": True,

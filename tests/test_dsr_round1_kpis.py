@@ -93,7 +93,19 @@ def _rows(day):
          "clock_in": f"{iso} 10:00:00", "clock_out": f"{iso} 18:00:00", "reg_hours": 8.0, "is_station": 1,
          "edited_by": None},
     ]
-    return {"tickets": _tickets(day), "lines": lines, "punches": punches, "payments": [], "payouts": [],
+    payments = [
+        {"payment_id": "y1", "ticket_id": "a1", "business_date": iso, "method": "Visa", "is_cash": 0, "is_card": 1,
+         "amount": 120.0, "tip": 24.0, "tip_fee": 0.5},
+        {"payment_id": "y2", "ticket_id": "a2", "business_date": iso, "method": "Visa", "is_cash": 0, "is_card": 1,
+         "amount": 80.0, "tip": 16.0, "tip_fee": 0.3},
+        {"payment_id": "y3", "ticket_id": "a3", "business_date": iso, "method": "Cash", "is_cash": 1, "is_card": 0,
+         "amount": 45.0, "tip": 0.0, "tip_fee": 0.0},
+    ]
+    payouts = [
+        {"payout_id": "o1", "business_date": iso, "category": "Misc. Payout", "is_payin": 0, "amount": 18.5,
+         "manager_id": "m1", "manager_name": "Andrew Marola", "paid_at": f"{iso}T14:05:00", "reference": "ice run"},
+    ]
+    return {"tickets": _tickets(day), "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
             "max_stamp": f"{iso}T23:59:00"}
 
 
@@ -235,6 +247,27 @@ def test_the_loss_ledger_names_the_approver_and_keeps_voids_apart(world, db):
     assert loss["voids"]["lines"] == 1 and loss["voids"]["by_reason"][0]["reason"] == "*Manager Test*"
     edits = blk["detail"]["timeclock_edits"]
     assert len(edits) == 1 and edits[0]["edited_by"] == "Andrew Marola" and edits[0]["code"] == "MC"
+
+
+def test_the_register_is_the_nights_cash_cards_and_payouts(world, db):
+    """Erik, 10/5/26: petty cash, check requests and the CC register in
+    Cavnar AI, pulled from RPower (rung there as payouts)."""
+    blk = _service(world, db)
+    reg = blk["detail"]["register"]
+    visa = reg["tenders"][0]
+    assert visa["method"] == "Visa" and visa["payments"] == 2 and visa["amount"] == 200.0 and visa["tips"] == 40.0
+    assert reg["totals"]["card"] == 200.0 and reg["totals"]["cash"] == 45.0 and reg["totals"]["all"] == 245.0
+    assert reg["totals"]["card_tip_fees"] == 0.8
+    assert reg["payouts"] == [{"category": "Misc. Payout", "type": "payout", "amount": 18.5,
+                               "approved_by": "Andrew Marola", "at": reg["payouts"][0]["at"], "reference": "ice run"}]
+    assert blk["metrics"]["register_payouts"] == 18.5 and reg["payouts_note"] is None
+    assert "register" in narrative.PRIVATE_DETAIL["service"], "approvers' names never reach the model"
+
+
+def test_a_night_with_no_payouts_says_where_petty_cash_comes_from():
+    from dsr.block_service import _register, REGISTER_NO_PAYOUTS
+    reg = _register([{"method": "Cash", "is_cash": 1, "amount": 10.0, "tip": 0, "tip_fee": 0}], [])
+    assert reg["payouts"] == [] and reg["payouts_note"] == REGISTER_NO_PAYOUTS and reg["totals"]["payouts"] == 0
 
 
 def test_who_sees_what_in_the_service_block(world, db):
