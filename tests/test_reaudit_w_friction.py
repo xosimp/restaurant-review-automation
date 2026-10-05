@@ -419,7 +419,8 @@ def test_f1_15_client_details_are_fixed_at_the_source():
     assert "'Jan','Feb'" not in day and "(d.getMonth() + 1) + '/' + d.getDate()" in day
     assert "setInterval(function() { if (!document.hidden) refreshBadge(); }" in src
     # issues past four are reachable
-    assert "data-iss-more" in src and "if (row && row.hidden) row.hidden = false;" in src
+    # (since 10/5/26 through the card's one "+N more", hbAttnMoreBtn)
+    assert "Math.max(0,nIss-4)" in src and "if (row && row.hidden) row.hidden = false;" in src
     # the inbox filter and search survive a reload
     assert "function rvKeepAddress(){" in src and "rvKeepAddress();" in re.search(
         r"function setRF\(f,btn\)\{.*?\n\}", src, re.S).group(0)

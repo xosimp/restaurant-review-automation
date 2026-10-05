@@ -213,8 +213,26 @@ def test_home_leads_with_the_one_thing_and_needs_attention_and_collapses_results
 def test_plus_n_more_expands_needs_attention_in_place():
     attn = SRC[SRC.index("  function renderAttention(d,used){"):SRC.index("  function hbSame(")]
     assert 'data-open-module="alerts"' not in attn
-    assert "data-attn-more" in attn and "hb-attn-more" in attn
+    assert "hb-attn-more" in attn and "hbAttnMoreBtn(items.length,iss.length)" in attn
     assert "for(var i=0;i<items.length;i++)" in attn        # every item is rendered
+
+
+def test_needs_attention_has_one_more_button_at_its_foot():
+    """One "+N more", at the foot of the card, counting the items past three
+    AND the issues past four, opening both - it was "+1 more" in the header
+    and "+4 more" under the issues (owner, 10/5/26)."""
+    attn = SRC[SRC.index("  function renderAttention(d,used){"):SRC.index("  function hbSame(")]
+    head = attn[attn.index("<span>Needs attention</span>"):attn.index("var al=hbAttnLine")]
+    assert "data-attn-more" not in head and 'id="hb-attn-cnt"' in head
+    assert "h+='<div id=\"hb-attn-foot\">'+hbAttnMoreBtn(items.length,iss.length)+'</div>';" in attn
+    btn = SRC[SRC.index("  function hbAttnMoreBtn(nItems,nIss){"):]
+    btn = btn[:btn.index("\n  }") + 4]
+    assert "Math.max(0,nItems-3)+Math.max(0,nIss-4)" in btn and "data-attn-more" in btn
+    rows = SRC[SRC.index("  function hbIssueRows(iss){"):SRC.index("  function hbAttnMoreBtn(")]
+    assert "data-iss-more" not in rows, "the issues no longer carry a button of their own"
+    assert "card.querySelectorAll('.hb-attn-more,.hb-iss-more')" in SRC
+    sets = SRC[SRC.index("  function hbAttnSetIssues(iss){"):]
+    assert "foot.innerHTML=hbAttnMoreBtn(" in sets[:sets.index("\n  }")], "redrawn when the issues land"
 
 
 def test_one_job_is_on_home_once():

@@ -4334,19 +4334,16 @@ svg:hover .hb-xh{opacity:1}
   // ([data-nav-go], #46) is the router's own listener's: routing it here
   // too navigated every click twice (re-audit F1-6).
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-attn-more],[data-iss-more],[data-mile-close],[data-group-open]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-attn-more],[data-mile-close],[data-group-open]'):null;if(!t)return;
     e.preventDefault();
-    if(t.hasAttribute('data-iss-more')){
-      var box=t.parentNode,iopen=t.getAttribute('aria-expanded')!=='true',irows=box?box.querySelectorAll('.hb-iss-more'):[];
-      for(var ii=0;ii<irows.length;ii++)irows[ii].hidden=!iopen;
-      t.setAttribute('aria-expanded',iopen?'true':'false');
-      t.textContent=iopen?'Show fewer':'+'+t.getAttribute('data-iss-more')+' more';
-      return;
-    }
     if(t.hasAttribute('data-group-open')){hbGroupOpen(+t.getAttribute('data-group-open'),t.getAttribute('data-group-nav')||'');return;}
     if(t.hasAttribute('data-attn-more')){
+      // One "+N more" at the foot of the card opens everything it hides -
+      // the attention items past three and the issues past four. They were
+      // two buttons, "+1 more" in the header and "+4 more" under the issues
+      // (owner, 10/5/26).
       var card=t.closest('#hb-attn-card'),open=t.getAttribute('aria-expanded')!=='true';
-      var rows=card?card.querySelectorAll('.hb-attn-more'):[];
+      var rows=card?card.querySelectorAll('.hb-attn-more,.hb-iss-more'):[];
       for(var i=0;i<rows.length;i++)rows[i].hidden=!open;
       t.setAttribute('aria-expanded',open?'true':'false');
       t.textContent=open?'Show fewer':'+'+t.getAttribute('data-attn-more')+' more';
@@ -5073,8 +5070,13 @@ svg:hover .hb-xh{opacity:1}
     // one cover to ask per gap still open (schedule audit 10/3/26 E-31,
     // the server's cover_gaps — the same list the /i/ page and the phone read).
     for(var j=0;j<iss.length;j++){var x=iss[j];h+='<div class="hb-row '+(x.status==='open'?(x.severity==='high'?'critical':'important'):'watch')+(j>=4?' hb-iss-more':'')+'" data-issue-id="'+(+x.id)+'"'+(j>=4?' hidden':'')+'><span class="d"></span><span class="t" title="'+esc(x.detail||'')+'">'+esc(x.title)+'</span><span class="m">'+esc(x.assignee_name||'unassigned')+' · '+esc(x.status==='acknowledged'?'on it':x.status)+'</span>'+hbCoverButtons(x)+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbResolveIssue('+x.id+',this)">Resolve</button></div>'+(window.sfw2GapsHtml?sfw2GapsHtml(x,j>=4):'');}
-    if(iss.length>4)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-iss-more="'+(iss.length-4)+'" aria-expanded="false">+'+(iss.length-4)+' more</button>';
     return h;
+  }
+  // The card's one "+N more": the attention items past three and the issues
+  // past four, together (owner, 10/5/26). Redrawn when the issues land.
+  function hbAttnMoreBtn(nItems,nIss){
+    var n=Math.max(0,nItems-3)+Math.max(0,nIss-4);
+    return n?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm hb-attn-morebtn" id="hb-attn-more" data-attn-more="'+n+'" aria-expanded="false">+'+n+' more</button>':'';
   }
   // "All clear" only when the sources under it are current: nothing flagged
   // on stale data, or with no live source at all, says so (B4 M4).
@@ -5171,7 +5173,7 @@ svg:hover .hb-xh{opacity:1}
     _hbAttnItems=items;hbExtraKeep();
     // "+N more" opens the rest of THIS list in place (friction #11). It used
     // to open the bell, which is the alert history, not these items.
-    var h='<div class="hb-card hb-rise" id="hb-attn-card" data-attn-n="'+items.length+'" style="--i:1"><div class="hb-h3"><span>Needs attention</span>'+(items.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-attn-more="'+(items.length-3)+'" aria-expanded="false">+'+(items.length-3)+' more</button>':'<span class="cnt" id="hb-attn-cnt"'+(total?'':' hidden')+'>'+total+'</span>')+'</div>';
+    var h='<div class="hb-card hb-rise" id="hb-attn-card" data-attn-n="'+items.length+'" style="--i:1"><div class="hb-h3"><span>Needs attention</span><span class="cnt" id="hb-attn-cnt"'+(total?'':' hidden')+'>'+total+'</span></div>';
     var al=hbAttnLine(items,iss);
     h+='<div class="hb-attn-line" id="hb-attn-line"'+(al?'':' hidden')+'>'+num(al)+'</div>';
     if(!total)h+=hbAttnClearHtml(used,d);
@@ -5188,6 +5190,7 @@ svg:hover .hb-xh{opacity:1}
       // two weeks - except a critical one (a guest waiting, a broken sync).
       +(a.dismissable?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-dismiss-kind="snooze" title="Back tomorrow">Not today</button><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(a.rec_key||a.key)+'" data-track-title="'+esc(a.title||'')+'"'+((a.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button>':'')+'</div>';}
     h+='<div id="hb-attn-issues">'+hbIssueRows(iss)+'</div>';
+    h+='<div id="hb-attn-foot">'+hbAttnMoreBtn(items.length,iss.length)+'</div>';
     h+='</div>';
     return h;
   }
@@ -5243,6 +5246,7 @@ svg:hover .hb-xh{opacity:1}
     var box=document.getElementById('hb-attn-issues');if(!box)return;
     box.innerHTML=hbIssueRows(_hbIssues);
     var card=document.getElementById('hb-attn-card'),n=(card?+card.getAttribute('data-attn-n')||0:0)+_hbIssues.length;
+    var foot=document.getElementById('hb-attn-foot');if(foot)foot.innerHTML=hbAttnMoreBtn(card?+card.getAttribute('data-attn-n')||0:0,_hbIssues.length);
     var cnt=document.getElementById('hb-attn-cnt');if(cnt){cnt.textContent=n;cnt.hidden=!n;}
     var aln=document.getElementById('hb-attn-line');if(aln){var al=hbAttnLine(_hbAttnItems,_hbIssues);aln.innerHTML=num(al);aln.hidden=!al;}
     var clr=document.getElementById('hb-attn-clear');if(clr&&_hbIssues.length)clr.parentNode.removeChild(clr);
@@ -6338,10 +6342,11 @@ svg:hover .hb-xh{opacity:1}
     // and one sentence naming the location that needs a look (#48).
     h+=hbGroupTotal(p);
     var at=g.attention||[];
-    h+='<div class="hb-card hb-rise" id="hb-attn-card" style="margin-top:22px"><div class="hb-h3"><span>Needs attention · all locations</span>'+(at.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-attn-more="'+(at.length-3)+'" aria-expanded="false">+'+(at.length-3)+' more</button>':(at.length?'<span class="cnt n">'+at.length+'</span>':''))+'</div>';
+    h+='<div class="hb-card hb-rise" id="hb-attn-card" style="margin-top:22px"><div class="hb-h3"><span>Needs attention · all locations</span>'+(at.length?'<span class="cnt n">'+at.length+'</span>':'')+'</div>';
     if(g.summary_line)h+='<div class="hb-attn-line">'+num(g.summary_line)+'</div>';
     if(!at.length)h+='<div class="hb-clear"><span class="ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>Nothing needs you at any location.</span></div>';
     for(var a=0;a<at.length;a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+(a>=3?' hb-attn-more':'')+'"'+(a>=3?' hidden':'')+'><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn cbtn-secondary cbtn-sm" data-group-open="'+(+x.restaurant_id)+'" data-group-nav="'+esc(x.nav||'')+'">'+esc(x.action_label||'Open')+'</button></div>';}
+    if(at.length>3)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm hb-attn-morebtn" data-attn-more="'+(at.length-3)+'" aria-expanded="false">+'+(at.length-3)+' more</button>';
     h+='</div>';
     // One row per location: last night and labor always visible, the
     // reviews folded into one cell (#19); food cost and last active are the
@@ -10255,8 +10260,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-sd-alt .cbtn{justify-content:space-between}
 /* Publish */
 .ss-pub,.ss-hist,.ss-side{max-width:980px;margin:0 auto;padding:56px 24px 90px}
-/* Team & rules and the Staffing review in the Studio (10/2/26): the stage
-   heading names them, so their disclosure line is hidden and they stay open. */
+/* Team & rules in the Studio (10/2/26; the Staffing review went back to
+   Labor 10/5/26): the stage heading names them, so their disclosure line is hidden and they stay open. */
 .ss-side>details>summary{display:none}
 /* The Team inbox keeps its own line in the Team step: it folds, and its
    summary carries the unread count (10/2/26). */
@@ -11056,7 +11061,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
 
   {# "Where the money went" was removed (owner, 9/26/26): the full lists sit
-     in the Studio's Staffing review (#lb2-money-all), and the Staffing board
+     in the Staffing review below (#lb2-money-all), and the Staffing board
      carries the same days. #}
 
   <div id="lb-panel-schedule">
@@ -11092,6 +11097,79 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
     </section>
   </div>
+  {# Staffing review (was "Every day and person"; in the Studio from 10/2/26,
+     back on Labor under Time off and Covers and above Details, owner 10/5/26) behind "Where the money went", in the standard
+     list shape - an hb-card of hb-rows with a status dot - instead of the
+     dark slabs (density round #9, #44). Collapsed: the top of it already
+     sits under Waiting on you. Dollars above target and overtime premiums
+     are opportunities, never "saved" (Money labels). #}
+  {# Staffing intelligence (9/25/26 redesign; labor.staffing_board): the
+     overstaffed days, strong days run lean and overtime as decision cards -
+     an executive strip first (at stake, costliest, fastest win), then one
+     lane per kind, each card worst-first: severity, a measured consistency
+     ring, the dollars, one sentence of what to do, and its actions. Every
+     figure is measured or hours x the blended rate, and Explain why shows
+     the arithmetic. Dollars are opportunities, never "saved" (Money labels). #}
+  {% set _sb = labor.staffing_board if labor.is_live else None %}
+  {% macro sb_ring(c) -%}
+  {%- if c and c.pct is not none -%}<span class="sb-ring" style="--p:{{ c.pct }}" title="The same pattern on {{ c.hits }} of {{ c.of }} of these weekdays in the window" aria-label="Consistency {{ c.pct }}%"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/><circle class="fg" cx="18" cy="18" r="15.5" pathLength="100"/></svg><b class="hb-num">{{ c.pct }}%</b><small>consistent</small></span>
+  {%- else -%}<span class="sb-ring none" title="First time in this window - not enough of these weekdays to call it a pattern"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/></svg><b>—</b><small>first seen</small></span>{%- endif -%}
+  {%- endmacro %}
+  <details class="hb-results lb2-money-all" id="lb2-money-all" open>
+    <summary><span class="hb-kicker">Staffing review</span><span>{% if _sb %}{{ _sb.overstaffed|length }} overstaffed · {{ _sb.lean|length }} strong day{{ '' if _sb.lean|length == 1 else 's' }} run lean · {{ _sb.overtime|length }} overtime{% else %}Overstaffed days, strong days run lean, overtime{% endif %}</span></summary>
+  {% if _sb %}
+  <div class="sb">
+    <div class="sb-sum">
+      <div class="sb-tile hero"><div class="k">At stake in this window</div><div class="v hb-num">{{ _sb.summary.at_stake_text }}</div><div class="s">{# The two parts do not overlap and add up to the total (9/25/26 audit); on the assumed wage the dollars above target are withheld (labor.staffing_board). #}{% if _sb.summary.dollars_withheld %}{{ _sb.summary.withheld_text }}{% if _sb.summary.ot %} · <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}{% else %}<span class="hb-num">{{ _sb.summary.over_text }}</span> above target at straight time + <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}</div></div>
+      <div class="sb-tile"><div class="k">Costliest</div>{% if _sb.summary.biggest %}<div class="v">{{ _sb.summary.biggest.title }}</div><div class="s"><span class="hb-num">{{ _sb.summary.biggest.dollars_text }}</span> {{ _sb.summary.biggest.label }}</div>{% else %}<div class="v">—</div><div class="s">Nothing priced in this window</div>{% endif %}</div>
+      <div class="sb-tile"><div class="k">Fastest win</div>{% if _sb.summary.quick %}<div class="v">{{ _sb.summary.quick.why[:1]|upper }}{{ _sb.summary.quick.why[1:] }}</div><div class="s">{% if _sb.summary.quick.kind == 'overtime' %}from {% endif %}{{ _sb.summary.quick.title }}</div>{% else %}<div class="v">—</div><div class="s">Nothing to fix here</div>{% endif %}</div>
+    </div>
+    {% set _lanes = [
+      ('over', 'Overstaffed days', 'Labor above ' ~ _tl ~ ' on the day’s own sales', _sb.overstaffed, 'No day ran over your target in this window.', '<path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/>'),
+      ('lean', 'Strong days run lean', 'Big sales on a thin crew — check service first', _sb.lean, 'No strong day ran lean in this window.', '<path d="M4 7l5 5 4-4 7 8"/><path d="M15 16h5v-5"/>'),
+      ('ot', 'Overtime', 'Hours past 40 in a week, at the premium', _sb.overtime, 'No one went past 40 hours in this window.', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
+    ] %}
+    {% for key, title, sub, items, empty, icon in _lanes %}
+    <section class="sb-lane" data-tone="{{ key }}" aria-label="{{ title }}">
+      <div class="sb-lh"><span class="sb-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{{ icon|safe }}</svg></span>
+        <div class="sb-lt"><b>{{ title }}</b><small>{{ sub }}</small></div>
+        <span class="sb-ln hb-num">{{ items|length }}</span></div>
+      {% if items %}
+      <div class="sb-grid">
+      {% for x in items %}
+      {% set _worst = loop.first and items|length > 1 %}
+      <article class="sb-card{{ ' worst' if _worst }}" style="--i:{{ loop.index0 }}"{% if loop.index > 6 %} hidden data-sb-more{% endif %}>
+        <div class="sb-top">
+          <span class="sb-sev {{ x.severity }}">{% if _worst %}Biggest · {% endif %}{% if key == 'ot' %}{{ x.extra_text }}h past 40{% elif key == 'over' %}{{ x.pts_text }} pts over{% else %}{{ x.pts_text }} pts under{% endif %}</span>
+          {% if key != 'ot' %}{{ sb_ring(x.consistency) }}{% endif %}
+        </div>
+        <div class="sb-title">{{ x.title }}<small>{% if key == 'ot' %}{{ x.role }}{% if x.role %} · {% endif %}week of {{ x.week }}{% else %}{{ x.date }}{% endif %}</small></div>
+        <div class="sb-fig"><b class="hb-num">{{ x.dollars_text }}</b><span>{{ x.label }}</span></div>
+        <p class="sb-say">{{ x.say }}</p>
+        <div class="sb-chips">
+          {% if key == 'over' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span><span><b class="hb-num">{{ x.sales_text }}</b> sales</span>{% if x.trim_text %}<span>trim <b class="hb-num">~{{ x.trim_text }}h</b></span>{% endif %}
+          {% elif key == 'lean' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span>{% if x.covers %}<span><b class="hb-num">{{ x.covers }}</b> covers</span>{% endif %}{% if x.spc_text %}<span><b class="hb-num">{{ x.spc_text }}</b> a cover</span>{% endif %}
+          {% else %}<span><b class="hb-num">{{ x.hours_text }}h</b> that week</span>{% if x.mate %}<span class="ok">give <b class="hb-num">{{ x.extra_text }}h</b> to {{ x.mate.name }}</span>{% endif %}{% endif %}
+        </div>
+        <div class="sb-acts">
+          {% set _how %}{% if key == 'over' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.pct_text }}% labor on {{ x.sales_text }} in sales, against your {{ _tl }}.</div>{% if x.withheld %}<div style="margin-bottom:10px"><strong>The figure:</strong> withheld. {{ _sb.summary.withheld_text }}</div>{% else %}<div style="margin-bottom:10px"><strong>The figure:</strong> labor spent above {{ _tl }} of that day’s sales = {{ x.dollars_text }}.</div>{% endif %}{% if x.trim_text %}<div style="margin-bottom:10px"><strong>Hours to trim:</strong> {{ x.dollars_text }} ÷ your blended rate of ${{ '%.2f'|format(labor.blended_rate or 0) }}/h ≈ {{ x.trim_text }}h.</div>{% endif %}{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran over target.</div>{% endif %}{% elif key == 'lean' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.dollars_text }} in sales on {{ x.pct_text }}% labor — well under your {{ _tl }} on one of your strongest days.</div><div style="margin-bottom:10px"><strong>Why not add staff straight away:</strong> a lean crew on a big day can be efficient, not short. Slow tickets or complaints from that day are the evidence that it was short.</div>{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran lean.</div>{% endif %}{% else %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.hours_text }}h the week of {{ x.week }} — {{ x.extra_text }}h past 40.</div><div style="margin-bottom:10px"><strong>The premium:</strong> hours past 40 × their blended rate × 0.5 (time and a half) = {{ x.dollars_text }}.</div>{% if x.mate %}<div><strong>Who had room:</strong> {{ x.mate.name }} worked {{ x.mate.hours_text }}h that week in the same role — those hours at straight time would not have cost the premium.</div>{% else %}<div><strong>Who had room:</strong> no one in the same role had {{ x.extra_text }}h free under 40 that week.</div>{% endif %}{% endif %}{% endset %}
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="{{ _how|forceescape }}" data-explain-title="{{ x.title }} — how this was worked out" data-explain-kicker="Explain why">Explain why</button>
+          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="{{ x.ask }}">Ask Cavnar AI →</button>
+        </div>
+      </article>
+      {% endfor %}
+      </div>
+      {% if items|length > 6 %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm sb-more" onclick="var l=this.closest('.sb-lane');[].forEach.call(l.querySelectorAll('[data-sb-more]'),function(c){c.hidden=false;});this.hidden=true;">Show all <span class="hb-num">{{ items|length }}</span> →</button>{% endif %}
+      {% else %}
+      <div class="sb-empty"><span class="sb-ok" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>{{ empty }}</div>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="hb-empty" style="margin-top:10px">Staffing cards show once your own shifts are in — sample data is never scored here.</div>
+  {% endif %}
+  </details>
   {# Details sit under Time off and Covers (owner, 10/2/26). #}
   {# Proof under the read (density round #26, #44): where the labor
      dollars go by role, and how the percentage is measured against the
@@ -11256,7 +11334,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <button type="button" role="tab" data-ss-go="publish"><i>4</i>Publish</button>
         <button type="button" role="tab" data-ss-go="history" class="ss-steps-h">History</button>
         <button type="button" role="tab" data-ss-go="team">Team</button>
-        <button type="button" role="tab" data-ss-go="staffing">Staffing</button>
       </nav>
       <div class="ss-top-r">
         <span class="ss-week" id="ss-week"></span>
@@ -11659,8 +11736,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
     </section>
 
-    {# Team & rules and the Staffing review left Labor for the Studio (owner,
-       10/2/26: "they dont belong on labor anymore"). Same markup and ids, so
+    {# Team & rules left Labor for the Studio (owner, 10/2/26: "they dont
+       belong on labor anymore"); the Staffing review came back to Labor, under
+       Time off and Covers (owner, 10/5/26). Same markup and ids, so
        every opener, deep link and loader still finds them; each is its own
        stage, open, its disclosure line hidden under the stage's heading. #}
     <section class="ss-stage" data-stage="team" aria-label="Team and rules">
@@ -11887,6 +11965,24 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </div>
 
+  {# Measured ratings sit right under the Operational Score they feed (owner,
+     10/5/26). Measured ratings (L-23, D-27): what each server sells a guest against
+     the house, as a suggested score - the account holder's alone (the GET
+     is 403 for anyone else, and the row hides). data-nav labor/ratings is
+     the action queue's link. #}
+  <div class="lb2-srow s12" data-nav="labor/ratings" id="sfw1-rate-row"{% if is_principal is defined and not is_principal %} hidden{% endif %}>
+    <div class="lb2-subsection" onclick="lb2RowClick(event,sfw1ToggleRate)">
+      <div class="lb2-subsection-title">Measured ratings <span id="sfw1-rate-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="sfw1ToggleRate()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle">Open ↓</button>
+    </div>
+    <div id="sfw1-rate-panel" style="display:none">
+      <div class="lb2-avail">
+        <div class="lb2-intro">Your POS measures what each server sells a guest. Confirm a suggestion and it becomes their Operational Score.</div>
+        <div id="sfw1-rate-body"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Scheduling rules — the compliance floor every draft is checked
        against, and how many of each role a morning or a night needs. -->
   <div class="lb2-srow s5">
@@ -11987,23 +12083,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </div>
 
-  {# Measured ratings (L-23, D-27): what each server sells a guest against
-     the house, as a suggested score - the account holder's alone (the GET
-     is 403 for anyone else, and the row hides). data-nav labor/ratings is
-     the action queue's link. #}
-  <div class="lb2-srow s12" data-nav="labor/ratings" id="sfw1-rate-row"{% if is_principal is defined and not is_principal %} hidden{% endif %}>
-    <div class="lb2-subsection" onclick="lb2RowClick(event,sfw1ToggleRate)">
-      <div class="lb2-subsection-title">Measured ratings <span id="sfw1-rate-chip" class="lb2-subsection-chip"></span></div>
-      <button type="button" onclick="sfw1ToggleRate()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle">Open ↓</button>
-    </div>
-    <div id="sfw1-rate-panel" style="display:none">
-      <div class="lb2-avail">
-        <div class="lb2-intro">Your POS measures what each server sells a guest. Confirm a suggestion and it becomes their Operational Score.</div>
-        <div id="sfw1-rate-body"></div>
-      </div>
-    </div>
-  </div>
-
   {# Task sheets (task_sheets.py, 9/30/26): opening and closing sheets by job
      code, owed by whoever the published schedule puts on that shift. A row
      like the others here (owner, 9/30/26); the owner READS the day - every
@@ -12034,85 +12113,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
     </section>
 
-    <section class="ss-stage" data-stage="staffing" aria-label="Staffing review">
-      <div class="ss-side" id="ss-staffing">
-        <div class="ss-kick">Staffing review</div>
-        <h1>Overstaffed days, strong days run lean, and overtime</h1>
-  {# Staffing review (was "Every day and person", renamed and moved into
-     the Studio, owner 10/2/26) behind "Where the money went", in the standard
-     list shape - an hb-card of hb-rows with a status dot - instead of the
-     dark slabs (density round #9, #44). Collapsed: the top of it already
-     sits under Waiting on you. Dollars above target and overtime premiums
-     are opportunities, never "saved" (Money labels). #}
-  {# Staffing intelligence (9/25/26 redesign; labor.staffing_board): the
-     overstaffed days, strong days run lean and overtime as decision cards -
-     an executive strip first (at stake, costliest, fastest win), then one
-     lane per kind, each card worst-first: severity, a measured consistency
-     ring, the dollars, one sentence of what to do, and its actions. Every
-     figure is measured or hours x the blended rate, and Explain why shows
-     the arithmetic. Dollars are opportunities, never "saved" (Money labels). #}
-  {% set _sb = labor.staffing_board if labor.is_live else None %}
-  {% macro sb_ring(c) -%}
-  {%- if c and c.pct is not none -%}<span class="sb-ring" style="--p:{{ c.pct }}" title="The same pattern on {{ c.hits }} of {{ c.of }} of these weekdays in the window" aria-label="Consistency {{ c.pct }}%"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/><circle class="fg" cx="18" cy="18" r="15.5" pathLength="100"/></svg><b class="hb-num">{{ c.pct }}%</b><small>consistent</small></span>
-  {%- else -%}<span class="sb-ring none" title="First time in this window - not enough of these weekdays to call it a pattern"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15.5"/></svg><b>—</b><small>first seen</small></span>{%- endif -%}
-  {%- endmacro %}
-  <details class="hb-results lb2-money-all" id="lb2-money-all" open>
-    <summary><span class="hb-kicker">Staffing review</span><span>{% if _sb %}{{ _sb.overstaffed|length }} overstaffed · {{ _sb.lean|length }} strong day{{ '' if _sb.lean|length == 1 else 's' }} run lean · {{ _sb.overtime|length }} overtime{% else %}Overstaffed days, strong days run lean, overtime{% endif %}</span></summary>
-  {% if _sb %}
-  <div class="sb">
-    <div class="sb-sum">
-      <div class="sb-tile hero"><div class="k">At stake in this window</div><div class="v hb-num">{{ _sb.summary.at_stake_text }}</div><div class="s">{# The two parts do not overlap and add up to the total (9/25/26 audit); on the assumed wage the dollars above target are withheld (labor.staffing_board). #}{% if _sb.summary.dollars_withheld %}{{ _sb.summary.withheld_text }}{% if _sb.summary.ot %} · <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}{% else %}<span class="hb-num">{{ _sb.summary.over_text }}</span> above target at straight time + <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}</div></div>
-      <div class="sb-tile"><div class="k">Costliest</div>{% if _sb.summary.biggest %}<div class="v">{{ _sb.summary.biggest.title }}</div><div class="s"><span class="hb-num">{{ _sb.summary.biggest.dollars_text }}</span> {{ _sb.summary.biggest.label }}</div>{% else %}<div class="v">—</div><div class="s">Nothing priced in this window</div>{% endif %}</div>
-      <div class="sb-tile"><div class="k">Fastest win</div>{% if _sb.summary.quick %}<div class="v">{{ _sb.summary.quick.why[:1]|upper }}{{ _sb.summary.quick.why[1:] }}</div><div class="s">{% if _sb.summary.quick.kind == 'overtime' %}from {% endif %}{{ _sb.summary.quick.title }}</div>{% else %}<div class="v">—</div><div class="s">Nothing to fix here</div>{% endif %}</div>
-    </div>
-    {% set _lanes = [
-      ('over', 'Overstaffed days', 'Labor above ' ~ _tl ~ ' on the day’s own sales', _sb.overstaffed, 'No day ran over your target in this window.', '<path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/>'),
-      ('lean', 'Strong days run lean', 'Big sales on a thin crew — check service first', _sb.lean, 'No strong day ran lean in this window.', '<path d="M4 7l5 5 4-4 7 8"/><path d="M15 16h5v-5"/>'),
-      ('ot', 'Overtime', 'Hours past 40 in a week, at the premium', _sb.overtime, 'No one went past 40 hours in this window.', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
-    ] %}
-    {% for key, title, sub, items, empty, icon in _lanes %}
-    <section class="sb-lane" data-tone="{{ key }}" aria-label="{{ title }}">
-      <div class="sb-lh"><span class="sb-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{{ icon|safe }}</svg></span>
-        <div class="sb-lt"><b>{{ title }}</b><small>{{ sub }}</small></div>
-        <span class="sb-ln hb-num">{{ items|length }}</span></div>
-      {% if items %}
-      <div class="sb-grid">
-      {% for x in items %}
-      {% set _worst = loop.first and items|length > 1 %}
-      <article class="sb-card{{ ' worst' if _worst }}" style="--i:{{ loop.index0 }}"{% if loop.index > 6 %} hidden data-sb-more{% endif %}>
-        <div class="sb-top">
-          <span class="sb-sev {{ x.severity }}">{% if _worst %}Biggest · {% endif %}{% if key == 'ot' %}{{ x.extra_text }}h past 40{% elif key == 'over' %}{{ x.pts_text }} pts over{% else %}{{ x.pts_text }} pts under{% endif %}</span>
-          {% if key != 'ot' %}{{ sb_ring(x.consistency) }}{% endif %}
-        </div>
-        <div class="sb-title">{{ x.title }}<small>{% if key == 'ot' %}{{ x.role }}{% if x.role %} · {% endif %}week of {{ x.week }}{% else %}{{ x.date }}{% endif %}</small></div>
-        <div class="sb-fig"><b class="hb-num">{{ x.dollars_text }}</b><span>{{ x.label }}</span></div>
-        <p class="sb-say">{{ x.say }}</p>
-        <div class="sb-chips">
-          {% if key == 'over' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span><span><b class="hb-num">{{ x.sales_text }}</b> sales</span>{% if x.trim_text %}<span>trim <b class="hb-num">~{{ x.trim_text }}h</b></span>{% endif %}
-          {% elif key == 'lean' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span>{% if x.covers %}<span><b class="hb-num">{{ x.covers }}</b> covers</span>{% endif %}{% if x.spc_text %}<span><b class="hb-num">{{ x.spc_text }}</b> a cover</span>{% endif %}
-          {% else %}<span><b class="hb-num">{{ x.hours_text }}h</b> that week</span>{% if x.mate %}<span class="ok">give <b class="hb-num">{{ x.extra_text }}h</b> to {{ x.mate.name }}</span>{% endif %}{% endif %}
-        </div>
-        <div class="sb-acts">
-          {% set _how %}{% if key == 'over' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.pct_text }}% labor on {{ x.sales_text }} in sales, against your {{ _tl }}.</div>{% if x.withheld %}<div style="margin-bottom:10px"><strong>The figure:</strong> withheld. {{ _sb.summary.withheld_text }}</div>{% else %}<div style="margin-bottom:10px"><strong>The figure:</strong> labor spent above {{ _tl }} of that day’s sales = {{ x.dollars_text }}.</div>{% endif %}{% if x.trim_text %}<div style="margin-bottom:10px"><strong>Hours to trim:</strong> {{ x.dollars_text }} ÷ your blended rate of ${{ '%.2f'|format(labor.blended_rate or 0) }}/h ≈ {{ x.trim_text }}h.</div>{% endif %}{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran over target.</div>{% endif %}{% elif key == 'lean' %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.dollars_text }} in sales on {{ x.pct_text }}% labor — well under your {{ _tl }} on one of your strongest days.</div><div style="margin-bottom:10px"><strong>Why not add staff straight away:</strong> a lean crew on a big day can be efficient, not short. Slow tickets or complaints from that day are the evidence that it was short.</div>{% if x.consistency and x.consistency.of %}<div><strong>Consistency:</strong> {{ x.consistency.hits }} of {{ x.consistency.of }} {{ x.title }}s in this window ran lean.</div>{% endif %}{% else %}<div style="margin-bottom:10px"><strong>What happened:</strong> {{ x.hours_text }}h the week of {{ x.week }} — {{ x.extra_text }}h past 40.</div><div style="margin-bottom:10px"><strong>The premium:</strong> hours past 40 × their blended rate × 0.5 (time and a half) = {{ x.dollars_text }}.</div>{% if x.mate %}<div><strong>Who had room:</strong> {{ x.mate.name }} worked {{ x.mate.hours_text }}h that week in the same role — those hours at straight time would not have cost the premium.</div>{% else %}<div><strong>Who had room:</strong> no one in the same role had {{ x.extra_text }}h free under 40 that week.</div>{% endif %}{% endif %}{% endset %}
-          <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-explain="{{ _how|forceescape }}" data-explain-title="{{ x.title }} — how this was worked out" data-explain-kicker="Explain why">Explain why</button>
-          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="{{ x.ask }}">Ask Cavnar AI →</button>
-        </div>
-      </article>
-      {% endfor %}
-      </div>
-      {% if items|length > 6 %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm sb-more" onclick="var l=this.closest('.sb-lane');[].forEach.call(l.querySelectorAll('[data-sb-more]'),function(c){c.hidden=false;});this.hidden=true;">Show all <span class="hb-num">{{ items|length }}</span> →</button>{% endif %}
-      {% else %}
-      <div class="sb-empty"><span class="sb-ok" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>{{ empty }}</div>
-      {% endif %}
-    </section>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="hb-empty" style="margin-top:10px">Staffing cards show once your own shifts are in — sample data is never scored here.</div>
-  {% endif %}
-  </details>
-      </div>
-    </section>
 
     </div>
   </div>
@@ -25054,9 +25054,34 @@ function _swSave(body, statusId, okText, then) {
       else { st.textContent = (d && d.error) || 'Could not save'; st.className = 'ac-status err'; }
     }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } });
 }
+// A number box that saves on change saves once it settles: a spinner click,
+// an arrow key or a scroll over it fires "change" on every step, and each
+// was a save. Simple EJ's 35% labor target became 31.5% in seven saves in two
+// seconds from the Studio's box (10/2/26). The last value, 800ms after the
+// last step, or at once when the box is left.
+window.cavSettled = function (el, fn) {
+  if (!el || el.type !== 'number') { fn(); return; }
+  if (el._cavSettle) clearTimeout(el._cavSettle);
+  el._cavSettleFn = fn;                       /* the latest value's save */
+  el._cavSettle = setTimeout(function () { el._cavSettle = null; el._cavSettleFn(); }, 800);
+  if (!el._cavSettleBlur) {
+    el._cavSettleBlur = true;
+    el.addEventListener('blur', function () {
+      if (el._cavSettle) { clearTimeout(el._cavSettle); el._cavSettle = null; el._cavSettleFn(); }
+    });
+  }
+};
 document.addEventListener('change', function (ev) {
   var t = ev.target; if (!t || !t.id) return;
-  if (t.id === 'sw-target') { if (t.value === '') return; _swSave({labor_target_pct: +t.value}, 'sw-target-status', 'Saved · the next draft uses it', function () { _ssFcKey = null; }); }
+  if (t.id === 'sw-target') {
+    if (t.value === '') return;
+    // The restaurant's labor target, not this draft's: Home, the alerts and
+    // the reports read the same number, and the message says so.
+    cavSettled(t, function () {
+      var v = +t.value;
+      _swSave({labor_target_pct: v}, 'sw-target-status', 'Saved · your labor target is now ' + v + '% everywhere: Home, alerts and the next draft', function () { _ssFcKey = null; });
+    });
+  }
   else if (t.id === 'sw-notes') _swSave({sched_notes: t.value}, 'sw-notes-status', 'Saved · every draft reads these', function () { ssLoadNoteRules(true); });
 });
 // Team & rules lives in the Studio's Team stage (10/2/26): every opener
@@ -25100,7 +25125,7 @@ function swOpenTeam(which) {
 // DESIGN_SYSTEM.md -> Schedule Studio.
 var _ssOpen = false, _ssStage = 'setup', _ssFromDash = false, _ssGenerating = false, _ssReview = null;
 var _swSel = null, _swSelRow = null, _swDrag = null, _swLeftLoaded = false;
-var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'team', 'staffing'];
+var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'team'];
 function _ssHost() { var st = document.getElementById('studio'); return st && !st.hidden ? st : null; }
 function _ssHasDraft() {
   var p = document.getElementById('schedule-preview-panel');
@@ -25257,7 +25282,7 @@ function studioGo(stage) {
   else if (stage === 'publish') ssRenderPublish();
   else if (stage === 'history') ssLoadHistory();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
-  else if (stage === 'team' || stage === 'staffing') { var dt = document.getElementById(stage === 'team' ? 'lb2-team' : 'lb2-money-all'); if (dt) dt.open = true; }
+  else if (stage === 'team') { var dt = document.getElementById('lb2-team'); if (dt) dt.open = true; }
   var m = document.getElementById('ss-main'); if (m) m.scrollTop = 0;
 }
 function ssTopbar() {
@@ -25536,7 +25561,7 @@ function studioOnResult(data, fromGeneration) {
     return;
   }
   ssTopbar();
-  if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build' || _ssStage === 'team' || _ssStage === 'staffing')) studioGo('schedule');
+  if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build' || _ssStage === 'team')) studioGo('schedule');
   ssRescoreOnOpen();
 }
 // A stored week's score was measured against the staffing history and
@@ -37612,15 +37637,19 @@ window.cavPalette = cavPalette;
       body.role_rates = rates;
     }
     if (f && body[f] === '') { status('as-tg-status', 'Enter a number', true); return; }
-    status('as-tg-status', 'Saving…');
-    postJ('/api/account/targets', body, function (d) {
-      if (d.ok) {
-        _tg.targets = d.targets;
-        if (rev) tgPaintRevenue(d.targets);   /* both boxes as stored */
-        tgNotes(d.targets);                   /* "Set by you on ..." now */
-        status('as-tg-status', 'Saved');
-      }
-      else { status('as-tg-status', d.error || 'Could not save', true); tgRender(); }
+    /* Once the box settles, not on every spinner step (cavSettled). */
+    cavSettled(t, function () {
+      if (f) body[f] = t.value === '' ? body[f] : +t.value;
+      status('as-tg-status', 'Saving…');
+      postJ('/api/account/targets', body, function (d) {
+        if (d.ok) {
+          _tg.targets = d.targets;
+          if (rev) tgPaintRevenue(d.targets);   /* both boxes as stored */
+          tgNotes(d.targets);                   /* "Set by you on ..." now */
+          status('as-tg-status', 'Saved');
+        }
+        else { status('as-tg-status', d.error || 'Could not save', true); tgRender(); }
+      });
     });
   });
 
