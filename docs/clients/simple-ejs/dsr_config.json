@@ -31,7 +31,7 @@
     "net_etc": "Pending — whether net also excludes service charges / gift cards.",
     "petty_cash_check_requests_cc_register": "Yes, wanted in Cavnar AI. RPower holds no payouts/pay-ins for EJ's (pos_payouts empty), so they must come from Back Office exports.",
     "back_office_exports": "Pending — Erik sending items+PLU+unit cost, a count, a recipe, a week of invoices (auto-email ideally).",
-    "manager_schedule": "Monday 10/5/26.",
+    "manager_schedule": "Received 10/5/26 and set as standing shifts (staff_settings). 'Open' = an hour before doors, 'close' = doors close. Erik: Tue 10am-11pm, Wed 10am-8pm (to volume), Thu 10am-12am, Fri/Sat 2pm-11pm (to volume), Mon off, Sun off unless the Bears play or a big party (owner preference: the draft suggests him). Anthony: Mon 10am-5pm, Wed admin 1-4pm + 4pm-11pm, Fri/Sat 10am-5pm, Sun 4pm-10pm, Tue/Thu off. Jim: Mon 8am-6pm, Wed 8am-8pm, Thu 8am-6pm, Fri 8am-8pm, Sat 6:30am-7pm, Sun 6:30am-5pm, Tue off (67h; his max set to 67). Andrew: Mon 4pm-11pm, Wed 4pm-11pm (start assumed same as Monday), Fri/Sat 5pm-2am, Sun 9am-5pm, Tue/Thu off. Gabriel Huerta (salaried, works the line) is on the roster as Kitchen.",
     "danielle_benedict": "Confirmed — back on the roster 10/2/26.",
     "seventh_day_warning": "OK for managers (already shown to any login with Labor).",
     "google_reconnect": "OK — once the GBP allowlist clears.",
