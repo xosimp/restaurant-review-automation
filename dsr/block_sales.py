@@ -162,6 +162,21 @@ def categorize(mapping, by_department, net, contents=None, held=None):
     return _arrange(cats, net), unmapped
 
 
+def _sold(restaurant_id, contents=None):
+    """{department: {item categories}} sold lately (pos.department_sold_
+    categories) joined with a night's own contents."""
+    import pos
+    out = {}
+    try:
+        for dep, cats in (pos.department_sold_categories(restaurant_id) or {}).items():
+            out.setdefault(dep, set()).update(cats or [])
+    except Exception as e:
+        log.warning("dsr sales: what departments sold could not be read rid=%s: %s", restaurant_id, e)
+    for dep, inside in (contents or {}).items():
+        out.setdefault(dep, set()).update(inside or {})
+    return out
+
+
 def _categories(ctx, by_department, net, contents=None):
     """(categories, unmapped, unallocated). Categories in Erik's order, then
     any the owner named themselves, then nothing guessed."""
@@ -384,11 +399,11 @@ def _ready(ctx, data, provider, closed_by):
     contents = data.get("by_department_category") or {}
     cats, unmapped, unallocated = _categories(ctx, data["by_department"], net, contents=contents)
     try:
-        # A mapped department seen with its contents for the first time:
-        # what it holds tonight is what the owner mapped (store.note_held).
-        # The POS's catalog where it has one (every item category filed under
-        # the department, sold tonight or not), else tonight's contents.
-        store.note_held(ctx.restaurant_id, data.get("department_catalog") or contents, db_path=ctx.db_path)
+        # A mapped department whose contents are not known yet: what it has
+        # sold - the archive's last 90 days with tonight - is what the owner
+        # mapped (store.note_held). Read only while one is unknown.
+        if store.unknown_held(ctx.restaurant_id, db_path=ctx.db_path):
+            store.note_held(ctx.restaurant_id, _sold(ctx.restaurant_id, contents), db_path=ctx.db_path)
     except Exception as e:
         log.warning("dsr sales: department contents not recorded rid=%s: %s", ctx.restaurant_id, e)
     for c in cats:
@@ -428,7 +443,6 @@ def _ready(ctx, data, provider, closed_by):
         "by_department": {dep: round(float(v or 0), 2) for dep, v in data["by_department"].items()},
         "department_contents": {dep: {sub: round(float(v or 0), 2) for sub, v in (inside or {}).items()}
                                 for dep, inside in contents.items()},
-        "department_catalog": data.get("department_catalog") or {},
         "unallocated": unallocated,
         "top_items": top,
         "bottom_items": bottom,

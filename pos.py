@@ -571,6 +571,15 @@ def fetch_sales_today(restaurant_id, business_date):
     return fn(restaurant_id, business_date), name
 
 
+def department_sold_categories(restaurant_id, days=90):
+    """{department: [item categories]} the POS sold under each department
+    over the last `days` days, for a POS that has item categories inside its
+    departments (RPOWER); {} where it has none."""
+    name, mod = connected_provider(restaurant_id)
+    fn = getattr(mod, "department_sold", None) if mod else None
+    return fn(restaurant_id, days=days) if fn else {}
+
+
 def fetch_clock_ins_today(restaurant_id, business_date):
     """Who has clocked in today: [{"employee", "role", "clocked_in_at"}].
 
@@ -699,7 +708,6 @@ def _net_day(raw):
         # that level (RPOWER): {department: {category: net}}.
         "by_department_category": {k: {c: net_of(p) for c, p in (v or {}).items()}
                                    for k, v in (raw.get("by_department_category") or {}).items()},
-        "department_catalog": {k: list(v or []) for k, v in (raw.get("department_catalog") or {}).items()},
         "by_hour": {k: net_of(v) for k, v in sorted((raw.get("by_hour") or {}).items())},
         "items": items,
         "net_deductions": list(NET_DEDUCTIONS),

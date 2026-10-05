@@ -737,15 +737,40 @@ def menu_lookup(restaurant_id: int) -> dict:
 UNASSIGNED_DEPARTMENT = "Unassigned"
 
 
-def _department_catalog(cats, deps):
-    """{department: [item category names]} from the sales category and
-    department catalogs."""
+SOLD_LOOKBACK_DAYS = 90
+
+
+def department_sold(restaurant_id: int, days: int = SOLD_LOOKBACK_DAYS, today=None) -> dict:
+    """{department: [item categories]} that actually SOLD in the last `days`
+    days of the local ticket archive (pos_ticket_lines, sale lines): what a
+    department holds when the owner maps it (dsr store.note_held). Not the
+    POS's catalog - RPOWER files Gratuity, Received on Account and Tax
+    Exempt under Simple EJ's "Other" beside Darts, and the owner mapped
+    "Other" to Darts for the darts it sells (10/5/26). Not one night either:
+    a category sold monthly (Catering, Banquet) is the department's, not
+    news. {} when nothing is archived."""
+    from models import get_conn
+    from datetime import date as _date, timedelta as _td
+    since = ((today or _date.today()) - _td(days=days)).isoformat()
+    conn = get_conn()
+    try:
+        ids = [r["item_id"] for r in conn.execute(
+            "SELECT DISTINCT item_id FROM pos_ticket_lines WHERE restaurant_id=? AND provider='rpower' "
+            "AND kind='sale' AND business_date >= ? AND item_id IS NOT NULL", (restaurant_id, since))]
+    finally:
+        conn.close()
+    if not ids:
+        return {}
+    menu = _catalog(restaurant_id, "menuitem/getbycg")
+    cats = _catalog(restaurant_id, "salescategory/getbycg")
+    deps = _catalog(restaurant_id, "salesdepartment/getbycg")
     out = {}
-    for cat in (cats or {}).values():
+    for mid in ids:
+        cat = cats.get(str((menu.get(str(mid)) or {}).get("slscat_mid"))) or {}
         name = (cat.get("name") or "").strip()
-        dep = ((deps or {}).get(str(cat.get("slsdep_mid"))) or {}).get("name") or UNASSIGNED_DEPARTMENT
+        dep = ((deps.get(str(cat.get("slsdep_mid"))) or {}).get("name") or "").strip() or UNASSIGNED_DEPARTMENT
         if name:
-            out.setdefault(dep.strip() or UNASSIGNED_DEPARTMENT, set()).add(name)
+            out.setdefault(dep, set()).add(name)
     return {d: sorted(v) for d, v in out.items()}
 
 # How far back a closeday row may start and still cover the day asked about
@@ -949,10 +974,6 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
         "guests": guests if guests and len(counted) == len(sale_tickets) else None,
         "by_department": by_dep, "by_hour": by_hour,
         "by_department_category": by_dep_cat,
-        # Every item category the POS files under each department, sold
-        # tonight or not: what a department holds when it is mapped
-        # (dsr store.note_held), so a rarely sold category is never "new".
-        "department_catalog": _department_catalog(cats, deps),
         # Sold at least once; an item that was only ever comped was served,
         # not sold, and its value is already in comps.
         "items": [it for it in items.values() if it["qty"] > 0],

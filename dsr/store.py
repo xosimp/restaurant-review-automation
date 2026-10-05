@@ -749,11 +749,21 @@ def held_map(restaurant_id, db_path=DB_PATH):
     return out
 
 
+def unknown_held(restaurant_id, db_path=DB_PATH) -> bool:
+    """Whether any mapped department's contents are still unknown."""
+    conn = get_conn(db_path)
+    try:
+        return conn.execute("SELECT 1 FROM dsr_category_map WHERE restaurant_id=? AND held_json IS NULL LIMIT 1",
+                            (restaurant_id,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
 def note_held(restaurant_id, contents, db_path=DB_PATH):
     """A mapped department reported with its contents for the first time:
     what it holds now is what the owner mapped (they mapped it knowing what
-    it sells). `contents` is {department: names} - the POS's catalog of item
-    categories under it where it has one, else a night's {category: net}.
+    it sells). `contents` is {department: item category names} - what it
+    has sold lately (dsr block_sales._sold).
     Only fills a department whose contents were unknown - a later night
     never widens what was recorded. Returns the departments set."""
     if not contents:

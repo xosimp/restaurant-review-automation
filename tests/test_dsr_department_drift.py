@@ -115,7 +115,7 @@ def test_the_mapping_route_records_what_the_department_holds(db_path, monkeypatc
     monkeypatch.setattr(strategy_routes, "_dsr_owner_only", lambda u: None)
     monkeypatch.setattr(strategy_routes, "_rid", lambda u: rid)
     monkeypatch.setattr(strategy_routes, "_body", lambda: {"pos_name": "Other", "category": "Darts"})
-    monkeypatch.setattr(strategy_routes, "_dsr_contents", lambda r: {"Other": ["Darts"]})
+    monkeypatch.setattr(strategy_routes, "_dsr_contents", lambda r, sold=False: {"Other": ["Darts"]})
     out, status = strategy_routes._do_dsr_category({"id": 1})
     assert status == 200 and store.held_map(rid) == {"other": {"darts"}}
     src = open(strategy_routes.__file__, encoding="utf-8").read()
@@ -137,22 +137,39 @@ def test_the_web_report_and_settings_name_what_is_new_and_what_a_department_hold
     assert "' &middot; holds ' + _ehEsc(shownHold)" in rows and "hold.slice(0, 3)" in rows
 
 
-def test_what_a_department_holds_is_the_pos_catalog_not_one_nights_sales(db_path, monkeypatch):
-    """A category that sold nothing the night a department was recorded is
-    still the department's - only one filed under it later is new."""
-    import test_dsr_pos_day as day
-    monkeypatch.setattr(pos, "PROVIDERS", None)
-    monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
-    monkeypatch.setattr(day, "CATEGORIES", day.CATEGORIES + [{"mid": "C9", "cg": 1280, "name": "Specials",
-                                                               "slsdep_mid": "D1"}])
-    rid = day._rpower(db_path)
-    day._stub(monkeypatch)
-    data, _ = pos.fetch_day_sales(rid, day.DAY)
-    assert data["department_catalog"]["Food"] == ["1 Entrees", "Specials"]      # Specials sold nothing
-    assert "Specials" not in data["by_department_category"]["Food"]
-    rid2 = _rid(db_path)
-    store.set_category(rid2, "Food", "Food")
-    store.note_held(rid2, data["department_catalog"])
-    assert store.held_map(rid2) == {"food": {"1 entrees", "specials"}}
+def test_what_a_department_holds_is_what_it_sold_not_the_pos_catalog(db_path, monkeypatch):
+    """RPOWER files Gratuity, Received on Account and Tax Exempt under Simple
+    EJ's "Other" beside Darts; Erik mapped "Other" to Darts for the darts.
+    Held = what the department SOLD over the archive's last 90 days, so a
+    category filed there but never sold is new when it first sells - and a
+    monthly one (Catering) that did sell is not."""
+    from datetime import date as _d
+    rid = _rid(db_path)
+    conn = models.get_conn(db_path)
+    rows = [("L1", "2026-09-20", "M_DARTS"), ("L2", "2026-10-01", "M_CATER"), ("L3", "2026-06-01", "M_OLD")]
+    for lid, day_, item in rows:
+        conn.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, business_date, item_id, kind, "
+                     "qty, sales) VALUES (?, 'rpower', ?, ?, ?, 'sale', 1, 10)", (rid, lid, day_, item))
+    conn.commit(); conn.close()
+    menu = {"M_DARTS": {"slscat_mid": "K_D"}, "M_CATER": {"slscat_mid": "K_C"}, "M_OLD": {"slscat_mid": "K_O"}}
+    cats = {"K_D": {"name": "Darts", "slsdep_mid": "OTHER"}, "K_G": {"name": "Gratuity", "slsdep_mid": "OTHER"},
+            "K_C": {"name": "Catering", "slsdep_mid": "FOOD"}, "K_O": {"name": "Old Menu", "slsdep_mid": "FOOD"}}
+    deps = {"OTHER": {"name": "Other"}, "FOOD": {"name": "Food"}}
+    lists = {"menuitem/getbycg": menu, "salescategory/getbycg": cats, "salesdepartment/getbycg": deps}
+    monkeypatch.setattr(rpower, "_catalog", lambda r, path, by_store=False: lists[path])
+    sold = rpower.department_sold(rid, today=_d(2026, 10, 5))
+    assert sold == {"Other": ["Darts"], "Food": ["Catering"]}, "Gratuity never sold; Old Menu is past 90 days"
+    store.set_category(rid, "Other", "Darts")
+    store.note_held(rid, sold)
+    cats_, unmapped = block_sales.categorize({"other": "Darts"}, {"Other": 60.0}, 60.0,
+                                             contents={"Other": {"Darts": 40.0, "Gratuity": 20.0}},
+                                             held=store.held_map(rid))
+    assert {c["category"]: c["net"] for c in cats_} == {"Darts": 40.0}
+    assert unmapped[0]["department"] == "Other \u203a Gratuity" and unmapped[0]["new_in"] == "Other"
     src = open(block_sales.__file__, encoding="utf-8").read()
-    assert 'store.note_held(ctx.restaurant_id, data.get("department_catalog") or contents' in src
+    assert "if store.unknown_held(ctx.restaurant_id, db_path=ctx.db_path):" in src
+    assert "store.note_held(ctx.restaurant_id, _sold(ctx.restaurant_id, contents)" in src
+    import strategy_routes
+    rsrc = open(strategy_routes.__file__, encoding="utf-8").read()
+    assert "held=_dsr_contents(_rid(u), sold=True).get(name)" in rsrc
+    assert '"contents": _dsr_contents(_rid(u))' in rsrc, "a page load reads no POS catalog"

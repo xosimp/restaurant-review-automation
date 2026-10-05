@@ -5903,27 +5903,25 @@ def _do_dsr_category(u):
     # What the department holds as the owner maps it (the latest night's POS
     # item categories inside it): anything new inside it later is asked
     # about, not counted here (block_sales.categorize, owner 10/5/26).
-    store.set_category(_rid(u), name, cat, held=_dsr_contents(_rid(u)).get(name))
+    store.set_category(_rid(u), name, cat, held=_dsr_contents(_rid(u), sold=True).get(name))
     return {"ok": True, "pos_name": name, "category": cat,
             "note": f"Nights already reported keep their split; from the next report on, {name} counts as {cat}."}, 200
 
 
-def _dsr_contents(rid):
-    """{department: [POS item categories]} the latest report saw inside each
-    department, {} before any night recorded them."""
+def _dsr_contents(rid, sold=False):
+    """{department: [POS item categories]}: inside each department on the
+    latest night, and with `sold` everything it has SOLD - the ticket
+    archive's last 90 days with that night (rpower.department_sold), never
+    the POS's whole catalog of categories filed under it. `sold` reads the
+    POS's item catalog, so only a mapping asks for it, not a page load."""
     from dsr import store
+    from dsr.block_sales import _sold
     latest = store.list_reports(rid, limit=1)
-    if not latest:
-        return {}
-    sales = ((latest[0].get("facts") or {}).get("blocks") or {}).get("sales") or {}
-    detail = sales.get("detail") or {}
-    # The POS's catalog (every item category under the department) where it
-    # was recorded, else what sold inside it that night.
-    catalog = detail.get("department_catalog") or {}
-    if catalog:
-        return {dep: sorted(cats) for dep, cats in catalog.items() if cats}
-    inside = detail.get("department_contents") or {}
-    return {dep: sorted(cats) for dep, cats in inside.items() if isinstance(cats, dict) and cats}
+    sales = (((latest[0].get("facts") or {}).get("blocks") or {}).get("sales") or {}) if latest else {}
+    inside = (sales.get("detail") or {}).get("department_contents") or {}
+    if not sold:
+        return {dep: sorted(cats) for dep, cats in inside.items() if isinstance(cats, dict) and cats}
+    return {dep: sorted(cats) for dep, cats in _sold(rid, inside).items() if cats}
 
 
 def _dsr_unmapped(rid):
