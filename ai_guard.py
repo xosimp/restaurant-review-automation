@@ -1333,7 +1333,15 @@ _NAME_SKIP = {"google", "yelp", "monday", "tuesday", "wednesday", "thursday",
               "tomorrow", "yesterday", "last", "next", "overtime", "schedule", "shift", "shifts",
               # role titles ("Have Chef Marco…" names Marco, not Chef)
               "chef", "sous", "server", "servers", "cook", "cooks", "host", "hostess", "bartender", "busser",
-              "runner", "waiter", "waitress", "owner", "expo", "lead", "supervisor", "cashier", "dishwasher"}
+              "runner", "waiter", "waitress", "owner", "expo", "lead", "supervisor", "cashier", "dishwasher",
+              # pronouns and the words a contraction opens on: "She's a gem"
+              # matched the possessive pattern as a name ('She') and held a
+              # reply for naming a person in public (Simple EJ's, 10/5/26)
+              "she", "her", "hers", "him", "his", "they", "them", "their", "theirs", "you", "your", "yours",
+              "our", "ours", "its", "who", "whoever", "what", "there", "here", "where", "when", "why", "how",
+              "let", "that", "it", "everybody", "somebody", "anyone", "anybody", "one",
+              # weekdays as plurals ("Here's to Sundays")
+              "mondays", "tuesdays", "wednesdays", "thursdays", "fridays", "saturdays", "sundays"}
 # Roles a name can follow ("Chef Marco", "server Tina") or stand in
 # apposition to ("Marco, the new weekend server"), and the imperatives an
 # owner is told to do something to a person with ("ask Marco", "pull Tina").
