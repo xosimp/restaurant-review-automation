@@ -102,3 +102,22 @@ def test_the_studio_step_rule_has_the_same_space_either_side():
     assert nav.index('data-ss-go="publish"') < nav.index('class="ss-steps-sep"') < nav.index('data-ss-go="history"')
     assert "ss-steps-h" not in SRC, "the rule is no longer drawn on History's edge"
     assert ".ss-steps .ss-steps-sep{flex:none;width:1px;height:18px;margin:0 6px;" in SRC
+
+
+def test_round_three_layout_calls():
+    # The Studio's header: no "← Dashboard" and no rule beside it.
+    assert "&larr; Dashboard" not in SRC and "ss-back" not in SRC
+    brand = SRC[_at(".ss-brand{"):]
+    assert "box-shadow" not in brand[:brand.index("}")]
+    # Reports load with the orb at page scale.
+    rep = SRC[_at("  function loading(label){return '<div class=\"hb-load dr-page-load\""):]
+    assert 'canvas class="hb-orb"' in rep[:rep.index("\n")] and 'width="56"' in rep[:rep.index("\n")]
+    assert ".dr-page-load{height:260px;justify-content:center;flex-direction:column" in SRC
+    # The recovery email's check, address and Remove sit on one centred line.
+    assert '<span class="rec-line"><i class="cv-ok" aria-hidden="true"></i><span>' in SRC
+    assert "#rec-status .rec-line{display:flex;align-items:center;" in SRC
+    # Staff not signed up: first name and last initial, full names on a clash.
+    un = SRC[_at("  function _renderUnclaimed(names){"):]
+    un = un[:un.index("\n  function _phone(")]
+    assert "names.map(_firstInitial)" in un and "seen[short[j]]>1?n:short[j]" in un
+    assert "p[0]+' '+p[1].charAt(0).toUpperCase()+'.'" in un and "font-size:11px" not in un
