@@ -742,7 +742,8 @@ SOLD_LOOKBACK_DAYS = 90
 
 def department_sold(restaurant_id: int, days: int = SOLD_LOOKBACK_DAYS, today=None) -> dict:
     """{department: [item categories]} that actually SOLD in the last `days`
-    days of the local ticket archive (pos_ticket_lines, sale lines): what a
+    days of the local ticket archive (pos_ticket_lines: sale, discount and
+    comp lines - the kinds a night's department dollars hold): what a
     department holds when the owner maps it (dsr store.note_held). Not the
     POS's catalog - RPOWER files Gratuity, Received on Account and Tax
     Exempt under Simple EJ's "Other" beside Darts, and the owner mapped
@@ -756,7 +757,8 @@ def department_sold(restaurant_id: int, days: int = SOLD_LOOKBACK_DAYS, today=No
     try:
         ids = [r["item_id"] for r in conn.execute(
             "SELECT DISTINCT item_id FROM pos_ticket_lines WHERE restaurant_id=? AND provider='rpower' "
-            "AND kind='sale' AND business_date >= ? AND item_id IS NOT NULL", (restaurant_id, since))]
+            "AND kind IN ('sale', 'discount', 'comp') AND business_date >= ? AND item_id IS NOT NULL",
+            (restaurant_id, since))]
     finally:
         conn.close()
     if not ids:

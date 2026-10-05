@@ -146,19 +146,24 @@ def test_what_a_department_holds_is_what_it_sold_not_the_pos_catalog(db_path, mo
     from datetime import date as _d
     rid = _rid(db_path)
     conn = models.get_conn(db_path)
-    rows = [("L1", "2026-09-20", "M_DARTS"), ("L2", "2026-10-01", "M_CATER"), ("L3", "2026-06-01", "M_OLD")]
-    for lid, day_, item in rows:
+    rows = [("L1", "2026-09-20", "M_DARTS", "sale"), ("L2", "2026-10-01", "M_CATER", "sale"),
+            ("L3", "2026-06-01", "M_OLD", "sale"), ("L4", "2026-10-02", "M_DISC", "discount"),
+            ("L5", "2026-10-02", "M_VOID", "void")]
+    for lid, day_, item, kind in rows:
         conn.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, business_date, item_id, kind, "
-                     "qty, sales) VALUES (?, 'rpower', ?, ?, ?, 'sale', 1, 10)", (rid, lid, day_, item))
+                     "qty, sales) VALUES (?, 'rpower', ?, ?, ?, ?, 1, 10)", (rid, lid, day_, item, kind))
     conn.commit(); conn.close()
-    menu = {"M_DARTS": {"slscat_mid": "K_D"}, "M_CATER": {"slscat_mid": "K_C"}, "M_OLD": {"slscat_mid": "K_O"}}
+    menu = {"M_DARTS": {"slscat_mid": "K_D"}, "M_CATER": {"slscat_mid": "K_C"}, "M_OLD": {"slscat_mid": "K_O"},
+            "M_DISC": {"slscat_mid": "K_X"}, "M_VOID": {"slscat_mid": "K_V"}}
     cats = {"K_D": {"name": "Darts", "slsdep_mid": "OTHER"}, "K_G": {"name": "Gratuity", "slsdep_mid": "OTHER"},
             "K_C": {"name": "Catering", "slsdep_mid": "FOOD"}, "K_O": {"name": "Old Menu", "slsdep_mid": "FOOD"}}
-    deps = {"OTHER": {"name": "Other"}, "FOOD": {"name": "Food"}}
+    cats.update({"K_X": {"name": "Discount All", "slsdep_mid": "DISC"}, "K_V": {"name": "Voided", "slsdep_mid": "DISC"}})
+    deps = {"OTHER": {"name": "Other"}, "FOOD": {"name": "Food"}, "DISC": {"name": "Discounts"}}
     lists = {"menuitem/getbycg": menu, "salescategory/getbycg": cats, "salesdepartment/getbycg": deps}
     monkeypatch.setattr(rpower, "_catalog", lambda r, path, by_store=False: lists[path])
     sold = rpower.department_sold(rid, today=_d(2026, 10, 5))
-    assert sold == {"Other": ["Darts"], "Food": ["Catering"]}, "Gratuity never sold; Old Menu is past 90 days"
+    assert sold == {"Other": ["Darts"], "Food": ["Catering"], "Discounts": ["Discount All"]}, \
+        "Gratuity never sold; Old Menu is past 90 days; a discount line counts, a void does not"
     store.set_category(rid, "Other", "Darts")
     store.note_held(rid, sold)
     cats_, unmapped = block_sales.categorize({"other": "Darts"}, {"Other": 60.0}, 60.0,
