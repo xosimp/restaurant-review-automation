@@ -2105,8 +2105,14 @@ def _waste_alert_worsened(restaurant_id: int, total: float, db_path: str = DB_PA
     return ((total - prior) / prior * 100.0) >= min_increase_pct
 
 
+# Two sign-ins by the same login inside this many minutes are one notice
+# (Simple EJ's, 10/3/26: two emails three seconds apart).
+LOGIN_NOTICE_COOLDOWN_MINUTES = 2
+
+
 def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
-                      ip: str, user_agent: str, db_path: str = DB_PATH, report_url: str = None):
+                      ip: str, user_agent: str, db_path: str = DB_PATH, report_url: str = None,
+                      user_id: int = None, to_email: str = None):
     """The one 'Sign-in notifications' toggle used to mean email-only —
     audited on device feedback ("does an alert pop up? is it sent to the
     bell? does it show on a locked phone?") and the honest answer for all
@@ -2116,14 +2122,28 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
     phone, and an alert_log row so it shows in the notifications bell.
     All three still gate on the SAME login_notify flag the one toggle
     controls — callers check that (and owner_email) before calling this,
-    same as they always have for the email alone."""
+    same as they always have for the email alone.
+
+    WHOSE sign-in (10/5/26): the notice goes to the login that signed in —
+    its own email (`to_email`) and its own phone (`user_id`) — never to the
+    owner for every teammate. At Simple EJ's the owner got ten "New sign-in"
+    emails in a week, most of them Jim and Danny signing in as themselves.
+    The "this wasn't me" link is already that login's. `owner_email` is the
+    fallback for a login with no email of its own."""
+    if user_id is not None:
+        try:
+            import ops
+            if not ops.claim_cooldown(f"login_notice:{restaurant_id}:{user_id}", LOGIN_NOTICE_COOLDOWN_MINUTES):
+                return
+        except Exception:
+            pass
     from emails import send_login_notification
     try:
         _tz = getattr(models.get_restaurant(restaurant_id), "timezone", None)
     except Exception:
         _tz = None
-    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url, tz=_tz,
-                            restaurant_id=restaurant_id)
+    send_login_notification((to_email or "").strip() or owner_email, restaurant_name, ip, user_agent,
+                            report_url=report_url, tz=_tz, restaurant_id=restaurant_id)
     try:
         from push import fire_push, console_user_ids
         # Named logins, never "everyone at the restaurant": this carries an
@@ -2134,7 +2154,7 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
             f"{restaurant_name} — signed in from {ip}",
             data={"alert_type": "login"},
             db_path=db_path,
-            user_ids=console_user_ids(restaurant_id, db_path=db_path),
+            user_ids=[user_id] if user_id is not None else console_user_ids(restaurant_id, db_path=db_path),
         )
     except Exception as e:
         print(f"[LoginAlert] push error: {e}")

@@ -15082,8 +15082,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Email preferences</h3><p>Security email &mdash; sign-in codes, password changes, alerts &mdash; always sends regardless.</p></div></div>
           <div class="ac-rows">
-            <div class="ac-row"><div class="l"><b>Email me about new sign-ins</b><span>A note whenever someone signs in to this dashboard, with a one-tap &ldquo;this wasn&rsquo;t me&rdquo;.</span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" aria-label="Email me about new sign-ins"{% if not _principal %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row"><div class="l"><b>Email about new sign-ins</b><span>Each person on the account hears about their own sign-ins, never everyone&rsquo;s &mdash; with a one-tap &ldquo;this wasn&rsquo;t me&rdquo;.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" aria-label="Email about new sign-ins"{% if not _principal %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Monthly business review</b><span>On the 1st: how last month&rsquo;s numbers moved against the month before, what your changes were measured to do, where your goals stand, and what&rsquo;s worth fixing next.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-monthly-review" onchange="saveMonthlyReview()" aria-label="Monthly business review"{% if not _principal %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Product update emails</b><span>Occasional notes about new features. Separate from your monthly review.</span></div>

@@ -90,7 +90,8 @@ def _send_login_notification(user, ip, user_agent):
         if rest and getattr(rest, "login_notify", 0) and rest.owner_email:
             from notify import send_login_alert
             send_login_alert(rid, rest.name or "", rest.owner_email, ip, user_agent,
-                             report_url=_login_report_url(user["id"]))
+                             report_url=_login_report_url(user["id"]), user_id=user["id"],
+                             to_email=user.get("email"))
     except Exception as e:
         print(f"[LoginNotify-mobile] {e}")
 

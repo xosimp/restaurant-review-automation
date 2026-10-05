@@ -45,7 +45,7 @@ struct AccountSecurityCheckupView: View {
                  detail: account.twoFAEnabled ? "\(viewModel.backupCodesRemaining ?? 0) unused" : "Only needed once 2FA is on",
                  points: 10, earned: codesOK, fix: account.twoFAEnabled ? .backupCodes : nil, fixLabel: "Regenerate"),
             Item(id: "notify", title: "Sign-in notifications",
-                 detail: account.loginNotify ? "On — every new sign-in emails you" : "Off — you won't hear about new sign-ins",
+                 detail: account.loginNotify ? "On — each person hears about their own sign-ins" : "Off — you won't hear about new sign-ins",
                  points: 10, earned: account.loginNotify, fix: .loginNotify, fixLabel: "Turn on"),
             Item(id: "recovery", title: "Recovery email",
                  detail: account.recoveryEmail ?? "None — losing your sign-in email means losing the account",

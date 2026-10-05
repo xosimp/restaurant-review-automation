@@ -257,7 +257,8 @@ def _send_restaurant_login_alert(user, token, ip, ua):
             from notify import send_login_alert
             from auth import create_login_report as _clr
             send_login_alert(_rid_ln, _rest_ln.name or "", _rest_ln.owner_email, ip, ua,
-                             report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr(user['id'], token)}")
+                             report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr(user['id'], token)}",
+                             user_id=user["id"], to_email=user.get("email"))
     except Exception as _ln_e:
         print(f"[LoginNotify] {_ln_e}")
 
