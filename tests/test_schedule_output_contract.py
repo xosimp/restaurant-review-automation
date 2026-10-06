@@ -353,13 +353,13 @@ def test_no_call_site_sends_a_setting_a_55_model_refuses():
     assert not bad, bad
 
 
-def test_the_schedule_on_sonnet_55_thinks_adaptively_at_high_effort_streamed(monkeypatch):
+def test_the_schedule_on_sonnet_55_thinks_adaptively_at_medium_effort_streamed(monkeypatch):
     monkeypatch.setenv("SCHEDULE_MODEL", "claude-sonnet-5-5")
     seen = _capture(monkeypatch, [_Msg(_answer([]))])
     _gen()
     kw = seen[0]
     assert kw["model"] == "claude-sonnet-5-5" and kw["thinking"] == {"type": "adaptive", "display": "summarized"}
-    assert kw["output_config"]["effort"] == "high" and kw["stream"] is True
+    assert kw["output_config"]["effort"] == "medium" and kw["stream"] is True
     assert kw["max_tokens"] == labor.SCHEDULE_MAX_TOKENS_THINKING
 
 

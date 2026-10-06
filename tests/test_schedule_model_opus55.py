@@ -108,7 +108,7 @@ def test_a_deadline_stops_retries_it_cannot_finish(monkeypatch):
     assert calls == []
 
 
-def test_the_schedule_call_asks_opus_55_to_think_at_high_effort_and_streams(monkeypatch):
+def test_the_schedule_call_asks_opus_55_to_think_at_medium_effort_and_streams(monkeypatch):
     monkeypatch.delenv("SCHEDULE_MODEL", raising=False)
     captured = {}
 
@@ -125,7 +125,7 @@ def test_the_schedule_call_asks_opus_55_to_think_at_high_effort_and_streams(monk
         restaurant_name="Test Bistro", hourly_rate=26.0, labor_target=23.0, monthly_revenue_target=365000.0)
     assert captured["model"] == "claude-opus-5-5"
     assert captured["thinking"] == {"type": "adaptive", "display": "summarized"}
-    assert captured["output_config"]["effort"] == "high"
+    assert captured["output_config"]["effort"] == "medium"
     assert captured["output_config"]["format"]["type"] == "json_schema"
     assert captured["max_tokens"] == labor.SCHEDULE_MAX_TOKENS_THINKING >= 64000
     assert captured["stream"] is True

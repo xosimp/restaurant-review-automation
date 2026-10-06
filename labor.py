@@ -2192,10 +2192,15 @@ STAFF_CONSTRAINTS_RULE = ("The STAFF CONSTRAINTS are the manager's notes about w
 
 # The schedule call's thinking (schedule audit 10/3/26 PR-6, PR-30). Opus
 # 5.5 (the default, ai_utils.MODELS["schedule"]) thinks adaptively and
-# cannot be turned off; it is run at high effort with room to reason. A
+# cannot be turned off; it is run at medium effort. High (to 10/6/26) spent
+# 62,353 of the 64,000 output tokens on Simple EJ's first week - nearly all
+# thinking, eight minutes, a hair from a cut answer - while the repair, the
+# manager plan, the solver and the quality gate do the rule-keeping after it
+# (owner, 10/6/26: "yes switch to medium"). Watch the drafts' quality score
+# and seconds (schedule_model_calls) before changing it back. A
 # SCHEDULE_MODEL override to an older model keeps the old call shape.
 SCHEDULE_THINKING_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable", "claude-mythos")
-SCHEDULE_EFFORT = "high"
+SCHEDULE_EFFORT = "medium"
 SCHEDULE_MAX_TOKENS_THINKING = 64000
 
 

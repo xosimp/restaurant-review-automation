@@ -861,8 +861,9 @@ OPUS = "claude-opus-5"
 # The week's schedule is the hardest constraint problem the product asks a
 # model to solve: presence per half hour, weekly hours across payroll weeks,
 # a manager every minute, minors, rest. It runs on Opus 5.5 with its
-# adaptive thinking at high effort (schedule audit 10/3/26 PR-6; owner,
-# 10/3/26: "use opus 5.5 for the model call instead of sonnet").
+# adaptive thinking (schedule audit 10/3/26 PR-6; owner, 10/3/26: "use opus
+# 5.5 for the model call instead of sonnet"), at medium effort since 10/6/26
+# (labor.SCHEDULE_EFFORT).
 OPUS_55 = "claude-opus-5-5"
 SONNET_55 = "claude-sonnet-5-5"
 

@@ -365,10 +365,11 @@ def test_a_redo_plans_only_its_days_against_the_kept_rows():
     plan = sk.plan_manager_coverage(c, ["2026-10-06"], prior_rows=kept)
     assert {r["date"] for r in plan["rows"]} == {"2026-10-06"}
     erik = _on(plan, "2026-10-06", "Erik")
-    assert erik and sr._span(erik[0])[0] >= 13 * 60          # ten hours' rest after a 3am close
+    # An owner keeps his own turnaround (owner, 10/6/26: the rest rule holds
+    # the team, never an owner or a manager), so the 3am close leaves the
+    # next day whole; the kept rows still read as the night before.
+    assert erik and sr._span(erik[0])[0] == 11 * 60 and plan["uncovered"] == []
     assert not [v for v in sr.violations(kept + plan["rows"], c) if v["hard"] and v["kind"] != "no_manager"]
-    gap = plan["uncovered"][0]
-    assert (gap["from"], gap["to"]) == ("11:00am", "1:00pm") and "the rule is 10h" in gap["why"]
 
 
 def test_a_staff_note_never_reaches_the_prompt_through_a_reason():

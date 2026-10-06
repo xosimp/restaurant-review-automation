@@ -1569,6 +1569,8 @@ class Constraints:
         need = float(self.compliance.get("min_rest_hours") or 0)
         if need <= 0:
             return True, ""
+        if not rest_rule_applies(self, name):
+            need = 0.0                      # an owner's or manager's own turnaround; overlaps still refused
         s, e = shift_span(candidate, self.tz)
         if not s:
             return True, ""
@@ -4211,6 +4213,10 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         tail = [(None, r, *shift_span(r, c.tz)) for r in tail_rows]
         tail = [(i, r, s, e) for i, r, s, e in tail if s]
         need = float(c.compliance.get("min_rest_hours") or 0)
+        # Owners and managers keep their own turnarounds (rest_rule_applies);
+        # overlaps still count for everyone.
+        if need and all(not rest_rule_applies(c, m) for m in members):
+            need = 0.0
         allspans = sorted(spans + tail, key=lambda t: (t[2], t[3]))
         # Each span against the one with the latest end so far: an overlap
         # inside a long shift, and a tail row AFTER a row of this week (next
@@ -4854,6 +4860,15 @@ def _trainee_breaches(c, day, items) -> list:
 # minute with somebody on and no manager on is a hard breach: it holds the
 # publish, and every pass that changes rows is refused one that makes a new
 # one. cover_manager_gaps is the deterministic backstop that fills them.
+
+
+def rest_rule_applies(c, name_or_key) -> bool:
+    """Whether the rest rule (min_rest_hours between one shift's end and the
+    next start) holds this person: everyone but an owner or a manager, the
+    same people max_shift_applies sets free (Simple EJ's, 10/6/26 - Andrew
+    Marola closes Saturday and opens Sunday by choice). An overlap is still
+    an overlap for everyone."""
+    return c.key(name_or_key) not in (c.managers or {})
 
 
 def max_shift_applies(c, name_or_key) -> bool:
@@ -5671,7 +5686,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                        "double, which is allowed"))
     if comp.get("min_rest_hours"):
         lines.append(_rule("rest_gap", f"At least {float(comp['min_rest_hours']):g} hours between the end of one shift and "
-                           "the same person's next start — no closing then opening",
+                           "the same person's next start — no closing then opening (except an owner or a manager, "
+                           "who keeps their own turnaround)",
                            why="a short turnaround can be the owner's legal exposure under rest rules, and it puts an "
                                "opener on the floor without sleep"))
     if comp.get("max_shift_hours"):

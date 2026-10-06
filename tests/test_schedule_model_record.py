@@ -106,7 +106,7 @@ def test_a_call_is_stored_with_its_whole_prompt_its_arguments_and_its_answer(db,
     assert call["request"]["messages"][0]["content"] == sent_prompt         # whole, not the first 40k
     assert call["request"]["output_config"]["format"] == seen[0]["output_config"]["format"]
     assert call["answer"] == answer and call["rows"] == 1 and call["outcome"] == "ok"
-    assert call["model"] == "claude-opus-5-5" and call["effort"] == "high" and call["contract"] == "schema"
+    assert call["model"] == "claude-opus-5-5" and call["effort"] == "medium" and call["contract"] == "schema"
     assert call["usage"]["output_tokens"] == 900 and call["dates"] == WEEK
     args = call["inputs"]
     assert args["roster"] == [("Ana", "Server"), ("Max", "Manager")]         # tuples come back as tuples
