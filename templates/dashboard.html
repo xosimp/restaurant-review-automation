@@ -13529,7 +13529,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="cp-card cp-photos" id="cp-photos" hidden>
           <div class="cp-thumbs" id="cp-thumbs"></div>
           <label class="cbtn cbtn-secondary cbtn-sm cp-upload">Upload<input type="file" accept="image/*" id="cp-photo-file" onchange="cpUploadPhoto(this)" hidden></label>
-          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" id="cp-photo-none" onclick="cpPickPhoto(null)">No photo</button>
+          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" id="cp-photo-none" onclick="cpPickPhoto(null)" hidden>Remove photo</button>
           <span class="cp-photo-st" id="cp-photo-st" aria-live="polite"></span>
         </div>
         <div class="cp-ai" id="cp-ai" hidden><div class="tag">Cavnar AI</div><div class="t" id="cp-ai-t"></div><div class="s" id="cp-ai-s"></div></div>
@@ -31500,6 +31500,8 @@ window.cpPickPhoto = function(item) {
   var img = _cpEl('cp-photo-img'), l = _cpEl('cp-photo-l');
   if (img) img.style.backgroundImage = _cp.photo ? 'url(' + _cp.photo.url + ')' : '';
   if (l) l.textContent = _cp.photo ? 'Change photo' : 'Add a photo';
+  // A button, not a status: it read "No photo" beside an uploaded one (10/6/26).
+  var none = _cpEl('cp-photo-none'); if (none) none.hidden = !_cp.photo;
   cpPaintThumbs();
   if (_cpVal('guest-newsletter-body')) cpEmailChanged(true); else cpPaint();
 };
@@ -31615,7 +31617,7 @@ window.cpPaint = function() {
   if (sp) { sp.style.backgroundImage = _cp.photo ? 'url(' + _cp.photo.url + ')' : ''; sp.classList.toggle('has', !!_cp.photo); }
   var needPhoto = _cp.plats.instagram !== false && !_cp.photo && plats.length && plats[0].key === 'instagram';
   var sft = _cpEl('cp-social-ft');
-  if (sft && !_cp.err.social) sft.innerHTML = needPhoto ? '<span class="warn">Instagram needs a photo: pick one above</span>' : '';
+  if (sft && !_cp.err.social) sft.innerHTML = needPhoto ? (_cp.media && _cp.media.length ? '<span class="warn">Instagram needs a photo: tap one of your photos above to use it</span>' : '<span class="warn">Instagram needs a photo: upload one above</span>') : '';
   // Cards: shown when their channel is on, busy while drafting, an error in place of the footer
   ['text', 'email', 'social'].forEach(function(k) {
     var card = _cpEl('cp-ch-' + k); if (!card) return;
