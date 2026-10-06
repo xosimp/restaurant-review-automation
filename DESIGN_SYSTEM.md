@@ -544,6 +544,18 @@ locations, the DSR week grid, the schedule, menu margins, the dish
 scorecard. Opt in where an owner compares down a column; leave out a
 table whose order IS the meaning (a ranked list, a timeline).
 
+### Scroll (web)
+
+Motion on scroll serves reading, never decoration (owner, 10/6/26). **Sticky**
+keeps the reader's place: the Studio week's day row (`.swg-d`, its notes in a
+row of their own so the stuck row stays one line) and an open report
+section's heading (`.dr-sec[open]>summary`, under the header and tab bar at
+`--dr-stick`, measured). **Scroll-triggered**: the one `.scroll-reveal`
+entrance, once. **Scroll-linked**: only `.dr-progline`, a 2px ember line under
+the tab bar while a report runs past a screen and a half. No parallax, no
+scroll snap, no horizontal scroll for data; none of it prints, and
+reduced motion drops the transitions.
+
 ### Print (web)
 
 `@media print` (the "Print" block at the end of `dashboard.html`) prints a

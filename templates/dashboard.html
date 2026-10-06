@@ -7002,6 +7002,19 @@ svg:hover .hb-xh{opacity:1}
 [data-theme="dark"] .dr-sec{background:var(--surface-glass),var(--surface);border-color:var(--line-hi);box-shadow:var(--elev-1)}
 .dr-sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:18px 22px;border-radius:16px}
 .dr-sec>summary::-webkit-details-marker{display:none}
+/* An open section's heading sticks under the app's header while its section
+   scrolls under it, so the reader always knows which part of the report
+   they are in (owner, 10/6/26). --dr-stick is the header and tab bar's
+   height (drStickTop). Opaque, so the figures pass beneath it cleanly. */
+.dr-sec[open]>summary{position:sticky;top:var(--dr-stick,102px);z-index:5;background:var(--surface);border-radius:16px 16px 0 0}
+[data-theme="dark"] .dr-sec[open]>summary{background:var(--surface-glass),var(--surface)}
+/* How far through a long report the reader is: a 2px ember line under the
+   tab bar, drawn only while the report runs past a screen and a half. */
+.dr-progline{position:fixed;left:0;right:0;top:var(--dr-stick,102px);height:2px;z-index:98;pointer-events:none;opacity:0;transition:opacity .2s ease}
+.dr-progline.on{opacity:1}
+.dr-progline i{display:block;height:100%;width:100%;transform-origin:0 50%;transform:scaleX(0);background:linear-gradient(90deg,var(--ember),var(--ember2));box-shadow:0 0 8px rgba(212,88,58,.45)}
+@media (prefers-reduced-motion:reduce){.dr-progline{transition:none}}
+@media print{.dr-progline{display:none!important}.dr-sec[open]>summary{position:static}}
 .dr-sec>summary:before{content:'';width:0;height:0;border-left:6px solid var(--ember);border-top:5px solid transparent;border-bottom:5px solid transparent;transition:transform .2s}
 .dr-sec[open]>summary:before{transform:rotate(90deg)}
 .dr-sec>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
@@ -7161,6 +7174,7 @@ svg:hover .hb-xh{opacity:1}
 @media (max-width:860px){.dr-wrap{padding:18px 16px 56px}.dr-two,.dr-cols{grid-template-columns:1fr}.dr-co-r{grid-template-columns:1fr;gap:4px}.dr-cmp{flex:1 1 100%}.dr-hours .c span{font-size:9.5px}.dr-hours .c b{font-size:11px}}
 @media (prefers-reduced-motion:reduce){.dr-hours .c i,.dr-bar .t i,.dr-wbars .c i{animation:none;transform:none}.dr-pulse i,.dr-pill.running i,.dr-step.now .ic:after{animation:none}.dr-pulse i{left:35%}}
 </style>
+<div class="dr-progline" id="dr-progline" aria-hidden="true"><i></i></div>
 <div class="dr-wrap" id="dr-root">
   {# No "Home" link here: Reports is its own tab beside Home (owner, 9/30/26). #}
   <div class="dr-nav">
@@ -7183,6 +7197,38 @@ svg:hover .hb-xh{opacity:1}
    payload has no budget, loss or food lines, and nothing here re-derives
    them. A block that isn't ready shows its reason; a missing figure is a
    dash, never a zero. ES5 only. */
+// The reading aids on a report (owner, 10/6/26): open sections' headings
+// stick under the app's header and tab bar (--dr-stick, measured, since the
+// header changes height on a phone), and a 2px line says how far through a
+// report that runs past a screen and a half the reader is. ES5.
+(function(){
+  var root=document.getElementById('dr-root'),line=document.getElementById('dr-progline'),queued=false;
+  if(!root||!line)return;
+  var bar=line.firstChild;
+  function stickTop(){
+    var tabs=document.querySelector('.tabs'),hdr=document.querySelector('.hdr'),top=0;
+    if(tabs){var cs=getComputedStyle(tabs);top=(parseFloat(cs.top)||0)+tabs.offsetHeight;}
+    else if(hdr)top=hdr.offsetHeight;
+    document.documentElement.style.setProperty('--dr-stick',Math.round(top)+'px');
+    return top;
+  }
+  function draw(){
+    queued=false;
+    var top=stickTop(),r=root.getBoundingClientRect(),view=window.innerHeight-top;
+    var visible=root.offsetParent!==null&&r.height>view*1.5;
+    line.className='dr-progline'+(visible?' on':'');
+    if(!visible)return;
+    var p=(top-r.top)/Math.max(1,r.height-view);
+    bar.style.transform='scaleX('+Math.max(0,Math.min(1,p)).toFixed(4)+')';
+  }
+  function soon(){if(!queued){queued=true;(window.requestAnimationFrame||setTimeout)(draw);}}
+  window.addEventListener('scroll',soon,{passive:true});
+  window.addEventListener('resize',soon);
+  window.addEventListener('hashchange',function(){setTimeout(soon,60);});
+  if(window.MutationObserver)new MutationObserver(soon).observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['open']});
+  window.drProgressDraw=soon;
+  soon();
+})();
 (function(){
   var TERMINAL={final:1,provisional:1,failed:1};
   var STATUS={final:'Final',provisional:'Provisional',failed:'Couldn’t finish'};
