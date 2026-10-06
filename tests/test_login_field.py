@@ -101,4 +101,6 @@ def test_the_ground_is_drawn_in_float_and_dithered_per_device_pixel():
     assert "tanh(" not in fs, "GLSL ES 1.0 has no tanh - the shader would not compile"
     mount = js[js.index("function mount("):]
     assert "aurora.cloneNode(false)" in mount, "a failed shader falls back on a fresh 2D canvas"
-    assert "card.style.boxShadow = '0 0 0 1px rgba(0,0,0,.35)'" in mount
+    assert "card.style.boxShadow = '0 0 0 1px rgba(0,0,0,.22)'" in mount
+    assert "float s1=0.28*erfc2(sd/(14.0*" in fs and "float s2=0.26*erfc2(sd/(35.0*" in fs, \
+        "the shader's shadow matches login.html's fallback (28px at .28, 70px at .26)"

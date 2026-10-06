@@ -145,8 +145,8 @@
     '    vec2 hc=uCard.xy+uCard.zw*0.5;',
     '    vec2 q=abs(px-hc)-uCard.zw*0.5+vec2(uCardR);',
     '    float sd=length(max(q,0.0))+min(max(q.x,q.y),0.0)-uCardR;',
-    '    float s1=0.55*erfc2(sd/(20.0*1.4142*uDpr));',
-    '    float s2=0.65*erfc2(sd/(50.0*1.4142*uDpr));',
+    '    float s1=0.28*erfc2(sd/(14.0*1.4142*uDpr));',
+    '    float s2=0.26*erfc2(sd/(35.0*1.4142*uDpr));',
     '    float s=1.0-(1.0-s1)*(1.0-s2);',
     '    c=mix(c,vec3(0.0),s*uShadow);',
     '  }',
@@ -198,11 +198,13 @@
     }
     var actx = GL ? null : aurora.getContext('2d'), sctx = sky.getContext('2d');
     // The card's soft shadow is painted by the GL ground (dithered) instead
-    // of CSS, which banded; its 1px edge stays in CSS.
+    // of CSS, which banded; its 1px edge stays in CSS. Its strength lives in
+    // the shader (s1, s2) and matches login.html's fallback box-shadow:
+    // softened twice on 10/6/26 (owner: "a bit too strong").
     var card = GL ? document.querySelector('.card') : null, cardR = 14;
     if (card) {
       try { cardR = parseFloat(window.getComputedStyle(card).borderTopLeftRadius) || 14; } catch (e) {}
-      card.style.boxShadow = '0 0 0 1px rgba(0,0,0,.35)';
+      card.style.boxShadow = '0 0 0 1px rgba(0,0,0,.22)';
     }
     var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var W = 0, H = 0, dpr = 1, ascale = 1;
