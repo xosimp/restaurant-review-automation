@@ -178,7 +178,7 @@ def test_the_grid_reads_as_rows():
     # The add is a ghost chip, ember-outlined, with its words inside it — not a
     # floating + beside a native tooltip (10/2/26); a hovered chip outlines too.
     assert '<span class="t">+ Add a shift</span>' in s and 'title="Add a shift"' not in s
-    assert "outline:none;border-color:var(--ember)}" in s
+    assert "outline:none;border-color:var(--ember);" in s
     assert '<div class="swg-role"><span class="pill">' in s
     # A darker shade of the page's own grey (owner, 9/26/26), not an ember tint.
     assert "background:linear-gradient(var(--ss-dayrow,var(--hb-tint2)),var(--ss-dayrow,var(--hb-tint2))),var(--surface)}" in s
@@ -289,9 +289,15 @@ def test_a_double_stacks_from_the_top_so_the_rest_of_the_row_stays_aligned():
     assert "The busiest day this week: the most scheduled hours" in s
 
 
-def test_hovering_a_shift_dims_the_rest_of_the_week():
+def test_a_hovered_shift_lifts_out_and_nothing_else_dims():
+    """The dim (10/2/26) faded the week out and back on every move between
+    shifts (owner, 10/6/26: flickering); the hovered shift stands out on its
+    own instead, and the day row sticks while the people scroll."""
     s = _src()
-    assert ".swg-t:has(.swg-chip:hover) .swg-chip:not(:hover){opacity:.4}" in s
+    assert ".swg-t:has(.swg-chip:hover)" not in s
+    assert ".swg-chip:hover,.swg-chip:focus-visible{z-index:3;transform:translateY(-2px) scale(1.035);" in s
+    assert ".ss .swg{overflow:visible}" in s and "@media (max-width:860px){.ss .swg{overflow-x:auto}}" in s
+    assert ".swg-d{padding:12px 6px 11px;text-align:center;position:sticky;top:0;" in s
 
 
 def test_a_stacked_second_shift_is_reachable_and_the_busiest_day_reads_orange():

@@ -10008,11 +10008,19 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* The week: one row per person under their role, a column per day, each
    shift a block like the building animation's. */
 .swg{padding:0 14px 16px;overflow-x:auto}
+/* In the Studio the week scrolls with the page, so its day row sticks to
+   the top of .ss-main as the people scroll under it (owner, 10/6/26): a
+   scroll box of its own here pinned the row to a box that never scrolls.
+   Only a screen too narrow for the week's 760px scrolls it sideways. */
+.ss .swg{overflow:visible}
+@media (max-width:860px){.ss .swg{overflow-x:auto}}
 .swg-t{display:grid;grid-template-columns:var(--swg-name,148px) repeat(var(--swg-days,7),minmax(var(--swg-min,86px),1fr));min-width:760px}
 .swg-r{display:contents}
 .swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}
 .swg-d{padding:12px 6px 11px;text-align:center;position:sticky;top:0;z-index:2;background:linear-gradient(var(--ss-dayrow,var(--hb-tint2)),var(--ss-dayrow,var(--hb-tint2))),var(--surface)}
 .swg-hr>.swg-d:first-child{border-radius:12px 0 0 12px}
+.swg-dn{padding:6px 6px 2px;min-width:0;text-align:center}
+.swg-dn:empty{padding:0}
 .swg-hr>.swg-d:last-child{border-radius:0 12px 12px 0}
 .swg-d b{display:block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
 .swg-d .dt{display:block;font-size:12.5px;color:var(--ink3);margin-top:1px}
@@ -10027,11 +10035,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-p .h.ot{color:var(--hb-bad);font-weight:600}
 .swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:flex-start;gap:4px;position:relative}
 .swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
-.swg-chip:hover,.swg-chip:focus-visible{transform:translateY(-1px);box-shadow:var(--elev-card);outline:none;border-color:var(--ember)}
+/* The hovered shift lifts out on its own: no dimming of the rest of the
+   week, which faded out and back on every move between shifts (owner,
+   10/6/26: "flickering on every hover"). */
+.swg-chip:hover,.swg-chip:focus-visible{z-index:3;transform:translateY(-2px) scale(1.035);outline:none;border-color:var(--ember);background:linear-gradient(var(--hb-tint2),var(--hb-tint2)),var(--sf-ai);box-shadow:var(--elev-float),0 0 0 1px var(--ember),0 8px 22px rgba(212,88,58,.28)}
 .swg-chip:focus-visible{box-shadow:0 0 0 2px var(--ember)}
-/* Hovering a shift dims the rest of the week behind it (owner, 10/2/26). */
-.swg-t:has(.swg-chip:hover) .swg-chip:not(:hover){opacity:.4}
-.swg-t:has(.swg-chip:hover) .swg-p,.swg-t:has(.swg-chip:hover) .swg-role{opacity:.55;transition:opacity .16s ease}
 .swg-chip .t{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip.bad{border-color:var(--hb-bad);box-shadow:inset 3px 0 0 var(--hb-bad)}
@@ -24918,6 +24926,10 @@ function swRenderGrid() {
   }
   var hot = null; for (j = 0; j < days.length; j++) if (hot === null || (dayHrs[days[j]] || 0) > (dayHrs[hot] || 0)) hot = days[j];
   var h = '<div class="swg-r swg-hr"><div class="swg-d" style="text-align:left"><b>Person</b><span class="dt">hours this week</span></div>';
+  // The day's notes sit in a row of their own under the day row, which
+  // sticks while the people scroll (owner, 10/6/26): inside it, a long
+  // note held a third of the screen stuck over the week.
+  var notes = '', anyNote = false;
   for (j = 0; j < days.length; j++) {
     var d = days[j], np = 0, k; for (k in (dayPpl[d] || {})) if (dayPpl[d].hasOwnProperty(k)) np++;
     // Understaffed / overstaffed against the forecast's hours for the day,
@@ -24927,12 +24939,16 @@ function swRenderGrid() {
     else if (want && got > want * 1.1) st = '<span class="st over">Over <span class="hb-num">' + _schedHrs(got - want) + 'h</span></span>';
     h += '<div class="swg-d' + (d === hot && dayHrs[d] ? ' hot" title="The busiest day this week: the most scheduled hours' : '') + '"><b>' + _escHtml(_schedDayOf(d).slice(0, 3)) + '</b><span class="dt hb-num">' + _escHtml(mdy(d)) + '</span>'
        + '<span class="dh"><span class="hb-num">' + np + '</span> on · <span class="hb-num">' + _schedHrs(got) + 'h</span></span>' + st + _schedHolidayMark(d)
-       // The manager window, a day not written, and a breach about the DAY
-       // (no manager, a floor short) on the day - never on a person's row
-       // (schedule audit 10/3/26 M-3, P-34, E-13; cav-sfw1).
-       + (window.sfw1DayHead ? sfw1DayHead(d) : '') + '</div>';
+       + '</div>';
+    // The manager window, a day not written, and a breach about the DAY
+    // (no manager, a floor short) under the day - never on a person's row
+    // (schedule audit 10/3/26 M-3, P-34, E-13; cav-sfw1).
+    var dn = window.sfw1DayHead ? sfw1DayHead(d) : '';
+    if (dn) anyNote = true;
+    notes += '<div class="swg-dn">' + dn + '</div>';
   }
   h += '</div>';
+  if (anyNote) h += '<div class="swg-r swg-nr"><div class="swg-dn"></div>' + notes + '</div>';
   if (!order.length) h += '<div class="swg-empty">No shifts on this week yet. Add one with + Add a shift.</div>';
   for (i = 0; i < gOrder.length; i++) {
     var g = groups[gOrder[i]].sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
@@ -35837,9 +35853,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
    day header's manager window and day-level breaches (M-3, A2-1). */
 .swg-chip .sfw1-pin{display:inline-block;margin-top:2px;padding:0 6px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ember2);background:var(--sf-recess);box-shadow:inset 0 0 0 1px var(--sf-ai-line)}
 .swg-chip .sfw1-dst{display:inline-block;margin-top:2px;padding:0 6px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);background:var(--sf-recess)}
-.swg-d .sfw1-mw{display:block;margin-top:3px;font-size:11px;color:var(--ink3)}
-.swg-d .sfw1-hd{display:block;margin:4px auto 0;max-width:150px;padding:2px 7px;border-radius:8px;font-size:10.5px;line-height:1.35;color:var(--hb-bad);background:var(--red-bg);text-align:left}
-.swg-d .sfw1-nw{display:inline-block;margin-top:4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:1px 7px;color:var(--hb-warn);background:var(--sf-recess)}
+.swg-d .sfw1-mw,.swg-dn .sfw1-mw{display:block;margin-top:3px;font-size:11px;color:var(--ink3)}
+.swg-d .sfw1-hd,.swg-dn .sfw1-hd{display:block;margin:4px auto 0;max-width:150px;padding:2px 7px;border-radius:8px;font-size:10.5px;line-height:1.35;color:var(--hb-bad);background:var(--red-bg);text-align:left}
+.swg-d .sfw1-nw,.swg-dn .sfw1-nw{display:inline-block;margin-top:4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:1px 7px;color:var(--hb-warn);background:var(--sf-recess)}
 /* The review's own groups (C2-1, B1-2, A1, F2-6, A2-3). */
 .sfw1-rv{margin-top:12px}
 .sfw1-rv .sr-k{margin-bottom:4px}
