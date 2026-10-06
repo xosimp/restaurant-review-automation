@@ -3277,7 +3277,8 @@ def mobile_generate_schedule(current_user):
     _running, _running_req = _ops.running_job("schedule", rid)
     if _running:
         if _running_req == _req:
-            return jsonify(ok=True, job_id=_running, joined=True, wait_seconds=_schedule_wait(_running, rid))
+            return jsonify(ok=True, job_id=_running, joined=True, wait_seconds=_schedule_wait(_running, rid),
+                           typical=_se.typical_generation_seconds(rid))
         return jsonify(ok=False, busy=True, running=_running_req,
                        error=_se.busy_message(_running_req)), 409
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
@@ -3289,7 +3290,8 @@ def mobile_generate_schedule(current_user):
     except _ops.JobBusy as _busy:
         return jsonify(ok=False, busy=True, running=_busy.request, error=_se.busy_message(_busy.request)), 409
     if joined:
-        return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid))
+        return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid),
+                       typical=_se.typical_generation_seconds(rid))
     # The owner throwing a draft away is the strongest "no" there is, and it
     # used to teach nothing (schedule audit 10/3/26 L-26): "redo these days"
     # is kept with the owner's optional reason (a chip and their words —
@@ -3331,7 +3333,7 @@ def mobile_generate_schedule(current_user):
     # How long the job can run (P-22): the client waits this long, not a
     # guessed 15 minutes; a poll while it is pending says what is left.
     return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates,
-                   wait_seconds=_se.job_wait_seconds())
+                   wait_seconds=_se.job_wait_seconds(), typical=_se.typical_generation_seconds(rid))
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")

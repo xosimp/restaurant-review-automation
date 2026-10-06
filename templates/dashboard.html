@@ -10201,7 +10201,14 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-build .cm-wk-grid{gap:16px 18px}
 .ss-build .cm-wk .cm-blk,.ss-build .cm-wk .cm-wk-gap{height:48px;border-radius:10px}
 .ss-build .cm-wk-d{font-size:14px}
-.ss-build .cm-wk-cap{font-size:13px;margin-top:26px;text-align:center}
+.ss-build .cm-wk-cap{font-size:13px;margin-top:44px;text-align:center}
+/* The steps under "Building next week's schedule": one block centred under
+   the heading, its lines left-aligned inside it (owner, 10/6/26), and how
+   long a week really takes under them. */
+.sched-steps{width:max-content;max-width:100%;margin:20px auto 0}
+.sched-eta{max-width:560px;margin:16px auto 0;text-align:center;font-size:13px;line-height:1.55;color:var(--ink3)}
+.sched-eta b{color:var(--ink);font-weight:600}
+.sched-eta .hb-num{font-family:'Space Grotesk',sans-serif}
 .ss-build #sched-steps{max-width:420px;margin:26px auto 0!important}
 .ss-build .cm-posted{display:block!important;margin:80px auto 0}
 /* Summary: what the draft does, before any editing */
@@ -21145,9 +21152,47 @@ var _SCHED_STEPS = [
   [62, 'Scoring every shift for quality']
 ];
 var _schedStepTimer = null;
+// The step times above are a 75-second sketch; a week now takes minutes, so
+// they stretch to the measured typical draft (scheduleTiming) and the last
+// step no longer sits on "Scoring" for most of the wait.
+var _schedStepScale = 1;
+var _schedTiming = null;
+
+// How long a draft takes, from what the server measured (schedule_engine.
+// typical_generation_seconds): never a guess. With no measured run it says
+// why a draft takes minutes; past half again the usual it says so, and the
+// time the job stops at the latest (its own deadline, wait_seconds).
+function scheduleTiming(start, typical, waitSeconds) {
+  _schedTiming = {start: start, typical: typical && +typical.seconds > 0 ? typical : null,
+                  until: +waitSeconds > 0 ? start + waitSeconds * 1000 : null};
+  _schedStepScale = _schedTiming.typical ? Math.max(1, _schedTiming.typical.seconds / 75) : 3;
+}
+function _schedClock(ms) {
+  var d = new Date(ms), h = d.getHours(), m = d.getMinutes();
+  return (h % 12 || 12) + ':' + (m < 10 ? '0' : '') + m + (h < 12 ? 'am' : 'pm');
+}
+function renderScheduleEta(startedAt) {
+  var el = document.getElementById('sched-eta');
+  if (!el) return;
+  var secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  var so = '<span class="hb-num">' + Math.floor(secs / 60) + ':' + (secs % 60 < 10 ? '0' : '') + (secs % 60) + '</span> so far. ';
+  var t = _schedTiming, line;
+  if (t && t.typical) {
+    var mins = Math.max(1, Math.round(t.typical.seconds / 60));
+    line = 'A full week usually takes about <b><span class="hb-num">' + mins + '</span> min</b> ('
+      + (t.typical.basis === 'yours' ? 'your last <span class="hb-num">' + t.typical.n + '</span> drafts'
+                                     : 'the last <span class="hb-num">' + t.typical.n + '</span> drafts on Cavnar AI') + ').';
+  } else {
+    line = 'Cavnar AI works through the whole week before it writes it, so a draft takes <b>several minutes</b>.';
+  }
+  var slow = t && (t.typical ? secs > t.typical.seconds * 1.5 : secs > 600);
+  if (slow) line += ' <b>Taking longer than usual</b> \u2014 it is still working' + (t.until ? ', and stops by <span class="hb-num">' + _schedClock(t.until) + '</span> at the latest' : '') + '.';
+  el.innerHTML = so + line + ' You can leave this page: the draft lands in History.';
+}
 
 function startScheduleSteps(startedAt) {
   stopScheduleSteps();
+  _schedTiming = null; _schedStepScale = 1;
   _schedStepTimer = setInterval(function () { renderScheduleSteps(startedAt); }, 500);
   renderScheduleSteps(startedAt);
 }
@@ -21162,8 +21207,9 @@ function renderScheduleSteps(startedAt) {
   var elapsed = (Date.now() - startedAt) / 1000;
   var current = 0, i;
   for (i = 0; i < _SCHED_STEPS.length; i++) {
-    if (elapsed >= _SCHED_STEPS[i][0]) current = i;
+    if (elapsed >= _SCHED_STEPS[i][0] * _schedStepScale) current = i;
   }
+  renderScheduleEta(startedAt);
   // A window rather than the whole list, so the block keeps its height and
   // the eye stays on the live line.
   var lower = Math.max(0, current - 2);
@@ -21172,13 +21218,13 @@ function renderScheduleSteps(startedAt) {
   for (i = lower; i <= upper; i++) {
     var done = i < current, live = i === current;
     var mark = done
-      ? '<i class="cv-ok" style="width:14px;height:14px" aria-hidden="true"></i>'
-      : (live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ember)"></span>'
-              : '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;border:1px solid var(--paper3)"></span>');
+      ? '<i class="cv-ok" style="width:17px;height:17px" aria-hidden="true"></i>'
+      : (live ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ember)"></span>'
+              : '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;border:1px solid var(--paper3)"></span>');
     var colour = live ? 'var(--ink)' : 'var(--ink3)';
-    html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;opacity:' + (done ? '.65' : '1') + '">'
-          + '<span style="width:12px;text-align:center">' + mark + '</span>'
-          + '<span style="font-size:12.5px;font-weight:' + (live ? '600' : '400') + ';color:' + colour + '">'
+    html += '<div style="display:flex;align-items:center;gap:11px;padding:5px 0;opacity:' + (done ? '.65' : '1') + '">'
+          + '<span style="width:18px;display:inline-flex;justify-content:center">' + mark + '</span>'
+          + '<span style="font-size:14.5px;font-weight:' + (live ? '600' : '400') + ';color:' + colour + '">'
           + _escHtml(_SCHED_STEPS[i][1]) + '</span></div>';
   }
   el.innerHTML = html;
@@ -22837,7 +22883,7 @@ function generateSchedule(btn, opts) {
   var _wkLabel = body.dates ? ('Redoing ' + body.dates.length + ' day' + (body.dates.length === 1 ? '' : 's') + ' of the draft')
                : (body.week_start ? 'Building the week of ' + mdy(body.week_start) : "Building next week's schedule");
   _wk.innerHTML = cavnarWeekHtml(_wkLabel)
-    + '<div id="sched-steps" style="margin:14px 0 0;text-align:left"></div>';
+    + '<div id="sched-steps" class="sched-steps"></div><div id="sched-eta" class="sched-eta" aria-live="polite"></div>';
   // In the schedule workspace it takes the week's own column (the centre
   // panel), where the draft will appear; elsewhere it follows the actions row.
   // The Schedule Studio's Build stage when it is there; the workspace
@@ -22864,6 +22910,7 @@ function generateSchedule(btn, opts) {
         return;
       }
       var jobId = startData.job_id;
+      scheduleTiming(_schedStart, startData.typical, startData.wait_seconds);
       // One generation at a time per restaurant: a second press joins the
       // one already running rather than paying for a second model call.
       if (startData.joined) {

@@ -280,6 +280,42 @@ def job_wait_seconds(calls: int = None) -> int:
                + _ops.ASYNC_DEADLINE_GRACE_SECONDS)
 
 
+# How long a full week has really taken (owner, 10/6/26: "put somewhere how
+# often these generations usually take"). Measured, never guessed: the
+# median total of this restaurant's recent whole-week drafts, else every
+# restaurant's, counted only from the generator in force — the thinking
+# model and its calls shipped 10/5/26, and the 1–2 minute drafts before it
+# would promise a time it no longer keeps. None until two have run.
+GENERATOR_SINCE = "2026-10-05"
+TYPICAL_MIN_RUNS = 2
+
+
+def typical_generation_seconds(restaurant_id, db_path=None):
+    """{"seconds", "n", "basis": "yours" | "all"} or None."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        def med(sql, args):
+            vals = sorted(float(r[0]) for r in conn.execute(sql, args).fetchall() if r[0])
+            if len(vals) < TYPICAL_MIN_RUNS:
+                return None, len(vals)
+            m = len(vals) // 2
+            return (vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2), len(vals)
+        base = ("SELECT COALESCE(total_seconds, generation_seconds) FROM schedule_history "
+                "WHERE generated_at >= ? AND COALESCE(total_seconds, generation_seconds) > 0")
+        sec, n = med(base + " AND restaurant_id=? ORDER BY id DESC LIMIT 8", (GENERATOR_SINCE, restaurant_id))
+        if sec is not None:
+            return {"seconds": int(round(sec)), "n": n, "basis": "yours"}
+        sec, n = med(base + " ORDER BY id DESC LIMIT 20", (GENERATOR_SINCE,))
+        if sec is not None:
+            return {"seconds": int(round(sec)), "n": n, "basis": "all"}
+        return None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
 # ── One frozen context per generation (schedule audit 10/3/26 P-36) ───────
 #
 # A generation read the same inputs again and again: the Shift Quality
