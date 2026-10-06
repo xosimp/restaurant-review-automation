@@ -177,6 +177,9 @@ def test_with_this_week_and_next_published_last_week_still_counts():
 
 
 def test_an_unsent_draft_of_last_week_is_a_labelled_tail(monkeypatch):
+    # E-10: built two weeks ahead, before last week's draft has begun.
+    import time_utils
+    monkeypatch.setattr(time_utils, "restaurant_now_by_id", lambda *a, **k: dt.datetime(2026, 9, 12, 9, 0))
     rid = _rid()
     models.update_restaurant(rid, {"week_start_day": 2})        # a Wednesday payroll week
     _week(rid, LAST, [(d, "Ana", "9:00am", "5:00pm", 8) for d in LAST[2:]], published=False)
@@ -188,6 +191,19 @@ def test_an_unsent_draft_of_last_week_is_a_labelled_tail(monkeypatch):
     assert sum(c.base_hours["ana"].values()) == 40.0
     ok, why = c.can_add(_row("Ana", "9:00am", "3:00pm", WEEK[0]), [])
     assert not ok and "40h" in why
+
+
+def test_a_draft_whose_week_began_unpublished_is_nobodys_week():
+    """Simple EJ's, 10/6/26: the 10/5 week's draft (published by mistake,
+    taken back) had Jose all seven days, and the next week's Monday read as
+    "8 days in a row". A week that began without its draft being published
+    is being worked from some other schedule; its rows are not the tail."""
+    rid = _rid()
+    _week(rid, LAST, [(d, "Ana", "9:00am", "5:00pm", 8) for d in LAST], published=False)
+    c = sr.build_constraints(rid, WEEK, list(sr.DAYS))          # the clock is 10/3: LAST began long ago
+    assert not [r for r in c.base_rows.get("ana") or [] if r.get("_source") == "draft"]
+    assert not any(v["kind"] == "long_run" for v in
+                   sr.violations([_row("Ana", "9:00am", "3:00pm", WEEK[0])], c, person_only=True))
 
 
 # ── E-26 / D-40: the organisation's other sites ─────────────────────────────

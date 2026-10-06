@@ -410,6 +410,9 @@ class ShiftContext:
     reliability: dict = field(default_factory=dict)    # {name: {"no_show_rate", "shifts"}}
     pairs: dict = field(default_factory=dict)          # {"prefer": {frozenset}, "avoid": {frozenset}}
     max_shift_hours: float | None = None
+    # Owners and managers: not held to the shift-length maximum
+    # (schedule_rules.max_shift_applies), lowercased names.
+    max_shift_exempt: set = field(default_factory=set)
     weekly_ceiling: float | None = None
     hours_limits: dict = field(default_factory=dict)   # {name: (min, max)}
     # Names the owner marked as experienced (staff_settings.experienced),
@@ -1732,7 +1735,7 @@ def _fatigue_findings(names, ctx: ShiftContext) -> dict:
             out["long_runs"].append((name, run))
         # Hours, not only days: a 13-hour double and a 46-hour week are
         # both fatigue the day count never sees.
-        if ctx.max_shift_hours:
+        if ctx.max_shift_hours and str(name or "").strip().lower() not in ctx.max_shift_exempt:
             longest = max((a.get("hours") or 0) for a in mine) if mine else 0
             if longest > float(ctx.max_shift_hours) + 0.01:
                 out["long_shifts"].append((name, longest))
@@ -5128,6 +5131,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             reliability=signals.get("reliability") or {},
             pairs=signals.get("pairs") or {},
             max_shift_hours=signals.get("max_shift_hours"),
+            max_shift_exempt={str(n).strip().lower() for n in (signals.get("max_shift_exempt") or ())},
             weekly_ceiling=signals.get("weekly_ceiling"),
             hours_limits=signals.get("hours_limits") or {},
             elsewhere=signals.get("elsewhere") or {},

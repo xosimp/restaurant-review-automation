@@ -58,6 +58,12 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "get_conn", conn)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(models, "_cached_shifts", lambda r: [])
+    # The restaurant's clock is TODAY's morning: a claim or a decision made
+    # without today= read the real clock, and once W1 had begun (10/6/26)
+    # "that shift has already started" refused them.
+    import time_utils
+    monkeypatch.setattr(time_utils, "restaurant_now_by_id",
+                        lambda *a, **k: dt.datetime.combine(TODAY, dt.time(9, 0)))
     return db_path
 
 

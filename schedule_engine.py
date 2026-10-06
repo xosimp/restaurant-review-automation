@@ -5029,6 +5029,9 @@ def _quality_signals(restaurant_id, result, **extra):
         signals["close_times"] = c.close_times or {}
         signals["role_floors"] = c.role_floors or {}
         signals["max_shift_hours"] = c.compliance.get("max_shift_hours")
+        # Owners and managers are not held to it (schedule_rules.max_shift_applies).
+        signals["max_shift_exempt"] = sorted(n.strip().lower() for n in (c.roster_names or [])
+                                             if not _rules.max_shift_applies(c, n))
         signals["weekly_ceiling"] = c.compliance.get("weekly_hours_ceiling")
         # Keyed by display name, which is what the contexts carry; the
         # constraints key by lowercase. (An earlier version built this and

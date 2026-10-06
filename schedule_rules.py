@@ -3739,12 +3739,24 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
     for w in published:
         for r in rows_from_csv(w["schedule_csv"]):
             _take(r, "published")
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id, naive=True).strftime("%Y-%m-%d")
+    except Exception:
+        today = datetime.now().strftime("%Y-%m-%d")
     # The draft in force of a week nothing published covers — its newest
-    # unsent, unsuperseded generation — never this week's own draft.
+    # unsent, unsuperseded generation — never this week's own draft, and
+    # never a draft whose week has already begun unpublished: the restaurant
+    # is working some other schedule, so its rows are nobody's week. Simple
+    # EJ's draft of 10/5/26 (published by mistake, taken back) had Jose work
+    # all seven days, and the next week's Monday became "8 days in a row"
+    # (10/6/26). Its past days read the time clock instead (below).
     drafted = set()
     for w in drafts:
         ws = str(w["week_start"] or "")[:10]
         span = _dates(w)
+        if ws and ws <= today:
+            continue
         if ws in drafted or not (span - covered):
             continue
         drafted.add(ws)
@@ -3753,11 +3765,6 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
                 _take(r, "draft", week=ws)
         covered |= span
     # The time clock for past dates nothing else covers (D-22).
-    try:
-        from time_utils import restaurant_now_by_id
-        today = restaurant_now_by_id(restaurant_id, naive=True).strftime("%Y-%m-%d")
-    except Exception:
-        today = datetime.now().strftime("%Y-%m-%d")
     gap_days = sorted(d for d in ((first - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, TAIL_DAYS + 1))
                       if d not in covered and d < today)
     if gap_days:
@@ -3914,7 +3921,11 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         seen_slots.add(slot)
         hrs = row_hours(r)
         mx = c.compliance.get("max_shift_hours")
-        if mx and hrs > float(mx) + 0.01:
+        # The shift-length maximum is for the team, never an owner or a
+        # manager: how long they stay is their own call (Simple EJ's,
+        # 10/6/26 - Erik and Jim choose their 13-hour busy days, and every
+        # restaurant's are different). max_shift_applies is the one answer.
+        if mx and hrs > float(mx) + 0.01 and max_shift_applies(c, key):
             out.append(_v("shift_too_long", i, r, f"{hrs:g}h shift, maximum {float(mx):g}h",
                           severity=round(hrs - float(mx), 2)))
         shortest = c.compliance.get("min_shift_hours")
@@ -4845,6 +4856,14 @@ def _trainee_breaches(c, day, items) -> list:
 # one. cover_manager_gaps is the deterministic backstop that fills them.
 
 
+def max_shift_applies(c, name_or_key) -> bool:
+    """Whether the shift-length maximum holds this person: everyone but an
+    owner or a manager (Constraints.managers - a manager or owner role, or
+    the floor-manager certificate). Someone only standing in as a manager
+    on a date is still held to it."""
+    return c.key(name_or_key) not in (c.managers or {})
+
+
 def is_manager_role(role) -> bool:
     """A role that names whoever runs the floor (manager_role_kind): an
     owner, a manager or supervisor of no single department, a GM, AGM, MOD
@@ -5656,7 +5675,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                            why="a short turnaround can be the owner's legal exposure under rest rules, and it puts an "
                                "opener on the floor without sleep"))
     if comp.get("max_shift_hours"):
-        lines.append(_rule("shift_too_long", f"No shift longer than {float(comp['max_shift_hours']):g} hours"))
+        lines.append(_rule("shift_too_long", f"No shift longer than {float(comp['max_shift_hours']):g} hours, "
+                           "except an owner's or a manager's: how long they stay is their own call"))
     if comp.get("min_shift_hours"):
         lines.append(_rule("shift_too_short", f"No shift shorter than {float(comp['min_shift_hours']):g} hours."))
     # One weekly limit per person — their MAX, which is the code's

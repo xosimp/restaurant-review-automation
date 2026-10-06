@@ -154,7 +154,9 @@ def test_before_service_lists_the_today_items_and_keeps_orange_for_what_matters(
 
 
 def test_the_manager_toggles_clear_the_rule_above_them():
-    assert "row+='<div style=\"display:flex;flex-wrap:wrap;gap:12px 22px;padding:16px 0 18px\">'+bits.join('')+'</div>';" in SRC
+    # c69687da (10/6/26) took the rule away instead: the row sits under its
+    # person with the same spacing either side of the switches.
+    assert "row+='<div class=\"ac-team-access\" style=\"display:flex;flex-wrap:wrap;gap:12px 22px;padding:8px 0 18px\">'+bits.join('')+'</div>';" in SRC
 
 
 def test_every_helper_is_defined_in_the_script_block_that_calls_it():

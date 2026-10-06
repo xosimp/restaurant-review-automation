@@ -35800,7 +35800,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 .sfw1-notes:empty{display:none}
 .sw-gen-ask .ac-input{width:100%;box-sizing:border-box}
 .sw-lbl small{font-weight:400;color:var(--ink3);margin-left:4px}
-#ss-summary .sfw1-notes{padding:0;margin:0 0 22px}
+/* The notes under the summary tiles: clear of the tiles above, a little
+   air between rows (owner, 10/6/26). */
+#ss-summary .sfw1-notes{padding:0;margin:26px 0 22px;gap:10px}
 .sfw1-n{display:flex;gap:12px;align-items:flex-start;padding:11px 14px;border-radius:12px;background:var(--sf-recess);box-shadow:inset 3px 0 0 var(--ink3);font-size:14.5px;line-height:1.5;color:var(--ink2)}
 .sfw1-n.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}
 .sfw1-n.bad{box-shadow:inset 3px 0 0 var(--hb-bad)}
