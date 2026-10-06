@@ -13679,7 +13679,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <!-- Scheduled sub-tab: the queue. Everything this module did was
        generate-now/post-now, and an owner does admin at 11pm. -->
   <div id="mkt-tab-queue" role="tabpanel" aria-labelledby="mkt-tab-queue-btn" style="display:none">
-    <div class="hb-sh" style="margin-top:0;border-top:none;padding-top:0"><div><div class="k">Scheduled</div><h2>What's going out, and when</h2></div></div>
+    <div class="hb-sh" style="border-top:none;padding-top:0"><div><div class="k">Scheduled</div><h2>What's going out, and when</h2></div></div>
     <div id="mkt-queue-list" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading the queue"><i></i></div></div>
   </div>
 
@@ -13688,7 +13688,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     {# The figures are what the nightly sync stored (MB-17): the tab no
        longer asks Meta every minute. "Refresh from Meta" asks once, rate
        limited like the phone's. #}
-    <div class="hb-sh" style="margin-top:0;border-top:none;padding-top:0"><div><div class="k">Analytics</div><h2>How your posts are performing</h2></div>
+    <div class="hb-sh" style="border-top:none;padding-top:0"><div><div class="k">Analytics</div><h2>How your posts are performing</h2></div>
       <button type="button" class="cbtn cbtn-text cbtn-sm" id="mkt-refresh-meta-btn" onclick="mktRefreshFromMeta(this)">Refresh from Meta</button>
     </div>
     <div id="mkt-refresh-meta-note" class="hb-sub" role="status" aria-live="polite" hidden style="margin:0 0 10px"></div>
@@ -20445,9 +20445,10 @@ function loadMktWindow(){
       // A platform whose reach was never measured (Google posts; a post
       // Meta has not answered for) says so, never "0 reach".
       var reachTxt = p.reach_posts ? (p.reach||0).toLocaleString() + ' reach' : 'reach not measured';
-      html += '<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--paper3);font-size:15px">'
+      // Spacing, not hairlines, between the platforms (owner, 10/6/26).
+      html += '<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;font-size:15px">'
         + '<span style="color:var(--ink);font-weight:600;text-transform:capitalize">' + _escHtml(p.platform) + '</span>'
-        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + reachTxt + ' · ' + (p.engagement_rate === null ? '\u2014' : p.engagement_rate + '%') + '</span>'
+        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + (p.posts === 1 ? ' post · ' : ' posts · ') + reachTxt + ' · ' + (p.engagement_rate === null ? '\u2014' : p.engagement_rate + '%') + '</span>'
         + '</div>';
     }
     if(plats) plats.innerHTML = html;
