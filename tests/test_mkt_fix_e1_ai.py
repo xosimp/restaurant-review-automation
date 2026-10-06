@@ -114,6 +114,10 @@ def test_another_phrasing_of_the_owners_offer_is_the_same_offer_and_a_different_
     assert rv.invented_offers("30% off apps", "20% off apps") == ["30% off"]
     assert rv.invented_offers("$6 off", "$5 off pizzas") == ["$6 off"]
     assert rv.invented_offers("free drinks", "free dessert on Tuesdays") == ["free drinks"]
+    # A giveaway is its own thing for free, and nothing else (Copper Table, 10/6/26)
+    assert rv.invented_offers("Free pumpkins while they last!", "bring guests in for a pumpkin giveaway") == []
+    assert rv.invented_offers("Free drinks too", "bring guests in for a pumpkin giveaway") == ["Free drinks too"]
+    assert rv.invented_offers("Everything is free", "bring guests in for a pumpkin giveaway") == ["is free"]
 
 
 def test_guest_marketing_reads_the_shared_vocabulary():

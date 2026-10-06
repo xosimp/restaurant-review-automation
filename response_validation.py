@@ -1273,7 +1273,10 @@ def _offers_judged(text, source=""):
         elif fam in ("pct", "money", "half", "multi"):
             ok = key in keys
         elif fam == "free":
-            ok = "free" in fams and (not items or any(_root(w) in src_roots for w in items))
+            named = any(_root(w) in src_roots for w in items)
+            # A giveaway the owner named is that thing for free: "pumpkin
+            # giveaway" allows "free pumpkins", never "free drinks" (10/6/26).
+            ok = ("free" in fams and (not items or named)) or ("giveaway" in fams and named)
         else:
             ok = fam in fams
         out.append((phrase, span, ok))
