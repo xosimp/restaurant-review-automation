@@ -1383,10 +1383,33 @@ async function locations(){
 // In-service customer accounts that aren't set up yet — never a churned,
 // paused, internal or demo account (#152). The owner hiding their setup card
 // doesn't hide it here.
+// Printed forms a client hands its staff (print_forms.py): blank, or with
+// one restaurant's name printed on it.
+async function clientForms(){
+  let opts = '<option value="">Blank (no restaurant name)</option>';
+  try {
+    const c = await api('/admin/api/clients/list?segment=' + (_showDemo ? 'all' : 'customer') + '&sort=name&per_page=200');
+    ((c && c.items) || []).forEach(r=>{ opts += `<option value="${r.id}">${esc(r.name)}</option>`; });
+  } catch(e) {}
+  return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Client forms</h2><span class="sub">Letter size, one page, in the Cavnar AI brand</span></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="font-weight:600;min-width:170px">Employee availability sheet</span>
+      <select id="form-avail-rid" aria-label="Restaurant printed on the sheet">${opts}</select>
+      <button class="btn s w" onclick="formAvail(false)">Open to print</button><button class="btn s p w" onclick="formAvail(true)">Download PDF</button></div>
+    <div class="dim">The boxes match Team &rarr; staff settings (any time, mornings, nights, off or a window; hours; under 18; closing; certificates), so a filled sheet types straight in.</div></div>`;
+}
+function formAvail(download){
+  const rid = $('form-avail-rid').value, q = [];
+  if(rid) q.push('restaurant_id=' + encodeURIComponent(rid));
+  if(download) q.push('download=1');
+  const url = '/admin/forms/availability.pdf' + (q.length ? '?' + q.join('&') : '');
+  if(download) location.href = url; else window.open(url, '_blank', 'noopener');
+}
 async function onboarding(){
   const d = await api('/admin/api/onboarding'); if(!okRes(d)) throw new Error(errText(d, 'Onboarding couldn\'t be read'));
   const rows = d.rows || [];
-  V().innerHTML = errBanner(d) + (rows.length ? `<div class="grid g3">${rows.map(r=>{ const pct = Math.round(100*(r.done||0)/(r.total||1)), steps = r.steps || [], left = steps.filter(s=>!s.done), done = steps.filter(s=>s.done);
+  const forms = await clientForms();
+  V().innerHTML = forms + errBanner(d) + (rows.length ? `<div class="grid g3">${rows.map(r=>{ const pct = Math.round(100*(r.done||0)/(r.total||1)), steps = r.steps || [], left = steps.filter(s=>!s.done), done = steps.filter(s=>s.done);
     return `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px">
       <div style="display:flex;align-items:center;gap:12px">${monoTile(r.name, r.health)}<div style="flex:1;min-width:0;display:flex;flex-direction:column"><a href="#client/${r.id}" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.name)}</a><span class="muted" style="font-size:12.5px">${esc(r.owner||r.owner_email||'')} · joined ${fmtD(r.created_at)} · day <span class="n">${r.days_since_signup}</span></span></div><span class="n" style="font-size:18px;font-weight:600">${r.done}<span class="muted" style="font-size:13px">/${r.total}</span></span></div>
       <span class="bar"><i style="width:${pct}%;background:${pct>=75?'var(--green)':pct>=40?'var(--amber)':'var(--ember2)'}"></i></span>

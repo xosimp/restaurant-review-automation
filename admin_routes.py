@@ -2611,6 +2611,28 @@ House red wine,beverage,bottle,24,20,8.50,3.5,2026-05-12,30,2.0
         download_name="cavnar_ai_inventory_template.csv"
     )
 
+@admin_bp.route("/admin/forms/availability.pdf")
+@admin_required
+def admin_form_availability(current_user):
+    """The branded employee availability sheet (print_forms), blank or with
+    one restaurant's name on it. ?download=1 saves it; otherwise it opens in
+    the browser's PDF viewer to print."""
+    import io
+    import re
+    import print_forms
+    name = None
+    rid = request.args.get("restaurant_id", type=int)
+    if rid:
+        r = get_restaurant(rid)
+        if r is None:
+            return jsonify({"error": "No such restaurant"}), 404
+        name = r.name
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return send_file(io.BytesIO(print_forms.availability_sheet(name)), mimetype="application/pdf",
+                     as_attachment=request.args.get("download") == "1",
+                     download_name="employee-availability" + ("-" + slug if slug else "") + ".pdf")
+
+
 @admin_bp.route("/privacy")
 def privacy_page():
     """Serve the Cavnar AI privacy policy page."""

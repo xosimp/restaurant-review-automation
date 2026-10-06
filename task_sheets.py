@@ -1493,6 +1493,12 @@ def yesterday_line(restaurant_id, today=None, db_path=DB_PATH):
     for a in rows:
         lines = json.loads(a["lines_json"] or "[]")
         done = sum(1 for l in lines if _line_state(latest, a["id"], l["line_id"]))
+        # The same rule as evaluate(): an unassigned sheet nobody touched (no
+        # schedule published) is not work anyone left undone. Simple EJ's
+        # brief said "Server PM sheet: 0 of 9 done (no one scheduled)" every
+        # morning once a published week was taken back (10/5/26).
+        if a["unassigned"] and done == 0:
+            continue
         if lines and done < len(lines):
             short.append(_describe(a, done, len(lines)))
     if not short:

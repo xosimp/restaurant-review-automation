@@ -115,7 +115,10 @@ MAX_ISSUES = 5
 MAX_ACTIONS = 5                   # "Tomorrow's priorities" (9/25/26): up to five, each an action
 MAX_LIST_ITEMS = 4
 MAX_CITES = 6
-MAX_LEAD_CITES = 10                # the lead is 2–3 sentences, each figure cited
+# The lead is 2–3 sentences, each figure cited, and a figure that comes from
+# two facts cites both: Simple EJ's 10/4/26 lead stated ten figures on eleven
+# cites and the whole night was refused at a cap of 10.
+MAX_LEAD_CITES = 16
 MAX_TEXT = 400
 MAX_LEAD = 700
 LIST_PREVIEW = 5
@@ -472,6 +475,13 @@ def _detail_numbers(v, out, depth=0):
     return out
 
 
+def _ratings(v):
+    """The `rating` of every entry in a detail list of reviews."""
+    if not isinstance(v, (list, tuple)):
+        return set()
+    return {round(float(x["rating"]), 1) for x in v if isinstance(x, dict) and _is_number(x.get("rating"))}
+
+
 def _shingles(text, n=ECHO_WORDS):
     """Every run of `n` words — ai_guard.shingles, the one shingle function
     (NS6 A3; the same word pattern this module kept its own copy of)."""
@@ -610,6 +620,21 @@ class Facts:
             if backs:
                 cites.append(key)
                 missing = self.untraced(text, cites)
+        # A star rating the words give a review ("one 5-star mention", "Joseph
+        # V, 2 stars") is backed by a review in tonight's list rated exactly
+        # that — the model wrote it from reviews.reviews and cited none of it,
+        # and the whole summary was held back (Simple EJ's 10/2 and 10/3/26).
+        # Only a star claim, only a list entry's own `rating`.
+        if missing:
+            stars = {round(c["value"], 1) for c in figure_claims(t) if c["kind"] == "star" and c["raw"] in missing}
+            for key, v in self.details.items():
+                if not stars or key in cites or not key.startswith("reviews."):
+                    continue
+                if stars & _ratings(v):
+                    cites.append(key)
+                    missing = self.untraced(text, cites)
+                    stars = {round(c["value"], 1) for c in figure_claims(t)
+                             if c["kind"] == "star" and c["raw"] in missing}
         return cites
 
     def echoes(self, text):
@@ -1076,6 +1101,9 @@ def _item(v, where, limit=MAX_TEXT, max_cites=MAX_CITES):
     if text is None:
         return None, f"{where} has no text or runs past {limit} characters"
     if cites is None:
+        n = len(v["cites"]) if isinstance(v["cites"], list) else 0
+        if n > max_cites:
+            return None, f"{where} has {n} cites, more than the {max_cites} allowed"
         return None, f"{where} has no cites (1–{max_cites} fact keys)"
     return {"text": text, "cites": cites}, None
 

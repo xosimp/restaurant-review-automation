@@ -573,6 +573,24 @@ reach for it for anything that reads fine as rows.
 
 ---
 
+
+### Printed forms (PDF, `print_forms.py`)
+
+Paper a client hands to staff (the employee availability sheet, 10/6/26) is
+a PDF drawn with reportlab, not a printed web page. Light paper, colours from
+`emails.BRAND` (ink `strong`, `body`, `muted`, `ember`, hairlines `border` /
+`rule`, row tint `#fbf7f3`) — never the dark UI. The wordmark top left at
+120pt, an ember kicker top right ("STAFF FORM"), a Clash Display Semibold
+title with the 38pt ember underline the contract uses; section heads are a
+Space Grotesk ember number ("01"), an Apfel Grotezk bold letter-spaced
+label and a hairline to the margin. Field labels are 6.6pt bold caps over a
+writing line; tick boxes are 8.5pt rounded squares; dates are blank
+`__/__/__` (M/D/YY); a table header is an ink bar with white caps and rows
+alternate the tint. The footer carries the seal and the form's revision
+date. One page — the generator asserts the content clears the footer.
+Fonts come from `static/fonts/pdf` (Apfel converted to TrueType outlines);
+letter spacing is set inside `saveState`/`restoreState`, because PDF
+character spacing outlives the text object.
 ## 9. When to use the brand colour (`#c84b2f`)
 
 The ember means **"this is the product speaking, or this is the one thing to
