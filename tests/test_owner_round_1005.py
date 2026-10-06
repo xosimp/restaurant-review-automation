@@ -169,7 +169,8 @@ def test_every_helper_is_defined_in_the_script_block_that_calls_it():
     def block(i):
         return next(k for k, (a, b) in enumerate(blocks) if a <= i < b)
     for name in ("briefNum", "briefSig", "hbIssuesNotShown", "hbReportDay", "_firstInitial", "mktOppFocus",
-                 "sfw2StandingLabel", "_dsrRenderCats", "glowLine", "hbChartHover"):
+                 "sfw2StandingLabel", "_dsrRenderCats", "glowLine", "hbChartHover", "_ssSavingsMath",
+                 "rvSetState", "rvClearState", "renderScheduleEta", "scheduleTiming"):
         if re.search(r"window\." + name + r"\s*=", SRC):
             continue
         defs = {block(m.start()) for m in re.finditer(r"function " + name + r"\(", SRC)}
@@ -177,3 +178,16 @@ def test_every_helper_is_defined_in_the_script_block_that_calls_it():
         for m in re.finditer(r"(?<![\w.])" + name + r"\(", SRC):
             assert block(m.start()) in defs, "%s called at line %d outside the script that defines it" % (
                 name, SRC.count("\n", 0, m.start()) + 1)
+
+
+def test_estimated_savings_shows_its_math_on_hover_or_focus():
+    """Owner, 10/6/26: "a tooltip with the math behind where that # was
+    derived from so owners know". The server's own figures, one formula."""
+    fn = SRC[_at("function _ssSavingsMath(lv, rev) {"):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "lv.savings == null || lv.recent_pct == null" in fn, "no figure, no card"
+    assert "'Forecast sales this week'" in fn and "n(_schedMoney(r / 100 * R))" in fn and "n(_schedMoney(p / 100 * R))" in fn
+    assert "' = ' + n(pts + ' pts') + ' \\u00d7 ' + n(_schedMoney(R)) + ' = <b>' + n(_schedMoney(lv.savings))" in fn
+    assert "'<span class=\"tag\">Projection · not yet earned</span>' + _ssSavingsMath(lv, rev));" in SRC
+    assert "(extra && extra.indexOf('ss-math') > -1 ? ' has-math\" tabindex=\"0' : '')" in SRC
+    assert ".ss-tile.has-math:hover .ss-math,.ss-tile.has-math:focus-within .ss-math{opacity:1;visibility:visible;" in SRC
