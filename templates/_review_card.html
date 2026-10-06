@@ -3,12 +3,23 @@
    /api/reviews/page) render the SAME markup — the alternative was a
    second copy of this card written in JS string concatenation, which
    is exactly how the two drift. `delay` is the scroll-reveal stagger. #}
-    <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgent }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }} {{ 'skipped' if r.response_status=='skipped' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ delay|default(0) }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}" data-status="{{ r.response_status }}">
+    {# Handled (owner, 10/6/26: "replied ones look the same as the ones not
+       replied to"): posted, approved and skipped cards carry a status pill,
+       sit dimmed with their text cut to three lines, and are never urgent -
+       an answered review is not waiting on anyone. #}
+    {% set _handled = r.response_status in ('posted', 'approved', 'skipped') %}
+    {% if r.replied_elsewhere %}{% set _st = ('good', 'Replied on ' ~ (r.platform|title)) %}
+    {% elif r.response_status == 'posted' %}{% set _st = ('good', 'Live on ' ~ (r.platform|title)) %}
+    {% elif r.response_status == 'approved' and r.platform == 'google' and restaurant.gmb_refresh_token %}{% set _st = ('bad', "Couldn't post to Google") %}
+    {% elif r.response_status == 'approved' %}{% set _st = ('warn', 'Approved · not on ' ~ (r.platform|title) ~ ' yet') %}
+    {% elif r.response_status == 'skipped' %}{% set _st = ('mute', 'Skipped · no reply sent') %}
+    {% else %}{% set _st = None %}{% endif %}
+    <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgent and not _handled }} {{ 'handled' if _handled }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }} {{ 'skipped' if r.response_status=='skipped' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ delay|default(0) }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}" data-status="{{ r.response_status }}">
       <div class="rv2-head">
         {# Multi-select (web desk #2): only a card still waiting on a decision. #}
         {% if r.response_status not in ('posted', 'approved') %}<label class="rv2-sel"><input type="checkbox" class="rv2-sel-cb" data-rv-sel="{{ r.id }}" aria-label="Select the review from {{ r.author|e if r.author else 'Anonymous' }}"></label>{% endif %}
         <div class="rv2-av">{{ r.author[0].upper() if r.author else '?' }}</div>
-        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}{% if r.severity and r.severity in ('safety','legal') %}<span class="rv2-sevchip {{ r.severity }}" title="{{ r.severity_reason or 'Severity tier — how serious this is, separate from how urgent the alert was' }}" aria-label="{{ r.severity_reason or r.severity_label }}" tabindex="0">{{ r.severity_label }}</span>{% endif %}{% if r.processed %}{% set _stars_say = 'positive' if (r.rating or 0) >= 4 else ('negative' if (r.rating or 0) and r.rating <= 2 else 'neutral') %}<span class="schip {{ r.sentiment or 'neutral' }}"{% if (r.sentiment or 'neutral') == _stars_say %} hidden{% endif %}>{{ r.sentiment or 'neutral' }}</span>{% else %}{# Not analysed yet — it used to be filtered out of this list entirely while still counting in the badge above, so the owner saw a number pointing at nothing. Saying "pending" beats inventing a neutral sentiment it was never given. #}<span class="schip pending" title="Cavnar AI hasn't analysed this review yet">analysis pending</span>{% endif %}{% if r.urgent %}<span class="rv2-urg">Urgent</span>{% endif %}</div>
+        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}{% if r.severity and r.severity in ('safety','legal') %}<span class="rv2-sevchip {{ r.severity }}" title="{{ r.severity_reason or 'Severity tier — how serious this is, separate from how urgent the alert was' }}" aria-label="{{ r.severity_reason or r.severity_label }}" tabindex="0">{{ r.severity_label }}</span>{% endif %}{% if r.processed %}{% set _stars_say = 'positive' if (r.rating or 0) >= 4 else ('negative' if (r.rating or 0) and r.rating <= 2 else 'neutral') %}<span class="schip {{ r.sentiment or 'neutral' }}"{% if (r.sentiment or 'neutral') == _stars_say %} hidden{% endif %}>{{ r.sentiment or 'neutral' }}</span>{% else %}{# Not analysed yet — it used to be filtered out of this list entirely while still counting in the badge above, so the owner saw a number pointing at nothing. Saying "pending" beats inventing a neutral sentiment it was never given. #}<span class="schip pending" title="Cavnar AI hasn't analysed this review yet">analysis pending</span>{% endif %}{% if r.urgent and not _handled %}<span class="rv2-urg">Urgent</span>{% endif %}{% if _st %}<span class="rv2-state {{ _st[0] }}">{{ _st[1] }}</span>{% endif %}</div>
         <button class="rv2-x" aria-label="Remove review" title="Remove review" onclick="deleteReview({{ r.id }},this)">✕</button>
       </div>
       <div class="rtext">{{ r.text|e }}</div>
@@ -106,15 +117,17 @@
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="editApprovedR({{ r.id }})">Edit</button>
             {% if r.platform != 'google' %}<button class="cbtn cbtn-soft cbtn-sm" onclick="markPosted({{ r.id }},this)">Mark as posted</button>{% endif %}
           {% elif r.response_status=='skipped' %}
-            <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
+            {# Skipped is a decision: the reply stays available, but not as
+               the card's primary action. #}
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve after all</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
-            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Replied on {{ r.platform|title }}</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Mark as replied on {{ r.platform|title }}</button>
           {% else %}
             <button class="cbtn cbtn-primary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR({{ r.id }})">Skip</button>
-            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Replied on {{ r.platform|title }}</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Mark as replied on {{ r.platform|title }}</button>
           {% endif %}
 
         </div>
@@ -136,7 +149,7 @@
           <button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft({{ r.id }})">Draft a reply</button>
           <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Write my own</button>
           <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
-          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Replied on {{ r.platform|title }}</button>
+          <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Mark as replied on {{ r.platform|title }}</button>
         </div>
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your response here…"></textarea>

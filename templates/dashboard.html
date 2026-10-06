@@ -9406,6 +9406,18 @@ svg:hover .hb-xh{opacity:1}
 /* Waiting on analysis — deliberately the quietest of the four, since it
    describes what Cavnar hasn't done yet, not what the guest said. */
 #panel-reviews .schip.pending{color:var(--ink3);opacity:.75;font-style:italic;letter-spacing:.06em}
+/* A handled review's status, in its head (10/6/26). */
+.rv2-state{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:999px;border:1px solid currentColor}
+.rv2-state.good{color:var(--hb-good)}
+.rv2-state.warn{color:var(--hb-warn)}
+.rv2-state.bad{color:var(--hb-bad)}
+.rv2-state.mute{color:var(--ink3)}
+/* On the children: the row's reveal animation holds its own opacity at 1. */
+.rv2-row.handled>*{opacity:.6;transition:opacity .15s ease}
+.rv2-row.handled:hover>*,.rv2-row.handled:focus-within>*{opacity:1}
+.rv2-row.handled .rtext{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.rv2-row.handled .rtext.open{display:block;overflow:visible}
+.rv2-row.handled .rv2-urg{display:none}
 .rv2-urg{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--hb-bad);padding:3px 8px;border-radius:999px;background:var(--red-bg)}
 /* Severity, drawn only for the two tiers an owner must not scroll past.
    `Urgent` above answers "should this have woken me up?"; this answers
@@ -19005,6 +19017,26 @@ function filterReviews(){
 // "Answered (N)", marks where they begin. It sits above the trailing run of
 // visible answered cards, so a card answered in place above it never
 // splits the list.
+// The handled look after an in-place approve or skip (the server renders
+// the same pill on a reload, _review_card.html): one status in the head,
+// dimmed, never urgent.
+function rvSetState(id,tone,label){
+  var card=document.getElementById('rc-'+id);if(!card)return;
+  card.classList.remove('urgent');card.classList.add('handled');
+  var who=card.querySelector('.rv2-who');if(!who)return;
+  var old=who.querySelector('.rv2-state');if(old)old.parentNode.removeChild(old);
+  var urg=who.querySelector('.rv2-urg');if(urg)urg.parentNode.removeChild(urg);
+  var sp=document.createElement('span');sp.className='rv2-state '+tone;sp.textContent=label;who.appendChild(sp);
+}
+function rvClearState(id){
+  var card=document.getElementById('rc-'+id);if(!card)return;
+  card.classList.remove('handled');
+  var old=card.querySelector('.rv2-state');if(old)old.parentNode.removeChild(old);
+}
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('.rv2-row.handled .rtext'):null;
+  if(t)t.classList.toggle('open');
+});
 function rvAnsweredDivider(){
   var list=document.querySelector('#rv-inbox-reviews .rv2-list');if(!list)return;
   var old=list.querySelector('.rv2-answered-div');if(old)old.parentNode.removeChild(old);
@@ -19013,9 +19045,11 @@ function rvAnsweredDivider(){
   function done(c){var st=c.getAttribute('data-status')||'';return st==='posted'||st==='approved'||st==='skipped';}
   var first=-1;for(i=vis.length-1;i>=0;i--){if(done(vis[i]))first=i;else break;}
   if(first<0)return;
-  var n=vis.length-first,div=document.createElement('div');
+  var n=vis.length-first,div=document.createElement('div'),sk=0;
+  for(i=first;i<vis.length;i++)if(vis[i].getAttribute('data-status')==='skipped')sk++;
   div.className='rv2-answered-div';div.setAttribute('role','separator');
-  div.textContent='Answered ('+n+')';
+  // Skipped is not answered (10/6/26): the label says how many of each.
+  div.textContent=(sk?'Handled ('+n+') \u00b7 '+(n-sk)+' answered, '+sk+' skipped':'Answered ('+n+')');
   list.insertBefore(div,vis[first]);
 }
 // The why line above the inbox (density round #32): the rating and its
@@ -19504,6 +19538,7 @@ function approveR(id, confirmed){
       card.classList.remove('approved');
       card.classList.add('posted');
       card.dataset.status='posted';
+      rvSetState(id,'good','Live on Google');
       // "Posted" — the ember leaves the draft, travels the wire, and lands
       // as a checkmark; only on the real 200, never optimistic.
       cmPostedThen(document.querySelector('#rc-'+id+' .draft-actions'),'Reply posted to Google','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>');
@@ -19526,6 +19561,7 @@ function approveR(id, confirmed){
         // show a static "Posting to Google" label that never changed and
         // silently hid the failure); no post_error means GBP just isn't
         // connected yet.
+        rvSetState(id,d.post_error?'bad':'warn',d.post_error?'Couldn\'t post to Google':'Approved \u00b7 not on Google yet');
         if(d.post_error){
           document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
             '<span class="rv2-status bad" style="margin-right:6px">⚠ Couldn\'t post to Google</span>' +
@@ -19539,6 +19575,7 @@ function approveR(id, confirmed){
           toast('Response approved and saved ✓','success');
         }
       } else {
+        rvSetState(id,'warn','Approved \u00b7 not on '+platform.charAt(0).toUpperCase()+platform.slice(1)+' yet');
         document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>'+_markBtn;
         toast('Response approved — copy and post to ' + platform + ' manually','success');
       }
@@ -19675,7 +19712,7 @@ function markPosted(id, btn){
     settle();
     if(d.ok){
       var actions = document.getElementById('draft-actions-'+id);
-      if(card){card.classList.remove('approved','skipped','urgent');card.classList.add('posted');card.dataset.status='posted';}
+      if(card){card.classList.remove('approved','skipped','urgent');card.classList.add('posted');card.dataset.status='posted';rvSetState(id,'good',platform==='yelp'?'Posted on Yelp':'Posted');}
       cmPostedThen(actions,'Marked as posted','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>');
       if(platform !== 'yelp') toast('Marked as posted','success');
       updateReviewStats();
@@ -19696,7 +19733,7 @@ function editApprovedR(id){
     settle();
     if(!d.ok){toast(d.error||'Couldn\u2019t reopen that reply \u2014 try again','error');return;}
     var card=document.getElementById('rc-'+id);
-    if(card){card.classList.remove('approved','skipped','posted');card.dataset.status='drafted';}
+    if(card){card.classList.remove('approved','skipped','posted');card.dataset.status='drafted';rvClearState(id);}
     var actions=document.getElementById('draft-actions-'+id);
     if(actions){
       actions.innerHTML='<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">\u2713 Approve</button>'
@@ -19760,10 +19797,11 @@ function skipR(id){
       // 'skipped', so the ribbon and reply-bubble color depended on CSS
       // source order rather than actually reflecting the current status.
       if(card){ card.classList.remove('approved','urgent','posted'); card.classList.add('skipped'); card.dataset.status='skipped'; }
+      rvSetState(id,'mute','Skipped \u00b7 no reply sent');
       var actions = document.getElementById('draft-actions-'+id);
       if(actions) {
         actions.innerHTML =
-          '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="cbtn cbtn-secondary cbtn-sm" onclick="approveR('+id+')">✓ Approve after all</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit response</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate</button>';
         actions.style.display='flex';

@@ -76,7 +76,7 @@ def test_the_web_draws_one_answered_divider_above_the_trailing_answered_run():
     s = _src()
     fn = s[s.index("function rvAnsweredDivider(){"):s.index("function rvLoadWhy(){")]
     assert "st==='posted'||st==='approved'||st==='skipped'" in fn
-    assert "'Answered ('+n+')'" in fn
+    assert "'Answered ('+n+')'" in fn and "'Handled ('+n+') \\u00b7 '+(n-sk)+' answered, '+sk+' skipped'" in fn
     assert "rvAnsweredDivider();" in s[s.index("function filterReviews(){"):]
 
 
