@@ -3572,21 +3572,6 @@ svg:hover .hb-xh{opacity:1}
   var MEANING='How well supported this is — not the chance it works';
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUMRX,'<span class="hb-num">$1</span>');}return out;}
-  // The Before service brief's numbers: every figure in the number face,
-  // but ember only for the ones worth the eye - $100 or more, a change of 5%
-  // or more either way. Counts, zeros, dates, times and degrees stay ink
-  // (owner, 10/5/26: "the 0s don't need to be orange; only significant
-  // things"). briefSig is the one rule.
-  function briefSig(t){
-    var s=String(t).replace(/,/g,''),m;
-    if((m=/^\$(\d+(?:\.\d+)?)/.exec(s)))return +m[1]>=100;
-    if((m=/^([+\-\u2212])(\d+(?:\.\d+)?)(?:\s?pts)?%$/.exec(s)))return +m[2]>=5;
-    return false;
-  }
-  function briefNum(v){
-    return num(v).replace(/<span class="hb-num">([^<]*)<\/span>/g,function(all,t){
-      return briefSig(t.replace(/&#x2212;|&minus;/g,'\u2212'))?'<span class="hb-num sig">'+t+'</span>':all;});
-  }
   function isNum(v){return typeof v==='number'&&isFinite(v);}
   function pctOf(v){
     if(isNum(v))return Math.max(0,Math.min(100,Math.round(v)));
@@ -4029,6 +4014,23 @@ svg:hover .hb-xh{opacity:1}
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   var NUM_RE=/(\d{1,2}\/\d{1,2}\/\d{2,4}|\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
   function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUM_RE,'<span class="hb-num">$1</span>');}return out;}
+  // The Before service brief's numbers: every figure in the number face,
+  // but ember only for the ones worth the eye - $100 or more, a change of 5%
+  // or more either way. Counts, zeros, dates, times and degrees stay ink
+  // (owner, 10/5/26: "the 0s don't need to be orange; only significant
+  // things"). briefSig is the one rule. They live in Home's own script, beside the
+  // num() they wrap: in another script block they were out of scope and
+  // Home stopped drawing at Before service (10/6/26).
+  function briefSig(t){
+    var s=String(t).replace(/,/g,''),m;
+    if((m=/^\$(\d+(?:\.\d+)?)/.exec(s)))return +m[1]>=100;
+    if((m=/^([+\-\u2212])(\d+(?:\.\d+)?)(?:\s?pts)?%$/.exec(s)))return +m[2]>=5;
+    return false;
+  }
+  function briefNum(v){
+    return num(v).replace(/<span class="hb-num">([^<]*)<\/span>/g,function(all,t){
+      return briefSig(t.replace(/&#x2212;|&minus;/g,'\u2212'))?'<span class="hb-num sig">'+t+'</span>':all;});
+  }
   function parseTs(s){if(!s)return null;var t=String(s);if(t.indexOf('T')<0){t=t.replace(' ','T')+'Z';}var d=new Date(t);return isNaN(d)?null:d;}
   function ago(s){var d=parseTs(s);if(!d)return '—';var m=Math.round((Date.now()-d)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<48)return h+'h ago';return Math.round(h/24)+'d ago';}
   function mdy(x){var d=x instanceof Date?x:(typeof x==='string'&&/^\d{4}-\d{2}-\d{2}/.test(x)?new Date(x.slice(0,4),+x.slice(5,7)-1,+x.slice(8,10)):new Date(x));if(isNaN(d))return esc(x||'');return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(-2);}

@@ -155,3 +155,23 @@ def test_before_service_lists_the_today_items_and_keeps_orange_for_what_matters(
 
 def test_the_manager_toggles_clear_the_rule_above_them():
     assert "row+='<div style=\"display:flex;flex-wrap:wrap;gap:12px 22px;padding:16px 0 18px\">'+bits.join('')+'</div>';" in SRC
+
+
+def test_every_helper_is_defined_in_the_script_block_that_calls_it():
+    """briefNum/briefSig were defined in the cav-conf script and called from
+    Home's: a ReferenceError, and Home stopped drawing at Before service for
+    every owner (Simple EJ's, 10/6/26). The string asserts above passed."""
+    import re
+    blocks = [(m.start(), m.end()) for m in re.finditer(r"<script[^>]*>.*?</script>", SRC, re.S)]
+
+    def block(i):
+        return next(k for k, (a, b) in enumerate(blocks) if a <= i < b)
+    for name in ("briefNum", "briefSig", "hbIssuesNotShown", "hbReportDay", "_firstInitial", "mktOppFocus",
+                 "sfw2StandingLabel", "_dsrRenderCats", "glowLine", "hbChartHover"):
+        if re.search(r"window\." + name + r"\s*=", SRC):
+            continue
+        defs = {block(m.start()) for m in re.finditer(r"function " + name + r"\(", SRC)}
+        assert defs, name
+        for m in re.finditer(r"(?<![\w.])" + name + r"\(", SRC):
+            assert block(m.start()) in defs, "%s called at line %d outside the script that defines it" % (
+                name, SRC.count("\n", 0, m.start()) + 1)
