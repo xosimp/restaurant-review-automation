@@ -13691,11 +13691,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="hb-sh" style="border-top:none;padding-top:0"><div><div class="k">Analytics</div><h2>How your posts are performing</h2></div>
       <button type="button" class="cbtn cbtn-text cbtn-sm" id="mkt-refresh-meta-btn" onclick="mktRefreshFromMeta(this)">Refresh from Meta</button>
     </div>
-    <div id="mkt-refresh-meta-note" class="hb-sub" role="status" aria-live="polite" hidden style="margin:0 0 10px"></div>
-
     <!-- A period, against the period before it. The all-time totals below
-         are a number, not a metric: no denominator, no trend. -->
-    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+         are a number, not a metric: no denominator, no trend. The refresh's
+         note shares this row, left of the period, so it appearing never
+         pushes the figures down (owner, 10/6/26). -->
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:16px;margin-bottom:14px">
+      <div id="mkt-refresh-meta-note" class="hb-sub" role="status" aria-live="polite" hidden style="margin:0 auto 0 0;flex:1 1 auto;min-width:0"></div>
       <select id="mkt-window-days" class="fc2-ctl" style="width:190px" aria-label="Period" onchange="loadMktWindow()">
         <option value="7">Last 7 days</option>
         <option value="30" selected>Last 30 days</option>
