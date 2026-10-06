@@ -301,10 +301,13 @@ def test_a_failed_facebook_insights_call_leaves_stored_reach_and_impressions_alo
                 reach=500, impressions=900, likes=3)
 
     def answer(url, params):
-        if url.endswith("/insights"):
-            return FakeResp(400, {"error": {"message": "(#100) The value must be a valid insights metric"}})
-        return FakeResp(200, {"reactions": {"summary": {"total_count": 5}},
-                              "comments": {"summary": {"total_count": 1}}, "shares": {"count": 0}})
+        # Reach and views refused; the reactions and activity insights answer.
+        metric = (params or {}).get("metric", "")
+        if metric == "post_reactions_by_type_total":
+            return FakeResp(200, {"data": [{"name": metric, "values": [{"value": {"like": 5}}]}]})
+        if metric == "post_activity_by_action_type":
+            return FakeResp(200, {"data": [{"name": metric, "values": [{"value": {"comment": 1}}]}]})
+        return FakeResp(400, {"error": {"message": "(#100) The value must be a valid insights metric"}})
     monkeypatch.setitem(sys.modules, "requests", FakeGraph(answer))
     social_routes.refresh_post_metrics(rid)
     after = _stored(db_path, row)

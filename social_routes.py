@@ -646,44 +646,66 @@ def _insight_value(m):
     return m.get("value")
 
 
-def _fb_post_metrics(post_id, token, _req):
-    """Facebook Page post engagement + reach/impressions. Reach/impressions is
-    fetched separately from engagement so one deprecated metric name can't
-    zero out likes/comments/shares too — and falls back to a single metric
-    if the paired request is rejected. `post_impressions_unique` is REACH
-    and `post_impressions` IMPRESSIONS: two columns, never added (MB-6)."""
-    metrics = {}
-    r = _req.get(
-        graph_url(post_id),
-        params={"fields": "reactions.summary(true),comments.summary(true),shares",
-                "access_token": token},
-        timeout=5
-    )
-    if r.status_code == 200:
-        d = _json_body(r)
-        metrics["likes"]    = (d.get("reactions") or {}).get("summary", {}).get("total_count", 0)
-        metrics["comments"] = (d.get("comments") or {}).get("summary", {}).get("total_count", 0)
-        metrics["shares"]   = (d.get("shares") or {}).get("count", 0)
-    else:
-        _capture_insights_error("facebook_engagement", post_id, r)
+# The Facebook post insights this sync asks for (10/6/26, read live against a
+# Page post). Meta retired post_impressions / post_impressions_unique ("The
+# value must be a valid insights metric"), so every Facebook post read "reach
+# not measured"; views replaced them. The post's own reactions / comments
+# fields need pages_read_user_content, which Cavnar AI does not request, and
+# one refusal there lost likes, comments and shares together; the insights
+# below carry those counts under read_insights instead.
+FB_INSIGHT_METRICS = ("post_total_media_view_unique", "post_media_view",
+                      "post_reactions_by_type_total", "post_activity_by_action_type")
 
-    for metric_set in ("post_impressions,post_impressions_unique", "post_impressions_unique"):
-        r2 = _req.get(
-            graph_url(post_id + "/insights"),
-            params={"metric": metric_set, "period": "lifetime", "access_token": token},
-            timeout=5
-        )
-        if r2.status_code == 200:
-            for m in _json_body(r2).get("data", []) or []:
-                val = _insight_value(m)
-                if val is None:
-                    continue
-                if m.get("name") == "post_impressions":
-                    metrics["impressions"] = val
-                elif m.get("name") == "post_impressions_unique":
-                    metrics["reach"] = val
-            break
-        _capture_insights_error(f"facebook_insights({metric_set})", post_id, r2)
+
+def _fb_post_metrics(post_id, token, _req):
+    """Facebook Page post reach, views and engagement, all from post insights.
+    `post_total_media_view_unique` is REACH (unique viewers) and
+    `post_media_view` IMPRESSIONS (views): two columns, never added (MB-6).
+    Likes are the reactions of every type; comments and shares come from the
+    post's activity by action type. Asked for together; if Meta refuses the
+    list, each metric is asked for alone, so one retired name cannot blank
+    the rest. Nothing Meta did not answer is written as 0."""
+    answers = {}
+
+    def _read(resp):
+        for m in _json_body(resp).get("data", []) or []:
+            if m.get("name") in FB_INSIGHT_METRICS:
+                answers[m["name"]] = _insight_value(m)
+
+    r = _req.get(graph_url(post_id + "/insights"),
+                 params={"metric": ",".join(FB_INSIGHT_METRICS), "period": "lifetime", "access_token": token},
+                 timeout=5)
+    if r.status_code == 200:
+        _read(r)
+    else:
+        _capture_insights_error(f"facebook_insights({','.join(FB_INSIGHT_METRICS)})", post_id, r)
+        for metric in FB_INSIGHT_METRICS:
+            r1 = _req.get(graph_url(post_id + "/insights"),
+                          params={"metric": metric, "period": "lifetime", "access_token": token}, timeout=5)
+            if r1.status_code == 200:
+                _read(r1)
+            else:
+                _capture_insights_error(f"facebook_insights({metric})", post_id, r1)
+
+    def _count(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    metrics = {}
+    if _count(answers.get("post_total_media_view_unique")) is not None:
+        metrics["reach"] = _count(answers["post_total_media_view_unique"])
+    if _count(answers.get("post_media_view")) is not None:
+        metrics["impressions"] = _count(answers["post_media_view"])
+    # A dict by type ({"like": 3, "love": 1}); {} is Meta's answer for none.
+    reactions = answers.get("post_reactions_by_type_total")
+    if isinstance(reactions, dict):
+        metrics["likes"] = sum(_count(v) or 0 for v in reactions.values())
+    activity = answers.get("post_activity_by_action_type")
+    if isinstance(activity, dict):
+        metrics["comments"] = _count(activity.get("comment")) or 0
+        metrics["shares"] = _count(activity.get("share")) or 0
     return metrics
 
 
@@ -1104,7 +1126,7 @@ def meta_review_test(current_user):
 
     # read_insights — try multiple metrics until one succeeds
     if fb_post_id:
-        for metric in ["post_impressions,post_impressions_unique", "post_activity", "post_clicks"]:
+        for metric in ["post_media_view,post_total_media_view_unique", "post_activity_by_action_type", "post_clicks"]:
             r1 = _req.get(
                 graph_url(fb_post_id + "/insights"),
                 params={"metric": metric, "period": "lifetime", "access_token": fb_token},

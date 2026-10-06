@@ -70,19 +70,46 @@ def test_ig_metrics_empty_when_every_attempt_fails(monkeypatch):
     assert sr._ig_post_metrics("p1", "tok", fake) == {}
 
 
-def test_fb_metrics_engagement_and_reach_are_independent(monkeypatch):
-    """A broken impressions metric must not also blank out likes/comments —
-    they come from a separate request."""
+def test_fb_metrics_read_views_reactions_and_activity_from_insights(monkeypatch):
+    """The answer Meta gives a Page post today (read live 10/6/26): reach is
+    unique viewers, impressions views, likes every reaction, comments and
+    shares the activity counts. One call, no post fields (those need
+    pages_read_user_content)."""
     monkeypatch.setattr(sr, "_capture_insights_error", lambda *a, **k: None)
+    fake = FakeReq([FakeResp(200, {"data": [
+        {"name": "post_total_media_view_unique", "values": [{"value": 300}]},
+        {"name": "post_media_view", "values": [{"value": 420}]},
+        {"name": "post_reactions_by_type_total", "values": [{"value": {"like": 4, "love": 1}}]},
+        {"name": "post_activity_by_action_type", "values": [{"value": {"comment": 2, "share": 1, "like": 5}}]},
+    ]})])
+    m = sr._fb_post_metrics("p1", "tok", fake)
+    assert m == {"reach": 300, "impressions": 420, "likes": 5, "comments": 2, "shares": 1}
+    assert len(fake.calls) == 1 and fake.calls[0][0].endswith("p1/insights")
+    assert "post_impressions" not in fake.calls[0][1]["metric"]
+
+
+def test_fb_metrics_a_refused_list_is_asked_one_metric_at_a_time(monkeypatch):
+    """One retired name must not blank the rest: each metric is asked for
+    alone, and what Meta refuses is simply not measured."""
+    errors = []
+    monkeypatch.setattr(sr, "_capture_insights_error", lambda what, *a, **k: errors.append(what))
     fake = FakeReq([
-        FakeResp(200, {"reactions": {"summary": {"total_count": 5}},
-                      "comments": {"summary": {"total_count": 2}},
-                      "shares": {"count": 1}}),
-        FakeResp(400, {"error": {"message": "bad metric"}}),
-        FakeResp(200, {"data": [{"name": "post_impressions_unique", "values": [{"value": 300}]}]}),
+        FakeResp(400, {"error": {"message": "(#100) The value must be a valid insights metric"}}),
+        FakeResp(200, {"data": [{"name": "post_total_media_view_unique", "values": [{"value": 12}]}]}),
+        FakeResp(400, {"error": {"message": "(#100) The value must be a valid insights metric"}}),
+        FakeResp(200, {"data": [{"name": "post_reactions_by_type_total", "values": [{"value": {}}]}]}),
+        FakeResp(200, {"data": [{"name": "post_activity_by_action_type", "values": [{"value": {}}]}]}),
     ])
     m = sr._fb_post_metrics("p1", "tok", fake)
-    assert m == {"likes": 5, "comments": 2, "shares": 1, "reach": 300}
+    # {} is Meta's answer for none, so 0; views were refused, so not measured.
+    assert m == {"reach": 12, "likes": 0, "comments": 0, "shares": 0}
+    assert "impressions" not in m and len(errors) == 2
+
+
+def test_fb_metrics_nothing_answered_is_never_written_as_zero(monkeypatch):
+    monkeypatch.setattr(sr, "_capture_insights_error", lambda *a, **k: None)
+    fake = FakeReq([FakeResp(400, {"error": {"message": "expired"}})] * 5)
+    assert sr._fb_post_metrics("p1", "tok", fake) == {}
 
 
 def test_refresh_post_metrics_not_connected(monkeypatch, db_path):

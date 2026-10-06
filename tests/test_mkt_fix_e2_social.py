@@ -364,10 +364,13 @@ def test_a_first_stamp_does_not_turn_a_default_zero_into_a_measurement(db_path, 
                          "VALUES (?,?,?,?,?)", (rid, "Legacy", "fbp_legacy", "facebook", 5))
 
     def answer(url, kw):
-        if url.endswith("/insights"):
-            return FakeResp(400, {"error": {"message": "(#100) bad metric", "code": 100}})
-        return FakeResp(200, {"reactions": {"summary": {"total_count": 8}},
-                              "comments": {"summary": {"total_count": 1}}, "shares": {"count": 0}})
+        # Reach and views refused; the reactions and activity insights answer.
+        metric = ((kw or {}).get("params") or kw or {}).get("metric", "")
+        if metric == "post_reactions_by_type_total":
+            return FakeResp(200, {"data": [{"name": metric, "values": [{"value": {"like": 8}}]}]})
+        if metric == "post_activity_by_action_type":
+            return FakeResp(200, {"data": [{"name": metric, "values": [{"value": {"comment": 1}}]}]})
+        return FakeResp(400, {"error": {"message": "(#100) bad metric", "code": 100}})
     _graph(monkeypatch, [("GET", "graph.facebook.com", answer)])
     social_routes.refresh_post_metrics(rid)
     r = _row(db_path, "SELECT reach, impressions, likes, metrics_synced_at FROM marketing_content_log WHERE id=?",
