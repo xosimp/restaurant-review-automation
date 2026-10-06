@@ -31819,7 +31819,9 @@ window.sendGuestCampaign = function(btn) {
   if (_cp.sending || !btn || btn.disabled || !(ready.text || ready.email || ready.social)) return;
   if (!_cp.armed) {
     _cp.snap = cpSnapshot(ready);
-    _cp.armed = setTimeout(function() { _cp.armed = null; _cp.snap = null; cpPaint(); }, 6000);
+    // 15s, not 6: an owner reading the checks before the second press found
+    // it re-armed every time and never sent (Meta screencast, 10/6/26).
+    _cp.armed = setTimeout(function() { _cp.armed = null; _cp.snap = null; cpPaint(); }, 15000);
     cpPaint(); return;
   }
   var snap = _cp.snap;
