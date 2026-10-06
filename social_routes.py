@@ -844,6 +844,7 @@ def refresh_post_metrics(restaurant_id, limit=25, deadline_s=REFRESH_DEADLINE_SE
                       reach, impressions, engaged, likes, comments, shares
                FROM marketing_content_log
                WHERE restaurant_id=? AND post_id IS NOT NULL AND TRIM(post_id) != ''
+                 AND removed_at IS NULL
                  -- Meta's platforms only. A Google post has no Graph id: it
                  -- was sent to Graph with the Instagram token, a wasted call
                  -- and an error per post, and it ate the limit (SOC-20).
@@ -909,6 +910,25 @@ def refresh_post_metrics(restaurant_id, limit=25, deadline_s=REFRESH_DEADLINE_SE
                                         type("R", (), {"status_code": 0, "text": _safe_err(e)})())
                 results.append({"topic": row["topic"], "post_id": row["post_id"],
                                "platform": platform, "metrics": {}, "measured": False})
+        # A post deleted on Facebook or Instagram answers "does not exist"
+        # forever, so the refresh read "partial" forever (10/6/26). Meta says
+        # the same when access is missing, so a post is taken as deleted only
+        # when every call for it said so AND another post on the same account
+        # was measured in this pass — the access works, the post is gone.
+        live = {r["platform"] for r in results if r.get("measured")}
+        for r in results:
+            if r.get("measured") or r["platform"] not in live:
+                continue
+            said = [e for e in errors if e.get("post_id") == r["post_id"]]
+            if said and all("does not exist" in str(e.get("text") or "").lower() for e in said):
+                conn.execute("UPDATE marketing_content_log SET removed_at=datetime('now') "
+                             "WHERE restaurant_id=? AND post_id=? AND removed_at IS NULL",
+                             (restaurant_id, r["post_id"]))
+                r["removed"] = True
+                attempted -= 1
+        conn.commit()
+        errors[:] = [e for e in errors
+                     if not any(r.get("removed") and r["post_id"] == e.get("post_id") for r in results)]
         if token_dead:
             return {"ok": False, "status": "failed", "measured": measured, "attempted": attempted,
                     "posts": results,

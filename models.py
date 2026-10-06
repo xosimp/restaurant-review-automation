@@ -1608,6 +1608,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
         # a person made or published, not calendar markers and job drafts.
         ("marketing_content_log", "origin", "TEXT"),
+        # When the post was found deleted on Meta (social_routes.
+        # refresh_post_metrics): never measured again, left out of the
+        # performance figures (10/6/26).
+        ("marketing_content_log", "removed_at", "TEXT"),
         # When the official Google rating was last refreshed. Without it a
         # failed refresh left the previous value in place indefinitely,
         # shown as current and driving the rating-threshold alert.

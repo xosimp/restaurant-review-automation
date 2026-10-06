@@ -838,7 +838,7 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
             morning was missing from the headline while still showing up in
             the per-platform breakdown below."""
             sql = (f"SELECT {agg} FROM marketing_content_log "
-                   "WHERE restaurant_id=? AND post_id IS NOT NULL "
+                   "WHERE restaurant_id=? AND post_id IS NOT NULL AND removed_at IS NULL "
                    "  AND COALESCE(posted_at, created_at) >= date('now', ?)")
             args = [restaurant_id, f"-{start_days} days"]
             if end_days is not None:
@@ -852,7 +852,7 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
         by_platform = conn.execute(
             f"SELECT post_platform AS platform, {agg} "
             "FROM marketing_content_log "
-            "WHERE restaurant_id=? AND post_id IS NOT NULL "
+            "WHERE restaurant_id=? AND post_id IS NOT NULL AND removed_at IS NULL "
             "  AND COALESCE(posted_at, created_at) >= date('now', ?) "
             "GROUP BY post_platform",
             (restaurant_id, f"-{days} days"),

@@ -87,6 +87,10 @@ def late_night_daypart(late_hour):
     should be tracked separately")."""
     def of(t):
         tag = t.get("mealtime") or "Other"
+        # RPOWER's own "Late Night" meal time (10p-2a at Simple EJ's, added
+        # 10/6/26 by Justin, RPOWER) is this daypart, not a second one.
+        if " ".join(str(tag).lower().split()) == LATE_NIGHT.lower():
+            tag = LATE_NIGHT
         if late_hour is None:
             return tag
         stamp = str(t.get("opened_at") or "")

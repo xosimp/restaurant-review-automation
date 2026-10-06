@@ -165,3 +165,62 @@ def test_refresh_post_metrics_writes_back_to_db(monkeypatch, db_path):
     conn.close()
     assert row["reach"] == 400
     assert row["likes"] == 30
+
+
+def _two_ig_posts(monkeypatch, db_path):
+    real_get_conn = __import__("models").get_conn
+    monkeypatch.setattr("models.get_conn", lambda *a, **k: real_get_conn(db_path))
+    rid = create_restaurant(Restaurant(name="Gone Post", owner_email="g@x.com"), db_path=db_path)
+    update_restaurant(rid, {"ig_token": "ig-tok", "ig_user_id": "ig-user"}, db_path=db_path)
+    conn = real_get_conn(db_path)
+    for pid, when in (("ig_live", "2026-10-06 20:23:00"), ("ig_gone", "2026-10-06 20:07:00")):
+        conn.execute("INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform, "
+                     "posted_at) VALUES (?,?,?,?,?,?)", (rid, "instagram_post", "Fall menu", pid, "instagram", when))
+    conn.commit()
+    conn.close()
+    return rid, real_get_conn
+
+
+GONE = FakeResp(400, {"error": {"message": "Unsupported get request. Object with ID 'ig_gone' does not exist, "
+                                           "cannot be loaded due to missing permissions", "code": 100}})
+
+
+def test_a_post_deleted_on_meta_is_retired_when_another_post_answers(monkeypatch, db_path):
+    """Will deleted his first two posts (10/6/26); every refresh after read
+    "2 of 4 posts couldn't be measured". A post every call calls missing,
+    while another post on the same account answers, is retired: not asked
+    again, not counted as a post."""
+    import sys
+    rid, real_get_conn = _two_ig_posts(monkeypatch, db_path)
+    fake = FakeReq([FakeResp(200, {"data": [{"name": "reach", "values": [{"value": 9}]}]}),
+                    FakeResp(200, {"like_count": 1, "comments_count": 0}),
+                    GONE, GONE, GONE])
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    out = sr.refresh_post_metrics(rid)
+    assert out["status"] == "ok" and (out["measured"], out["attempted"]) == (1, 1), out
+    conn = real_get_conn(db_path)
+    rows = {r["post_id"]: r["removed_at"] for r in conn.execute(
+        "SELECT post_id, removed_at FROM marketing_content_log WHERE restaurant_id=?", (rid,))}
+    conn.close()
+    assert rows["ig_gone"] and rows["ig_live"] is None
+    import marketing_signals as ms
+    assert ms.performance_window(rid, days=3650, db_path=db_path)["posts"] == 1
+    # The next pass never asks about it.
+    fake2 = FakeReq([FakeResp(200, {"data": [{"name": "reach", "values": [{"value": 9}]}]}),
+                     FakeResp(200, {"like_count": 1, "comments_count": 0})])
+    monkeypatch.setitem(sys.modules, "requests", fake2)
+    assert sr.refresh_post_metrics(rid)["attempted"] == 1 and len(fake2.calls) == 2
+
+
+def test_missing_with_nothing_answering_is_never_taken_as_deleted(monkeypatch, db_path):
+    """The same words come back when access is missing: with no post on the
+    account answering, nothing is retired."""
+    import sys
+    rid, real_get_conn = _two_ig_posts(monkeypatch, db_path)
+    monkeypatch.setitem(sys.modules, "requests", FakeReq([GONE] * 6))
+    out = sr.refresh_post_metrics(rid)
+    assert out["status"] == "failed"
+    conn = real_get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND removed_at IS NOT NULL",
+                        (rid,)).fetchone()[0] == 0
+    conn.close()

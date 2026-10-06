@@ -95,3 +95,16 @@ def test_the_team_route_and_screen_carry_the_switch():
     assert 'm["nightly_report"] = bool(a.get("nightly_report", True))' in inspect.getsource(mobile_api.mobile_get_team)
     html = open("templates/dashboard.html", encoding="utf-8").read()
     assert "bits.push(sw('Nightly report'," in html and "window.setTeamReport=function(id,box){" in html
+
+
+def test_the_poss_own_late_night_meal_time_is_the_same_daypart():
+    """RPOWER added a "Late Night" meal time at Simple EJ's (Justin, 10/6/26):
+    with the late hour on or off, it is one "Late night" row, never two."""
+    from dsr.block_service import late_night_daypart, _split
+    tickets = [
+        {"mealtime": "Late Night", "opened_at": "2026-10-06T22:30:00", "net_sales": 30, "guest_count": 1},
+        {"mealtime": "Dinner", "opened_at": "2026-10-06T23:10:00", "net_sales": 20, "guest_count": 1},
+    ]
+    for hour in (22, None):
+        names = [d["name"] for d in _split(tickets, late_night_daypart(hour), 50)]
+        assert names.count("Late night") == 1 and "Late Night" not in names, (hour, names)

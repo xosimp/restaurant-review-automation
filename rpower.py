@@ -1679,6 +1679,12 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     against the store's records without sending, and the first live push
     waits on Will.
 
+    A second push for the same week: Justin (10/6/26, unconfirmed) believes
+    "the newest record applies once it hits the store". The body names only
+    the people who have shifts, so whether a person LEFT OUT of a corrected
+    push keeps their earlier shifts is still open — settle it with RPOWER
+    before a corrected week is pushed live.
+
     `shifts` is Cavnar's own shape — [{employee_payroll_id or employee, job
     or role, start, end}] (labor.timed_shifts_from_csv) — grouped here into
     RPOWER's per-employee structure. Times are local wall
