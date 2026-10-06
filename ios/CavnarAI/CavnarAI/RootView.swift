@@ -108,190 +108,10 @@ struct RootView: View {
     }
 
     var body: some View {
-        ZStack {
-            // The employee tier short-circuits everything below it. A staff
-            // session never reaches mainTabs — not hidden behind a flag on the
-            // dashboard, but a different root entirely, so there is no tab, no
-            // deep link and no sheet in the owner app that a PIN session can
-            // land on. The backend enforces the same boundary independently
-            // (auth._console_denied), so this is the convenience half of it,
-            // not the security half.
-            if staffSessionStore.isAuthenticated && !staffSessionStore.isLocked {
-                StaffPortalView()
-                    // A new sign-in (another location, a reset PIN) is a
-                    // new portal, never the last session's screens.
-                    .id(staffSessionStore.sessionGeneration)
-                    .transition(.opacity)
-                    // Push after every staff sign-in, and on a launch into a
-                    // live session: the person's details, then permission
-                    // and the token under the staff login (C4).
-                    .task(id: staffSessionStore.sessionGeneration) {
-                        await staffSessionStore.refreshAfterSignIn()
-                    }
-                    .overlay(alignment: .bottom) {
-                        if staffSessionStore.notificationAsk {
-                            StaffNotificationAskCard(staff: staffSessionStore)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                    }
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.25),
-                               value: staffSessionStore.notificationAsk)
-            } else if staffSessionStore.isAuthenticated || staffDeviceEntry {
-                // The idle lock, an ended staff session, a PIN change: this
-                // phone's PIN pad, on its last person.
-                StaffLoginView(onOwnerSignIn: staffSessionStore.isAuthenticated ? nil : {
-                    ownerLoginChosen = true
-                })
-                .transition(.opacity)
-            } else if sessionStore.isAuthenticated {
-                if sessionStore.isLocked {
-                    // introReady: on a cold launch this mounts UNDER the splash;
-                    // without the gate its draw-in played hidden and the user
-                    // only ever saw the settled end state once the splash lifted.
-                    LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
-                        // Fetch Home's summary while the gate is up (the
-                        // session is signed in, just locked), so the moment the
-                        // user unlocks, Home mounts straight onto its hero — no
-                        // loading state at all. Without this, every cold-launch
-                        // unlock landed on an empty Home whose loading seal
-                        // flashed for the length of the fetch.
-                        .task {
-                            if homeViewModel.summary == nil { await homeViewModel.load() }
-                        }
-                } else {
-                    mainTabs
-                        // Revealed by the login screen fading out above it,
-                        // not by fading in itself; on sign-out it fades
-                        // under the returning login screen.
-                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
-                }
-            }
-            if loginCoverUp {
-                LoginView(sessionStore: sessionStore, introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
-                    .transition(.opacity)
-                    .zIndex(1)
-                    .onAppear { loginLifted = false }
-            }
-        }
-        // The sign-in → Home crossfade. The Face ID lock/unlock swap
-        // (isLocked) stays an instant cut deliberately — a frequent,
-        // security-relevant action where snappy reads as trustworthy and a
-        // fade would just feel like lag.
-        .animation(.easeOut(duration: 0.35), value: loginCoverUp)
-        .environment(deepLinkRouter)
-        .environment(chrome)
-        .environment(network)
-        // Mobile's in-app interface is dark-only by design — what's
-        // switchable is the home-screen APP ICON (Account > More), not
-        // this. See AppIconManager for that.
-        .preferredColorScheme(.dark)
-        // Dynamic Type is honoured (see Font+Cavnar), capped at xxxLarge —
-        // the top of the "standard" range, one notch short of the
-        // "accessibility" categories (accessibility1...5). Those use a much
-        // steeper multiplier specifically meant for low-vision users, and
-        // ~400 call sites across this app were never individually stress-
-        // tested against jumps that large: this session's first cap
-        // (accessibility2) let short, bold, uppercase-tracked labels like
-        // Account's section kickers balloon disproportionately (small text
-        // styles scale more steeply than large ones by Apple's own design)
-        // while dense KPI/chart screens broke outright. xxxLarge still gives
-        // real, meaningful growth over the old frozen-at-any-setting
-        // behavior (audit 7.1's actual defect) without reaching into the
-        // range this app hasn't been laid out for yet.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        // Single app-wide source for tint — covers button/control tint AND
-        // text field cursor color (a TextField's blinking caret follows the
-        // environment's tint, not a color you set on the field itself).
-        // Applied at the very root, above the Login/Locked/mainTabs branch,
-        // so it's inherited by every screen and every .sheet presented from
-        // any of them — previously only some screens set this locally
-        // (MarketingView, AccountView, TwoFactorView), which is why cursors
-        // elsewhere (like Ask Cavnar's compose field) still showed the
-        // system's default blue.
-        .tint(Color.cavnarEmber)
-        .overlay {
-            if privacyShieldUp {
-                ZStack {
-                    Color.cavnarPaper.ignoresSafeArea()
-                    CavnarSealMark(size: 64)
-                }
-                .transition(.opacity)
-            }
-        }
-        .overlay(alignment: .top) {
-            VStack(spacing: 6) {
-                if let status = connectivityStatus {
-                    Text(status)
-                        .font(.cavnarBody(13.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.cavnarAmber.opacity(0.92), in: Capsule())
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .accessibilityLabel(unsentLabels.isEmpty
-                            ? status
-                            : status + ". Waiting to send: " + unsentLabels.joined(separator: ", "))
-                }
-                if let note = droppedNote {
-                    // The same amber pill, tapped away once read.
-                    Text(note)
-                        .font(.cavnarBody(13.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(4)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.cavnarAmber.opacity(0.92), in: RoundedRectangle(cornerRadius: 16))
-                        .padding(.horizontal, 16)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .onTapGesture { Task { await PendingWriteQueue.shared.dismissDropped() } }
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityHint("Dismisses this note")
-                }
-            }
-            .padding(.top, 8)
-        }
-        .animation(.easeOut(duration: 0.25), value: connectivityStatus)
-        .animation(.easeOut(duration: 0.25), value: droppedWrites)
-        .task { await refreshUnsent() }
-        .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
-            Task { await refreshUnsent() }
-        }
-        #if DEBUG
-        // Debug-only tripwire for the exact failure that once took a whole
-        // live-debugging session to trace: CAVNAR_API_BASE_URL falling back
-        // to the unsubstituted "${CAVNAR_DEV_API_BASE_URL}" placeholder
-        // (because `xcodegen generate` ran in a shell that hadn't sourced
-        // the export) silently drops every request to unreachable
-        // localhost, and every screen just shows a generic "connection
-        // dropped" error with nothing pointing at the real cause. This
-        // can't be missed on screen the way AppEnvironment's console NSLog
-        // can be.
-        .overlay(alignment: .top) {
-            if AppEnvironment.baseURLOverrideIsUnsubstitutedPlaceholder {
-                Text("DEV BUILD: API base URL not configured — see Xcode console")
-                    .font(.cavnarBody(12, weight: 700))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.cavnarRed, in: Capsule())
-                    .padding(.top, 8)
-            }
-        }
-        #endif
-        .overlay {
-            if showLaunchSplash {
-                LaunchSplashView {
-                    DebugFrameWatchdog.mark("splash finished")
-                    withAnimation(.easeOut(duration: 0.45)) { showLaunchSplash = false }
-                    if introWaitingOnSplash {
-                        introWaitingOnSplash = false
-                        startIntroSequence()
-                    }
-                }
-                .transition(.opacity)
-            }
-        }
+        // Split in two (10/6/26): as one ~425-line modifier chain, Xcode 26's
+        // type checker gave up on it ("unable to type-check this expression
+        // in reasonable time") and the app stopped building.
+        rootSurface
         .onAppear {
             // A tap on another location's alert switches there first, the
             // same way the location switcher does (re-audit A-14).
@@ -533,6 +353,194 @@ struct RootView: View {
             Button("OK", role: .cancel) { deepLinkRouter.locationSwitchFailure = nil }
         } message: {
             Text(deepLinkRouter.locationSwitchFailure ?? "")
+        }
+    }
+
+    /// The root stack and its chrome; `body` adds the lifecycle and routing handlers.
+    private var rootSurface: some View {
+        ZStack {
+            // The employee tier short-circuits everything below it. A staff
+            // session never reaches mainTabs — not hidden behind a flag on the
+            // dashboard, but a different root entirely, so there is no tab, no
+            // deep link and no sheet in the owner app that a PIN session can
+            // land on. The backend enforces the same boundary independently
+            // (auth._console_denied), so this is the convenience half of it,
+            // not the security half.
+            if staffSessionStore.isAuthenticated && !staffSessionStore.isLocked {
+                StaffPortalView()
+                    // A new sign-in (another location, a reset PIN) is a
+                    // new portal, never the last session's screens.
+                    .id(staffSessionStore.sessionGeneration)
+                    .transition(.opacity)
+                    // Push after every staff sign-in, and on a launch into a
+                    // live session: the person's details, then permission
+                    // and the token under the staff login (C4).
+                    .task(id: staffSessionStore.sessionGeneration) {
+                        await staffSessionStore.refreshAfterSignIn()
+                    }
+                    .overlay(alignment: .bottom) {
+                        if staffSessionStore.notificationAsk {
+                            StaffNotificationAskCard(staff: staffSessionStore)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.25),
+                               value: staffSessionStore.notificationAsk)
+            } else if staffSessionStore.isAuthenticated || staffDeviceEntry {
+                // The idle lock, an ended staff session, a PIN change: this
+                // phone's PIN pad, on its last person.
+                StaffLoginView(onOwnerSignIn: staffSessionStore.isAuthenticated ? nil : {
+                    ownerLoginChosen = true
+                })
+                .transition(.opacity)
+            } else if sessionStore.isAuthenticated {
+                if sessionStore.isLocked {
+                    // introReady: on a cold launch this mounts UNDER the splash;
+                    // without the gate its draw-in played hidden and the user
+                    // only ever saw the settled end state once the splash lifted.
+                    LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
+                        // Fetch Home's summary while the gate is up (the
+                        // session is signed in, just locked), so the moment the
+                        // user unlocks, Home mounts straight onto its hero — no
+                        // loading state at all. Without this, every cold-launch
+                        // unlock landed on an empty Home whose loading seal
+                        // flashed for the length of the fetch.
+                        .task {
+                            if homeViewModel.summary == nil { await homeViewModel.load() }
+                        }
+                } else {
+                    mainTabs
+                        // Revealed by the login screen fading out above it,
+                        // not by fading in itself; on sign-out it fades
+                        // under the returning login screen.
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
+                }
+            }
+            if loginCoverUp {
+                LoginView(sessionStore: sessionStore, introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
+                    .transition(.opacity)
+                    .zIndex(1)
+                    .onAppear { loginLifted = false }
+            }
+        }
+        // The sign-in → Home crossfade. The Face ID lock/unlock swap
+        // (isLocked) stays an instant cut deliberately — a frequent,
+        // security-relevant action where snappy reads as trustworthy and a
+        // fade would just feel like lag.
+        .animation(.easeOut(duration: 0.35), value: loginCoverUp)
+        .environment(deepLinkRouter)
+        .environment(chrome)
+        .environment(network)
+        // Mobile's in-app interface is dark-only by design — what's
+        // switchable is the home-screen APP ICON (Account > More), not
+        // this. See AppIconManager for that.
+        .preferredColorScheme(.dark)
+        // Dynamic Type is honoured (see Font+Cavnar), capped at xxxLarge —
+        // the top of the "standard" range, one notch short of the
+        // "accessibility" categories (accessibility1...5). Those use a much
+        // steeper multiplier specifically meant for low-vision users, and
+        // ~400 call sites across this app were never individually stress-
+        // tested against jumps that large: this session's first cap
+        // (accessibility2) let short, bold, uppercase-tracked labels like
+        // Account's section kickers balloon disproportionately (small text
+        // styles scale more steeply than large ones by Apple's own design)
+        // while dense KPI/chart screens broke outright. xxxLarge still gives
+        // real, meaningful growth over the old frozen-at-any-setting
+        // behavior (audit 7.1's actual defect) without reaching into the
+        // range this app hasn't been laid out for yet.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        // Single app-wide source for tint — covers button/control tint AND
+        // text field cursor color (a TextField's blinking caret follows the
+        // environment's tint, not a color you set on the field itself).
+        // Applied at the very root, above the Login/Locked/mainTabs branch,
+        // so it's inherited by every screen and every .sheet presented from
+        // any of them — previously only some screens set this locally
+        // (MarketingView, AccountView, TwoFactorView), which is why cursors
+        // elsewhere (like Ask Cavnar's compose field) still showed the
+        // system's default blue.
+        .tint(Color.cavnarEmber)
+        .overlay {
+            if privacyShieldUp {
+                ZStack {
+                    Color.cavnarPaper.ignoresSafeArea()
+                    CavnarSealMark(size: 64)
+                }
+                .transition(.opacity)
+            }
+        }
+        .overlay(alignment: .top) {
+            VStack(spacing: 6) {
+                if let status = connectivityStatus {
+                    Text(status)
+                        .font(.cavnarBody(13.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.cavnarAmber.opacity(0.92), in: Capsule())
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .accessibilityLabel(unsentLabels.isEmpty
+                            ? status
+                            : status + ". Waiting to send: " + unsentLabels.joined(separator: ", "))
+                }
+                if let note = droppedNote {
+                    // The same amber pill, tapped away once read.
+                    Text(note)
+                        .font(.cavnarBody(13.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.cavnarAmber.opacity(0.92), in: RoundedRectangle(cornerRadius: 16))
+                        .padding(.horizontal, 16)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .onTapGesture { Task { await PendingWriteQueue.shared.dismissDropped() } }
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Dismisses this note")
+                }
+            }
+            .padding(.top, 8)
+        }
+        .animation(.easeOut(duration: 0.25), value: connectivityStatus)
+        .animation(.easeOut(duration: 0.25), value: droppedWrites)
+        .task { await refreshUnsent() }
+        .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
+            Task { await refreshUnsent() }
+        }
+        #if DEBUG
+        // Debug-only tripwire for the exact failure that once took a whole
+        // live-debugging session to trace: CAVNAR_API_BASE_URL falling back
+        // to the unsubstituted "${CAVNAR_DEV_API_BASE_URL}" placeholder
+        // (because `xcodegen generate` ran in a shell that hadn't sourced
+        // the export) silently drops every request to unreachable
+        // localhost, and every screen just shows a generic "connection
+        // dropped" error with nothing pointing at the real cause. This
+        // can't be missed on screen the way AppEnvironment's console NSLog
+        // can be.
+        .overlay(alignment: .top) {
+            if AppEnvironment.baseURLOverrideIsUnsubstitutedPlaceholder {
+                Text("DEV BUILD: API base URL not configured — see Xcode console")
+                    .font(.cavnarBody(12, weight: 700))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.cavnarRed, in: Capsule())
+                    .padding(.top, 8)
+            }
+        }
+        #endif
+        .overlay {
+            if showLaunchSplash {
+                LaunchSplashView {
+                    DebugFrameWatchdog.mark("splash finished")
+                    withAnimation(.easeOut(duration: 0.45)) { showLaunchSplash = false }
+                    if introWaitingOnSplash {
+                        introWaitingOnSplash = false
+                        startIntroSequence()
+                    }
+                }
+                .transition(.opacity)
+            }
         }
     }
 

@@ -14603,6 +14603,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
    center-aligning against the whole block's height leaves them floating
    above where the meta line reads. Align to the bottom line instead. */
 #acct-team-list .ac-row{align-items:flex-end}
+/* A person's switches belong to them: no rule between the two (owner, 10/6/26) */
+.ac-list > .ac-team-access{border-top:none}
 
 /* Consultant */
 .ac-consult{display:flex;gap:16px;align-items:center}
@@ -33300,26 +33302,28 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       window._acctData=window._acctData||{};window._acctData.team=(d.members||[]).length;if(window.acctHealthRefresh)acctHealthRefresh();
       var opts=d.access_options||[];
       el.innerHTML=(d.members||[]).map(function(m){
+        var who=m.name||m.username;
         var role=m.role_label||(m.role==='member'?'Teammate':(m.role==='manager'?'Manager':'Owner'));
         var right=m.is_you?'<span style="color:var(--ink3)">you</span>':(d.can_edit_access?'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="revokeTeam('+m.id+',this)">Remove</button>':'');
         if(d.can_edit_access&&m.role_editable){
-          var ro=d.role_options||[],sel='<select class="ac-select" style="width:auto;padding:4px 8px;font-size:13px" aria-label="Role for '+esc(m.username)+'" onchange="setTeamRole('+m.id+',this)">';
+          var ro=d.role_options||[],sel='<select class="ac-select" style="width:auto;padding:4px 8px;font-size:13px" aria-label="Role for '+esc(who)+'" onchange="setTeamRole('+m.id+',this)">';
           for(var r=0;r<ro.length;r++){sel+='<option value="'+esc(ro[r].key)+'"'+(ro[r].key===m.role?' selected':'')+'>'+esc(ro[r].label)+'</option>';}
           right=sel+'</select>'+right;
         }
-        var row='<div class="ac-row"><div class="l"><b>'+esc(m.username)+'</b><span>'+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></div><div class="c">'+right+'</div></div>';
+        var row='<div class="ac-row"><div class="l"><b>'+esc(who)+'</b><span>'+esc(m.email||'')+' · '+role+(m.last_login?' · last in '+ago(m.last_login):' · never signed in')+'</span></div><div class="c">'+right+'</div></div>';
         // What this manager sees beyond their role, and whether the morning
         // brief reaches them. Owner-only controls; managers see neither.
         if(d.can_edit_access&&m.access_grantable&&!m.is_you){
-          var sw=function(label,checked,onchange,help){return '<label'+(help?' title="'+esc(help)+'"':'')+' style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2)"><span class="ac-switch"><input type="checkbox"'+(checked?' checked':'')+' onchange="'+onchange+'" aria-label="'+esc(label)+' for '+esc(m.username)+'"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></span>'+esc(label)+'</label>';};
+          var sw=function(label,checked,onchange,help){return '<label'+(help?' title="'+esc(help)+'"':'')+' style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2)"><span class="ac-switch"><input type="checkbox"'+(checked?' checked':'')+' onchange="'+onchange+'" aria-label="'+esc(label)+' for '+esc(who)+'"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></span>'+esc(label)+'</label>';};
           var bits=[];
           for(var i=0;i<opts.length;i++){bits.push(sw(opts[i].label,(m.access||[]).indexOf(opts[i].key)>=0,'setTeamAccess('+m.id+',\''+opts[i].key+'\',this)',ACCESS_HELP[opts[i].key]));}
           bits.push(sw('Morning brief',m.morning_brief,'setTeamBrief('+m.id+',this)'));
           // The nightly sales report (10/2/26): on for every manager unless the
           // owner leaves someone off it - a marketer has no use for it.
           bits.push(sw('Nightly report',m.nightly_report!==false,'setTeamReport('+m.id+',this)','The Daily Sales Report email after each night'));
-          // Clear of the rule above them and the next login below (owner, 10/5/26).
-          row+='<div style="display:flex;flex-wrap:wrap;gap:12px 22px;padding:16px 0 18px">'+bits.join('')+'</div>';
+          // Clear of the next login below (owner, 10/5/26); no rule between a
+          // person and their own switches (owner, 10/6/26).
+          row+='<div class="ac-team-access" style="display:flex;flex-wrap:wrap;gap:12px 22px;padding:8px 0 18px">'+bits.join('')+'</div>';
         }
         return row;
       }).join('')||'Just you so far.';

@@ -46,7 +46,7 @@ struct AccountTeamDetailView: View {
 
                     AccountSection(kicker: "Who has access") {
                         ForEach(Array(viewModel.teamMembers.enumerated()), id: \.element.id) { index, member in
-                            AccountKVRow(label: member.username, showsDivider: index < viewModel.teamMembers.count - 1) {
+                            AccountKVRow(label: member.displayName, showsDivider: index < viewModel.teamMembers.count - 1) {
                                 HStack(spacing: 8) {
                                     if viewModel.canEditTeamAccess && (member.roleEditable ?? false) {
                                         Menu {
@@ -68,12 +68,12 @@ struct AccountTeamDetailView: View {
                                         } label: {
                                             AccountPill(text: member.roleLabel, on: member.role != "member")
                                         }
-                                        .accessibilityLabel("Role for \(member.username): \(member.roleLabel)")
+                                        .accessibilityLabel("Role for \(member.displayName): \(member.roleLabel)")
                                     } else {
                                         AccountPill(text: member.roleLabel, on: member.role != "member")
                                     }
                                     if !member.isYou && viewModel.canEditTeamAccess {
-                                        AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove \(member.username)") {
+                                        AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove \(member.displayName)") {
                                             pendingRevoke = member
                                         }
                                     }
@@ -90,7 +90,7 @@ struct AccountTeamDetailView: View {
                     // the morning brief reaches them. Owner only.
                     if viewModel.canEditTeamAccess {
                         ForEach(viewModel.teamMembers.filter { ($0.accessGrantable ?? false) && !$0.isYou }) { member in
-                            AccountSection(kicker: "\(member.username) sees") {
+                            AccountSection(kicker: "\(member.displayName) sees") {
                                 ForEach(viewModel.teamAccessOptions) { option in
                                     accessRow(label: option.label,
                                               on: (member.access ?? []).contains(option.key),
@@ -127,7 +127,7 @@ struct AccountTeamDetailView: View {
                 InviteTeamMemberSheet(viewModel: viewModel)
             }
             .confirmationDialog(
-                pendingRevoke.map { "Remove \($0.username)?" } ?? "",
+                pendingRevoke.map { "Remove \($0.displayName)?" } ?? "",
                 isPresented: Binding(get: { pendingRevoke != nil }, set: { if !$0 { pendingRevoke = nil } }),
                 titleVisibility: .visible
             ) {
@@ -136,7 +136,7 @@ struct AccountTeamDetailView: View {
                     Task {
                         if await viewModel.revokeTeamMember(member.id) {
                             Haptic.success()
-                            postedLabel = "\(member.username) removed"
+                            postedLabel = "\(member.displayName) removed"
                         }
                         pendingRevoke = nil
                     }
@@ -146,7 +146,7 @@ struct AccountTeamDetailView: View {
                 Text("They'll be signed out immediately and won't be able to log back in.")
             }
             .confirmationDialog(
-                pendingCoOwner.map { "Make \($0.username) a co-owner?" } ?? "",
+                pendingCoOwner.map { "Make \($0.displayName) a co-owner?" } ?? "",
                 isPresented: Binding(get: { pendingCoOwner != nil }, set: { if !$0 { pendingCoOwner = nil } }),
                 titleVisibility: .visible
             ) {
@@ -155,7 +155,7 @@ struct AccountTeamDetailView: View {
                     Task {
                         if await viewModel.setTeamRole(member.id, role: "client") {
                             Haptic.success()
-                            postedLabel = "\(member.username) is a co-owner"
+                            postedLabel = "\(member.displayName) is a co-owner"
                         }
                         pendingCoOwner = nil
                     }
@@ -165,7 +165,7 @@ struct AccountTeamDetailView: View {
                 Text("They'll be able to do everything you can — manage the team, settings and every number.")
             }
             .confirmationDialog(
-                pendingLossGrant.map { "Show comps & voids to \($0.username)?" } ?? "",
+                pendingLossGrant.map { "Show comps & voids to \($0.displayName)?" } ?? "",
                 isPresented: Binding(get: { pendingLossGrant != nil }, set: { if !$0 { pendingLossGrant = nil } }),
                 titleVisibility: .visible
             ) {

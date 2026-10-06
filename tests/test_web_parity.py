@@ -94,6 +94,9 @@ def test_web_team_invite_and_revoke(client, db_path, monkeypatch):
     uid = r.get_json()["user_id"]
     members = client.get("/api/account/team").get_json()["members"]
     assert any(m["id"] == uid and not m["is_you"] for m in members)
+    # People shows the name typed in, not the handle made from the email (10/6/26)
+    added = next(m for m in members if m["id"] == uid)
+    assert added["name"] == "Mate" and added["username"] == "mate"
     assert client.post(f"/api/account/team/{uid}/revoke", json={}).get_json()["ok"]
     assert all(m["id"] != uid or not m["is_active"] for m in client.get("/api/account/team").get_json()["members"])
 

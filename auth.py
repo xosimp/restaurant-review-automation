@@ -4254,11 +4254,16 @@ def get_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:
     # Console logins only. Staff-PIN identities (role 'employee', the
     # @staff.invalid address) are managed under Staff, and listing them here
     # showed an employee as an account holder (SEC-29).
+    # name: what the owner typed when adding them (memberships.employee_name)
+    # — "Anthony", not the login handle "aabbott" built from their email.
     rows = conn.execute("""
-        SELECT id, username, email, role, created_at, last_login, is_active
-        FROM users WHERE restaurant_id=? AND is_active=1
-          AND COALESCE(role, 'client') <> 'employee' AND email NOT LIKE '%@staff.invalid'
-        ORDER BY created_at
+        SELECT u.id, u.username, u.email, u.role, u.created_at, u.last_login, u.is_active,
+               NULLIF(TRIM(m.employee_name), '') AS name
+        FROM users u
+        LEFT JOIN memberships m ON m.user_id = u.id AND m.restaurant_id = u.restaurant_id
+        WHERE u.restaurant_id=? AND u.is_active=1
+          AND COALESCE(u.role, 'client') <> 'employee' AND u.email NOT LIKE '%@staff.invalid'
+        ORDER BY u.created_at
     """, (restaurant_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]

@@ -446,6 +446,9 @@ struct LoginHistoryEntry: Decodable, Identifiable {
 struct TeamMember: Decodable, Identifiable {
     let id: Int
     let username: String
+    /// What the owner typed when adding them ("Anthony"); nil for an older
+    /// login with none, which shows its username instead.
+    let name: String?
     let email: String
     let role: String
     let createdAt: String
@@ -462,7 +465,7 @@ struct TeamMember: Decodable, Identifiable {
     let roleEditable: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, username, email, role, access
+        case id, username, name, email, role, access
         case createdAt = "created_at"
         case lastLogin = "last_login"
         case isYou = "is_you"
@@ -482,6 +485,12 @@ struct TeamMember: Decodable, Identifiable {
     }
 
     var isOwnerRole: Bool { role == "client" || role == "owner" }
+
+    /// The person's name, not the login handle built from their email.
+    var displayName: String {
+        if let name, !name.trimmingCharacters(in: .whitespaces).isEmpty { return name }
+        return username
+    }
 }
 
 /// A role an owner can give a login: key is what's stored ("client" is a
