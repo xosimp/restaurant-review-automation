@@ -95,7 +95,11 @@ def test_a_digest_line_comparing_the_restaurant_with_most_restaurants_is_dropped
     out, _ = _digest(db_path, monkeypatch,
                      "HEADLINE: Pat, two new reviews this week.\n"
                      "REVIEWS: Your 4.5 rating beats most restaurants in the area.")
-    assert out.get("headline") and "reviews" not in out
+    # Since AI cost audit 10/7/26 #82 the REVIEWS line is written from the
+    # figures: the model's line is never read, so its peer claim cannot
+    # reach the email (it used to be dropped by the check).
+    assert out.get("headline") and "most restaurants" not in out.get("reviews", "")
+    assert out["reviews"] == "2 reviews this week, averaging 4.5★."
 
 
 def test_a_digest_line_naming_another_cavnar_restaurant_is_dropped(db_path, monkeypatch):
@@ -108,7 +112,9 @@ def test_a_digest_line_naming_another_cavnar_restaurant_is_dropped(db_path, monk
     out, _ = _digest(db_path, monkeypatch,
                      "HEADLINE: Pat, one new 5★ review this week.\n"
                      "REVIEWS: Dana said you beat Rosa's Cantina.", rid=rid, reviews=reviews)
-    assert out.get("headline") and "reviews" not in out
+    # The REVIEWS line is the figures' own (#82): the model's, naming
+    # another tenant, is never read.
+    assert out.get("headline") and "Rosa" not in out.get("reviews", "")
 
 
 def test_the_digest_lowers_a_certainty_it_cannot_back(db_path, monkeypatch):
@@ -129,13 +135,16 @@ def test_a_recommended_action_is_never_a_cause_anchor_in_the_digest(db_path, mon
     out, _ = _digest(db_path, monkeypatch,
                      "HEADLINE: Pat, two new reviews this week.\n"
                      "REVIEWS: Tickets backed up because there was no manager on the pass at Friday dinner.")
-    assert out.get("headline") and "reviews" not in out
+    # The REVIEWS line is the figures' own (#82): the model's cause is never read.
+    assert out.get("headline") and "manager" not in out.get("reviews", "")
 
 
 def test_every_digest_line_is_logged_on_the_digest_surface(db_path, monkeypatch, logged):
     _digest(db_path, monkeypatch, "HEADLINE: Pat, two new reviews this week.\n"
                                   "REVIEWS: Two reviews came in at a 4.5 average.")
-    assert [s for s, _v, _c in logged].count("digest") == 2
+    # The headline only: the REVIEWS line is written from the figures since
+    # AI cost audit 10/7/26 #82, and the model's own is not read or checked.
+    assert [s for s, _v, _c in logged].count("digest") == 1
 
 
 def test_a_stale_labor_line_carries_its_caveat_into_the_email(db_path, monkeypatch):

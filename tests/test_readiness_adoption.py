@@ -28,7 +28,9 @@ NOT_APPLICABLE_SITES = {
     ("marketing.py", "_fill_missing_days"): "the same calendar prompt, for the days a week came back without",
     ("emails.py", "generate_email_personalization"): "onboarding email copy from typed counts",
     ("analyser.py", "analyse_review"): "classifies one review's own text",
-    ("recipes.py", "draft_missing"): "recipe drafts the owner confirms line by line",
+    # The recipe draft's call moved into its run's attempt closure when the
+    # Tuesday job's drafts began to batch (AI cost audit 10/7/26 #60).
+    ("recipes.py", "_recipe_draft_attempt"): "recipe drafts the owner confirms line by line",
     ("recipes.py", "extract_from_image"): "OCR of a recipe photo the owner confirms",
     ("invoices.py", "extract"): "invoice OCR the owner confirms line by line",
     ("sales_audit_notes_ai.py", "_call_claude"): "internal notes from the auditor's own input",

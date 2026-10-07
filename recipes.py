@@ -305,145 +305,295 @@ def _examples_block(examples) -> str:
     return head + wrap_untrusted(body) + "\n\n"
 
 
-def _prompt(item_name, ingredients, context, examples=None):
+# The prompt is built for the prompt cache (AI cost audit 10/7/26 #60): the
+# instructions, the restaurant's ingredient list and its menu context come
+# first and are the same for every dish of a run, so they are one block
+# marked cache_control; the examples (per kind of dish) and the dish itself
+# come last. The Tuesday job's dishes — up to RECIPE_DRAFT_LIMIT calls on one
+# ingredient list — then read the list from the cache after the first. Below
+# the model's minimum cacheable length (1,024 tokens on Sonnet; a short
+# ingredient list) the marker costs nothing and nothing is cached.
+def _prompt_prefix(ingredients, context) -> str:
     names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients)
     return (
-        f"You are costing a restaurant menu. Draft the recipe for ONE plate of: {item_name}\n\n"
-        f"Use ONLY ingredients from this list, spelled exactly as given, with the quantity per plate "
-        f"in the ingredient's own unit. Leave out anything you would have to invent. "
-        f"Mark each line's confidence honestly.\n\nIngredients on hand:\n{names}\n\n"
-        + _examples_block(examples)
-        + (f"Restaurant context: {context}\n" if context else "")
-        + "Return the JSON only."
+        "You are costing a restaurant menu. You will be asked to draft the recipe for ONE plate of one dish.\n\n"
+        "Use ONLY ingredients from this list, spelled exactly as given, with the quantity per plate "
+        "in the ingredient's own unit. Leave out anything you would have to invent. "
+        f"Mark each line's confidence honestly.\n\nIngredients on hand:\n{names}\n"
+        + (f"\nRestaurant context: {context}\n" if context else "")
     )
 
 
-def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=DB_PATH, items=None):
-    """Draft up to `limit` recipes — every dish with none, or just `items`
-    ([{id, name}]) when the caller has a list. Returns {"drafted": n,
-    "skipped": n} plus `reason` when nothing could be attempted."""
+def _prompt_dish(item_name, examples=None) -> str:
+    return (_examples_block(examples)
+            + f"Draft the recipe for ONE plate of: {item_name}\n\nReturn the JSON only.")
+
+
+def _prompt(item_name, ingredients, context, examples=None):
+    """The whole prompt as one text (the request carries it as two blocks —
+    _draft_request)."""
+    return _prompt_prefix(ingredients, context) + "\n" + _prompt_dish(item_name, examples)
+
+
+def _draft_request(item_name, ingredients, context, examples=None, route=None) -> dict:
+    """One dish's request — the same whether it is sent now or as a batch
+    item (ai_batches.submit): the cached prefix, then the dish."""
+    kw = dict(model=MODEL, max_tokens=1200,
+              output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
+              messages=[{"role": "user", "content": [
+                  {"type": "text", "text": _prompt_prefix(ingredients, context),
+                   "cache_control": {"type": "ephemeral"}},
+                  {"type": "text", "text": _prompt_dish(item_name, examples)}]}])
+    return route.apply(kw) if route is not None else kw
+
+
+def _draft_inputs(restaurant_id, db_path=DB_PATH):
+    """(restaurant, ingredients, context) for a run of drafts, or (None,
+    None, reason) when nothing can be drafted here."""
     import inventory_ledger
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
     if not r or not getattr(r, "module_inventory", 0):
-        return {"drafted": 0, "skipped": 0, "reason": "Food Cost is not on for this restaurant"}
+        return None, None, "Food Cost is not on for this restaurant"
     ingredients = [i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")]
     if len(ingredients) < 3:
-        return {"drafted": 0, "skipped": 0, "reason": "fewer than three ingredients on file"}
+        return None, None, "fewer than three ingredients on file"
+    return r, ingredients, (getattr(r, "menu_notes", None) or "")[:600]
+
+
+def _parse_draft(msg) -> dict:
+    """The model's JSON, or ValueError (the ledger row filed unparseable)."""
+    text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
+    try:
+        return json.loads(text)
+    except ValueError:
+        # Billed, and useless: the ledger says so (fix round G, #52).
+        from ai_utils import mark_outcome
+        mark_outcome(msg, "unparseable", reason="recipe draft was not JSON")
+        raise
+
+
+def _save_draft(restaurant_id, item, out, by_name, db_path=DB_PATH) -> bool:
+    """The model's answer for one dish → a pending draft (the lines code can
+    stand behind, flagged where it cannot). False when no line names an
+    ingredient the restaurant has."""
+    # What the owner's edits to past drafts of this kind of dish said
+    # (H6): most lines rewritten → this draft's confidence steps down.
+    kind = dish_type(item.get("name"))
+    hist = draft_edit_history(restaurant_id, kind, db_path=db_path)
+    lower = bool(hist["drafts"] >= EDIT_HISTORY_MIN_DRAFTS and hist["rate"] is not None
+                 and hist["rate"] >= EDIT_HISTORY_LOWER_AT)
+    lines = []
+    for ln in out.get("ingredients") or []:
+        ing = by_name.get(str(ln.get("name") or "").strip().lower())
+        try:
+            qty = float(ln.get("qty"))
+        except (TypeError, ValueError):
+            continue
+        if not ing or qty <= 0:
+            continue          # never an ingredient the restaurant does not have
+        ing_unit = ing.get("unit") or ""
+        given_unit = str(ln.get("unit") or "").strip()
+        said_unit = given_unit or ing_unit
+        converted = convert_qty(qty, said_unit, ing_unit) if ing_unit else None
+        # The line's confidence is code's (R9): unit given and
+        # convertible, a plausible per-plate amount, an estimate never
+        # high — the model's band only lowers it; the owner's edit
+        # history steps it down.
+        conf, conf_note = line_confidence(ln.get("confidence"), qty, given_unit, ing_unit, converted,
+                                          estimate=True)
+        if lower:
+            conf = _CONF_STEP[conf]
+        line = {"ingredient_id": ing["id"], "name": ing["name"], "unit": ing_unit,
+                "confidence": conf, "source": "estimate", "per": "plate"}
+        if not given_unit:
+            # A missing unit is flagged, never silently the ingredient's
+            # (R13, B5 #16 / p11).
+            line.update(qty=round(qty, 4), unit_ok=False, unit_note=conf_note)
+        elif conf_note and converted is not None and converted > 0:
+            line.update(qty=round(converted, 4), unit_ok=False, unit_note=conf_note)
+            if norm_unit(said_unit) != norm_unit(ing_unit):
+                line["card_qty"], line["card_unit"] = round(qty, 4), said_unit
+        elif converted is not None and converted > 0:
+            line["qty"] = round(converted, 4)
+            line["unit_ok"] = True
+            if norm_unit(said_unit) != norm_unit(ing_unit):
+                line["card_qty"], line["card_unit"] = round(qty, 4), said_unit
+        else:
+            # The model answered in a unit the ingredient is not kept
+            # in and cannot be converted to: kept, flagged, never
+            # written by an unedited accept.
+            line.update(qty=round(qty, 4), unit=said_unit, unit_ok=False,
+                        unit_note=f"estimated in {said_unit or 'no unit'}; {ing['name']} is kept in "
+                                  f"{ing_unit or 'no unit'}")
+        lines.append(line)
+    if not lines:
+        return False
+    note_bits = ["Estimated by Cavnar AI — check each quantity before accepting"]
+    if lower:
+        note_bits.append(f"confidence lowered: you changed {int(hist['rate'] * 100)}% of the lines on "
+                         f"{hist['drafts']} past {kind} drafts")
+    if out.get("note"):
+        note_bits.append(str(out["note"])[:160])
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO recipe_drafts (restaurant_id, menu_item_id, menu_item_name, lines_json, note) "
+                     "VALUES (?,?,?,?,?)",
+                     (restaurant_id, item["id"], item["name"], json.dumps(lines), " · ".join(note_bits)[:300]))
+        conn.commit()
+    finally:
+        conn.close()
+    return True
+
+
+def _draft_run(restaurant_id, item, client, request, first=None, run_id=None, unattended=False):
+    """One dish as a recipe_draft run (ai_orchestrator; T2, one call — the
+    owner confirms every line). `request` is the dish's request on the call
+    site's own model (_draft_request); `first` is a batch item's answer,
+    standing as the run's first rung: no call is made for it."""
+    import ai_orchestrator
+    from ai_utils import create_with_retry
+
+    def _recipe_draft_attempt(route, notes):
+        if first is not None and not notes:
+            return first
+        import data_health
+        return create_with_retry(
+            client, restaurant_id=restaurant_id, action="recipe_draft",
+            # Rests on no data source: recipe drafts the owner confirms line by line.
+            readiness=data_health.NOT_APPLICABLE, **route.apply(request))
+    return ai_orchestrator.generate("recipe_draft", restaurant_id, _recipe_draft_attempt,
+                                    subject=f"recipe:{item.get('id')}",
+                                    unattended=unattended, run_id=run_id).result
+
+
+# The Tuesday job's drafts go through Message Batches (AI cost audit 10/7/26
+# #60): nobody waits on them, so half price — and the dishes of one
+# restaurant go as one batch sharing the cached ingredient list. An owner's
+# own drafts (a pasted menu) are written now. A dish whose batch answer
+# never comes back is drafted synchronously: at once when the batch says so
+# (errored, expired), else at the cutoff (ai_batches' cutoff sweep).
+BATCH_WORKFLOW = "recipe_draft"
+BATCH_CALLBACK = "recipes:on_draft_batch"
+BATCH_CUTOFF_HOURS = 6
+
+
+def _submit_batch(restaurant_id, todo, ingredients, context, menu_now):
+    """Send each dish of `todo` as a batch item. Returns the dishes that
+    must be drafted now instead (batches off here, or the submit failed)."""
+    import uuid
+    from datetime import datetime, timedelta
+    import ai_batches
+    import ai_orchestrator
+    import ai_workflows as wf
+    import data_health
+    route = wf.route_for(wf.policy(BATCH_WORKFLOW), 0)
+    cutoff = datetime.utcnow() + timedelta(hours=BATCH_CUTOFF_HOURS)
+    items, by_cid = [], {}
+    for item in todo:
+        examples = confirmed_examples(restaurant_id, dish_type(item.get("name")), exclude_item_id=item.get("id"),
+                                      items=menu_now)
+        run_id = ai_orchestrator.new_run_id(BATCH_WORKFLOW)
+        cid = f"rd-{int(restaurant_id)}-{int(item['id'])}-{uuid.uuid4().hex[:8]}"
+        by_cid[cid] = item
+        items.append({"custom_id": cid, "restaurant_id": restaurant_id, "action": "recipe_draft",
+                      "request": _draft_request(item["name"], ingredients, context, examples, route=route),
+                      "readiness": data_health.NOT_APPLICABLE, "callback": BATCH_CALLBACK, "cutoff_at": cutoff,
+                      # Each dish under its own run id, so its ledger row is its run's.
+                      "correlation_id": run_id,
+                      "context": {"item": {"id": item["id"], "name": item["name"]}, "run_id": run_id}})
+    # One batch for the restaurant's dishes: they share the cached prefix.
+    out = ai_batches.submit(BATCH_WORKFLOW, items)
+    return [by_cid[cid] for cid, state in out.items()
+            if state not in (ai_batches.SUBMITTED, ai_batches.BLOCKED, ai_batches.DUPLICATE)]
+
+
+def on_draft_batch(item, message=None, error=None):
+    """ai_batches' callback for one dish of the Tuesday job. An answer is
+    the run's first rung and is stored as the synchronous call's would be;
+    a batch that came back without one (errored, expired, past the cutoff)
+    drafts the dish now; a gate's refusal (budget, breaker) drafts nothing,
+    as the synchronous call would not have. A dish that has gained a recipe
+    or a pending draft since is left alone."""
+    import ai_batches
+    rid = (item or {}).get("restaurant_id")
+    ctx = (item or {}).get("context") or {}
+    dish = ctx.get("item") or {}
+    if not rid or not dish.get("id"):
+        return
+    if error is not None and not isinstance(error, ai_batches.BatchItemFailed):
+        return
+    if dish["id"] not in {m.get("id") for m in missing_recipes(rid)}:
+        return
+    if isinstance(error, ai_batches.BatchItemFailed):
+        draft_missing(rid, items=[dish])
+        return
+    r, ingredients, context = _draft_inputs(rid)
+    if r is None:
+        return
+    by_name = {i["name"].strip().lower(): i for i in ingredients}
+    from ai_utils import get_client
+    examples = confirmed_examples(rid, dish_type(dish.get("name")), exclude_item_id=dish.get("id"))
+    try:
+        msg = _draft_run(rid, dish, get_client(), _draft_request(dish["name"], ingredients, context, examples),
+                         first=message, run_id=ctx.get("run_id"), unattended=True)
+        _save_draft(rid, dish, _parse_draft(msg), by_name)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="recipe_draft", context=f"restaurant_id={rid} item={dish.get('id')} (batch)")
+
+
+def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=DB_PATH, items=None, batch=False):
+    """Draft up to `limit` recipes — every dish with none, or just `items`
+    ([{id, name}]) when the caller has a list. Returns {"drafted": n,
+    "skipped": n} plus `reason` when nothing could be attempted, and
+    `batched` (dishes sent as batch items, drafted when their answers come
+    back) when `batch` — the Tuesday job — and Message Batches may run here."""
+    import inventory_ledger
+    r, ingredients, context = _draft_inputs(restaurant_id, db_path)
+    if r is None:
+        return {"drafted": 0, "skipped": 0, "reason": context}
     by_name = {i["name"].strip().lower(): i for i in ingredients}
     todo = (list(items) if items is not None else missing_recipes(restaurant_id, db_path=db_path))[:limit]
     if not todo:
         return {"drafted": 0, "skipped": 0}
-    from ai_utils import create_with_retry, get_client
-    client = client or get_client()
-    context = (getattr(r, "menu_notes", None) or "")[:600]
-    drafted = skipped = 0
     try:
         menu_now = inventory_ledger.list_menu_items_with_recipes(restaurant_id) or []
     except Exception:
         menu_now = []
+    batched = 0
+    if batch:
+        import ai_batches
+        if ai_batches.enabled(BATCH_WORKFLOW):
+            now_list = _submit_batch(restaurant_id, todo, ingredients, context, menu_now)
+            batched = len(todo) - len(now_list)
+            todo = now_list
+    from ai_utils import get_client
+    client = client or (get_client() if todo else None)
+    drafted = skipped = 0
     for item in todo:
         # The owner's confirmed recipes of this kind of dish (food_corrections).
         examples = confirmed_examples(restaurant_id, dish_type(item.get("name")), exclude_item_id=item.get("id"),
                                       items=menu_now)
         try:
-            import data_health
-            import ai_orchestrator
             # On the orchestrator's rung (recipe_draft: T2, one call; the
             # owner confirms every line — AI cost audit 10/7/26, orchestration
             # Phase 3).
-            msg = ai_orchestrator.generate("recipe_draft", restaurant_id, lambda route, notes: create_with_retry(
-                client, restaurant_id=restaurant_id, action="recipe_draft",
-                # Rests on no data source: recipe drafts the owner confirms line by line.
-                readiness=data_health.NOT_APPLICABLE,
-                **route.apply(dict(
-                    model=MODEL, max_tokens=1200,
-                    output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
-                    messages=[{"role": "user", "content": _prompt(item["name"], ingredients, context,
-                                                                  examples=examples)}]))),
-                subject=f"recipe:{item.get('id')}").result
-            text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
-            try:
-                out = json.loads(text)
-            except ValueError:
-                # Billed, and useless: the ledger says so (fix round G, #52).
-                from ai_utils import mark_outcome
-                mark_outcome(msg, "unparseable", reason="recipe draft was not JSON")
-                raise
+            msg = _draft_run(restaurant_id, item, client, _draft_request(item["name"], ingredients, context, examples))
+            out = _parse_draft(msg)
         except Exception as e:
             import ops
             ops.capture(e, job="recipe_draft", context=f"restaurant_id={restaurant_id} item={item.get('id')}")
             skipped += 1
             continue
-        # What the owner's edits to past drafts of this kind of dish said
-        # (H6): most lines rewritten → this draft's confidence steps down.
-        kind = dish_type(item.get("name"))
-        hist = draft_edit_history(restaurant_id, kind, db_path=db_path)
-        lower = bool(hist["drafts"] >= EDIT_HISTORY_MIN_DRAFTS and hist["rate"] is not None
-                     and hist["rate"] >= EDIT_HISTORY_LOWER_AT)
-        lines = []
-        for ln in out.get("ingredients") or []:
-            ing = by_name.get(str(ln.get("name") or "").strip().lower())
-            try:
-                qty = float(ln.get("qty"))
-            except (TypeError, ValueError):
-                continue
-            if not ing or qty <= 0:
-                continue          # never an ingredient the restaurant does not have
-            ing_unit = ing.get("unit") or ""
-            given_unit = str(ln.get("unit") or "").strip()
-            said_unit = given_unit or ing_unit
-            converted = convert_qty(qty, said_unit, ing_unit) if ing_unit else None
-            # The line's confidence is code's (R9): unit given and
-            # convertible, a plausible per-plate amount, an estimate never
-            # high — the model's band only lowers it; the owner's edit
-            # history steps it down.
-            conf, conf_note = line_confidence(ln.get("confidence"), qty, given_unit, ing_unit, converted,
-                                              estimate=True)
-            if lower:
-                conf = _CONF_STEP[conf]
-            line = {"ingredient_id": ing["id"], "name": ing["name"], "unit": ing_unit,
-                    "confidence": conf, "source": "estimate", "per": "plate"}
-            if not given_unit:
-                # A missing unit is flagged, never silently the ingredient's
-                # (R13, B5 #16 / p11).
-                line.update(qty=round(qty, 4), unit_ok=False, unit_note=conf_note)
-            elif conf_note and converted is not None and converted > 0:
-                line.update(qty=round(converted, 4), unit_ok=False, unit_note=conf_note)
-                if norm_unit(said_unit) != norm_unit(ing_unit):
-                    line["card_qty"], line["card_unit"] = round(qty, 4), said_unit
-            elif converted is not None and converted > 0:
-                line["qty"] = round(converted, 4)
-                line["unit_ok"] = True
-                if norm_unit(said_unit) != norm_unit(ing_unit):
-                    line["card_qty"], line["card_unit"] = round(qty, 4), said_unit
-            else:
-                # The model answered in a unit the ingredient is not kept
-                # in and cannot be converted to: kept, flagged, never
-                # written by an unedited accept.
-                line.update(qty=round(qty, 4), unit=said_unit, unit_ok=False,
-                            unit_note=f"estimated in {said_unit or 'no unit'}; {ing['name']} is kept in "
-                                      f"{ing_unit or 'no unit'}")
-            lines.append(line)
-        if not lines:
+        if _save_draft(restaurant_id, item, out, by_name, db_path=db_path):
+            drafted += 1
+        else:
             skipped += 1
-            continue
-        note_bits = ["Estimated by Cavnar AI — check each quantity before accepting"]
-        if lower:
-            note_bits.append(f"confidence lowered: you changed {int(hist['rate'] * 100)}% of the lines on "
-                             f"{hist['drafts']} past {kind} drafts")
-        if out.get("note"):
-            note_bits.append(str(out["note"])[:160])
-        conn = get_conn(db_path)
-        try:
-            conn.execute("INSERT INTO recipe_drafts (restaurant_id, menu_item_id, menu_item_name, lines_json, note) "
-                         "VALUES (?,?,?,?,?)",
-                         (restaurant_id, item["id"], item["name"], json.dumps(lines), " · ".join(note_bits)[:300]))
-            conn.commit()
-        finally:
-            conn.close()
-        drafted += 1
-    return {"drafted": drafted, "skipped": skipped}
+    res = {"drafted": drafted, "skipped": skipped}
+    if batch:
+        res["batched"] = batched
+    return res
 
 
 # ── the menu, pasted ─────────────────────────────────────────────────────────
@@ -595,7 +745,20 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     invoices.check_upload(data, media_type)
     if media_type == invoices.PDF_TYPE:
         raise RecipePhotoError("Photograph the recipe card — a PDF is not a card.")
-    ingredients = [i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")]
+    # The same photo sent twice (a re-tap after a slow answer, the same card
+    # chosen again) opens the draft it already made rather than paying to
+    # read it again — the invoice scan's image_sha rule (AI cost audit
+    # 10/7/26 #87). A draft the owner accepted is the recipe now: said, not
+    # re-read. One they rejected may be read again (they asked).
+    import hashlib
+    sha = hashlib.sha256(data).hexdigest()
+    prior = _draft_by_sha(restaurant_id, sha, db_path)
+    if prior is not None:
+        if prior["status"] == "pending":
+            return dict(prior, duplicate=True)
+        if prior["status"] == "accepted":
+            raise RecipePhotoError(f"That card was already added — it's the recipe for {prior['menu_item_name']}.")
+    ingredients =[i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")]
     by_name = {i["name"].strip().lower(): i for i in ingredients}
     names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients) or "- (none on file yet)"
     from ai_utils import create_with_retry, get_client
@@ -687,15 +850,37 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
         note_bits.append("not on your list: " + ", ".join(u["name"] for u in unmatched[:6]))
     conn = get_conn(db_path)
     try:
-        cur = conn.execute("INSERT INTO recipe_drafts (restaurant_id, menu_item_id, menu_item_name, lines_json, note) "
-                           "VALUES (?,?,?,?,?)", (restaurant_id, item_id, item_name, json.dumps(lines), " · ".join(note_bits)[:300]))
+        cur = conn.execute("INSERT INTO recipe_drafts (restaurant_id, menu_item_id, menu_item_name, lines_json, note, "
+                           "image_sha) VALUES (?,?,?,?,?,?)",
+                           (restaurant_id, item_id, item_name, json.dumps(lines), " · ".join(note_bits)[:300], sha))
         conn.commit()
         draft_id = cur.lastrowid
     finally:
         conn.close()
     return {"id": draft_id, "menu_item_id": item_id, "menu_item_name": item_name, "lines": lines,
             "note": " · ".join(note_bits)[:300], "unmatched": unmatched, "menu_item_matched": matched,
-            **_draft_flags(lines)}
+            "duplicate": False, **_draft_flags(lines)}
+
+
+def _draft_by_sha(restaurant_id, sha, db_path=DB_PATH):
+    """The newest draft this restaurant made from a photo with this sha256,
+    as extract_from_image returns one (plus its status), or None. The
+    unmatched card lines are not stored; a duplicate answers with none."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM recipe_drafts WHERE restaurant_id=? AND image_sha=? ORDER BY id DESC LIMIT 1",
+                           (restaurant_id, sha)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        lines = json.loads(row["lines_json"] or "[]")
+    except Exception:
+        lines = []
+    return {"id": row["id"], "menu_item_id": row["menu_item_id"], "menu_item_name": row["menu_item_name"],
+            "lines": lines, "note": row["note"], "unmatched": [], "menu_item_matched": True,
+            "status": row["status"], **_draft_flags(lines)}
 
 
 def _draft_flags(lines) -> dict:

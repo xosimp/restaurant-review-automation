@@ -605,7 +605,7 @@ def _draft_social_post(prompt, restaurant_id, p, owner_topic, signal_context, gi
     Response Validation Layer. The caller reads result.verdict. `route` is
     the orchestrator's rung (ai_workflows policy marketing_content: T2, then
     T3 on a refusal); without one, the call site's own model."""
-    kw = dict(model=model_for("marketing"), max_tokens=500, messages=[{"role": "user", "content": prompt}])
+    kw = social_post_request(prompt)
     msg = create_with_retry(
         get_client(),
         restaurant_id=restaurant_id,
@@ -614,6 +614,40 @@ def _draft_social_post(prompt, restaurant_id, p, owner_topic, signal_context, gi
         readiness=data_health.NOT_APPLICABLE,
         **(route.apply(kw) if route is not None else kw),
     )
+    # This copy is published to Instagram, Facebook and Google Business
+    # Profile. Hashtags and links are fine here — a claim the restaurant
+    # cannot make about itself is not. The Response Validation Layer on
+    # social_post (workstream A) replaces the bare check_marketing_copy: the
+    # same closure / health-department / never-say check, plus an offer, an
+    # award ("famous", "voted", "#1"), a sourcing or allergen claim the owner
+    # never wrote, fault and inspection claims, another tenant's name.
+    # What the owner wrote is the offer source: the profile the prompt was
+    # built from (known for, vibe, voice, menu notes, their website) and the
+    # topic they typed — not a calendar angle or a job's topic (AI-2). What
+    # guests said (the signal block) is never a source. Today's date and the
+    # holiday dates the prompt carried may back a date, never an offer.
+    return validate_marketing_text(_clean_social_post(msg), restaurant_id, "social_post", p, topic=owner_topic,
+                                   untrusted=[signal_context] if signal_context else (),
+                                   action="marketing_content", given=given)
+
+
+def social_post_request(prompt, route=None) -> dict:
+    """One social post's request on `route` (None = the call site's own
+    model) — sent now, or carried by a batch item (the quiet-night post).
+
+    No cache_control (AI cost audit 10/7/26 #79, checked and not done): the
+    refusal retry runs one rung up (marketing_content: T2 Sonnet 5, then T3
+    Sonnet 5.5), and a prompt cache is per model — the retry could never
+    read what the first call wrote. The prompt is also usually under
+    Sonnet's 1,024-token minimum. The marker would only add the 25% cache
+    write premium to every first draft."""
+    kw = dict(model=model_for("marketing"), max_tokens=500, messages=[{"role": "user", "content": prompt}])
+    return route.apply(kw) if route is not None else kw
+
+
+def _clean_social_post(msg) -> str:
+    """A model's draft of a social post as text, its markdown stripped —
+    whether it came back now or from a batch (the quiet-night post)."""
     result = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("marketing copy was truncated")
@@ -627,27 +661,13 @@ def _draft_social_post(prompt, restaurant_id, p, owner_topic, signal_context, gi
     # started a new line ("#GiaMia #TruffleSeason" came out "GiaMia
     # #TruffleSeason"), quietly breaking one tag on every Instagram post.
     result = _re.sub(r'^#{1,3}[ \t]+', '', result, flags=_re.MULTILINE)
-
-    # This copy is published to Instagram, Facebook and Google Business
-    # Profile. Hashtags and links are fine here — a claim the restaurant
-    # cannot make about itself is not. The Response Validation Layer on
-    # social_post (workstream A) replaces the bare check_marketing_copy: the
-    # same closure / health-department / never-say check, plus an offer, an
-    # award ("famous", "voted", "#1"), a sourcing or allergen claim the owner
-    # never wrote, fault and inspection claims, another tenant's name.
-    # What the owner wrote is the offer source: the profile the prompt was
-    # built from (known for, vibe, voice, menu notes, their website) and the
-    # topic they typed — not a calendar angle or a job's topic (AI-2). What
-    # guests said (the signal block) is never a source. Today's date and the
-    # holiday dates the prompt carried may back a date, never an offer.
-    result = validate_marketing_text(result, restaurant_id, "social_post", p, topic=owner_topic,
-                                     untrusted=[signal_context] if signal_context else (),
-                                     action="marketing_content", given=given)
     return result
 
 
+
 def generate_content(content_type: str, topic: str,
-                     restaurant_id: int = None, topic_is_owner: bool = True, user_id: int = None) -> str:
+                     restaurant_id: int = None, topic_is_owner: bool = True, user_id: int = None,
+                     first=None, run_id=None, state=None) -> str:
     """Generate marketing content for a given type and topic.
 
     `topic_is_owner` is whether the owner typed the topic. A calendar idea's
@@ -664,7 +684,92 @@ def generate_content(content_type: str, topic: str,
     they sent in their own words, what their regenerated drafts had in
     common), and the draft is kept (marketing_voice.record_draft, `user_id`
     the person who asked) so what goes out can be measured against it; its
-    id rides on the text as `draft_ref`."""
+    id rides on the text as `draft_ref`.
+
+    `first`, `run_id` and `state` are a batch item's answer coming back (the
+    quiet-night post, AI cost audit 10/7/26 #62): `state` the prompt it was
+    sent with (content_prompt), `first` the model's answer — the run's first
+    rung, judged as a fresh draft is; a refusal escalates now, synchronously
+    — and `run_id` the run the item was sent under."""
+    st = state or content_prompt(content_type, topic, restaurant_id, topic_is_owner)
+    prompt, p, owner_topic, signal_context, given, asked_topic, topic = (
+        st["prompt"], st["profile"], st["owner_topic"], st["signal_context"], st["given"], st["asked_topic"],
+        st["topic"])
+    import data_health
+    import ai_orchestrator as _orch
+    # A draft the public-copy check refuses is written once more, told why:
+    # one slip by the model ("your usual" in a brunch post) is not an error
+    # the owner should see. The second draft runs one tier up — the
+    # orchestrator's marketing_content ladder, T2 then T3, with the refusal
+    # as its notes (AI cost audit 10/7/26, orchestration Phase 3: it replaced
+    # a same-model retry). A second refusal is still MarketingCopyRejected.
+
+    def _attempt(route, notes):
+        if first is not None and not notes:
+            # The batch's answer, judged as _draft_social_post judges a fresh one.
+            return validate_marketing_text(_clean_social_post(first), restaurant_id, "social_post", p,
+                                           topic=owner_topic, untrusted=[signal_context] if signal_context else (),
+                                           action="marketing_content", given=given)
+        note = (f"\n\nA draft you wrote for this was rejected before anyone saw it: {'; '.join(notes)}. "
+                "Write a new one that avoids that entirely.") if notes else ""
+        return _draft_social_post(prompt + note, restaurant_id, p, owner_topic, signal_context, given,
+                                  data_health, route=route)
+
+    def _check(draft):
+        if draft.verdict is None or draft.verdict.verdict != "refuse":
+            return _orch.Verdict.passed(label=getattr(draft.verdict, "verdict", None) or "pass")
+        why = refusal_detail(draft.verdict)
+        try:
+            from ai_utils import record_quality_event
+            record_quality_event("marketing_content", "public_copy_refused", restaurant_id=restaurant_id,
+                                 detail=why, action="marketing_content")
+        except Exception:
+            pass
+        return _orch.Verdict.failed("validation_refuse", why, label="refuse")
+
+    # The owner reads every post before it goes out (reviewer "owner"); the
+    # rubric only scores a sample in the background (shadow).
+    try:
+        from ai_reviewer import reviewer_for
+        review = reviewer_for("marketing_post", restaurant_id, context=f"Topic: {topic}")
+    except Exception:
+        review = None
+    run = _orch.generate("marketing_content", restaurant_id, _attempt, _check, review=review,
+                         subject=f"post:{content_type}", run_id=run_id, unattended=first is not None)
+    result = run.result
+    if not run.verdict.ok:
+        raise MarketingCopyRejected("marketing copy rejected: "
+                                    + ("; ".join(run.verdict.reasons) or refusal_detail(result.verdict)))
+
+    # Log this content for future memory — the owner's own topic, not the
+    # public one (AUX-15). Its row id travels with the text, so a publish
+    # completes THIS row (MB-8), not a guess by topic.
+    row_id = log_content(restaurant_id, content_type, asked_topic)
+    try:
+        result.content_log_id = row_id
+    except AttributeError:
+        pass
+    # The model's text, kept so the piece that goes out is measured against
+    # it (marketing_voice; mkt_edits). A scheduled job's draft has no person.
+    try:
+        import marketing_voice
+        # The run is named after the draft it wrote (run_id), so what the
+        # owner does with it — published as written, rewritten, regenerated —
+        # lands on the run (marketing_voice.record_final / record_draft).
+        draft_ref = marketing_voice.record_draft(restaurant_id, content_channel(content_type), str(result),
+                                                 "post" if user_id else "job", user_id=user_id,
+                                                 content_log_id=row_id, run_id=run.run_id)
+        result.draft_ref = draft_ref
+    except Exception:
+        pass
+
+    return result
+
+
+def content_prompt(content_type: str, topic: str, restaurant_id: int = None, topic_is_owner: bool = True) -> dict:
+    """The post's prompt and what its checks read — {prompt, profile,
+    owner_topic, signal_context, given, asked_topic, topic}, JSON-able: what
+    generate_content sends now and what a batch item carries (#62)."""
     from datetime import datetime
     prompt_template = PROMPTS.get(content_type, PROMPTS["instagram_post"])
     p = get_profile_for_restaurant(restaurant_id)
@@ -764,72 +869,9 @@ def generate_content(content_type: str, topic: str,
     prompt += ("\nThe topic may be the owner's own aim. Never say or hint that a night is slow, quiet or empty, "
                "or that the restaurant wants to fill tables.")
     prompt += PUBLIC_COPY_RULES + ("" if topic_is_owner else SUGGESTED_TOPIC_RULE)
-
-    import data_health
-    import ai_orchestrator as _orch
     given = f"Today's date: {today_date}. Upcoming holidays: {upcoming or 'none'}."
-    # A draft the public-copy check refuses is written once more, told why:
-    # one slip by the model ("your usual" in a brunch post) is not an error
-    # the owner should see. The second draft runs one tier up — the
-    # orchestrator's marketing_content ladder, T2 then T3, with the refusal
-    # as its notes (AI cost audit 10/7/26, orchestration Phase 3: it replaced
-    # a same-model retry). A second refusal is still MarketingCopyRejected.
-
-    def _attempt(route, notes):
-        note = (f"\n\nA draft you wrote for this was rejected before anyone saw it: {'; '.join(notes)}. "
-                "Write a new one that avoids that entirely.") if notes else ""
-        return _draft_social_post(prompt + note, restaurant_id, p, owner_topic, signal_context, given,
-                                  data_health, route=route)
-
-    def _check(draft):
-        if draft.verdict is None or draft.verdict.verdict != "refuse":
-            return _orch.Verdict.passed(label=getattr(draft.verdict, "verdict", None) or "pass")
-        why = refusal_detail(draft.verdict)
-        try:
-            from ai_utils import record_quality_event
-            record_quality_event("marketing_content", "public_copy_refused", restaurant_id=restaurant_id,
-                                 detail=why, action="marketing_content")
-        except Exception:
-            pass
-        return _orch.Verdict.failed("validation_refuse", why, label="refuse")
-
-    # The owner reads every post before it goes out (reviewer "owner"); the
-    # rubric only scores a sample in the background (shadow).
-    try:
-        from ai_reviewer import reviewer_for
-        review = reviewer_for("marketing_post", restaurant_id, context=f"Topic: {topic}")
-    except Exception:
-        review = None
-    run = _orch.generate("marketing_content", restaurant_id, _attempt, _check, review=review,
-                         subject=f"post:{content_type}")
-    result = run.result
-    if not run.verdict.ok:
-        raise MarketingCopyRejected("marketing copy rejected: "
-                                    + ("; ".join(run.verdict.reasons) or refusal_detail(result.verdict)))
-
-    # Log this content for future memory — the owner's own topic, not the
-    # public one (AUX-15). Its row id travels with the text, so a publish
-    # completes THIS row (MB-8), not a guess by topic.
-    row_id = log_content(restaurant_id, content_type, asked_topic)
-    try:
-        result.content_log_id = row_id
-    except AttributeError:
-        pass
-    # The model's text, kept so the piece that goes out is measured against
-    # it (marketing_voice; mkt_edits). A scheduled job's draft has no person.
-    try:
-        import marketing_voice
-        # The run is named after the draft it wrote (run_id), so what the
-        # owner does with it — published as written, rewritten, regenerated —
-        # lands on the run (marketing_voice.record_final / record_draft).
-        draft_ref = marketing_voice.record_draft(restaurant_id, content_channel(content_type), str(result),
-                                                 "post" if user_id else "job", user_id=user_id,
-                                                 content_log_id=row_id, run_id=run.run_id)
-        result.draft_ref = draft_ref
-    except Exception:
-        pass
-
-    return result
+    return {"prompt": prompt, "profile": p, "owner_topic": owner_topic, "signal_context": signal_context,
+            "given": given, "asked_topic": asked_topic, "topic": topic}
 
 
 def marketing_memory_block(restaurant_id, subjects=()) -> str:

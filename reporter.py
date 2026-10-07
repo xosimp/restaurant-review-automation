@@ -419,8 +419,322 @@ def _digest_facts(report, pos, neg, urgent, module_facts, labor_days=None, ratin
     return out
 
 
-def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaurant_id=None):
-    """Generate a short AI summary paragraph for the weekly digest."""
+# ── the digest's lines written in Python (AI cost audit 10/7/26 #82) ────────
+# REVIEWS, LABOR and INVENTORY restated figures this module had already
+# computed — the model was paid to turn "12 reviews, 4.6★, up 0.2" into a
+# sentence and the validation layer then checked it had not changed them.
+# They are written here from the same figures; the model writes what needs
+# judgement: the HEADLINE, the ACTION and MARKETING's angle.
+TEMPLATED_DIGEST_LINES = ("REVIEWS", "LABOR", "INVENTORY")
+
+
+def _templated_lines(keys, report, pos, neg, urgent, facts, rating_move) -> dict:
+    """{"reviews"|"labor"|"inventory": one sentence} for each of `keys`,
+    from the digest's own figures. A key with nothing to say is left out."""
+    out = {}
+    keys = {str(k).upper() for k in keys or ()}
+    n = int(getattr(report, "total_reviews", 0) or 0)
+    if "REVIEWS" in keys and n:
+        avg = getattr(report, "avg_rating", None)
+        line = f"{n} review{'' if n == 1 else 's'} this week"
+        if avg:
+            line += f", averaging {float(avg):.1f}★"
+        if rating_move is not None and abs(rating_move) >= 0.05:
+            line += f", {'up' if rating_move > 0 else 'down'} {abs(rating_move):.1f}★ on last week"
+        bits = []
+        if pos or neg:
+            bits.append(f"{pos} positive and {neg} negative")
+        if urgent:
+            bits.append(f"{urgent} marked urgent")
+        out["reviews"] = line + (f" ({', '.join(bits)})" if bits else "") + "."
+    lab = (facts or {}).get("labor") or {}
+    if "LABOR" in keys and lab.get("pct") is not None:
+        line = f"Labor was {float(lab['pct']):.1f}% of revenue"
+        if lab.get("days") and lab.get("through"):
+            line += f" over the {lab['days']} days of shifts through {lab['through']}"
+        else:
+            line += " over the shifts on file"
+        if lab.get("direction") in ("up", "down") and lab.get("from_pct") is not None:
+            line += (f", {'up' if lab['direction'] == 'up' else 'down'} from {float(lab['from_pct']):.1f}% "
+                     f"over {lab.get('weeks') or 2} weeks")
+        if lab.get("overtime_risk"):
+            k = int(lab["overtime_risk"])
+            line += f", with {k} {'person' if k == 1 else 'people'} at overtime risk"
+        out["labor"] = line + "."
+    inv = (facts or {}).get("inventory") or {}
+    if "INVENTORY" in keys and inv:
+        bits = []
+        if inv.get("waste_direction") in ("up", "down") and inv.get("waste_change_pct") is not None:
+            bits.append(f"Waste is {inv['waste_direction']} {int(inv['waste_change_pct'])}% on last week")
+        if inv.get("top_waste_item"):
+            bits.append(("the top waste item is " if bits else "The top waste item is ") + str(inv["top_waste_item"]))
+        if inv.get("first_low"):
+            bits.append(f"{inv['first_low']} is critically low")
+        if bits:
+            out["inventory"] = "; ".join(bits) + "."
+    return out
+
+
+# ── the answer kept, and written the night before (AI cost audit 10/7/26) ───
+#
+# #50: the model's answer for a week is kept per (restaurant, prompt
+# fingerprint) for DIGEST_KEEP_HOURS — the parsed, checked summary — so a
+# preview, a resend or a send retried after a Resend failure serves it
+# rather than paying for the same week twice.
+#
+# #61: the send is 9am local on the owner's digest day, and nobody waits on
+# its narrative. run_digest_precompute builds the same prompt from
+# DIGEST_PRECOMPUTE_FROM_HOUR local on that day and sends it through
+# Message Batches (half price, back within the hour as a rule); the
+# collector stores the raw answer (on_digest_batch) and the send judges it
+# exactly as a fresh one. The night's data must be the morning's: the
+# fingerprint covers the whole prompt but its DATA STATE block, so a review
+# that arrived, or a reply posted, in between is a new fingerprint — and the
+# send writes the summary itself, as it always did (the synchronous
+# fallback). The send is the batch's cutoff: an item still out is cancelled.
+DIGEST_KEEP_HOURS = 24
+DIGEST_KEEP_PRUNE_DAYS = 3
+DIGEST_PRECOMPUTE_FROM_HOUR = 2
+DIGEST_SEND_HOUR = 9
+DIGEST_PRECOMPUTE_MAX_SECONDS = 15 * 60
+DIGEST_BATCH_WORKFLOW = "weekly_digest"
+DIGEST_BATCH_CALLBACK = "reporter:on_digest_batch"
+DIGEST_MAX_TOKENS = 300          # HEADLINE, MARKETING and ACTION only (#82)
+
+
+def digest_fingerprint(base_prompt, readiness) -> str:
+    """The prompt's identity for the kept answer: the prompt without its DATA
+    STATE block (whose ages move by the hour), with the readiness verdict
+    and data state that block was built from."""
+    import hashlib
+    import json
+    r = readiness or {}
+    tail = json.dumps({"decision": r.get("decision"), "data_state": r.get("data_state")}, sort_keys=True,
+                      default=str)
+    return hashlib.sha256((str(base_prompt) + "\n" + tail).encode("utf-8")).hexdigest()[:32]
+
+
+def digest_request(prompt, route=None) -> dict:
+    """The digest's request on `route` — sent now or carried by a batch item."""
+    from ai_utils import model_for
+    kw = dict(model=model_for("reporter"), max_tokens=DIGEST_MAX_TOKENS,
+              messages=[{"role": "user", "content": prompt}])
+    return route.apply(kw) if route is not None else kw
+
+
+class _KeptAnswer:
+    """A stored answer, read like the message it came from (extract_text,
+    stop_reason, mark_outcome's call id)."""
+
+    def __init__(self, text, stop_reason=None, call_id=None):
+        class _Block:
+            type = "text"
+
+            def __init__(self, t):
+                self.text = t
+        self.content = [_Block(text or "")]
+        self.stop_reason = stop_reason
+        self._cavnar_call_id = call_id
+
+
+def _digest_kept(restaurant_id, fingerprint) -> dict:
+    """{"parsed"?, "raw"?, "stop_reason", "call_id"} kept for this prompt
+    within DIGEST_KEEP_HOURS, or {}. Never raises."""
+    import json
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT raw_text, stop_reason, call_id, parsed_json FROM digest_summaries "
+                               "WHERE restaurant_id=? AND fingerprint=? AND created_at >= datetime('now', ?)",
+                               (restaurant_id, fingerprint, f"-{DIGEST_KEEP_HOURS} hours")).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("digest summary not read for %s: %s", restaurant_id, e)
+        return {}
+    if not row:
+        return {}
+    out = {"raw": row["raw_text"], "stop_reason": row["stop_reason"], "call_id": row["call_id"], "parsed": None}
+    if row["parsed_json"]:
+        try:
+            out["parsed"] = json.loads(row["parsed_json"])
+        except ValueError:
+            pass
+    return out
+
+
+def _digest_keep(restaurant_id, fingerprint, raw=None, stop_reason=None, call_id=None, parsed=None, source=None):
+    """Keep the week's answer (the batch's raw text, or the checked summary).
+    Rows past DIGEST_KEEP_PRUNE_DAYS are pruned on the way. Never raises."""
+    import json
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            if parsed is not None:
+                # A row past the keep window is this prompt's old answer:
+                # replaced whole, so the summary just checked is kept a day.
+                conn.execute("DELETE FROM digest_summaries WHERE restaurant_id=? AND fingerprint=? "
+                             "AND created_at < datetime('now', ?)",
+                             (restaurant_id, fingerprint, f"-{DIGEST_KEEP_HOURS} hours"))
+                conn.execute(
+                    "INSERT INTO digest_summaries (restaurant_id, fingerprint, parsed_json, source) VALUES (?,?,?,?) "
+                    "ON CONFLICT(restaurant_id, fingerprint) DO UPDATE SET parsed_json=excluded.parsed_json, "
+                    "source=COALESCE(digest_summaries.source, excluded.source)",
+                    (restaurant_id, fingerprint, json.dumps(parsed, default=str), source))
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO digest_summaries (restaurant_id, fingerprint, raw_text, stop_reason, "
+                    "call_id, source) VALUES (?,?,?,?,?,?)",
+                    (restaurant_id, fingerprint, raw, stop_reason, call_id, source))
+            conn.execute("DELETE FROM digest_summaries WHERE created_at < datetime('now', ?)",
+                         (f"-{DIGEST_KEEP_PRUNE_DAYS} days",))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("digest summary not kept for %s: %s", restaurant_id, e)
+
+
+def _digest_custom_id(restaurant_id, fingerprint):
+    return f"dg-{int(restaurant_id)}-{fingerprint[:24]}"
+
+
+def _submit_digest_batch(restaurant_id, fingerprint, prompt, readiness) -> str:
+    """The week's prompt as one batch item, cut off at the send. Returns
+    ai_batches' word for it ("submitted", "duplicate", "disabled"...)."""
+    try:
+        from datetime import datetime, timedelta, timezone
+        import ai_batches
+        import ai_orchestrator
+        import ai_workflows as wf
+        from models import get_restaurant
+        from time_utils import restaurant_now, restaurant_tz
+        restaurant = get_restaurant(restaurant_id)
+        local = restaurant_now(restaurant, naive=True)
+        send_local = local.replace(hour=DIGEST_SEND_HOUR, minute=0, second=0, microsecond=0)
+        cutoff = (send_local.replace(tzinfo=restaurant_tz(restaurant)).astimezone(timezone.utc)
+                  .replace(tzinfo=None))
+        if cutoff <= datetime.utcnow() + timedelta(minutes=30):
+            return "too_late"
+        run_id = ai_orchestrator.new_run_id(DIGEST_BATCH_WORKFLOW)
+        cid = _digest_custom_id(restaurant_id, fingerprint)
+        out = ai_batches.submit(DIGEST_BATCH_WORKFLOW, [{
+            "custom_id": cid, "restaurant_id": restaurant_id, "action": "weekly_digest",
+            "request": digest_request(prompt, wf.route_for(wf.policy(DIGEST_BATCH_WORKFLOW), 0)),
+            "readiness": readiness, "callback": DIGEST_BATCH_CALLBACK, "correlation_id": run_id,
+            "cutoff_at": cutoff, "context": {"fingerprint": fingerprint, "run_id": run_id}}])
+        return out.get(cid) or "submit_failed"
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="digest_precompute", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+        return "submit_failed"
+
+
+def _cancel_digest_batch(restaurant_id, fingerprint):
+    """The send writes the summary now: an item for this prompt still out is
+    cancelled (its answer, if it lands, is ledgered and dropped). Never raises."""
+    try:
+        import ai_batches
+        ai_batches.cancel(DIGEST_BATCH_WORKFLOW, _digest_custom_id(restaurant_id, fingerprint))
+    except Exception as e:
+        log.warning("digest batch not cancelled for %s: %s", restaurant_id, e)
+
+
+def on_digest_batch(item, message=None, error=None):
+    """ai_batches' callback for the night's digest narrative: the answer is
+    the run's one rung (ai_orchestrator.generate under the run id the item
+    was sent with) and is kept, raw, for the send to judge. Nothing came
+    back (errored, expired, past the send, a gate refused it): nothing is
+    kept, and the send writes the summary itself."""
+    rid = (item or {}).get("restaurant_id")
+    ctx = (item or {}).get("context") or {}
+    if not rid or not ctx.get("fingerprint") or message is None or error is not None:
+        return
+    import ai_orchestrator
+    from ai_utils import extract_text
+    msg = ai_orchestrator.generate(DIGEST_BATCH_WORKFLOW, rid, lambda route, notes: message,
+                                   subject="weekly_digest", unattended=True, run_id=ctx.get("run_id")).result
+    _digest_keep(rid, ctx["fingerprint"], raw=extract_text(msg).strip(), stop_reason=getattr(msg, "stop_reason", None),
+                 call_id=getattr(msg, "_cavnar_call_id", None) or (item or {}).get("call_id"), source="batch")
+
+
+def run_digest_precompute(now=None):
+    """Hourly: for each restaurant whose digest goes out today (its owner's
+    digest day, the send's own selection), from DIGEST_PRECOMPUTE_FROM_HOUR
+    to the 9am send in its own timezone, once a day: the week's report is
+    built as the send builds it and its narrative sent as a Message Batches
+    item (generate_ai_digest_summary(precompute=True)). Only where batches
+    may run (ai_batches.enabled; never a local backend). Bounded by
+    DIGEST_PRECOMPUTE_MAX_SECONDS; a restaurant not reached keeps its day,
+    and the send writes its summary itself. Returns {attempted, ok, failed,
+    skipped, hit_bound, submitted}."""
+    import time as _time
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "submitted": 0}
+    try:
+        import ai_batches
+        if not ai_batches.enabled(DIGEST_BATCH_WORKFLOW):
+            return dict(counts, reason="Message Batches are not enabled here for the weekly digest")
+    except Exception:
+        return counts
+    import ops
+    import emails as _em
+    from models import get_restaurants_for_digest, get_restaurant
+    from time_utils import restaurant_now
+    from zoneinfo import ZoneInfo
+    chi = now or datetime.now(ZoneInfo("America/Chicago"))
+    seen, started = set(), _time.monotonic()
+    for row in get_restaurants_for_digest(chi.strftime("%A").lower()) or []:
+        rid = row["id"]
+        if rid in seen:
+            continue
+        seen.add(rid)
+        if _time.monotonic() - started > DIGEST_PRECOMPUTE_MAX_SECONDS:
+            counts["hit_bound"] = True
+            break
+        restaurant = get_restaurant(rid)
+        if not restaurant:
+            continue
+        local = restaurant_now(restaurant, naive=True)
+        if not (DIGEST_PRECOMPUTE_FROM_HOUR <= local.hour < DIGEST_SEND_HOUR):
+            continue
+        if not ops.claim_period(f"digest_precompute:{rid}", local.date().isoformat()):
+            continue
+        counts["attempted"] += 1
+        try:
+            report = build_report_from_db(rid, restaurant.name, days=7)
+            if not digest_has_data(restaurant, report):
+                counts["skipped"] += 1
+                counts["attempted"] -= 1
+                continue
+            out = generate_ai_digest_summary(report, restaurant.name, _em.greeting_name(restaurant),
+                                             restaurant_id=rid, precompute=True)
+            counts["ok"] += 1
+            if (out or {}).get("_precompute") == ai_batches.SUBMITTED:
+                counts["submitted"] += 1
+        except Exception as e:
+            counts["failed"] += 1
+            ops.capture(e, job="digest_precompute", context=f"restaurant_id={rid}")
+    return counts
+
+
+def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaurant_id=None, precompute=False):
+    """Generate a short AI summary paragraph for the weekly digest.
+
+    AI cost audit 10/7/26: the REVIEWS, LABOR and INVENTORY lines restate
+    figures computed here, so they are written here (_templated_lines, #82)
+    — the model writes the HEADLINE, the ACTION and the MARKETING line. The
+    model's answer is kept per (restaurant, prompt fingerprint) for 24
+    hours (digest_summaries, #50): a preview or a resend of the same week
+    reuses it. `precompute` (run_digest_precompute, #61) builds the same
+    prompt the night before the send and sends it as a Message Batches item
+    instead of calling the model; the send then reads the answer that came
+    back, and calls the model itself only when none did (or the data moved
+    since, which is a new fingerprint). Returns {"_precompute": state} then."""
     try:
         import anthropic, os
         from ai_utils import create_with_retry, extract_text, get_client, model_for
@@ -499,7 +813,11 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                     labor_context += f", {len(ot_risk)} overtime risk"
                 _facts["labor"] = {"pct": float(lp), "direction": None,
                                    "from_pct": None, "weeks": 0,
-                                   "overtime_risk": len(ot_risk)}
+                                   "overtime_risk": len(ot_risk),
+                                   # The window the figure covers, for the
+                                   # templated LABOR line (#82).
+                                   "days": _days_lr if _dr_lr.get("end") and _days_lr else None,
+                                   "through": (_mdy(_dr_lr["end"]) if _dr_lr.get("end") and _days_lr else None)}
                 # Pull labor trend from history
                 try:
                     from models import get_conn as _gc_lr
@@ -591,7 +909,12 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 except Exception:
                     pass
                 if low:
-                    inventory_context += f", {low[0]} critically low"
+                    # A critical_low entry is the item's analysis row: its
+                    # name, never the dict's repr, which the prompt used to
+                    # carry ("{'item': 'Basil', 'stock': 0.0, …} critically low").
+                    _low = low[0].get("item") if isinstance(low[0], dict) else low[0]
+                    inventory_context += f", {_low} critically low"
+                    _facts["inventory"]["first_low"] = str(_low) if _low else None
                 if inventory_context:
                     inventory_context += "."
         except Exception:
@@ -922,13 +1245,19 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 for k in ("LABOR", "INVENTORY", "MARKETING")):
             return {"headline": DIGEST_NO_DATA_HEADLINE, "_no_data": True, "_data_gaps": module_gap_lines}
 
+        # The REVIEWS, LABOR and INVENTORY lines only restate figures this
+        # function computed (AI cost audit 10/7/26 #82): they are written
+        # here from those figures (_templated_lines) and the model is asked
+        # only for what needs judgement — the HEADLINE, the ACTION and the
+        # MARKETING line's angle. A shorter answer, and lines that cannot
+        # misstate a figure.
+        templated_keys = [k for k in required_lines if k in TEMPLATED_DIGEST_LINES]
+        model_lines = [k for k in required_lines if k not in TEMPLATED_DIGEST_LINES]
         module_instruction = f"""
 
-You MUST output exactly these lines and no others (plus HEADLINE and ACTION): {", ".join(required_lines) or "none"}.
-- REVIEWS: the rating picture, any multi-week trend that carries a stated confidence, and any urgent reviewer named in the data above
-- LABOR: state the labor % and whether it is trending up or down against prior weeks, using only the figures above
-- INVENTORY: whether waste improved or worsened against last week with the % change given above, and the top waste item named above
+You MUST output exactly these lines and no others (plus HEADLINE and ACTION): {", ".join(model_lines) or "none"}.
 - MARKETING: name the best-performing topic given above and say whether to push it further or change angle
+The REVIEWS, LABOR and INVENTORY lines are written for you from the figures above; do not write them.
 
 Every module NOT in that list is either switched off for this client or reported no data this week. Write NO line for it. Do not infer what it might have said, do not suggest what it might show, and do not refer to it at all. A module with no data is handled outside this summary — inventing a sentence for it would be inventing a fact about this restaurant's week."""
 
@@ -982,9 +1311,6 @@ Notable reviews:{specific_reviews}
 Respond in EXACTLY this structure, one item per line, label followed by a colon, nothing else on the line before the colon. Output ONLY the lines listed above as required (plus HEADLINE and ACTION):
 
 HEADLINE: one sentence — the single most important takeaway this week, addressed to the owner by name ("{greeting},")
-REVIEWS: one short sentence on review performance this week
-LABOR: one short sentence stating the labor % and whether it's trending up or down
-INVENTORY: one short sentence on waste cost and the top waste item
 MARKETING: one short sentence on best-performing content or a suggested content angle
 ACTION: one specific, concrete next step the owner should take this week
 
@@ -1016,19 +1342,41 @@ Rules:
                                        sources=_df_dig.sources_for(_dig_mods) or ("reviews",),
                                        include_not_connected=False)
         from ai_utils import with_data_state as _with_ds_dig
+        # The fingerprint (#50, #61): the prompt before its DATA STATE block,
+        # with the readiness verdict that block was built from — a source's
+        # age moving by the hours between the night's batch and the morning's
+        # send is the same week; a source turning stale is not.
+        _fp_dig = digest_fingerprint(prompt, _ready_dig)
         prompt = _with_ds_dig(prompt, _ready_dig)
+        _kept = _digest_kept(_rid_dg, _fp_dig)
+        if _kept.get("parsed") is not None:
+            # This week's summary, already written and checked within the
+            # last 24 hours (a preview, a resend): served as it was.
+            return _kept["parsed"]
+        if precompute:
+            # An answer already kept for this prompt needs no second item.
+            if _kept.get("raw") is not None:
+                return {"_precompute": "kept"}
+            return {"_precompute": _submit_digest_batch(_rid_dg, _fp_dig, prompt, _ready_dig)}
 
-        import ai_orchestrator
-        # On the orchestrator's rung (weekly_digest: T2, one call — AI cost
-        # audit 10/7/26, orchestration Phase 3); the checks below stand.
-        msg = ai_orchestrator.generate("weekly_digest", restaurant_id, lambda route, notes: create_with_retry(
-            client,
-            restaurant_id=restaurant_id,
-            action="weekly_digest",
-            readiness=_ready_dig,
-            **route.apply(dict(model=model_for("reporter"), max_tokens=500,
-                               messages=[{"role": "user", "content": prompt}])),
-        ), subject="weekly_digest").result
+        if _kept.get("raw") is not None:
+            # The answer the night's batch brought back for exactly this
+            # prompt (#61): judged below like a fresh one, at no call.
+            msg = _KeptAnswer(_kept["raw"], _kept.get("stop_reason"), _kept.get("call_id"))
+        else:
+            # The send is the batch's cutoff: an item still out is dropped.
+            _cancel_digest_batch(_rid_dg, _fp_dig)
+            import ai_orchestrator
+            # On the orchestrator's rung (weekly_digest: T2, one call — AI
+            # cost audit 10/7/26, orchestration Phase 3); the checks below
+            # stand.
+            msg = ai_orchestrator.generate("weekly_digest", restaurant_id, lambda route, notes: create_with_retry(
+                client,
+                restaurant_id=restaurant_id,
+                action="weekly_digest",
+                readiness=_ready_dig,
+                **route.apply(digest_request(prompt)),
+            ), subject="weekly_digest").result
         raw = extract_text(msg).strip()
         # Output problems raise AIOutputRejected (a ValueError): filed below
         # as AI-quality findings, not as a failing job (fix round G #58).
@@ -1042,6 +1390,10 @@ Rules:
             m = _re_rpt.match(r'^(HEADLINE|REVIEWS|LABOR|INVENTORY|MARKETING|ACTION):\s*(.+)$', line)
             if m:
                 parsed[m.group(1).lower()] = m.group(2).strip()
+        # The lines written here from the figures (#82): one the model wrote
+        # anyway is not read — the template stands in its place below.
+        for key in [k.lower() for k in TEMPLATED_DIGEST_LINES if k.lower() in parsed]:
+            parsed.pop(key)
         # "ACTION: none this week" is the prompt's allowed answer when
         # nothing supports a move — not a move to email.
         if _re_rpt.match(r"(?i)^none\b", parsed.get("action") or ""):
@@ -1097,7 +1449,7 @@ Rules:
         # instruction above was rewritten to prevent. Enforced here as well as
         # asked for, because a prompt rule is a request and this email goes
         # out with nobody reading it first.
-        _allowed = {k.lower() for k in required_lines} | {"headline", "action"}
+        _allowed = {k.lower() for k in model_lines} | {"headline", "action"}
         for key in [k for k in parsed if k not in _allowed]:
             print(f"[digest] dropped {key} line — that module reported no data this week")
             import ai_utils as _ai_q
@@ -1108,6 +1460,8 @@ Rules:
 
         if not parsed.get("headline"):
             raise _Rejected("weekly digest headline stated figures that were not in the data")
+        # The lines that only restate figures, written from them (#82).
+        parsed.update(_templated_lines(templated_keys, report, pos, neg, urgent_count, _facts, _rating_move))
         # Modules the client pays for that reported nothing. Deterministic
         # copy, never generated — see the module_instruction comment.
         if module_gap_lines:
@@ -1138,6 +1492,10 @@ Rules:
         _caveats = list(dict.fromkeys(c for k in parsed for c in _line_caveats.get(k, ())))
         if _caveats:
             parsed["_caveats"] = _caveats
+        # Kept for 24 hours against this prompt (#50): a preview or a resend
+        # of the same week serves it rather than writing it again.
+        _digest_keep(_rid_dg, _fp_dig, parsed=parsed,
+                     source="batch" if isinstance(msg, _KeptAnswer) else "sync")
         return parsed
     except Exception as e:
         import ai_utils as _ai_q

@@ -141,8 +141,15 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
     Facts: counts are counts, a rating a ★), for the Response Validation
     Layer the paragraph passes before it is sent (surface
     "email_personalise", unattended). A figure only `context` states is
-    still backed by it (the engine's hybrid mode)."""
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    still backed by it (the engine's hybrid mode).
+
+    `brief` (the report emails' one opening line above their stat row) is
+    the fallback, with no model call (AI cost audit 10/7/26 #83): asked for
+    one sentence over a row that already shows the figures, the model could
+    only restate them, and the validation layer then checked that it had
+    not changed them. The caller's fallback is that sentence, from the same
+    figures."""
+    if brief or not os.getenv("ANTHROPIC_API_KEY"):
         return fallback
 
     def _served_fallback(why, msg=None, outcome=None):
@@ -164,21 +171,13 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
     try:
         from ai_utils import create_with_retry, extract_text, get_client, model_for
         client = get_client()
-        # `brief` is for the report emails, which open on ONE line above a stat
-        # row that already shows the figures. Left on the default the model
-        # writes a 30-word run-up ("I wanted to share some really encouraging
-        # news...") and then recites the same numbers the table below is about
-        # to show, which is most of what made these read as generated.
-        shape = ("a single sentence of no more than 22 words"
-                 if brief else "a short, warm, genuine paragraph (2-4 sentences)")
+        shape = "a short, warm, genuine paragraph (2-4 sentences)"
         prompt = (
             f"You are Will, writing {shape} "
             "in a client email for a restaurant using the Cavnar AI dashboard. "
             "Write in first person as Will. No greeting ('Hi X') and no sign-off — "
             "just the text itself, it will be inserted into an existing email. "
             "Reference the specific data given below naturally, not as a list. "
-            + ("Open on the substance — no run-up like 'I wanted to share' or "
-               "'Great news'. State what happened, plainly. " if brief else "")
             # No peer claims (NS4 H1: "running ahead of most restaurants I
             # bring on" was emailed in Will's first person), and no
             # celebration where the data shows no activity (NS4 matrix).
@@ -3583,22 +3582,11 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             f"{restaurant_name} picked up {total} new review{'' if total == 1 else 's'} in "
             f"{month_name} at a {avg}★ average."
         )
-        modules_in_use = ", ".join(m for m, on in [
-            ("Review Intelligence", r_reviews), ("Labor Optimizer", r_labor),
-            ("Food Cost Control", r_inventory), ("Marketing Autopilot", r_marketing),
-        ] if on) or "Review Intelligence"
-        ai_context = (
-            f"Restaurant: {restaurant_name}. This is their {month_name} {year} monthly summary email.\n"
-            f"Modules in use: {modules_in_use}.\n"
-            + (f"Reviews this month: {total} total, {avg} star average, {pos} positive, {neg} negative.\n"
-               if total else "No new reviews this month.\n")
-            + "Write the opening line. The stat row directly above it already shows the "
-              "totals, so do not recite them all — lead with the one thing that matters most."
-        )
-        summary_paragraph = generate_email_personalization(
-            ai_context, fallback_paragraph, restaurant_id=restaurant_id, brief=True,
-            facts=_personalise_facts(**({"reviews.total": total, "reviews.rating": avg, "reviews.positive": pos,
-                                         "reviews.negative": neg} if total else {"reviews.total": 0})))
+        # The opening line over the stat row is the sentence above, from the
+        # same figures — no model call (AI cost audit 10/7/26 #83): asked
+        # for one sentence above a row that already shows the totals, the
+        # model could only restate them.
+        summary_paragraph = fallback_paragraph
 
         import rec_delivery
         with rec_delivery.collect() as shown:

@@ -334,6 +334,14 @@ JOBS = {
         cadence="hourly (9am local, the day after the draft)", sla_minutes=_H, sends=True, runnable=True,
         label="Auto-publish", description="Queue the unedited draft to publish with a two-hour undo",
         target=("scheduler", "run_auto_publish_schedules"), max_minutes=20),
+    "digest_precompute": dict(
+        # Submits only where Message Batches may (ai_batches.enabled: the
+        # production scheduler, weekly_digest listed). Sends nothing: the
+        # 9am weekly_digests pass reads what comes back, or writes it itself.
+        cadence="hourly (2am-9am local on each client's digest day)", sla_minutes=_H, sends=False,
+        runnable=True, label="Digest precompute",
+        description="Send each digest's narrative through Message Batches before the 9am send (half price)",
+        target=("reporter", "run_digest_precompute"), max_minutes=20, lane="ai"),
     "weekly_digests": dict(
         cadence="hourly (9am local on each client's digest day)", sla_minutes=_H, sends=True, runnable=True,
         label="Weekly digests", description="Email weekly digests (bounded, resumable, on the AI lane)",

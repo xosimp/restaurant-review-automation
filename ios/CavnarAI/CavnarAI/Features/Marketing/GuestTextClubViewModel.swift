@@ -352,6 +352,12 @@ final class GuestTextClubViewModel {
     private struct DraftBody: Encodable {
         let type: String
         let topic: String
+        /// Drafted as a job this screen polls (AI cost audit 10/7/26 #57).
+        var runAsJob: Bool = true
+        enum CodingKeys: String, CodingKey {
+            case type, topic
+            case runAsJob = "async"
+        }
     }
 
     private struct DraftResponse: Decodable {
@@ -393,10 +399,13 @@ final class GuestTextClubViewModel {
         campaignError = nil
         defer { isDrafting = false }
         do {
-            let response: DraftResponse = try await client.send(
+            // A job polled to its end; an older server's direct answer
+            // passes straight through (resolveAIJob).
+            let started: APIClient.AIJobAnswer<DraftResponse> = try await client.send(
                 "/mobile/api/guest-campaign/draft", method: .post,
                 body: DraftBody(type: campaignType, topic: campaignTopic)
             )
+            let response: DraftResponse = try await client.resolveAIJob(started)
             if response.ok, let message = response.message {
                 draftMessage = message
                 draftRef = response.draftRef

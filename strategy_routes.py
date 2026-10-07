@@ -757,6 +757,27 @@ def _do_invoice_scan(u):
     media_type = (f.mimetype or "").lower()
     if media_type == "image/jpg":
         media_type = "image/jpeg"
+    # A read is many seconds of Opus: a client that asks (`async`) gets a
+    # job to poll and the request thread back (AI cost audit 10/7/26 #57);
+    # an older app that does not ask is answered as before. The same file
+    # sent again joins the read already running.
+    import ai_async
+    if ai_async.wants_async():
+        try:
+            invoices.check_upload(data, media_type)
+        except invoices.InvoiceError as e:
+            return {"ok": False, "error": str(e)}, 400
+        import hashlib
+        job_id, joined = ai_async.start("invoice_scan", _rid(u), {"sha": hashlib.sha256(data).hexdigest()},
+                                        _invoice_scan_result, dict(u), data, media_type, by_user=u.get("id"))
+        return ai_async.started_answer(job_id, joined, "invoice_scan"), 202
+    return _invoice_scan_result(u, data, media_type)
+
+
+def _invoice_scan_result(u, data, media_type):
+    """The read, the trusted-supplier apply and the answer — what the scan
+    route answers, on the request thread or on the owner AI job pool."""
+    import invoices
     try:
         out = invoices.scan(_rid(u), data, media_type, user_id=u.get("id"))
         # Supplier memory (ordering.py): a supplier whose scans the owner
@@ -778,6 +799,15 @@ def _do_invoice_scan(u):
         ops.capture(e, job="invoice_scan", context=f"restaurant_id={_rid(u)}")
         return {"ok": False, "error": "The invoice couldn't be read right now. Try again shortly."}, 502
     return {"ok": True, "invoice": out}, 200
+
+
+def _do_ai_job(u, job_id):
+    """A poll of an owner AI job (ai_async, AI cost audit 10/7/26 #57): the
+    invoice read, the recipe-card read, the Campaign Studio's drafts.
+    Pending, or exactly what the synchronous route would have answered,
+    status code included."""
+    import ai_async
+    return ai_async.result(job_id, _rid(u), user=u)
 
 
 def _do_invoice_list(u):
@@ -4514,6 +4544,26 @@ def _do_recipe_scan(u):
     media_type = (f.mimetype or "").lower()
     if media_type == "image/jpg":
         media_type = "image/jpeg"
+    # As the invoice read (AI cost audit 10/7/26 #57): a job to poll when
+    # the client asks, the old synchronous answer when it does not.
+    import ai_async
+    if ai_async.wants_async():
+        import invoices
+        try:
+            invoices.check_upload(data, media_type)
+        except invoices.InvoiceError as e:
+            return {"ok": False, "error": str(e)}, 400
+        import hashlib
+        job_id, joined = ai_async.start("recipe_scan", _rid(u), {"sha": hashlib.sha256(data).hexdigest()},
+                                        _recipe_scan_result, dict(u), data, media_type, by_user=u.get("id"))
+        return ai_async.started_answer(job_id, joined, "recipe_scan"), 202
+    return _recipe_scan_result(u, data, media_type)
+
+
+def _recipe_scan_result(u, data, media_type):
+    """The card read and the answer — on the request thread or the owner
+    AI job pool."""
+    import recipes
     try:
         draft = recipes.extract_from_image(_rid(u), data, media_type, user_id=u.get("id"))
     except (recipes.RecipePhotoError, ValueError) as e:
@@ -5471,7 +5521,8 @@ def _idempotent(body, route):
     on iOS, so tapping Scan again after a timeout no longer pays for a
     second model read of the same invoice (CLIENT-21). A request still in
     flight is answered 409 rather than started twice; a failure (5xx) is
-    not remembered, so a real retry runs."""
+    not remembered, so a real retry runs; nor is a job started for the
+    client to poll (ai_async)."""
     import json as _json
 
     def wrapped(u, **kw):
@@ -5503,7 +5554,12 @@ def _idempotent(body, route):
         except BaseException:
             _forget(rid, route, key)
             raise
-        if status >= 500:
+        # A job started for the client to poll (ai_async, AI cost audit
+        # 10/7/26 #57) is not remembered: the job store joins a repeat of
+        # the same file while it runs, and once it has finished a repeat
+        # must be able to run again — a stored job id would hand back a
+        # failed read for a week.
+        if status >= 500 or (isinstance(payload, dict) and payload.get("async")):
             _forget(rid, route, key)
         else:
             conn = get_conn()
@@ -6671,6 +6727,8 @@ _ROUTES = [
     ("/food-cost/invoices", ["GET"], _do_invoice_list, "invoice_list"),
     ("/food-cost/invoices", ["POST"], _idempotent(_do_invoice_scan, "invoice_scan"), "invoice_scan"),
     ("/food-cost/invoices/<int:import_id>", ["GET"], _do_invoice_get, "invoice_get"),
+    # A poll of an owner AI job (ai_async, AI cost audit 10/7/26 #57).
+    ("/ai-jobs/<job_id>", ["GET"], _do_ai_job, "ai_job_status"),
     ("/food-cost/invoices/<int:import_id>/apply", ["POST"], _do_invoice_apply, "invoice_apply"),
     ("/actions", ["GET"], _do_actions, "actions_list"),
     ("/actions/snooze", ["POST"], _do_action_snooze, "actions_snooze"),

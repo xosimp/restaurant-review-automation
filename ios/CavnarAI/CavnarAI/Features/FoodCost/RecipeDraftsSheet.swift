@@ -197,8 +197,12 @@ final class RecipeDraftsViewModel {
                 errorMessage = "That photo couldn't be read. Try another."
                 return
             }
-            let r: ScanResponse = try await client.upload("/mobile/api/food-cost/recipes/scan",
-                                                          fileData: jpeg, filename: "recipe.jpg", mimeType: "image/jpeg")
+            // A job this screen polls (`async`, AI cost audit 10/7/26 #57);
+            // an older server's direct answer passes straight through.
+            let started: APIClient.AIJobAnswer<ScanResponse> = try await client.upload(
+                "/mobile/api/food-cost/recipes/scan", fileData: jpeg, filename: "recipe.jpg",
+                mimeType: "image/jpeg", query: ["async": "1"])
+            let r: ScanResponse = try await client.resolveAIJob(started)
             guard r.ok, let d = r.draft else {
                 errorMessage = r.error ?? "The card couldn't be read."
                 return

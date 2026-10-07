@@ -1035,10 +1035,15 @@ def run_weekly_plan(db_path=DB_PATH):
 def run_recipe_drafts(db_path=DB_PATH):
     """Tuesday 5am local, after the nightly depletion has created any new
     menu items: draft recipes for dishes that have none (recipes.py), a
-    bounded number per restaurant per week. Only where Food Cost is on."""
+    bounded number per restaurant per week. Only where Food Cost is on.
+
+    The drafts go through Message Batches where they may (recipes.
+    draft_missing(batch=True), AI cost audit 10/7/26 #60): nobody waits on
+    them, so they are written at half price within the hour and stored when
+    the collector hands them back; `batched` counts the dishes sent."""
     import ops, recipes
     from time_utils import restaurant_now
-    drafted, attempted, failed = 0, 0, 0
+    drafted, attempted, failed, batched = 0, 0, 0, 0
     walk = _BoundedWalk("recipe_drafts", _restaurants(db_path), db_path, RECIPE_DRAFTS_MAX_SECONDS)
     for r in walk:
         if not getattr(r, "module_inventory", 0):
@@ -1050,11 +1055,14 @@ def run_recipe_drafts(db_path=DB_PATH):
             continue
         attempted += 1
         try:
-            drafted += recipes.draft_missing(r.id, db_path=db_path).get("drafted", 0)
+            out = recipes.draft_missing(r.id, db_path=db_path, batch=True)
+            drafted += out.get("drafted", 0)
+            batched += out.get("batched", 0)
         except Exception as e:
             failed += 1
             ops.capture(e, job="recipe_drafts", context=f"restaurant_id={r.id}")
-    return _counts(attempted, attempted - failed, failed, hit_bound=walk.hit_bound, drafted=drafted)
+    return _counts(attempted, attempted - failed, failed, hit_bound=walk.hit_bound, drafted=drafted,
+                   batched=batched)
 
 
 def run_issue_scan(db_path=DB_PATH, local_hour=None):
@@ -2823,8 +2831,13 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
             drafted = {} if ignored >= QUIET_NIGHT_IGNORED_LIMIT else _draft_quiet_night_fill(r, out, db_path)
             body = (f"About ${out['typical_sales']:,.0f}, {out['below_average_pct']:.0f}% under a "
                     f"typical day across {out['samples']} of them. ")
+            # A post sent to Message Batches (#62) is in the drafts within
+            # the hour, not yet: said so.
             body += (f"A post is drafted, and Marketing's Fill {out['weekday']} card writes the guest text."
-                     if drafted else
+                     if drafted.get("post_draft_id") else
+                     f"A post is being drafted for your approval, and Marketing's Fill {out['weekday']} card "
+                     f"writes the guest text."
+                     if drafted.get("post_draft_queued") else
                      f"Two days to do something about it: Marketing's Fill {out['weekday']} card writes the text.")
             # Its measured confidence and the date the sales run through,
             # on the push itself (T1).
@@ -2846,7 +2859,7 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
                 f"{out['weekday']} is usually your quietest night", body,
                 # It opens Marketing, where the post and the night's card are
                 # (it used to open Ask on "What could fill …?").
-                data={"nav": "marketing", **drafted,
+                data={"nav": "marketing", **{k: v for k, v in drafted.items() if k == "post_draft_id"},
                       "alert_id": alert_id, "surface": "alert_push", "answerable": ans,
                       **({"rec_key": rec["key"]} if ans else {})},
                 db_path=db_path, user_ids=audience,
@@ -2992,11 +3005,25 @@ def _draft_quiet_night_fill(r, out, db_path):
     Campaign Studio with the text channel, the audience and the target day
     set - the fill-a-night plan (guest_marketing.plan_campaign), measured by
     the slow-day tracker. The post stays a draft here: it has a real publish
-    path from the Content tab."""
-    import ops
-    saved = {}
+    path from the Content tab.
+
+    The night is two days out and the post waits for the owner's approval
+    anyway, so it goes through Message Batches where it may (AI cost audit
+    10/7/26 #62): {"post_draft_queued": True} — the draft is saved when the
+    collector hands the answer back (on_quiet_night_post), or written
+    synchronously if the batch cannot answer by QUIET_NIGHT_BATCH_CUTOFF_HOURS."""
     weekday = out.get("weekday") or "the quiet night"
     topic = f"{weekday}{_QN_POST_SUFFIX}"
+    if _submit_quiet_night_post(r, topic):
+        return {"post_draft_queued": True}
+    return _quiet_night_post_now(r, topic)
+
+
+def _quiet_night_post_now(r, topic):
+    """The quiet night's post written and saved as a draft now:
+    {"post_draft_id"} when it was saved, {} if not."""
+    import ops
+    saved = {}
     try:
         import marketing, marketing_drafts
         # The topic is ours, not the owner's: nothing in it is an offer
@@ -3009,6 +3036,80 @@ def _draft_quiet_night_fill(r, out, db_path):
     except Exception as e:
         ops.capture(e, job="quiet_night_post", context=f"restaurant_id={r.id}")
     return saved
+
+
+# The quiet-night post through Message Batches (AI cost audit 10/7/26 #62).
+# An owner's own post (the Content tab, the Campaign Studio) is written now.
+QUIET_NIGHT_BATCH_WORKFLOW = "quiet_night_post"
+QUIET_NIGHT_BATCH_CALLBACK = "strategy_jobs:on_quiet_night_post"
+QUIET_NIGHT_BATCH_CUTOFF_HOURS = 6
+
+
+def _submit_quiet_night_post(r, topic) -> bool:
+    """The post's request sent as one batch item (the prompt built now, as
+    the synchronous draft would build it). True when it went — or a gate
+    refused it, which the synchronous call would have too; False when it
+    must be written now (batches off here, the submit failed). Never raises."""
+    try:
+        import ai_batches
+        if not ai_batches.enabled(QUIET_NIGHT_BATCH_WORKFLOW):
+            return False
+        from datetime import datetime, timedelta
+        import ai_orchestrator
+        import ai_workflows as wf
+        import data_health
+        import marketing
+        state = marketing.content_prompt("instagram_post", topic, restaurant_id=r.id, topic_is_owner=False)
+        run_id = ai_orchestrator.new_run_id("marketing_content")
+        cid = f"qn-{int(r.id)}-{uuid.uuid4().hex[:12]}"
+        res = ai_batches.submit(QUIET_NIGHT_BATCH_WORKFLOW, [{
+            "custom_id": cid, "restaurant_id": r.id, "action": "marketing_content",
+            "request": marketing.social_post_request(state["prompt"],
+                                                     wf.route_for(wf.policy("marketing_content"), 0)),
+            "readiness": data_health.NOT_APPLICABLE, "callback": QUIET_NIGHT_BATCH_CALLBACK,
+            "correlation_id": run_id,
+            "cutoff_at": datetime.utcnow() + timedelta(hours=QUIET_NIGHT_BATCH_CUTOFF_HOURS),
+            "context": {"topic": topic, "state": state, "run_id": run_id}}])
+        return res.get(cid) in (ai_batches.SUBMITTED, ai_batches.BLOCKED)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="quiet_night_post", context=f"restaurant_id={r.id} batch submit")
+        return False
+
+
+def on_quiet_night_post(item, message=None, error=None):
+    """ai_batches' callback for the quiet night's post. The answer is the
+    marketing_content run's first rung (marketing.generate_content with the
+    prompt it was sent with); a refusal by the public-copy check escalates
+    now, as it would have synchronously; the draft is saved as the
+    synchronous path saves it. No answer (errored, expired, past the
+    cutoff) writes the post now; a gate's refusal saves nothing."""
+    import ai_batches
+    import ops
+    rid = (item or {}).get("restaurant_id")
+    ctx = (item or {}).get("context") or {}
+    topic = ctx.get("topic")
+    if not rid or not topic:
+        return
+    if error is not None and not isinstance(error, ai_batches.BatchItemFailed):
+        return
+    from models import get_restaurant
+    r = get_restaurant(rid)
+    if r is None or not getattr(r, "module_marketing", 0):
+        return
+    if error is not None:
+        _quiet_night_post_now(r, topic)
+        return
+    try:
+        import marketing, marketing_drafts
+        body = marketing.generate_content("instagram_post", topic, restaurant_id=rid, topic_is_owner=False,
+                                          first=message, run_id=ctx.get("run_id"), state=ctx.get("state"))
+        if body and body.strip():
+            marketing_drafts.save_draft(rid, body.strip(), content_type="instagram_post", topic=topic)
+    except Exception as e:
+        # A second refusal (MarketingCopyRejected) is already a quality
+        # event; nothing is saved, as the synchronous draft would save none.
+        ops.capture(e, job="quiet_night_post", context=f"restaurant_id={rid} (batch)")
 
 
 def run_trusted_orders(db_path=DB_PATH):

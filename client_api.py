@@ -3708,6 +3708,32 @@ def _mkt_forecast(reach_vals, diff_pct, rid=None, week_sum=None):
     return line, shown_last
 
 
+def mkt_read_line1(greeting, feed_lines):
+    """The marketing read's first line when the Opportunity Feed has cards
+    (AI cost audit 10/7/26 #80): "<greeting> this week's biggest opportunity:
+    <the first card's title>." — the card the owner reads directly above the
+    brief, named by the code that ranked it. None with no cards (the model
+    writes line 1 from the calendar and the brand, as before)."""
+    if not feed_lines:
+        return None
+    first = feed_lines[0] or {}
+    title = str(first.get("title") or str(first.get("line") or "").partition(" — ")[0]).strip().rstrip(".")
+    if not title:
+        return None
+    return f"{greeting} this week's biggest opportunity: {title}."
+
+
+def mkt_with_line1(raw, line1):
+    """The model's two recommendations under the templated first line: any
+    opening the model wrote anyway (a greeting line before "1.") is dropped."""
+    lines = [ln for ln in str(raw or "").strip().split("\n")]
+    for i, ln in enumerate(lines):
+        if re.match(r"^\s*1[.)]\s", ln):
+            return line1 + "\n\n" + "\n".join(lines[i:]).strip()
+    body = "\n".join(lines).strip()
+    return line1 + ("\n\n" + body if body else "")
+
+
 def _do_mkt_insight(rid, raw=False):
     """Shared by the web route above and mobile_api.py. raw=True skips
     format_insight_html(), for a client that renders its own layout.
@@ -3909,13 +3935,17 @@ def _do_mkt_insight(rid, raw=False):
         except Exception:
             _feed_m = []
         feed_clause = ""
+        # Line 1 names the feed's first card — a fact the code already has,
+        # so it is written here rather than asked of the model (AI cost audit
+        # 10/7/26 #80): the model writes the two recommendations only.
+        _line1_m = mkt_read_line1(greeting, _feed_m)
         if _feed_m:
             feed_clause = ("\n\nWhat Cavnar AI measured for this week, in order (the owner sees these as cards "
                            "above this brief; every figure in them is measured):\n"
                            + "\n".join(f"- {c['line']}" for c in _feed_m)
-                           + "\nLine 1 names the first of these as this week's biggest opportunity. The two "
-                             "recommendations add to them (an angle, a dish, a post for one of them) and never "
-                             "contradict them or put something else ahead of them.")
+                           + "\nThe brief's first line is written for you and names the first of these as this "
+                             "week's biggest opportunity. The two recommendations add to them (an angle, a dish, a "
+                             "post for one of them) and never contradict them or put something else ahead of them.")
         # Inputs this read never had: the feed's cards bring sales (a slow
         # night, a category) and the guest list (an idle list) when they
         # carry them.
@@ -3924,6 +3954,10 @@ def _do_mkt_insight(rid, raw=False):
             _missing_m.remove("sales")
         if any(c.get("kind") == "list_idle" for c in _feed_m):
             _missing_m.remove("guests")
+        _shape_line1_m = ("" if _line1_m else
+                          f'Line 1: "{greeting}" followed by ONE sentence, 20 words maximum, naming the single\n'
+                          "biggest marketing opportunity this week. This line is read on its own on a\n"
+                          "small screen — it has to stand alone.\n\nThen a blank line, then ")
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
 Today: {today_m}
 
@@ -3938,11 +3972,7 @@ Recent content already generated (do NOT repeat these): {recent_str}.{perf_claus
 
 Return EXACTLY this shape and nothing else:
 
-Line 1: "{greeting}" followed by ONE sentence, 20 words maximum, naming the single
-biggest marketing opportunity this week. This line is read on its own on a
-small screen — it has to stand alone.
-
-Then a blank line, then 2 recommendations, numbered "1." and "2.", each ONE
+{_shape_line1_m}2 recommendations, numbered "1." and "2.", each ONE
 sentence of 15 words or less. Each is a concrete thing to post or do, with a
 specific angle — reference a real menu item or a named holiday where it fits.
 No preamble on them, no closing encouragement, no sign-off.{forecast_instruction}
@@ -4059,6 +4089,8 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
                                    messages=[{"role": "user", "content": prompt + _orch_m.notes_block(notes)}])),
             )
             _raw = extract_text(_msg).strip()
+            if _line1_m:
+                _raw = mkt_with_line1(_raw, _line1_m)
             _read, _checked = _mkt_read(_raw)
             _why = None
             if getattr(_msg, "stop_reason", None) in ("refusal", "max_tokens"):
@@ -4686,7 +4718,8 @@ def food_cost_waste_trend(current_user):
     except Exception as e:
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
-def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False, user_id=None):
+def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False, user_id=None,
+                         rate_checked=False):
     """Write one marketing post — the one body behind /api/generate-content
     and /mobile/api/marketing/generate-content. The two had drifted: the web
     answered a rate limit with 200 and no `ok`, the phone a failed model call
@@ -4695,7 +4728,9 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
     502/503/422 from ai_utils.user_facing_error)."""
     from marketing import generate_content, mark_calendar_idea_used, MarketingCopyRejected
     from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"gencontent:{restaurant_id}", max_calls=8, window_secs=60):
+    # `rate_checked`: a job started for the client to poll was counted on
+    # the request thread (generate_content_answer) — counted once.
+    if not rate_checked and ai_rate_limited(f"gencontent:{restaurant_id}", max_calls=8, window_secs=60):
         return {"ok": False, "content": "",
                 "error": "Too many requests — please wait a moment and try again."}, 429
     content_type = content_type or "instagram_post"
@@ -4736,13 +4771,33 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
             "draft_ref": getattr(result, "draft_ref", None)}, 200
 
 
+def generate_content_answer(current_user, data):
+    """(payload, status) for /api/generate-content and its mobile twin: the
+    post written now, or — when the client asks (`async`, the Campaign
+    Studio's social channel) — a job to poll on the owner AI job pool
+    (ai_async, AI cost audit 10/7/26 #57). The rate limit is counted here,
+    on the request thread, either way."""
+    rid = current_user["restaurant_id"]
+    import ai_async
+    if not ai_async.wants_async():
+        return _do_generate_content(rid, data.get("type"), data.get("topic"),
+                                    from_calendar=bool(data.get("from_calendar")), user_id=current_user.get("id"))
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"gencontent:{rid}", max_calls=8, window_secs=60):
+        return {"ok": False, "content": "",
+                "error": "Too many requests — please wait a moment and try again."}, 429
+    key = {"type": data.get("type"), "topic": data.get("topic"), "from_calendar": bool(data.get("from_calendar"))}
+    job_id, joined = ai_async.start("campaign_post", rid, key, _do_generate_content, rid, data.get("type"),
+                                    data.get("topic"), from_calendar=bool(data.get("from_calendar")),
+                                    user_id=current_user.get("id"), rate_checked=True, by_user=current_user.get("id"))
+    return ai_async.started_answer(job_id, joined, "campaign_post"), 202
+
+
 @client_bp.route("/api/generate-content", methods=["POST"])
 @login_required
 def gen_content(current_user):
     data = request.get_json(silent=True) or {}
-    payload, status = _do_generate_content(current_user["restaurant_id"], data.get("type"),
-                                           data.get("topic"), from_calendar=bool(data.get("from_calendar")),
-                                           user_id=current_user.get("id"))
+    payload, status = generate_content_answer(current_user, data)
     return jsonify(**payload), status
 
 

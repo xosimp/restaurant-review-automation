@@ -829,11 +829,21 @@ def test_the_marketing_brief_is_written_from_the_feeds_cards(db, monkeypatch):
     monkeypatch.setattr(ai_utils, "extract_text",
                         lambda m: f"Hi, fill {SLOW} this week.\n\n1. Post a {SLOW} dinner photo.\n2. Text the club.")
     monkeypatch.setattr(client_api, "_insight_cache", {})
-    client_api._do_mkt_insight(rid, raw=True)
+    out, _status = client_api._do_mkt_insight(rid, raw=True)
     prompt = seen["messages"][0]["content"]
     card = mo.context_lines(rid)[0]
+    # The first line is the code's, naming the first card; the model's own
+    # opening line is dropped (AI cost audit 10/7/26 #80).
+    first = out["insight"].split("\n")[0]
+    assert first == client_api.mkt_read_line1("Hi,", [card]) or first.endswith(
+        "this week's biggest opportunity: " + card["line"].partition(" — ")[0] + ".")
+    assert f"Hi, fill {SLOW} this week." not in out["insight"]
     assert card["key"] == f"slow_day:{SLOW}" and f"- {card['line']}" in prompt
-    assert "Line 1 names the first of these as this week's biggest opportunity" in prompt
+    # Line 1 is written in Python from the first card since AI cost audit
+    # 10/7/26 #80 (client_api.mkt_read_line1); the model is told so and
+    # writes the two recommendations.
+    assert "The brief's first line is written for you and names the first of these" in prompt
+    assert 'Line 1: "' not in prompt
     src = open("client_api.py", encoding="utf-8").read()
     assert '{"missing_inputs": _missing_m}' in src and '_missing_m.remove("sales")' in src
 

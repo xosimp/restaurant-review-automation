@@ -49,7 +49,7 @@ from dataclasses import dataclass, field, replace
 # Bumped when any default below changes: every ai_runs row records the policy
 # version it ran under, so the learner never compares runs across a change it
 # cannot see.
-POLICY_VERSION = "2026-10-07.2"
+POLICY_VERSION = "2026-10-07.3"
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
@@ -206,8 +206,10 @@ POLICIES = {p.workflow: p for p in (
        note="4-5 stars with no complaint start on T1; 3 stars or less, or a flagged review, on T2"),
     # ── marketing ───────────────────────────────────────────────────────
     _p("marketing_content", "marketing", "marketing", ladder=("T2", "T3"),
-       escalate_on=_ESC_COPY, max_escalations=1, reviewer="owner", shadow_rate=0.1,
-       caps=Caps(calls=3, usd=0.10, seconds=60), context=("profile", "owner_rules", "events", "memory")),
+       escalate_on=_ESC_COPY, max_escalations=1, reviewer="owner", shadow_rate=0.1, batch=True,
+       caps=Caps(calls=3, usd=0.10, seconds=60), context=("profile", "owner_rules", "events", "memory"),
+       note="the scheduled quiet-night post batches (ai_batches 'quiet_night_post', AI cost audit 10/7/26 "
+            "#62); a post the owner asks for never does"),
     _p("content_calendar", "marketing", "marketing", ladder=("T2", "T3"),
        escalate_on=_ESC_COPY, max_escalations=1, reviewer="owner",
        caps=Caps(calls=3, usd=0.15, seconds=90), context=("profile", "owner_rules", "events", "memory")),

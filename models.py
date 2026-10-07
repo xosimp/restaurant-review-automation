@@ -1596,6 +1596,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # draft's own lines_json (audit #41: suggested vs chosen).
         ("recipe_drafts", "accepted_lines_json", "TEXT"),
         ("recipe_drafts", "edited_lines", "INTEGER"),
+        # The sha256 of a photographed recipe card (AI cost audit 10/7/26
+        # #87): the same photo sent again opens the draft it already made,
+        # as an invoice scan's image_sha does, instead of paying to read it
+        # twice. NULL on a drafted (not photographed) recipe.
+        ("recipe_drafts", "image_sha", "TEXT"),
         # Supplier orders (audit #41): who sent it ('owner' or 'automatic'),
         # the draft it was built from, and whether the sent lines differ.
         # Order trust counts only owner-sent, unedited orders.
@@ -2343,6 +2348,23 @@ def init_db(db_path: str = DB_PATH):
         "UPDATE restaurants SET temp_password=NULL WHERE temp_password IS NOT NULL AND temp_password != ''",
         "ALTER TABLE restaurants ADD COLUMN weekly_plan_enabled INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN send_delay_minutes INTEGER DEFAULT 0",
+        # The weekly digest's model answer per (restaurant, prompt
+        # fingerprint), kept 24 hours (reporter.digest_fingerprint, AI cost
+        # audit 10/7/26 #50, #61): the raw answer a Message Batches item
+        # brought back the night before the send, and the checked summary,
+        # so a preview or a resend of the same week serves it. Pruned on
+        # write past 3 days (reporter._digest_keep).
+        """CREATE TABLE IF NOT EXISTS digest_summaries (
+            restaurant_id  INTEGER NOT NULL,
+            fingerprint    TEXT    NOT NULL,
+            raw_text       TEXT,
+            stop_reason    TEXT,
+            call_id        TEXT,
+            parsed_json    TEXT,
+            source         TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, fingerprint)
+        )""",
         """CREATE TABLE IF NOT EXISTS recipe_drafts (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),

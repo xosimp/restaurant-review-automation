@@ -2008,6 +2008,41 @@ function apiJson(r){
     return d;
   });
 }
+/* An owner AI job (ai_async, AI cost audit 10/7/26 #57): an invoice read, a
+   Campaign Studio draft. A route asked with async answers {job_id} at once
+   and the work runs off the request thread; this polls /api/ai-jobs/<id>
+   until it is done and resolves with exactly what the route would have
+   answered (apiJson's shape, the error included). An answer with no job_id
+   (a refusal, an older server) is passed through as it is. */
+function aiJobAwait(d, opts){
+  if (!d || !d.job_id || d.ok === false) return Promise.resolve(d);
+  opts = opts || {};
+  var every = opts.every || 1500;
+  var limit = Date.now() + ((d.wait_seconds || 240) + 30) * 1000;
+  var misses = 0;
+  return new Promise(function(resolve){
+    function poll(){
+      fetch('/api/ai-jobs/' + encodeURIComponent(d.job_id), {credentials: 'same-origin'}).then(apiJson).then(function(r){
+        misses = 0;
+        if (r && r.status === 'pending' && r.ok !== false) {
+          if (r.seconds_left) limit = Math.max(limit, Date.now() + (r.seconds_left + 30) * 1000);
+          if (Date.now() > limit) { resolve({ok: false, error: 'That is taking longer than it should. Try again in a moment.'}); return; }
+          setTimeout(poll, every);
+          return;
+        }
+        resolve(r);
+      }).catch(function(){
+        /* A dropped poll (a deploy restarting, a flaky connection) is waited
+           out a while; the job runs on regardless. */
+        misses++;
+        if (misses > 20 || Date.now() > limit) { resolve({ok: false, error: 'Couldn’t reach Cavnar AI.'}); return; }
+        setTimeout(poll, every * 2);
+      });
+    }
+    setTimeout(poll, every);
+  });
+}
+window.aiJobAwait = aiJobAwait;
 /* A panel whose load failed says so in place of its "Loading…" (CLIENT-12,
    CLIENT-58): the server's own sentence when it sent one, never an empty box
    that reads as "nothing here" and never a placeholder left up forever. */
@@ -31027,8 +31062,10 @@ document.addEventListener('click',function(ev){
     var f=inp&&inp.files&&inp.files[0];if(!f)return;
     var body=document.getElementById('fc2-inv-body');
     body.innerHTML='<div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas><span style="margin-left:10px;color:var(--ink3)">Reading the invoice…</span></div>';
-    var fd=new FormData();fd.append('file',f);
-    fetch('/api/food-cost/invoices',{method:'POST',credentials:'same-origin',body:fd}).then(apiJson).then(function(d){
+    /* Read as a job the page polls (async, AI cost audit 10/7/26 #57): the
+       request thread is not held for the many seconds of the read. */
+    var fd=new FormData();fd.append('file',f);fd.append('async','1');
+    fetch('/api/food-cost/invoices',{method:'POST',credentials:'same-origin',body:fd}).then(apiJson).then(aiJobAwait).then(function(d){
       inp.value='';
       if(!d||!d.ok){body.innerHTML='<div class="hb-empty" style="color:var(--red)">'+_fcEsc((d&&d.error)||'Couldn\'t read that invoice.')+'</div>';return;}
       _fcInv=d.invoice;renderInvoice();fc2LoadPendingInvoices();
@@ -31718,8 +31755,11 @@ function cpDraft(k, prompt, plan) {
   if (k === 'text') { url = '/api/guest-campaign/draft'; body = plan ? {prompt: prompt} : {prompt: prompt, type: _cp.type}; }
   else if (k === 'email') { url = '/api/guest-newsletter/draft'; body = {prompt: prompt}; }
   else { url = '/api/generate-content'; body = {type: cpSocialType(), topic: prompt}; }
+  /* Each channel drafts as a job the Studio polls (AI cost audit 10/7/26
+     #57): three model calls no longer hold three request threads. */
+  body['async'] = true;
   cpPaint();
-  _cpPost(url, body).then(function(d) {
+  _cpPost(url, body).then(aiJobAwait).then(function(d) {
     if (my !== _cp.seq[k]) return;
     _cp.busy[k] = false;
     var good = d && (k === 'social' ? !!d.content : d.ok);

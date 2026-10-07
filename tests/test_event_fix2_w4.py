@@ -379,7 +379,9 @@ def test_a_business_profile_rating_on_sunday_evening_is_this_weeks(db, monkeypat
 def test_the_competitor_check_dates_its_market_snapshot_on_the_restaurants_clock():
     import inspect
     import competitor
-    src = inspect.getsource(competitor.run_competitor_analysis)
+    # The storing moved into _store_analysis (AI cost audit 10/7/26 #59: a
+    # batched read lands there too).
+    src = inspect.getsource(competitor._store_analysis)
     assert "_now_ct = restaurant_now(restaurant, naive=True)" in src
     assert "record_market_snapshot(restaurant_id, competitors, closed=_closed, at=_now_ct)" in src
 

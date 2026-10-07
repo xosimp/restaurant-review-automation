@@ -5115,6 +5115,14 @@ def scheduler_loop():
                 from ai_learning import run_learning
                 _ops.run_job("ai_route_learning", run_learning)
 
+            # Hourly: the digest's narrative sent through Message Batches
+            # from 2am local on each digest day, so the 9am send reads it
+            # (reporter.run_digest_precompute, AI cost audit 10/7/26 #61).
+            if _ops.claim_period("digest_precompute", f"{today}-{now.hour}"):
+                from reporter import run_digest_precompute
+                if not _ops.run_in_lane("ai", "digest_precompute", run_digest_precompute):
+                    _ops.release_period("digest_precompute", f"{today}-{now.hour}")
+
             # Attempted hourly: each restaurant is gated on ITS 9am inside
             # (local_due), so one Chicago-timed daily claim would serve only
             # the restaurants whose local hour happened to match. On the AI
