@@ -14234,7 +14234,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
       <section class="in2-aiv-card in2-aiv-wide" aria-label="What AI said, by question">
         <div class="in2-aiv-h"><span class="k">What AI said, by question</span><i id="in2-q-flag"></i></div>
-        <div class="in2-aiv-v sm"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
+        <div class="in2-aiv-v sm"><span id="in2-q-n" class="hb-num">—</span><small>open questions named you</small></div>
         <div class="in2-gva" id="in2-gva" hidden></div>
         <div class="in2-q" id="aiv-queries"></div>
         <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
@@ -29851,7 +29851,7 @@ function renderAIVisibility(d) {
     } else if (d.city_source === 'profile') {
       note = "<b>Heads up</b> — the city in these questions comes from your profile text, not from your Google listing. Add a Google Place ID for a firmer match.";
     } else if (ai === 0) {
-      note = '<b>Not coming up in ' + (d.platform || 'AI search') + ' yet</b> — normal for independent restaurants this early. This is one system, asked ' + (d.answered_queries||0) + ' ways. More reviews and a complete Google listing are the parts you control.';
+      note = '<b>Not coming up in ' + (d.platform || 'AI search') + ' yet</b> — normal for independent restaurants this early. This is one system, asked ' + (d.answered_queries||0) + ' ways. It answers from other sites — directories, review sites and local lists — and the ones it read are under each question below. Getting onto those is what moves this.';
     } else if (d.setup_total) {
       note = (d.setup_done||0) + ' of ' + d.setup_total + ' Cavnar AI connections set up. These help us read your listing; they do not change what AI search sees.';
     }
@@ -29938,8 +29938,14 @@ function renderAIVisibility(d) {
       /^While .{5,80} is (?:a suburb|located|situated|part of)[^\.]+\.\s*/i,
       /^Note that\s+/i
     ];
+    // Only the open questions count as coming up (10/7/26): "Tell me about
+    // <name>" names the restaurant, so being named there is recall, not
+    // discovery — it read "1 / 8 · you came up" on a 0-of-7 check.
+    var asked = 0, byName = false;
     for (var i = 0; i < d.queries.length; i++) {
-      var q = d.queries[i]; if (q.appeared) hits++;
+      var q = d.queries[i];
+      if (q.kind === 'branded') { if (q.appeared) byName = true; }
+      else if (q.ok !== false) { asked++; if (q.appeared) hits++; }
       var clean = (q.answer || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\[\d+\]/g, '');
       for (var _pi = 0; _pi < _aiPatterns.length; _pi++) clean = clean.replace(_aiPatterns[_pi], '');
       if (clean.length) clean = clean.charAt(0).toUpperCase() + clean.slice(1);
@@ -29988,15 +29994,16 @@ function renderAIVisibility(d) {
       }
       else { qVB.style.display = 'none'; }
     }
-    var qn = document.getElementById('in2-q-n'); if (qn) qn.textContent = hits + ' / ' + d.queries.length;
-    var qf = document.getElementById('in2-q-flag'); if (qf) { qf.textContent = hits ? 'you came up' : 'not mentioned'; qf.className = hits ? 'good' : 'bad'; }
+    var qn = document.getElementById('in2-q-n'); if (qn) qn.textContent = hits + ' / ' + asked;
+    var qf = document.getElementById('in2-q-flag');
+    if (qf) { qf.textContent = hits ? 'you came up' : (byName ? 'only when asked by name' : 'not mentioned'); qf.className = hits ? 'good' : 'bad'; }
     var oc = document.getElementById('in2-orbit-cap');
     if (oc) {
       // A bare "0-35%" reads as two conflicting numbers, not a range — say
       // what it is when the score is one (a small/partial sample gives a
       // spread, not a point estimate).
       var ocIsRange = (d.ai_score_low != null && d.ai_score_high != null && d.ai_score_high > d.ai_score_low);
-      oc.textContent = (ocIsRange ? 'estimated range of AI searches mentioning you · ' : 'of AI searches mention you · ') + hits + ' of ' + d.queries.length + ' queries';
+      oc.textContent = (ocIsRange ? 'estimated range of AI searches mentioning you · ' : 'of AI searches mention you · ') + hits + ' of ' + asked + ' open questions';
     }
   }
   var cEl = document.getElementById('aiv-checklist'); if (cEl) cEl.innerHTML = '';
