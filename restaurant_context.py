@@ -341,6 +341,14 @@ def forget(restaurant_id, sections=None, db_path=None):
         log.debug("context_sections not forgotten for %s: %s", restaurant_id, e)
 
 
+def _default_db():
+    try:
+        import models
+        return str(models.DB_PATH)
+    except Exception:
+        return ""
+
+
 def _l1_get(key, version):
     with _L1_LOCK:
         hit = _L1.get(key)
@@ -468,7 +476,10 @@ def section(restaurant_id, name, viewer=None, params=None, db_path=None) -> Buil
     except Exception as e:
         log.info("context section %s version unreadable for %s: %s", name, restaurant_id, e)
         version = None
-    key = (restaurant_id, name, scope, db_path or "")
+    # The database the section was read from is part of the key: two
+    # databases (a restore drill, a script, a test) reuse restaurant ids, and
+    # two empty ones give the same version.
+    key = (restaurant_id, name, scope, db_path or _default_db())
     if version:
         hit = _l1_get(key, version)
         if hit is not None:

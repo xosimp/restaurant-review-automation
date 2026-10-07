@@ -147,6 +147,18 @@ def _reset_labor_note_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_restaurant_context_l1():
+    """restaurant_context's L1 (60 s, in-process) is keyed by restaurant id,
+    section and viewer scope; a fresh database per test reuses ids, and two
+    empty databases give the same version, so one test's section text was
+    another's (the h8 labor forecast read an earlier test's DATA STATE)."""
+    import restaurant_context
+    restaurant_context.invalidate()
+    yield
+    restaurant_context.invalidate()
+
+
+@pytest.fixture(autouse=True)
 def _reset_tenant_names_cache():
     """models.other_tenant_names caches every restaurant's name per process
     (the Response Validation Layer's T1 list); one test's restaurants must
