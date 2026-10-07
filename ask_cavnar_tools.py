@@ -255,8 +255,10 @@ def _read_team(restaurant_id):
     """
     from models import (get_capabilities, capability_coverage, SCORE_LABELS,
                         get_role_strength_thresholds, get_shift_leader_rules)
-    from labor import load_shifts_for_restaurant, analyse_shifts_for_restaurant
-    analysis = analyse_shifts_for_restaurant(restaurant_id) or {}
+    from labor import load_shifts_for_restaurant
+    import business_intelligence as _bi_team
+    # The question's one analysis (AI cost audit 10/7/26 #33).
+    analysis = _bi_team.shift_analysis(restaurant_id) or {}
     if not analysis.get("is_live"):
         return {"rated": False,
                 "note": "No shift data uploaded yet, so there is no roster to rate."}
@@ -2545,16 +2547,9 @@ TOOLS = [
         "spec": {
             "name": "read_business_snapshot",
             "description": (
-                "THE WHOLE BUSINESS IN ONE CALL: every module's executive read (reviews, food "
-                "cost, labor, marketing, AI visibility), the cross-module links between them "
-                "with the evidence and an alternative explanation for each, and the monthly "
-                "dollars at stake ranked across modules. Call this FIRST for any question "
-                "about profit, money, priorities, causes, 'what should I focus on', 'why did "
-                "X happen', 'how are we doing', or anything that touches more than one part "
-                "of the business. It is computed, not written by a model, and it is one call "
-                "instead of six. Drill into a single module with that module's own tool only "
-                "after this tells you which one matters."
-            ),
+                "Every module's executive read, the cross-module links (with what would confirm each and an "
+                "alternative) and the monthly dollars at stake ranked, in one computed call. First call for "
+                "money, profit, priorities, causes or how the business is doing."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -2568,14 +2563,8 @@ TOOLS = [
         "spec": {
             "name": "read_data_health",
             "description": (
-                "How current and complete this restaurant's data is: the Data Health score with its reason, "
-                "one line per source (POS sales, shifts, reviews, counts, deliveries, marketing metrics, "
-                "weather, competitors, AI visibility, the daily report) with the date its data runs through "
-                "and whether its sync is failing, what is not connected, and how much each module's "
-                "recommendations would rise once its data is current. Call this for 'can I trust this', "
-                "'is my data up to date', 'why is confidence low', 'is my POS syncing', or before advising "
-                "on data a snapshot marks as not current."
-            ),
+                "How current each data source is, failing syncs, what isn't connected, and the Data Health "
+                "score. For 'can I trust this' or before advising on data marked not current."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -2586,20 +2575,16 @@ TOOLS = [
         "spec": {
             "name": "read_reviews",
             "description": (
-                "Read this restaurant's individual reviews. Use whenever the owner asks "
-                "about what specific reviewers said, wants examples, or asks which reviews "
-                "mention a topic. The data snapshot only has totals, so call this for "
-                "anything about actual review content."
-            ),
+                "Individual reviews and their drafts: what reviewers said, examples, which mention a topic."),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "sentiment": {"type": "string", "enum": ["positive", "neutral", "negative"]},
                     "urgency": {"type": "string", "enum": ["high"]},
-                    "search": {"type": "string", "description": "Keyword to match in review text, e.g. 'patio'."},
-                    "needs_response": {"type": "boolean", "description": "Only reviews with no draft written yet."},
-                    "limit": {"type": "integer", "description": "Max reviews to return (default 10, max 20)."},
-                    "review_id": {"type": "integer", "description": "One review by id, with its drafted reply — the one the owner is looking at."},
+                    "search": {"type": "string"},
+                    "needs_response": {"type": "boolean", "description": "Only reviews with no draft yet."},
+                    "limit": {"type": "integer"},
+                    "review_id": {"type": "integer"},
                 },
             },
         },
@@ -2610,9 +2595,9 @@ TOOLS = [
         "module": "module_inventory",
         "spec": {
             "name": "read_menu",
-            "description": "Every active dish by name and its listed price, whether or not it has a recipe or margin data. Use this for 'what's on my menu' — read_menu_margins only lists priced dishes in full.",
+            "description": "Every active dish and its price, with or without recipe data.",
             "input_schema": {"type": "object", "properties": {
-                "limit": {"type": "integer", "description": "Max items (default 30)."}}},
+                "limit": {"type": "integer"}}},
         },
     },
     {
@@ -2621,9 +2606,9 @@ TOOLS = [
         "module": "module_inventory",
         "spec": {
             "name": "read_menu_margins",
-            "description": "Plate cost, sell price and margin per dish. Use for questions about which dishes make or lose money.",
+            "description": "Plate cost, price and margin per dish.",
             "input_schema": {"type": "object", "properties": {
-                "limit": {"type": "integer", "description": "Max dishes (default 10, max 20)."}}},
+                "limit": {"type": "integer"}}},
         },
     },
     {
@@ -2632,7 +2617,7 @@ TOOLS = [
         "module": "module_inventory",
         "spec": {
             "name": "read_order_draft",
-            "description": "This week's suggested supplier order, grouped by supplier, with costs. Read-only — does not send anything.",
+            "description": "This week's suggested supplier order by supplier, with costs.",
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2642,12 +2627,9 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_schedule",
-            "description": ("The latest generated staff schedule: week, hours vs budget, who is on "
-                            "it, who has opened their link, whether a manager edited it, and its "
-                            "Shift Quality evaluation — the overall score, the score and profile "
-                            "for every shift, which shifts fell under their target and why, and "
-                            "how confident the engine was. Use this for any question about how "
-                            "good a schedule is, not just who is on it."),
+            "description": (
+                "The latest schedule: hours vs budget, who is on and has opened their link, manager edits, and "
+                "Shift Quality per shift with why any fell short."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2657,11 +2639,10 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_schedule_rules",
-            "description": ("The scheduling rules set in Cavnar AI for this restaurant: rest between shifts, "
-                            "shift and weekly hours limits, meal breaks, the schedule notice rule, the "
-                            "jurisdiction pack's starting values, staffing floors, and each minor's age band "
-                            "and limits. Call it before answering ANY labor-law, compliance or scheduling-rule "
-                            "question, and quote what it returns as the rule set here — never as the law."),
+            "description": (
+                "The scheduling rules set here (rest, hour limits, breaks, notice, floors, minors). Call before "
+                "ANY labor-law or scheduling-rule answer; quote it as the rule set in Cavnar AI, never as the "
+                "law."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2671,12 +2652,9 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_team",
-            "description": ("Everyone on the roster with their Operational Score (1 weakest to 5 "
-                            "strongest, set by the owner), whether they are authorized to close, "
-                            "how many shifts they have worked, plus the per-role strength targets "
-                            "and shift leader rules the scheduler is held to. Use this for "
-                            "questions about who is strong or weak, who can close, who is still "
-                            "unrated, and why a shift scored the way it did."),
+            "description": (
+                "The roster with Operational Scores (1-5), who may close, shifts worked, role strength targets "
+                "and leader rules: who is strong, weak or unrated, and why a shift scored as it did."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2687,12 +2665,10 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "read_alerts",
-            "description": ("Alerts that have fired for this restaurant and whether each one has "
-                            "been handled — one-star reviews, health mentions, negative spikes, "
-                            "labor over target. Use this whenever the owner asks what needs their "
-                            "attention, what happened overnight, or about a specific alert."),
+            "description": (
+                "Alerts that fired and whether each was handled: what needs attention or happened overnight."),
             "input_schema": {"type": "object", "properties": {
-                "days": {"type": "integer", "description": "How far back to look. Default 7."}}},
+                "days": {"type": "integer"}}},
         },
     },
     {
@@ -2706,51 +2682,31 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "remember",
-            "description": ("Record one durable fact the person you are talking to told you, so it survives "
-                            "into future conversations AND reaches every other part of Cavnar AI that plans "
-                            "for them — the schedule draft, the labor and food reads, the daily report, "
-                            "marketing and review replies. Call it when they tell you something that should "
-                            "change how Cavnar AI works NEXT week and is not already in the data: 'we're adding "
-                            "two bartenders from 10/12' (context, labor, valid until a month after), "
-                            "'football Sundays start next week' (context, labor + marketing), 'never cut the "
-                            "host — she's our brand' (constraint, labor), 'stop suggesting the salmon "
-                            "special' (preference, food + marketing), 'check Friday's comps with me next "
-                            "week' (followup, due date). One short sentence in their own terms; no trivia; "
-                            "never the same thing twice.\n"
-                            "NOT for: a measurable target ('labor under 26% by December') — call set_goal, "
-                            "which measures it and makes it the target the modules judge against; a date the "
-                            "restaurant is closed — propose add_closed_date; a person who can't work a "
-                            "weekday — propose set_staff_unavailable; a person who can work only part of a "
-                            "weekday ('can't close Sundays') — propose set_staff_hours. Those write the store "
-                            "the schedule actually obeys.\n"
-                            "audience: 'team' when managers should know it too (most operational facts), "
-                            "'principals' for anything private to the owner (personnel changes, pay, money, "
-                            "selling), 'author' for a personal reminder.\n"
-                            "If the result lists `similar` notes, ask whether the new one replaces one of them "
-                            "(e.g. 'closed Mondays' then 'open Mondays now'); if so, call again with replaces."),
+            "description": (
+                "Save one durable fact the person told you that should change how Cavnar AI plans from next week "
+                "and is not in the data (a hire, a season, a standing rule, a preference, a followup): one short "
+                "sentence in their terms, never a repeat. Not for a target (set_goal), a closed date "
+                "(add_closed_date), a whole weekday someone can't work (set_staff_unavailable) or part of one "
+                "(set_staff_hours). If the result lists `similar` notes, ask whether it replaces one; if so, "
+                "call again with replaces."),
             "input_schema": {"type": "object", "properties": {
-                "fact": {"type": "string", "description": "One short sentence, in their own terms."},
+                "fact": {"type": "string"},
                 "kind": {"type": "string", "enum": ["constraint", "context", "preference", "goal", "followup"],
-                         "description": ("constraint: a hard rule to respect; context: something true about the "
-                                         "business for a while; preference: how they like things done or said; "
-                                         "goal: an aim no number measures; followup: something to raise again "
-                                         "by a date.")},
+                         "description": (
+                             "constraint: a hard rule; context: true for a while; preference: how they like "
+                             "things; goal: an aim no number measures; followup: raise by due_on.")},
                 "modules": {"type": "array", "items": {"type": "string", "enum": [
-                    "reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops"]},
-                    "description": "The parts of the business it is about. Omit for the whole business."},
+                    "reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops"]}},
                 "subject": {"type": "string",
-                            "description": "Optional tag: day:<weekday>, dish:<name>, person:<name>, item:<name>."},
+                            "description": "Optional: day:<weekday>, dish:<name>, person:<name>, item:<name>."},
                 "valid_until": {"type": "string",
-                                "description": "YYYY-MM-DD for a fact that stops being true (a season, a hire)."},
-                "due_on": {"type": "string", "description": "YYYY-MM-DD, for a followup."},
+                                "description": "YYYY-MM-DD it stops being true."},
+                "due_on": {"type": "string"},
                 "audience": {"type": "string", "enum": ["team", "principals", "author"]},
                 "replaces": {"type": "string",
-                             "description": ("The exact text of a note this one replaces (they said it changed) — "
-                                             "that note is archived. Only when they confirmed it.")},
+                             "description": "Exact text of a note they confirmed this replaces."},
                 "scope": {"type": "string", "enum": ["location", "org"],
-                          "description": ("'org' only when they say it holds for EVERY one of their locations "
-                                          "('we close every location on Thanksgiving'); only an owner of all "
-                                          "the locations may. Omit for this location.")},
+                          "description": "'org' only when they say it holds at EVERY location they own."},
             }, "required": ["fact"]},
         },
     },
@@ -2761,12 +2717,11 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "forget",
-            "description": ("Drop a note you previously recorded about this owner. Call this "
-                            "whenever they say something is no longer true, was wrong, or ask "
-                            "you to forget it. The notes you are holding are listed in your "
-                            "context — quote the one they mean."),
+            "description": (
+                "Drop a note you recorded that they say is wrong or no longer true. Quote it as your context "
+                "lists it."),
             "input_schema": {"type": "object", "properties": {
-                "fact": {"type": "string", "description": "The note to drop, as close to stored wording as you can."},
+                "fact": {"type": "string"},
             }, "required": ["fact"]},
         },
     },
@@ -2776,7 +2731,7 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_staff_availability",
-            "description": "Days staff have said they cannot work, submitted through their own schedule link.",
+            "description": "Days staff said they cannot work.",
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2785,9 +2740,9 @@ TOOLS = [
         "fn": _read_email_history,
         "spec": {
             "name": "read_email_history",
-            "description": "Recent email Cavnar AI sent for this restaurant and whether it was delivered or failed.",
+            "description": "Recent email Cavnar AI sent here and whether it was delivered.",
             "input_schema": {"type": "object", "properties": {
-                "limit": {"type": "integer", "description": "Max rows (default 10, max 20)."}}},
+                "limit": {"type": "integer"}}},
         },
     },
 
@@ -2798,13 +2753,11 @@ TOOLS = [
         "spec": {
             "name": "read_shifts",
             "description": (
-                "The staff roster and logged shifts — who works here, their hours, who is "
-                "near overtime. Call this for any question about specific people or hours, "
-                "and before saying a restaurant has no staff or no shift data."
-            ),
+                "The roster and logged shifts: hours, who is near overtime. Before saying there is no staff "
+                "data."),
             "input_schema": {"type": "object", "properties": {
-                "employee": {"type": "string", "description": "Filter to one person by name."},
-                "limit": {"type": "integer", "description": "Max recent shifts (default 20, max 20)."}}},
+                "employee": {"type": "string"},
+                "limit": {"type": "integer"}}},
         },
     },
     {
@@ -2813,7 +2766,7 @@ TOOLS = [
         "module": "module_inventory",
         "spec": {
             "name": "read_food_cost",
-            "description": "Item-level food cost: what's critically low, what's being wasted, what's overstocked, and which supplier prices are rising.",
+            "description": "Item-level food cost: critically low, wasted, overstocked, rising supplier prices.",
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2824,12 +2777,8 @@ TOOLS = [
         "spec": {
             "name": "read_food_cost_drivers",
             "description": (
-                "WHY food cost is where it is — the ranked cost drivers with the dollars each "
-                "carries, the stored root-cause read, the food cost % against target, and the "
-                "month-end profitability projection. Call this for any 'why', 'what's driving', "
-                "'what should I fix first', 'how much is this costing me' or 'am I making money' "
-                "question. read_food_cost gives the item totals; this gives the diagnosis."
-            ),
+                "Why food cost is where it is: ranked drivers with dollars, the root-cause read, food cost % vs "
+                "target, month-end profitability."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2838,9 +2787,10 @@ TOOLS = [
         "fn": _read_competitors,
         "spec": {
             "name": "read_competitors",
-            "description": "The competitor set: names, ratings, review counts and sample reviews from each, plus the recommendations drawn from them.",
+            "description": (
+                "Competitors' ratings, review counts, sample reviews and the recommendations drawn from them."),
             "input_schema": {"type": "object", "properties": {
-                "limit": {"type": "integer", "description": "Max competitors (default 5)."}}},
+                "limit": {"type": "integer"}}},
         },
     },
     {
@@ -2849,9 +2799,9 @@ TOOLS = [
         "module": "module_marketing",
         "spec": {
             "name": "read_marketing_posts",
-            "description": "Marketing content history — what was generated, what was actually published, and its reach/engagement.",
+            "description": "Marketing content generated and published, with reach and engagement.",
             "input_schema": {"type": "object", "properties": {
-                "limit": {"type": "integer", "description": "Max posts (default 10, max 20)."}}},
+                "limit": {"type": "integer"}}},
         },
     },
     {
@@ -2860,14 +2810,11 @@ TOOLS = [
         "module": "module_marketing",
         "spec": {
             "name": "read_website_analytics",
-            "description": ("The restaurant's own website (Google Analytics) and Google search (Search Console): "
-                            "visits, where they came from, clicks out to book a table / order / checkout, menu "
-                            "page views, Google search clicks and appearances, the top searches, and each spike, "
-                            "dip or 3-week run with what else happened that day (sales, games, posts, reviews). "
-                            "Use it for questions about the website, online traffic, search, or why bookings "
-                            "moved. What moved together is not proof of cause."),
+            "description": (
+                "Website (Google Analytics) and Google search (Search Console): visits, sources, book/order/menu "
+                "clicks, searches, each spike or dip with what else happened that day."),
             "input_schema": {"type": "object", "properties": {
-                "days": {"type": "integer", "description": "Window in days (7-90, default 28)."}}},
+                "days": {"type": "integer", "description": "7-90."}}},
         },
     },
     {
@@ -2877,10 +2824,8 @@ TOOLS = [
         "spec": {
             "name": "read_guest_club",
             "description": (
-                "Guest text club make-up: how many are on file, how many can actually be "
-                "texted (opted in themselves), how many unsubscribed, and recent campaigns. "
-                "Call before proposing a campaign so you can say who it reaches."
-            ),
+                "The guest text club: on file, textable, unsubscribed, recent campaigns. Before proposing a "
+                "campaign."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2890,14 +2835,10 @@ TOOLS = [
         "module": "module_reviews",
         "spec": {
             "name": "read_review_trends",
-            "description": (
-                "Whether reviews are getting better or worse over time, what topics guests "
-                "raise most, and how fast replies go out. Call this for any question about "
-                "direction or trend — the snapshot only has totals."
-            ),
+            "description": "Review direction over time, top topics and reply speed.",
             "input_schema": {"type": "object", "properties": {
-                "weeks": {"type": "integer", "description": "Weeks of sentiment history (default 8)."},
-                "days": {"type": "integer", "description": "Window for topics (default 90)."}}},
+                "weeks": {"type": "integer"},
+                "days": {"type": "integer", "description": "Topic window."}}},
         },
     },
     {
@@ -2907,13 +2848,8 @@ TOOLS = [
         "spec": {
             "name": "read_review_brief",
             "description": (
-                "The Reviews module's executive read: the biggest problems ranked by severity "
-                "then volume with their evidence, what to fix first, what the rating movement "
-                "is worth per month, what improved and what got worse. Use for 'what are my "
-                "biggest review problems' or 'what should I fix first' about reviews. "
-                "read_review_trends gives direction; read_review_diagnosis gives the cause of "
-                "one cluster; this ranks them all."
-            ),
+                "The Reviews executive read: problems ranked with evidence, what to fix first, what the rating "
+                "movement is worth a month."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -2924,12 +2860,8 @@ TOOLS = [
         "spec": {
             "name": "read_review_diagnosis",
             "description": (
-                "WHY guests are complaining — the likely operational cause behind the biggest "
-                "complaint clusters, an alternative explanation, what would tell them apart, "
-                "and the reviews each cause rests on. Call this for any 'why', 'what's causing', "
-                "'what should I fix' or 'how do I stop this' question about reviews. "
-                "read_review_trends gives direction and topics; this gives the diagnosis."
-            ),
+                "Why guests complain: the likely cause behind each big complaint cluster, an alternative, what "
+                "would tell them apart, the reviews behind it."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -2952,9 +2884,9 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_labor_detail",
-            "description": "Labor day by day and week by week — for 'which day is costing me most' rather than the overall percentage.",
+            "description": "Labor day by day and week by week: which day costs most.",
             "input_schema": {"type": "object", "properties": {
-                "weeks": {"type": "integer", "description": "Weeks of history (default 8)."}}},
+                "weeks": {"type": "integer"}}},
         },
     },
     {
@@ -2963,9 +2895,9 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_schedule_history",
-            "description": "Past generated schedules with hours vs budget, so this week can be compared with previous ones. read_schedule only sees the latest.",
+            "description": "Past schedules with hours vs budget.",
             "input_schema": {"type": "object", "properties": {
-                "limit": {"type": "integer", "description": "How many past schedules (default 8)."}}},
+                "limit": {"type": "integer"}}},
         },
     },
     {
@@ -2975,12 +2907,10 @@ TOOLS = [
         "spec": {
             "name": "set_staff_contact",
             "description": (
-                "Add or correct how a member of staff is reached. Sends nothing. Do this "
-                "before proposing publish_schedule for anyone with no email on file — "
-                "otherwise the schedule goes out to nobody."
-            ),
+                "Add or correct a staff member's email or phone; before publish_schedule for anyone with no "
+                "email."),
             "input_schema": {"type": "object", "required": ["employee_name"], "properties": {
-                "employee_name": {"type": "string", "description": "Exactly as they appear on the schedule."},
+                "employee_name": {"type": "string", "description": "As on the schedule."},
                 "email": {"type": "string"},
                 "phone": {"type": "string"}}},
         },
@@ -2991,16 +2921,12 @@ TOOLS = [
         "module": "module_marketing",
         "spec": {
             "name": "generate_marketing_content",
-            "description": (
-                "Draft marketing copy in this restaurant's own brand voice and log it. "
-                "Publishes nothing. Types: instagram_post, weekly_email, google_promo, "
-                "loyalty_nudge, happy_hour, event_announcement. Show the draft in your reply."
-            ),
+            "description": "Draft on-brand marketing copy and log it. Show the draft in your reply.",
             "input_schema": {"type": "object", "properties": {
                 "content_type": {"type": "string", "enum": ["instagram_post", "weekly_email",
                                                              "google_promo", "loyalty_nudge",
                                                              "happy_hour", "event_announcement"]},
-                "topic": {"type": "string", "description": "What it should be about."}}},
+                "topic": {"type": "string"}}},
         },
     },
     {
@@ -3011,13 +2937,11 @@ TOOLS = [
         "spec": {
             "name": "edit_review_reply",
             "description": (
-                "Replace a review's drafted reply with your own wording. Posts nothing. Use "
-                "this for 'make that shorter/warmer' instead of draft_review_reply, which "
-                "throws the existing draft away and regenerates from scratch."
-            ),
+                "Replace a review's draft with your wording ('make it warmer'); draft_review_reply regenerates "
+                "instead."),
             "input_schema": {"type": "object", "required": ["review_id", "draft"], "properties": {
                 "review_id": {"type": "integer"},
-                "draft": {"type": "string", "description": "The full replacement reply."}}},
+                "draft": {"type": "string"}}},
         },
     },
     {
@@ -3026,7 +2950,7 @@ TOOLS = [
         "module": "module_reviews",
         "spec": {
             "name": "skip_review",
-            "description": "Take a review out of the response queue. Publishes nothing and can be undone.",
+            "description": "Take a review out of the response queue (undoable).",
             "input_schema": {"type": "object", "required": ["review_id"], "properties": {
                 "review_id": {"type": "integer"}}},
         },
@@ -3039,16 +2963,11 @@ TOOLS = [
         "wants_viewer": True,
         "spec": {
             "name": "change_setting",
-            "description": (
-                "Change an account setting directly (no confirmation needed): "
-                "marketing_opt_out, login_notify. Both are private to the account, reversible, "
-                "and send nothing. Say what you changed. For auto-approve or data retention use "
-                "set_auto_approve or set_data_retention — those are proposed, not applied."
-            ),
+            "description": "Turn marketing_opt_out or login_notify on or off.",
             "input_schema": {"type": "object", "required": ["setting"],
                              "additionalProperties": False, "properties": {
                 "setting": {"type": "string", "enum": ["marketing_opt_out", "login_notify"]},
-                "value": {"type": "boolean", "description": "true to turn on, false to turn off."}}},
+                "value": {"type": "boolean"}}},
         },
     },
 
@@ -3059,11 +2978,8 @@ TOOLS = [
         "spec": {
             "name": "read_dish_scorecard",
             "description": (
-                "Every dish scored on margin AND what guests say about it: plate cost, food cost %, "
-                "units sold, contribution, review mentions (positive/negative) and one suggested "
-                "action (fix, cut, reprice, promote). Use for 'which dishes should I cut/push/fix', "
-                "'what's my best dish', menu engineering, or any question joining the menu to reviews."
-            ),
+                "Every dish on margin AND guest mentions, with one action (fix, cut, reprice, promote): menu "
+                "engineering."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3074,11 +2990,8 @@ TOOLS = [
         "spec": {
             "name": "read_reprice_suggestions",
             "description": (
-                "Dishes whose plate cost rose because an ingredient price rose, with the price "
-                "that would restore the dish's previous food cost % and the monthly margin being "
-                "lost meanwhile. Use for 'should I raise prices', 'what do I charge for X now', "
-                "'which dishes did the price increase hit'."
-            ),
+                "Dishes whose plate cost rose with an ingredient price, the price that restores their food cost "
+                "%, and the margin lost meanwhile."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3089,13 +3002,10 @@ TOOLS = [
         "spec": {
             "name": "read_demand_forecast",
             "description": (
-                "Expected sales for a day (median of recent same weekdays, with a range), the "
-                "restaurant's reliably slow weekdays, and a prep list for that day from typical dish "
-                "sales and recipes. Use for 'how busy will Friday be', 'what should we prep', "
-                "'which nights are slow', and before proposing a slow-night promotion."
-            ),
+                "Expected sales for a day (with a range), slow weekdays and a prep list. Before a slow-night "
+                "promotion."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "day": {"type": "string", "description": "YYYY-MM-DD; defaults to today."}}},
+                "day": {"type": "string", "description": "YYYY-MM-DD, default today."}}},
         },
     },
     {
@@ -3105,11 +3015,7 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "read_open_issues",
-            "description": (
-                "Open operational issues, who each is assigned to, whether they have acknowledged it, "
-                "and whether it escalated. Use for 'what's still open', 'did anyone handle X', "
-                "'who has the bad-review follow-up'."
-            ),
+            "description": "Open issues: assignee, acknowledged, escalated.",
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3120,7 +3026,7 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "read_goals",
-            "description": "The owner's active goals and whether each is on track, met, or slipping.",
+            "description": "Active goals and whether each is on track, met or slipping.",
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3132,10 +3038,7 @@ TOOLS = [
         "spec": {
             "name": "read_outcomes",
             "description": (
-                "What happened after changes the owner committed to: each tracker's metric before "
-                "and after, and an interim reading for ones still running. Before/after, not proven "
-                "cause — always pass the caveat on. Use for 'did that work', 'what came of X'."
-            ),
+                "Before/after results of changes the owner committed to — not proven cause; pass the caveat on."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3149,15 +3052,14 @@ TOOLS = [
         "spec": {
             "name": "set_goal",
             "description": (
-                "Set a goal the owner stated (no confirmation needed — private and replaceable). "
-                "Only when the owner states a target themselves; never invent one. metric: labor_pct | overtime_hours | food_cost_pct | sales | avg_rating | weekly_waste | response_hours | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service). "
-                "target is in the metric's own unit (percent points, dollars per day, stars)."
-            ),
+                "Set a target the owner stated themselves (never invent one). metric: labor_pct | overtime_hours "
+                "| food_cost_pct | sales | avg_rating | weekly_waste | response_hours | weekday_sales:<Weekday> "
+                "| complaints:<category>; target in its own unit."),
             "input_schema": {"type": "object", "required": ["metric", "target"],
                              "additionalProperties": False, "properties": {
                 "metric": {"type": "string"},
                 "target": {"type": "number"},
-                "deadline": {"type": "string", "description": "YYYY-MM-DD, optional."},
+                "deadline": {"type": "string"},
                 "note": {"type": "string"}}},
         },
     },
@@ -3169,17 +3071,13 @@ TOOLS = [
         "spec": {
             "name": "track_outcome",
             "description": (
-                "Start measuring the effect of a change the owner says they are making "
-                "(no confirmation — it only measures). The baseline is taken now and a before/after "
-                "result comes back when the window closes. metric: labor_pct | overtime_hours | food_cost_pct | sales | avg_rating | weekly_waste | response_hours | weekday_sales:<Weekday> (e.g. weekday_sales:Tuesday) | complaints:<category> (e.g. complaints:slow_service)."
-            ),
+                "Measure a change the owner says they are making: baseline now, before/after when the window "
+                "closes. metric as in set_goal."),
             "input_schema": {"type": "object", "required": ["title", "metric"],
                              "additionalProperties": False, "properties": {
-                "title": {"type": "string", "description": "The change, in the owner's words."},
+                "title": {"type": "string"},
                 "metric": {"type": "string"},
-                "source_key": {"type": "string", "description": (
-                    "The key of the recommendation this change follows, when it follows one Cavnar AI made "
-                    "(e.g. slow_day:Tuesday, trim_day:Monday). Leave it out otherwise.")}}},
+                "source_key": {"type": "string", "description": "The recommendation key it follows (e.g. slow_day:Tuesday), if any."}}},
         },
     },
 
@@ -3191,12 +3089,9 @@ TOOLS = [
         "spec": {
             "name": "read_restaurant_memory",
             "description": (
-                "THIS RESTAURANT'S OWN LEARNED HISTORY: busiest and quietest weekdays, seasonal peak and trough "
-                "months, which recommendation kinds measurably worked here and which the owner keeps declining, "
-                "how its key measures are trending week to week, and the history of every cross-module link "
-                "(found when, still open, declined, done or ended). Its own data only. Call this before "
-                "recommending timing, staffing or a kind of action the owner may already have judged."
-            ),
+                "This restaurant's learned history: busy and quiet weekdays, seasons, which recommendation kinds "
+                "worked or keep being declined, every cross-module link's history. Before recommending timing or "
+                "staffing."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3208,15 +3103,10 @@ TOOLS = [
         "spec": {
             "name": "read_platform_intelligence",
             "description": (
-                "HOW THIS RESTAURANT COMPARES WITH OTHER RESTAURANTS ON CAVNAR AI, for the peer group each comparison "
-                "names — restaurants of its own type on Cavnar AI, or 'other restaurants on Cavnar AI, all types' (only "
-                "for measures comparable across types, never labor or food cost) — plus the published industry "
-                "figure for its type and statistically tested patterns with counts and effects. Bands are over at "
-                "least 8 other restaurants and no older than 8 weeks; each carries its group, size, as_of date "
-                "and a comparison strength %. Quote the group as named, the size and the date; no ranking word "
-                "under 75% strength. A comparison marked unavailable says why (usually too few restaurants of "
-                "the type yet) — repeat that honestly rather than guessing. Never another restaurant's figures."
-            ),
+                "How this restaurant compares with other restaurants on Cavnar AI (its own type, or 'other "
+                "restaurants on Cavnar AI, all types'), its type's published industry figure and tested "
+                "patterns. Bands span 8 other restaurants or more. An unavailable comparison says why: repeat "
+                "that, never guess."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3228,12 +3118,8 @@ TOOLS = [
         "spec": {
             "name": "read_decisions",
             "description": (
-                "THE HISTORY OF DECISIONS at this restaurant: every recommendation, issue and "
-                "proposal, what the owner did with it (done, not for us and why, hidden, "
-                "tracking, resolved) and what was measured afterwards. Call this before "
-                "recommending anything, so you never re-propose what they declined and you "
-                "build on what measurably worked."
-            ),
+                "Every recommendation, issue and proposal, what the owner did with it, and what was measured "
+                "after. Before recommending anything."),
             "input_schema": {"type": "object", "properties": {
                 "limit": {"type": "integer", "minimum": 1, "maximum": 60}},
                 "additionalProperties": False},
@@ -3247,14 +3133,11 @@ TOOLS = [
         "spec": {
             "name": "read_recent_reads",
             "description": (
-                "WHAT CAVNAR AI ALREADY TOLD THIS OWNER elsewhere, each with its date: the Reviews, Food Cost, "
-                "Marketing and Labor reads, the competitor read, the diagnoses, the weekly email, the morning "
-                "brief and the last week of daily-report summaries. Call it for 'why did the Food tab tell me to "
-                "cut salmon orders', 'what did last week's email say', 'what did you tell me about labor'. "
-                "module narrows it: reviews | food | marketing | labor | intel | dsr."),
+                "What Cavnar AI already told this owner elsewhere, dated: module reads, diagnoses, emails, "
+                "briefs, daily-report summaries. module: reviews | food | marketing | labor | intel | dsr."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
                 "module": {"type": "string"},
-                "days": {"type": "integer", "description": "How far back. Default 30."}}},
+                "days": {"type": "integer"}}},
         },
     },
     {
@@ -3265,18 +3148,10 @@ TOOLS = [
         "spec": {
             "name": "read_service_performance",
             "description": (
-                "HOW EACH SERVER, ROOM AND DAYPART PERFORMED, measured from the POS's own tickets: per server "
-                "the tickets, covers, sales per cover, check average, drinks per entree, card tip rate, "
-                "median table turn and comps on their checks (figures only past 20 tickets); by room and by "
-                "daypart; kitchen speed where the POS records it; pay and tips by role and person (hours, "
-                "pay, overtime pay, tips, earned per hour); how guests paid (cash vs card, by card type, card "
-                "tips) and cash paid out of the drawer by category and manager. Call it for 'who are my best "
-                "servers', 'who upsells drinks', 'how fast do we turn tables', 'lunch vs dinner', 'what do my "
-                "servers make an hour', 'how much is cash', 'what's been paid out'. "
-                "Personnel data: the "
-                "account holder's. days: the window, default 28, at most 90."),
+                "Per server, room and daypart from POS tickets (covers, check average, drinks, tips, turns, "
+                "comps), kitchen speed, pay and tips by role and person, cash vs card and paid-outs."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "days": {"type": "integer", "description": "How far back. Default 28, at most 90."}}},
+                "days": {"type": "integer", "description": "Max 90."}}},
         },
     },
     {
@@ -3286,16 +3161,11 @@ TOOLS = [
         "spec": {
             "name": "read_task_sheets",
             "description": (
-                "THE OPENING AND CLOSING TASK SHEETS by job code: for one business day, every sheet, who the "
-                "published schedule put on it, which lines were done, by whom and when, which were late, "
-                "numbers out of their allowed range (temperatures, counts) and the manager's sign-off; plus "
-                "the consistency report — per job code and per person, completion and on-time rates and "
-                "critical misses, with the managers side by side. Call it for 'who closed Tuesday and what "
-                "did they skip', 'are my managers doing their opening duties', 'who misses the safe count'. "
-                "date: YYYY-MM-DD (default today); days: the report's window, default 14."),
+                "Opening/closing task sheets for a day (who, lines done or late, out-of-range readings, "
+                "sign-off) and completion rates per job code and person."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "date": {"type": "string", "description": "Business date, YYYY-MM-DD. Default today."},
-                "days": {"type": "integer", "description": "Report window in days. Default 14, at most 90."}}},
+                "date": {"type": "string", "description": "YYYY-MM-DD, default today."},
+                "days": {"type": "integer", "description": "Report window, max 90."}}},
         },
     },
     {
@@ -3306,13 +3176,10 @@ TOOLS = [
         "spec": {
             "name": "read_target_history",
             "description": (
-                "WHICH TARGETS APPLIED WHEN: the labor, food cost, waste and revenue targets in force on a given "
-                "date, who set each and when, and every change to them, newest first. Call it for 'what was my "
-                "food cost target in August', 'when did we change the labor target', 'was I over target that "
-                "week' (read the target that applied THEN, not today's). as_of is a date on the restaurant's "
-                "own calendar; leave it out for today's targets and the change list."),
+                "The targets in force on a date, who set them, and every change. Judge a past week by the target "
+                "then."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "as_of": {"type": "string", "description": "A date, YYYY-MM-DD."}}},
+                "as_of": {"type": "string", "description": "YYYY-MM-DD; omit for today."}}},
         },
     },
     {
@@ -3323,19 +3190,12 @@ TOOLS = [
         "spec": {
             "name": "read_events",
             "description": (
-                "GAMES AND EVENTS THIS RESTAURANT FEELS (the Event Intelligence catalog: the Bears, Blackhawks, Bulls, Fire, a White Sox playoff run and "
-                "any team, festival or local event it follows): the next ones with kickoff, home or road, prime "
-                "time and TV; what games like each one did HERE, measured; the last game of the same kind with "
-                "what that night sold, its covers, labor % and who was on the clock by role; and the recent "
-                "games' nights. An item marked context_only is a frequent series' game (Blackhawks, Bulls) this "
-                "restaurant has not measured to matter: name it, never plan staff or stock around it. "
-                "reviews_on_game_nights is the share of service/wait reviews posted around game nights against "
-                "other days, by posted date — a lean, never proof. Call it for 'is there a Bears game this week', "
-                "'should we add a bartender Sunday', 'how did we do compared to our last Bears home game', 'what "
-                "does a game do to us', 'do game nights hurt our service reviews'."),
+                "Games and events this restaurant follows: upcoming ones, what similar games did HERE, the last "
+                "comparable night's sales, labor and crew, and service reviews on game nights (a lean, never "
+                "proof). context_only items are not measured to matter: never plan staff or stock on them."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "days": {"type": "integer", "description": "How far ahead. Default 21, at most 120."},
-                "past": {"type": "integer", "description": "Recent games per team to include. Default 4, at most 12."}}},
+                "days": {"type": "integer", "description": "Ahead, max 120."},
+                "past": {"type": "integer", "description": "Recent games per team, max 12."}}},
         },
     },
     {
@@ -3346,14 +3206,10 @@ TOOLS = [
         "spec": {
             "name": "read_upcoming",
             "description": (
-                "WHAT IS COMING, BY DATE, from what is on the books: the owner's own events and reservations, "
-                "orders already rung for a later time (catering, scheduled pick-up, where the POS records them), "
-                "tomorrow from the daily report (prep, the forecast and its record), closed dates, scheduled "
-                "social posts, guest texts waiting to go, and approved or requested time off. Call it for "
-                "'what's on this Friday', 'anything I should know about next week', 'who's off Saturday'. Not a "
-                "forecast — read_demand_forecast for how busy a day will be."),
+                "What is on the books by date: events, reservations, future orders, tomorrow's prep, closed "
+                "dates, scheduled posts and texts, time off."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "days": {"type": "integer", "description": "How far ahead. Default 14, at most 60."}}},
+                "days": {"type": "integer"}}},
         },
     },
     {
@@ -3363,12 +3219,7 @@ TOOLS = [
         "wants_viewer": True,
         "spec": {
             "name": "read_forecast_record",
-            "description": (
-                "HOW CAVNAR AI'S FORECASTS HAVE HELD UP HERE: every weekly and monthly forecast's scored record "
-                "(waste, profitability, revenue, labor, marketing reach, rating — mean error, bias, whether it "
-                "beats a simple guess, withheld or not), the daily demand forecast's accuracy and the weekly "
-                "projection's, and the daily report's graded predictions. Call it for 'how accurate has your "
-                "forecast been', 'can I trust the projection', before leaning on any forecast."),
+            "description": "How Cavnar AI's forecasts have held up here (error, bias, vs a simple guess).",
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3379,12 +3230,9 @@ TOOLS = [
         "spec": {
             "name": "read_market_history",
             "description": (
-                "THE MARKET'S HISTORY: competitors that opened, closed or moved their Google rating nearby, with "
-                "the date each was seen, and this restaurant's own Google rating over the same window. Call it "
-                "for 'did anyone new open near us', 'when did our rating start slipping', 'has the competition "
-                "changed since spring'."),
+                "Nearby competitors that opened, closed or moved rating, dated, and this restaurant's rating."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "days": {"type": "integer", "description": "How far back. Default 180."}}},
+                "days": {"type": "integer"}}},
         },
     },
     {
@@ -3393,12 +3241,9 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "read_closeouts",
-            "description": (
-                "THE CLOSERS' OWN NOTES on recent nights: what went well and wrong, what ran out, who didn't make "
-                "it, equipment and maintenance, and the influence line (a game, an event). Call it for 'what "
-                "happened on Saturday', 'what keeps running out', 'any equipment problems this week'."),
+            "description": "Closers' notes on recent nights: what went wrong, ran out, no-shows, equipment.",
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "days": {"type": "integer", "description": "How far back. Default 7."}}},
+                "days": {"type": "integer"}}},
         },
     },
     {
@@ -3408,10 +3253,8 @@ TOOLS = [
         "spec": {
             "name": "read_marketing_results",
             "description": (
-                "WHAT MARKETING DID, MEASURED: sales and dish lift after posts (by kind, occasion and dish, and "
-                "the weakest), and each guest text's return — guests the POS saw come back within the window — "
-                "plus the win-back texts' return per 100 texted. Call it for 'did last month's Tuesday campaign "
-                "work', 'which posts actually sell', before proposing a campaign like one that already ran."),
+                "Marketing measured: sales and dish lift after posts, guest texts' return visits. Before "
+                "proposing a campaign like one that ran."),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
@@ -3423,14 +3266,11 @@ TOOLS = [
         "spec": {
             "name": "read_past_conversations",
             "description": (
-                "THIS PERSON'S EARLIER CHATS WITH YOU: their past conversation titles and your notes on each "
-                "(what they decided, the figures you read out, the options you proposed, what was left open) — "
-                "including chats too old for the history list. Call it for 'what was option 2 on Monday', 'what "
-                "did you tell me about labor last week', 'did we already talk about the patio'. Only their own "
-                "chats; this conversation is not included (it is in front of you)."),
+                "This person's earlier chats with you and your notes on each (decisions, figures, options), old "
+                "ones too; not this chat."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "query": {"type": "string", "description": "Words to look for, e.g. 'tuesday labor options'."},
-                "days": {"type": "integer", "description": "How far back. Default 90."}}},
+                "query": {"type": "string"},
+                "days": {"type": "integer"}}},
         },
     },
     # ── The nightly Daily Sales Report ──────────────────────────────────────
@@ -3442,15 +3282,10 @@ TOOLS = [
         "spec": {
             "name": "read_dsr",
             "description": (
-                "ONE NIGHT'S DAILY SALES REPORT, as this login may read it: every measured figure by "
-                "block (sales, labor, food, reviews, marketing, intel), what was missing and why, the "
-                "night's verified summary and actions, and the manager's close-out notes. Use for any "
-                "question about a specific night ('how did last Tuesday go', 'what did we do on 9/19'). "
-                "The report's figures are final — quote them, never recompute them. Says when a night "
-                "is provisional or has no report."
-            ),
+                "One night's Daily Sales Report as this login may read it: each block's figures, what was "
+                "missing, the summary and close-out notes."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "date": {"type": "string", "description": "The business date, YYYY-MM-DD. Default: the latest report."}}},
+                "date": {"type": "string", "description": "Default the latest."}}},
         },
     },
     {
@@ -3461,21 +3296,16 @@ TOOLS = [
         "spec": {
             "name": "find_days",
             "description": (
-                "SEARCH THE NIGHTLY REPORTS' HISTORY: every night where one metric passes a threshold, "
-                "e.g. every night labor ran over 25% (metric 'labor.pct', op '>', value 25), nights net "
-                "sales topped $10,000 ('sales.net', '>', 10000). Metrics are '<block>.<key>' as read_dsr "
-                "shows them (sales.net, sales.gross, sales.transactions, labor.pct, labor.cost, "
-                "reviews.avg_rating, sales.cat:Liquor …); an unknown name returns the list this login "
-                "may search. Counts only measured nights and says how many there were."
-            ),
+                "Every night where one metric passes a threshold (e.g. labor.pct > 25). Metrics are "
+                "'<block>.<key>' as read_dsr shows them; an unknown name returns the list."),
             "input_schema": {"type": "object", "additionalProperties": False,
                              "required": ["metric", "op", "value"], "properties": {
                 "metric": {"type": "string"},
                 "op": {"type": "string", "enum": [">", ">=", "<", "<=", "="]},
                 "value": {"type": "number"},
-                "start": {"type": "string", "description": "YYYY-MM-DD, optional."},
-                "end": {"type": "string", "description": "YYYY-MM-DD, optional."},
-                "limit": {"type": "integer", "description": "Max nights listed (default 20, max 60)."}}},
+                "start": {"type": "string"},
+                "end": {"type": "string"},
+                "limit": {"type": "integer"}}},
         },
     },
     {
@@ -3486,13 +3316,10 @@ TOOLS = [
         "spec": {
             "name": "read_week",
             "description": (
-                "THE WEEKLY SALES GRID for the restaurant's own week holding a date (its fiscal week, "
-                "e.g. Wed-Tue, 'Period 9 · Week 4'): each day's categories, gross, net, last year, "
-                "labor, weather, event and notes, the week's totals, and period to date. Use for 'how "
-                "did this week go', 'are we ahead of last year', week-over-week questions."
-            ),
+                "The fiscal week's sales grid holding a date: each day vs last year, labor, weather, events, "
+                "totals."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "date": {"type": "string", "description": "Any day in the week, YYYY-MM-DD. Default: the latest report's week."}}},
+                "date": {"type": "string", "description": "Default the latest report's week."}}},
         },
     },
     {
@@ -3502,13 +3329,9 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "read_period",
-            "description": (
-                "THE FISCAL PERIOD holding a date, one row of totals per week, and the period's totals. "
-                "Use for 'how is this period going' or period-over-period questions. Only for a "
-                "restaurant with a fiscal calendar set."
-            ),
+            "description": "The fiscal period holding a date: totals per week and for the period.",
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "date": {"type": "string", "description": "Any day in the period, YYYY-MM-DD. Default: the latest report's."}}},
+                "date": {"type": "string"}}},
         },
     },
     # ── Write tools: proposal only ──────────────────────────────────────────
@@ -3528,16 +3351,13 @@ TOOLS = [
         "spec": {
             "name": "set_auto_approve",
             "description": (
-                "Propose turning automatic approval of drafted 5-star review replies on or "
-                "off. When on, those replies POST PUBLICLY without the owner reading them, so "
-                "this is proposed and the owner confirms. Say plainly what it will do, and "
-                "what the daily cap is, before proposing it."
-            ),
+                "Propose turning auto-approval of drafted 5-star replies on or off. When on they POST PUBLICLY "
+                "unread; say so, with the daily cap."),
             "input_schema": {"type": "object", "required": ["enabled"],
                              "additionalProperties": False, "properties": {
                 "enabled": {"type": "boolean"},
                 "daily_cap": {"type": "integer",
-                              "description": "How many a day at most, 1-50. Default 5."}}},
+                              "description": "1-50, default 5."}}},
         },
     },
     {
@@ -3550,16 +3370,11 @@ TOOLS = [
         "summary": "Change review retention to {months}",
         "spec": {
             "name": "set_data_retention",
-            "description": (
-                "Propose changing how long reviews are kept. Anything other than 'keep "
-                "everything' means the nightly job deletes reviews older than that window — "
-                "so this is proposed, and the owner confirms. Tell them what will be removed."
-            ),
+            "description": "Propose how long reviews are kept; the nightly job deletes older ones. Say what goes.",
             "input_schema": {"type": "object", "required": ["months"],
                              "additionalProperties": False, "properties": {
                 "months": {"type": "integer", "enum": [0, 6, 12, 24, 36],
-                           "description": "0 keeps everything; otherwise reviews older than "
-                                          "this many months are deleted."}}},
+                           "description": "0 keeps everything."}}},
         },
     },
     {
@@ -3570,13 +3385,9 @@ TOOLS = [
         "module": "module_inventory",
         "spec": {
             "name": "send_supplier_order",
-            "description": (
-                "Propose emailing the suggested order to suppliers. This does NOT send — it asks "
-                "the owner to confirm first. Call read_order_draft first so you can tell them what "
-                "they are about to send."
-            ),
+            "description": "Propose emailing the suggested order to suppliers. Call read_order_draft first.",
             "input_schema": {"type": "object", "properties": {
-                "supplier_email": {"type": "string", "description": "Send to just this supplier. Omit to send to every supplier with items."}}},
+                "supplier_email": {"type": "string", "description": "Omit for every supplier."}}},
         },
     },
     {
@@ -3587,9 +3398,9 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "publish_schedule",
-            "description": "Propose sending each employee their own shifts by email. Does NOT send — the owner confirms first.",
+            "description": "Propose emailing each employee their shifts.",
             "input_schema": {"type": "object", "properties": {
-                "schedule_id": {"type": "integer", "description": "Defaults to the most recent schedule."}}},
+                "schedule_id": {"type": "integer"}}},
         },
     },
     {
@@ -3600,7 +3411,7 @@ TOOLS = [
         "module": "module_reviews",
         "spec": {
             "name": "approve_all_reviews",
-            "description": "Propose approving every review reply that already has a draft awaiting approval. Posts publicly, so the owner confirms first.",
+            "description": "Propose approving every drafted reply awaiting approval (they post publicly).",
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -3612,13 +3423,9 @@ TOOLS = [
         "module": "module_reviews",
         "spec": {
             "name": "draft_review_reply",
-            "description": (
-                "Propose writing (or rewriting) the AI reply for one review. Use read_reviews "
-                "first to find the review id. Does not post anything — it only drafts, and the "
-                "owner confirms."
-            ),
+            "description": "Propose writing or rewriting the AI reply for one review (a draft only).",
             "input_schema": {"type": "object", "required": ["review_id"], "properties": {
-                "review_id": {"type": "integer", "description": "From read_reviews."}}},
+                "review_id": {"type": "integer"}}},
         },
     },
     {
@@ -3629,13 +3436,9 @@ TOOLS = [
         "module": "module_reviews",
         "spec": {
             "name": "approve_review",
-            "description": (
-                "Propose approving one review's drafted reply so it posts publicly. Use "
-                "read_reviews to find the id and check it has a draft. Posts publicly, so the "
-                "owner confirms first."
-            ),
+            "description": "Propose approving one review's draft so it posts publicly.",
             "input_schema": {"type": "object", "required": ["review_id"], "properties": {
-                "review_id": {"type": "integer", "description": "From read_reviews."}}},
+                "review_id": {"type": "integer"}}},
         },
     },
     {
@@ -3647,31 +3450,23 @@ TOOLS = [
         "spec": {
             "name": "send_guest_campaign",
             "description": (
-                "Propose texting consented guests. Does NOT send — the owner confirms first. "
-                "Always include the exact message you are proposing so they can read it before agreeing, "
-                "and say which guests get it (segment). The text is held to the same rules as every guest "
-                "text: no offer, price, date, time or event the owner did not say in their own words or menu "
-                "notes, nothing new/back/better/changed they did not say, no invented sign-off, at most "
-                "300 characters, links only in link_url."
-            ),
+                "Propose texting consented guests: give the exact message and the segment. Like every guest "
+                "text: no offer, price, date, time or event the owner did not state; nothing new/back/better "
+                "they did not say; no invented sign-off; at most 300 characters; links only in link_url."),
             "input_schema": {"type": "object", "required": ["message", "segment"], "properties": {
-                "message": {"type": "string", "description": "The exact SMS body to send."},
+                "message": {"type": "string"},
                 # guest_marketing.SEGMENTS (a test pins the two together).
                 # Required: a text used to go to everyone consented whenever
                 # the model left the audience out (AUX-2 / #15).
                 "segment": {"type": "string", "enum": ["all", "lapsed_30", "lapsed_60", "regulars", "new"],
-                            "description": "Who gets it: all (everyone consented), lapsed_30 / lapsed_60 "
-                                           "(no visit in 30+ / 60+ days), regulars (3+ visits), new "
-                                           "(first-timers). Ask the owner when they haven't said."},
+                            "description": (
+                                "lapsed_30/60: no visit in 30+/60+ days; regulars: 3+ visits. Ask if unsaid.")},
                 "link_url": {"type": "string",
-                             "description": "Optional: one page on the restaurant's OWN website (its menu or "
-                                            "booking page), sent as a tracked link. Any other domain is refused."},
+                             "description": "One page on the restaurant's OWN website."},
                 "target_day": {"type": "string",
                                "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
                                         "Saturday", "Sunday"],
-                               "description": "When the campaign exists to lift one slow weekday "
-                                              "(see read_demand_forecast), that weekday — its sales "
-                                              "are then tracked before and after."}}},
+                               "description": "The slow weekday it is meant to lift, if any."}}},
         },
     },
     {
@@ -3683,18 +3478,12 @@ TOOLS = [
         "module": None,
         "spec": {
             "name": "create_issue",
-            "description": (
-                "Propose opening an operational issue and texting it to the manager the owner has "
-                "routed issues to (or a named alert contact). Does NOT send — the owner confirms. "
-                "Use when the owner wants someone to own a problem ('make sure someone deals with "
-                "this review', 'have the GM look at the walk-in')."
-            ),
+            "description": "Propose opening an issue and texting it to the routed manager or a named contact.",
             "input_schema": {"type": "object", "required": ["title"], "properties": {
                 "title": {"type": "string"},
                 "detail": {"type": "string"},
                 "severity": {"type": "string", "enum": ["normal", "high"]},
-                "assignee_contact_id": {"type": "integer",
-                                        "description": "Optional; defaults to the routed manager."}}},
+                "assignee_contact_id": {"type": "integer"}}},
         },
     },
     {
@@ -3705,7 +3494,7 @@ TOOLS = [
         "module": "module_reviews",
         "spec": {
             "name": "retract_review_reply",
-            "description": "Propose pulling back a reply that has already been posted publicly. Changes what the public sees, so the owner confirms.",
+            "description": "Propose pulling back a publicly posted reply.",
             "input_schema": {"type": "object", "required": ["review_id"], "properties": {
                 "review_id": {"type": "integer"}}},
         },
@@ -3718,11 +3507,7 @@ TOOLS = [
         "module": "module_marketing",
         "spec": {
             "name": "publish_instagram_post",
-            "description": (
-                "Propose publishing a caption to Instagram. Publishes publicly, so the owner "
-                "confirms. Draft with generate_marketing_content first and show them the "
-                "caption before proposing."
-            ),
+            "description": "Propose publishing a caption to Instagram; draft and show it first.",
             "input_schema": {"type": "object", "required": ["caption"], "properties": {
                 "caption": {"type": "string"},
                 "image_url": {"type": "string"},
@@ -3737,7 +3522,7 @@ TOOLS = [
         "module": "module_marketing",
         "spec": {
             "name": "publish_facebook_post",
-            "description": "Propose publishing a caption to the Facebook page. Publishes publicly, so the owner confirms.",
+            "description": "Propose publishing a caption to the Facebook page.",
             "input_schema": {"type": "object", "required": ["caption"], "properties": {
                 "caption": {"type": "string"},
                 "image_url": {"type": "string"},
@@ -3752,7 +3537,7 @@ TOOLS = [
         "module": "module_reviews",
         "spec": {
             "name": "send_review_request",
-            "description": "Propose emailing one guest a request to leave a review. Emails someone outside the business, so the owner confirms.",
+            "description": "Propose emailing one guest a request to leave a review.",
             "input_schema": {"type": "object", "required": ["email"], "properties": {
                 "name": {"type": "string"},
                 "email": {"type": "string"}}},
@@ -3769,7 +3554,7 @@ TOOLS = [
         "summary": "Refresh competitor data",
         "spec": {
             "name": "refresh_competitors",
-            "description": "Propose re-pulling competitor ratings and reviews. Costs external API calls and takes a minute, so the owner confirms.",
+            "description": "Propose re-pulling competitor ratings and reviews.",
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -3795,17 +3580,13 @@ TOOLS = [
             # "redo Friday with fewer servers" generated next week, whole,
             # with the ask lost (schedule audit 10/3/26 PR-19).
             "description": (
-                "Propose building the schedule for a week, or rewriting some days of that week's current draft. "
-                "Takes a minute and replaces the current draft, so the owner confirms first. week_start is any "
-                "date in the week wanted (leave it out for next week). dates rewrites only those days of the "
-                "week's draft and keeps every other day as it is. instruction carries what the owner asked for "
-                "with this draft, in their words ('Maria closes no more than twice', 'one fewer server Friday "
-                "lunch') — put every such ask in it, never drop one."),
+                "Propose building a week's schedule, or rewriting some days of its draft. instruction carries "
+                "everything the owner asked for with it, in their words — never drop one."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "week_start": {"type": "string", "description": "YYYY-MM-DD: any date in the week wanted."},
+                "week_start": {"type": "string", "description": "Any date in the week; omit for next week."},
                 "dates": {"type": "array", "items": {"type": "string"},
-                          "description": "YYYY-MM-DD days of that week to rewrite; the rest of its draft is kept."},
-                "instruction": {"type": "string", "description": "What the owner asked for with this draft."}}},
+                          "description": "Only these days are rewritten."},
+                "instruction": {"type": "string"}}},
         },
     },
     # Answering the team (Friction audit #18): the same decide routes the
@@ -3820,10 +3601,7 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "decide_time_off",
-            "description": (
-                "Propose approving or denying one pending time-off request. Call read_time_off first "
-                "for the request id. Does NOT decide — the owner confirms first."
-            ),
+            "description": "Propose approving or denying one pending time-off request.",
             "input_schema": {"type": "object", "required": ["request_id", "decision"], "properties": {
                 "request_id": {"type": "integer", "description": "From read_time_off."},
                 "decision": {"type": "string", "enum": ["approve", "deny"]}}},
@@ -3838,10 +3616,7 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "decide_shift_request",
-            "description": (
-                "Propose approving or denying one pending shift swap or drop request. Call "
-                "read_time_off first for the request id. Does NOT decide — the owner confirms first."
-            ),
+            "description": "Propose approving or denying one pending shift swap or drop.",
             "input_schema": {"type": "object", "required": ["request_id", "decision"], "properties": {
                 "request_id": {"type": "integer", "description": "From read_time_off."},
                 "decision": {"type": "string", "enum": ["approve", "deny"]}}},
@@ -3861,11 +3636,9 @@ TOOLS = [
         "spec": {
             "name": "add_closed_date",
             "description": (
-                "Propose adding a date the restaurant is CLOSED (a holiday, a private buyout, a repair) to the "
-                "closures the schedule and every forecast obey. Use it instead of remember when the owner says "
-                "they are closed on a date. Does NOT change anything — the owner confirms first."),
+                "Propose a date the restaurant is CLOSED, for the closures the schedule and forecasts obey."),
             "input_schema": {"type": "object", "required": ["date"], "additionalProperties": False, "properties": {
-                "date": {"type": "string", "description": "YYYY-MM-DD, today or later."}}},
+                "date": {"type": "string"}}},
         },
     },
     {
@@ -3881,12 +3654,8 @@ TOOLS = [
             # shift too (schedule audit 10/3/26 PR-19). Part of a day is
             # set_staff_hours.
             "description": (
-                "Propose recording that one person on the team cannot work certain weekdays AT ALL, in the "
-                "availability the schedule draft treats as a hard rule. Use it instead of remember when the owner "
-                "says someone can't work a whole day ('Maria can't work Sundays' → Maria, Sunday). Part of a day "
-                "is NOT this — 'Maria can't close Sundays' or 'Ben only does lunches on Fridays' is "
-                "set_staff_hours. The name must be someone on the roster; their other blocked days and notes are "
-                "kept. Does NOT change anything — the owner confirms first."),
+                "Propose that one roster member cannot work certain weekdays AT ALL (a hard schedule rule). Part "
+                "of a day ('can't close Sundays') is set_staff_hours."),
             "input_schema": {"type": "object", "required": ["employee_name", "weekdays"],
                              "additionalProperties": False, "properties": {
                 "employee_name": {"type": "string"},
@@ -3907,22 +3676,18 @@ TOOLS = [
         "spec": {
             "name": "set_staff_hours",
             "description": (
-                "Propose recording that one person on the team can work only PART of certain weekdays — not after "
-                "a time (latest), not before a time (earliest), or only one daypart (morning = lunch/day, night = "
-                "dinner/night) — in the settings the schedule draft treats as a hard rule. 'Maria can't close "
-                "Sundays' is this, not a day off: she can work Sunday, just not until close, so ask the owner by "
-                "what time she has to be done unless they said it, then propose latest. 'Ben only does lunches on "
-                "Fridays' → Friday, daypart morning. The name must be someone on the roster; their limits on other "
-                "days are kept. Does NOT change anything — the owner confirms first."),
+                "Propose that one roster member can work only PART of certain weekdays (done by latest, not "
+                "before earliest, or one daypart): a hard schedule rule. 'Maria can't close Sundays' is this; "
+                "ask by what time she must be done unless they said."),
             "input_schema": {"type": "object", "required": ["employee_name", "weekdays"],
                              "additionalProperties": False, "properties": {
                 "employee_name": {"type": "string"},
                 "weekdays": {"type": "array", "items": {"type": "string", "enum": [
                     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]}},
-                "latest": {"type": "string", "description": "The time they must be done by, e.g. 8:00pm."},
-                "earliest": {"type": "string", "description": "The time they can start from, e.g. 4:00pm."},
+                "latest": {"type": "string", "description": "e.g. 8:00pm."},
+                "earliest": {"type": "string", "description": "e.g. 4:00pm."},
                 "daypart": {"type": "string", "enum": ["morning", "night"],
-                            "description": "morning = lunch/day shifts only; night = dinner/night shifts only."}}},
+                            "description": "morning = lunch/day; night = dinner/night."}}},
         },
     },
     {
@@ -3931,8 +3696,7 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "read_time_off",
-            "description": ("Pending time-off and shift swap/drop requests, each with its id, the person, "
-                            "the dates or shift, and what they wrote. Use before proposing an answer."),
+            "description": "Pending time-off and swap/drop requests with their ids.",
             "input_schema": {"type": "object", "properties": {}},
         },
     },
@@ -3948,15 +3712,10 @@ TOOLS = [
         "module": "module_inventory",
         "spec": {
             "name": "apply_invoice_lines",
-            "description": (
-                "Propose applying a scanned supplier invoice's checked lines to ingredient costs — "
-                "only the lines Cavnar AI could verify (they add up and match one ingredient); flagged "
-                "lines stay for the owner on the Food Cost invoice card. Omit import_id for the "
-                "newest invoice still waiting. The owner confirms first."
-            ),
+            "description": "Propose applying a scanned invoice's verified lines to ingredient costs.",
             "input_schema": {"type": "object", "properties": {
                 "import_id": {"type": "integer",
-                              "description": "A scanned invoice's id. Omit for the newest one waiting."}}},
+                              "description": "Omit for the newest waiting."}}},
         },
     },
     {
@@ -3969,14 +3728,11 @@ TOOLS = [
         "spec": {
             "name": "receive_purchase_order",
             "description": (
-                "Propose marking a sent supplier order as received exactly as ordered, which adds "
-                "every line to on-hand stock. If anything arrived short, tell the owner to receive "
-                "it on the Food Cost order card instead, where each quantity can be changed. Omit "
-                "po_id for the oldest order still open. The owner confirms first."
-            ),
+                "Propose receiving a sent supplier order exactly as ordered. If anything arrived short, send the "
+                "owner to the Food Cost order card."),
             "input_schema": {"type": "object", "properties": {
                 "po_id": {"type": "integer",
-                          "description": "The purchase order's id. Omit for the oldest one still open."}}},
+                          "description": "Omit for the oldest open."}}},
         },
     },
 ]
@@ -4093,10 +3849,19 @@ def tool_specs(restaurant=None):
     """The `tools` array passed to the API.
 
     Filtered to the modules this restaurant actually has. The full set is
-    ~2,750 tokens on every single call — paid even for "what time do we
-    open?" — and offering a tool for a module they don't own invites the
-    model to call it and then explain an empty result. Tools with no module
-    tag (reviews of the account itself, settings, competitors) always apply.
+    ~25,700 characters of JSON (~6,400 tokens) on every single call — paid
+    even for "what time do we open?" — and offering a tool for a module they
+    don't own invites the model to call it and then explain an empty result.
+    Tools with no module tag (reviews of the account itself, settings,
+    competitors) always apply.
+
+    Kept short on purpose (AI cost audit 10/7/26 #17: it was ~45,900
+    characters, ~11,400 tokens, and nearly half of every cold question's
+    bill): a description names what the tool returns and the decisive "when
+    to use it"; rules that held for many tools (what "Propose" means, which
+    direct actions send nothing, ids from the matching read, figures are
+    final) are said once in ask_cavnar._SYSTEM_STATIC's TOOL CONVENTIONS.
+    tests/test_ask_cost_1007.py holds the total under a ceiling.
     """
     if restaurant is None:
         return [t["spec"] for t in TOOLS]

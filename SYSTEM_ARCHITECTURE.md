@@ -119,6 +119,7 @@ One SQLite file (`reviews.db`), WAL mode, on a Railway persistent volume. `model
 |---|---|---|
 | `FETCH_WORKERS` / `FETCH_MAX_SECONDS` + `job_cursors` | `scheduler.py` | A serial pass over every restaurant ran for hours and never reached the tail; the cursor stops the bound from starving the same tail every pass |
 | `ASK_MAX_CONCURRENT` | `client_api.py` | Ask spawned an unbounded daemon thread per request |
+| `ASK_READ_WORKERS` (4) | `ask_cavnar._read_pool` | one Ask round's reads ahead of its first direct action run together on one shared pool (AI cost audit 10/7/26 #32), never a thread per read; each in the turn's context (`ai_utils.context_runner`), with no Flask request (read tools take the viewer from the restaurant they are handed) |
 | `MAX_CSV_ROWS` | `client_api.py` | Parse/analyse/store run synchronously in a request |
 | `CB_FAILURE_THRESHOLD` / `CB_OPEN_SECONDS` | `ai_utils.py` | Retry is the wrong answer to a provider outage |
 | `timeout=` on every outbound call | enforced by `scripts/check_timeouts.py` | One hung call is 25% of capacity |

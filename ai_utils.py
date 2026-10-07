@@ -1857,8 +1857,10 @@ def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_
 # most models. Neither is included in `input_tokens`, which counts only the
 # uncached remainder.
 #
-# This matters beyond reporting. Ask Cavnar now caches ~9,600 tokens of tools
-# and static prompt, so a cache WRITE is a real charge the ledger recorded as
+# This matters beyond reporting. Ask Cavnar caches ~10,000 tokens of tools
+# and static prompt (since the AI cost audit of 10/7/26: tools ~6,400 from
+# ~11,400), then its snapshot and each round's turn so far, so a cache WRITE
+# is a real charge the ledger recorded as
 # nothing — and ai_budget_exceeded sums this ledger, so the $10/day and
 # $1,500/month ceilings would have been enforced against an understated
 # figure on every cached call. Counting reads matters the other way: they are

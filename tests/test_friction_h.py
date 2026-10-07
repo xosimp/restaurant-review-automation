@@ -324,8 +324,10 @@ def test_the_screen_hint_reaches_the_model_beside_the_snapshot(db_path, monkeypa
                               screen={"panel": "reviews", "entity": {"type": "review", "id": rv}})
     system = "\n".join(b["text"] for b in captured["system"])
     assert f"Looking at: review #{rv}" in system
-    # The owner's words are still the only user turn.
-    assert captured["messages"][-1]["content"] == "Make this reply warmer"
+    # The owner's words are still the only user turn — sent as one text
+    # block carrying the turn's cache breakpoint (AI cost audit 10/7/26 #16).
+    last = captured["messages"][-1]["content"]
+    assert [blk["text"] for blk in last] == ["Make this reply warmer"]
 
 
 def test_both_ask_routes_pass_the_screen_through(client_for, db_path, monkeypatch):

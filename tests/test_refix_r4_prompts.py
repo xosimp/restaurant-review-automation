@@ -246,7 +246,11 @@ def test_ask_with_tools_puts_a_callers_memory_in_the_system_prompt_and_the_corpu
     import inspect
     import ask_cavnar
     src = inspect.getsource(ask_cavnar.ask_with_tools)
-    assert "seen_corpus.append(_memory_extra)" in src and '{"type": "text", "text": _memory_extra}' in src
+    # A per-turn block after the snapshot (_system_blocks' `turn` list, AI
+    # cost audit 10/7/26 #30) — it was appended as its own dict literal.
+    assert "seen_corpus.append(_memory_extra)" in src and "_memory_extra, _screen" in src
+    blocks = ask_cavnar._system_blocks("R", "SNAP", "standard", turn=["MEMORY BLOCK"])
+    assert blocks[-1] == {"type": "text", "text": "MEMORY BLOCK"}
 
 
 def _claim(rid, surface, subject, text, rec_key, when):

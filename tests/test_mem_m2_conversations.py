@@ -80,16 +80,22 @@ def test_turns_that_scroll_out_are_summarised_validated_and_replayed_first(monke
     assert out["figures"] == ["Labor ran 31.4% last week"], "a figure the turns never held is dropped"
     # nothing new has scrolled out: no second call
     assert conv.maybe_summarize(rid, cid, user_id=1) is None and len(calls) == 1
-    # ...and it is the first context block of the next turn, fenced
+    # ...and it is a context block of the next turn, fenced
     captured = {}
     monkeypatch.setattr(ask_cavnar, "create_with_retry", lambda client, **kw: captured.update(kw) or types.SimpleNamespace(
         content=[types.SimpleNamespace(type="text", text="ok")], stop_reason="end_turn"))
     ask_cavnar.ask_with_tools(get_restaurant(rid), "what was option 2?", history=[], user=OWNER, conversation_id=cid)
     blocks = captured["system"]
     assert "cache_control" in blocks[0]
-    assert "Option 2: move a server" in blocks[1]["text"] and "Restaurant:" not in blocks[1]["text"]
+    # Per turn, so after the cached snapshot and uncached (AI cost audit
+    # 10/7/26 #30: it was the first block after the static rules, which put
+    # a per-turn text in front of the snapshot's cache breakpoint).
+    assert "Restaurant:" in blocks[1]["text"] and "cache_control" in blocks[1]
+    chat = [b for b in blocks if "Option 2: move a server" in b["text"]]
+    assert len(chat) == 1 and blocks.index(chat[0]) > 1 and "cache_control" not in chat[0]
+    assert "Restaurant:" not in chat[0]["text"]
     import ai_guard
-    assert ai_guard.UNTRUSTED_OPEN in blocks[1]["text"]
+    assert ai_guard.UNTRUSTED_OPEN in chat[0]["text"]
 
 
 def test_another_logins_chat_summary_never_reaches_this_one(monkeypatch):
@@ -131,7 +137,10 @@ def test_the_last_answer_replays_in_full_and_older_ones_are_cut():
     history = [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "y" * 9000},
                {"role": "user", "content": "q2"}, {"role": "assistant", "content": long_answer}]
     out = ask_cavnar._sanitize_history(history)
-    assert len(out[1]["content"]) == ask_cavnar._MAX_HISTORY_TURN_LENGTH
+    # An older answer is cut to _MAX_OLDER_ANSWER_LENGTH (800) since the AI
+    # cost audit of 10/7/26 (#66) — it was _MAX_HISTORY_TURN_LENGTH (2,400),
+    # resent on every call of every later question.
+    assert len(out[1]["content"]) == ask_cavnar._MAX_OLDER_ANSWER_LENGTH == 800
     assert out[3]["content"] == long_answer
 
 

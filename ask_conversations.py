@@ -166,18 +166,26 @@ def _parse(text) -> dict:
     return d if isinstance(d, dict) else {}
 
 
-def maybe_summarize(restaurant_id, conversation_id, user_id=None, db_path=None, force=False):
+def maybe_summarize(restaurant_id, conversation_id, user_id=None, db_path=None, force=False, correlation_id=None):
     """Fold the turns that scrolled out of the replayed window into the chat's
     rolling summary when at least SUMMARY_TRIGGER of them are new (or
     `force`). Returns the stored summary dict, or None when nothing was due
-    or the call failed. Never raises into the caller's request."""
+    or the call failed. Never raises into the caller's request.
+
+    Its call carries a correlation id (AI cost audit 10/7/26 #97): the turn's
+    (`correlation_id`, the answer meta's turn_id) when the caller passes it,
+    else one of its own — it runs after the turn's own block has closed, and
+    a call with none was filed with every other id-less row as one group."""
     if not restaurant_id or not conversation_id:
         return None
     lock = _lock(conversation_id)
     if not lock.acquire(blocking=False):
         return None                     # another request is already summarising this chat
     try:
-        return _summarize(restaurant_id, int(conversation_id), user_id, db_path, force)
+        import ai_utils
+        corr = correlation_id or ai_utils.new_correlation_id("ask_summary")
+        with ai_utils.ai_context(correlation_id=corr):
+            return _summarize(restaurant_id, int(conversation_id), user_id, db_path, force)
     except Exception as e:
         log.warning("ask_conversations: summary failed for rid=%s chat=%s: %s", restaurant_id, conversation_id, e)
         return None
