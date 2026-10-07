@@ -63,6 +63,23 @@ def arms_from(models, efforts, prompts) -> list:
     return out
 
 
+def tier_arms(tiers, prompts) -> list:
+    """Arms for tiers of the labor_schedule ladder (ai_workflows: T3 Sonnet
+    5.5, T4 Opus 5.5, each at its tier's effort) - what the generator runs
+    on since 10/7/26 (AI orchestration, owner decision 3), named
+    "<tier>:<model>/<effort>/<prompt>" so a report reads by tier."""
+    import ai_workflows as wf
+    table = wf._tier_table()
+    out = []
+    for t in tiers:
+        if t not in table:
+            raise ValueError(f"unknown tier {t!r} (one of {sorted(table)})")
+        m, e = table[t]["model"], table[t]["effort"]
+        for p in prompts:
+            out.append({"name": f"{t}:{m}/{e or '-'}/{p}", "model": m, "effort": e, "prompt": p, "tier": t})
+    return out
+
+
 def apply_arm(request: dict, arm: dict) -> dict:
     """The request as `arm` would send it: its model, and the thinking,
     effort and max_tokens labor.generate_optimized_schedule gives that
@@ -364,7 +381,9 @@ def run(weeks, arms, call_model=None, repair=None, live=False, db_path=None) -> 
     for generation, calls in weeks:
         ctx = week_context(generation, calls, db_path=db_path)
         row = {"generation_id": generation["generation_id"], "restaurant_id": generation["restaurant_id"],
-               "week_start": generation["week_start"], "history_id": generation.get("history_id"), "arms": {}}
+               "week_start": generation["week_start"], "history_id": generation.get("history_id"),
+               # The tier(s) production wrote it on (schedule_model_calls.tier, 10/7/26).
+               "tiers": sorted({c.get("tier") for c in calls if c.get("tier")}), "arms": {}}
         plan = [({"name": PRODUCTION}, production_result(calls))]
         if live:
             for arm in arms:
@@ -439,6 +458,7 @@ def main(argv=None):
     ap.add_argument("--models", default="claude-opus-5-5,claude-sonnet-5-5")
     ap.add_argument("--efforts", default="high")
     ap.add_argument("--prompts", default="stored", help="stored, rerender, or module:function (comma-separated)")
+    ap.add_argument("--tiers", help="labor_schedule ladder tiers to replay instead of --models/--efforts (e.g. T3,T4)")
     ap.add_argument("--repair", help="module:function(rows, constraints, roster_roles) -> rows")
     ap.add_argument("--live", action="store_true", help="make the calls (costs money); otherwise plan only")
     ap.add_argument("--json", help="write the full report here")
@@ -449,9 +469,12 @@ def main(argv=None):
     if not weeks:
         ap.error("no stored schedule calls for those weeks (schedule_model_calls is filled by generations "
                  "made since it was added)")
-    arms = arms_from([m.strip() for m in args.models.split(",") if m.strip()],
-                     [e.strip() for e in args.efforts.split(",") if e.strip()],
-                     [p.strip() for p in args.prompts.split(",") if p.strip()])
+    prompts = [p.strip() for p in args.prompts.split(",") if p.strip()]
+    if args.tiers:
+        arms = tier_arms([t.strip() for t in args.tiers.split(",") if t.strip()], prompts)
+    else:
+        arms = arms_from([m.strip() for m in args.models.split(",") if m.strip()],
+                         [e.strip() for e in args.efforts.split(",") if e.strip()], prompts)
     calls = sum(len(c) for _g, c in weeks)
     print(f"{len(weeks)} week(s), {calls} stored call(s), {len(arms)} arm(s)")
     for name, dollars in estimate(weeks, arms).items():

@@ -123,7 +123,11 @@ def test_the_schedule_call_asks_opus_55_to_think_at_medium_effort_and_streams(mo
         [{"employee": "Alex", "role": "Server", "date": "2026-06-01", "day": "Monday",
           "scheduled_hours": 8, "actual_hours": 8}],
         restaurant_name="Test Bistro", hourly_rate=26.0, labor_target=23.0, monthly_revenue_target=365000.0)
-    assert captured["model"] == "claude-opus-5-5"
+    # Since 10/7/26 the model is the route's (AI orchestration, owner
+    # decision 3): a call outside a job runs on the labor_schedule ladder's
+    # first rung, T3 - Sonnet 5.5 thinking at medium. Opus 5.5 is T4 and the
+    # SCHEDULE_MODEL pin (tests/test_schedule_route.py).
+    assert captured["model"] == "claude-sonnet-5-5"
     assert captured["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert captured["output_config"]["effort"] == "medium"
     assert captured["output_config"]["format"]["type"] == "json_schema"

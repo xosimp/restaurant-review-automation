@@ -2199,6 +2199,13 @@ STAFF_CONSTRAINTS_RULE = ("The STAFF CONSTRAINTS are the manager's notes about w
 # (owner, 10/6/26: "yes switch to medium"). Watch the drafts' quality score
 # and seconds (schedule_model_calls) before changing it back. A
 # SCHEDULE_MODEL override to an older model keeps the old call shape.
+# Since 10/7/26 the model and effort are the route's (AI orchestration,
+# owner decision 3): the ai_workflows "labor_schedule" ladder's T3 (Sonnet
+# 5.5) or T4 (Opus 5.5), both adaptive thinking at medium — both in
+# SCHEDULE_THINKING_MODELS (a test holds the tier table to it).
+# SCHEDULE_EFFORT is the effort of the pinned route: a SCHEDULE_MODEL env
+# pin skips the ladder and runs that model at this effort
+# (schedule_engine.schedule_route).
 SCHEDULE_THINKING_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable", "claude-mythos")
 SCHEDULE_EFFORT = "medium"
 SCHEDULE_MAX_TOKENS_THINKING = 64000
@@ -3975,7 +3982,7 @@ def _usage_of(msg) -> dict:
 
 def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_id=None, week_start=None,
                           dates=None, contract=None, outcome=None, error=None, seconds=None, rows=None,
-                          call_kind=None):
+                          call_kind=None, tier=None):
     """Store one schedule call's full input and answer (schedule audit
     10/3/26 PR-31: the trace keeps 40k characters of a 55-70k prompt, so no
     real week could be replayed). Returns the record id, or None. A failure
@@ -3992,7 +3999,8 @@ def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_i
             model=(call or {}).get("model"), effort=oc.get("effort"), contract=contract,
             stop_reason=getattr(msg, "stop_reason", None) if msg is not None else None,
             outcome=outcome, error=error, seconds=seconds, usage=_usage_of(msg) if msg is not None else None,
-            rows=rows, answer_chars=len(raw or "") if raw is not None else None, call_kind=call_kind)
+            rows=rows, answer_chars=len(raw or "") if raw is not None else None, call_kind=call_kind,
+            tier=tier)
     except Exception as e:
         print(f"[schedule] model call not recorded rid={restaurant_id}: {e!r}")
         try:
@@ -5351,7 +5359,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
     _t0 = time.time()
-    _model = model_for("schedule")
+    # The generation's route (AI orchestration, owner decision 3, 10/7/26):
+    # the run's tier on the ai_workflows "labor_schedule" ladder — T3 Sonnet
+    # 5.5 or T4 Opus 5.5, both thinking at medium — for every call of it
+    # (the week, its slices, retries and the gate's rewrite); the
+    # SCHEDULE_MODEL pin instead when it is set (schedule_engine.
+    # schedule_route). A direct call outside a job runs on the first rung.
+    from schedule_engine import schedule_route as _sched_route
+    _route = _sched_route()
+    _model = _route.model
     _thinks = schedule_model_thinks(_model)
     _call = dict(
         model=_model,
@@ -5391,15 +5407,21 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # display keeps the stream moving while it thinks, so the read
         # timeout never sees a silent connection.
         _call["thinking"] = {"type": "adaptive", "display": "summarized"}
-        _oc["effort"] = SCHEDULE_EFFORT
+        _oc["effort"] = _route.effort or SCHEDULE_EFFORT
     if structured:
         _oc["format"] = {"type": "json_schema", "schema": _schema}
     if _oc:
         _call["output_config"] = _oc
+    # The route sets the model and its effort (ai_workflows.Route.apply); the
+    # schedule keeps its summarized thinking display on any thinking route.
+    _call = _route.apply(_call)
+    if _thinks:
+        _call["thinking"] = {"type": "adaptive", "display": "summarized"}
+    _oc = dict(_call.get("output_config") or {})
     _cut = None
     _contract = ("schema" if schema_enums else "plain_schema") if structured else "csv"
     _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract,
-                call_kind=call_kind)
+                call_kind=call_kind, tier=_route.tier)
     try:
         # Background job, long output: minutes of generation, well past the
         # request-path default. The timeout is the longest silence between
@@ -5555,7 +5577,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                     rows=_rows_written, **_rec)
     _usage = _usage_of(msg)
     _model_call = {"id": _rec_id, "model": _model, "effort": _oc.get("effort"), "contract": _contract,
-                   "call_kind": call_kind,
+                   "call_kind": call_kind, "tier": _route.tier,
                    "stop_reason": _stop, "seconds": _seconds, **_usage, "rows": _rows_written,
                    "answer_chars": len(raw),
                    # Every output token — thinking included — per row written:

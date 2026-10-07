@@ -660,7 +660,9 @@ def test_a_restaurants_measured_row_cost_shrinks_its_calls_and_never_grows_them(
         return fake
     monkeypatch.setattr(so, "call_costs", measured(None))
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL              # no calls yet: the estimate
-    assert seen[-1] == (rid, ai_utils.model_for("schedule"))           # the restaurant's own, on the model in force
+    # The restaurant's own, on the model in force: the route's since 10/7/26
+    # (schedule_route - the labor_schedule ladder's tier, not model_for).
+    assert seen[-1] == (rid, se.schedule_route().model)
     monkeypatch.setattr(so, "call_costs", measured(400))               # thinking included, per row written
     assert se.rows_per_call(rid) == int(se.SCHEDULE_TOKEN_CEILING * se.MEASURED_HEADROOM // 400)
     monkeypatch.setattr(so, "call_costs", measured(100, fixed=30000))  # the fixed part comes off first

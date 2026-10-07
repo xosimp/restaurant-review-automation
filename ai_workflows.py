@@ -49,7 +49,7 @@ from dataclasses import dataclass, field, replace
 # Bumped when any default below changes: every ai_runs row records the policy
 # version it ran under, so the learner never compares runs across a change it
 # cannot see.
-POLICY_VERSION = "2026-10-07.1"
+POLICY_VERSION = "2026-10-07.2"
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
@@ -142,16 +142,26 @@ _ESC_COPY = ("schema_fail", "validation_refuse")
 
 POLICIES = {p.workflow: p for p in (
     # ── scheduling ──────────────────────────────────────────────────────
-    # Stays on the call site's own model (Opus 5.5, labor.SCHEDULE_EFFORT)
-    # until the model eval clears Sonnet 5.5 on stored weeks (owner, 10/7/26:
-    # Sonnet 5.5 first only if it passes >= 80%). The quality gate is the
-    # rules engine; a gate rewrite is its own call inside the same run.
-    _p("labor_schedule", "scheduling", "schedule", ladder=(DEFAULT,), reviewer="rules",
+    # Sonnet 5.5 first (owner decision 3, 10/7/26: "Sonnet 5.5 first if the
+    # eval clears 80%, hard weeks straight to Opus"). On Simple EJ's one
+    # stored week (scripts/schedule_model_eval.py, prod 10/7/26) Sonnet 5.5
+    # medium matched Opus 5.5 medium, the production setting: quality 78 v
+    # 79, hard rules 3 v 4 before the repair and 0 after it, at a third of
+    # the cost ($0.41 v $1.23) and 278s v 456s. The quality gate is the
+    # rules engine: its fill in code runs first, and only a gate that still
+    # trips after it (rule_breach) sends the gate's days to T4 — that
+    # rewrite IS the escalation, with the gate's reasons as its notes.
+    # schedule_engine.hard_week_reasons pre-routes a hard week to T4; a
+    # SCHEDULE_MODEL env pin skips the ladder (schedule_engine.
+    # schedule_route). Caps: a week's planned calls, the generation's own
+    # MAX_EXTRA_CALLS (8) retries and splits, and the gate's rewrite with
+    # its own; ~$6; the job's longest deadline (SCHEDULE_JOB_MAX_SECONDS).
+    _p("labor_schedule", "scheduling", "schedule", ladder=("T3", "T4"), reviewer="rules",
        escalate_on=("rule_breach",), max_escalations=1,
-       caps=Caps(calls=12, usd=8.0, seconds=2400), delivery="background",
+       caps=Caps(calls=16, usd=6.0, seconds=2400), delivery="background",
        context=("profile", "owner_rules", "roster", "sales_trend", "labor_trend", "events", "weather",
                 "memory", "data_state"),
-       note="ladder becomes (T3, T4) with a complexity pre-router once the eval clears it"),
+       note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder"),
     # ── cfo ─────────────────────────────────────────────────────────────
     _p("ask_cavnar", "cfo", "ask_cavnar", ladder=("T2",), reviewer="rules",
        caps=Caps(calls=8, usd=0.60, seconds=90),

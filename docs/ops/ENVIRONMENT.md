@@ -162,6 +162,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `AI_TIER_T3_EFFORT` | `medium` | Tier T3's effort. | ai_workflows.py |
 | `AI_TIER_T4_MODEL` | `claude-opus-5-5` | Tier T4's model (adaptive thinking). | ai_workflows.py |
 | `AI_TIER_T4_EFFORT` | `medium` | Tier T4's effort. | ai_workflows.py |
+| `SCHEDULE_MODEL` | — | Pins the schedule generator to one model (`ai_utils.MODELS["schedule"]`) at `labor.SCHEDULE_EFFORT`, skipping the `labor_schedule` ladder (T3 Sonnet 5.5 first, T4 Opus 5.5 for a hard week or the quality gate's rewrite — owner decision 3, 10/7/26) and its pre-router (`schedule_engine.schedule_route`). Unset: the ladder. A model before the 5.5 generation runs the old thinking-off shape. | schedule_engine.py |
 | `AI_REPLAY_SAMPLE_RATE` | `0.05` | Share of workflow runs whose model requests are kept (redacted, compressed, `ai_run_requests`) so the learner can replay a cheaper route on real inputs. `0` keeps none. | ai_orchestrator.py |
 | `AI_SHADOW_REVIEW` | `"1"` | `0` stops the shadow reviewer (a Haiku rubric scoring a sample of passing runs off the request path). Gates are unaffected. | ai_orchestrator.py |
 | `AI_BATCHES_WORKFLOWS` | `"dsr_narrative"` | Comma-separated workflows allowed to batch (half price, answered within 24 hours); a workflow not named here is written synchronously. | ai_batches.py |
