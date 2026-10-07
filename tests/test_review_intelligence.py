@@ -394,7 +394,8 @@ def test_an_unknown_confidence_falls_to_low_not_to_high():
 def test_the_diagnose_prompt_requires_an_alternative_and_a_tiebreaker():
     """A single confident cause with nothing to weigh it against is exactly
     the shape of a plausible guess."""
-    p = ri.DIAGNOSE_PROMPT
+    # The rules are the cached system block since AI cost audit 10/7/26 #63.
+    p = ri.DIAGNOSE_SYSTEM
     assert "alternative_cause" in p
     assert "what_would_confirm" in p
     assert "Never write an id that is not on this page" in p

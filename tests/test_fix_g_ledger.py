@@ -142,8 +142,10 @@ def test_every_call_site_parse_failure_the_packet_names_passes_its_message():
     # The DSR narrative's answer is parsed in narrative.finish since AI cost
     # audit 10/7/26 #20 — the one judge of a synchronous answer and a batch
     # answer alike; _write only makes the call.
-    for fn in (analyser.analyse_review, review_intelligence.diagnose, food_cost_intelligence.diagnose,
-               narrative.finish):
+    # The diagnoses' answers likewise in finish_diagnosis since AI cost audit
+    # 10/7/26 #58 — shared by the 6am call and the batched answer.
+    for fn in (analyser.analyse_review, review_intelligence.finish_diagnosis,
+               food_cost_intelligence.finish_diagnosis, narrative.finish):
         assert "message=m" in inspect.getsource(fn), fn.__qualname__
 
 

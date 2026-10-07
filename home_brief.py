@@ -894,6 +894,10 @@ def home_freshness(ctx, active_keys, labor_live, inv_live, google_connected=Fals
                     "as_of": st.get("as_of"), "as_of_iso": st.get("as_of_iso"), "basis": st.get("basis"),
                     "error": st.get("error"), "last_ok_at": st.get("last_ok_at"),
                     "key": module, "label": label, "at": st.get("as_of_iso"), "note": st.get("basis")})
+        if st.get("cadence_hours") is not None:
+            # A quiet Places-only review cadence (#45): "current" is judged
+            # against its own slots (data_health.counts_as_current).
+            out[-1].update(cadence_hours=st["cadence_hours"], cadence_word=st.get("cadence_word"))
 
     def sample(module, label, basis):
         out.append({"module": module, "source": None, "state": "sample", "pct": None, "as_of": None,
@@ -917,6 +921,11 @@ def home_freshness(ctx, active_keys, labor_live, inv_live, google_connected=Fals
                    else "sample data — add a count or connect your POS")
             continue
         states = ctx.sources(keys)
+        try:
+            import data_health as _dh_cad
+            states = [_dh_cad._with_own_cadence(ctx.row(), st) for st in states]
+        except Exception:
+            pass
         shown = [st for st in states if st.get("state") != "not_connected"]
         if not shown:
             st = dict(states[0]) if states else {"key": None, "state": "not_connected", "pct": None}
@@ -2254,8 +2263,16 @@ def _build(current_user, present=True):
         ct = timezone.utc
     if "reviews" in active_keys and google_connected:
         now_ct = datetime.now(ct)
-        nxt = next((h for h in _REVIEW_FETCH_HOURS_CT if h > now_ct.hour), None)
-        nxt_dt = now_ct.replace(hour=nxt, minute=0, second=0, microsecond=0) if nxt else (now_ct + timedelta(days=1)).replace(hour=_REVIEW_FETCH_HOURS_CT[0], minute=0, second=0, microsecond=0)
+        # This restaurant's own slots: a quiet Places-only listing is read
+        # at 8am and 4pm only (fetcher.review_fetch_slots, AI cost audit
+        # 10/7/26 #45).
+        try:
+            import fetcher as _fetcher_slots
+            _slots = _fetcher_slots.review_fetch_slots(rid)
+        except Exception:
+            _slots = _REVIEW_FETCH_HOURS_CT
+        nxt = next((h for h in _slots if h > now_ct.hour), None)
+        nxt_dt = now_ct.replace(hour=nxt, minute=0, second=0, microsecond=0) if nxt else (now_ct + timedelta(days=1)).replace(hour=_slots[0], minute=0, second=0, microsecond=0)
         upcoming.append({"label": "Next review pull", "when": nxt_dt.astimezone(restaurant_now(restaurant).tzinfo).isoformat(), "module": "reviews", "kind": "fetch"})
     digest_day = (r.get("digest_day") or "monday").lower()
     days_map = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]

@@ -368,6 +368,12 @@ def _record_places_gap(rid, name, total, stored_new):
     except Exception as e:
         log.warning(f"places total cursor for {rid}: {e}")
         return
+    # The day's total, for the quiet cadence's growth rate (#45).
+    try:
+        import fetcher
+        fetcher.record_places_total(rid, total)
+    except Exception as e:
+        log.warning(f"places total history for {rid}: {e}")
     if prev is None:
         return
     try:
@@ -437,17 +443,34 @@ def run_daily_fetch(restaurant_ids=None):
         # hole in the owner's reviews for the whole 30-day notice.
         from models import in_service_sql
         live = conn.execute(
-            "SELECT id FROM restaurants WHERE (reviews_live=1 OR gmb_refresh_token IS NOT NULL) "
-            "AND " + in_service_sql()
+            "SELECT id, (gmb_refresh_token IS NOT NULL) AS has_gbp FROM restaurants "
+            "WHERE (reviews_live=1 OR gmb_refresh_token IS NOT NULL) AND " + in_service_sql()
         ).fetchall()
         conn.close()
+        quiet_skipped = 0
         if restaurant_ids is not None:
             wanted = {int(x) for x in restaurant_ids}
             live = [r for r in live if r["id"] in wanted]
+        else:
+            # A quiet Places-only restaurant is fetched in the quiet slots
+            # only (AI cost audit 10/7/26 #45; fetcher.decide_quiet): the
+            # decision is made, and remembered, at every slot, so a 1-2 star
+            # review or a busier listing puts it back on all four. "Sync
+            # now" (restaurant_ids) always fetches.
+            import fetcher as _fetcher_q
+            slot = _latest_slot(_chi_now(), _fetcher_q.REVIEW_FETCH_SLOTS)
+            kept = []
+            for r in live:
+                quiet = _fetcher_q.decide_quiet(r["id"], bool(r["has_gbp"]))
+                if quiet and slot is not None and slot not in _fetcher_q.QUIET_SLOTS:
+                    quiet_skipped += 1
+                    continue
+                kept.append(r)
+            live = kept
 
         if not live:
-            return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False,
-                    "restaurants": 0, "processed": 0}
+            return {"attempted": 0, "ok": 0, "failed": 0, "skipped": quiet_skipped, "hit_bound": False,
+                    "restaurants": 0, "processed": 0, "quiet_skipped": quiet_skipped}
 
         log.info(f"Daily fetch for {len(live)} live restaurant(s)")
 
@@ -849,7 +872,8 @@ def run_daily_fetch(restaurant_ids=None):
                 job="review_fetch", context="time_bound")
         return {"restaurants": len(live), "processed": counts["ok"], "hit_time_bound": ran_out,
                 "attempted": counts["attempted"], "ok": counts["ok"], "failed": counts["failed"],
-                "skipped": counts["skipped"], "hit_bound": bool(ran_out)}
+                "skipped": counts["skipped"] + quiet_skipped, "hit_bound": bool(ran_out),
+                "quiet_skipped": quiet_skipped}
 
     except Exception as e:
         # Captured AND re-raised (DH2-1): logged only, a pass that never
@@ -1418,6 +1442,98 @@ def run_pos_retry():
 # anything older permanently missing.
 DEPLETION_OVERLAP_DAYS = 2
 DEPLETION_CATCHUP_MAX_DAYS = 14
+
+
+# ── the Labor read, warmed after the POS sync (AI cost audit 10/7/26 #100) ──
+#
+# The first Labor open of the morning wrote the read while the owner waited
+# (a model call behind the page). After the 3am POS sync the figures it
+# narrates are settled for the day, so for a restaurant whose Labor read was
+# opened in the last LABOR_PREWARM_LOOKBACK_DAYS it is written here, through
+# the same function the route calls (labor.labor_note: the orchestrated
+# labor_insight workflow, its readiness gate and validation), and stored
+# where the route reads it (insight_store, keyed on the data and the local
+# day) — the open is then a stored read. Nothing new to narrate is no call:
+# the same figures are a stored-read hit. Opened = a web Labor tab view
+# (activity_log tab_view) or a Labor read an owner's request made (ai_usage,
+# trigger not "scheduler" — so a pre-warm never keeps itself going).
+LABOR_PREWARM_LOOKBACK_DAYS = 7
+LABOR_PREWARM_MAX_SECONDS = int(os.getenv("LABOR_PREWARM_MAX_SECONDS", str(20 * 60)))
+LABOR_PREWARM_CURSOR_KEY = "labor_prewarm_cursor"
+
+
+def labor_prewarm_restaurants(db_path=None) -> list:
+    """Served restaurants with Labor on whose Labor read someone opened in
+    the last LABOR_PREWARM_LOOKBACK_DAYS days."""
+    from models import get_conn
+    since = f"-{LABOR_PREWARM_LOOKBACK_DAYS} days"
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        ids = {r["id"] for r in conn.execute(
+            "SELECT id FROM restaurants WHERE module_labor=1 AND " + _served_client_sql()).fetchall()}
+        opened = set()
+        try:
+            opened |= {r[0] for r in conn.execute(
+                "SELECT DISTINCT restaurant_id FROM activity_log WHERE event_type='tab_view' "
+                "AND json_extract(event_data, '$.tab')='labor' AND created_at >= datetime('now', ?)",
+                (since,)).fetchall()}
+        except Exception as e:
+            log.warning(f"labor prewarm: tab views unreadable: {e}")
+        try:
+            opened |= {r[0] for r in conn.execute(
+                "SELECT DISTINCT restaurant_id FROM ai_usage WHERE action='labor_insight' "
+                "AND COALESCE(\"trigger\", '') <> 'scheduler' AND created_at >= datetime('now', ?)",
+                (since,)).fetchall()}
+        except Exception as e:
+            log.warning(f"labor prewarm: labor reads unreadable: {e}")
+    finally:
+        conn.close()
+    return sorted(i for i in ids & opened if i)
+
+
+def run_labor_prewarm(now=None):
+    """After the 3am POS sync, on the AI lane — each recently opened Labor
+    read written ahead of the morning open (#100). Bounded and resumable;
+    sends nothing. A restaurant whose local day is not the scheduler's (its
+    "today" would be yesterday's read) or whose AI budget is spent is
+    skipped."""
+    import client_api
+    import labor
+    from models import get_restaurant, get_staff_notes
+    from time_utils import restaurant_now_by_id
+    now = now or _chi_now()
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    lock = threading.Lock()
+
+    def _one(rid):
+        try:
+            if _ai_budget_spent(rid) or restaurant_now_by_id(rid).date() != now.date():
+                with lock:
+                    c["skipped"] += 1
+                return
+            r = get_restaurant(rid)
+            analysis = client_api.labor_analysis_safe(rid)
+            if not r or analysis is None:
+                with lock:
+                    c["skipped"] += 1
+                return
+            notes = get_staff_notes(rid)
+            labor.labor_note(rid, analysis, restaurant_name=r.name or "your restaurant",
+                             owner_name=r.owner_name or None, staff_notes=notes if notes else None)
+            with lock:
+                c["attempted"] += 1
+                c["ok"] += 1
+        except Exception as e:
+            with lock:
+                c["attempted"] += 1
+                c["failed"] += 1
+            log.error(f"labor prewarm failed for restaurant {rid}: {e}")
+            _ops.capture(e, job="labor_prewarm", context=f"restaurant_id={rid}")
+
+    _done, ran_out = resumable_sweep(LABOR_PREWARM_CURSOR_KEY, labor_prewarm_restaurants(), _one,
+                                     LABOR_PREWARM_MAX_SECONDS, workers=2, job="labor_prewarm")
+    c["hit_bound"] = bool(ran_out)
+    return c
 
 
 def _depletion_start(restaurant_id, end):
@@ -3051,6 +3167,15 @@ def send_while_away_nudges():
 # One worker: visibility is paced against a single Perplexity rate limit,
 # and neither job is urgent enough to contend for it.
 WEEKLY_SWEEP_MAX_SECONDS = int(os.getenv("WEEKLY_SWEEP_MAX_SECONDS", str(3 * 3600)))
+# Competitor analysis runs three restaurants at once (AI cost audit 10/7/26
+# #55): one worker and a three-hour bound meant a fleet past ~150 full-tier
+# restaurants was never finished on a Monday. Safe to widen: each restaurant
+# is one worker's (its Places ceiling is read before each of its own
+# requests, so a restaurant never races itself past it), the Details cache
+# is rows in the database (places_details_cache), and the Claude read goes
+# through create_with_retry's own concurrency and budget gates. Visibility
+# stays at one: its queries are paced against one Perplexity rate limit.
+COMPETITOR_WORKERS = max(1, int(os.getenv("COMPETITOR_WORKERS", "3")))
 _COMPETITOR_CURSOR_KEY = "competitor_sweep_cursor"
 _VISIBILITY_CURSOR_KEY = "ai_visibility_sweep_cursor"
 
@@ -3078,10 +3203,11 @@ def _ok_this_week(restaurant_id, source, week_start):
         return False
 
 
-def _weekly_sweep(job, cursor_key, restaurants, fn):
+def _weekly_sweep(job, cursor_key, restaurants, fn, workers=1):
     """Run `fn(restaurant)` over `restaurants` under WEEKLY_SWEEP_MAX_SECONDS,
-    starting after the cursor; returns (processed, hit_bound). `fn` returns
-    True for a success and False for a handled failure, or raises.
+    starting after the cursor, on `workers` threads; returns (processed,
+    hit_bound). `fn` returns True for a success and False for a handled
+    failure, or raises; with several workers it must count under a lock.
 
     Through resumable_sweep (#137): the cursor is saved as each restaurant
     finishes, not once at the end, so a pass a deploy killed and a reclaim
@@ -3099,7 +3225,7 @@ def _weekly_sweep(job, cursor_key, restaurants, fn):
         fn(by_id[rid])
 
     _done, ran_out = resumable_sweep(cursor_key, list(by_id), _one, WEEKLY_SWEEP_MAX_SECONDS,
-                                     workers=1, job=job)
+                                     workers=max(1, int(workers or 1)), job=job)
     if ran_out:
         _ops.capture(
             RuntimeError(f"{job} covered {tally['attempted']} of {len(by_id)} restaurants before the "
@@ -3125,6 +3251,8 @@ def run_weekly_competitor_analysis(retry_only=False):
     from models import get_all_restaurants, in_service, is_full_tier
     counts = {"analysed": 0, "failed": 0}
     week_start = _week_start_utc()
+    # COMPETITOR_WORKERS threads share these counts (#55).
+    lock = threading.Lock()
 
     def _analyse(r):
         try:
@@ -3132,20 +3260,23 @@ def run_weekly_competitor_analysis(retry_only=False):
             # competitor.run_competitor_analysis is honoured.
             res = competitor.run_competitor_analysis(r.id) or {}
         except Exception as e:
-            counts["failed"] += 1
+            with lock:
+                counts["failed"] += 1
             _record(r.id, "competitor", False, error=str(e), provider="places")
             raise
         # An analysis that returned ok:False did not analyse anything:
         # counting it as done hid a Places refusal behind "analysed".
         if res.get("ok") is False:
-            counts["failed"] += 1
+            with lock:
+                counts["failed"] += 1
             _record(r.id, "competitor", False, error=res.get("error") or "competitor analysis failed",
                     provider="places")
             if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
                 _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
                              job="competitor_analysis", context=f"restaurant_id={r.id}")
         else:
-            counts["analysed"] += 1
+            with lock:
+                counts["analysed"] += 1
             _record(r.id, "competitor", True, provider="places")
 
     # In service only (MOD-REV-2): no Places or Claude spend on a customer
@@ -3157,7 +3288,8 @@ def run_weekly_competitor_analysis(retry_only=False):
     # the same Places and Claude calls twice (#137).
     before = len(eligible)
     eligible = [r for r in eligible if not _ok_this_week(r.id, "competitor", week_start)]
-    _n, hit_bound = _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse)
+    _n, hit_bound = _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse,
+                                  workers=COMPETITOR_WORKERS)
     counts.update(attempted=counts["analysed"] + counts["failed"], ok=counts["analysed"],
                   skipped=before - len(eligible), hit_bound=bool(hit_bound))
     return counts
@@ -3593,6 +3725,10 @@ def run_food_cost_diagnoses():
                 with lock:
                     c["skipped"] += 1
                 return
+            # Its batched read (#58) has not landed by now: stopped waiting
+            # for, and written synchronously below. One that landed is
+            # reused by diagnose()'s evidence-hash rule.
+            _cancel_open_batch_items(fci.BATCH_WORKFLOW, rid)
             out = fci.diagnose(rid)
             if out and out.get("ok"):
                 with lock:
@@ -3616,8 +3752,10 @@ def run_food_cost_diagnoses():
 
     # Bounded and resumable (#84): a Sonnet call per restaurant walked the
     # whole fleet serially on the loop thread with no bound and no cursor.
+    # DIAGNOSES_WORKERS at once (AI cost audit 10/7/26 #53).
     _done, ran_out = resumable_sweep(FOOD_COST_DIAGNOSES_CURSOR_KEY, [row["id"] for row in rows], _one,
-                                     DIAGNOSES_MAX_SECONDS, workers=1, job="food_cost_diagnoses")
+                                     DIAGNOSES_MAX_SECONDS, workers=DIAGNOSES_WORKERS,
+                                     job="food_cost_diagnoses")
     if ran_out:
         _ops.capture(RuntimeError(f"Food cost diagnoses stopped at the {DIAGNOSES_MAX_SECONDS}s bound; "
                                   "the rest lead the next pass"), job="food_cost_diagnoses", context="time_bound")
@@ -3633,6 +3771,118 @@ def run_food_cost_diagnoses():
 DIAGNOSES_MAX_SECONDS = int(os.getenv("DIAGNOSES_MAX_SECONDS", str(40 * 60)))
 REVIEW_DIAGNOSES_CURSOR_KEY = "review_diagnoses_cursor"
 FOOD_COST_DIAGNOSES_CURSOR_KEY = "food_cost_diagnoses_cursor"
+# Restaurants diagnosed at once (AI cost audit 10/7/26 #53). One worker made
+# the fleet's Sonnet calls one after another for up to 40 minutes. Each
+# restaurant is one worker's (resumable_sweep: a pool, the bound, the
+# prefix cursor), its own short SQLite writes on its own connection, and
+# the model calls go through create_with_retry's concurrency and budget
+# gates. A restaurant's own (up to three) review clusters stay in order on
+# its worker: in parallel too they would multiply the calls in flight past
+# what the gates are sized for, and the batch (below) already sends them
+# together.
+DIAGNOSES_WORKERS = max(1, int(os.getenv("DIAGNOSES_WORKERS", "3")))
+
+
+def _clock(raw, default):
+    """"H:MM" as (hour, minute), else `default`."""
+    try:
+        h, _sep, m = str(raw).strip().partition(":")
+        return (int(h), int(m or 0))
+    except (TypeError, ValueError):
+        return default
+
+
+# The diagnoses' Message Batch (AI cost audit 10/7/26 #58): the review
+# diagnosis sent at 4am, the food cost one once the morning's snapshots are
+# in, each at half the price; the 6am passes above are the fallback and
+# write synchronously whatever has not landed. A batch is not sent after
+# DIAGNOSES_BATCH_UNTIL (Chicago): it would have no time to land before
+# the 6am pass, and its unrun requests would only be cancelled.
+DIAGNOSES_BATCH_UNTIL = _clock(os.getenv("DIAGNOSES_BATCH_UNTIL", "5:30"), (5, 30))
+REVIEW_DIAGNOSES_BATCH_CURSOR_KEY = "review_diagnoses_batch_cursor"
+FOOD_COST_DIAGNOSES_BATCH_CURSOR_KEY = "food_cost_diagnoses_batch_cursor"
+
+
+def _cancel_open_batch_items(workflow, restaurant_id):
+    """The 6am pass stops waiting for this restaurant's batched reads that
+    have not landed (ai_batches.cancel: an answer that lands later is
+    ledgered and dropped, never stored over the synchronous one). Never
+    raises."""
+    try:
+        import ai_batches
+        for cid in ai_batches.open_items(workflow, restaurant_id):
+            ai_batches.cancel(workflow, cid)
+    except Exception as e:
+        log.warning(f"{workflow}: open batch items not cancelled for {restaurant_id}: {e}")
+
+
+def _diagnoses_batch(job, workflow, cursor_key, module_flag, items_fn, now=None):
+    """Plan every eligible restaurant's diagnoses and send the calls they
+    need as ONE Message Batch (one cached prefix across the fleet). Bounded
+    and resumable like the passes it stands in front of. Standard counts:
+    attempted = restaurants planned, `items` = requests sent."""
+    import ai_batches
+    from models import get_conn
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "items": 0, "reused": 0}
+    now = now or _chi_now()
+    if (now.hour, now.minute) >= DIAGNOSES_BATCH_UNTIL:
+        return dict(c, reason="too late to batch — the 6am pass writes them synchronously")
+    if not ai_batches.enabled(workflow):
+        return dict(c, reason="batching is off here — the 6am pass writes them synchronously")
+    day = str(now.date())
+    conn = get_conn()
+    rows = conn.execute(f"SELECT id FROM restaurants WHERE {module_flag}=1 AND " + _served_client_sql()).fetchall()
+    conn.close()
+    items, lock = [], threading.Lock()
+
+    def _one(rid):
+        if _ai_budget_spent(rid):
+            with lock:
+                c["skipped"] += 1
+            return
+        try:
+            out = items_fn(rid, day)
+        except Exception as e:
+            with lock:
+                c["attempted"] += 1
+                c["failed"] += 1
+            log.error(f"{job}: restaurant {rid} not planned: {e}")
+            _ops.capture(e, job=job, context=f"restaurant_id={rid}")
+            return
+        with lock:
+            c["attempted"] += 1
+            c["ok"] += 1
+            c["reused"] += int(out.get("reused") or 0)
+            items.extend(out.get("items") or [])
+
+    _done, ran_out = resumable_sweep(cursor_key, [r["id"] for r in rows], _one, DIAGNOSES_MAX_SECONDS,
+                                     workers=DIAGNOSES_WORKERS, job=job)
+    c["hit_bound"] = bool(ran_out)
+    if items:
+        res = ai_batches.submit(workflow, items)
+        c["items"] = sum(1 for v in res.values() if v == ai_batches.SUBMITTED)
+        c["blocked"] = sum(1 for v in res.values() if v == ai_batches.BLOCKED)
+        c["submit_failed"] = sum(1 for v in res.values() if v == ai_batches.SUBMIT_FAILED)
+    log.info(f"{job}: {c['attempted']} planned, {c['items']} sent, {c['reused']} reused")
+    return c
+
+
+def run_review_diagnoses_batch(now=None):
+    """4am CT — the review diagnoses' Message Batch (#58), on the sweep lane.
+    run_review_diagnoses at 6am is its fallback."""
+    import review_intelligence as ri
+    return _diagnoses_batch("review_diagnoses_batch", ri.BATCH_WORKFLOW, REVIEW_DIAGNOSES_BATCH_CURSOR_KEY,
+                            "module_reviews", ri.diagnosis_batch_items, now=now)
+
+
+def run_food_cost_diagnoses_batch(now=None):
+    """From 5am CT, once the snapshots are in — the food cost diagnoses'
+    Message Batch (#58), on the sweep lane. run_food_cost_diagnoses at 6am
+    is its fallback."""
+    import food_cost_intelligence as fci
+    return _diagnoses_batch("food_cost_diagnoses_batch", fci.BATCH_WORKFLOW,
+                            FOOD_COST_DIAGNOSES_BATCH_CURSOR_KEY, "module_inventory", fci.diagnosis_batch_items,
+                            now=now)
 
 
 def _ai_budget_spent(rid):
@@ -3688,6 +3938,10 @@ def run_review_diagnoses():
                 return
             with lock:
                 c["attempted"] += 1
+            # Its batched reads (#58) that have not landed by now: stopped
+            # waiting for, and written synchronously below. Landed ones are
+            # reused by diagnose()'s evidence-hash rule.
+            _cancel_open_batch_items(ri.BATCH_WORKFLOW, rid)
             produced = ri.diagnose(rid)
             if produced:
                 with lock:
@@ -3706,9 +3960,10 @@ def run_review_diagnoses():
             log.error(f"Review diagnosis failed for restaurant {rid}: {e}")
             _ops.capture(e, job="review_diagnoses", context=f"restaurant_id={rid}")
 
-    # Bounded and resumable (#84), like the food-cost pass above.
+    # Bounded and resumable (#84), like the food-cost pass above, and
+    # DIAGNOSES_WORKERS restaurants at once (#53).
     _done, ran_out = resumable_sweep(REVIEW_DIAGNOSES_CURSOR_KEY, [row["id"] for row in rows], _one,
-                                     DIAGNOSES_MAX_SECONDS, workers=1, job="review_diagnoses")
+                                     DIAGNOSES_MAX_SECONDS, workers=DIAGNOSES_WORKERS, job="review_diagnoses")
     if ran_out:
         _ops.capture(RuntimeError(f"Review diagnoses stopped at the {DIAGNOSES_MAX_SECONDS}s bound; "
                                   "the rest lead the next pass"), job="review_diagnoses", context="time_bound")
@@ -4358,6 +4613,9 @@ class _PulsedOps:
         self._last = None               # time.monotonic() the duties last ran
         self._claimed = {}              # claim key -> the period this tick claimed
         self._retries = {}              # (claim key, period) -> {"attempt", "at"}
+        # _retries is read by the loop and written by a lane thread when a
+        # lane job finishes (#54), so it is touched under this lock only.
+        self._retry_lock = threading.Lock()
         self._ticks = 0                 # ticks this process has begun
         self._tick_began = None         # time.monotonic() the current tick began
         self._completed_at = None       # time.monotonic() a tick last completed
@@ -4401,7 +4659,8 @@ class _PulsedOps:
         return self._tick_began - self._completed_at <= SCHEDULER_TICK_SECONDS + 60
 
     def claim_period(self, job, period):
-        retry = self._retries.get((job, period))
+        with self._retry_lock:
+            retry = self._retries.get((job, period))
         if retry is not None:
             if time.monotonic() < retry["at"]:
                 return False
@@ -4517,27 +4776,67 @@ class _PulsedOps:
         key = (claim, period)
         failed = outcome.get("raised") or (
             "result" in outcome and _ops.run_outcome(outcome["result"])[0] == _ops.RUN_FAILED)
-        if not failed:
-            self._retries.pop(key, None)
-            return
-        if not spec.get("retry") or spec.get("sends") or len(jobs_registry.jobs_for_claim(claim)) > 1:
-            return
-        attempt = self._retries.get(key, {}).get("attempt", 0)
-        backoff = jobs_registry.RETRY_BACKOFF_MINUTES
-        if attempt >= len(backoff):
-            log.error(f"{name} failed for {period} after {attempt} retries — the period stays spent")
-            self._retries.pop(key, None)
-            return
-        self._retries[key] = {"attempt": attempt + 1, "at": time.monotonic() + backoff[attempt] * 60}
+        with self._retry_lock:
+            if not failed:
+                self._retries.pop(key, None)
+                return
+            if not spec.get("retry") or spec.get("sends") or len(jobs_registry.jobs_for_claim(claim)) > 1:
+                return
+            attempt = self._retries.get(key, {}).get("attempt", 0)
+            backoff = jobs_registry.RETRY_BACKOFF_MINUTES
+            if attempt >= len(backoff):
+                log.error(f"{name} failed for {period} after {attempt} retries — the period stays spent")
+                self._retries.pop(key, None)
+                return
+            self._retries[key] = {"attempt": attempt + 1, "at": time.monotonic() + backoff[attempt] * 60}
         log.warning(f"{name} failed for {period}; retry {attempt + 1} in {backoff[attempt]} minutes")
 
     def run_in_lane(self, lane, name, fn, *args, **kwargs):
         """Start `name` on its worker lane beside the loop (#98). False when
         the lane is busy or the job is already running — the caller gives
-        its period back, so a later tick starts it."""
+        its period back, so a later tick starts it.
+
+        A lane run gets the loop's retry (AI cost audit 10/7/26 #54): when
+        it finishes, a failed retryable job gives its period back after the
+        backoff, exactly as _after does for a run on the loop thread — the
+        5am sweeps moved to the sweep lane are all retry=True, and a lane
+        run used to keep a failed night's period spent."""
         if self._already_running(name, kwargs.get("claim")):
             return False
-        return _LANES[lane].submit(name, fn, *args, **kwargs)
+        claim = kwargs.get("claim") or name
+        period = self._claimed.get(claim)
+        spec = jobs_registry.spec(name)
+        outcome = {}
+
+        def body(*a, **k):
+            try:
+                res = fn(*a, **k)
+            except Exception:
+                outcome["raised"] = True
+                raise
+            outcome["result"] = res
+            return res
+
+        def done():
+            try:
+                self._after(name, claim, period, spec, outcome)
+            except Exception as e:
+                log.warning(f"lane {lane}: {name}'s retry not recorded: {e}")
+        return _LANES[lane].submit(name, body, *args, _on_done=done, **kwargs)
+
+    def settled(self, job, period):
+        """Whether `job` has run for `period` and is not running now: its
+        period is claimed, and no run of it is going on the loop, on a
+        lane (submitted counts — the thread may not have started it yet)
+        or in another process. What a job that reads another job's output
+        waits on, now that the 5am sweeps run beside the loop (#54)."""
+        if not self.period_claimed(job, period):
+            return False
+        if any(lane.holds(job) for lane in _LANES.values()):
+            return False
+        if _ops.is_running(job):
+            return False
+        return not _ops.running_elsewhere(job)
 
 
 class _Lane:
@@ -4554,20 +4853,36 @@ class _Lane:
         self.name = name
         self._lock = threading.Lock()
         self._thread = None
+        self._job = None            # the job submitted, until its thread ends
 
     def busy(self):
         return self._thread is not None and self._thread.is_alive()
 
-    def submit(self, job_name, fn, *args, **kwargs):
+    def holds(self, job_name):
+        """Whether `job_name` is this lane's job right now (submitted or
+        running)."""
+        return self.busy() and self._job == job_name
+
+    def submit(self, job_name, fn, *args, _on_done=None, **kwargs):
         with self._lock:
             if self.busy():
                 return False
-            self._thread = threading.Thread(target=self._run, args=(job_name, fn, args, kwargs), daemon=True,
-                                            name=f"scheduler-lane-{self.name}")
+            self._job = job_name
+            self._thread = threading.Thread(target=self._run, args=(job_name, fn, args, kwargs, _on_done),
+                                            daemon=True, name=f"scheduler-lane-{self.name}")
             self._thread.start()
             return True
 
-    def _run(self, job_name, fn, args, kwargs):
+    def _run(self, job_name, fn, args, kwargs, on_done=None):
+        try:
+            self._run_job(job_name, fn, args, kwargs)
+        finally:
+            if on_done is not None:
+                on_done()
+            if self.name == "sweep":
+                _SWEEP_DONE.set()
+
+    def _run_job(self, job_name, fn, args, kwargs):
         if not _ops.acquire_scheduler_lease():
             log.error(f"lane {self.name}: {job_name} not started — this process no longer holds the lease")
             return
@@ -4601,7 +4916,75 @@ class _Lane:
 # the morning briefs and the reminders, so a slow model morning held all of
 # them. Its own lane, not the Intel one: a three-hour Intel sweep must not
 # hold a draft an owner is waiting for, nor a draft a Monday sweep.
-_LANES = {"intel": _Lane("intel"), "ai": _Lane("ai")}
+#
+# "sweep" (AI cost audit 10/7/26 #54): the 4-6am restaurant sweeps — the
+# depletion sync and the food cost snapshots (45 minutes each at one
+# worker), forecast scoring, the Data Health snapshot, the learning pass,
+# both diagnoses and their batches — ran inline, so on a long morning the
+# DSR delivery, the staff reminders, the intraday checks and the briefs
+# waited behind up to three hours of them. One job at a time, in the
+# loop's order, so the morning's single SQLite writer stays single; each
+# one that reads another's output waits for it explicitly
+# (_PulsedOps.settled), not by its place in the loop. Its own lane: a
+# Monday Intel sweep or an hour-long schedule draft must not hold the
+# chain the briefs read.
+_LANES = {"intel": _Lane("intel"), "ai": _Lane("ai"), "sweep": _Lane("sweep")}
+
+
+# What the morning briefs read that the 5-6am chain writes (#54): the food
+# cost snapshot (prime cost), the event memory, both diagnoses (the brief's
+# one thing, executive_brief) and the outcome verdicts it announces. While
+# one of them is due today and not settled the briefs wait — never past
+# BRIEF_INPUT_WAIT_UNTIL_HOUR (Chicago), after which they go on what is
+# there, as a brief always did when a sweep failed. The weekly digest
+# (9am local) waits the same way for the diagnoses it reads.
+BRIEF_INPUTS = (("food_cost_snapshots", 5), ("event_memory", 5), ("review_diagnoses", 6),
+                ("food_cost_diagnoses", 6), ("outcome_evaluations", 6))
+DIGEST_INPUTS = (("review_diagnoses", 6), ("food_cost_diagnoses", 6))
+BRIEF_INPUT_WAIT_UNTIL_HOUR = int(os.getenv("BRIEF_INPUT_WAIT_UNTIL_HOUR", "8"))
+
+
+# The sweep lane runs one job a tick at most, so a chain of nine 5-6am jobs
+# would take nine ticks (45 minutes) even when each takes seconds — the
+# briefs waiting on the last of them. So the pause between ticks ends when
+# a sweep job does (_tick_pause): the next link starts SWEEP_FOLLOW_SECONDS
+# later. An extra tick is harmless: every job is claimed per period.
+_SWEEP_DONE = threading.Event()
+SWEEP_FOLLOW_SECONDS = 5
+
+
+def _tick_pause():
+    """The pause between ticks: SCHEDULER_TICK_SECONDS, or until the sweep
+    lane's running job ends (then SWEEP_FOLLOW_SECONDS more), or only
+    SWEEP_FOLLOW_SECONDS when one ended during the tick. Always exactly one
+    time.sleep, so a test's stand-in for the sleep still ends each tick."""
+    if _SWEEP_DONE.is_set():
+        _SWEEP_DONE.clear()
+        time.sleep(SWEEP_FOLLOW_SECONDS)
+        return
+    lane = _LANES["sweep"]
+    if lane.busy():
+        began = time.monotonic()
+        lane.join(SCHEDULER_TICK_SECONDS)
+        if not lane.busy():
+            _SWEEP_DONE.clear()
+            time.sleep(SWEEP_FOLLOW_SECONDS)
+            return
+        time.sleep(max(0.0, SCHEDULER_TICK_SECONDS - (time.monotonic() - began)))
+        return
+    time.sleep(SCHEDULER_TICK_SECONDS)
+
+
+def _morning_input_pending(ops, now, inputs=BRIEF_INPUTS):
+    """The first of `inputs` that is due today and not settled, or None —
+    always None from BRIEF_INPUT_WAIT_UNTIL_HOUR on."""
+    if now.hour >= BRIEF_INPUT_WAIT_UNTIL_HOUR:
+        return None
+    day = str(now.date())
+    for job, hour in inputs:
+        if now.hour >= hour and not ops.settled(job, day):
+            return job
+    return None
 
 
 class _LeaseKeeper:
@@ -4752,6 +5135,98 @@ def scheduler_loop():
             # under the lease beside nothing already running (#153, #64).
             _run_manual_requests(_ops)
 
+            # ── minute-sensitive work first (AI cost audit 10/7/26 #54) ──
+            # The batch collector, the DSR sweep and delivery, the staff
+            # reminders and the intraday checks owe people minutes. They
+            # ran at the end of the tick, after every daily job that came
+            # due in it — a 5am morning held them behind the whole sweep
+            # chain. None of them reads what the nightly jobs below write.
+            # The minute duties (scheduled posts, undo windows, issue
+            # escalations, held alerts, the outboxes) run with the first of
+            # them: its pulse starts them as soon as it starts (_PulsedOps).
+
+            # Every tick, claimed per 5-minute slot — the Message Batches
+            # collector (ai_batches.run_collector, AI cost audit 10/7/26
+            # #19): ended batches' answers ledgered at the batch rate and
+            # handed to their callbacks. Before the DSR sweep, so a narrative
+            # that came back is finalised in the same tick.
+            if _ops.claim_period("ai_batch_collect", f"{today}-{now.hour}-{now.minute // 5}"):
+                from ai_batches import run_collector as _run_batch_collector
+                _ops.run_job("ai_batch_collect", _run_batch_collector)
+
+            # Every tick, claimed per 10-minute slot — the nightly DSR
+            # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
+            # the POS close-day poll, block retries, the provisional
+            # deadline and late-data versions. Bounded and resumable inside;
+            # each night claims (restaurant, business date, version).
+            if _ops.claim_period("dsr_sweep", f"{today}-{now.hour}-{now.minute // 10}"):
+                from dsr.pipeline import run_sweep
+                _ops.run_job("dsr_sweep", run_sweep)
+
+            # Every tick, claimed per 10-minute slot — DSR pushes held through
+            # a restaurant's quiet hours go out once they end
+            # (dsr.deliver.release_held). Bounded; the held rows are the
+            # queue, and each is taken (held -> sending) before it is sent.
+            if _ops.claim_period("dsr_delivery", f"{today}-{now.hour}-{now.minute // 10}"):
+                from dsr.deliver import release_held
+                _ops.run_job("dsr_delivery", release_held)
+
+            # Every tick, claimed per 10-minute slot — staff reminders: a push
+            # about an hour before each published shift and ~15 minutes before
+            # a critical task line is due, each claimed once per person; then
+            # the staff texts held through the night (staff_reminders).
+            # Bounded and resumable inside.
+            if _ops.claim_period("staff_reminders", f"{today}-{now.hour}-{now.minute // 10}"):
+                from staff_reminders import run_job as _run_staff_reminders
+                _ops.run_job("staff_reminders", _run_staff_reminders)
+
+            # During service — the only part of the product that can see a
+            # day while it is happening (Toast and RPOWER both post during
+            # service). Capture is hourly per restaurant, the pulse
+            # is one push before dinner, coverage runs while they're open.
+            if _ops.claim_period("intraday", f"{today}-{now.hour}-{now.minute // 20}"):
+                # The restaurants are read ONCE per slot and handed to all
+                # six jobs; each is a bounded, resumable sweep with its own
+                # cursor (strategy_jobs._slot_sweep, DH5-9).
+                from strategy_jobs import (run_intraday_capture, run_pre_dinner_pulse, run_coverage_check,
+                                           slot_restaurants)
+                _slot = slot_restaurants()
+                _ops.run_job("intraday_capture", run_intraday_capture, restaurants=_slot, claim="intraday")
+                _ops.run_job("pre_dinner_pulse", run_pre_dinner_pulse, restaurants=_slot, claim="intraday")
+                _ops.run_job("coverage_check", run_coverage_check, restaurants=_slot, claim="intraday")
+                from strategy_jobs import run_preshift_nudge
+                _ops.run_job("preshift_nudge", run_preshift_nudge, restaurants=_slot, claim="intraday")
+                # A certificate about to expire, told to its holder and the
+                # owner once (10am local; staff_knowledge, employee audit V9).
+                from staff_knowledge import run_cert_reminders
+                _ops.run_job("cert_reminders", run_cert_reminders, restaurants=_slot, claim="intraday")
+                # How tonight went, once the doors are shut — the one part
+                # of the day nothing reported on while the owner could
+                # still picture the room.
+                from strategy_jobs import run_closing_summary
+                _ops.run_job("closing_summary", run_closing_summary, restaurants=_slot, claim="intraday")
+                # Task sheets: today's issued from the published schedule, a
+                # critical line past due texts the manager, an ended shift
+                # closes (task_sheets.py).
+                import task_sheets as _task_sheets
+                _ops.run_job("task_sheets", _task_sheets.run_job, restaurants=_slot, claim="intraday")
+                # A quiet night two days out, once a week — the one area of
+                # the product that produced no notification at all.
+                from strategy_jobs import run_demand_opportunity
+                _ops.run_job("demand_opportunity", run_demand_opportunity, restaurants=_slot, claim="intraday")
+                # The afternoon before a game measured big here, one push per
+                # game (Event Intelligence phase 3).
+                from event_intel.gameday import run_event_push
+                _ops.run_job("event_push", run_event_push, restaurants=_slot, claim="intraday")
+
+            # The morning briefs, here too when what they read is settled
+            # (_morning_input_pending); otherwise at the end of the tick.
+            _briefs_ran = False
+            if _morning_input_pending(_ops, now) is None:
+                import morning_brief as _mb
+                _ops.run_job("morning_brief", _mb.run_due)
+                _briefs_ran = True
+
             # Monday 6am — run competitor analysis for all clients
             # 2am daily — backup DB to email
             if _due(now, 2) and _ops.claim_period("backup_db", str(today)):
@@ -4818,6 +5293,13 @@ def scheduler_loop():
                 log.info("Running nightly Toast POS sync...")
                 _ops.run_job("pos_sync", run_toast_sync)
 
+            # After the POS sync, on the AI lane — the Labor read written
+            # ahead of the morning open for owners who open it (#100).
+            if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
+                    _ops.claim_period("labor_prewarm", str(today)):
+                if not _ops.run_in_lane("ai", "labor_prewarm", run_labor_prewarm, now=now):
+                    _ops.release_period("labor_prewarm", str(today))
+
             # Hourly — the automatic-recovery pass over failed POS syncs
             # whose retry is due (+1h, +3h, +6h; until 11am local).
             if _ops.claim_period("pos_retry", f"{today}-{now.hour}"):
@@ -4843,25 +5325,47 @@ def scheduler_loop():
                 from billing_jobs import reconcile_stripe
                 _ops.run_job("stripe_reconcile", reconcile_stripe)
 
+            # ── 4-6am chain on the sweep lane (AI cost audit 10/7/26 #54) ──
+            # Each job submits to the "sweep" lane (one at a time, in this
+            # order) and gives its period back when the lane is busy, so a
+            # later tick starts it. A job that reads another's output waits
+            # until that one is settled (_PulsedOps.settled) — under
+            # catch-up several come due in one tick, and the lane, not the
+            # loop, now decides when each runs. The snapshot follows
+            # depletion, the food cost diagnosis the snapshot, and the 9am
+            # digest and the briefs both diagnoses.
+            _d = str(today)
+
+            # 4am — the review diagnoses' Message Batch (#58): half price,
+            # landed before the 6am pass below, which writes the rest.
+            if _due(now, 4) and _ops.claim_period("review_diagnoses_batch", str(today)):
+                if not _ops.run_in_lane("sweep", "review_diagnoses_batch", run_review_diagnoses_batch):
+                    _ops.release_period("review_diagnoses_batch", str(today))
+
             if _due(now, 5) and _ops.claim_period("inventory_depletion", str(today)):
                 log.info("Running nightly ingredient depletion sync...")
-                _ops.run_job("inventory_depletion", run_daily_depletion_sync)
+                if not _ops.run_in_lane("sweep", "inventory_depletion", run_daily_depletion_sync):
+                    _ops.release_period("inventory_depletion", str(today))
 
-            # ── 5-6am chain: snapshot, then both root-cause passes ──
-            # Placed straight after the depletion sync rather than where their
-            # hour would suggest, because under catch-up gating several jobs
-            # can come due in ONE tick and they then run in the order they
-            # appear here. The snapshot must follow depletion, the food cost
-            # diagnosis must follow the snapshot, and the 9am digest must
-            # follow both diagnoses — which it did not, positionally, before.
-            if _due(now, 5) and _ops.claim_period("food_cost_snapshots", str(today)):
+            if _due(now, 5) and _ops.settled("inventory_depletion", _d) and \
+                    _ops.claim_period("food_cost_snapshots", str(today)):
                 log.info("Writing food cost snapshots...")
-                _ops.run_job("food_cost_snapshots", run_food_cost_snapshots)
+                if not _ops.run_in_lane("sweep", "food_cost_snapshots", run_food_cost_snapshots):
+                    _ops.release_period("food_cost_snapshots", str(today))
 
             # After the snapshot, so a closed week's waste figure is on file
             # before its forecast is scored.
-            if _due(now, 5) and _ops.claim_period("forecast_scoring", str(today)):
-                _ops.run_job("forecast_scoring", run_forecast_scoring)
+            if _due(now, 5) and _ops.settled("food_cost_snapshots", _d) and \
+                    _ops.claim_period("forecast_scoring", str(today)):
+                if not _ops.run_in_lane("sweep", "forecast_scoring", run_forecast_scoring):
+                    _ops.release_period("forecast_scoring", str(today))
+
+            # Once the snapshot is in — the food cost diagnoses' Message
+            # Batch (#58); none is sent after DIAGNOSES_BATCH_UNTIL.
+            if _due(now, 5) and _ops.settled("food_cost_snapshots", _d) and \
+                    _ops.claim_period("food_cost_diagnoses_batch", str(today)):
+                if not _ops.run_in_lane("sweep", "food_cost_diagnoses_batch", run_food_cost_diagnoses_batch):
+                    _ops.release_period("food_cost_diagnoses_batch", str(today))
 
             # 5am+ — what the nights just finished taught (event_memory): the
             # weather each day actually had, and the measured lift of every
@@ -4879,16 +5383,26 @@ def scheduler_loop():
 
             # 6am+ — one Data Health snapshot per restaurant, after the
             # nightly chain (POS, depletion, snapshots) has landed.
-            if _due(now, 6) and _ops.claim_period("data_health_daily", str(today)):
-                _ops.run_job("data_health_daily", run_data_health_daily)
+            if _due(now, 6) and _ops.settled("food_cost_snapshots", _d) and \
+                    _ops.claim_period("data_health_daily", str(today)):
+                if not _ops.run_in_lane("sweep", "data_health_daily", run_data_health_daily):
+                    _ops.release_period("data_health_daily", str(today))
 
-            if _due(now, 6) and _ops.claim_period("review_diagnoses", str(today)):
+            # 6am+ — the diagnoses: what the batches above did not land is
+            # written synchronously here, before the briefs and the digest
+            # read them (#58). Each after its own batch has been sent.
+            if _due(now, 6) and _ops.settled("review_diagnoses_batch", _d) and \
+                    _ops.claim_period("review_diagnoses", str(today)):
                 log.info("Running review root-cause diagnoses...")
-                _ops.run_job("review_diagnoses", run_review_diagnoses)
+                if not _ops.run_in_lane("sweep", "review_diagnoses", run_review_diagnoses):
+                    _ops.release_period("review_diagnoses", str(today))
 
-            if _due(now, 6) and _ops.claim_period("food_cost_diagnoses", str(today)):
+            if _due(now, 6) and _ops.settled("food_cost_snapshots", _d) and \
+                    _ops.settled("food_cost_diagnoses_batch", _d) and \
+                    _ops.claim_period("food_cost_diagnoses", str(today)):
                 log.info("Running food cost root-cause diagnoses...")
-                _ops.run_job("food_cost_diagnoses", run_food_cost_diagnoses)
+                if not _ops.run_in_lane("sweep", "food_cost_diagnoses", run_food_cost_diagnoses):
+                    _ops.release_period("food_cost_diagnoses", str(today))
 
             # 6am+ — close outcome trackers whose window ended and mark met
             # goals, before the morning briefs (7am+ local) announce them.
@@ -4906,8 +5420,10 @@ def scheduler_loop():
             # 6am+, after the evaluations and re-checks — the nightly
             # learning pass (learning_memory): score AI claims whose horizon
             # passed, summarise closed quarters of reads. Sends nothing.
-            if _due(now, 6) and _ops.claim_period("learning_memory", str(today)):
-                _ops.run_job("learning_memory", run_learning_memory)
+            if _due(now, 6) and _ops.settled("outcome_rechecks", _d) and \
+                    _ops.claim_period("learning_memory", str(today)):
+                if not _ops.run_in_lane("sweep", "learning_memory", run_learning_memory):
+                    _ops.release_period("learning_memory", str(today))
 
             # 6am+, after the outcome evaluations — each restaurant's four
             # value figures into value_figures_daily, which the admin
@@ -5057,7 +5573,9 @@ def scheduler_loop():
                 log.info("Refreshing expiring IG/FB tokens...")
                 _ops.run_job("refresh_tokens", refresh_expiring_tokens)
 
-            # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time
+            # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time (a quiet
+            # Places-only restaurant at 8am and 4pm only — run_daily_fetch,
+            # AI cost audit 10/7/26 #45).
             _fetch_slot = _latest_slot(now, (8, 12, 16, 20))
             if _fetch_slot is not None and _ops.claim_period("review_fetch", f"{today}-{_fetch_slot}"):
                 log.info(f"Running review fetch for the {_fetch_slot}:00 CT slot "
@@ -5121,7 +5639,10 @@ def scheduler_loop():
             # lane (#6): each digest is built (a model read) and sent, and the
             # pass sat on the loop thread with no bound; a busy lane gives
             # the hour back.
-            if _ops.claim_period("weekly_digest", f"{today}-{now.hour}"):
+            # Not claimed while a diagnosis it reads is still being written
+            # on the sweep lane (#54): a later tick in the hour claims it.
+            if _morning_input_pending(_ops, now, DIGEST_INPUTS) is None and \
+                    _ops.claim_period("weekly_digest", f"{today}-{now.hour}"):
                 log.info("Running weekly digest check...")
                 if not _ops.run_in_lane("ai", "weekly_digests", run_weekly_digests, claim="weekly_digest"):
                     _ops.release_period("weekly_digest", f"{today}-{now.hour}")
@@ -5232,80 +5753,6 @@ def scheduler_loop():
                 from strategy_jobs import run_review_request_nudge
                 _ops.run_job("review_request_nudge", run_review_request_nudge)
 
-            # During service — the only part of the product that can see a
-            # day while it is happening (Toast and RPOWER both post during
-            # service). Capture is hourly per restaurant, the pulse
-            # is one push before dinner, coverage runs while they're open.
-            if _ops.claim_period("intraday", f"{today}-{now.hour}-{now.minute // 20}"):
-                # The restaurants are read ONCE per slot and handed to all
-                # six jobs; each is a bounded, resumable sweep with its own
-                # cursor (strategy_jobs._slot_sweep, DH5-9).
-                from strategy_jobs import (run_intraday_capture, run_pre_dinner_pulse, run_coverage_check,
-                                           slot_restaurants)
-                _slot = slot_restaurants()
-                _ops.run_job("intraday_capture", run_intraday_capture, restaurants=_slot, claim="intraday")
-                _ops.run_job("pre_dinner_pulse", run_pre_dinner_pulse, restaurants=_slot, claim="intraday")
-                _ops.run_job("coverage_check", run_coverage_check, restaurants=_slot, claim="intraday")
-                from strategy_jobs import run_preshift_nudge
-                _ops.run_job("preshift_nudge", run_preshift_nudge, restaurants=_slot, claim="intraday")
-                # A certificate about to expire, told to its holder and the
-                # owner once (10am local; staff_knowledge, employee audit V9).
-                from staff_knowledge import run_cert_reminders
-                _ops.run_job("cert_reminders", run_cert_reminders, restaurants=_slot, claim="intraday")
-                # How tonight went, once the doors are shut — the one part
-                # of the day nothing reported on while the owner could
-                # still picture the room.
-                from strategy_jobs import run_closing_summary
-                _ops.run_job("closing_summary", run_closing_summary, restaurants=_slot, claim="intraday")
-                # Task sheets: today's issued from the published schedule, a
-                # critical line past due texts the manager, an ended shift
-                # closes (task_sheets.py).
-                import task_sheets as _task_sheets
-                _ops.run_job("task_sheets", _task_sheets.run_job, restaurants=_slot, claim="intraday")
-                # A quiet night two days out, once a week — the one area of
-                # the product that produced no notification at all.
-                from strategy_jobs import run_demand_opportunity
-                _ops.run_job("demand_opportunity", run_demand_opportunity, restaurants=_slot, claim="intraday")
-                # The afternoon before a game measured big here, one push per
-                # game (Event Intelligence phase 3).
-                from event_intel.gameday import run_event_push
-                _ops.run_job("event_push", run_event_push, restaurants=_slot, claim="intraday")
-
-            # Every tick, claimed per 5-minute slot — the Message Batches
-            # collector (ai_batches.run_collector, AI cost audit 10/7/26
-            # #19): ended batches' answers ledgered at the batch rate and
-            # handed to their callbacks. Before the DSR sweep, so a narrative
-            # that came back is finalised in the same tick.
-            if _ops.claim_period("ai_batch_collect", f"{today}-{now.hour}-{now.minute // 5}"):
-                from ai_batches import run_collector as _run_batch_collector
-                _ops.run_job("ai_batch_collect", _run_batch_collector)
-
-            # Every tick, claimed per 10-minute slot — the nightly DSR
-            # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
-            # the POS close-day poll, block retries, the provisional
-            # deadline and late-data versions. Bounded and resumable inside;
-            # each night claims (restaurant, business date, version).
-            if _ops.claim_period("dsr_sweep", f"{today}-{now.hour}-{now.minute // 10}"):
-                from dsr.pipeline import run_sweep
-                _ops.run_job("dsr_sweep", run_sweep)
-
-            # Every tick, claimed per 10-minute slot — DSR pushes held through
-            # a restaurant's quiet hours go out once they end
-            # (dsr.deliver.release_held). Bounded; the held rows are the
-            # queue, and each is taken (held -> sending) before it is sent.
-            if _ops.claim_period("dsr_delivery", f"{today}-{now.hour}-{now.minute // 10}"):
-                from dsr.deliver import release_held
-                _ops.run_job("dsr_delivery", release_held)
-
-            # Every tick, claimed per 10-minute slot — staff reminders: a push
-            # about an hour before each published shift and ~15 minutes before
-            # a critical task line is due, each claimed once per person; then
-            # the staff texts held through the night (staff_reminders).
-            # Bounded and resumable inside.
-            if _ops.claim_period("staff_reminders", f"{today}-{now.hour}-{now.minute // 10}"):
-                from staff_reminders import run_job as _run_staff_reminders
-                _ops.run_job("staff_reminders", _run_staff_reminders)
-
             # Every tick — scheduled posts, delayed actions whose undo window
             # closed, issue escalations, alerts held through a rush. Skipped
             # when a job's pulse ran them within the last interval.
@@ -5332,9 +5779,14 @@ def scheduler_loop():
 
             # Every tick — morning briefs go at each restaurant's own local
             # hour and claim themselves per restaurant per day. A job run of
-            # its own, with the pulse (#31): it wrote none at all.
-            import morning_brief as _mb
-            _ops.run_job("morning_brief", _mb.run_due)
+            # its own, with the pulse (#31): it wrote none at all. At the
+            # top of the tick when what they read is settled (#54), else
+            # here, after the tick's own 5-6am work — and not at all this
+            # tick while the sweep lane is still writing it (until
+            # BRIEF_INPUT_WAIT_UNTIL_HOUR).
+            if not _briefs_ran and _morning_input_pending(_ops, now) is None:
+                import morning_brief as _mb
+                _ops.run_job("morning_brief", _mb.run_due)
 
             # Daily — drop login-attempt rows older than two days.
             if _ops.claim_period("prune_login_attempts", str(today)):
@@ -5367,8 +5819,9 @@ def scheduler_loop():
         # Five minutes, not an hour. Every daily/hourly job above is gated on
         # its own "already ran for this hour/date" marker, so a faster tick
         # doesn't re-run any of them — it exists so a post scheduled for 11am
-        # publishes within a few minutes of 11am.
-        time.sleep(SCHEDULER_TICK_SECONDS)
+        # publishes within a few minutes of 11am. A sweep-lane job finishing
+        # starts the next tick early (_tick_pause).
+        _tick_pause()
 
 
 def scheduling_allowed():

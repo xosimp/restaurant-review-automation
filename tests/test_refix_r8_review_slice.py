@@ -134,9 +134,13 @@ def test_the_diagnosis_may_cite_the_worked_and_nightly_lines():
     # The module list is built per cluster from its lines (re-audit P4-12).
     shape = ri.evidence_guide({m: None for m in ri.OPERATIONAL_MODULES})["evidence_shape"]
     assert "labor|food_cost|waste|marketing|shifts|guests|worked|nightly|games" in shape
-    assert "{evidence_shape}" in ri.DIAGNOSE_PROMPT
+    # The cluster's own shape sits in the message since the prompt was split
+    # for the cache (AI cost audit 10/7/26 #63).
+    assert "{evidence_shape}" in ri.DIAGNOSE_USER
     import inspect
-    assert 'cl_lines.update({k: v for k, v in (sl.get("lines") or {}).items()' in inspect.getsource(ri.diagnose)
+    # The evidence is gathered in diagnosis_plan since the 4am batch shares
+    # it (AI cost audit 10/7/26 #58).
+    assert 'cl_lines.update({k: v for k, v in (sl.get("lines") or {}).items()' in inspect.getsource(ri.diagnosis_plan)
 
 
 def test_the_review_diagnosis_reads_its_links():

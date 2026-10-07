@@ -213,9 +213,11 @@ def test_the_schedule_trace_keeps_the_whole_prompt_and_answer(db, monkeypatch):
 
 
 def test_the_record_is_on_the_retention_registry_with_a_floor_and_its_reader():
-    assert ops._RETENTION_DAYS["schedule_model_calls"] == 180
+    # 90 days since AI cost audit 10/7/26 #94 (was 180): the floor is a
+    # quarter of real weeks, and the readers read 60.
+    assert ops._RETENTION_DAYS["schedule_model_calls"] == 90
     assert ops._RETENTION_COLUMN["schedule_model_calls"] == "created_at"
-    assert 0 < ops._RETENTION_FLOOR_DAYS["schedule_model_calls"] <= 180
+    assert 0 < ops._RETENTION_FLOOR_DAYS["schedule_model_calls"] <= 90
     assert ("schedule_output.measured_tokens_per_row", 60, None) in ops._RETENTION_READERS["schedule_model_calls"]
 
 
@@ -344,8 +346,9 @@ def test_the_security_doc_names_the_record_and_its_redaction():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     text = open(os.path.join(root, "docs", "ops", "SECURITY.md"), encoding="utf-8").read()
     assert "`schedule_model_calls` keeps every schedule generation call's full request" in text
-    assert "180 days" in text.split("**Schedule call record**", 1)[1].split("\n", 1)[0]
-    assert ops._RETENTION_DAYS["schedule_model_calls"] == 180
+    # 90 days since AI cost audit 10/7/26 #94 (was 180).
+    assert "90 days" in text.split("**Schedule call record**", 1)[1].split("\n", 1)[0]
+    assert ops._RETENTION_DAYS["schedule_model_calls"] == 90
 
 
 def test_the_default_repair_runs_the_owners_floors_and_the_manager_rule(db, monkeypatch):

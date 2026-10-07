@@ -1178,13 +1178,67 @@ CAUSE_VOCABULARY = """\
 - Demand exceeding what was staffed for (a promotion, an event, a busy period)
 - Menu or pricing expectation mismatch (value perception against the price point)"""
 
-DIAGNOSE_PROMPT = """You are an experienced restaurant operations consultant. You have been given one cluster of negative guest reviews from a single restaurant, plus what the restaurant's other systems recorded over the same period.
+# The diagnosis prompt in two parts (AI cost audit 10/7/26 #63): everything
+# that is the same for every cluster of every restaurant — the role, the
+# guest-text note, the layout of the message, the cause vocabulary, the
+# evidence rules and the answer's shape — is DIAGNOSE_SYSTEM, sent as a
+# cached system block, so the whole fleet's 6am pass (and its Message
+# Batch) reads one prefix at a tenth of the input price after the first;
+# the cluster's own evidence is DIAGNOSE_USER. The rules are the ones the
+# single prompt carried, word for word, except the two that depend on the
+# cluster's own lines (re-audit P4-12): the module list a cause may cite
+# and the operational_evidence shape now sit at the end of the message,
+# under "EVIDENCE RULE FOR THIS CLUSTER", and the system block points at
+# them. Above 1,024 tokens on purpose: a shorter prefix is never cached.
+def _diagnose_system():
+    from ai_guard import UNTRUSTED_NOTE
+    return f"""You are an experienced restaurant operations consultant. Each message gives you one cluster of negative guest reviews from a single restaurant, plus what the restaurant's other systems recorded over the same period.
 
 Your job is the step AFTER counting complaints: say what operational problem most likely produced them, what else it could be, and how the owner could tell the difference. Return ONLY valid JSON — no markdown, no commentary.
 
-{untrusted_note}
+{UNTRUSTED_NOTE}
 
-RESTAURANT: {restaurant_name}
+HOW THE MESSAGE IS LAID OUT — every section is this one restaurant's own record:
+- RESTAURANT and TODAY: who this is and the date the read is written on.
+- THE CLUSTER: the complaint theme, how many negative reviews carry it and over which dates, their average rating, the most serious review in it, and where the complaints concentrate (a weekday, a pair of weekdays, a daypart, a dish or a role) — or a line saying they concentrate nowhere.
+- What guests specifically said went wrong (review id -> complaint), then guest review excerpts (review id -> text). These are the only review ids that exist for this read.
+- WHAT THE OTHER SYSTEMS RECORDED OVER THE SAME PERIOD: one line per module that reported (labor, food cost, waste, marketing, guests, game nights), each with its own figures and how fresh they are. A missing line is a module with no data, never a module that saw nothing.
+- WHAT CHANGED ON THOSE SHIFTS: the published schedules, the shifts staff actually worked, the nightly reports, the owner's events and guest texts, and the closers' notes, cut to the slice where these complaints concentrate.
+- WHAT WAS ALREADY TRIED ON THIS THEME: the owner's answers to earlier advice and what was measured after.
+- WHAT CAVNAR AI REMEMBERS ABOUT THIS THEME: its earlier reads, what the owner answered, what was measured since, the owner's rules and the team's notes.
+- EVIDENCE RULE FOR THIS CLUSTER and OPERATIONAL EVIDENCE SHAPE FOR THIS CLUSTER: which recorded lines this cluster may be connected to, and the exact shape of `operational_evidence` for it.
+
+CAUSE VOCABULARY — pick from these kinds of cause:
+{CAUSE_VOCABULARY}
+
+EVIDENCE RULES — these bound what you may claim:
+- If an earlier read of this theme named a cause, its advice was taken and the expected change did not show, do not restate that cause as the most likely one at the same confidence: say the earlier cause did not hold and weigh the alternative. If it held, you may say what followed is consistent with it — never that it is proven.
+- Never recommend an action the owner already declined, in those words or any others.
+- `evidence_review_ids` MUST be ids listed in the message. Never write an id that is not on this page. An id you did not see is a fabricated citation.
+- State no figure — a dollar amount, a percentage, a count, a rating — that does not appear in the message.
+- Name a person, a dish, a role, a shift or a weekday ONLY if it appears in the message. If no dish is listed, your cause may not turn on a dish.
+- Follow the EVIDENCE RULE FOR THIS CLUSTER at the end of the message: it says which recorded lines you may connect this cluster to, and only by naming that figure in `operational_evidence`. If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
+- A schedule edit, an event, a guest text or a close-out note on the same shifts is something that moved WITH the complaints: say they coincide, never that one caused the other. Quote no figure from a close-out note.
+- Correlation in a 90-day window is not proof. If the reviews and a figure moved together, say they moved together; do not say one caused the other.
+- `confidence` is "high" only when the complaints are specific AND concentrated AND a figure from another system points the same way. It is "low" when you are reasoning mostly from the theme name.
+- If the evidence genuinely does not identify a cause, say that in `cause` and set confidence "low". A stated uncertainty is worth more than a confident guess, and this text goes to an owner who may act on it.
+
+Return this exact shape:
+{{
+  "cause": "the single most likely operational cause, 1-2 sentences, specific to what is in the message",
+  "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
+  "what_would_confirm": "one concrete thing the owner could check or observe this week that would tell the two apart, 1 sentence",
+  "evidence_review_ids": [ids from the message that this cause rests on, 2-6 of them],
+  "operational_evidence": the OPERATIONAL EVIDENCE SHAPE FOR THIS CLUSTER, exactly as the message gives it,
+  "confidence": "high" | "medium" | "low",
+  "recommended_action": "one thing a manager can start within a week using only the staff, menu and equipment they already have, 1 sentence",
+  "expected_outcome": "what the owner should see change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
+}}"""
+
+
+DIAGNOSE_SYSTEM = _diagnose_system()
+
+DIAGNOSE_USER = """RESTAURANT: {restaurant_name}
 TODAY: {today}
 
 THE CLUSTER
@@ -1211,32 +1265,9 @@ WHAT WAS ALREADY TRIED ON THIS THEME (the owner's answers and what was measured 
 WHAT CAVNAR AI REMEMBERS ABOUT THIS THEME (its earlier reads, what the owner answered, what was measured since, the owner's rules and the team's notes. {memory_fence_note}):
 {memory_block}
 
-CAUSE VOCABULARY — pick from these kinds of cause:
-{cause_vocabulary}
+EVIDENCE RULE FOR THIS CLUSTER: {evidence_rule}
 
-EVIDENCE RULES — these bound what you may claim:
-- If an earlier read of this theme named a cause, its advice was taken and the expected change did not show, do not restate that cause as the most likely one at the same confidence: say the earlier cause did not hold and weigh the alternative. If it held, you may say what followed is consistent with it — never that it is proven.
-- Never recommend an action the owner already declined, in those words or any others.
-- `evidence_review_ids` MUST be ids listed above. Never write an id that is not on this page. An id you did not see is a fabricated citation.
-- State no figure — a dollar amount, a percentage, a count, a rating — that does not appear above.
-- Name a person, a dish, a role, a shift or a weekday ONLY if it appears above. If no dish is listed, your cause may not turn on a dish.
-- {evidence_rule} If those sections are empty or say data is unavailable, you have NO operational evidence — say so, and let that pull your confidence down.
-- A schedule edit, an event, a guest text or a close-out note on the same shifts is something that moved WITH the complaints: say they coincide, never that one caused the other. Quote no figure from a close-out note.
-- Correlation in a 90-day window is not proof. If the reviews and a figure moved together, say they moved together; do not say one caused the other.
-- `confidence` is "high" only when the complaints are specific AND concentrated AND a figure from another system points the same way. It is "low" when you are reasoning mostly from the theme name.
-- If the evidence genuinely does not identify a cause, say that in `cause` and set confidence "low". A stated uncertainty is worth more than a confident guess, and this text goes to an owner who may act on it.
-
-Return this exact shape:
-{{
-  "cause": "the single most likely operational cause, 1-2 sentences, specific to what is above",
-  "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
-  "what_would_confirm": "one concrete thing the owner could check or observe this week that would tell the two apart, 1 sentence",
-  "evidence_review_ids": [ids from above that this cause rests on, 2-6 of them],
-  "operational_evidence": {evidence_shape},
-  "confidence": "high" | "medium" | "low",
-  "recommended_action": "one thing a manager can start within a week using only the staff, menu and equipment they already have, 1 sentence",
-  "expected_outcome": "what the owner should see change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
-}}"""
+OPERATIONAL EVIDENCE SHAPE FOR THIS CLUSTER (the `operational_evidence` field): {evidence_shape}"""
 
 
 # The lines a diagnosis may cite by name, with the module each one is.
@@ -1249,7 +1280,7 @@ def _or_list(parts):
 
 
 def evidence_guide(cl_lines) -> dict:
-    """{"evidence_rule", "evidence_shape"} for DIAGNOSE_PROMPT, built from the
+    """{"evidence_rule", "evidence_shape"} for DIAGNOSE_USER, built from the
     lines ACTUALLY passed for this cluster (`cl_lines`, the same dict the
     answer is verified against). Re-audit 10/1/26, P4-12: the prompt named
     the "Game nights" line and offered module `games` to every cluster, even
@@ -2077,20 +2108,63 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     re-derived daily is the same cause in different words, which reads as
     instability rather than insight (AI cost audit 10/7/26 #12). A skipped
     one is marked checked (confirmed_at), so it does not read as stale.
+
+    The work is in three parts shared with the 4am Message Batch (AI cost
+    audit 10/7/26 #58): diagnosis_plan (reuse, the readiness gate, each
+    cluster's evidence and message), diagnosis_request (the call) and
+    finish_diagnosis (validation and the save). A cluster whose batched
+    answer landed before this runs is stored with its evidence hash, so the
+    reuse rule finds it and no second call is made.
     """
-    import os
-    import anthropic
-    from ai_utils import create_with_retry, extract_text, get_client, model_for
-    from ai_guard import MEMORY_FENCE_NOTE, UNTRUSTED_NOTE
+    # The readiness gate before any call (DH5-2), asked here where the call
+    # is made and handed to the plan (which asks it itself for the batch).
+    import data_health as _dh_rd
+    _ready_rd = _dh_rd.unattended_readiness(restaurant_id, "reviews",
+                                            db_path=db_path if db_path != DB_PATH else None)
+    plan = diagnosis_plan(restaurant_id, db_path=db_path, force=force, max_clusters=max_clusters,
+                          readiness=_ready_rd)
+    if plan is None:
+        return []
+    if plan.get("held") is not None:
+        return plan["held"]
+    from ai_utils import create_with_retry, get_client
+    client = None
+    produced = []
+    for slot in plan["slots"]:
+        if slot["kind"] == "done":
+            produced.append(slot["diagnosis"])
+            continue
+        try:
+            if slot["kind"] == "failed":
+                raise slot["error"]
+            client = client or get_client()
+            msg = create_with_retry(client, restaurant_id=restaurant_id, action="review_diagnosis",
+                                    readiness=_ready_rd, **diagnosis_request(slot["state"]))
+            produced.append(finish_diagnosis(restaurant_id, slot["state"], msg, db_path=db_path))
+        except Exception as e:
+            _diagnosis_failed(restaurant_id, slot["category"], e, slot.get("prior"), produced)
+    return produced
+
+
+def diagnosis_plan(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
+                   max_clusters: int = MAX_DIAGNOSES_PER_RUN, readiness=None):
+    """What diagnose() would do for each of the top clusters, before any
+    call: {"slots": [...], "readiness"} — each slot "done" (the stored
+    diagnosis reused, and marked checked), "call" (`state`: everything the
+    call and its validation need, JSON-able so a batched answer is checked
+    against exactly what the model saw) or "failed" (`error`, raised while
+    gathering its evidence). {"held": [...]} when the readiness gate holds
+    the restaurant (its stored diagnoses stand); None with nothing to read."""
+    from ai_guard import MEMORY_FENCE_NOTE
     from models import get_restaurant
     from time_utils import restaurant_now
 
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return []
+        return None
     clusters = complaint_clusters(restaurant_id, db_path=db_path)
     if not clusters:
-        return []
+        return None
     ctx = operational_context(restaurant_id, db_path=db_path)
     op_block = _operational_block(ctx)
     op_lines = _operational_lines(ctx)
@@ -2101,7 +2175,6 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     _ctx_no_games = dict(ctx, games=None)
     op_block_no_games = _operational_block(_ctx_no_games)
     op_lines_no_games = _operational_lines(_ctx_no_games)
-    client = get_client()
     today = restaurant_now(restaurant).strftime("%B %d, %Y")
 
     existing = {d["category"]: d for d in get_diagnoses(restaurant_id, db_path=db_path,
@@ -2111,15 +2184,21 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     # past its horizon or refused refuses it — the stored diagnoses stand,
     # as when a call fails — and a failing or old fetch is said in the
     # prompt's DATA STATE block.
-    import data_health as _dh_rd
     from ai_utils import is_held as _held_rd
-    _ready_rd = _dh_rd.unattended_readiness(restaurant_id, "reviews",
-                                            db_path=db_path if db_path != DB_PATH else None)
+    _ready_rd = readiness
+    if _ready_rd is None:
+        import data_health as _dh_rd
+        _ready_rd = _dh_rd.unattended_readiness(restaurant_id, "reviews",
+                                                db_path=db_path if db_path != DB_PATH else None)
     if _held_rd(_ready_rd):
-        return [existing[c["category"]] for c in clusters[:max_clusters] if c["category"] in existing]
+        return {"held": [existing[c["category"]] for c in clusters[:max_clusters] if c["category"] in existing]}
     if _ready_rd.get("prompt_block"):
+        # Both blocks (#58): the copy without the game-night line was built
+        # before this and never carried the DATA STATE block, so a
+        # food-quality cluster was never told its fetch was old or failing.
         op_block = f"{op_block}\n\n{_ready_rd['prompt_block']}"
-    produced = []
+        op_block_no_games = f"{op_block_no_games}\n\n{_ready_rd['prompt_block']}"
+    slots = []
     _keys = _diagnosis_keys(restaurant_id, db_path)
     for cluster in clusters[:max_clusters]:
         prior = existing.get(cluster["category"])
@@ -2130,7 +2209,8 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             if reuse:
                 # The same reviews: the same cause. Checked, not rewritten.
                 _confirm_diagnosis(restaurant_id, cluster, ev_hash if stamp else None, db_path)
-                produced.append(dict(prior, stale=False, stale_note=None))
+                slots.append({"kind": "done", "category": cluster["category"],
+                              "diagnosis": dict(prior, stale=False, stale_note=None)})
                 continue
         try:
             excerpts, complaints, concentration, allowed, guest_texts = _diagnosis_inputs(
@@ -2145,8 +2225,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
             # What was worked and what the nightly reports measured on the
             # slice (CROSSMODULE-9), each checkable by its own fields.
             cl_lines.update({k: v for k, v in (sl.get("lines") or {}).items() if v is not None})
-            prompt = DIAGNOSE_PROMPT.format(
-                untrusted_note=UNTRUSTED_NOTE,
+            user = DIAGNOSE_USER.format(
                 restaurant_name=restaurant.name,
                 today=today,
                 category=cluster["category"].replace("_", " "),
@@ -2167,60 +2246,214 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
                 memory_fence_note=MEMORY_FENCE_NOTE,
                 memory_block=diagnosis_memory(restaurant_id, "review_diagnosis",
                                               diagnosis_subjects(cluster["category"]), db_path=db_path),
-                cause_vocabulary=CAUSE_VOCABULARY,
                 **evidence_guide(cl_lines),
             )
-            msg = create_with_retry(
-                client,
-                model=model_for("review_diagnosis"),
-                max_tokens=800,
-                messages=[{"role": "user", "content": prompt}],
-                restaurant_id=restaurant_id,
-                action="review_diagnosis",
-                readiness=_ready_rd,
-            )
-            if getattr(msg, "stop_reason", None) == "max_tokens":
-                raise ValueError("diagnosis was truncated")
-            # A leading sentence before the JSON failed json.loads (AI-26).
-            from ai_utils import parse_json_reply
-            result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict, message=msg),
-                                         allowed, prompt, restaurant_id, op_lines=cl_lines,
-                                         facts=_cluster_facts(cluster),
-                                         # Where the complaints concentrate, what
-                                         # the other modules recorded and what changed
-                                         # on those shifts all moved WITH the
-                                         # complaints: association, not cause.
-                                         anchors=diagnosis_anchors(
-                                             weak=[ln for ln in concentration.split("\n")
-                                                   if ln.startswith("Concentrated")] + list(cl_lines.values())),
-                                         untrusted=list(guest_texts) + list(sl.get("untrusted") or []))
-            _save_diagnosis(restaurant_id, cluster, result, {}, db_path, evidence_hash=ev_hash)
-            result.update({"category": cluster["category"], "mention_count": cluster["mentions"],
-                           "window_days": cluster["window_days"], "stale": False})
-            produced.append(result)
+            state = {
+                "category": cluster["category"],
+                "cluster": json.loads(json.dumps(cluster, default=str)),
+                "ev_hash": ev_hash,
+                "user": user,
+                "allowed": sorted(allowed),
+                "lines": {k: _line_to_state(v) for k, v in cl_lines.items()},
+                # Where the complaints concentrate, what the other modules
+                # recorded and what changed on those shifts all moved WITH
+                # the complaints: association, not cause.
+                "concentration": [ln for ln in concentration.split("\n") if ln.startswith("Concentrated")],
+                "untrusted": list(guest_texts) + list(sl.get("untrusted") or []),
+                "prepared_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            slots.append({"kind": "call", "category": cluster["category"], "prior": prior, "state": state})
         except Exception as e:
-            import ai_utils as _ai_q
-            if isinstance(e, ValueError):
-                # The model's diagnosis was cut off, did not parse or was
-                # refused by its checks: an AI-quality finding (#58).
-                _ai_q.record_quality_event("review_diagnosis", "output_rejected", restaurant_id=restaurant_id,
-                                           action="review_diagnosis",
-                                           detail=f"{cluster['category']}: {str(e)[:200]}")
-            elif not _ai_q.is_platform_stop(e):
-                # A budget stop or an open breaker is already in the ledger.
-                try:
-                    import ops
-                    ops.capture(e, job="review_diagnosis",
-                                context=f"restaurant_id={restaurant_id} category={cluster['category']}")
-                except Exception:
-                    pass
-            if prior:
-                produced.append(prior)
-                # Yesterday's diagnosis stands in for today's (#140).
-                _ai_q.record_quality_event("review_diagnosis", "fallback", restaurant_id=restaurant_id,
-                                           action="review_diagnosis",
-                                           detail=f"{cluster['category']}: the previous diagnosis was kept")
-    return produced
+            slots.append({"kind": "failed", "category": cluster["category"], "prior": prior, "error": e})
+    return {"slots": slots, "readiness": _ready_rd}
+
+
+def _line_to_state(line):
+    """An operational line as [text, fields] (fields None for plain text)."""
+    if line is None:
+        return None
+    from ai_guard import OperationalLine
+    return [str(line), json.loads(json.dumps(line.fields, default=str))
+            if isinstance(line, OperationalLine) and line.fields is not None else None]
+
+
+def _line_from_state(raw):
+    if raw is None:
+        return None
+    from ai_guard import OperationalLine
+    text, fields = raw[0], raw[1]
+    return OperationalLine(text, fields) if fields is not None else text
+
+
+def diagnosis_request(state) -> dict:
+    """The request for one cluster's call — what create_with_retry sends
+    and what the batch sends. The static rules ride in a cached system
+    block (#63); the cluster's evidence is the message."""
+    from ai_utils import model_for
+    return dict(model=model_for("review_diagnosis"), max_tokens=800,
+                system=[{"type": "text", "text": DIAGNOSE_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": state["user"]}])
+
+
+def finish_diagnosis(restaurant_id, state, msg, db_path: str = DB_PATH) -> dict:
+    """A model answer for one cluster, checked and stored exactly as the
+    synchronous path always did: truncation refused, the JSON parsed, every
+    citation, figure, name and operational line checked against what the
+    model was handed (the state), the result saved with its evidence hash
+    and its history row. Raises ValueError when the answer is refused."""
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ValueError("diagnosis was truncated")
+    # A leading sentence before the JSON failed json.loads (AI-26).
+    from ai_utils import extract_text, parse_json_reply
+    cluster = state["cluster"]
+    cl_lines = {k: _line_from_state(v) for k, v in (state.get("lines") or {}).items()}
+    result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict, message=msg),
+                                 set(state.get("allowed") or ()), DIAGNOSE_SYSTEM + "\n\n" + state["user"],
+                                 restaurant_id, op_lines=cl_lines,
+                                 facts=_cluster_facts(cluster),
+                                 anchors=diagnosis_anchors(
+                                     weak=list(state.get("concentration") or []) + list(cl_lines.values())),
+                                 untrusted=list(state.get("untrusted") or []))
+    _save_diagnosis(restaurant_id, cluster, result, {}, db_path, evidence_hash=state.get("ev_hash"))
+    result.update({"category": cluster["category"], "mention_count": cluster["mentions"],
+                   "window_days": cluster["window_days"], "stale": False})
+    return result
+
+
+def _diagnosis_failed(restaurant_id, category, e, prior, produced):
+    """What a cluster whose read failed leaves behind: the quality event or
+    the capture, and yesterday's diagnosis standing in for today's (#140)."""
+    import ai_utils as _ai_q
+    if isinstance(e, ValueError):
+        # The model's diagnosis was cut off, did not parse or was
+        # refused by its checks: an AI-quality finding (#58).
+        _ai_q.record_quality_event("review_diagnosis", "output_rejected", restaurant_id=restaurant_id,
+                                   action="review_diagnosis",
+                                   detail=f"{category}: {str(e)[:200]}")
+    elif not _ai_q.is_platform_stop(e):
+        # A budget stop or an open breaker is already in the ledger.
+        try:
+            import ops
+            ops.capture(e, job="review_diagnosis",
+                        context=f"restaurant_id={restaurant_id} category={category}")
+        except Exception:
+            pass
+    if prior:
+        produced.append(prior)
+        # Yesterday's diagnosis stands in for today's (#140).
+        _ai_q.record_quality_event("review_diagnosis", "fallback", restaurant_id=restaurant_id,
+                                   action="review_diagnosis",
+                                   detail=f"{category}: the previous diagnosis was kept")
+
+
+# ── the 4am Message Batch (AI cost audit 10/7/26 #58) ─────────────────────
+#
+# The 6am pass made one synchronous Sonnet call per new cluster while nobody
+# was waiting for it. scheduler.run_review_diagnoses_batch sends those calls
+# at 4am as one Message Batch at half the price; ai_batches' collector hands
+# each answer to on_diagnosis_batch, which stores it through finish_diagnosis
+# — the same checks and the same save as a synchronous answer. The 6am pass
+# (scheduler.run_review_diagnoses) is the fallback: it cancels whatever has
+# not landed and calls for it synchronously, so a slow batch never leaves a
+# brief or a digest without its read.
+
+BATCH_WORKFLOW = "review_diagnosis"
+BATCH_CALLBACK = "review_intelligence:on_diagnosis_batch"
+
+
+def batch_custom_id(restaurant_id, category, day) -> str:
+    """One custom_id per restaurant, cluster theme and day — so a re-run of
+    the same morning's batch is a duplicate, never a second request."""
+    import hashlib
+    h = hashlib.sha1(str(category).encode("utf-8")).hexdigest()[:10]
+    return f"rd-{int(restaurant_id)}-{str(day).replace('-', '')}-{h}"
+
+
+def _pack_state(state) -> str:
+    import base64
+    import zlib
+    return base64.b64encode(zlib.compress(json.dumps(state, default=str).encode("utf-8"))).decode("ascii")
+
+
+def _unpack_state(packed):
+    import base64
+    import zlib
+    try:
+        return json.loads(zlib.decompress(base64.b64decode(packed)).decode("utf-8"))
+    except Exception:
+        return None
+
+
+def diagnosis_batch_items(restaurant_id, day, db_path: str = DB_PATH) -> dict:
+    """Plan this restaurant's diagnoses and return the calls they need as
+    ai_batches items: {"items", "reused", "reason"}. The scheduler sends the
+    whole fleet's items as ONE batch (one cached prefix), and only where
+    ai_batches.enabled — a local backend, the switch off or the workflow
+    not listed sends nothing, and the 6am pass calls synchronously."""
+    out = {"items": [], "reused": 0, "reason": None}
+    plan = diagnosis_plan(restaurant_id, db_path=db_path)
+    if plan is None:
+        out["reason"] = "nothing to diagnose"
+        return out
+    if plan.get("held") is not None:
+        out["reason"] = "held by the readiness gate"
+        return out
+    for slot in plan["slots"]:
+        if slot["kind"] == "done":
+            out["reused"] += 1
+        if slot["kind"] != "call":
+            continue
+        st = slot["state"]
+        out["items"].append({"custom_id": batch_custom_id(restaurant_id, st["category"], day),
+                             "restaurant_id": restaurant_id, "action": "review_diagnosis",
+                             "request": diagnosis_request(st), "callback": BATCH_CALLBACK,
+                             "readiness": plan["readiness"],
+                             "context": {"category": st["category"], "day": str(day),
+                                         "state_z": _pack_state(st)}})
+    return out
+
+
+def _written_since(restaurant_id, cluster, stamp, db_path=DB_PATH) -> bool:
+    """Whether this cluster's stored diagnosis was written after `stamp` (a
+    fresher read — the 6am fallback, a forced run — already stands)."""
+    conn = get_conn(db_path)
+    try:
+        row = _one_row(conn, "SELECT generated_at FROM review_diagnoses WHERE restaurant_id=? AND category=? "
+                             "AND window_days=?", (restaurant_id, cluster.get("category"), cluster.get("window_days")))
+    finally:
+        conn.close()
+    return bool(row and row["generated_at"] and str(row["generated_at"]) >= str(stamp or ""))
+
+
+def on_diagnosis_batch(item, message=None, error=None):
+    """ai_batches' callback for one cluster's batched answer. A failed,
+    blocked or expired item is left to the 6am pass, which calls for it
+    synchronously; an answer is stored through finish_diagnosis unless a
+    fresher read was written since it was asked for. A refused answer is
+    the same AI-quality finding the synchronous path records."""
+    if message is None:
+        return
+    rid = item.get("restaurant_id")
+    state = _unpack_state((item.get("context") or {}).get("state_z"))
+    if not state:
+        raise ValueError("the batch item carried no diagnosis state")
+    if _written_since(rid, state["cluster"], state.get("prepared_at")):
+        return
+    try:
+        finish_diagnosis(rid, state, message)
+    except ValueError as e:
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event("review_diagnosis", "output_rejected", restaurant_id=rid,
+                                   action="review_diagnosis",
+                                   detail=f"{state['category']}: {str(e)[:200]}")
+        return
+    # A fresh cause makes every cached insight for this restaurant out of
+    # date, as after the 6am pass.
+    try:
+        from client_api import invalidate_insight_cache
+        invalidate_insight_cache(rid)
+    except Exception:
+        pass
 
 
 def _save_diagnosis(restaurant_id, cluster, result, money, db_path, evidence_hash=None):

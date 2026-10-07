@@ -248,7 +248,10 @@ def test_a_real_tick_stamps_loop_completed_and_pings(db_path, monkeypatch):
         scheduler.scheduler_loop()
     st = status_manager.scheduler_state()
     assert st["beat_age_minutes"] < 1 and st["loop_completed_age_minutes"] < 1 and st["running_job"] is None
-    assert pings == ["ok"]
+    # The end of the tick pings; since AI cost audit 10/7/26 #54 the morning
+    # brief runs at the top of the tick, so its pulse — which runs the
+    # minute duties as the tick's first job starts — pings too. Never a fail.
+    assert pings and set(pings) == {"ok"} and len(pings) <= 2, pings
     jobs = {r["job"] for r in _q(db_path, "SELECT job FROM job_runs")}
     assert {"morning_brief", "minute_duties"} <= jobs, "the brief and the minute duties write job runs (#31)"
 

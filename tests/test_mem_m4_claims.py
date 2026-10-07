@@ -377,7 +377,9 @@ def test_the_food_diagnosis_prompt_carries_the_last_read_of_its_driver(monkeypat
     p = seen["prompts"][0]
     assert "WHAT CAVNAR AI REMEMBERS ABOUT THIS" in p and "LAST READ on driver:salmon" in p
     assert "Salmon is ordered past its shelf life." in p and ai_guard.UNTRUSTED_OPEN in p
-    assert "did not hold" in p                    # the rule that uses it
+    # The rule that uses it is in the cached system block since AI cost
+    # audit 10/7/26 #63 (the memory itself stays in the message).
+    assert "did not hold" in fci.DIAGNOSE_SYSTEM
 
 
 def test_the_review_diagnosis_prompt_says_so_when_nothing_is_remembered(monkeypatch):

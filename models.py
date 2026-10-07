@@ -827,7 +827,53 @@ _open_conns = threading.local()
 _POOL_PER_PATH = 3
 _POOL_PER_THREAD = 6
 _pool_local = threading.local()
+# A caller's own `PRAGMA synchronous=` still taints its connection (it is
+# not listed here): every pooled connection keeps the level _open_pragmas
+# set when it was opened.
 _SAFE_PRAGMA_WRITES = ("foreign_keys", "busy_timeout")
+
+
+# ── synchronous=NORMAL under WAL (AI cost audit 10/7/26 #92) ──────────────
+#
+# SQLite's default, synchronous=FULL, fsyncs the write-ahead log on EVERY
+# commit. Under WAL, NORMAL fsyncs only at a checkpoint, and SQLite's own
+# guarantee for that pairing (sqlite.org/pragma.html#pragma_synchronous,
+# /wal.html) is:
+#   - the database is never corrupted, whatever fails;
+#   - every committed transaction survives an APPLICATION crash, a killed
+#     process, a redeploy — the WAL is written to the OS before commit
+#     returns, and the OS writes it out on its own;
+#   - an OS crash or a power loss on the host can lose the transactions
+#     committed since the last checkpoint (at most the last ~1,000 pages of
+#     WAL, typically seconds of writes). The file stays consistent: it reads
+#     as it was a moment earlier.
+# On Railway the volume sits under the container; a redeploy or OOM kill is
+# an application crash (no loss), and only a host failure reaches the second
+# case — rarer than the nightly backup's own window, and recovered the same
+# way (docs/ops/RECOVERY.md). In exchange each small commit stops paying an
+# fsync. SQLITE_SYNCHRONOUS=FULL puts the old behaviour back (it is read on
+# every new connection). NORMAL is applied only once WAL is confirmed: in a
+# rollback-journal database NORMAL CAN corrupt on power loss, so anything
+# that is not WAL keeps FULL.
+_SYNC_LEVELS = ("NORMAL", "FULL", "EXTRA")
+
+
+def sqlite_synchronous() -> str:
+    """The synchronous level new connections get under WAL: NORMAL unless
+    SQLITE_SYNCHRONOUS names FULL or EXTRA (anything else reads as NORMAL)."""
+    v = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").strip().upper()
+    return v if v in _SYNC_LEVELS else "NORMAL"
+
+
+def _open_pragmas(conn) -> None:
+    """Every new connection's settings: foreign keys on, WAL, and the
+    synchronous level above — NORMAL only when the journal really is WAL."""
+    conn.execute("PRAGMA foreign_keys=ON")
+    row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+    mode = str((row[0] if row else "") or "").lower()
+    level = sqlite_synchronous()
+    if mode == "wal" or level != "NORMAL":
+        conn.execute(f"PRAGMA synchronous={level}")
 
 
 def _pool_enabled() -> bool:
@@ -932,8 +978,7 @@ def _checkout(db_path):
                     _real_close(conn)
     conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
+    _open_pragmas(conn)
     if key is not None and _file_id(db_path) != key[1]:
         key = None          # the file changed under the open: don't pool it
     return conn, key
@@ -1056,8 +1101,7 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     if not _pool_enabled():
         conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA journal_mode=WAL")
+        _open_pragmas(conn)
     else:
         raw, key = _checkout(db_path)
         conn = _ConnHandle(raw, key)

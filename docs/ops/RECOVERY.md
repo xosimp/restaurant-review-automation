@@ -467,6 +467,13 @@ way.
   on a night the object-storage copy was not made (the default, `always`,
   sends it every night beside object storage).
 - **Re-run**: `/admin` → Operations → Jobs → `backup_db` → Run now.
+- **Durability between backups**: the database runs in WAL with
+  `synchronous=NORMAL` (AI cost audit 10/7/26 #92, `models.sqlite_synchronous`).
+  A crash, kill, OOM or redeploy of the app loses no committed write and
+  never corrupts the file; a host power loss or OS crash can lose the
+  writes since the last WAL checkpoint (seconds of them) — the file reads as
+  it was a moment earlier, so nothing here needs a restore. Set
+  `SQLITE_SYNCHRONOUS=FULL` to fsync every commit again.
 
 ---
 

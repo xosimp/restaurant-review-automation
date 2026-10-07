@@ -402,7 +402,9 @@ _AI_LANE_JOBS = ("auto_draft_schedule", "weekly_plan", "recipe_drafts", "weekly_
 def test_the_long_ai_jobs_are_on_the_ai_lane():
     import jobs_registry
     loop = inspect.getsource(scheduler.scheduler_loop)
-    assert set(scheduler._LANES) == {"intel", "ai"}
+    # "sweep" joined for the 4-6am restaurant sweeps (AI cost audit 10/7/26
+    # #54, tests/test_ai_cost_sched_1007.py).
+    assert set(scheduler._LANES) == {"intel", "ai", "sweep"}
     for name in _AI_LANE_JOBS:
         assert f'_ops.run_in_lane("ai", "{name}"' in loop, name
         assert f'_ops.run_job("{name}"' not in loop, f"{name} still runs on the loop thread"
