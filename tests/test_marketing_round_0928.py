@@ -119,7 +119,7 @@ def test_guest_contacts_reads_at_page_size():
     assert 'class="gc-title">Guest contacts</div>' in modal and 'class="gc-help"' in modal
     assert "font-size:11px" not in modal and "font-size:12px" not in modal
     assert 'class="ac-input gc-in"' in modal
-    rows = _between("list.innerHTML = '<div class=\"dr-pulse wide\"", "function ")
+    rows = _between("list.innerHTML = mktLoading('Loading your guests", "function ")
     assert "font-size:15.5px;font-weight:600" in rows and "font-size:12px" not in rows
 
 

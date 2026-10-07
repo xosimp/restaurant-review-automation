@@ -191,3 +191,17 @@ def test_estimated_savings_shows_its_math_on_hover_or_focus():
     assert "'<span class=\"tag\">Projection · not yet earned</span>' + _ssSavingsMath(lv, rev));" in SRC
     assert "(extra && extra.indexOf('ss-math') > -1 ? ' has-math\" tabindex=\"0' : '')" in SRC
     assert ".ss-tile.has-math:hover .ss-math,.ss-tile.has-math:focus-within .ss-math{opacity:1;visibility:visible;" in SRC
+
+
+def test_marketing_loads_with_the_orb_on_every_tab_and_the_text_card_runs_full_height():
+    """Owner, 10/6/26: the orb, big enough to notice, in place of the orange
+    line across Content, Campaigns, Scheduled and Analytics; the text card
+    as tall as the email card beside it."""
+    panel = SRC[_at('<div class="panel" id="panel-marketing"'):]
+    panel = panel[:panel.index('id="mkt-attr-card"')]
+    assert "dr-pulse" not in panel
+    assert "window.mktLoading=function(label,size,state){size=size||48;" in SRC
+    for fn in ("function loadMktOpps(", "function loadEmailHistory(", "function _loadGuestContactsList(", "function cpLoadMedia("):
+        body = SRC[_at(fn):][:1200]
+        assert "dr-pulse" not in body and "mktLoading(" in body, fn
+    assert ".cp-chs:has(> #cp-ch-social[hidden])>#cp-ch-text{grid-row:1/span 2;align-self:stretch;" in SRC

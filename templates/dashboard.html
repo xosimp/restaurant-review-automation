@@ -1160,6 +1160,13 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-chs{display:grid;grid-template-columns:330px minmax(0,1fr);gap:16px;align-items:start}
 .cp-chs>.cp-ch{grid-column:1}
 .cp-chs>.cp-ch-em{grid-column:2;grid-row:1/span 2}
+/* With no social card the text card is the only one in its column: it runs
+   the email's full height, so the two cards end level (owner, 10/6/26). Its
+   message box takes the extra room. */
+.cp-chs:has(> #cp-ch-social[hidden])>#cp-ch-text{grid-row:1/span 2;align-self:stretch;display:flex;flex-direction:column}
+.cp-chs:has(> #cp-ch-social[hidden])>#cp-ch-text>.cp-chb{flex:1}
+.cp-chs:has(> #cp-ch-social[hidden])>.cp-ch-em{align-self:stretch}
+.cp-chs:has(> #cp-ch-social[hidden])>#cp-ch-text .cp-msg{flex:1;min-height:96px}
 .cp-chs.noem{grid-template-columns:repeat(2,minmax(0,1fr))}
 .cp-chs.noem>.cp-ch{grid-column:auto}
 .cp-chs[data-n="1"],.cp-chs.noem[data-n="1"]{grid-template-columns:minmax(0,780px);justify-content:center}
@@ -3017,6 +3024,7 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-xl span{flex:1;min-width:0;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:10px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
 .hb-sub .chg .hb-num{font-size:15px;font-weight:700;color:var(--ember)}
 .hb-load{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:13px;min-height:28px}
+.mkt-load{flex-direction:column;justify-content:center;gap:12px;min-height:150px;padding:18px 0;text-align:center;font-size:13.5px}
 .dr-page-load{height:260px;justify-content:center;flex-direction:column;gap:14px;margin-top:30px}
 .hb-load canvas{display:block;flex-shrink:0}
 @media (max-width:1000px){.hb-sig{grid-template-columns:1fr}.hb-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.hb-sg:last-child{border-bottom:none;margin-bottom:0}.hb-act{grid-template-columns:1fr;gap:24px}.hb-act>div+div{border-left:none;padding-left:0;padding-top:20px;border-top:1px solid var(--hb-line)}.hb-pulse{justify-content:flex-start}.hb-tbl .hide-m{display:none}}
@@ -4263,6 +4271,10 @@ svg:hover .hb-xh{opacity:1}
   }
   // Loading state = the Cavnar orb (same component the iOS app uses).
   function isDark(){return document.documentElement.getAttribute('data-theme')==='dark';}
+  // Marketing's loading state (owner, 10/6/26: the orb, big enough to be
+  // noticed, in place of the orange line on all four tabs): a 48px orb over
+  // its sentence, centred in the space the content will take.
+  window.mktLoading=function(label,size,state){size=size||48;return '<div class="hb-load mkt-load" role="status"><canvas class="hb-orb" data-orb-state="'+esc(state||'working')+'" width="'+size+'" height="'+size+'" style="width:'+size+'px;height:'+size+'px"></canvas>'+(label?'<span>'+esc(label)+'</span>':'')+'</div>';};
   window.cavnarLoading=function(label,size,state,height){size=size||28;return '<div class="hb-load"'+(height?' style="height:'+height+'px"':'')+'><canvas class="hb-orb" data-orb-state="'+esc(state||'working')+'" width="'+size+'" height="'+size+'" style="width:'+size+'px;height:'+size+'px"></canvas>'+(label?'<span>'+esc(label)+'</span>':'')+'</div>';};
   var _orbs=[];
   window.cavnarMountOrbs=function(root){
@@ -13756,7 +13768,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
        generate-now/post-now, and an owner does admin at 11pm. -->
   <div id="mkt-tab-queue" role="tabpanel" aria-labelledby="mkt-tab-queue-btn" style="display:none">
     <div class="hb-sh" style="border-top:none;padding-top:0"><div><div class="k">Scheduled</div><h2>What's going out, and when</h2></div></div>
-    <div id="mkt-queue-list" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading the queue"><i></i></div></div>
+    <div id="mkt-queue-list" aria-live="polite"><div class="hb-load mkt-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="48" height="48" style="width:48px;height:48px"></canvas><span>Loading what’s scheduled…</span></div></div>
   </div>
 
   <!-- Analytics sub-tab: real Meta post performance, unlocked now that the app is Meta-approved -->
@@ -13793,7 +13805,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
        that day - moved together, never "caused". Filled by loadMktWebsite. #}
     <section class="hb-card wa-site" id="mkt-web" aria-labelledby="mkt-web-h" style="margin-bottom:16px">
       <div class="hb-kicker" id="mkt-web-h">Your website</div>
-      <div id="mkt-web-body"><div class="dr-pulse wide" role="status" aria-label="Loading your website"><i></i></div></div>
+      <div id="mkt-web-body"><div class="hb-load mkt-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="48" height="48" style="width:48px;height:48px"></canvas><span>Reading your website…</span></div></div>
     </section>
 
     <!-- What posts did to the till. Correlational, and said so. -->
@@ -27390,7 +27402,7 @@ function genContent(fromCalendar){
   box.removeAttribute('data-gen-error');
   box.removeAttribute('data-mkt-posted');
   // The orb loader, not a line of text (DS §10, friction #43).
-  box.innerHTML=window.cavnarLoading?cavnarLoading('Writing it in your voice…',22,'composing'):'<div class="dr-pulse wide"><i></i></div>';
+  box.innerHTML=window.cavnarLoading?mktLoading('Writing it in your voice…',48,'composing'):'<div class="dr-pulse wide"><i></i></div>';
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
     .then(apiJson)
     .then(function(d){
@@ -27542,7 +27554,7 @@ function downloadCal(){
 // it does, then the week, or the reason there is none.
 function loadCalCached(){
   var g=document.getElementById('cal-grid');
-  if(g&&!window._calIdeas)g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?cavnarLoading('Planning your week…',22,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
+  if(g&&!window._calIdeas)g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?mktLoading('Planning your week…',48,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
   fetch('/api/content-calendar').then(apiJson).then(function(d){
     if(d.ideas&&d.ideas.length){renderCal(d.ideas);return;}
     /* A GET only reads; the first visit of the week asks the server to
@@ -27559,7 +27571,7 @@ function loadCalCached(){
 }
 function loadCal(){
   var g=document.getElementById('cal-grid');
-  g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?cavnarLoading('Planning your week…',22,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
+  g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?mktLoading('Planning your week…',48,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
   fetch('/api/content-calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true})}).then(apiJson).then(function(d){
     if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">'+_escHtml(String(d.error||'Could not generate.'))+'</div>';return;}
     renderCal(d.ideas);
@@ -27943,7 +27955,7 @@ function _ehFmtDateTime(s){
 function loadEmailHistory(){
   var el = document.getElementById('eh-body');
   if(!el) return;
-  el.innerHTML = '<div class="dr-pulse" role="status" aria-label="Loading email history"><i></i></div>';
+  el.innerHTML = mktLoading('Loading your sent emails\u2026');
   fetch('/api/email-history').then(apiJson).then(function(d){
     if(!d.ok){ el.innerHTML = '<span style="color:#ef4444">Couldn\'t load email history</span>'; return; }
     if(!d.emails || !d.emails.length){
@@ -31006,7 +31018,7 @@ function loadMktOpps(quiet) {
   sec.hidden = false;
   if (!quiet && !_mktOpps.length) {
     list.classList.remove('collapsed');
-    list.innerHTML = '<div class="dr-pulse wide mkt-opps-load" role="status" aria-label="Loading opportunities"><i></i></div>';
+    list.innerHTML = mktLoading('Looking for this week\u2019s opportunities\u2026');
     if (foot) foot.innerHTML = '';
   }
   fetch('/api/marketing/opportunities' + (_mktOppSt.open ? '?show=all' : ''), {credentials: 'same-origin'}).then(apiJson).then(function(d) {
@@ -31619,7 +31631,7 @@ window.cpTogglePhotos = function() {
 };
 function cpLoadMedia() {
   _cp.media = [];
-  var box = _cpEl('cp-thumbs'); if (box) box.innerHTML = '<div class="dr-pulse"><i></i></div>';
+  var box = _cpEl('cp-thumbs'); if (box) box.innerHTML = mktLoading('Loading your photos\u2026', 36);
   fetch('/api/marketing/media', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     _cp.media = (d && d.ok && d.media) || [];
     cpPaintThumbs();
@@ -32235,7 +32247,7 @@ function _fmtVisitDate(iso) {
 
 function _loadGuestContactsList() {
   var list = document.getElementById('guest-contacts-list');
-  list.innerHTML = '<div class="dr-pulse wide" role="status" aria-label="Loading guests" style="margin:8px 0"><i></i></div>';
+  list.innerHTML = mktLoading('Loading your guests\u2026');
   fetch('/api/guest-contacts').then(apiJson).then(function(d){
     if (!d.ok || !d.contacts.length) {
       list.innerHTML = '<div style="padding:12px 0;font-size:15px;color:var(--ink3)">No contacts yet.</div>';
@@ -33318,7 +33330,7 @@ document.addEventListener('click', function(e) {
       <input type="tel" id="guest-add-phone" class="ac-input gc-in" placeholder="Phone number" aria-label="Guest phone number">
       <button onclick="addGuestContact()" class="cbtn cbtn-primary">Add</button>
     </div>
-    <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px"><div class="dr-pulse wide" role="status" aria-label="Loading guests" style="margin:8px 0"><i></i></div></div>
+    <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px"><div class="hb-load mkt-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="48" height="48" style="width:48px;height:48px"></canvas><span>Loading your guests…</span></div></div>
   </div>
 </div>
 

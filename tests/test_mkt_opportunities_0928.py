@@ -980,7 +980,7 @@ def test_cards_reuse_home_anatomy_one_primary_answer_controls_and_a_named_draft_
 
 def test_the_feed_loads_on_the_pulse_and_a_failed_reload_leaves_no_stale_show_more():
     load = _between("function loadMktOpps(quiet) {", "function mktOppWhen(o) {")
-    assert '<div class="dr-pulse wide mkt-opps-load" role="status" aria-label="Loading opportunities"><i></i></div>' in load
+    assert "list.innerHTML = mktLoading('Looking for this week\\u2019s opportunities\\u2026');" in load
     assert "if (seq !== _mktOppSt.seq) return;" in load
     fail = _between("function mktOppsFailed(d) {", "function mktOppWhen(o) {")
     assert "foot.innerHTML = ''" in fail and "loadFailed(list, d)" in fail
