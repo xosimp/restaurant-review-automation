@@ -65,6 +65,18 @@ RUBRICS = {
         "A social media post a restaurant owner will review before posting.",
         ["sounds like this restaurant", "one clear idea", "no invented offers or claims",
          "fits the platform's length and tone"]),
+    # The analyst's reads (labor, food cost, reviews, marketing, the
+    # competitor read, the diagnoses, the weekly digest): scored only in
+    # shadow, where the learner compares a cheaper tier with production on
+    # the same inputs (ai_learning.shadow_arms) — the rules engine still
+    # decides every figure; this judges whether the read is worth reading.
+    "insight_read": (
+        "A short written read of a restaurant's own numbers, for the owner.",
+        ["every claim follows from the numbers in the context",
+         "the most important thing in the numbers comes first",
+         "specific to this restaurant and actionable, not generic advice",
+         "no line contradicts another or the numbers given",
+         "plain words an owner reads in under a minute"]),
 }
 
 _PROMPT = """You review one piece of writing for a restaurant before it goes out. You do not rewrite it.

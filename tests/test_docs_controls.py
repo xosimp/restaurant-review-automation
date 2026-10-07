@@ -135,6 +135,12 @@ _STEP_UP_TODAY = {
     "/admin/rpower/save/<int:restaurant_id>",
     "/admin/rpower/bootstrap/<int:restaurant_id>",
     "/admin/rpower/disconnect/<int:restaurant_id>",
+    # The AI routes console (orchestration design 10/7/26): route overrides,
+    # their revert, the learner's recommendations, and the invoice entry.
+    "/admin/api/ai-routes/<workflow>/override",
+    "/admin/api/ai-routes/<workflow>/revert",
+    "/admin/api/ai-routes/recommendations/<int:rec_id>",
+    "/admin/api/ai-costs/invoices",
 }
 
 # Routes that need the step-up for only PART of what they do, through

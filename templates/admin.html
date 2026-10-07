@@ -796,7 +796,7 @@ const PAGES = [
   ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email & SMS','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'], ['Operations · Event calendar','#operations/events','Page'],
   ['Customers · Restaurants','#customers/restaurants','Page'], ['Customers · Billing','#customers/billing','Page'], ['Customers · Onboarding','#customers/onboarding','Page'], ['Customers · Support queue','#customers/support','Page'],
   ['Customers · Bug reports','#customers/support?view=bugs','Page'], ['Customers · Deletion requests','#customers/support?view=deletions','Page'], ['Customers · Resolved issues','#customers/support?view=resolved','Page'],
-  ['Engineering','#engineering','Page'], ['Engineering · Status page','#engineering/status','Page'], ['Engineering · Audit trail','#engineering/audit','Page'], ['Engineering · Team & access','#engineering/access','Page'], ['Engineering · Experiments','#engineering/experiments','Page'],
+  ['Engineering','#engineering','Page'], ['Engineering · Status page','#engineering/status','Page'], ['Engineering · Audit trail','#engineering/audit','Page'], ['Engineering · Team & access','#engineering/access','Page'], ['Engineering · Experiments','#engineering/experiments','Page'], ['Engineering · AI routes','#engineering/ai-routes','Page'], ['Engineering · AI costs','#engineering/ai-costs','Page'],
   ['Analytics','#analytics','Page'], ['Analytics · Recommendations','#analytics/recommendations','Page'], ['Analytics · Intelligence','#analytics/intelligence','Page'],
   ['New client','fn:newClientOpen','Action'], ['Add a location to a brand','fn:addLocationOpen','Action'], ['Post an incident','fn:incidentOpen','Action'],
   ['Current audit','/admin/audits/latest','Tool'], ['Meeting cheat sheet','/admin/audits/latest/cheatsheet','Tool'], ['All audits','/admin/audits','Tool']
@@ -3073,13 +3073,15 @@ async function opsIntegrations(){
 // what breaks without it (#125). A system read that failed is unknown —
 // never "every key is configured" (#128). The status page, the audit trail
 // and team access are tabs of their own.
-const ENG_TABS = [['overview', 'Overview'], ['status', 'Status page'], ['audit', 'Audit trail'], ['access', 'Team &amp; access'], ['experiments', 'Experiments']];
+const ENG_TABS = [['overview', 'Overview'], ['status', 'Status page'], ['audit', 'Audit trail'], ['access', 'Team &amp; access'], ['experiments', 'Experiments'], ['ai-routes', 'AI routes'], ['ai-costs', 'AI costs']];
 const ENG_LINKS = `<a class="btn" href="/health" target="_blank">${ico('ext','xs')}/health</a><a class="btn" href="/status" target="_blank">${ico('ext','xs')}Status page</a>`;
 async function engineering(tab){
   tab = tab || 'overview';
   if(tab !== 'overview'){
     areaShell(head('Engineering', 'Engineering', '', ENG_LINKS) + tabsNav('engineering', ENG_TABS, tab));
     if(tab === 'experiments') await experiments();
+    else if(tab === 'ai-routes') await aiRoutes();
+    else if(tab === 'ai-costs') await aiCosts();
     else if(tab === 'status') await engStatus();
     else if(tab === 'audit') await engAudit();
     else if(tab === 'access') await engAccess();
@@ -3946,6 +3948,208 @@ function expPinForm(){
   const rid = parseInt($('exp-rid').value, 10), v = ($('exp-arm').value || '').split('|');
   if(!rid || v.length !== 2){ toast('Give a restaurant ID and an arm', 'bad'); return; }
   expPin(rid, v[0], v[1]);
+}
+
+// ── AI routes (internal only; orchestration design 10/7/26) ────────────────
+// Each workflow's policy in force (the code's default, an override's fields
+// in ember), its last 28 days of runs by route (ai_learning.route_stats), the
+// shadow replays' pairs, the learner's open recommendations with Apply /
+// Dismiss, and the override editor. Written in ES5 (CLAUDE.md: inline JS is
+// ES5) — var, function and string joins — beside the page's older code.
+var _airTriggers = {};
+function aiPct(v){ return v == null ? '—' : (Math.round(v * 1000) / 10) + '%'; }
+function aiMs(v){ return v == null ? '—' : (v >= 1000 ? (Math.round(v / 100) / 10) + ' s' : Math.round(v) + ' ms'); }
+function aiUsd(v){ return v == null ? '—' : '$' + (Math.abs(v) < 0.1 ? Number(v).toFixed(4) : Number(v).toFixed(2)); }
+function aiNum(v){ return '<span class="num">' + v + '</span>'; }
+function aiLadder(l){ return (l || []).map(function(t){ return esc(t); }).join(' → '); }
+function aiCaps(c){ return c ? (c.calls + ' calls · $' + c.usd + ' · ' + c.seconds + ' s') : '—'; }
+function aiField(name, p){
+  var v = p[name];
+  if(name === 'ladder') return aiLadder(v);
+  if(name === 'escalate_on') return v && v.length ? v.map(esc).join(', ') : 'never';
+  if(name === 'caps') return esc(aiCaps(v));
+  if(name === 'batch') return v ? 'yes' : 'no';
+  if(name === 'reviewer_unattended') return v ? esc(v) : 'same as reviewer';
+  if(name === 'shadow_rate') return aiPct(v);
+  return esc(v == null ? '—' : String(v));
+}
+var AI_FIELD_LABEL = {ladder: 'Ladder', escalate_on: 'Escalates on', max_escalations: 'Escalations', reviewer: 'Reviewer',
+  reviewer_unattended: 'Reviewer, unattended', shadow_rate: 'Shadow-scored', batch: 'May batch', caps: 'Caps per run'};
+var AI_REC_KIND = {start_higher: 'Start higher', start_lower: 'Start lower', quality_low: 'Owners use little of it', reverted: 'Reverted'};
+function aiPolicyTable(w){
+  var rows = w['default'] ? Object.keys(AI_FIELD_LABEL).map(function(f){
+    var over = w.overridden.indexOf(f) >= 0;
+    return '<tr><td>' + esc(AI_FIELD_LABEL[f]) + '</td><td>' + aiField(f, w['default']) + '</td><td' + (over ? ' style="color:var(--ember2);font-weight:700"' : '') + '>'
+      + aiField(f, w.effective) + (over ? ' <span class="chip warn">override</span>' : '') + '</td></tr>';
+  }).join('') : '';
+  return '<div class="tw"><table><thead><tr><th>Field</th><th>Default (code)</th><th>In force</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+function aiStatsTable(w){
+  if(w.stats == null) return '<div class="warnline" role="status">' + ico('alert','xs') + ' The runs could not be read — the figures are unknown, not zero.</div>';
+  if(!w.stats.length) return '<div class="dim">No run of this workflow in the last 28 days.</div>';
+  return table([
+    {h:'Route', key:'tier', cell:function(r){ return esc(r.tier || '—') + ' <span class="dim">' + esc(r.model || '') + '</span>'; }},
+    {h:'Runs', key:'runs', r:true, cell:function(r){ return aiNum(fmtN(r.runs)); }},
+    {h:'$ / run', key:'cost_per_run', r:true, cell:function(r){ return aiNum(aiUsd(r.cost_per_run)); }},
+    {h:'p50', key:'p50_ms', r:true, cell:function(r){ return aiNum(aiMs(r.p50_ms)); }},
+    {h:'p95', key:'p95_ms', r:true, cell:function(r){ return aiNum(aiMs(r.p95_ms)); }},
+    {h:'Escalated', key:'escalation_rate', r:true, cell:function(r){ return aiNum(aiPct(r.escalation_rate)); }},
+    {h:'Passed', key:'pass_rate', r:true, cell:function(r){ return aiNum(aiPct(r.pass_rate)); }},
+    {h:'Accepted', key:'acceptance', r:true, cell:function(r){ return r.acceptance == null ? '<span class="dim">—</span>' : aiNum(aiPct(r.acceptance)) + ' <span class="dim">n=' + r.outcomes + '</span>'; }},
+    {h:'Quality', key:'quality', r:true, cell:function(r){ return r.quality == null ? '<span class="dim">—</span>' : aiNum(r.quality.toFixed(2)); }},
+    {h:'Shadow score', key:'shadow_score', r:true, cell:function(r){ return r.shadow_score == null ? '<span class="dim">—</span>' : aiNum(r.shadow_score.toFixed(2)); }}
+  ], w.stats, {id:'air-' + w.workflow, sort:'runs'});
+}
+function aiShadowLine(w){
+  var cand = w.shadow_candidate ? 'Replayed weekly on ' + esc(w.shadow_candidate) + ', the next cheaper tier.' : (w.replayable ? 'Not replayed: no cheaper tier below its first rung, or no rubric judges it.' : 'Not replayable (a tool loop, the schedule, or a document).');
+  var pairs = (w.shadow || []).map(function(p){
+    return esc(p.tier) + ': ' + aiNum(p.cand_score.toFixed(2)) + ' against production\'s ' + aiNum(p.prod_score.toFixed(2)) + ' on ' + aiNum(fmtN(p.pairs)) + ' pair' + (p.pairs === 1 ? '' : 's') + ', at ' + aiNum(aiUsd(p.cand_cost)) + ' a run against ' + aiNum(aiUsd(p.prod_cost));
+  }).join(' · ');
+  return '<span class="ink2" style="font-size:12.5px">' + cand + (pairs ? ' ' + pairs + '.' : '') + '</span>';
+}
+function aiRecRow(r){
+  var hasRoute = r.proposed && Object.keys(r.proposed).length;
+  return '<div class="li"><span style="width:150px;flex-shrink:0">' + pill(r.kind === 'quality_low' ? 'warn' : 'neu', esc(AI_REC_KIND[r.kind] || r.kind), false) + '</span>'
+    + '<div class="tt"><b>' + esc(r.workflow) + '</b><span>' + esc(r.summary || '') + ' · ' + fmtD(r.created_at) + '</span></div>'
+    + (hasRoute ? '<button class="cbtn btn s p w" onclick="aiDecide(' + r.id + ',true,\'' + jsq(r.workflow) + '\')">Apply</button>' : '<span class="dim" title="It asks for a look, not a route">nothing to apply</span>')
+    + '<button class="cbtn btn s g w" onclick="aiDecide(' + r.id + ',false,\'' + jsq(r.workflow) + '\')">Dismiss</button></div>';
+}
+function aiRow(w){
+  var t = w.totals, o = w.override;
+  var figs = t == null ? unknownV('ai_runs') : (t.runs ? aiNum(fmtN(t.runs)) + ' runs · ' + aiNum(aiUsd(t.cost_per_run)) + ' a run · ' + aiNum(aiPct(t.pass_rate)) + ' passed · ' + aiNum(aiPct(t.escalation_rate)) + ' escalated' : 'no runs in 28 days');
+  var meta = o ? '<span class="ink2" style="font-size:12.5px">Override by ' + esc(o.updated_by || 'admin') + ' on ' + fmtD(o.updated_at) + (o.reason ? ' — ' + esc(o.reason) : '') + '</span>' : '';
+  var invalid = o && o.invalid ? '<div class="warnline" role="status">' + ico('alert','xs') + ' The stored override no longer validates (' + esc(o.invalid) + ') — the defaults run until it is edited.</div>' : '';
+  return '<div class="li click" onclick="toggleRow(this)"><span style="width:96px;flex-shrink:0" class="dim">' + esc(w.agent) + '</span>'
+    + '<div class="tt"><b>' + esc(w.workflow) + (w.overridden.length ? ' <span class="chip warn">override</span>' : '') + (w.recommendations.length ? ' <span class="chip">' + w.recommendations.length + ' to decide</span>' : '') + '</b>'
+    + '<span>' + aiLadder(w.effective.ladder) + ' · ' + esc(w.effective.reviewer) + ' · ' + figs + '</span></div><span class="chev">' + ico('chev','s') + '</span></div>'
+    + '<div class="lx"><div class="box">' + invalid + aiPolicyTable(w) + aiStatsTable(w) + aiShadowLine(w) + meta
+    + '<span style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="cbtn btn s w" onclick="aiOverrideOpen(\'' + jsq(w.workflow) + '\')">Edit override</button>'
+    + (o ? '<button class="cbtn btn s g w" onclick="aiRevert(\'' + jsq(w.workflow) + '\')">Revert</button>' : '')
+    + '<span class="dim">' + esc(w.agent_label || '') + '</span></span></div></div>';
+}
+var _airData = null;
+function aiRoutes(){
+  return api('/admin/api/ai-routes').then(function(d){
+    var err = readErr(d);
+    if(err){ V().innerHTML = '<div class="err">Couldn\'t read the AI routes — ' + esc(err) + '.</div>'; return; }
+    _airData = d; _airTriggers = d.triggers || {};
+    var wfs = d.workflows || [], recs = [], runs = 0, overridden = 0, statsKnown = true;
+    wfs.forEach(function(w){ recs = recs.concat(w.recommendations || []); if(w.totals) runs += w.totals.runs || 0; else statsKnown = false; if(w.overridden.length) overridden += 1; });
+    var tiers = d.tiers || {};
+    var tierLine = Object.keys(tiers).map(function(k){ return esc(k) + ' ' + esc(tiers[k].model) + (tiers[k].effort ? ' (' + esc(tiers[k].effort) + ')' : ''); }).join(' · ');
+    var decided = (d.decided || []).filter(function(r){ return r.kind === 'reverted'; }).slice(0, 5);
+    V().innerHTML = errBanner(d)
+      + '<section class="card" style="overflow:hidden;margin-bottom:16px"><div class="strip">'
+      + stripCell('#engineering/ai-routes', 'sliders', 'neu', 'Workflows', fmtN(wfs.length), 'policy ' + esc(d.policy_version || ''))
+      + stripCell('#engineering/ai-routes', 'flag', overridden ? 'warn' : 'neu', 'Overridden', fmtN(overridden), overridden ? 'a console override is in force' : 'every workflow on its defaults')
+      + stripCell('#engineering/ai-routes', 'spark', recs.length ? 'warn' : 'neu', 'To decide', fmtN(recs.length), 'the learner recommends, never applies')
+      + stripCell('#engineering/ai-costs', 'chart', 'neu', 'Runs, 28 days', statsKnown ? fmtN(runs) : unknownV('ai_runs'), 'production runs, shadow replays apart')
+      + '</div></section>'
+      + (recs.length ? '<div class="card" style="overflow:hidden;margin-bottom:16px"><div class="ch" style="padding-bottom:12px"><h2>Recommendations</h2><span class="sub">Apply makes it the workflow\'s override; Revert on the workflow puts back what it replaced.</span></div><div class="lst" style="border-top:1px solid var(--line)">' + recs.map(aiRecRow).join('') + '</div></div>' : '')
+      + (decided.length ? '<div class="warnbox" style="margin-bottom:16px;display:flex;flex-direction:column;gap:6px"><b>Reverted by the learner</b>' + decided.map(function(r){ return '<span>• ' + esc(r.summary || r.workflow) + ' · ' + fmtD(r.decided_at) + '</span>'; }).join('') + '</div>' : '')
+      + '<div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Workflows</h2><span class="sub">' + tierLine + '</span></div><div class="lst" style="border-top:1px solid var(--line)">'
+      + (wfs.length ? wfs.map(aiRow).join('') : '<div class="empty">No workflow is registered.</div>') + '</div></div>';
+  });
+}
+function aiOverrideOpen(name){
+  var w = null;
+  ((_airData && _airData.workflows) || []).forEach(function(x){ if(x.workflow === name) w = x; });
+  if(!w){ toast('Reload the page and try again', 'bad'); return; }
+  var e = w.effective, df = w['default'];
+  var revs = ((_airData && _airData.reviewers) || []).map(function(r){ return [r, r]; });
+  formOpen({title: 'Override · ' + name, sub: 'Only fields that differ from the code\'s default are stored; a field set back to its default stops being an override. The learner compares the runs before and after.', go: 'Save override', done: 'Override saved',
+    fields: [
+      {id: 'ladder', label: 'Ladder (cheapest first)', value: (e.ladder || []).join(', '), placeholder: 'T1, T2', hint: 'Tiers T1–T4, or default (the call site\'s own model). Default: ' + (df.ladder || []).join(', ')},
+      {id: 'escalate_on', label: 'Escalate on', type: 'checks', value: e.escalate_on || [], options: Object.keys(_airTriggers).map(function(k){ return [k, k.replace(/_/g, ' ')]; }), hint: 'Deterministic evidence only. Default: ' + ((df.escalate_on || []).join(', ') || 'never')},
+      {id: 'max_escalations', label: 'Escalations per run', type: 'select', value: String(e.max_escalations), options: [['0', '0'], ['1', '1'], ['2', '2']], hint: 'Default: ' + df.max_escalations},
+      {id: 'reviewer', label: 'Reviewer', type: 'select', value: e.reviewer, options: revs, hint: 'Default: ' + df.reviewer},
+      {id: 'reviewer_unattended', label: 'Reviewer when nobody approves first', type: 'select', value: e.reviewer_unattended || '', options: [['', 'same as reviewer']].concat(revs), hint: 'Default: ' + (df.reviewer_unattended || 'same as reviewer')},
+      {id: 'shadow_rate', label: 'Shadow-scored share (0–1)', value: String(e.shadow_rate), hint: 'Default: ' + df.shadow_rate},
+      {id: 'batch', label: 'May go through Message Batches', type: 'checkbox', value: !!e.batch},
+      {id: 'calls', label: 'Cap: model calls per run', value: String(e.caps.calls), hint: 'Default: ' + df.caps.calls},
+      {id: 'usd', label: 'Cap: dollars per run', value: String(e.caps.usd), hint: 'Default: ' + df.caps.usd},
+      {id: 'seconds', label: 'Cap: seconds per run', value: String(e.caps.seconds), hint: 'Default: ' + df.caps.seconds},
+      {id: 'reason', label: 'Why (for the record)', placeholder: 'e.g. the learner\'s start_lower on 20 pairs'}],
+    submit: function(v){
+      var ladder = String(v.ladder || '').split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s; });
+      return post('/admin/api/ai-routes/' + encodeURIComponent(name) + '/override', {reason: v.reason, override: {
+        ladder: ladder, escalate_on: v.escalate_on || [], max_escalations: v.max_escalations, reviewer: v.reviewer,
+        reviewer_unattended: v.reviewer_unattended, shadow_rate: v.shadow_rate, batch: !!v.batch,
+        caps: {calls: v.calls, usd: v.usd, seconds: v.seconds}}});
+    }});
+}
+function aiRevert(name){
+  if(!confirm('Revert ' + name + '? The override this one replaced comes back — or the code\'s defaults, when it replaced none.')) return;
+  post('/admin/api/ai-routes/' + encodeURIComponent(name) + '/revert', {}).then(function(d){ if(say(d, name + ' reverted')) route(); });
+}
+function aiDecide(id, apply, name){
+  if(!confirm(apply ? 'Apply this recommendation to ' + name + '? It becomes ' + name + '\'s override; Revert puts back what it replaces.' : 'Dismiss this recommendation for ' + name + '? The learner may raise it again next week.')) return;
+  post('/admin/api/ai-routes/recommendations/' + id, {apply: !!apply}).then(function(d){ if(say(d, apply ? 'Applied' : 'Dismissed')) route(); });
+}
+
+// ── AI costs (internal only; AI cost audit 10/7/26 #95, #96) ───────────────
+// One UTC month's metered cost per restaurant and per workflow (the ledger's
+// action), Places and Perplexity as their own vendors, totals each way; and
+// the ledger per vendor against the invoice entered for the month — a ratio
+// away from 1.00 is price drift. ES5, like AI routes above.
+var _aicMonth = '';
+function aiCostTone(ratio){ if(ratio == null) return 'neu'; var off = Math.abs(ratio - 1); return off <= 0.05 ? 'good' : (off <= 0.15 ? 'warn' : 'bad'); }
+function aiCosts(){
+  return api('/admin/api/ai-costs' + (_aicMonth ? '?month=' + encodeURIComponent(_aicMonth) : '')).then(function(d){
+    var err = readErr(d);
+    if(err){ V().innerHTML = '<div class="err">Couldn\'t read the AI costs — ' + esc(err) + '.</div>'; return; }
+    _aicMonth = d.month;
+    var pick = '<select onchange="_aicMonth=this.value;aiCosts()">' + (d.months || []).map(function(m){ return '<option value="' + esc(m) + '"' + (m === d.month ? ' selected' : '') + '>' + esc(monLabel(m)) + '</option>'; }).join('') + '</select>';
+    var bv = d.by_vendor || {};
+    var recon = table([
+      {h:'Vendor', key:'vendor', cell:function(r){ return esc(r.vendor.replace(/_/g, ' ')); }},
+      {h:'Ledger', key:'ledger_usd', r:true, cell:function(r){ return aiNum(fmtUSD(r.ledger_usd, 2)); }},
+      {h:'Invoice', key:'invoice_usd', r:true, cell:function(r){ return r.invoice_usd == null ? '<span class="dim">not entered</span>' : aiNum(fmtUSD(r.invoice_usd, 2)); }},
+      {h:'Ledger ÷ invoice', key:'ratio', r:true, cell:function(r){ return r.ratio == null ? '<span class="dim">—</span>' : pill(aiCostTone(r.ratio), aiNum(r.ratio.toFixed(2)), false); }},
+      {h:'Difference', key:'diff_usd', r:true, cell:function(r){ return r.diff_usd == null ? '<span class="dim">—</span>' : aiNum((r.diff_usd > 0 ? '+' : '') + fmtUSD(r.diff_usd, 2)); }},
+      {h:'Entered', key:'entered_at', cell:function(r){ return r.entered_at ? esc(r.entered_by || 'admin') + ' · ' + fmtD(r.entered_at) + (r.note ? ' <span class="dim">' + esc(r.note) + '</span>' : '') : '<span class="dim">—</span>'; }}
+    ], d.reconciliation || [], {id:'aic-recon'});
+    var rest = table([
+      {h:'Restaurant', key:'restaurant', cell:function(r){ return r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : esc(r.restaurant); }},
+      {h:'Calls', key:'calls', r:true, cell:function(r){ return aiNum(fmtN(r.calls)); }},
+      {h:'Cost', key:'cost_usd', r:true, cell:function(r){ return '<span class="num" title="' + esc(Object.keys(r.by_vendor || {}).map(function(k){ return k.replace(/_/g, ' ') + ' ' + fmtUSD(r.by_vendor[k], 2); }).join(' · ')) + '">' + fmtUSD(r.cost_usd, 2) + '</span>'; }}
+    ], d.restaurants || [], {id:'aic-rest', sort:'cost_usd', limit:15, empty:'No metered call this month.'});
+    var flows = table([
+      {h:'Workflow', key:'action', cell:function(r){ return esc(r.action) + (r.agent ? ' <span class="dim">' + esc(r.agent) + '</span>' : ''); }},
+      {h:'Vendor', key:'vendor', cell:function(r){ return esc(r.vendor.replace(/_/g, ' ')); }},
+      {h:'Restaurants', key:'restaurants', r:true, cell:function(r){ return aiNum(fmtN(r.restaurants)); }},
+      {h:'Calls', key:'calls', r:true, cell:function(r){ return aiNum(fmtN(r.calls)); }},
+      {h:'Cost', key:'cost_usd', r:true, cell:function(r){ return aiNum(fmtUSD(r.cost_usd, 2)); }}
+    ], d.workflows || [], {id:'aic-wf', sort:'cost_usd', limit:15, empty:'No metered call this month.'});
+    var detail = table([
+      {h:'Restaurant', key:'restaurant', cell:function(r){ return r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : esc(r.restaurant); }},
+      {h:'Workflow', key:'action'}, {h:'Vendor', key:'vendor'},
+      {h:'Calls', key:'calls', r:true, cell:function(r){ return aiNum(fmtN(r.calls)); }},
+      {h:'Cost', key:'cost_usd', r:true, cell:function(r){ return aiNum(fmtUSD(r.cost_usd, 2)); }}
+    ], d.rows || [], {id:'aic-rows', sort:'cost_usd', limit:25, empty:'No metered call this month.'});
+    V().innerHTML = errBanner(d)
+      + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><span class="lbl">Month (UTC)</span>' + pick
+      + '<span class="dim">' + (d.rolled_through ? 'from the daily rollup through ' + esc(mdy(dayOf(d.rolled_through))) + ', the raw ledger after it' : 'from the raw ledger') + '</span></div>'
+      + '<section class="card" style="overflow:hidden;margin-bottom:16px"><div class="strip">'
+      + stripCell('#engineering/ai-costs', 'dollar', 'neu', 'Metered', fmtUSD(d.total_usd, 2), esc(monLabel(d.month)) + ' · ' + fmtN(d.total_calls) + ' calls')
+      + stripCell('#engineering/ai-costs', 'spark', 'neu', 'Anthropic', fmtUSD(bv.anthropic || 0, 2), 'model calls')
+      + stripCell('#engineering/ai-costs', 'plug', 'neu', 'Google Places', fmtUSD(bv.google_places || 0, 2), 'Places requests')
+      + stripCell('#engineering/ai-costs', 'search', 'neu', 'Perplexity', fmtUSD(bv.perplexity || 0, 2), 'AI visibility')
+      + '</div></section>'
+      + '<div class="card" style="margin-bottom:16px"><div class="ch"><h2>Ledger against invoices</h2><button class="cbtn btn s w" onclick="aiInvoiceOpen()">Enter an invoice…</button></div><div class="cb">' + recon + '<div class="dim" style="margin-top:8px">' + esc(d.note || '') + '</div></div></div>'
+      + '<section class="split"><div class="card"><div class="ch"><h2>By restaurant</h2></div><div class="cb">' + rest + '</div></div>'
+      + '<div class="card"><div class="ch"><h2>By workflow</h2></div><div class="cb">' + flows + '</div></div></section>'
+      + '<details class="card" style="margin-top:16px"><summary>Every restaurant × workflow</summary><div class="cb">' + detail + '</div></details>';
+  });
+}
+function aiInvoiceOpen(){
+  formOpen({title: 'Enter an invoice', sub: 'The vendor\'s billed total for one UTC month, read against what the ledger metered.', go: 'Save invoice', done: 'Invoice saved',
+    fields: [{id: 'vendor', label: 'Vendor', type: 'select', options: [['anthropic', 'Anthropic'], ['google_places', 'Google Places'], ['perplexity', 'Perplexity']]},
+             {id: 'month', label: 'Month (YYYY-MM)', value: _aicMonth, placeholder: '2026-09'},
+             {id: 'amount_usd', label: 'Invoice total (USD)', placeholder: 'e.g. 41.27'},
+             {id: 'note', label: 'Note (optional)', placeholder: 'Invoice number, credits…'}],
+    submit: function(v){ return post('/admin/api/ai-costs/invoices', {vendor: v.vendor, month: v.month, amount_usd: v.amount_usd, note: v.note}); },
+    after: function(){ aiCosts(); }});
 }
 
 // ── Alerts & notifications ──────────────────────────────────────────────────

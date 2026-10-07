@@ -1777,6 +1777,18 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 kwargs["timeout"] = _short
     if retries is None:
         retries = DEFAULT_AI_RETRIES
+    # The effort the call goes out at, after the defaults above (#74): one
+    # ledger column, on every row this call writes.
+    sent_effort = _effort_of(kwargs)
+    # Every gate has passed: the call is about to be sent. A workflow run the
+    # orchestrator sampled for replay keeps this request so the learner can
+    # replay a cheaper route on it (ai_learning.shadow_arms). Lazy, cheap
+    # when the run is not sampled (one contextvar read), never raises.
+    try:
+        import ai_orchestrator as _orch
+        _orch.keep_request(kwargs)
+    except Exception:
+        pass
     held = _INTERACTIVE_HELD.set(True) if took_slot else None
     try:
         call_id = _new_call_id()
@@ -1797,7 +1809,8 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 # its tokens as a truncated answer (#52).
                 e.call_id = call_id
                 latency = int((time.time() - started) * 1000)
-                _log_cut_safe(e.partial, model, restaurant_id, action, latency, attempt + 1, call_id, attribution)
+                _log_cut_safe(e.partial, model, restaurant_id, action, latency, attempt + 1, call_id, attribution,
+                              effort=sent_effort)
                 _record_trace_safe(call_id, kwargs, e.partial, restaurant_id, action, "truncated", attribution,
                                    attempts=attempt + 1, latency_ms=latency)
                 _breaker_release_probe("anthropic")
@@ -1816,7 +1829,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                     # operator digest exists for, so record it before re-raising.
                     _log_failure_safe(e, model, restaurant_id, action, attempts=attempt, reason=reason,
                                       latency_ms=int((time.time() - started) * 1000), call_id=call_id,
-                                      attribution=attribution)
+                                      attribution=attribution, effort=sent_effort)
                     _record_trace_safe(call_id, kwargs, None, restaurant_id, action, "error", attribution,
                                        attempts=attempt, latency_ms=int((time.time() - started) * 1000))
                     try:
@@ -1836,7 +1849,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 # successes, in the same table.
                 _log_failure_safe(e, model, restaurant_id, action, attempts=attempt + 1, reason=reason,
                                   latency_ms=int((time.time() - started) * 1000), call_id=call_id,
-                                  attribution=attribution)
+                                  attribution=attribution, effort=sent_effort)
                 _record_trace_safe(call_id, kwargs, None, restaurant_id, action, "error", attribution,
                                    attempts=attempt + 1, latency_ms=int((time.time() - started) * 1000))
                 if reason in _CONFIG_REASONS:
@@ -1850,7 +1863,8 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 raise
             latency_ms = int((time.time() - started) * 1000)
             usage_id = _log_usage_safe(message, model, restaurant_id, action, latency_ms=latency_ms,
-                                       attempts=attempt + 1, call_id=call_id, attribution=attribution)
+                                       attempts=attempt + 1, call_id=call_id, attribution=attribution,
+                                       effort=sent_effort)
             _breaker_record("anthropic", True)
             if getattr(message, "usage", None) is not None:
                 _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome_of(message), attribution,
@@ -1948,6 +1962,11 @@ _USAGE_COLUMNS = (
     ("vendor", "TEXT"), ("outcome", "TEXT"), ("stop_reason", "TEXT"), ("attempts", "INTEGER"),
     ("request_id", "TEXT"), ("trigger", "TEXT"), ("actor_user_id", "INTEGER"),
     ("correlation_id", "TEXT"), ("price_version", "TEXT"), ("call_id", "TEXT"), ("reason", "TEXT"),
+    # AI cost audit 10/7/26 #74: the output_config.effort the call was sent
+    # at (after default_effort), so a thinking tier's cost reads against the
+    # effort that produced it — the schedule's "high" run read as the cost
+    # of "medium" until this was recorded. NULL: the model's own default.
+    ("effort", "TEXT"),
 )
 
 # Outcomes a ledger row can carry. status stays the coarse legacy reading
@@ -2298,7 +2317,7 @@ def _estimate_cost(model, input_tokens, output_tokens,
 
 
 def _log_usage_safe(message, model, restaurant_id, action, latency_ms=None, attempts=None, call_id=None,
-                    attribution=None):
+                    attribution=None, effort=None):
     """Never let usage logging break the AI call it's measuring. The row's
     outcome is read from the message's stop_reason: a refusal or a
     max_tokens stop is billed like any answer but is not 'ok' (#52)."""
@@ -2317,13 +2336,13 @@ def _log_usage_safe(message, model, restaurant_id, action, latency_ms=None, atte
             outcome=outcome_of(message), stop_reason=getattr(message, "stop_reason", None),
             attempts=attempts, request_id=getattr(message, "_request_id", None) or getattr(message, "id", None),
             trigger=att.get("trigger"), actor_user_id=att.get("actor_user_id"),
-            correlation_id=att.get("correlation_id"), call_id=call_id,
+            correlation_id=att.get("correlation_id"), call_id=call_id, effort=effort,
         )
     except Exception:
         return None
 
 
-def _log_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, call_id, attribution):
+def _log_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, call_id, attribution, effort=None):
     """The ledger row for a call cut at its caller's deadline
     (CallDeadlineExceeded): what had streamed is billed, so it is filed with
     its tokens as 'truncated', stop_reason 'deadline' — never as a free error
@@ -2339,13 +2358,13 @@ def _log_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, c
             latency_ms=latency_ms, outcome="truncated", stop_reason="deadline", attempts=attempts,
             reason="timeout", request_id=getattr(partial, "id", None),
             trigger=att.get("trigger"), actor_user_id=att.get("actor_user_id"),
-            correlation_id=att.get("correlation_id"), call_id=call_id)
+            correlation_id=att.get("correlation_id"), call_id=call_id, effort=effort)
     except Exception:
         pass
 
 
 def _log_failure_safe(exc, model, restaurant_id, action, attempts=None, reason=None, latency_ms=None,
-                      call_id=None, attribution=None):
+                      call_id=None, attribution=None, effort=None):
     try:
         att = attribution or {}
         log_ai_usage(restaurant_id, action or "unspecified", model, 0, 0,
@@ -2354,7 +2373,7 @@ def _log_failure_safe(exc, model, restaurant_id, action, attempts=None, reason=N
                      latency_ms=latency_ms, call_id=call_id,
                      request_id=getattr(exc, "request_id", None),
                      trigger=att.get("trigger"), actor_user_id=att.get("actor_user_id"),
-                     correlation_id=att.get("correlation_id"))
+                     correlation_id=att.get("correlation_id"), effort=effort)
     except Exception:
         pass
 
@@ -2362,7 +2381,7 @@ def _log_failure_safe(exc, model, restaurant_id, action, attempts=None, reason=N
 _USAGE_INSERT_COLS = ("restaurant_id", "action", "model", "input_tokens", "output_tokens", "cost_usd",
                       "status", "error", "cache_write_tokens", "cache_read_tokens", "latency_ms",
                       "vendor", "outcome", "stop_reason", "attempts", "request_id", "trigger",
-                      "actor_user_id", "correlation_id", "price_version", "call_id", "reason")
+                      "actor_user_id", "correlation_id", "price_version", "call_id", "reason", "effort")
 _USAGE_INSERT_SQL = ("INSERT INTO ai_usage (" + ", ".join(f'"{c}"' for c in _USAGE_INSERT_COLS) + ") VALUES ("
                      + ",".join("?" * len(_USAGE_INSERT_COLS)) + ")")
 
@@ -2371,14 +2390,16 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
                  status="ok", error=None, cache_write_tokens=0, cache_read_tokens=0,
                  latency_ms=None, vendor=None, outcome=None, stop_reason=None, attempts=None,
                  request_id=None, trigger=None, actor_user_id=None, correlation_id=None,
-                 call_id=None, reason=None, cost_usd=None, batch=False):
+                 call_id=None, reason=None, cost_usd=None, batch=False, effort=None):
     """One ledger row; returns its id. `outcome` defaults from the legacy
     `status`; the row's status is derived from the outcome, so every older
     reader of `status` still sees ok / error. Tokens are billed whatever the
     outcome — a refusal and a truncation cost what they cost — and a blocked
     row costs nothing. Unattributed calls are attributed here
     (ai_context / the request / the stack). `batch` prices the tokens at the
-    Message Batches rate and stamps BATCH_PRICE_VERSION (ai_batches.py)."""
+    Message Batches rate and stamps BATCH_PRICE_VERSION (ai_batches.py).
+    `effort` is the request's output_config.effort (#74), None when the call
+    named none and the model's own default ran."""
     from models import get_conn, DB_PATH
     path = db_path or DB_PATH
     conn = get_conn(path)
@@ -2402,7 +2423,7 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
             (str(request_id)[:120] if request_id else None), trigger, actor_user_id,
             (str(correlation_id)[:80] if correlation_id else None),
             BATCH_PRICE_VERSION if batch else PRICE_VERSION, call_id,
-            (str(reason)[:60] if reason else None))
+            (str(reason)[:60] if reason else None), (str(effort)[:12] if effort else None))
     try:
         try:
             cur = conn.execute(_USAGE_INSERT_SQL, _row)
@@ -2521,8 +2542,41 @@ class AIOutputRejected(ValueError):
 VALIDATION_TOKEN_MAX = 60
 
 
+# A re-check of a stored text that has not changed (AI cost audit 10/7/26,
+# orchestration design W4): drafter.recheck_draft_flags re-reads every still-
+# flagged reply draft at each boot (action "recheck_flag", regex only, no
+# model call), so production's ai_validation_log showed reply_public with 310
+# checks of 27 distinct texts — every deploy re-counted the same drafts and
+# the surface's catch rate read as ten times the outputs it had. A check with
+# no model call behind it (no call_id) whose (restaurant, surface, text hash,
+# mode, verdict, rules version) already has a row inside this many days adds
+# nothing and is not written. A changed verdict or a new rules version is
+# written: that is what a re-check exists to catch. 0 turns it off.
+VALIDATION_RECHECK_DEDUPE_DAYS = int(os.getenv("VALIDATION_RECHECK_DEDUPE_DAYS", "7"))
+
+
+def _validation_seen(conn, row):
+    """Whether an identical check of the same text is already on record
+    inside VALIDATION_RECHECK_DEDUPE_DAYS (idx_ai_validation_log_hash)."""
+    rid, surface, verdict = row[0], row[1], row[3]
+    text_hash, mode, version = row[9], row[10], row[11]
+    if not text_hash or VALIDATION_RECHECK_DEDUPE_DAYS <= 0:
+        return False
+    try:
+        return conn.execute(
+            "SELECT 1 FROM ai_validation_log WHERE text_hash=? AND surface=? AND restaurant_id IS ? AND verdict=? "
+            "AND COALESCE(mode,'')=? AND COALESCE(version,'')=? AND created_at >= datetime('now', ?) LIMIT 1",
+            (text_hash, surface, rid, verdict, mode, version,
+             f"-{VALIDATION_RECHECK_DEDUPE_DAYS} days")).fetchone() is not None
+    except sqlite3.Error:
+        return False
+
+
 def log_validation(restaurant_id, surface, action, verdict, rules=(), tokens=(), n_rewrites=0, n_drops=0,
                    n_caveats=0, text_hash="", mode="enforce", version="", db_path=None, call_id=None) -> None:
+    """One ai_validation_log row — unless it is a re-check of an unchanged
+    stored text (no model call behind it, the same verdict on the same hash
+    within VALIDATION_RECHECK_DEDUPE_DAYS), which is not written again."""
     from models import get_conn, DB_PATH
     if call_id is None:
         call_id = last_call_id(restaurant_id, action=action, surface=surface)
@@ -2533,6 +2587,8 @@ def log_validation(restaurant_id, surface, action, verdict, rules=(), tokens=(),
            str(mode or "")[:10], str(version or "")[:16])
     conn = get_conn(db_path or DB_PATH)
     try:
+        if call_id is None and _validation_seen(conn, row):
+            return
         try:
             conn.execute(
                 "INSERT INTO ai_validation_log (restaurant_id, surface, action, verdict, rules, tokens, n_rewrites, "
@@ -2983,6 +3039,7 @@ _AI_OPS_DDL = (
         max_ms             INTEGER,
         admin_cost_usd     REAL NOT NULL DEFAULT 0,
         updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+        efforts_json       TEXT,
         PRIMARY KEY (day, rid_key, vendor, action, model)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_ai_usage_daily_rid ON ai_usage_daily(rid_key, day)",
@@ -2998,6 +3055,7 @@ _AI_OPS_DDL = (
         n_withhold INTEGER NOT NULL DEFAULT 0,
         n_refuse   INTEGER NOT NULL DEFAULT 0,
         rules_json TEXT NOT NULL DEFAULT '{}',
+        n_texts    INTEGER,
         PRIMARY KEY (day, rid_key, surface, mode)
     )""",
     # The rate limiter's window (#96) and its refusals by bucket.
@@ -3060,6 +3118,23 @@ def init_ai_ops(db_path=None):
                 if "duplicate column" not in str(e).lower():    # another process added it first
                     raise
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action, model)")
+        # The re-check dedupe's probe (W4): one text's checks on a surface.
+        if cols:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_validation_log_hash ON ai_validation_log(text_hash, surface)")
+        # Columns the rollups gained after they shipped (AI cost audit
+        # 10/7/26): calls by effort (#74) — a column, not part of the key:
+        # the key is per model, an action runs one effort on a model almost
+        # always, and a new key column would mean rebuilding a never-pruned
+        # table at boot — and distinct texts checked (W4).
+        for table, col, typ in (("ai_usage_daily", "efforts_json", "TEXT"),
+                                ("ai_validation_daily", "n_texts", "INTEGER")):
+            have = {r[1] for r in conn.execute("PRAGMA table_info(" + table + ")").fetchall()}
+            if have and col not in have:
+                try:
+                    conn.execute("ALTER TABLE " + table + " ADD COLUMN " + col + " " + typ)
+                except sqlite3.OperationalError as e:
+                    if "duplicate column" not in str(e).lower():
+                        raise
         conn.commit()
     finally:
         conn.close()
@@ -3814,13 +3889,14 @@ def _roll_usage_day(conn, day):
         "COALESCE(outcome, CASE WHEN COALESCE(status,'ok')='ok' THEN 'ok' ELSE 'error' END) AS outcome, "
         "COALESCE(attempts, 1) AS attempts, COALESCE(input_tokens,0) AS tin, COALESCE(output_tokens,0) AS tout, "
         "COALESCE(cache_write_tokens,0) AS cw, COALESCE(cache_read_tokens,0) AS cr, COALESCE(cost_usd,0) AS cost, "
-        "latency_ms, COALESCE(\"trigger\",'') AS trig FROM ai_usage WHERE created_at >= ? AND created_at < ?",
+        "latency_ms, COALESCE(\"trigger\",'') AS trig, effort FROM ai_usage "
+        "WHERE created_at >= ? AND created_at < ?",
         _day_range(day)).fetchall()
     groups = {}
     for r in rows:
         k = (r["restaurant_id"] or 0, r["restaurant_id"], r["vendor"], r["action"], r["model"])
         g = groups.setdefault(k, {"calls": 0, "attempts": 0, "tin": 0, "tout": 0, "cw": 0, "cr": 0, "cost": 0.0,
-                                  "admin_cost": 0.0, "lat": [], **{f"n_{o}": 0 for o in OUTCOMES}})
+                                  "admin_cost": 0.0, "lat": [], "efforts": {}, **{f"n_{o}": 0 for o in OUTCOMES}})
         outcome = r["outcome"] if r["outcome"] in OUTCOMES else "error"
         # A blocked row stands for every refusal coalesced into it.
         weight = int(r["attempts"] or 1) if outcome == "blocked" else 1
@@ -3831,6 +3907,11 @@ def _roll_usage_day(conn, day):
         g["cost"] += float(r["cost"] or 0)
         if r["trig"] == "admin":
             g["admin_cost"] += float(r["cost"] or 0)
+        if outcome != "blocked":
+            # Calls by the effort they were sent at (#74); "" is the model's
+            # own default (or a row from before the column).
+            eff = str(r["effort"] or "")
+            g["efforts"][eff] = g["efforts"].get(eff, 0) + 1
         if r["latency_ms"] is not None and outcome != "blocked":
             g["lat"].append(int(r["latency_ms"]))
     conn.execute("DELETE FROM ai_usage_daily WHERE day=?", (day,))
@@ -3838,23 +3919,30 @@ def _roll_usage_day(conn, day):
         "INSERT INTO ai_usage_daily (day, rid_key, restaurant_id, vendor, action, model, calls, n_ok, n_error, "
         "n_refused, n_truncated, n_unparseable, n_blocked, attempts, input_tokens, output_tokens, "
         "cache_write_tokens, cache_read_tokens, cost_usd, latency_n, latency_sum_ms, p50_ms, p95_ms, max_ms, "
-        "admin_cost_usd, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+        "admin_cost_usd, efforts_json, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
         [(day, k[0], k[1], k[2], k[3], k[4], g["calls"], g["n_ok"], g["n_error"], g["n_refused"],
           g["n_truncated"], g["n_unparseable"], g["n_blocked"], g["attempts"], g["tin"], g["tout"], g["cw"],
           g["cr"], round(g["cost"], 8), len(g["lat"]), sum(g["lat"]), _percentile(g["lat"], 50),
-          _percentile(g["lat"], 95), max(g["lat"]) if g["lat"] else None, round(g["admin_cost"], 8))
+          _percentile(g["lat"], 95), max(g["lat"]) if g["lat"] else None, round(g["admin_cost"], 8),
+          json.dumps(g["efforts"], sort_keys=True) if g["efforts"] else None)
          for k, g in groups.items()])
 
 
 def _roll_validation_day(conn, day):
-    rows = conn.execute("SELECT restaurant_id, surface, COALESCE(mode,'?') AS mode, verdict, rules "
+    rows = conn.execute("SELECT restaurant_id, surface, COALESCE(mode,'?') AS mode, verdict, rules, text_hash "
                         "FROM ai_validation_log WHERE created_at >= ? AND created_at < ?",
                         _day_range(day)).fetchall()
     groups = {}
     for r in rows:
         k = (r["restaurant_id"] or 0, r["surface"] or "?", r["mode"])
-        g = groups.setdefault(k, {"n": 0, "pass": 0, "caveat": 0, "withhold": 0, "refuse": 0, "rules": {}})
+        g = groups.setdefault(k, {"n": 0, "pass": 0, "caveat": 0, "withhold": 0, "refuse": 0, "rules": {},
+                                  "texts": set()})
         g["n"] += 1
+        # Distinct texts checked (W4): a stored draft re-checked at every
+        # deploy is one text, however many rows the days before the re-check
+        # dedupe left behind. A row with no hash counts as its own.
+        g["texts"].add(r["text_hash"] or ("row", g["n"]))
         if r["verdict"] in ("pass", "caveat", "withhold", "refuse"):
             g[r["verdict"]] += 1
         try:
@@ -3865,9 +3953,9 @@ def _roll_validation_day(conn, day):
     conn.execute("DELETE FROM ai_validation_daily WHERE day=?", (day,))
     conn.executemany(
         "INSERT INTO ai_validation_daily (day, rid_key, surface, mode, n, n_pass, n_caveat, n_withhold, n_refuse, "
-        "rules_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "rules_json, n_texts) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         [(day, k[0], k[1], k[2], g["n"], g["pass"], g["caveat"], g["withhold"], g["refuse"],
-          json.dumps(g["rules"], sort_keys=True)) for k, g in groups.items()])
+          json.dumps(g["rules"], sort_keys=True), len(g["texts"])) for k, g in groups.items()])
 
 
 def prune_ai_ops(db_path=None):

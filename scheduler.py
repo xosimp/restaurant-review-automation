@@ -5097,6 +5097,24 @@ def scheduler_loop():
             if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("operator_weekly_digest", str(today)):
                 _ops.run_job("operator_weekly_digest", _ops.send_operator_weekly_digest)
 
+            # Sunday 4am, on the AI lane — the learner's shadow replays
+            # (ai_learning.run_shadow_arms): each workflow's next cheaper tier
+            # on a sample of kept production requests, through Message
+            # Batches; the answers land through ai_batch_collect within the
+            # day, a day before Monday's learning reads them. Bounded by
+            # AI_SHADOW_WEEKLY_USD. Sends nothing.
+            if _due(now, 4) and now.weekday() == 6 and _ops.claim_period("ai_shadow_arms", str(today)):
+                from ai_learning import run_shadow_arms
+                if not _ops.run_in_lane("ai", "ai_shadow_arms", run_shadow_arms):
+                    _ops.release_period("ai_shadow_arms", str(today))
+
+            # Monday 6am — the AI route learner (ai_learning.run_learning):
+            # recommendations for the console's AI routes view, and a revert
+            # of an override owners accept clearly less often. Database only.
+            if _due(now, 6) and now.weekday() == 0 and _ops.claim_period("ai_route_learning", str(today)):
+                from ai_learning import run_learning
+                _ops.run_job("ai_route_learning", run_learning)
+
             # Attempted hourly: each restaurant is gated on ITS 9am inside
             # (local_due), so one Chicago-timed daily claim would serve only
             # the restaurants whose local hour happened to match. On the AI

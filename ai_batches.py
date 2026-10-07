@@ -74,8 +74,12 @@ import zlib
 
 log = logging.getLogger("ai_batches")
 
-# Workflows that batch unless AI_BATCHES_WORKFLOWS names others.
-DEFAULT_WORKFLOWS = "dsr_narrative"
+# Workflows that batch unless AI_BATCHES_WORKFLOWS names others: the nightly
+# DSR narrative, and the learner's weekly shadow replays (ai_learning.
+# shadow_arms — a cheaper tier on kept production requests, which nobody
+# waits on and which would never be worth list price). An explicit
+# AI_BATCHES_WORKFLOWS replaces this list, so it must name both to keep both.
+DEFAULT_WORKFLOWS = "dsr_narrative,shadow_arms"
 # The batches endpoints carry a whole request set up and a JSONL file back.
 API_TIMEOUT_SECONDS = 60.0
 # The collector's bounds per pass (CLAUDE.md: bounded; the jobs table is the
@@ -550,7 +554,7 @@ def _ledger(row, result_type, message, error_text, ended_at):
                 cache_write_tokens=u["cache_write_tokens"], cache_read_tokens=u["cache_read_tokens"],
                 latency_ms=latency, outcome=outcome, stop_reason=getattr(message, "stop_reason", None),
                 attempts=1, request_id=getattr(message, "id", None), call_id=call_id, cost_usd=cost, batch=True,
-                **attribution)
+                effort=ai_utils._effort_of(kwargs), **attribution)
         except Exception as e:
             log.warning("ai_batches: ledger row not written for %s: %s", d.get("custom_id"), e)
         ai_utils._record_trace_safe(call_id, kwargs, message, rid, action, outcome, attribution,
