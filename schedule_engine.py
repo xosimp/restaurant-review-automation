@@ -491,6 +491,332 @@ def _inputs_failed() -> list:
     return list(store["failed"]) if store is not None else []
 
 
+# ── One orchestrated run per generation (AI orchestration, 10/7/26) ───────
+#
+# The week runs on the ai_workflows "labor_schedule" ladder (T3 Sonnet 5.5,
+# then T4 Opus 5.5, both at medium thinking): owner decision 3, 10/7/26 —
+# "Sonnet 5.5 first if the eval clears 80%, hard weeks straight to Opus".
+# On Simple EJ's one stored week (scripts/schedule_model_eval.py, prod
+# 10/7/26) Sonnet 5.5 medium matched Opus 5.5 medium, the setting it
+# replaces (quality 78 v 79, 0 hard rules after the repair for both) at a
+# third of the cost.
+#
+# One job (_run_schedule_job, the quality gate's fill and rewrite inside it)
+# is ONE run: every model call of it — the week, its slices, retries and
+# splits, the gate's rewrite — carries the run id as its ai_usage
+# correlation_id, and the run is written to ai_runs when the job ends (its
+# start and final tier, the escalation, the gate's reasons, the cost read
+# from the ledger). The job's recursive shape (the gate re-enters the job)
+# does not fit ai_orchestrator.generate's attempt/check loop, so the run is
+# kept here and recorded through the orchestrator's own record path.
+#
+#   * The route: a SCHEDULE_MODEL env pin wins and skips the ladder (that
+#     model, labor.SCHEDULE_EFFORT) — the operator's override, as before.
+#     Otherwise the policy's first rung, or T4 when hard_week_reasons finds
+#     the week hard (the pre-router, deterministic, thresholds below).
+#   * The escalation is the quality gate: the code's fill runs first
+#     (_gate_fill_answer, no model); when what tripped the gate survives it,
+#     the gate's model rewrite runs on the NEXT rung (trigger "rule_breach",
+#     the gate's reasons as its notes — they are already its `focus`). A
+#     week already on the top rung (pre-routed, or pinned) rewrites on it.
+#     The run's caps (calls, dollars) are checked before the escalation, as
+#     generate() checks them before each rung: a capped run keeps its draft.
+WORKFLOW = "labor_schedule"
+# The pre-router's thresholds (each a documented, tested rule; PROMPT_LIBRARY
+# → Schedule). A week with any of these starts on the ladder's top rung:
+#   * one of these holidays on a date of the week — the nights the week's
+#     shape changes (demand, closes, who asks off), not every calendar day
+#     schedule_economics.holiday_names knows;
+#   * a dated closure in the week (schedule_rules.closures "closed_dates":
+#     a special day the owner closed, not a weekday the restaurant never
+#     trades);
+#   * more people on the roster offered to the model than HARD_WEEK_ROSTER
+#     (Simple EJ's ~215-row week, which Sonnet 5.5 matched Opus on, is well
+#     under it);
+#   * more owner standing rules in force than HARD_WEEK_OWNER_RULES;
+#   * the restaurant's first generation (no schedule_history row yet);
+#   * a new draft of a week whose last run escalated.
+HARD_WEEK_HOLIDAYS = ("New Year's Eve", "New Year's Day", "Valentine's Day", "Easter", "Mother's Day",
+                      "Fourth of July", "Thanksgiving", "Christmas Eve", "Christmas Day")
+HARD_WEEK_ROSTER = 60
+HARD_WEEK_OWNER_RULES = 12
+
+_SCHED_RUN = contextvars.ContextVar("schedule_generation_run", default=None)
+
+
+def schedule_pinned() -> bool:
+    """Whether SCHEDULE_MODEL pins the schedule's model (no ladder)."""
+    return bool((os.getenv("SCHEDULE_MODEL") or "").strip())
+
+
+def _pinned_route():
+    """The call site's own route: ai_utils.model_for("schedule") (the
+    SCHEDULE_MODEL pin, else Opus 5.5) at labor.SCHEDULE_EFFORT on a model
+    that thinks — the route every week ran on before the ladder."""
+    import ai_utils as _ai
+    import ai_workflows as _wf
+    import labor as _labor_r
+    model = _ai.model_for("schedule")
+    return _wf.Route(tier=_wf.DEFAULT, model=model,
+                     effort=_labor_r.SCHEDULE_EFFORT if _labor_r.schedule_model_thinks(model) else None)
+
+
+def start_route(start=None):
+    """The route a generation starts on: the pin when SCHEDULE_MODEL is set;
+    else the policy's rung `start` (a pre-routed tier on its ladder) or its
+    first. A "default" rung (a console override) is the call site's own."""
+    import ai_workflows as _wf
+    if schedule_pinned():
+        return _pinned_route()
+    r = _wf.route_for(_wf.policy(WORKFLOW), 0, start)
+    return _pinned_route() if r.tier == _wf.DEFAULT else r
+
+
+def schedule_route():
+    """The route the next schedule call runs on: the run's (its start, or
+    the rung the gate escalated it to), else the start route — a direct
+    call outside a job (a test, a script) runs on the policy's first rung."""
+    run = _SCHED_RUN.get()
+    if run is not None and run.get("route") is not None:
+        return run["route"]
+    return start_route()
+
+
+def current_schedule_run():
+    """The generation's run state (a copy), or None outside a job."""
+    run = _SCHED_RUN.get()
+    return dict(run) if run is not None else None
+
+
+def hard_week_reasons(week_dates, closed_dates=(), roster_size=0, owner_rules=0, prior_generations=None,
+                      last_run_escalated=False) -> list:
+    """Why a week is hard enough to start on the ladder's top rung — [] for
+    an ordinary week. Pure: the thresholds above, nothing asked of a model."""
+    from time_utils import mdy
+    out = []
+    hol = []
+    try:
+        from schedule_economics import holiday_names
+        by_year = {}
+        for d in week_dates or []:
+            y = int(str(d)[:4])
+            names = by_year.setdefault(y, holiday_names(y)).get(str(d)[:10]) or []
+            hit = [n for n in names if n in HARD_WEEK_HOLIDAYS]
+            if hit:
+                hol.append(f"{hit[0]} {mdy(str(d)[:10])}")
+    except Exception as e:
+        print(f"[schedule] pre-router: holidays not read: {e!r}")
+    if hol:
+        out.append("holiday in the week: " + ", ".join(hol))
+    special = sorted(set(str(d)[:10] for d in closed_dates or ()) & set(str(d)[:10] for d in week_dates or ()))
+    if special:
+        out.append("closed for a dated closure: " + ", ".join(mdy(d) for d in special))
+    if int(roster_size or 0) > HARD_WEEK_ROSTER:
+        out.append(f"roster of {int(roster_size)} (over {HARD_WEEK_ROSTER})")
+    if int(owner_rules or 0) > HARD_WEEK_OWNER_RULES:
+        out.append(f"{int(owner_rules)} owner standing rules (over {HARD_WEEK_OWNER_RULES})")
+    if prior_generations == 0:
+        out.append("the restaurant's first schedule")
+    if last_run_escalated:
+        out.append("this week's last draft escalated")
+    return out
+
+
+def _week_subject(week_dates) -> str:
+    return f"week:{str((week_dates or [''])[0])[:10]}"
+
+
+def _route_generation(restaurant_id, restaurant, week_dates, constraints, roster_pairs, redo=False) -> None:
+    """The pre-router (once per run, before its first call): reads what
+    hard_week_reasons needs and sets the run's route — the top rung for a
+    hard week, else the first. A redo inside the run (the gate's rewrite)
+    keeps the route the run is on. Never raises into the week."""
+    run = _SCHED_RUN.get()
+    if run is None or run.get("route") is not None:
+        return
+    import ai_workflows as _wf
+    run["subject"] = _week_subject(week_dates)
+    reasons = []
+    if not schedule_pinned():
+        prior, escalated = None, False
+        try:
+            from models import get_conn as _gc_route
+            conn = _gc_route()
+            try:
+                prior = int(conn.execute("SELECT COUNT(*) FROM schedule_history WHERE restaurant_id=?",
+                                         (restaurant_id,)).fetchone()[0] or 0)
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[schedule] pre-router: drafts not counted: {e!r}")
+        try:
+            import ai_orchestrator as _orch_route
+            last = _orch_route.subject_run(WORKFLOW, restaurant_id, run["subject"])
+            escalated = bool(last and int(last.get("escalations") or 0) > 0)
+        except Exception as e:
+            print(f"[schedule] pre-router: last run not read: {e!r}")
+        try:
+            closed = _rules.closures(restaurant)["closed_dates"] if restaurant is not None else []
+        except Exception:
+            closed = []
+        rules_n = len(getattr(constraints, "owner_rules", None) or []) + \
+            len(getattr(constraints, "owner_rules_unchecked", None) or [])
+        reasons = hard_week_reasons(week_dates, closed_dates=closed, roster_size=len(roster_pairs or []),
+                                    owner_rules=rules_n, prior_generations=prior, last_run_escalated=escalated)
+    pol = _wf.policy(WORKFLOW)
+    start = pol.ladder[-1] if (reasons and not schedule_pinned()) else None
+    route = start_route(start)
+    run.update(route=route, start=route.tier, pre_route=reasons, pinned=schedule_pinned())
+    run["steps"].append({"tier": route.tier, "model": route.model, "effort": route.effort,
+                         "kind": "redo" if redo else "week", "pre_route": reasons[:6]})
+    if reasons:
+        print(f"[schedule] pre-router: {route.tier} ({'; '.join(reasons)})")
+
+
+def _gate_reasons(gate) -> list:
+    g = gate or {}
+    return [str(x) for x in ([g.get("reason")] + list(g.get("focus") or [])[:4]) if x]
+
+
+def _run_gate(gate, outcome=None) -> None:
+    """The gate that tripped on this run's week, and (when known) what came
+    of it: "filled" (the code's fill settled it), "rewritten" / "original"
+    (the model's rewrite kept / not kept), "skipped" (no time, or capped)."""
+    run = _SCHED_RUN.get()
+    if run is None:
+        return
+    if gate and run.get("gate") is None:
+        run["gate"] = {"reason": gate.get("reason"), "dates": list(gate.get("dates") or []),
+                       "focus": list(gate.get("focus") or [])[:12]}
+    if outcome:
+        run["outcome"] = outcome
+
+
+def _run_failed(exc) -> None:
+    run = _SCHED_RUN.get()
+    if run is not None and run.get("error") is None:
+        run["error"] = exc
+
+
+def _escalate_for_gate(gate) -> str:
+    """The quality gate's model rewrite, as the run's escalation: moves the
+    run one rung up its ladder (trigger rule_breach, the gate's reasons as
+    notes) — "escalated"; "stay" on a week already on the top rung, pinned,
+    or past max_escalations; "capped" when the run has spent its calls or
+    dollars (the draft in force stands)."""
+    run = _SCHED_RUN.get()
+    if run is None:
+        return "stay"
+    import ai_orchestrator as _orch
+    import ai_workflows as _wf
+    _run_gate(gate)
+    notes = _gate_reasons(gate)
+    route = run.get("route") or schedule_route()
+    pol = _wf.policy(WORKFLOW)
+    cost, _i, _o, calls = _orch._spent(run["run_id"])
+    if calls >= pol.caps.calls or cost >= pol.caps.usd:
+        run["capped"] = {"calls": calls, "usd": round(cost, 4)}
+        run["steps"].append({"capped": run["capped"]})
+        run["outcome"] = "skipped"
+        return "capped"
+    ladder = list(pol.ladder)
+    step = {"kind": "gate", "notes": notes}
+    if (not run.get("pinned") and route.tier in ladder and "rule_breach" in pol.escalate_on
+            and "rule_breach" not in _wf.NEVER_TRIGGERS
+            and int(run.get("escalations") or 0) < int(pol.max_escalations)
+            and ladder.index(route.tier) + 1 < len(ladder)):
+        nxt = _wf.route_for(pol, ladder.index(route.tier) + 1)
+        nxt = _pinned_route() if nxt.tier == _wf.DEFAULT else nxt
+        run["route"] = nxt
+        run["escalations"] = int(run.get("escalations") or 0) + 1
+        run["notes"] = notes
+        run["steps"].append(dict(step, tier=nxt.tier, model=nxt.model, effort=nxt.effort, trigger="rule_breach"))
+        print(f"[schedule] quality gate: escalating {route.tier} -> {nxt.tier}")
+        return "escalated"
+    run["steps"].append(dict(step, tier=route.tier, model=route.model, effort=route.effort))
+    return "stay"
+
+
+def _run_verdict(run):
+    """(Verdict, status) for the ai_runs row of a finished generation."""
+    import ai_orchestrator as _orch
+    import ai_utils as _ai
+    err, gate, outcome = run.get("error"), run.get("gate"), run.get("outcome")
+    if err is not None:
+        held = isinstance(err, getattr(_ai, "DataNotReady", ())) or (
+            isinstance(err, ScheduleGenerationError) and _orch._spent(run["run_id"])[3] == 0)
+        return _orch.Verdict.failed("data_missing" if held else None, type(err).__name__), \
+            ("held" if held else "error")
+    if not gate:
+        return _orch.Verdict.passed(), "ok"
+    ok = outcome in ("filled", "rewritten")
+    v = _orch.Verdict(ok=ok, trigger="rule_breach", reasons=_gate_reasons(gate), label=f"gate_{outcome or 'open'}")
+    if ok:
+        return v, "ok"
+    return v, ("capped" if run.get("capped") else "failed")
+
+
+def _record_schedule_run(run) -> None:
+    """The generation's ai_runs row (ai_orchestrator's record path): start
+    tier (NULL when it started on the first rung, as generate() writes it),
+    final tier and model, the escalation, every step, the gate's reasons and
+    outcome, the cost from the ledger rows carrying the run id. A run that
+    never reached a model call and did not fail writes nothing. Never raises."""
+    if run.get("route") is None and run.get("error") is None:
+        return
+    try:
+        import ai_orchestrator as _orch
+        import ai_workflows as _wf
+        pol = _wf.policy(WORKFLOW)
+        route = run.get("route") or start_route()
+        verdict, status = _run_verdict(run)
+        steps = list(run.get("steps") or [])
+        rr = _orch.RunResult(run_id=run["run_id"], workflow=WORKFLOW, verdict=verdict, tier=route.tier,
+                             model=route.model, attempts=sum(1 for s in steps if s.get("tier")),
+                             escalations=int(run.get("escalations") or 0), status=status)
+        start = run.get("start")
+        start = start if start and start in pol.ladder and start != pol.ladder[0] else None
+        context = {"start": run.get("start"), "pre_route": run.get("pre_route") or [],
+                   "pinned": bool(run.get("pinned")), "gate": run.get("gate"), "outcome": run.get("outcome"),
+                   "notes": run.get("notes") or [], "capped": run.get("capped")}
+        _orch._record(rr, pol, restaurant_id=run.get("restaurant_id"), subject=run.get("subject"),
+                      unattended=False, start_tier=start, steps=steps, started=run["started"], reviewer=None,
+                      reviewer_score=None, reviewer_notes=None, context=context, parent=None,
+                      trigger=_orch._trigger_now(), db_path=None)
+    except Exception as e:
+        print(f"[schedule] run not recorded: {e!r}")
+
+
+def _in_schedule_run(fn):
+    """Run a generation job as one orchestrated run (above). A nested run —
+    the gate's fill or rewrite, a re-run over an edited draft — is the same
+    run: it shares the outer one's state and correlation id."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*a, **k):
+        if _SCHED_RUN.get() is not None:
+            return fn(*a, **k)
+        import ai_orchestrator as _orch
+        import ai_utils as _ai
+        rid = k.get("restaurant_id", a[1] if len(a) > 1 else None)
+        state = {"run_id": _orch.new_run_id(WORKFLOW), "restaurant_id": rid, "route": None, "start": None,
+                 "pre_route": [], "pinned": schedule_pinned(), "steps": [], "escalations": 0, "notes": [],
+                 "gate": None, "outcome": None, "error": None, "capped": None, "subject": None,
+                 "started": time.time()}
+        token = _SCHED_RUN.set(state)
+        try:
+            with _ai.ai_context(correlation_id=state["run_id"], restaurant_id=rid):
+                return fn(*a, **k)
+        except BaseException as e:
+            _run_failed(e)
+            raise
+        finally:
+            _SCHED_RUN.reset(token)
+            _record_schedule_run(state)
+    return run
+
+
 class _StageClock:
     """Wall-clock seconds per stage of one generation (schedule audit
     10/3/26 P-24): `generation_seconds` was the model's time alone, so the
@@ -972,6 +1298,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     roster_pairs = [(e["name"], e.get("role") or "") for e in roster_rows if e["name"] not in _dormant]
     if no_history and not roster_pairs:
         raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant, missing="team"))
+    # The run's route, before the first call is planned or made (AI
+    # orchestration, owner decision 3, 10/7/26): a hard week starts on the
+    # top rung; the gate's rewrite inside the same run keeps the route the
+    # run is on (_escalate_for_gate moves it).
+    _route_generation(restaurant_id, restaurant, next_week_dates, constraints, roster_pairs, redo=bool(dates))
     # Days nobody on the roster can legally work (E-20): everyone on approved
     # time off, unavailable that weekday or off that day. They were asked of
     # the model like any day, came back empty twice, and failed the week with
@@ -1924,7 +2255,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         clock.plan(len(plan), seconds=sum(call_seconds(task_rows(t), costs) for t in plan))
     try:
         import ai_utils as _ai_c
-        read_rate = _ai_c._cache_read_multiplier(_ai_c.model_for("schedule"))
+        read_rate = _ai_c._cache_read_multiplier(schedule_route().model)
     except Exception as _rx:
         _soft_fail("cache read rate", _rx, kwargs.get("restaurant_id"))
         read_rate = 0.1
@@ -2134,24 +2465,28 @@ _PART_WORDS = {"KITCHEN": "Kitchen", "FRONT OF HOUSE": "Front of house", "STAFF"
 
 def schedule_effort_in_force() -> str:
     """The effort the next schedule call runs at, as schedule_model_calls
-    records it: labor.SCHEDULE_EFFORT on a model that thinks, "" on one that
-    runs without an effort."""
-    import ai_utils as _ai
+    records it: the route in force's (schedule_route — a T3/T4 tier's, or
+    labor.SCHEDULE_EFFORT on the pinned route) on a model that thinks, ""
+    on one that runs without an effort."""
     import labor as _labor_e
-    return _labor_e.SCHEDULE_EFFORT if _labor_e.schedule_model_thinks(_ai.model_for("schedule")) else ""
+    route = schedule_route()
+    if not _labor_e.schedule_model_thinks(route.model):
+        return ""
+    return route.effort or _labor_e.SCHEDULE_EFFORT
 
 
 def call_cost_model(restaurant_id=None) -> dict:
     """schedule_output.call_costs for the restaurant on the schedule model
-    and effort in force; the estimate when there is no restaurant or the
-    store cannot be read (a store failure never fails the week)."""
+    and effort of the route in force (schedule_route: a Sonnet 5.5 week is
+    never sized from Opus calls, nor the reverse); the estimate when there
+    is no restaurant or the store cannot be read (a store failure never
+    fails the week)."""
     empty = {"fixed": None, "per_row": None, "source": "estimate", "calls": 0, "seconds_fixed": None,
              "seconds_per_row": None, "seconds_source": "estimate", "tokens_per_second": None, "by_kind": {}}
     if not restaurant_id:
         return empty
     try:
-        import ai_utils as _ai
-        return _sched_out.call_costs(restaurant_id=restaurant_id, model=_ai.model_for("schedule"),
+        return _sched_out.call_costs(restaurant_id=restaurant_id, model=schedule_route().model,
                                      effort=schedule_effort_in_force())
     except Exception as e:
         _soft_fail("measured call cost", e, restaurant_id)
@@ -6350,6 +6685,15 @@ def _gate_model_rewrite(job_id, restaurant_id, week_start, gate, fallback, instr
     (P-22) the draft in force is the answer."""
     if clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS:
         print(f"[schedule] quality gate rewrite skipped: {int(clock.model_seconds_left())}s of model time left")
+        _run_gate(gate, "skipped")
+        _ops.finish_async_job(job_id, "done", _json_ready(fallback["payload"]))
+        return
+    # The rewrite is the run's escalation (AI orchestration, 10/7/26): the
+    # gate's days go to the next rung of the ladder (T3 -> T4) with the
+    # gate's reasons as notes - its `focus`. A run already on the top rung
+    # rewrites on it; a run at its caps keeps the draft in force.
+    if _escalate_for_gate(gate) == "capped":
+        print("[schedule] quality gate rewrite skipped: the run is at its caps")
         _ops.finish_async_job(job_id, "done", _json_ready(fallback["payload"]))
         return
     print(f"[schedule] quality gate: regenerating {gate['dates']} ({gate.get('reason')})")
@@ -7393,6 +7737,7 @@ def _in_frozen_inputs(fn):
     return run
 
 
+@_in_schedule_run
 @_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
                       focus=None, gate=True, _fallback=None, instruction=None, _model_result=None, _reruns=0,
@@ -8622,6 +8967,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                          "dates": list(_fallback["dates"])}
                 if not _survives:
                     _record_gate_path(restaurant_id, "code", _fallback["dates"])
+                    _run_gate(_gate_fill, "filled")
                     _payload["gate"] = {"ran": True, "kept": "filled", "path": "code", "fill": _fill,
                                         "dates": list(_fallback["dates"]),
                                         "reason": "Cavnar AI filled the weakest days from your own team, without "
@@ -8640,6 +8986,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _next = dict(_fallback, payload=dict(_fallback["payload"], gate=dict(
                         (_fallback["payload"] or {}).get("gate") or {}, fill=_fill)))
                 return _gate_model_rewrite(job_id, restaurant_id, week_start, _gate_fill, _next, instruction, clock)
+            # What the gate's model rewrite came to, for the run's verdict.
+            _run_gate(None, "rewritten" if better else "original")
             if not better:
                 _restore_draft(restaurant_id, _fallback["history_id"], _history_id)
                 _fb = dict(_fallback["payload"])
@@ -8656,8 +9004,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # Not enough of the job's time left to rewrite the weak days and
             # check the rewrite (P-22): the draft stands as it is.
             print(f"[schedule] quality gate skipped: {int(clock.model_seconds_left())}s of model time left")
+            _run_gate(_gate, "skipped")
             _gate = None
         if _gate and _history_id:
+            _run_gate(_gate)
             try:
                 import inspect as _insp
                 _fill_answer = _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"])
@@ -8677,6 +9027,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                    "payload": dict(_payload, gate={"ran": True, **_gate})},
                         instruction=instruction)
                 if "focus" in _insp.signature(_build_schedule_result).parameters:
+                    # No fill in code to try (no copy of the answer): the
+                    # model's rewrite is the escalation straight away, on
+                    # the next rung (_escalate_for_gate) - unless capped.
+                    if _escalate_for_gate(_gate) == "capped":
+                        print("[schedule] quality gate rewrite skipped: the run is at its caps")
+                        _ops.finish_async_job(job_id, "done", _json_ready(_payload))
+                        return
                     print(f"[schedule] quality gate: regenerating {_gate['dates']} ({_gate['reason']})")
                     _record_gate_path(restaurant_id, "model", _gate["dates"])
                     return _run_schedule_job(
@@ -8698,6 +9055,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     except Exception as e:
         tb = _tb.format_exc()
         print(f"[schedule job] FAILED:\n{tb}")
+        if not _fallback:
+            _run_failed(e)
+        elif _gate_fill is None:
+            # The gate's model rewrite failed: the draft it was improving stands.
+            _run_gate(None, "original")
         try:
             _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id}")
         except Exception:

@@ -90,8 +90,12 @@ def test_routes():
     assert r.tier == "T2"
     r = wf.route_for(wf.POLICIES["labor_insight"], 7)          # past the top: the top
     assert r.tier == "T2"
-    d = wf.route_for(wf.POLICIES["labor_schedule"], 0)
-    assert d.tier == wf.DEFAULT and d.model == ai_utils.model_for("schedule")
+    # A "default" ladder is the call site's own model. (labor_schedule was the
+    # example until 10/7/26, when it moved to (T3, T4) - owner decision 3.)
+    d = wf.route_for(wf.POLICIES["invoice_extract"], 0)
+    assert d.tier == wf.DEFAULT and d.model == ai_utils.model_for("invoices")
+    s = wf.route_for(wf.POLICIES["labor_schedule"], 0)
+    assert (s.tier, s.model, s.effort) == ("T3", tiers["T3"]["model"], tiers["T3"]["effort"])
     kw = {"model": "x", "thinking": {"type": "adaptive"}, "output_config": {"effort": "high", "format": {"a": 1}}}
     assert d.apply(kw) == kw                                   # the call site's own call, untouched
     t3 = wf.Route("T3", "claude-sonnet-5-5", "medium").apply(dict(kw))

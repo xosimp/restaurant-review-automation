@@ -106,7 +106,10 @@ def test_a_call_is_stored_with_its_whole_prompt_its_arguments_and_its_answer(db,
     assert call["request"]["messages"][0]["content"] == sent_prompt         # whole, not the first 40k
     assert call["request"]["output_config"]["format"] == seen[0]["output_config"]["format"]
     assert call["answer"] == answer and call["rows"] == 1 and call["outcome"] == "ok"
-    assert call["model"] == "claude-opus-5-5" and call["effort"] == "medium" and call["contract"] == "schema"
+    # The route's model and tier (AI orchestration 10/7/26): a direct call
+    # runs on the labor_schedule ladder's first rung, T3 (Sonnet 5.5, medium).
+    assert call["model"] == "claude-sonnet-5-5" and call["effort"] == "medium" and call["contract"] == "schema"
+    assert call["tier"] == "T3"
     assert call["usage"]["output_tokens"] == 900 and call["dates"] == WEEK
     args = call["inputs"]
     assert args["roster"] == [("Ana", "Server"), ("Max", "Manager")]         # tuples come back as tuples
@@ -329,7 +332,9 @@ def test_schedule_eval_shows_the_calls_behind_a_week_and_scores_the_models_own_a
     hid = _stored_week(db, monkeypatch, rid)
     from scripts import schedule_eval
     out = schedule_eval.evaluate(hid, calls=True)
-    assert out["calls"][0]["model"] == "claude-opus-5-5" and out["calls"][0]["rows"] == 2
+    # The stored week was written on the route's model: a direct call runs on
+    # the labor_schedule ladder's first rung, T3 Sonnet 5.5 (AI orchestration 10/7/26).
+    assert out["calls"][0]["model"] == "claude-sonnet-5-5" and out["calls"][0]["rows"] == 2
     assert out["calls"][0]["tokens_per_row"] == 1500.0
     assert out["model_answer"]["hard_before"] == 0 and out["model_answer"]["manager_minutes_before"] == 0
 

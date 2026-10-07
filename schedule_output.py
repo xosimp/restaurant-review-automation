@@ -621,7 +621,8 @@ _CALLS_DDL = """CREATE TABLE IF NOT EXISTS schedule_model_calls (
     inputs_z       BLOB,
     shared_z       BLOB,
     answer_z       BLOB,
-    call_kind      TEXT
+    call_kind      TEXT,
+    tier           TEXT
 )"""
 
 # What a call wrote (schedule re-audit 10/4/26 PROMPT-3): a whole week, a
@@ -642,6 +643,11 @@ def init_schedule_output(db_path=None):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_model_calls)").fetchall()}
         if "call_kind" not in cols:
             conn.execute("ALTER TABLE schedule_model_calls ADD COLUMN call_kind TEXT")
+        # The route's tier on the labor_schedule ladder (T3, T4, or "default"
+        # for the SCHEDULE_MODEL pin), so the eval and the learner compare
+        # calls by tier (AI orchestration, 10/7/26).
+        if "tier" not in cols:
+            conn.execute("ALTER TABLE schedule_model_calls ADD COLUMN tier TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_created ON schedule_model_calls(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_gen ON schedule_model_calls(generation_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_hist ON schedule_model_calls(history_id)")
@@ -737,7 +743,7 @@ SHARED_INPUTS = ("analysis", "shifts")
 def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=None, week_start=None,
                 dates=None, ai_call_id=None, model=None, effort=None, contract=None, stop_reason=None,
                 outcome=None, error=None, seconds=None, usage=None, rows=None, answer_chars=None,
-                db_path=None, call_kind=None):
+                db_path=None, call_kind=None, tier=None):
     """Store one schedule call: the exact request (model, max_tokens, system,
     messages, thinking, output_config with its schema), the generator's
     arguments (`inputs`, encoded so a replay rebuilds them), and the answer
@@ -766,14 +772,14 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
         cur = conn.execute(
             "INSERT INTO schedule_model_calls (restaurant_id, generation_id, week_start, dates_json, ai_call_id, "
             "model, effort, contract, stop_reason, outcome, error, seconds, usage_json, rows, answer_chars, "
-            "request_z, inputs_z, shared_z, answer_z, call_kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "request_z, inputs_z, shared_z, answer_z, call_kind, tier) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (restaurant_id, generation_id, week_start, json.dumps(list(dates or [])), ai_call_id, model, effort,
              contract, stop_reason, outcome, (str(error)[:500] if error else None), seconds,
              json.dumps(usage or {}), rows, answer_chars, _z(req),
              _z(enc_inputs) if enc_inputs is not None else None,
              _z(shared) if shared else None,
              zlib.compress(_scrub(str(answer), names).encode("utf-8", "replace")) if answer else None,
-             call_kind if call_kind in CALL_KINDS else None))
+             call_kind if call_kind in CALL_KINDS else None, (str(tier)[:16] if tier else None)))
         conn.commit()
         return cur.lastrowid
     finally:
@@ -800,7 +806,7 @@ def load_calls(generation_id=None, history_id=None, db_path=None) -> list:
     row was saved from), oldest first, decoded: {id, created_at,
     restaurant_id, generation_id, history_id, week_start, dates, model,
     effort, contract, stop_reason, outcome, seconds, usage, rows,
-    answer_chars, request, inputs (the shared history merged back in),
+    answer_chars, call_kind, tier, request, inputs (the shared history merged back in),
     answer}."""
     conn = get_conn(db_path)
     try:
@@ -831,6 +837,7 @@ def load_calls(generation_id=None, history_id=None, db_path=None) -> list:
                     "stop_reason": r["stop_reason"], "outcome": r["outcome"], "error": r["error"],
                     "seconds": r["seconds"], "usage": json.loads(r["usage_json"] or "{}"), "rows": r["rows"],
                     "answer_chars": r["answer_chars"], "call_kind": r["call_kind"] if "call_kind" in r.keys() else None,
+                    "tier": r["tier"] if "tier" in r.keys() else None,
                     "request": decode(_unz(r["request_z"]) or {}),
                     "inputs": inputs,
                     "answer": zlib.decompress(r["answer_z"]).decode("utf-8") if r["answer_z"] else ""})

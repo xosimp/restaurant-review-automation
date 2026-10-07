@@ -256,8 +256,9 @@ WEEK_ROWS = 224        # Simple EJ's week
 
 
 def _record(db, rid, rows, kind, seconds=None, think=THINK):
-    # At the effort in force, as labor's call records it (call_cost_model reads that effort only).
-    so.record_call(rid, {"model": ai_utils.model_for("schedule")}, rows=rows, model=ai_utils.model_for("schedule"),
+    # At the effort in force, as labor's call records it (call_cost_model reads that effort only),
+    # on the route's model (schedule_route - since 10/7/26 a tier of the labor_schedule ladder).
+    so.record_call(rid, {"model": se.schedule_route().model}, rows=rows, model=se.schedule_route().model,
                    effort=se.schedule_effort_in_force() or None,
                    contract="schema", stop_reason="end_turn", usage={"output_tokens": think + 30 * rows},
                    answer_chars=84 * rows, seconds=seconds, call_kind=kind, db_path=db)
@@ -280,7 +281,7 @@ def test_a_gate_rewrite_no_longer_splits_every_later_week(db):
             _record(db, rid, int(WEEK_ROWS / len(plan)), "week" if len(plan) == 1 else "slice")
         _record(db, rid, 64, "gate")
     assert plans == [1] * 6
-    costs = so.call_costs(rid, model=ai_utils.model_for("schedule"), db_path=db)
+    costs = so.call_costs(rid, model=se.schedule_route().model, db_path=db)
     assert costs["source"] == "fit"
     assert costs["fixed"] == pytest.approx(THINK, rel=0.01) and costs["per_row"] == pytest.approx(30, rel=0.01)
     # Measured per call kind (week / slice / redo / gate).
@@ -293,11 +294,11 @@ def test_before_the_calls_spread_only_week_and_slice_calls_set_the_row_cost(db):
     rid = _restaurant(db)
     _record(db, rid, 64, "gate")
     _record(db, rid, 32, "redo")
-    costs = so.call_costs(rid, model=ai_utils.model_for("schedule"), db_path=db)
+    costs = so.call_costs(rid, model=se.schedule_route().model, db_path=db)
     assert costs["source"] == "estimate"               # small calls alone say nothing about a week's call
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL
     _record(db, rid, WEEK_ROWS, "week")
-    costs = so.call_costs(rid, model=ai_utils.model_for("schedule"), db_path=db)
+    costs = so.call_costs(rid, model=se.schedule_route().model, db_path=db)
     assert costs["source"] in ("fit", "comparable")
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL
 
@@ -577,7 +578,7 @@ def test_a_call_at_another_effort_does_not_size_the_next_week(db, monkeypatch):
     # effort in force.
     import labor
     rid = _restaurant(db)
-    model = ai_utils.model_for("schedule")
+    model = se.schedule_route().model
     monkeypatch.setattr(labor, "SCHEDULE_EFFORT", "medium")
     so.record_call(rid, {"model": model}, rows=215, model=model, effort="high", contract="schema",
                    stop_reason="end_turn", usage={"output_tokens": 62353}, answer_chars=84 * 215,
