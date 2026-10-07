@@ -44,6 +44,80 @@ from models import DB_PATH, get_conn
 
 log = logging.getLogger(__name__)
 
+
+# ── one question's reads (AI cost audit 10/7/26 #33) ───────────────────────
+#
+# One Ask question computed the cross-module brief twice (the snapshot's
+# ACROSS THE BUSINESS block, then read_business_snapshot) and the full labor
+# analysis three times (the snapshot's LABOR block, gather() inside each
+# brief). Inside question_memo() each is computed once per key and handed
+# out as a copy. It is a scope, not a cache: it lives for one question (Ask
+# opens it around a turn), nothing outside one is memoised, and a write
+# inside the question drops the restaurant's entries (forget_question_memo,
+# from ask_cavnar.invalidate_context) — so it can never serve a stale read
+# across requests. A contextvar, so the worker threads Ask runs reads on
+# (ai_utils.context_runner) share the question's memo.
+import contextlib as _contextlib
+import contextvars as _contextvars
+import copy as _copy
+
+_QUESTION_MEMO = _contextvars.ContextVar("cavnar_bi_question_memo", default=None)
+
+
+@_contextlib.contextmanager
+def question_memo():
+    """Memoise executive_brief and shift_analysis for the block. Nested
+    blocks share the outer one."""
+    if _QUESTION_MEMO.get() is not None:
+        yield
+        return
+    token = _QUESTION_MEMO.set({})
+    try:
+        yield
+    finally:
+        _QUESTION_MEMO.reset(token)
+
+
+def _memoised(key, fn):
+    memo = _QUESTION_MEMO.get()
+    if memo is None:
+        return fn()
+    if key in memo:
+        return _copy.deepcopy(memo[key])
+    value = fn()
+    try:
+        memo[key] = _copy.deepcopy(value)
+    except Exception:
+        pass                    # not copyable: computed again next time, never shared
+    return value
+
+
+def forget_question_memo(restaurant_id=None):
+    """Drop the open question's entries for a restaurant (all, for None) —
+    the data under them changed. A no-op outside question_memo()."""
+    memo = _QUESTION_MEMO.get()
+    if not memo:
+        return
+    for k in [k for k in memo if restaurant_id is None or k[1] == int(restaurant_id)]:
+        memo.pop(k, None)
+
+
+def shift_analysis(restaurant_id):
+    """labor.analyse_shifts_for_restaurant, once per question (#33)."""
+    from labor import analyse_shifts_for_restaurant
+    return _memoised(("shifts", int(restaurant_id)), lambda: analyse_shifts_for_restaurant(restaurant_id))
+
+
+def _viewer_scope(restaurant, viewer):
+    """What an executive brief depends on besides the restaurant id: the
+    module flags of the (viewer's) restaurant and the login whose answers
+    filter the links."""
+    flags = None if restaurant is None else tuple(
+        bool(getattr(restaurant, f, 0)) for f in ("module_reviews", "module_labor", "module_inventory",
+                                                   "module_marketing"))
+    who = viewer.get("id") if isinstance(viewer, dict) else (None if viewer is None else repr(viewer))
+    return flags, who
+
 # A weekday link needs both sides pointing at the same day. Two modules each
 # naming a concentrated day is already past their own floors, so no extra
 # threshold is applied here — see the module docstring.
@@ -197,8 +271,7 @@ def gather(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) -> dict:
         off.append("food_cost")
 
     if _on("module_labor"):
-        from labor import analyse_shifts_for_restaurant
-        out["labor"] = _safe("labor", lambda: analyse_shifts_for_restaurant(restaurant_id), degraded)
+        out["labor"] = _safe("labor", lambda: shift_analysis(restaurant_id), degraded)
         # Sample shift data is not this restaurant's labor. The Labor tab
         # shows it so the module isn't blank before the first upload; reading
         # it here would put invented days into an executive answer.
@@ -1941,7 +2014,20 @@ def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH,
     `links` are the links the owner has NOT answered (unanswered_links —
     `viewer`'s own answers too, when a login is given); `links_answered`
     counts the rest, which only the link history names.
+
+    Inside question_memo() (an Ask question) it is computed once per
+    restaurant, viewer scope and database (#33) — never when it logs the
+    day's rank or reads a caller's ranking context.
     """
+    if ctx is None and not log_rank:
+        return _memoised(("brief", int(restaurant_id), db_path, _viewer_scope(restaurant, viewer)),
+                         lambda: _executive_brief(restaurant_id, restaurant=restaurant, db_path=db_path,
+                                                  viewer=viewer))
+    return _executive_brief(restaurant_id, restaurant=restaurant, db_path=db_path, ctx=ctx, viewer=viewer,
+                            log_rank=log_rank)
+
+
+def _executive_brief(restaurant_id, restaurant=None, db_path=DB_PATH, ctx=None, viewer=None, log_rank=False):
     data = gather(restaurant_id, restaurant=restaurant, db_path=db_path)
     found = correlations(restaurant_id, data=data, db_path=db_path)
     links, answered_links = unanswered_links(restaurant_id, found, viewer=viewer, db_path=db_path)
@@ -2014,6 +2100,11 @@ def _trim_labor(a):
 
 # ── the text the assistant reads ───────────────────────────────────────────
 
+# The section's first line — what Ask strips when a turn already carries
+# read_business_snapshot's full result (ask_cavnar._without_across).
+SNAPSHOT_HEADER = "ACROSS THE BUSINESS (computed, not written by a model)"
+
+
 def snapshot_block(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) -> str:
     """The cross-module section of Ask Cavnar's context snapshot.
 
@@ -2028,7 +2119,7 @@ def snapshot_block(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) 
         log.warning("business_intelligence snapshot failed: %s", e)
         return ""
 
-    lines = ["ACROSS THE BUSINESS (computed, not written by a model)"]
+    lines = [SNAPSHOT_HEADER]
 
     money = brief.get("money") or {}
     ranked = money.get("ranked") or []

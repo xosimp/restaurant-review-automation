@@ -58,6 +58,21 @@ def _system_text(captured):
     return "\n".join(b["text"] for b in system)
 
 
+def _plain(messages):
+    """The messages a call sent, as plain turns. The newest user message of
+    the turn goes out as a text block carrying a cache breakpoint (AI cost
+    audit 10/7/26 #16, ask_cavnar._cached_messages); what these tests check
+    is the conversation itself, so the block and its marker are folded back
+    into the string the turn was built from."""
+    out = []
+    for m in messages:
+        c = m["content"]
+        if isinstance(c, list) and all(isinstance(b, dict) and b.get("type") == "text" for b in c):
+            c = "".join(b["text"] for b in c)
+        out.append({"role": m["role"], "content": c})
+    return out
+
+
 def _restaurant(db_path, **modules):
     defaults = dict(module_reviews=0, module_labor=0, module_inventory=0, module_marketing=0)
     defaults.update(modules)
@@ -435,7 +450,7 @@ def test_ask_builds_prompt_with_context_and_question(db_path, monkeypatch):
     # LIST of content blocks so the static half can carry a cache breakpoint
     # (audit #15 P1-9) — the snapshot is in the second, uncached block.
     assert "Total reviews analyzed: 1" in _system_text(captured)
-    assert captured["messages"] == [{"role": "user", "content": "How are my reviews doing?"}]
+    assert _plain(captured["messages"]) == [{"role": "user", "content": "How are my reviews doing?"}]
     assert captured["restaurant_id"] == r.id
     assert captured["action"] == "ask_cavnar"
 
@@ -454,7 +469,7 @@ def test_ask_truncates_overly_long_questions(db_path, monkeypatch):
     # final message rather than embedded inside a larger templated prompt,
     # so this checks the message content directly instead of a substring
     # search that used to need to account for surrounding instruction text.
-    assert captured["messages"][-1]["content"] == "a" * 2000
+    assert _plain(captured["messages"])[-1]["content"] == "a" * 2000
 
 
 def test_ask_forwards_sanitized_history_as_prior_messages(db_path, monkeypatch):
@@ -477,7 +492,7 @@ def test_ask_forwards_sanitized_history_as_prior_messages(db_path, monkeypatch):
     ]
     ask_with_tools(r, "Yes", history=history)
 
-    assert captured["messages"] == [
+    assert _plain(captured["messages"]) == [
         {"role": "user", "content": "How are my reviews doing?"},
         {"role": "assistant", "content": "Solid — want me to pull up the urgent ones?"},
         {"role": "user", "content": "Yes"},
@@ -506,7 +521,7 @@ def test_ask_history_drops_malformed_entries_and_caps_length(db_path, monkeypatc
     ]
     ask_with_tools(r, "Next question", history=history)
 
-    messages = captured["messages"]
+    messages = _plain(captured["messages"])
     # The oversized first turn is capped, not dropped or left full-length.
     assert messages[0] == {"role": "user", "content": "a" * ask_cavnar._MAX_HISTORY_TURN_LENGTH}
     # Invalid role, empty content, and the non-dict entry are all gone.
@@ -530,7 +545,7 @@ def test_ask_history_caps_to_recent_messages_only(db_path, monkeypatch):
         history.append({"role": "assistant", "content": f"answer {i}"})
     ask_with_tools(r, "latest question", history=history)
 
-    messages = captured["messages"]
+    messages = _plain(captured["messages"])
     # 12 kept history messages + the new question = 13 total, and it's the
     # MOST RECENT ones kept, not the oldest.
     assert len(messages) == 13
