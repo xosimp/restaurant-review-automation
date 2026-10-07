@@ -188,7 +188,7 @@ def test_estimated_savings_shows_its_math_on_hover_or_focus():
     fn = fn[:fn.index("\n}\n")]
     assert "lv.savings == null || lv.recent_pct == null" in fn, "no figure, no card"
     assert "'Forecast sales this week'" in fn and "n(_schedMoney(r / 100 * R))" in fn and "n(_schedMoney(p / 100 * R))" in fn
-    assert "' = ' + n(pts + ' pts') + ' \\u00d7 ' + n(_schedMoney(R)) + ' = <b>' + n(_schedMoney(lv.savings))" in fn
+    assert "' = ' + n(pts + ' pts') + ' \\u00d7 ' + n(_schedMoney(R)) + ' = <b>' + n(_schedMoney(S))" in fn
     assert "'<span class=\"tag\">Projection · not yet earned</span>' + _ssSavingsMath(lv, rev));" in SRC
     assert "(extra && extra.indexOf('ss-math') > -1 ? ' has-math\" tabindex=\"0' : '')" in SRC
     assert ".ss-tile.has-math:hover .ss-math,.ss-tile.has-math:focus-within .ss-math{opacity:1;visibility:visible;" in SRC
