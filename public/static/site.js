@@ -35,6 +35,25 @@
     })(t0);
   }
 
+  // ── a light haptic tap on phones. Android: the Vibration API. iOS
+  //    (Safari 18+): toggling a native switch input taps the Taptic Engine,
+  //    the only haptic a web page can reach there; on anything else it's a
+  //    no-op. ──
+  var tapSwitch = null;
+  function haptic() {
+    try {
+      if (navigator.vibrate) { navigator.vibrate(8); return; }
+      if (!tapSwitch) {
+        var lab = document.createElement('label'), inp = document.createElement('input');
+        inp.type = 'checkbox'; inp.setAttribute('switch', ''); inp.tabIndex = -1;
+        lab.setAttribute('aria-hidden', 'true');
+        lab.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none';
+        lab.appendChild(inp); document.body.appendChild(lab); tapSwitch = lab;
+      }
+      tapSwitch.click();
+    } catch (e) { /* no haptics here */ }
+  }
+
   // ── nav: solid once the page moves; a menu on phones ──
   var nav = $('.nav');
   if (nav) {
@@ -42,13 +61,14 @@
     solid(); window.addEventListener('scroll', solid, { passive: true });
     var menu = $('.menu', nav);
     if (menu) menu.addEventListener('click', function () {
+      haptic();
       var open = nav.classList.toggle('open'); menu.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
-    $$('.links a', nav).forEach(function (a) { a.addEventListener('click', function () { nav.classList.remove('open'); }); });
+    $$('.links a', nav).forEach(function (a) { a.addEventListener('click', function () { if (nav.classList.contains('open')) haptic(); nav.classList.remove('open'); }); });
   }
 
   // ── staggered reveals, once ──
-  $$('.rv').forEach(function (el) { onView(el, function () { el.classList.add('in'); }, 0.12); });
+  $$('.rv').forEach(function (el) { onView(el, function () { el.classList.add('shown'); }, 0.12); });
 
   // ── parallax: the hero's rings and glow drift slower than the page,
   //    so the core reads as depth behind the headline; the demo's glow
@@ -131,7 +151,7 @@
     onView($('#board'), function () {
       var cells = $$('.s', g), gap = reduce ? 0 : 36, t = reduce ? 0 : 160 + cells.length * gap;
       lit(0);
-      cells.forEach(function (el, i) { setTimeout(function () { el.classList.add('in'); }, reduce ? 0 : 160 + i * gap); });
+      cells.forEach(function (el, i) { setTimeout(function () { el.classList.add('shown'); }, reduce ? 0 : 160 + i * gap); });
       setTimeout(function () { lit(1); }, t * 0.5);
       // Sam works seven days: the weekend shifts break 40h, flag, and move.
       var ot = $$('.s[data-r="6"][data-c="5"], .s[data-r="6"][data-c="6"]', g);

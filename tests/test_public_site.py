@@ -89,8 +89,9 @@ def test_the_pricing_page_says_what_pricing_py_charges():
 def test_the_site_shares_one_stylesheet_and_script_and_lists_its_pages():
     for page in ("index.html", "pricing.html", "about.html"):
         html = open(os.path.join(PUBLIC, page), encoding="utf-8").read()
-        assert '<link rel="stylesheet" href="/static/site.css">' in html, page
-        assert '<script src="/static/site.js" defer></script>' in html, page
+        # Versioned (?v=), so a change reaches a browser that already has the file.
+        assert re.search(r'<link rel="stylesheet" href="/static/site\.css\?v=[\w.-]+">', html), page
+        assert re.search(r'<script src="/static/site\.js\?v=[\w.-]+" defer></script>', html), page
         assert 'href="/#demo"' in html or 'href="#demo"' in html, page
     sitemap = open(os.path.join(PUBLIC, "sitemap.xml"), encoding="utf-8").read()
     for loc in ("https://cavnar.ai/", "https://cavnar.ai/pricing", "https://cavnar.ai/about"):
