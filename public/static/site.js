@@ -225,6 +225,52 @@
     onView(stage, function () { play(0); if (!reduce) auto = setInterval(function () { play((cur + 1) % chains.length); }, 6400); }, 0.3);
   }
 
+  // ── Ask Cavnar AI: a question typed, the answer streamed with its
+  //    figures, then where each figure came from. Illustrative figures. ──
+  var asks = $('#asks'), chatb = $('#chatbody');
+  if (asks && chatb) {
+    var QA = [
+      { q: 'Why was labor high on Tuesday?',
+        a: 'Tuesday ran [41.2%] labor against your [35%] target. Sales came in [$1,180] under a normal Tuesday while four servers were on from 4pm. Sending one home at 8pm would have landed it near [36%].',
+        s: ['Labor · Tue 9/29', 'Nightly report · Tue 9/29'] },
+      { q: 'What did the Bears game do to sales?',
+        a: 'Sunday’s noon game brought in [$9,860], [38%] above a normal Sunday. The bar did most of it at [$4,210], double the usual. Next Bears Sunday, plan one more bartender from 11am.',
+        s: ['Nightly report · Sun 10/4', 'Events · Bears game'] },
+      { q: 'Which menu items are losing money?',
+        a: 'Two items sit over your [30%] food cost target: the short rib at [36%] since beef rose [9%], and the chicken parm at [33%]. A [$1] price move brings the short rib back to [31%].',
+        s: ['Food cost · last 4 invoices', 'Menu margins'] },
+      { q: 'Did last month’s campaign work?',
+        a: 'The game-day text reached [418] guests and [37] came in within three days, about [$1,260] in sales against the four Sundays before. Measured before and after, not proof it was the only cause.',
+        s: ['Marketing · campaign', 'Nightly reports · 4 Sundays'] }
+    ];
+    asks.innerHTML = QA.map(function (x, i) { return '<button type="button" class="q" data-q="' + i + '" aria-pressed="false">' + x.q + '</button>'; }).join('');
+    var chatTimers = [], chatAuto = null, chatCur = -1;
+    var esc = function (t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
+    var askPlay = function (i) {
+      chatTimers.forEach(clearTimeout); chatTimers = []; chatCur = i;
+      $$('.q', asks).forEach(function (b) { b.setAttribute('aria-pressed', +b.getAttribute('data-q') === i ? 'true' : 'false'); });
+      var x = QA[i];
+      // the answer as words; [figure] is a number from the restaurant's data
+      var words = x.a.split(' ').map(function (w) {
+        var m = /^\[(.+?)\](.*)$/.exec(w);
+        return m ? '<span class="w"><b' + (/%|\$/.test(m[1]) ? ' class="hot"' : '') + '>' + esc(m[1]) + '</b>' + esc(m[2]) + '</span>' : '<span class="w">' + esc(w) + '</span>';
+      }).join(' ');
+      chatb.innerHTML = '<div class="msg me">' + esc(x.q) + '</div><div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>';
+      var wait = reduce ? 0 : 900;
+      chatTimers.push(setTimeout(function () {
+        chatb.innerHTML = '<div class="msg me">' + esc(x.q) + '</div><div class="msg ai">' + words + '</div><div class="srcs">' + x.s.map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') + '</div>';
+        var ws = $$('.msg.ai .w', chatb), step = reduce ? 0 : 55;
+        ws.forEach(function (w, k) { chatTimers.push(setTimeout(function () { w.classList.add('on'); }, k * step)); });
+        chatTimers.push(setTimeout(function () { var sr = $('.srcs', chatb); if (sr) sr.classList.add('on'); }, ws.length * step + 200));
+      }, wait));
+    };
+    asks.addEventListener('click', function (e) {
+      var b = e.target.closest('.q'); if (!b) return;
+      clearInterval(chatAuto); chatAuto = null; askPlay(+b.getAttribute('data-q'));
+    });
+    onView(chatb, function () { askPlay(0); if (!reduce) chatAuto = setInterval(function () { askPlay((chatCur + 1) % QA.length); }, 9000); }, 0.35);
+  }
+
   // ── it learns: the curve draws as the things it learns light up ──
   var chart = $('#chart');
   if (chart) {

@@ -96,3 +96,16 @@ def test_the_site_shares_one_stylesheet_and_script_and_lists_its_pages():
     sitemap = open(os.path.join(PUBLIC, "sitemap.xml"), encoding="utf-8").read()
     for loc in ("https://cavnar.ai/", "https://cavnar.ai/pricing", "https://cavnar.ai/about"):
         assert f"<loc>{loc}</loc>" in sitemap
+
+
+def test_ask_cavnar_ai_is_shown_as_the_restaurants_cfo_with_labelled_figures():
+    """Owner, 10/7/26: Ask Cavnar AI as each restaurant's own CFO, between
+    Everything connected and It learns. Its answers are illustrations with
+    made-up figures, said so on the panel, and name no client's dishes."""
+    html = open(os.path.join(PUBLIC, "index.html"), encoding="utf-8").read()
+    assert html.index('id="platform"') < html.index('id="ask"') < html.index('id="h-learn"')
+    assert "Illustration · made-up figures" in html
+    js = open(os.path.join(PUBLIC, "static", "site.js"), encoding="utf-8").read()
+    assert "var QA = [" in js and "smash burger" not in js and "fried rice" not in js
+    css = open(os.path.join(PUBLIC, "static", "site.css"), encoding="utf-8").read()
+    assert "clip-path:circle(50% at 50% 50%)" in css, "Safari showed the sphere's swirl as a square"
