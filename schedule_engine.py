@@ -273,8 +273,18 @@ def current_clock():
 GEN_PRIORITY_PRESS = 0
 GEN_PRIORITY_BACKGROUND = 1
 # A press announced (submit_generation) but never seen at the gate stops
-# holding the background back after this long (a pool that died with it).
+# holding the background back once its pool future is done or cancelled (it
+# will never reach the gate), and in any case after this long.
 GEN_ANNOUNCE_MAX_SECONDS = 2 * 60 * 60
+# A background generation (the auto-draft) waits at most this long for a
+# slot, then gives up (GenerationSlotTimeout): its pass hands the period back
+# and the next hourly pass tries again. It never waits without end — a
+# waiter blocked forever held the AI lane, and in the suite a worker.
+GEN_BACKGROUND_WAIT_SECONDS = 30 * 60
+
+
+class GenerationSlotTimeout(RuntimeError):
+    """A background generation found no free slot in GEN_BACKGROUND_WAIT_SECONDS."""
 
 
 class GenerationSlots:
@@ -292,9 +302,16 @@ class GenerationSlots:
         self._seq = 0
         self._announced = {}        # job_id -> time it was announced
 
-    def announce(self, job_id) -> None:
+    def announce(self, job_id, future=None) -> None:
         with self._cv:
-            self._announced[job_id] = time.time()
+            self._announced[job_id] = (time.time(), future)
+
+    def attach(self, job_id, future) -> None:
+        """The pool future of an announced press, so a press whose thread
+        will never reach the gate (done, cancelled) stops being waited for."""
+        with self._cv:
+            if job_id in self._announced:
+                self._announced[job_id] = (self._announced[job_id][0], future)
 
     def withdraw(self, job_id) -> None:
         """A press that will never reach the gate (its submit failed)."""
@@ -304,22 +321,28 @@ class GenerationSlots:
 
     def _presses_on_the_way(self) -> bool:
         cutoff = time.time() - GEN_ANNOUNCE_MAX_SECONDS
-        for j in [j for j, t in self._announced.items() if t < cutoff]:
-            self._announced.pop(j, None)
+        for j, (t, fut) in list(self._announced.items()):
+            if t < cutoff or (fut is not None and fut.done()):
+                self._announced.pop(j, None)
         return bool(self._announced)
 
-    def acquire(self, priority=GEN_PRIORITY_PRESS, job_id=None) -> None:
+    def acquire(self, priority=GEN_PRIORITY_PRESS, job_id=None, timeout=None) -> None:
+        """Wait for a slot in priority order. `timeout` (seconds) bounds the
+        wait: past it, GenerationSlotTimeout and the ticket leaves the queue."""
         import heapq
         with self._cv:
             self._announced.pop(job_id, None)
             self._seq += 1
             ticket = (int(priority), self._seq)
             heapq.heappush(self._waiting, ticket)
+            give_up = (time.time() + float(timeout)) if timeout else None
             try:
                 while not (self.busy < self.slots and self._waiting[0] == ticket
                            and not (ticket[0] > GEN_PRIORITY_PRESS and self._presses_on_the_way())):
+                    if give_up is not None and time.time() >= give_up:
+                        raise GenerationSlotTimeout(f"no generation slot free in {int(timeout)}s")
                     # A timed wait, so an announcement that expires is noticed.
-                    self._cv.wait(30)
+                    self._cv.wait(30 if give_up is None else max(0.05, min(30, give_up - time.time())))
             except BaseException:
                 self._waiting.remove(ticket)
                 heapq.heapify(self._waiting)
@@ -353,7 +376,8 @@ def generation_scope(job_id, priority=GEN_PRIORITY_PRESS):
     submit_generation runs an owner's job inside it; the auto-draft enters it
     itself (strategy_jobs._draft_one) at GEN_PRIORITY_BACKGROUND, so a press
     takes the next free slot ahead of it (AI cost audit 10/7/26 #5)."""
-    _GEN_SLOTS.acquire(priority, job_id=job_id)
+    _GEN_SLOTS.acquire(priority, job_id=job_id,
+                       timeout=GEN_BACKGROUND_WAIT_SECONDS if priority > GEN_PRIORITY_PRESS else None)
     try:
         clock = GenerationClock(job_id)
         token = _CLOCK.set(clock)
@@ -392,10 +416,12 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
             _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
             _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
     try:
-        return _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
+        fut = _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
     except BaseException:
         _GEN_SLOTS.withdraw(job_id)
         raise
+    _GEN_SLOTS.attach(job_id, fut)
+    return fut
 
 
 def generation_request(restaurant_id, week_start=None, dates=None, history_id=None, instruction=None,

@@ -431,3 +431,14 @@ def two_restaurants(db_path):
     ], db_path=db_path)
     return {"db_path": db_path, "rid_a": rid_a, "rid_b": rid_b}
 
+
+
+
+@pytest.fixture(autouse=True)
+def _fresh_generation_slots():
+    """schedule_engine._GEN_SLOTS is process-wide: a press one test announced
+    and never ran (a stubbed pool) held every later auto-draft in the same
+    worker behind it — the suite's intermittent hang at 99% (10/7/26)."""
+    import schedule_engine
+    schedule_engine._GEN_SLOTS = schedule_engine.GenerationSlots(schedule_engine.SCHEDULE_GEN_WORKERS)
+    yield

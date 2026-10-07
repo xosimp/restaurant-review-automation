@@ -1391,3 +1391,39 @@ def test_the_finished_payload_says_chunked_as_the_bool_both_clients_read(db, mon
     monkeypatch.setattr(se._ops, "finish_async_job", lambda j, s, r: finished.update(status=s, result=r))
     se._run_schedule_job("one-call", rid)
     assert finished["result"]["chunked"] is False and finished["result"]["calls"] == 1
+
+
+def test_a_background_generation_never_waits_without_end(monkeypatch):
+    # The suite's intermittent hang (10/7/26): a press announced but never run
+    # held an auto-draft at the gate for up to two hours, on the AI lane.
+    import concurrent.futures
+    gate = se.GenerationSlots(1)
+    gate.announce("press-1")
+    with pytest.raises(se.GenerationSlotTimeout):
+        gate.acquire(se.GEN_PRIORITY_BACKGROUND, job_id="auto-1", timeout=0.2)
+    assert gate.waiting() == 0 and gate.busy == 0
+    # A press whose pool future is finished (it will never reach the gate)
+    # stops being waited for.
+    done = concurrent.futures.Future()
+    done.set_result(None)
+    gate.attach("press-1", done)
+    gate.acquire(se.GEN_PRIORITY_BACKGROUND, job_id="auto-2", timeout=1)
+    assert gate.busy == 1
+    gate.release()
+
+
+def test_an_auto_draft_with_no_free_slot_hands_its_day_back(db, monkeypatch):
+    import contextlib
+    import strategy_jobs, ops
+    released, bumps = [], []
+    monkeypatch.setattr(ops, "release_period", lambda name, period: released.append((name, period)))
+
+    @contextlib.contextmanager
+    def busy(job_id, priority=se.GEN_PRIORITY_PRESS):
+        raise se.GenerationSlotTimeout("no slot")
+        yield
+    monkeypatch.setattr(se, "generation_scope", busy)
+    rid = _restaurant(db, module_labor=1)
+    r = models.get_restaurant(rid, db_path=db)
+    strategy_jobs._draft_one(r, db, se, bumps.append, period="2026-10-01")
+    assert bumps == ["skipped"] and released == [(f"auto_draft:{rid}", "2026-10-01")]

@@ -1336,8 +1336,18 @@ def _draft_one(r, db_path, _se, _bump, period=None):
         return
     # Behind any owner's press (AI cost audit 10/7/26 #5): an owner who
     # presses Generate takes the next free slot ahead of queued drafts.
-    with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND):
-        _se._run_schedule_job(job_id, r.id)
+    try:
+        with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND):
+            _se._run_schedule_job(job_id, r.id)
+    except _se.GenerationSlotTimeout:
+        # Every slot stayed busy (owners' presses first): the job is closed,
+        # the day handed back, and the next hourly pass tries again.
+        ops.finish_async_job(job_id, "error", {"ok": False, "error": "No generation slot came free — "
+                                                                     "it will try again within the hour."})
+        if period:
+            ops.release_period(f"auto_draft:{r.id}", period)
+        _bump("skipped")
+        return
     # _run_schedule_job reports its own failures into the job row rather
     # than raising, so the push below must wait on that verdict — telling
     # an owner a draft is waiting when none was saved is worse than silence.
