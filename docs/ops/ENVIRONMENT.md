@@ -145,6 +145,8 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `BACKUP_S3_SECRET_ACCESS_KEY` | — | Secret. | offsite_backup.py |
 | `BACKUP_S3_PREFIX` | `"cavnar-backups/"` | Key prefix (default `cavnar-backups/`). | offsite_backup.py |
 | `BACKUP_DIR` | — | Where the nightly local snapshot is written; default `backups/` beside the database. | scheduler.py |
+| `BACKUP_RETAIN_COUNT` | `"3"` | How many local snapshots (`cavnar_ai_backup_<date>.db.gz`, gzipped since 10/7/26) are kept — the newest N, gzipped and older plain ones counted together. Replaces `BACKUP_RETAIN_DAYS` (7 by default, 14 set in production), which the code no longer reads: remove it from Railway. | scheduler.py |
+| `BACKUP_FREE_SPACE_FACTOR` | `"1.5"` | Free space the backup needs before it starts, as a multiple of the database and its WAL: the `VACUUM INTO` copy (at most the database) plus its gzip, with margin. Was 3.5 when the snapshot, the scrubbed copy and the encryption all had to fit up front; the off-site copy now checks its own room (1.4x the snapshot) just before it is made. | scheduler.py |
 
 ## Model behaviour
 
@@ -175,6 +177,13 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 
 Bounds, budgets, thresholds and pool sizes, each with a safe default. Change one only to answer a measured problem, and say which in the commit.
 
+Changed or added by the AI cost audit (10/7/26):
+
+- `AI_GLOBAL_PER_CLIENT_USD` — **30** (was 200): the shared AI pool is the larger of `AI_GLOBAL_MONTHLY_BUDGET_USD` ($1,500) and $30 a paying client, capped at `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` ($10,000). A full-tier restaurant spends $15–25 a month, so $200 each let the pool reach ~8x real use before it noticed a runaway; at $30 the floor covers the first fifty clients and the pool grows with real use after that.
+- `AI_PLACES_GLOBAL_MONTHLY_USD` — **300**: Google Places across every restaurant and every unattributed request, a month. The per-restaurant ceilings (`AI_PLACES_DAILY_BUDGET_USD` $3, `AI_PLACES_MONTHLY_BUDGET_USD` $30) bound one restaurant and nothing bounded the fleet. About three times expected spend (a few dollars a restaurant a month); 80% pages Will; the review fetch is still never refused; 0 disables it.
+- `INTERACTIVE_AI_SLOTS` — **2**: model calls made on a request thread at once, process-wide (`ai_utils`, the interactive guard). gunicorn has four request threads; two always stay free for logins, pages, webhooks and `/health`. An Ask turn holds one for the whole turn. `INTERACTIVE_AI_WAIT_SECONDS` (**3**) is how long a call waits for one before the owner is told "busy, try again in a moment"; `INTERACTIVE_AI_TIMEOUT` (**40**) is the per-try timeout such a call gets (with one retry) when its caller names none. Scheduler and background calls take no slot. Per process, like `ASK_MAX_CONCURRENT`.
+- `DIGEST_WORKERS` (**2**) and `DIGEST_MAX_SECONDS` (**1200**): the weekly digest pass's pool and wall-clock bound (cursor `weekly_digest_cursor`); a restaurant not reached gives its day back to the next hourly pass.
+
 | Variable | Default | Read in |
 |---|---|---|
 | `ADMIN_BADGES_MAX_AGE_SECONDS` | `"300"` | admin_ops.py |
@@ -201,13 +210,14 @@ Bounds, budgets, thresholds and pool sizes, each with a safe default. Change one
 | `AI_DAILY_BUDGET_USD` | `"10"` | ai_utils.py |
 | `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` | `"10000"` | ai_utils.py |
 | `AI_GLOBAL_MONTHLY_BUDGET_USD` | `"1500"` | ai_utils.py |
-| `AI_GLOBAL_PER_CLIENT_USD` | `"200"` | ai_utils.py |
+| `AI_GLOBAL_PER_CLIENT_USD` | `"30"` | ai_utils.py |
 | `AI_HEALTH_RETAIN_DAYS` | `"365"` | ai_utils.py |
 | `AI_MEMORY_SIZES_RETAIN_DAYS` | `"400"` | ai_utils.py |
 | `AI_MONTHLY_BUDGET_USD` | `"150"` | ai_utils.py |
 | `AI_PAGE_COOLDOWN_MINUTES` | `"60"` | ai_utils.py |
 | `AI_PLACES_DAILY_BUDGET_USD` | `"3"` | ai_utils.py |
 | `AI_PLACES_MONTHLY_BUDGET_USD` | `"30"` | ai_utils.py |
+| `AI_PLACES_GLOBAL_MONTHLY_USD` | `"300"` | ai_utils.py |
 | `AI_QUALITY_RETAIN_DAYS` | `"180"` | ai_utils.py |
 | `AI_STATUS_DEGRADED_PCT` | `"20"` | ai_utils.py |
 | `AI_STATUS_MIN_CALLS` | `"5"` | ai_utils.py |
@@ -230,13 +240,13 @@ Bounds, budgets, thresholds and pool sizes, each with a safe default. Change one
 | `ASK_MAX_CONCURRENT` | `"2"` | client_api.py |
 | `BACKUP_EMAIL_MAX_BYTES` | `str(25 * 1024 * 1024` | scheduler.py |
 | `BACKUP_EMAIL_MODE` | `"always"` | scheduler.py |
-| `BACKUP_FREE_SPACE_FACTOR` | `"3.5"` | scheduler.py |
 | `BACKUP_OFFSITE_MAX_DAYS` | `"35"` | scheduler.py |
-| `BACKUP_RETAIN_DAYS` | `"7"` | scheduler.py |
 | `CAMPAIGN_ATTRIBUTION_SECONDS` | `str(10 * 60` | guest_marketing.py |
 | `CLAIM_RECLAIM_MINUTES` | `"120"` | ops.py |
 | `DAILY_ALERT_PASS_SECONDS` | `"600"` | notify.py |
 | `DIAGNOSES_MAX_SECONDS` | `str(40 * 60` | scheduler.py |
+| `DIGEST_MAX_SECONDS` | `str(20 * 60` | scheduler.py |
+| `DIGEST_WORKERS` | `"2"` | scheduler.py |
 | `EMAIL_BOUNCE_CRIT_PCT` | `"8"` | admin_ops.py |
 | `EMAIL_BOUNCE_WARN_PCT` | `"4"` | admin_ops.py |
 | `EMAIL_COMPLAINT_CRIT_PCT` | `"0.3"` | admin_ops.py |
@@ -246,6 +256,9 @@ Bounds, budgets, thresholds and pool sizes, each with a safe default. Change one
 | `FETCH_STALE_HOURS` | `"12"` | admin_ops.py |
 | `FETCH_WORKERS` | `"6"` | scheduler.py |
 | `GUEST_SMS_PER_SECOND` | — | guest_marketing.py |
+| `INTERACTIVE_AI_SLOTS` | `"2"` | ai_utils.py |
+| `INTERACTIVE_AI_TIMEOUT` | `"40"` | ai_utils.py |
+| `INTERACTIVE_AI_WAIT_SECONDS` | `"3"` | ai_utils.py |
 | `INVENTORY_SYNC_MAX_SECONDS` | `str(15 * 60` | inventory_sync.py |
 | `LEARNING_HOLDOUT_PCT` | `str(HOLDOUT_DEFAULT_PCT` | rec_learning.py |
 | `LEASE_OWNER_GONE_SECONDS` | `"240"` | ops.py |

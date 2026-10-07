@@ -87,8 +87,12 @@ def test_a_good_snapshot_is_written_under_today_s_name(tmp_path, monkeypatch):
     # the local snapshot is still written first.
     with pytest.raises(scheduler.BackupFailed):
         scheduler.backup_db()
-    snap = bdir / "cavnar_ai_backup_2026-09-22.db"
-    assert snap.exists() and _count(str(snap), "SELECT COUNT(*) FROM restaurants") == 1
+    # Gzipped since AI cost audit 10/7/26 #8; decompressed to be read.
+    snap = bdir / "cavnar_ai_backup_2026-09-22.db.gz"
+    assert snap.exists()
+    plain = str(tmp_path / "unpacked.db")
+    scheduler.gunzip_snapshot(str(snap), plain)
+    assert _count(plain, "SELECT COUNT(*) FROM restaurants") == 1
 
 
 def test_a_failed_snapshot_leaves_no_file_behind(tmp_path, monkeypatch):
@@ -112,7 +116,7 @@ def test_a_failed_snapshot_leaves_no_file_behind(tmp_path, monkeypatch):
             scheduler.backup_db()
     finally:
         monkeypatch.setattr(sqlite3, "connect", real_connect)
-    left = sorted(os.path.basename(p) for p in glob.glob(str(bdir / "cavnar_ai_backup_*.db")))
+    left = sorted(os.path.basename(p) for p in glob.glob(str(bdir / "cavnar_ai_backup_*.db*")))
     assert left == ["cavnar_ai_backup_2026-09-21.db"], \
         f"a restore would pick {left[-1]} as the newest snapshot"
 

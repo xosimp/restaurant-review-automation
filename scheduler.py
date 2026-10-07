@@ -903,6 +903,18 @@ def _record_review_fetch(restaurant, fetched_ok, gbp_ok, gmb_failed_reason, gbp_
 
 
 
+# The weekly digest pass (AI cost audit 10/7/26 #52): bounded and resumable,
+# the run_daily_fetch way. Each address's digest is a model-written read per
+# location and a send; the pass ran them one after another with no bound, on
+# the loop thread. A small pool (each worker waits on the model and Resend,
+# not the CPU), a wall-clock bound under the job's 30-minute registry bound,
+# and a cursor so a pass that ran out of time starts the next hour's with
+# whoever it missed — inside the 9am-2pm local window those are still due.
+WEEKLY_DIGEST_CURSOR_KEY = "weekly_digest_cursor"
+DIGEST_WORKERS = int(os.getenv("DIGEST_WORKERS", "2"))
+DIGEST_MAX_SECONDS = int(os.getenv("DIGEST_MAX_SECONDS", str(20 * 60)))
+
+
 def run_weekly_digests():
     """Send the weekly digest to every owner scheduled for today.
 
@@ -918,12 +930,29 @@ def run_weekly_digests():
     times. The claim_period below hid that (rows 2 and 3 lose the claim), at
     the cost of a wasted get_restaurant per row.
 
+    Bounded and resumable (#52): who is due and where each digest goes is
+    settled first (cheap reads); then each address's digest — its locations'
+    reports built, then one send — is a unit of work for DIGEST_WORKERS,
+    rotated after job_cursors[WEEKLY_DIGEST_CURSOR_KEY] and stopped after
+    DIGEST_MAX_SECONDS (resumable_sweep). A restaurant whose digest was not
+    reached gives its day's claim back, so the next hourly pass inside its
+    window serves it; an address already mailed today is never mailed again
+    (weekly_digest_to), so a split multi-location owner is never sent twice.
+
     Returns the standard counts over the emails (one per owner address):
     attempted, ok (Resend accepted it), failed, skipped (a restaurant with no
-    address or nothing measured, an address already sent to today). A
-    failure outside one email raises (#39).
+    address or nothing measured, an address already sent to today), and
+    hit_bound when the pass ran out of time. A failure outside one email
+    raises (#39).
     """
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    lock = threading.Lock()
+
+    def _count(**kw):
+        with lock:
+            for k, v in kw.items():
+                counts[k] += v
+
     try:
         from models import get_restaurants_for_digest, get_restaurant
         from reporter import build_report_from_db, render_html
@@ -942,14 +971,17 @@ def run_weekly_digests():
 
         log.info(f"Weekly digests for {len(unique)} restaurant(s) on {today.title()}")
         from reporter import render_group_html
+        from time_utils import restaurant_now as _rnow
 
-        # Pass 1: build every due report and bucket it by owner address.
-        # Pass 2: one email per address — a single location gets the digest
-        # it always got; several get every location in one shell
-        # (reporter.render_group_html). The dedup-by-address that lived here
-        # solved "three identical-looking digests" by dropping two
-        # restaurants' weeks on the floor; the monthly, meanwhile, sent three.
-        by_email = {}
+        # Pass 1, cheap and unbounded: which restaurants are due now (each
+        # claims its day — local_due) and which addresses each one's week
+        # goes to. Pass 2 builds and sends one email per address — a single
+        # location gets the digest it always got; several get every location
+        # in one shell (reporter.render_group_html). The dedup-by-address
+        # that lived here solved "three identical-looking digests" by
+        # dropping two restaurants' weeks on the floor; the monthly,
+        # meanwhile, sent three.
+        due, by_email = {}, {}
         for row in unique:
             rid = row["id"]
             restaurant = get_restaurant(rid)
@@ -963,42 +995,62 @@ def run_weekly_digests():
                 log.warning(f"No email for {restaurant.name}, skipping")
                 counts["skipped"] += 1
                 continue
-            try:
-                report = build_report_from_db(rid, restaurant.name, days=7)
-                # No digest without something measured this week in a
-                # module the restaurant has on (NS4 C2). This skipped only
-                # when there were no reviews AND no other module was switched
-                # on — so a switched-on module with nothing in it got a
-                # generated email of invented comparisons.
-                from reporter import digest_has_data
-                if not digest_has_data(restaurant, report):
-                    log.info(f"Not enough data this week for {restaurant.name} — skipping digest")
-                    counts["skipped"] += 1
+            due[rid] = restaurant
+            for owner_email in owner_emails:
+                key = (owner_email or "").strip().lower()
+                if not key:
                     continue
-                for owner_email in owner_emails:
-                    key = (owner_email or "").strip().lower()
-                    if not key:
-                        continue
-                    by_email.setdefault(key, {"to": owner_email, "items": []})
-                    by_email[key]["items"].append((restaurant, report))
-            except Exception as e:
-                log.error(f"Digest build failed for {restaurant.name}: {e}")
-                _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
-                counts["attempted"] += 1
-                counts["failed"] += 1
+                bucket = by_email.setdefault(key, {"to": owner_email, "rids": []})
+                if rid not in bucket["rids"]:
+                    bucket["rids"].append(rid)
+        if not by_email:
+            return counts
 
-        from time_utils import restaurant_now as _rnow
-        for key, bucket in by_email.items():
-            items = bucket["items"]
+        # A restaurant's report is built once however many addresses it goes
+        # to, by whichever worker reaches it first.
+        reports, built_by = {}, {rid: threading.Lock() for rid in due}
+
+        def _report(rid):
+            with built_by[rid]:
+                if rid in reports:
+                    return reports[rid]
+                restaurant = due[rid]
+                report = None
+                try:
+                    report = build_report_from_db(rid, restaurant.name, days=7)
+                    # No digest without something measured this week in a
+                    # module the restaurant has on (NS4 C2). This skipped only
+                    # when there were no reviews AND no other module was
+                    # switched on — so a switched-on module with nothing in
+                    # it got a generated email of invented comparisons.
+                    from reporter import digest_has_data
+                    if not digest_has_data(restaurant, report):
+                        log.info(f"Not enough data this week for {restaurant.name} — skipping digest")
+                        _count(skipped=1)
+                        report = None
+                except Exception as e:
+                    log.error(f"Digest build failed for {restaurant.name}: {e}")
+                    _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
+                    _count(attempted=1, failed=1)
+                    report = None
+                reports[rid] = report
+                return report
+
+        def _send(key):
+            bucket = by_email[key]
+            items = [(due[rid], rep) for rid in bucket["rids"] for rep in (_report(rid),) if rep is not None]
+            if not items:
+                return
             first_rest, first_rep = items[0]
             # Once per address per day, recorded only when it was actually
-            # delivered — so a pass retried after a failure (below) never
-            # mails an address that already got it.
+            # delivered — so a pass retried after a failure (below), or one
+            # that resumes a pass cut short, never mails an address that
+            # already got it.
             sent_period = _rnow(first_rest, naive=True).date().isoformat()
             if _ops.period_claimed(f"weekly_digest_to:{key}", sent_period):
-                counts["skipped"] += 1
-                continue
-            counts["attempted"] += 1
+                _count(skipped=1)
+                return
+            _count(attempted=1)
             try:
                 import rec_delivery
                 owner_name = _emails.greeting_name(first_rest)
@@ -1030,10 +1082,10 @@ def run_weekly_digests():
                 if getattr(result, "ok", False):
                     shown.flush()
                     _ops.claim_period(f"weekly_digest_to:{key}", sent_period)
-                    counts["ok"] += 1
+                    _count(ok=1)
                     log.info(f"Digest sent to {bucket['to']} covering {len(items)} location(s)")
                 else:
-                    counts["failed"] += 1
+                    _count(failed=1)
                     log.error(f"Digest send to {bucket['to']} failed: {result.error}")
                     _ops.capture(RuntimeError(result.error or "digest send failed"),
                                  job="weekly_digest", context=f"restaurant_id={first_rest.id}")
@@ -1057,7 +1109,35 @@ def run_weekly_digests():
             except Exception as e:
                 log.error(f"Digest failed for {bucket['to']}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={first_rest.id}")
-                counts["failed"] += 1
+                _count(failed=1)
+
+        # One unit per lowest restaurant id among an address's locations —
+        # the cursor's key is a restaurant id, and an owner's addresses that
+        # lead with the same location travel together.
+        units = {}
+        for key, bucket in by_email.items():
+            units.setdefault(min(bucket["rids"]), []).append(key)
+        reached = set()
+
+        def _unit(lead):
+            for key in units[lead]:
+                with lock:
+                    reached.add(key)
+                _send(key)
+
+        _done, hit_bound = resumable_sweep(WEEKLY_DIGEST_CURSOR_KEY, list(units), _unit, DIGEST_MAX_SECONDS,
+                                           workers=DIGEST_WORKERS, job="weekly_digest")
+        if hit_bound:
+            counts["hit_bound"] = True
+            # Out of time: every restaurant one of whose addresses was not
+            # reached gives its day back, so the next hourly pass inside its
+            # window serves it — an address already mailed today is skipped
+            # there (weekly_digest_to), so nobody is mailed twice.
+            missed = {rid for key, bucket in by_email.items() if key not in reached for rid in bucket["rids"]}
+            for rid in missed:
+                _ops.release_period(f"weekly_digest:{rid}", _rnow(due[rid], naive=True).date().isoformat())
+            log.warning(f"Weekly digests stopped at the {DIGEST_MAX_SECONDS // 60}-minute bound; "
+                        f"{len(missed)} restaurant(s) given back for the next pass")
 
     except Exception as e:
         # Raised, not swallowed (#39): ops.run_job captures it and records
@@ -1824,8 +1904,22 @@ def _latest_slot(now, slots):
 OPTIN_INVITE_LATEST_HOUR = 20
 
 
-# Backups keep this many days of local snapshots on the Railway volume.
-BACKUP_RETAIN_DAYS = int(os.getenv("BACKUP_RETAIN_DAYS", "7"))
+# Backups keep this many local snapshots on the Railway volume — the newest
+# N, counted, not aged (AI cost audit 10/7/26 #8). Seven days of whole,
+# uncompressed copies were 271 MB beside a 57 MB database on a 5 GB volume
+# that grows with every RPOWER restaurant; the off-site copies (35 days,
+# BACKUP_OFFSITE_MAX_DAYS) are the history, the local ones are for a fast
+# restore of last night, and three gzipped snapshots are about a single
+# uncompressed one. A count also cannot prune to nothing after a gap in
+# runs, where an age could.
+BACKUP_RETAIN_COUNT = max(1, int(os.getenv("BACKUP_RETAIN_COUNT", "3")))
+# Every local snapshot, either form: gzipped since 10/7/26, plain before it
+# (still read by the restore drill and RESTORE_FROM, and pruned by count).
+_SNAPSHOT_GLOBS = ("cavnar_ai_backup_*.db.gz", "cavnar_ai_backup_*.db")
+# The uncompressed copy the off-site artifact is scrubbed from — named
+# outside the snapshot globs, so one left by a crash mid-scrub can never be
+# taken for a snapshot (it may already be redacted).
+_OFFSITE_WORK_PREFIX = "offsite_work_"
 
 # What must never leave the server in a backup artifact is ONE registry now,
 # offsite_backup.SCRUB_TABLES / SCRUB_COLUMNS / KEEP_COLUMNS, built from
@@ -1833,11 +1927,21 @@ BACKUP_RETAIN_DAYS = int(os.getenv("BACKUP_RETAIN_DAYS", "7"))
 # hand-named columns that stood here let the POS, reservation and webhook
 # credentials and every staff-portal link ride in the "stripped" copy.
 
-# A backup needs this many times the database's size free before it starts:
-# the snapshot, the scrubbed copy and its encryption (~1.33x) exist at once
-# (#28). A 2am run that filled the volume would take its own snapshot down
-# and every write with it.
-BACKUP_FREE_SPACE_FACTOR = float(os.getenv("BACKUP_FREE_SPACE_FACTOR", "3.5"))
+# A backup needs this many times the database's size free before it starts
+# (#28): a 2am run that filled the volume would take its own snapshot down
+# and every write with it. Since 10/7/26 (#8) the snapshot is a VACUUM INTO
+# copy (at most the database, without its free pages) gzipped beside it (a
+# SQLite file compresses to a quarter or a third; half is the margin) — 1.5x.
+# It was 3.5x when the snapshot, the scrubbed copy and its encryption all
+# had to fit before anything was written. The off-site copy is checked on
+# its own, against the real snapshot size, just before it is made
+# (BACKUP_OFFSITE_SPACE_FACTOR): short of room it fails and pages, and the
+# local snapshot — the restore artifact — is already safely written.
+BACKUP_FREE_SPACE_FACTOR = float(os.getenv("BACKUP_FREE_SPACE_FACTOR", "1.5"))
+# The encrypted off-site copy is base64'd Fernet: ~4/3 of the scrubbed copy
+# it is made from, plus a token's overhead per 3 MB chunk.
+BACKUP_OFFSITE_SPACE_FACTOR = 1.4
+BACKUP_GZIP_LEVEL = 6
 
 
 # The emailed copy is skipped, and the skip reported, above this many bytes
@@ -1896,8 +2000,13 @@ def _write_consistent_snapshot(dest_path):
     and this process serves four request threads alongside the scheduler, so a
     plain file copy can miss recent commits or capture a torn page. Neither
     shows up until a restore is attempted, which is the worst possible moment
-    to discover your only backup doesn't open. sqlite3's own backup API takes
-    a proper online snapshot with the source locked page-by-page instead.
+    to discover your only backup doesn't open.
+
+    `VACUUM INTO` (AI cost audit 10/7/26 #8; it was the backup API) takes
+    the same online snapshot — one read transaction, so every commit up to
+    its start and none after — and writes it compacted: no free pages, so
+    the copy is the data's size, not the file's. The backup API copied every
+    page, free ones included, of a database that never VACUUMs.
     """
     import sqlite3
     from models import DB_PATH
@@ -1907,20 +2016,25 @@ def _write_consistent_snapshot(dest_path):
     # restore and the restore drill pick — was the corrupt one (DATA-34).
     partial = dest_path + ".partial"
     try:
+        for leftover in (partial, partial + "-journal"):
+            try:
+                os.unlink(leftover)          # VACUUM INTO refuses an existing file
+            except FileNotFoundError:
+                pass
         src = sqlite3.connect(DB_PATH, timeout=30)
         try:
-            dst = sqlite3.connect(partial)
-            try:
-                src.backup(dst)
-                # Integrity-check the artifact itself, so a corrupt backup is
-                # caught here rather than during an emergency restore.
-                result = dst.execute("PRAGMA integrity_check").fetchone()
-                if not result or result[0] != "ok":
-                    raise RuntimeError(f"backup integrity_check failed: {result}")
-            finally:
-                dst.close()
+            src.execute("VACUUM INTO ?", (partial,))
         finally:
             src.close()
+        dst = sqlite3.connect(partial)
+        try:
+            # Integrity-check the artifact itself, so a corrupt backup is
+            # caught here rather than during an emergency restore.
+            result = dst.execute("PRAGMA integrity_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError(f"backup integrity_check failed: {result}")
+        finally:
+            dst.close()
         os.replace(partial, dest_path)
     finally:
         for leftover in (partial, partial + "-journal", partial + "-wal", partial + "-shm"):
@@ -1928,6 +2042,58 @@ def _write_consistent_snapshot(dest_path):
                 os.unlink(leftover)
             except FileNotFoundError:
                 pass
+
+
+def _gzip_snapshot(src_path, dest_path):
+    """Gzip a checked snapshot to `dest_path`, streamed in _BACKUP_CHUNK
+    pieces (never the whole file in memory), then read back through to the
+    end so a short write or a bad CRC fails here, not at a restore; renamed
+    into place only after (#8)."""
+    import gzip
+    import shutil as _sh
+    partial = dest_path + ".partial"
+    try:
+        with open(src_path, "rb") as src, gzip.open(partial, "wb", compresslevel=BACKUP_GZIP_LEVEL) as gz:
+            _sh.copyfileobj(src, gz, _BACKUP_CHUNK)
+        with gzip.open(partial, "rb") as check:
+            while check.read(_BACKUP_CHUNK):
+                pass
+        os.replace(partial, dest_path)
+    finally:
+        try:
+            os.unlink(partial)
+        except FileNotFoundError:
+            pass
+
+
+def gunzip_snapshot(src_path, dest_path):
+    """A gzipped snapshot back to a SQLite file at `dest_path`, streamed —
+    the restore drill's and RESTORE_FROM's (db_restore) one way in."""
+    import gzip
+    import shutil as _sh
+    with gzip.open(src_path, "rb") as gz, open(dest_path, "wb") as out:
+        _sh.copyfileobj(gz, out, _BACKUP_CHUNK)
+
+
+def local_snapshots(backup_dir):
+    """Every local snapshot in `backup_dir`, oldest first by the date in its
+    name (a gzipped one after a plain one of the same date)."""
+    import glob
+    paths = set()
+    for pattern in _SNAPSHOT_GLOBS:
+        paths.update(glob.glob(os.path.join(backup_dir, pattern)))
+
+    def _key(p):
+        name = os.path.basename(p)
+        return name[len("cavnar_ai_backup_"):len("cavnar_ai_backup_") + 10], name.endswith(".gz"), name
+    return sorted(paths, key=_key)
+
+
+def _remove_quietly(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _redact_snapshot(path):
@@ -1938,12 +2104,11 @@ def _redact_snapshot(path):
 
 
 def _prune_old_backups(backup_dir):
-    import glob
-    cutoff = time.time() - (BACKUP_RETAIN_DAYS * 86400)
-    for old in glob.glob(os.path.join(backup_dir, "cavnar_ai_backup_*.db")):
+    """Keep the newest BACKUP_RETAIN_COUNT snapshots, gzipped and plain
+    together (#8) — the plain ones from before the change go first."""
+    for old in local_snapshots(backup_dir)[:-BACKUP_RETAIN_COUNT]:
         try:
-            if os.path.getmtime(old) < cutoff:
-                os.unlink(old)
+            os.unlink(old)
         except OSError:
             pass
 
@@ -1953,10 +2118,12 @@ class BackupFailed(RuntimeError):
     snapshot AND at least one off-site copy (decision 7)."""
 
 
-def _dir_bytes(path, pattern="cavnar_ai_backup_*.db"):
+def _dir_bytes(path, pattern=None):
+    """Bytes the local snapshots take (both forms), or one glob's."""
     import glob
     total = 0
-    for p in glob.glob(os.path.join(path, pattern)):
+    paths = glob.glob(os.path.join(path, pattern)) if pattern else local_snapshots(path)
+    for p in paths:
         try:
             total += os.path.getsize(p)
         except OSError:
@@ -2099,8 +2266,10 @@ def backup_db():
     1. Free space first (#28): at least BACKUP_FREE_SPACE_FACTOR times the
        database (and its WAL) must be free, or the run fails before it
        writes anything.
-    2. The snapshot is taken with sqlite3's online backup API and
-       integrity-checked, not shutil.copy2 — see _write_consistent_snapshot.
+    2. The snapshot is a VACUUM INTO copy, integrity-checked (see
+       _write_consistent_snapshot), then gzipped and read back
+       (_gzip_snapshot) — cavnar_ai_backup_<date>.db.gz; the newest
+       BACKUP_RETAIN_COUNT are kept (AI cost audit 10/7/26 #8).
        The LOCAL snapshot is NOT redacted: it is the restore artifact.
     3. Off-site (#1, decision 7): a scrubbed COPY (offsite_backup.redact —
        every credential out), encrypted with BACKUP_ENCRYPTION_KEY, goes to
@@ -2125,6 +2294,10 @@ def backup_db():
     timestamp = _chi_now().strftime("%Y-%m-%d")
     filename = f"cavnar_ai_backup_{timestamp}.db"
     backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+    # The uncompressed, checked copy the gzip is made from — kept just long
+    # enough to be scrubbed for the off-site copy (no second copy, no
+    # decompress), then deleted.
+    work_path = os.path.join(backup_dir, f"{_OFFSITE_WORK_PREFIX}{timestamp}.db")
     run = {"started_at": _now_utc_stamp(), "_detail": {}}
     try:
         run["db_bytes"] = os.path.getsize(DB_PATH)
@@ -2138,6 +2311,14 @@ def backup_db():
     try:
         os.makedirs(backup_dir, exist_ok=True)
         import shutil as _sh
+        # A work copy a crashed run left behind is not a snapshot and holds
+        # space this run needs.
+        import glob as _glob
+        for _stale in _glob.glob(os.path.join(backup_dir, _OFFSITE_WORK_PREFIX + "*")):
+            try:
+                os.unlink(_stale)
+            except OSError:
+                pass
         free = _sh.disk_usage(backup_dir).free
         run["free_bytes"] = free
         need = int(BACKUP_FREE_SPACE_FACTOR * ((run["db_bytes"] or 0) + (run["wal_bytes"] or 0)))
@@ -2150,8 +2331,10 @@ def backup_db():
         log.warning(f"backup_db: free-space check unavailable: {e}")
 
     try:
-        local_path = os.path.join(backup_dir, filename)
-        _write_consistent_snapshot(local_path)
+        local_path = os.path.join(backup_dir, filename + ".gz")
+        _write_consistent_snapshot(work_path)
+        _gzip_snapshot(work_path, local_path)
+        run["_detail"]["snapshot_bytes"] = os.path.getsize(work_path)
         # The LOCAL snapshot is NOT redacted, deliberately.
         #
         # It was, and that quietly made it useless as the thing it exists to
@@ -2177,29 +2360,45 @@ def backup_db():
         except Exception:
             pass
         run.update(local_ok=0, integrity_ok=0 if "integrity" in str(e) else None)
+        _remove_quietly(work_path)
         _backup_failed(run, f"the snapshot failed: {e}")
 
     cfg = {"s3": offsite_backup.s3_config() is not None, "email": bool(_resend_key())}
     key = os.getenv("BACKUP_ENCRYPTION_KEY", "").strip()
     if not key:
+        _remove_quietly(work_path)
         _backup_failed(run, "BACKUP_ENCRYPTION_KEY is not set, so no copy left the server: every snapshot is on "
                             "the one volume that could be lost. Generate a key with `python3 -c \"from "
                             "cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`, set it "
                             "in Railway AND keep a copy off Railway, and set BACKUP_S3_* for object storage.")
     if not cfg.get("s3") and not cfg.get("email"):
+        _remove_quietly(work_path)
         _backup_failed(run, "no off-site copy is configured: set BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, "
                             "BACKUP_S3_ACCESS_KEY_ID and BACKUP_S3_SECRET_ACCESS_KEY (or RESEND_API_KEY for the "
                             "emailed copy)")
 
-    redacted_path = local_path + ".redacted"
-    enc_path = local_path + ".enc"
+    # Redact a COPY: the work copy the gzip was made from, already the
+    # snapshot's exact contents. The off-site copies are the artifacts that
+    # leave the server; the local snapshot stays whole so a restore is a
+    # restore. The off-site artifact's format is unchanged (Fernet lines over
+    # the scrubbed SQLite file, docs/ops/RECOVERY.md).
+    redacted_path = work_path
+    enc_path = os.path.join(backup_dir, f"{_OFFSITE_WORK_PREFIX}{timestamp}.db.enc")
     enc_name = filename + ".enc"
     targets, errors = [], []
     try:
-        import shutil as _shutil
-        # Redact a COPY. The off-site copies are the artifacts that leave the
-        # server; the local snapshot stays whole so a restore is a restore.
-        _shutil.copy2(local_path, redacted_path)
+        # Room for the encrypted copy, checked against the real snapshot
+        # (#8): short of it, the off-site copy fails (and the run pages)
+        # instead of filling the volume the live database writes to.
+        try:
+            import shutil as _shf
+            _need = int(BACKUP_OFFSITE_SPACE_FACTOR * os.path.getsize(redacted_path))
+            _free = _shf.disk_usage(backup_dir).free
+        except OSError:
+            _need, _free = 0, 1
+        if _free < _need:
+            raise RuntimeError(f"not enough free space for the encrypted copy: {_free // (1024 * 1024)} MB free, "
+                               f"{_need // (1024 * 1024)} MB needed")
         scrubbed = _redact_snapshot(redacted_path) or {}
         run["_detail"]["scrubbed_unclassified"] = scrubbed.get("unclassified") or []
         run["_detail"]["scrubbed_tables"] = scrubbed.get("tables") or []
@@ -2242,7 +2441,7 @@ def backup_db():
         # The redacted copy exists only to be encrypted and sent. Leaving it
         # on the volume would double the backup directory's size and put a
         # second, restore-useless file next to every real snapshot.
-        for _tmp in (redacted_path, enc_path):
+        for _tmp in (redacted_path, redacted_path + "-journal", enc_path):
             try:
                 if os.path.exists(_tmp):
                     os.unlink(_tmp)
@@ -3827,10 +4026,11 @@ def run_restore_drill():
     way a real restore is (init_db), and deleted. Emails Will the result
     either way; a failure also lands in ops like any job.
     """
-    import sqlite3, glob, shutil
+    import sqlite3, shutil
     from models import DB_PATH, init_db
     backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
-    snaps = sorted(glob.glob(os.path.join(backup_dir, "cavnar_ai_backup_*.db")))
+    # Gzipped since 10/7/26 (#8); a plain one from before still counts.
+    snaps = local_snapshots(backup_dir)
     if not snaps:
         raise RuntimeError(f"restore drill: no snapshot in {backup_dir}")
     newest = snaps[-1]
@@ -3852,9 +4052,14 @@ def run_restore_drill():
             conn.close()
 
     _clean()
-    import models as _models_ck
-    _models_ck.checkpoint(newest)       # pooled connections: the file alone holds every commit
-    shutil.copyfile(newest, scratch)
+    if newest.endswith(".gz"):
+        # Decompressed into the scratch file — the step a real restore
+        # (RESTORE_FROM, db_restore) takes too.
+        gunzip_snapshot(newest, scratch)
+    else:
+        import models as _models_ck
+        _models_ck.checkpoint(newest)       # pooled connections: the file alone holds every commit
+        shutil.copyfile(newest, scratch)
     # Fresh (#2): the drill picked the newest snapshot with no age check, so
     # a backup that had silently stopped weeks ago still "passed".
     age_hours = round((time.time() - os.path.getmtime(newest)) / 3600.0, 1)
@@ -4382,7 +4587,14 @@ class _Lane:
             t.join(timeout)
 
 
-_LANES = {"intel": _Lane("intel")}
+# "ai" (AI cost audit 10/7/26 #6): the long model jobs — the hourly
+# auto-draft (one Opus schedule a restaurant, bound 50 minutes), Monday's
+# weekly plan (60), Tuesday's recipe drafts (45) and the hourly weekly
+# digests (30) — ran inline on the loop thread, ahead of the DSR delivery,
+# the morning briefs and the reminders, so a slow model morning held all of
+# them. Its own lane, not the Intel one: a three-hour Intel sweep must not
+# hold a draft an owner is waiting for, nor a draft a Monday sweep.
+_LANES = {"intel": _Lane("intel"), "ai": _Lane("ai")}
 
 
 class _LeaseKeeper:
@@ -4793,19 +5005,27 @@ def scheduler_loop():
             # is time-bounded and starts at the cursor, and a restaurant is
             # attempted once a day, so a pass that ran out of time is
             # finished later the same day, not next week (SCHED-11).
+            #
+            # This and the two below run on the AI lane (#6): model work
+            # bounded at up to an hour must not hold the DSR, the briefs and
+            # the reminders behind it. A busy lane gives the hour's claim
+            # back, so a later tick in the hour starts it.
             if _ops.claim_period("auto_draft_schedule", f"{today}-{now.hour}"):
                 from strategy_jobs import run_auto_draft_schedules
-                _ops.run_job("auto_draft_schedule", run_auto_draft_schedules, now=now)
+                if not _ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now):
+                    _ops.release_period("auto_draft_schedule", f"{today}-{now.hour}")
 
             # Monday 7am local — the agent files the week's three actions.
             if now.weekday() == 0 and _ops.claim_period("weekly_plan", f"{today}-{now.hour}"):
                 from strategy_jobs import run_weekly_plan
-                _ops.run_job("weekly_plan", run_weekly_plan)
+                if not _ops.run_in_lane("ai", "weekly_plan", run_weekly_plan):
+                    _ops.release_period("weekly_plan", f"{today}-{now.hour}")
 
             # Tuesday 5am local — recipe drafts for dishes with none.
             if now.weekday() == 1 and _ops.claim_period("recipe_drafts", f"{today}-{now.hour}"):
                 from strategy_jobs import run_recipe_drafts
-                _ops.run_job("recipe_drafts", run_recipe_drafts)
+                if not _ops.run_in_lane("ai", "recipe_drafts", run_recipe_drafts):
+                    _ops.release_period("recipe_drafts", f"{today}-{now.hour}")
 
             # Hourly: 8am local on each restaurant's order day (Monday unless
             # the owner picked another) — queue trusted supplier orders with
@@ -4872,10 +5092,14 @@ def scheduler_loop():
 
             # Attempted hourly: each restaurant is gated on ITS 9am inside
             # (local_due), so one Chicago-timed daily claim would serve only
-            # the restaurants whose local hour happened to match.
+            # the restaurants whose local hour happened to match. On the AI
+            # lane (#6): each digest is built (a model read) and sent, and the
+            # pass sat on the loop thread with no bound; a busy lane gives
+            # the hour back.
             if _ops.claim_period("weekly_digest", f"{today}-{now.hour}"):
                 log.info("Running weekly digest check...")
-                _ops.run_job("weekly_digests", run_weekly_digests, claim="weekly_digest")
+                if not _ops.run_in_lane("ai", "weekly_digests", run_weekly_digests, claim="weekly_digest"):
+                    _ops.release_period("weekly_digest", f"{today}-{now.hour}")
 
             if _due(now, 10) and now.weekday() == 0 and _ops.claim_period("stale_inventory", str(today)):
                 # Monday 10am — check for stale inventory data

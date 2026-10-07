@@ -65,7 +65,10 @@ def loop(db_path, monkeypatch):
         del calls[:]
         with pytest.raises(_Stop):
             scheduler.scheduler_loop()
-        scheduler._LANES["intel"].join(5)
+        # Every lane (the Intel one, and since AI cost audit 10/7/26 #6 the
+        # AI one): a job started there finishes before the tick is read.
+        for _lane in scheduler._LANES.values():
+            _lane.join(5)
         return list(calls), asked
     return tick
 

@@ -46,7 +46,9 @@ retry         a failed run gives its period back for up to
               job must not be sent twice)
 lane          run on this bounded worker lane beside the loop, not on the
               loop thread (scheduler._LANES) — the weekly Intel sweeps
-              run for hours and blocked briefs, DSR and intraday (#98)
+              run for hours and blocked briefs, DSR and intraday (#98);
+              "ai" holds the long model jobs (auto-draft, weekly plan,
+              recipe drafts, weekly digests — AI cost audit 10/7/26 #6)
 
 Owner-facing SLAs are about 3 h for hourly jobs, 26 h for daily, 8 days for
 weekly (#31).
@@ -315,15 +317,15 @@ JOBS = {
     "auto_draft_schedule": dict(
         cadence="hourly (6am local on each restaurant's draft day)", sla_minutes=_H, sends=True, runnable=True,
         label="Auto-draft", description="Draft next week's schedule for owners who opted in (a draft; nothing reaches staff)",
-        target=("strategy_jobs", "run_auto_draft_schedules"), run_kwargs=_chi_now_kw, max_minutes=50),
+        target=("strategy_jobs", "run_auto_draft_schedules"), run_kwargs=_chi_now_kw, max_minutes=50, lane="ai"),
     "weekly_plan": dict(
         cadence="Mon 7am local (hourly on Mondays)", sla_minutes=_W, sends=False, runnable=True,
         label="Weekly plan", description="The agent files the week's three actions as issues (nobody is texted)",
-        target=("strategy_jobs", "run_weekly_plan"), max_minutes=60),
+        target=("strategy_jobs", "run_weekly_plan"), max_minutes=60, lane="ai"),
     "recipe_drafts": dict(
         cadence="Tue 5am local (hourly on Tuesdays)", sla_minutes=_W, sends=False, runnable=True,
         label="Recipe drafts", description="Draft recipes for POS dishes that have none",
-        target=("strategy_jobs", "run_recipe_drafts"), max_minutes=45),
+        target=("strategy_jobs", "run_recipe_drafts"), max_minutes=45, lane="ai"),
     "trusted_orders": dict(
         cadence="hourly (8am local on each restaurant's order day)", sla_minutes=_H, sends=True, runnable=True,
         label="Trusted orders", description="Queue supplier orders that have earned it, with an hour to undo",
@@ -334,8 +336,8 @@ JOBS = {
         target=("scheduler", "run_auto_publish_schedules"), max_minutes=20),
     "weekly_digests": dict(
         cadence="hourly (9am local on each client's digest day)", sla_minutes=_H, sends=True, runnable=True,
-        label="Weekly digests", description="Email weekly digests",
-        target=("scheduler", "run_weekly_digests"), claim="weekly_digest", max_minutes=30),
+        label="Weekly digests", description="Email weekly digests (bounded, resumable, on the AI lane)",
+        target=("scheduler", "run_weekly_digests"), claim="weekly_digest", max_minutes=30, lane="ai"),
     "daily_alerts": dict(
         cadence="hourly (10am local)", sla_minutes=_H, sends=True, runnable=True,
         label="Daily alerts", description="No-response, trend, threshold, labor, competitor and data-source alerts, batched",

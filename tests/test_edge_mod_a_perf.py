@@ -285,4 +285,5 @@ def test_the_local_backup_snapshot_is_written_without_an_encryption_key(monkeypa
     with pytest.raises(scheduler.BackupFailed):
         scheduler.backup_db()
     files = os.listdir(tmp_path / "backups")
-    assert any(f.startswith("cavnar_ai_backup_") and f.endswith(".db") for f in files), files
+    # Gzipped since AI cost audit 10/7/26 #8.
+    assert any(f.startswith("cavnar_ai_backup_") and f.endswith(".db.gz") for f in files), files
