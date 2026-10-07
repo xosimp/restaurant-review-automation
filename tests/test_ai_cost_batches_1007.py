@@ -577,3 +577,25 @@ def test_the_invoice_eval_calls_nothing_without_live(tmp_path, monkeypatch, db):
     monkeypatch.setattr(ai_utils, "create_with_retry", lambda *a, **k: pytest.fail("no call without --live"))
     plan = ev.main(["--files", str(tmp_path), "--json"])
     assert plan["files"] == 1 and set(plan["estimate_usd"]) == {"default", "T4:low", "T4:medium", "T3:medium"}
+
+
+def test_a_batched_competitor_read_is_not_this_weeks_until_it_lands(db_path, monkeypatch):
+    # The weekly pass recorded success when the item was SENT, so a batched
+    # read that later failed counted as this week's and the retry never ran;
+    # and a restaurant with a read still out must not be read again.
+    import scheduler, competitor, models, data_health as dh
+    import ai_batches
+    rid = models.create_restaurant(models.Restaurant(name="Batch Co", owner_email="b@x.test",
+                                                     google_place_id="p-b", service_tier="full"), db_path=db_path)
+    monkeypatch.setattr(models, "is_full_tier", lambda r: True)
+    monkeypatch.setattr(competitor, "run_competitor_analysis",
+                        lambda rid: {"ok": True, "batched": True, "competitors_analyzed": 5})
+    recorded = []
+    monkeypatch.setattr(scheduler, "_record", lambda *a, **k: recorded.append((a, k)))
+    out = scheduler.run_weekly_competitor_analysis()
+    assert out.get("batched") == 1 and out["ok"] == 1 and not recorded
+    seen = []
+    monkeypatch.setattr(ai_batches, "open_items", lambda wf, rid=None: ["ci-1"])
+    monkeypatch.setattr(competitor, "run_competitor_analysis", lambda rid: seen.append(rid) or {"ok": True})
+    scheduler.run_weekly_competitor_analysis(retry_only=True)
+    assert seen == []

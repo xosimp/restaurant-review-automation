@@ -3274,6 +3274,14 @@ def run_weekly_competitor_analysis(retry_only=False):
             if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
                 _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
                              job="competitor_analysis", context=f"restaurant_id={r.id}")
+        elif res.get("batched"):
+            # The read went out as a batch item (AI cost audit 10/7/26 #59):
+            # not done yet — its callback (competitor.on_insight_batch)
+            # records the real outcome when it lands or is written after the
+            # cutoff. Recording success here let a failed batched read count
+            # as this week's, so the retry never ran.
+            with lock:
+                counts["batched"] = counts.get("batched", 0) + 1
         else:
             with lock:
                 counts["analysed"] += 1
@@ -3283,6 +3291,13 @@ def run_weekly_competitor_analysis(retry_only=False):
     # who has cancelled.
     eligible = [r for r in get_all_restaurants()
                 if r.google_place_id and r.id and is_full_tier(r) and in_service(r)]
+    # A restaurant whose batched read is still out is not read again: the
+    # retry pass would pay for the Places fan-out and a second model call.
+    try:
+        import ai_batches as _aib
+        eligible = [r for r in eligible if not _aib.open_items("competitor_insight", r.id)]
+    except Exception:
+        pass
     # Every pass, not only the retry: a restaurant already analysed this
     # week is not analysed again — a pass re-run after a deploy used to buy
     # the same Places and Claude calls twice (#137).
@@ -3290,7 +3305,10 @@ def run_weekly_competitor_analysis(retry_only=False):
     eligible = [r for r in eligible if not _ok_this_week(r.id, "competitor", week_start)]
     _n, hit_bound = _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse,
                                   workers=COMPETITOR_WORKERS)
-    counts.update(attempted=counts["analysed"] + counts["failed"], ok=counts["analysed"],
+    # A read sent as a batch item is a pass that did its part (the item is
+    # out); its outcome lands with the callback.
+    _batched = counts.get("batched", 0)
+    counts.update(attempted=counts["analysed"] + counts["failed"] + _batched, ok=counts["analysed"] + _batched,
                   skipped=before - len(eligible), hit_bound=bool(hit_bound))
     return counts
 
