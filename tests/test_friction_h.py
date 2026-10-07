@@ -490,8 +490,9 @@ def test_marketing_sends_a_weekly_email_as_a_newsletter_and_schedules_inline():
     assert 'data-nav="marketing/guests"' in SRC
     modal = re.search(r'<div id="mkt-schedule-modal"[^>]*>', SRC).group(0)
     assert "position:fixed" not in modal
-    # The week plan shows the orb while the server builds it, not text.
-    assert "cavnarLoading('Planning your week…'" in _fn("loadCalCached")
+    # The week plan shows the orb while the server builds it, not text -
+    # the big Marketing orb since 10/6/26 (mktLoading wraps cavnarLoading).
+    assert "mktLoading('Planning your week…'" in _fn("loadCalCached")
     assert "box.textContent='Generating…'" not in _fn("genContent")
 
 

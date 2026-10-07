@@ -386,10 +386,19 @@ def _ejs_history_rows(start, n_days):
     return out
 
 
+def _seed_today():
+    """The day the seeded history runs up to: today. Tests pin it - the
+    history is generated from the weekday its window opens on, so a fixed
+    test week read a different Saturday crew on every day of the week
+    (10/7/26)."""
+    from datetime import date
+    return date.today()
+
+
 def _seed_ejs_shifts(rid: int, db_path: str):
     """Two weeks of shifts, generated rather than hand-written so the roster,
     the day-of-week volume and the role mix stay consistent with each other."""
-    from datetime import date, timedelta
+    from datetime import timedelta
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT shifts_source FROM client_data WHERE restaurant_id=?",
@@ -406,7 +415,7 @@ def _seed_ejs_shifts(rid: int, db_path: str):
     # date" the way a fixed 8/31-9/13 window did (9/25/26).
     lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,"
              "actual_hours,sales,notes"]
-    for r in _ejs_history_rows(date.today() - timedelta(days=14), 14):
+    for r in _ejs_history_rows(_seed_today() - timedelta(days=14), 14):
         lines.append(",".join(str(x) for x in r) + ",")
     save_client_data(rid, "shifts", "\n".join(lines), source="seed", db_path=db_path)
     # The seed IS the demo's whole record: its per-shift history follows it

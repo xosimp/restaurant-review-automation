@@ -905,7 +905,24 @@ def _fit(points):
     return my - slope * mx, slope
 
 
-def call_costs(restaurant_id=None, model=None, days=60, db_path=None) -> dict:
+# A call's thinking is most of its cost, and the effort sets how much of it
+# there is: one call at "high" (62,353 tokens for 215 rows, Simple EJ's
+# 10/6/26) read as the cost of a row at "medium" planned the next week as
+# two calls, each paying the whole input and its own thinking (AI cost
+# audit 10/7/26). So the measured cost is read at the effort in force:
+# `effort` None reads every call, "" the calls that ran without one (a
+# model that does not think), anything else that effort only.
+def _effort_where(where, args, effort):
+    if effort is None:
+        return
+    if effort == "":
+        where.append("(effort IS NULL OR effort='')")
+    else:
+        where.append("effort=?")
+        args.append(effort)
+
+
+def call_costs(restaurant_id=None, model=None, days=60, db_path=None, effort=None) -> dict:
     """What a schedule call really costs, from the stored calls of the last
     `days` that finished (end_turn) on the structured contract (schedule
     re-audit 10/4/26 PROMPT-3, PROMPT-4).
@@ -935,6 +952,7 @@ def call_costs(restaurant_id=None, model=None, days=60, db_path=None) -> dict:
     if model:
         where.append("model=?")
         args.append(model)
+    _effort_where(where, args, effort)
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT usage_json, rows, seconds, call_kind FROM schedule_model_calls WHERE "
@@ -986,7 +1004,7 @@ def call_costs(restaurant_id=None, model=None, days=60, db_path=None) -> dict:
     return out
 
 
-def measured_tokens_per_row(restaurant_id=None, model=None, days=60, db_path=None) -> dict:
+def measured_tokens_per_row(restaurant_id=None, model=None, days=60, db_path=None, effort=None) -> dict:
     """What a row has really cost, from the stored calls of the last `days`
     that finished (end_turn) on the structured contract: {"output_tokens_per_row"
     — every output token, thinking included, per row written (what a call's
@@ -1001,6 +1019,7 @@ def measured_tokens_per_row(restaurant_id=None, model=None, days=60, db_path=Non
     if model:
         where.append("model=?")
         args.append(model)
+    _effort_where(where, args, effort)
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT usage_json, rows, answer_chars FROM schedule_model_calls WHERE "

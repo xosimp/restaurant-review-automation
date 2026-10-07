@@ -170,6 +170,8 @@ import schedule_engine as se  # noqa: E402
 def ejs(db, monkeypatch):
     import datetime as dt
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 5))
+    # The punches are the two weeks before WEEK, whatever day the suite runs.
+    monkeypatch.setattr(demo_seed, "_seed_today", lambda: dt.date(2026, 10, 5))
     return demo_seed._seed_simple_ejs(db)
 
 
@@ -254,7 +256,9 @@ WEEK_ROWS = 224        # Simple EJ's week
 
 
 def _record(db, rid, rows, kind, seconds=None, think=THINK):
+    # At the effort in force, as labor's call records it (call_cost_model reads that effort only).
     so.record_call(rid, {"model": ai_utils.model_for("schedule")}, rows=rows, model=ai_utils.model_for("schedule"),
+                   effort=se.schedule_effort_in_force() or None,
                    contract="schema", stop_reason="end_turn", usage={"output_tokens": think + 30 * rows},
                    answer_chars=84 * rows, seconds=seconds, call_kind=kind, db_path=db)
 
@@ -559,3 +563,36 @@ def test_the_rules_screen_says_how_each_line_is_checked(ejs, db):
     assert "dinner/night" in reads["Bartenders: minimum 1 whenever the bar is open"]
     assert "lunch/day" not in reads["Bartenders: minimum 1 whenever the bar is open"]
     assert "Line cooks: others stagger from 3:00pm" in payload["hours_rules_unchecked"]
+
+
+def test_a_call_at_another_effort_does_not_size_the_next_week(db, monkeypatch):
+    # Simple EJ's 10/6/26: one week at effort "high" - 62,353 output tokens
+    # for 215 rows, nearly all thinking - and the effort moved to "medium".
+    # Read as the cost of a row at any effort, it planned 187 rows a call and
+    # split the next ~215-row week in two, each paying the whole input and its
+    # own thinking (AI cost audit 10/7/26). The measured cost is read at the
+    # effort in force.
+    import labor
+    rid = _restaurant(db)
+    model = ai_utils.model_for("schedule")
+    monkeypatch.setattr(labor, "SCHEDULE_EFFORT", "medium")
+    so.record_call(rid, {"model": model}, rows=215, model=model, effort="high", contract="schema",
+                   stop_reason="end_turn", usage={"output_tokens": 62353}, answer_chars=84 * 215,
+                   seconds=495.6, call_kind="week", db_path=db)
+    # Every effort, as before: the high call sizes a call below the week.
+    assert so.call_costs(rid, model=model, db_path=db)["source"] == "comparable"
+    assert se.schedule_effort_in_force() == ("medium" if labor.schedule_model_thinks(model) else "")
+    costs = se.call_cost_model(rid)
+    assert costs["source"] == "estimate" and costs["calls"] == 0
+    assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL >= 215
+    assert se._plan_tasks(215, WEEK, [(f"P{i}", "Server") for i in range(40)], (), se.rows_per_call(rid)) \
+        and len(se._plan_tasks(215, WEEK, [(f"P{i}", "Server") for i in range(40)], (),
+                               se.rows_per_call(rid))) == 1
+    # A call at the effort in force counts.
+    so.record_call(rid, {"model": model}, rows=215, model=model, effort=se.schedule_effort_in_force() or None,
+                   contract="schema", stop_reason="end_turn", usage={"output_tokens": 30000},
+                   answer_chars=84 * 215, seconds=240, call_kind="week", db_path=db)
+    costs = se.call_cost_model(rid)
+    assert costs["calls"] == 1 and costs["source"] == "comparable"
+    assert so.measured_tokens_per_row(rid, model=model, db_path=db, effort="high")["output_tokens_per_row"] \
+        == pytest.approx(62353 / 215, abs=0.1)

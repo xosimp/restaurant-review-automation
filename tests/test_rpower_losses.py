@@ -94,6 +94,8 @@ def test_the_week_names_its_reasons_and_the_manager(db_path, monkeypatch):
     lines = [_line(f"2026-09-{d}", "C", 20.0, reason="R1", mgr="M1") for d in range(22, 29)]
     lines += [_line("2026-09-27", "C", 5.0, reason="R4", mgr="M2")]
     _stub(monkeypatch, lines)
+    # sync reads back from yesterday: pinned, or 9/22 fell out of its 14 days on 10/7/26.
+    monkeypatch.setattr(loss_detection, "date", type("D", (date,), {"today": staticmethod(lambda: date(2026, 9, 29))}))
     out = loss_detection.sync(rid, days=14)
     assert out["ok"] and out["provider"] == "rpower"
     conn = models.get_conn(db_path)

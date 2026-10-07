@@ -54,7 +54,7 @@ import demand_signals as _signals
 # split, not the week: a cut answer keeps its finished days and the rest is
 # written again smaller.
 SCHEDULE_TOKEN_CEILING = 64000          # labor.SCHEDULE_MAX_TOKENS_THINKING (a test holds them equal)
-THINKING_TOKENS_RESERVED = 40000        # adaptive thinking at effort "high", left room before rows
+THINKING_TOKENS_RESERVED = 40000        # adaptive thinking at effort "high" (an upper bound at "medium"), left room before rows
 SUMMARY_TOKENS = 1500                   # the three bullets and the JSON around the rows
 OUTPUT_TOKENS_PER_ROW = _sched_out.ANSWER_TOKENS_PER_ROW_ESTIMATE   # one row of schedule_output.schedule_schema()
 ROW_TOKENS_PER_CALL = 9600              # what one call is held to writing, for its minutes
@@ -2019,17 +2019,27 @@ MIN_CALL_SECONDS = 60
 _PART_WORDS = {"KITCHEN": "Kitchen", "FRONT OF HOUSE": "Front of house", "STAFF": "Staff"}
 
 
+def schedule_effort_in_force() -> str:
+    """The effort the next schedule call runs at, as schedule_model_calls
+    records it: labor.SCHEDULE_EFFORT on a model that thinks, "" on one that
+    runs without an effort."""
+    import ai_utils as _ai
+    import labor as _labor_e
+    return _labor_e.SCHEDULE_EFFORT if _labor_e.schedule_model_thinks(_ai.model_for("schedule")) else ""
+
+
 def call_cost_model(restaurant_id=None) -> dict:
     """schedule_output.call_costs for the restaurant on the schedule model
-    in force; the estimate when there is no restaurant or the store cannot
-    be read (a store failure never fails the week)."""
+    and effort in force; the estimate when there is no restaurant or the
+    store cannot be read (a store failure never fails the week)."""
     empty = {"fixed": None, "per_row": None, "source": "estimate", "calls": 0, "seconds_fixed": None,
              "seconds_per_row": None, "seconds_source": "estimate", "tokens_per_second": None, "by_kind": {}}
     if not restaurant_id:
         return empty
     try:
         import ai_utils as _ai
-        return _sched_out.call_costs(restaurant_id=restaurant_id, model=_ai.model_for("schedule"))
+        return _sched_out.call_costs(restaurant_id=restaurant_id, model=_ai.model_for("schedule"),
+                                     effort=schedule_effort_in_force())
     except Exception as e:
         _soft_fail("measured call cost", e, restaurant_id)
         return empty

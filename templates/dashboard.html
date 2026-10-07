@@ -25923,7 +25923,7 @@ function _ssLaborPct() {
 // % - this draft's labor %) x this week's forecast sales, both on one basis.
 function _ssSavingsMath(lv, rev) {
   if (!lv || lv.savings == null || lv.recent_pct == null || lv.pct == null || !(+rev > 0)) return '';
-  var r = +lv.recent_pct, p = +lv.pct, R = +rev, pts = Math.round((r - p) * 10) / 10;
+  var r = +lv.recent_pct, p = +lv.pct, R = +rev, S = +lv.savings, pts = Math.round((r - p) * 10) / 10;
   var basis = lv.basis === 'all_in' ? 'all-in' : 'hourly pay only';
   var n = function (x) { return '<span class="hb-num">' + x + '</span>'; };
   var row = function (k, v, sub) { return '<div class="mr"><span class="mk">' + k + (sub ? '<small>' + sub + '</small>' : '') + '</span><span class="mv">' + v + '</span></div>'; };
@@ -25932,7 +25932,7 @@ function _ssSavingsMath(lv, rev) {
     + row('Forecast sales this week', n(_schedMoney(R)))
     + row('At your last ' + n(lv.recent_days || 14) + ' days\u2019 labor', n(_schedMoney(r / 100 * R)), n(r + '%') + ' of sales, ' + basis)
     + row('This draft', n(_schedMoney(p / 100 * R)), n(p + '%') + ' of sales' + (split ? ' \u00b7 ' + split : ''))
-    + '<div class="meq">' + n(r + '%') + ' \u2212 ' + n(p + '%') + ' = ' + n(pts + ' pts') + ' \u00d7 ' + n(_schedMoney(R)) + ' = <b>' + n(_schedMoney(lv.savings)) + '</b></div>'
+    + '<div class="meq">' + n(r + '%') + ' \u2212 ' + n(p + '%') + ' = ' + n(pts + ' pts') + ' \u00d7 ' + n(_schedMoney(R)) + ' = <b>' + n(_schedMoney(S)) + '</b></div>'
     + '<div class="mft">A projection: it is earned only if the week runs as drafted and sales come in at the forecast.</div></div>';
 }
 function ssRenderSummary() {
