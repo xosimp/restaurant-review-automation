@@ -23,12 +23,18 @@ struct AIVisibilityQuery: Decodable, Identifiable {
     var id: String { query }
 
     /// The sites the answer read, as bare domains ("tripadvisor.com").
-    var sourceDomains: [String] {
-        var out: [String] = []
+    var sourceDomains: [String] { sourceLinks.map(\.domain) }
+
+    /// Each site once, with the page the answer actually read: a bare
+    /// "thebranchmoms.com" sent the owner to a homepage, not the sports-bar
+    /// list it cited (10/7/26).
+    var sourceLinks: [(domain: String, url: URL)] {
+        var out: [(domain: String, url: URL)] = []
         for s in sources ?? [] {
-            guard let host = URL(string: s)?.host else { continue }
+            guard let url = URL(string: s), let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https", let host = url.host else { continue }
             let d = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-            if !out.contains(d) { out.append(d) }
+            if !out.contains(where: { $0.domain == d }) { out.append((d, url)) }
         }
         return out
     }

@@ -4125,7 +4125,13 @@ def ai_visibility_roadmap(d) -> list:
     checklist = d.get("checklist") or []
     reviews_done = any("google review" in str(c.get("label") or "").lower() and c.get("done") for c in checklist)
     response_done = any("response rate" in str(c.get("label") or "").lower() and c.get("done") for c in checklist)
-    missing = sum(1 for c in checklist if not c.get("done"))
+    # What the percentage is out of (10/7/26): the scored listing items that
+    # could be read. Setup items are not scored, and an item that needs the
+    # Google listing connected is unread, not missing — counting both read
+    # "100% complete — 6 items left" at Simple EJ's.
+    _scored = [c for c in checklist if c.get("kind") != "setup"]
+    missing = sum(1 for c in _scored if c.get("measured") is not False and not c.get("done"))
+    unread = sum(1 for c in _scored if c.get("measured") is False)
     posts = int(d.get("social_posts_30d") or 0)
     total = int(d.get("review_total") or 0)
     rate = int(round(float(d.get("resp_rate") or 0)))
@@ -4150,7 +4156,8 @@ def ai_visibility_roadmap(d) -> list:
          "why": (f"Your public listing and review record score {gbp_pct}. This covers what someone finds when they "
                  "look you up: your description, hours, phone, website, and how many recent reviews you have."),
          "detail": (f"{gbp_pct} complete — {missing} item{'' if missing == 1 else 's'} left" if missing
-                    else f"{gbp_pct} complete")},
+                    else (f"{gbp_pct} of what can be read — {unread} more need{'s' if unread == 1 else ''} "
+                          "your Google listing connected" if unread else f"{gbp_pct} complete"))},
         {"key": "aiv_roadmap:social", "title": "Post consistently on social", "impact": "Long-term",
          "action": "Go to marketing", "module": "marketing", "done": posts >= 8,
          "why": (f"You've logged {posts} marketing piece{'' if posts == 1 else 's'} this month. Posts that name "

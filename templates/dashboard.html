@@ -13993,6 +13993,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .in2-gva b{color:var(--ink);font-weight:600}
 .in2-q .q .gv{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:4px}
 .in2-q .q .gv b{color:var(--ink2);font-weight:600}
+.in2-q .q .gv a{color:var(--ink2);text-decoration:underline;text-decoration-color:var(--hb-line);text-underline-offset:2px}
+.in2-q .q .gv a:hover{color:var(--ember2);text-decoration-color:currentColor}
 .in2-q .q .h .src{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
 .in2-q .q .hist{display:flex;align-items:center;gap:10px;margin-top:8px}.in2-q .q .hist:empty{display:none}.in2-q .q .hist .n{min-width:0;text-align:left;font-size:12.5px}
 /* Rating-comparison hero and analysis card are Intel-specific; scoped so
@@ -14047,7 +14049,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .in2-road .row .t .tt{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .in2-road .row .t b{font-size:16px;font-weight:600;color:var(--ink)}
 .in2-road .row .t .im{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--rc,var(--ember))}
-.in2-road .row .t .im.done{color:var(--hb-good)}
+.in2-road .row .t .im.done{color:var(--hb-good);display:inline-flex;align-items:center;gap:8px;line-height:1}
+/* The disc and DONE share one centre line (owner, 10/7/26): the disc's own -4px baseline nudge left the word riding high */
+.in2-road .row .t .im.done .cv-ok{vertical-align:0;margin-left:2px}
 .in2-road .row .t .d{font-size:14px;color:var(--ink3);margin-top:2px}
 .in2-road .row .t .why{font-size:15px;color:var(--ink2);line-height:1.6;margin-top:8px;display:none}
 .in2-road .row .t .why.on{display:block}
@@ -29963,13 +29967,20 @@ function renderAIVisibility(d) {
       }
       if (!q.appeared && q.ok !== false) {
         if ((q.competitors_named || []).length) gv += '<div class="gv">AI named instead: ' + esc(q.competitors_named.slice(0, 4).join(', ')) + '</div>';
-        var doms = [];
+        // Each site links to the page AI actually read (10/7/26): a bare
+        // "thebranchmoms.com" sent the owner to a homepage, not the
+        // sports-bar list it cited.
+        var doms = [], links = [];
         for (var si = 0; si < (q.sources || []).length && doms.length < 4; si++) {
-          var su = q.sources[si]; su = (su && su.url) || su || '';
-          var dm = String(su).match(/\/\/([^\/]+)/); dm = dm ? dm[1].replace(/^www\./, '') : '';
-          if (dm && doms.indexOf(dm) < 0) doms.push(dm);
+          var su = q.sources[si]; su = String((su && su.url) || su || '');
+          if (!/^https?:\/\//i.test(su)) continue;
+          var dm = su.match(/\/\/([^\/?#]+)/); dm = dm ? dm[1].replace(/^www\./, '') : '';
+          if (dm && doms.indexOf(dm) < 0) {
+            doms.push(dm);
+            links.push('<a href="' + esc(su) + '" target="_blank" rel="noopener noreferrer">' + esc(dm) + '</a>');
+          }
         }
-        if (doms.length) gv += '<div class="gv">AI read: ' + esc(doms.join(', ')) + '</div>';
+        if (links.length) gv += '<div class="gv">AI read: ' + links.join(', ') + '</div>';
       }
       qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + qhide + '" data-q="' + esc(q.query) + '"><div class="h"><span>' + (q.search ? '<span class="src">From your Google searches</span>' : '') + '&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div>' + gv + '<div class="a">' + esc(snippet) + '</div><div class="hist"></div></div>';
     }

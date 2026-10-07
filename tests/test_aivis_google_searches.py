@@ -113,4 +113,24 @@ function _aivFitBody(){}function _in2ChevronDown(){return ''}function aivLoading
     html = out.stdout
     assert "From your Google searches" in html and "about <b class=\"hb-num\">#4</b>" in html
     assert "3,796" in html and "AI named instead: Alter Brewing" in html
-    assert "AI read: tripadvisor.com, opentable.com" in html and "0%</b> of that search volume" in html
+    assert '<a href="https://www.tripadvisor.com/x" target="_blank" rel="noopener noreferrer">tripadvisor.com</a>' in html
+    assert '>opentable.com</a>' in html and "0%</b> of that search volume" in html
+
+
+def test_the_profile_card_never_says_complete_with_items_left():
+    """Simple EJ's (10/7/26): "100% complete — 6 items left" counted setup
+    items and items that need the listing connected."""
+    import client_api
+    checklist = ([{"label": "Excellent review response rate (78%)", "kind": "presence", "done": True}]
+                 + [{"label": l, "kind": "presence", "done": False, "measured": False}
+                    for l in ("Add a business description", "Add your phone number", "Add your website URL",
+                              "Add your hours")]
+                 + [{"label": "Connect Google Business Profile (OAuth)", "kind": "setup", "done": False},
+                    {"label": "Link your Yelp business profile", "kind": "setup", "done": False}])
+    cards = client_api.ai_visibility_roadmap({"presence_score": 100, "checklist": checklist})
+    gbp = next(c for c in cards if c["key"] == "aiv_roadmap:gbp")
+    assert gbp["detail"] == "100% of what can be read — 4 more need your Google listing connected"
+    checklist[1].pop("measured")
+    gbp = next(c for c in client_api.ai_visibility_roadmap({"presence_score": 75, "checklist": checklist})
+               if c["key"] == "aiv_roadmap:gbp")
+    assert gbp["detail"].startswith("75% complete — 1 item left")

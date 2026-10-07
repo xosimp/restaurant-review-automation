@@ -894,6 +894,20 @@ private struct QueryResultRow: View {
 
     @State private var isPressed = false
 
+    /// "AI read: tripadvisor.com, opentable.com", each site a link to the
+    /// page the answer read.
+    private func aiReadLinks(_ links: [(domain: String, url: URL)]) -> AttributedString {
+        var out = AttributedString("AI read: ")
+        for (i, l) in links.enumerated() {
+            var run = AttributedString(l.domain)
+            run.link = l.url
+            run.underlineStyle = .single
+            out += run
+            if i < links.count - 1 { out += AttributedString(", ") }
+        }
+        return out
+    }
+
     /// "On Google: about #4 · shown in 3,796 searches in 28 days". Position is
     /// Search Console's average, so it reads as "about".
     private func googleLine(_ s: AIVisibilitySearch) -> Text {
@@ -924,10 +938,11 @@ private struct QueryResultRow: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if !q.appeared, !q.sourceDomains.isEmpty {
-                    Text("AI read: " + q.sourceDomains.prefix(4).joined(separator: ", "))
+                if !q.appeared, !q.sourceLinks.isEmpty {
+                    Text(aiReadLinks(Array(q.sourceLinks.prefix(4))))
                         .font(.cavnarBody(12.5))
                         .foregroundStyle(Color.cavnarInk3)
+                        .tint(Color.cavnarInk2)
                         .lineLimit(2)
                 }
                 Text(q.answer)
