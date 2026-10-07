@@ -531,7 +531,10 @@ def test_no_checklist_item_borrows_another_items_reason():
     for label, why in reasons:
         if "Google Posts" in why:
             assert "Google Business Profile" in label or "GBP connected" in label or "OAuth" in label, label
-    assert "AND post_id IS NOT NULL" in src                             # published posts only
+    # published posts only — counted in one helper since the not-measured
+    # read needs the same figure (AI cost audit 10/7/26 #9)
+    assert "_aivis_social_posts_30d(rid)" in src
+    assert "AND post_id IS NOT NULL" in inspect.getsource(client_api._aivis_social_posts_30d)
 
 
 # ── #35 / #36 food cost confidence and the de-duplicated total ─────────────

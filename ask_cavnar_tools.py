@@ -1022,11 +1022,23 @@ def _read_ai_visibility(restaurant_id):
     An entire module the assistant previously could not see at all.
     """
     import client_api
+    # A read: the stored run (complete or partial) or "not measured yet" —
+    # never a live run (AI cost audit 10/7/26 #9). force stays False.
     payload, status = client_api._do_ai_visibility(restaurant_id)
     if status != 200 or not payload.get("ok", True):
         return {"has_data": False, "error": payload.get("error", "AI visibility unavailable")}
+    if payload.get("state") == "not_measured":
+        return {"has_data": False, "measured": False,
+                "note": ("No AI visibility check is on record for this restaurant yet. Say so; do not "
+                         "estimate a score. The weekly check runs on Mondays, and Check on the Intel tab "
+                         "runs one now.")}
+    partial = bool(payload.get("partial"))
     return {
         "has_data": True,
+        # A partial run is an estimate from the questions that came back
+        # (#10): say it is partial, never call a move in it a change.
+        "partial": partial,
+        "questions_not_answered": len(payload.get("failed_queries") or []) if partial else 0,
         "ai_score": payload.get("ai_score"),
         # The range is the measurement; the point alone is false precision
         # from a handful of non-deterministic questions (CA1 I1/I2, fix I4).
@@ -1036,7 +1048,9 @@ def _read_ai_visibility(restaurant_id):
         "answered_queries": payload.get("answered_queries"),
         "note": ("ai_score is a point estimate from answered_queries questions; quote the range "
                  "ai_score_low-ai_score_high, never the point alone, and never call a move inside "
-                 "that range a change."),
+                 "that range a change."
+                 + (" This check is PARTIAL: some questions did not come back, so say it is an estimate "
+                    "from part of the check and compare it with nothing." if partial else "")),
         "gbp_score": payload.get("gbp_score"),
         "gbp_connected": payload.get("gbp_connected"),
         "appeared_in": payload.get("appeared_count"),

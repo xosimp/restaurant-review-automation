@@ -1830,10 +1830,15 @@ def test_ai_visibility_rate_limited(client, db_path, monkeypatch):
     token = _login(client, db_path, rid)
     monkeypatch.setattr("ai_utils.ai_rate_limited", lambda *a, **kw: True)
 
-    resp = client.get("/mobile/api/intel/ai-visibility", headers=_auth_headers(token))
+    # The burst limit guards a live run — the POST (AI cost audit 10/7/26
+    # #98: it used to be checked before the cache, so three reads a minute
+    # were told "too many"). A GET is a read and is never limited.
+    resp = client.post("/mobile/api/intel/ai-visibility", headers=_auth_headers(token), json={})
     data = resp.get_json()
     assert data["ok"] is False
     assert "too many" in data["error"].lower()
+    read = client.get("/mobile/api/intel/ai-visibility", headers=_auth_headers(token)).get_json()
+    assert read["ok"] is True and read["state"] == "not_measured"
 
 
 # ── /mobile/api/account ───────────────────────────────────────────────────

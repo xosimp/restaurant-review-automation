@@ -412,6 +412,11 @@ class Restaurant:
     # retry re-billed Google on every call — 570 requests for one restaurant
     # in eight days (audit #17).
     geocode_failed_at: Optional[str]     = None
+    # The city Google has on file for this Place ID, as the AI-visibility
+    # check asks about it: {"place_id", "city", "at"} (AI cost audit 10/7/26
+    # #46). It lived in a process dict and was re-bought from Places Details
+    # after every deploy; keyed on the Place ID, so a corrected ID re-reads.
+    aivis_city_json: Optional[str]       = None
     # Hold non-critical alerts through lunch and dinner service — see
     # notify.rush_release_at. On by default; an owner who wants everything
     # the moment it lands can turn it off.
@@ -1628,6 +1633,21 @@ def ensure_columns(db_path: str = DB_PATH):
         # measurement after a redeploy instead of re-asking Perplexity
         # eight live questions on a request thread (MOD-INT-5).
         ("ai_visibility_runs", "payload_json", "TEXT"),
+        # A partial run is stored, flagged, with the questions that did not
+        # come back (AI cost audit 10/7/26 #10): it was neither stored nor
+        # cached, so the next Intel open or Ask call re-ran all eight live.
+        # Its ai_score stays NULL, so no trend or comparison reads it.
+        ("ai_visibility_runs", "partial", "INTEGER DEFAULT 0"),
+        ("ai_visibility_runs", "failed_queries", "TEXT"),
+        ("restaurants", "aivis_city_json", "TEXT"),
+        # A diagnosis is reused while the evidence it was written from is
+        # unchanged (AI cost audit 10/7/26 #12, #28): a hash of that
+        # evidence, and when a pass last found it unchanged (`stale` reads
+        # from that check, not from when the words were written).
+        ("review_diagnoses", "evidence_hash", "TEXT"),
+        ("review_diagnoses", "confirmed_at", "TEXT"),
+        ("food_cost_diagnoses", "evidence_hash", "TEXT"),
+        ("food_cost_diagnoses", "confirmed_at", "TEXT"),
         # Recommendation-trust audit (notify / issues / Ask). An issue filed
         # with notify=False keeps that intent: issues.tick used to text every
         # open, assigned, un-notified issue on the next pass, so a comp/void
@@ -4815,7 +4835,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "brand_name","brand_color","brand_logo_url",
         "section_count","foh_sections_json","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
-        "geocode_failed_at",
+        "geocode_failed_at", "aivis_city_json",
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
         "auto_draft_schedule", "external_scheduling_tool", "auto_draft_weekday", "auto_order_weekday",
@@ -5651,6 +5671,7 @@ def _restaurant_from_row(row) -> Restaurant:
         weather_cache_json=row["weather_cache_json"]   if "weather_cache_json" in row.keys() else None,
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
         geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
+        aivis_city_json=row["aivis_city_json"]         if "aivis_city_json" in row.keys() else None,
         preshift_nudge_hour=(row["preshift_nudge_hour"] if "preshift_nudge_hour" in row.keys()
                              and row["preshift_nudge_hour"] is not None else 0),
         alert_hold_during_service=(row["alert_hold_during_service"]
@@ -14664,24 +14685,81 @@ def ai_visibility_sources(restaurant_id: int, limit: int = 20, db_path: str = DB
 
 def record_ai_visibility_run(restaurant_id: int, ai_score: int, gbp_score: int = None,
                              answered: int = None, appeared: int = None,
-                             db_path: str = DB_PATH, city_basis: str = None):
-    """Record one complete visibility run.
+                             db_path: str = DB_PATH, city_basis: str = None,
+                             partial: bool = False, failed_queries: list = None):
+    """Record one visibility run.
 
     answered/appeared are stored so a later comparison can tell a real
     change from a difference in sample size, and so the drop alert can
     refuse to fire on a sample too small to say anything. city_basis is
     what the run was measured against (MOD-INT-4).
+
+    A partial run (AI cost audit 10/7/26 #10) is stored with ai_score NULL,
+    partial=1 and the questions that did not come back: its payload is
+    served and its answers reused, but every trend, comparison and alert
+    reads `ai_score IS NOT NULL` and so never sees it — a missing
+    measurement is never a 0.
     """
+    import json as _j
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
             "INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score, answered, appeared, "
-            "city_basis) VALUES (?,?,?,?,?,?)",
-            (restaurant_id, ai_score, gbp_score, answered, appeared, city_basis))
+            "city_basis, partial, failed_queries) VALUES (?,?,?,?,?,?,?,?)",
+            (restaurant_id, None if partial else ai_score, gbp_score, answered, appeared, city_basis,
+             1 if partial else 0, _j.dumps(list(failed_queries)) if partial and failed_queries else None))
         conn.commit()
         return cur.lastrowid
     finally:
         conn.close()
+
+
+def update_ai_visibility_run(run_id: int, ai_score: int, gbp_score: int = None,
+                             answered: int = None, appeared: int = None,
+                             db_path: str = DB_PATH, city_basis: str = None,
+                             partial: bool = False, failed_queries: list = None):
+    """A stored partial run, re-asked: its failed questions answered now
+    (AI cost audit 10/7/26 #10). Complete, it becomes a measurement — its
+    score set, its flag cleared and its time the moment it completed; still
+    partial, it keeps ai_score NULL with the questions still missing."""
+    import json as _j
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE ai_visibility_runs SET ai_score=?, gbp_score=?, answered=?, appeared=?, city_basis=?, "
+            "partial=?, failed_queries=?, created_at=datetime('now') WHERE id=?",
+            (None if partial else ai_score, gbp_score, answered, appeared, city_basis, 1 if partial else 0,
+             _j.dumps(list(failed_queries)) if partial and failed_queries else None, run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def latest_partial_ai_visibility_run(restaurant_id: int, db_path: str = DB_PATH):
+    """{"id", "payload", "failed_queries", "created_at"} of the newest stored
+    run when it is a partial one with its payload, else None — what the next
+    live run completes instead of re-asking every question (#10)."""
+    import json as _j
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("""
+            SELECT id, payload_json, failed_queries, created_at, partial FROM ai_visibility_runs
+            WHERE restaurant_id=? AND payload_json IS NOT NULL
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        """, (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["partial"]:
+        return None
+    try:
+        payload = _j.loads(row["payload_json"])
+        failed = _j.loads(row["failed_queries"] or "[]")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return {"id": row["id"], "payload": payload, "failed_queries": failed if isinstance(failed, list) else [],
+            "created_at": row["created_at"]}
 
 
 def attach_ai_visibility_payload(run_id: int, payload_json: str, db_path: str = DB_PATH):
@@ -14698,7 +14776,9 @@ def latest_ai_visibility_payload(restaurant_id: int, max_age_days: int = 8,
                                  db_path: str = DB_PATH):
     """(payload dict, created_at) of the newest recorded run younger than
     max_age_days that stored its payload, or None. The weekly job records
-    one a week; the Intel tab serves it rather than re-running (MOD-INT-5)."""
+    one a week; the Intel tab serves it rather than re-running (MOD-INT-5).
+    A partial run is served too (its payload says `partial`) — AI cost
+    audit 10/7/26 #10."""
     import json as _json
     conn = get_conn(db_path)
     try:

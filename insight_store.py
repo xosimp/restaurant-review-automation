@@ -83,6 +83,86 @@ def fingerprint(*parts) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+# "5 days ago", ", 1 day ago", "(3 days old)": a count of days since
+# something, which moves every morning with nothing in the data moving.
+_DAYS_SINCE = re.compile(r",?\s*\(?\b\d+\s+days?\s+(?:ago|old)\)?", re.I)
+
+
+def read_fingerprint(prompt, readiness=None, today=None, week=None, extra=()) -> str:
+    """The stored read's key from the DATA its prompt carries, not the
+    prompt's wording of the clock (AI cost audit 10/7/26 #26, #27, #11).
+
+    Taken out before hashing: the DATA STATE block (readiness's
+    prompt_block — its lines say how many days old each source is; the
+    states, dates and decision behind it go in instead, less the age),
+    the `today` string the prompt names, and every "N days ago". `week`
+    (an ISO week, "2026-W41") goes in where a read's "this week" wording
+    must not cross a week; `extra` anything else the key must carry. Every
+    figure, line and date of DATA stays in the key."""
+    text = str(prompt or "")
+    rd = readiness if isinstance(readiness, dict) else {}
+    block = str(rd.get("prompt_block") or "").strip()
+    if block:
+        text = text.replace(block, "")
+    if today:
+        text = text.replace(str(today), "")
+    text = _DAYS_SINCE.sub("", text)
+    state = {k: v for k, v in (rd.get("data_state") or {}).items() if k != "data_age_days"}
+    return fingerprint(text, week, rd.get("decision"), state, *tuple(extra or ()))
+
+
+# A read the validation layer (or the model) refused whole is held against
+# its fingerprint this long (AI cost audit 10/7/26 #48): it was held five
+# minutes in process memory only, so every later open sent the identical
+# prompt again and was refused again. New data is a new fingerprint and
+# tries at once.
+REFUSAL_HOLD_HOURS = 6
+
+
+def _refusal_kind(kind) -> str:
+    return f"{kind}:refused"
+
+
+def hold_refusal(restaurant_id, kind, fp, payload, db_path=DB_PATH) -> bool:
+    """Store the fixed copy a refused read served, against the prompt's
+    fingerprint. Its own row (kind "<kind>:refused"): never the read's —
+    the last good read stays `latest` — and never history (ai_reads) or
+    recommendation lines. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        conn.execute("INSERT INTO insight_cache (restaurant_id, kind, fingerprint, payload, created_at) "
+                     "VALUES (?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, kind) DO UPDATE SET "
+                     "fingerprint=excluded.fingerprint, payload=excluded.payload, created_at=excluded.created_at",
+                     (restaurant_id, _refusal_kind(kind), fp, json.dumps(payload, default=str)))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[insight_store] refusal not held: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def held_refusal(restaurant_id, kind, fp, db_path=DB_PATH, max_age_hours=None):
+    """The refusal held for exactly this fingerprint, younger than
+    REFUSAL_HOLD_HOURS, or None."""
+    row = _row(restaurant_id, _refusal_kind(kind), db_path)
+    if not row or row["fingerprint"] != fp:
+        return None
+    hours = REFUSAL_HOLD_HOURS if max_age_hours is None else max_age_hours
+    try:
+        when = datetime.strptime(str(row["created_at"])[:19], "%Y-%m-%d %H:%M:%S")
+        if (datetime.utcnow() - when).total_seconds() > hours * 3600:
+            return None
+        payload = json.loads(row["payload"])
+    except (TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _validation_version():
     import response_validation
     return response_validation.VERSION

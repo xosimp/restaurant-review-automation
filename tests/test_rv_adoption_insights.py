@@ -156,7 +156,10 @@ def test_a_stored_food_read_is_revalidated_from_the_model_text_without_a_model_c
     _stub_food(monkeypatch, "Waste ran $160 this week.\n1. Trim the Salmon par — $96 a week, low effort", seen)
     first = inventory.get_claude_insights(_food_analysis(), restaurant_id=rid, is_live=True)
     assert seen["calls"] == 1 and rv.validation_of(first)
-    fp = insight_store.fingerprint(seen["prompts"][0])
+    # The read's key is its DATA, not the raw prompt (AI cost audit 10/7/26
+    # #27: the date and the sources' ages are left out) — read it back.
+    fp = insight_store._row(rid, "food", insight_store.DB_PATH)["fingerprint"]
+    assert fp != insight_store.fingerprint(seen["prompts"][0])
     # A read stored before the engine: its old marker and its "saved".
     insight_store.put(rid, "food", fp, "You saved $520 a month on waste.\n\nUNVERIFIED: old note")
     again = inventory.get_claude_insights(_food_analysis(), restaurant_id=rid, is_live=True)

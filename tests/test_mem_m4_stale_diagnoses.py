@@ -44,7 +44,10 @@ def _food_diag(rid, hours_ago=1):
                                     "what_would_confirm": "w", "operational_evidence": [], "confidence": "medium",
                                     "recommended_action": "Order less salmon.", "expected_outcome": "o"},
                         220.0, models.DB_PATH)
-    _exec("UPDATE food_cost_diagnoses SET generated_at=datetime('now', ?) WHERE restaurant_id=?",
+    # Aged as a read nobody has re-checked since (AI cost audit 10/7/26 #28:
+    # staleness reads the last check, confirmed_at, falling back to
+    # generated_at — a write stamps both).
+    _exec("UPDATE food_cost_diagnoses SET generated_at=datetime('now', ?), confirmed_at=NULL WHERE restaurant_id=?",
           (f"-{int(hours_ago)} hours", rid))
 
 
@@ -109,11 +112,11 @@ def test_the_food_reads_root_cause_block_follows_the_anchor_strength():
     _food_diag(rid, hours_ago=2)
     block, cause, alt = inventory.root_cause_block(rid)
     assert "Most likely: Salmon is over-ordered." in block and cause == ["Salmon is over-ordered."]
-    _exec("UPDATE food_cost_diagnoses SET generated_at=datetime('now', '-3 days') WHERE restaurant_id=?", (rid,))
+    _exec("UPDATE food_cost_diagnoses SET generated_at=datetime('now', '-3 days'), confirmed_at=NULL WHERE restaurant_id=?", (rid,))
     block, cause, alt = inventory.root_cause_block(rid)
     assert "Most likely" not in block and "An earlier read suggested" in block
     assert cause == [] and "Salmon is over-ordered." in alt
-    _exec("UPDATE food_cost_diagnoses SET generated_at=datetime('now', '-60 days') WHERE restaurant_id=?", (rid,))
+    _exec("UPDATE food_cost_diagnoses SET generated_at=datetime('now', '-60 days'), confirmed_at=NULL WHERE restaurant_id=?", (rid,))
     block, cause, alt = inventory.root_cause_block(rid)
     assert "too old to lean on" in block and "Salmon" not in block and cause == alt == []
 

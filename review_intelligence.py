@@ -78,7 +78,16 @@ CONCENTRATION_MIN_SHARE = 0.50
 # a few a day at best, so a cause re-derived hourly would be the same cause
 # with a different sentence — which reads as instability, not insight.
 DIAGNOSIS_WINDOW_DAYS = 90
+# How long since a diagnosis was last CHECKED against its evidence (written,
+# or found unchanged by a pass — confirmed_at) before it reads as stale.
 DIAGNOSIS_TTL_HOURS = 24
+# A diagnosis is reused while the reviews behind its cluster are exactly the
+# same ones (AI cost audit 10/7/26 #12): the 24-hour TTL on a daily job
+# rewrote every cause every day — the same cause in new words, a new Sonnet
+# call, and a cleared Reviews read (scheduler clears it on a rewrite). Past
+# this age it is rewritten whatever the evidence, so the memory and the
+# other modules it cites cannot go stale under an unchanged cluster.
+DIAGNOSIS_REFRESH_DAYS = 7
 
 # At most this many clusters get a diagnosis in one pass. Each is a Sonnet
 # call; an owner cannot act on six root causes at once anyway, and the ranking
@@ -2061,10 +2070,13 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     """Produce and store a root-cause diagnosis for this restaurant's top
     complaint clusters.
 
-    One Sonnet call per cluster. Skips a cluster whose stored diagnosis is
-    still inside DIAGNOSIS_TTL_HOURS and whose mention count has not moved,
-    because a cause re-derived hourly is the same cause in different words,
-    which reads as instability rather than insight.
+    One Sonnet call per cluster. Skips a cluster whose stored diagnosis
+    rests on exactly the same reviews (cluster_evidence_hash) and is younger
+    than DIAGNOSIS_REFRESH_DAYS — or, as before, is inside
+    DIAGNOSIS_TTL_HOURS with the same mention count — because a cause
+    re-derived daily is the same cause in different words, which reads as
+    instability rather than insight (AI cost audit 10/7/26 #12). A skipped
+    one is marked checked (confirmed_at), so it does not read as stale.
     """
     import os
     import anthropic
@@ -2108,12 +2120,18 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     if _ready_rd.get("prompt_block"):
         op_block = f"{op_block}\n\n{_ready_rd['prompt_block']}"
     produced = []
+    _keys = _diagnosis_keys(restaurant_id, db_path)
     for cluster in clusters[:max_clusters]:
         prior = existing.get(cluster["category"])
-        if not force and prior and not prior.get("stale") \
-                and prior.get("mention_count") == cluster["mentions"]:
-            produced.append(prior)
-            continue
+        ev_hash = cluster_evidence_hash(cluster)
+        if not force and prior:
+            reuse, stamp = diagnosis_reusable(_keys.get(cluster["category"]), ev_hash,
+                                              prior.get("mention_count") == cluster["mentions"])
+            if reuse:
+                # The same reviews: the same cause. Checked, not rewritten.
+                _confirm_diagnosis(restaurant_id, cluster, ev_hash if stamp else None, db_path)
+                produced.append(dict(prior, stale=False, stale_note=None))
+                continue
         try:
             excerpts, complaints, concentration, allowed, guest_texts = _diagnosis_inputs(
                 restaurant_id, cluster, db_path, with_texts=True)
@@ -2176,7 +2194,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
                                              weak=[ln for ln in concentration.split("\n")
                                                    if ln.startswith("Concentrated")] + list(cl_lines.values())),
                                          untrusted=list(guest_texts) + list(sl.get("untrusted") or []))
-            _save_diagnosis(restaurant_id, cluster, result, {}, db_path)
+            _save_diagnosis(restaurant_id, cluster, result, {}, db_path, evidence_hash=ev_hash)
             result.update({"category": cluster["category"], "mention_count": cluster["mentions"],
                            "window_days": cluster["window_days"], "stale": False})
             produced.append(result)
@@ -2205,16 +2223,17 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
     return produced
 
 
-def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
+def _save_diagnosis(restaurant_id, cluster, result, money, db_path, evidence_hash=None):
     conn = get_conn(db_path)
     conn.execute("""
         INSERT INTO review_diagnoses
             (restaurant_id, category, window_days, mention_count, cause, alternative_cause,
              evidence_review_ids, operational_evidence, confidence, what_would_confirm,
              recommended_action, expected_outcome, revenue_at_risk_low, revenue_at_risk_high,
-             unsupported_figures, model_confidence, generated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+             unsupported_figures, model_confidence, evidence_hash, generated_at, confirmed_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))
         ON CONFLICT(restaurant_id, category, window_days) DO UPDATE SET
+            evidence_hash=excluded.evidence_hash, confirmed_at=excluded.confirmed_at,
             mention_count=excluded.mention_count, cause=excluded.cause,
             alternative_cause=excluded.alternative_cause,
             evidence_review_ids=excluded.evidence_review_ids,
@@ -2245,10 +2264,97 @@ def _save_diagnosis(restaurant_id, cluster, result, money, db_path):
           json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None,
           # The model's own band, kept apart from the capped one so it can
           # later be compared with what was measured (H1).
-          result.get("model_confidence")))
+          result.get("model_confidence"),
+          # The cluster's reviews it was written from (#12).
+          evidence_hash))
     conn.commit()
     conn.close()
     record_diagnosis_read(restaurant_id, cluster, result, db_path=db_path)
+
+
+def cluster_evidence_hash(cluster) -> str:
+    """A hash of the reviews a cluster rests on — its category, window,
+    mention count and review ids (AI cost audit 10/7/26 #12; the cluster
+    carries at most 25 ids, so the count covers the rest). The same reviews
+    are the same evidence: a new complaint, or one aging out of the window,
+    moves it."""
+    import hashlib
+    c = cluster or {}
+    ids = sorted(str(i) for i in (c.get("review_ids") or []))
+    raw = json.dumps([c.get("category"), c.get("window_days"), c.get("mentions"), ids])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _diagnosis_keys(restaurant_id, db_path=DB_PATH) -> dict:
+    """{category: {"evidence_hash", "generated_at"}} of the stored
+    diagnoses — what the reuse rule reads. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return {}
+    try:
+        rows = _rows_raw(conn, "SELECT category, evidence_hash, generated_at FROM review_diagnoses "
+                               "WHERE restaurant_id=?", (restaurant_id,))
+        return {r["category"]: {"evidence_hash": r["evidence_hash"], "generated_at": r["generated_at"]}
+                for r in rows}
+    except Exception as e:
+        print(f"[review_intelligence] diagnosis keys unreadable for {restaurant_id}: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def diagnosis_reusable(stored, evidence_hash, same_count, now=None, refresh_days=None, ttl_hours=None) -> tuple:
+    """(reuse, stamp the hash) for a stored diagnosis `stored`
+    ({"evidence_hash", "generated_at"}) against the evidence now.
+
+    Rewritten once its words are DIAGNOSIS_REFRESH_DAYS old, whatever the
+    evidence. Before that, reused while the evidence hash is unchanged
+    (AI cost audit 10/7/26 #12) — or, as before, while it is inside
+    DIAGNOSIS_TTL_HOURS of being written with the same mention count (or,
+    for food, the same lead driver). A row written before the hash existed
+    is stamped with the evidence it was reused on. Shared by the food
+    diagnosis (#28)."""
+    if not stored:
+        return False, False
+    refresh_days = DIAGNOSIS_REFRESH_DAYS if refresh_days is None else refresh_days
+    ttl_hours = DIAGNOSIS_TTL_HOURS if ttl_hours is None else ttl_hours
+    try:
+        when = datetime.strptime(str(stored.get("generated_at")).replace("T", " ")[:19], "%Y-%m-%d %H:%M:%S")
+        age_h = ((now or datetime.utcnow()) - when).total_seconds() / 3600.0
+    except (TypeError, ValueError):
+        return False, False
+    if age_h >= refresh_days * 24:
+        return False, False
+    if stored.get("evidence_hash"):
+        if stored["evidence_hash"] == evidence_hash:
+            return True, False
+        return bool(age_h <= ttl_hours and same_count), False
+    if age_h <= ttl_hours and same_count:
+        return True, True
+    return False, False
+
+
+def _confirm_diagnosis(restaurant_id, cluster, evidence_hash=None, db_path=DB_PATH):
+    """A pass found this diagnosis's evidence unchanged: `confirmed_at` is
+    now (no longer stale — get_diagnoses reads staleness from the last
+    check), the words and their date untouched. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return
+    try:
+        sets, args = "confirmed_at=datetime('now')", []
+        if evidence_hash:
+            sets += ", evidence_hash=?"
+            args.append(evidence_hash)
+        conn.execute(f"UPDATE review_diagnoses SET {sets} WHERE restaurant_id=? AND category=? AND window_days=?",
+                     (*args, restaurant_id, cluster["category"], cluster["window_days"]))
+        conn.commit()
+    except Exception as e:
+        print(f"[review_intelligence] diagnosis not confirmed for {restaurant_id}: {e}")
+    finally:
+        conn.close()
 
 
 NO_MEMORY_LINE = "(Nothing on file yet — this is the first read of this.)"
@@ -2354,7 +2460,18 @@ def get_diagnoses(restaurant_id: int, db_path: str = DB_PATH,
                 age_h = (datetime.utcnow() - when).total_seconds() / 3600.0
             except ValueError:
                 age_h = (days * 24.0) if days is not None else None
-        stale = bool(age_h is None or age_h > DIAGNOSIS_TTL_HOURS)
+        # Stale from the last CHECK, not the words' age (AI cost audit
+        # 10/7/26 #12): a cause a pass found resting on exactly the same
+        # reviews this morning is current, though written days ago.
+        check_h = age_h
+        _checked = r["confirmed_at"] if "confirmed_at" in r.keys() else None
+        if _checked:
+            try:
+                check_h = (datetime.utcnow() - datetime.strptime(
+                    str(_checked).replace("T", " ")[:19], "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600.0
+            except ValueError:
+                check_h = age_h
+        stale = bool(check_h is None or check_h > DIAGNOSIS_TTL_HOURS)
         if stale and not include_stale:
             continue
         def _j(v, fallback):
