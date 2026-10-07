@@ -90,6 +90,9 @@ def test_the_draft_days_already_in_force_are_kept_once(db):
     conn.execute("INSERT INTO activity_log (restaurant_id, event_type, event_data) VALUES (?, ?, ?)",
                  (logged, "auto_draft_day_changed", "{}"))
     conn.execute("UPDATE restaurants SET auto_draft_weekday_chosen=0")
+    # Restaurants that existed before auto-draft became the Labor default
+    # (#73, 10/7/26): only the one this test opts in drafts.
+    conn.execute("UPDATE restaurants SET auto_draft_schedule=0 WHERE id!=?", (on,))
     conn.execute("DELETE FROM data_migrations WHERE name=?", (models.AUTO_DRAFT_DAY_CHOSEN_MIGRATION,))
     conn.commit()
     conn.close()
@@ -144,7 +147,8 @@ def test_the_draft_day_is_set_through_the_auto_draft_route(client, db, monkeypat
         spread, models.WEEKDAY_NAMES[spread], models.WEEKDAY_NAMES[spread + 1])
     got = client.post("/api/labor/auto-draft", json={"weekday": 1}).get_json()
     assert got["ok"], got
-    assert (got["day"], got["publish_day"], got["enabled"]) == ("Tuesday", "Wednesday", False)
+    # A new Labor restaurant drafts by default (AI cost audit 10/7/26 #73).
+    assert (got["day"], got["publish_day"], got["enabled"]) == ("Tuesday", "Wednesday", True)
     pub = client.get("/api/labor/auto-publish").get_json()
     assert (pub["day"], pub["draft_day"]) == ("Wednesday", "Tuesday")
     # Sunday, a bool and a word are refused, and the day stays.

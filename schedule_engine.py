@@ -1187,6 +1187,8 @@ def _soft_fail(what, exc, restaurant_id):
 # the review's one line about what the draft was made without (P-17). An
 # input not named here reads as its own name.
 _INPUT_WORDS = {
+    # The shape contract's slot filling (AI cost audit 10/7/26 #69, off by default).
+    "shape slot assignment": "who fills each slot the draft asked for",
     "staff_availability": "staff availability", "staffing_baseline": "the usual crew from past weeks",
     "salaried_week": "the salaried staff's share of the budget", "signals_by_date": "the week's dated events",
     "pairs": "who works well together", "reliability": "attendance", "learned": "the habits learned from your edits",

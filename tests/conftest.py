@@ -418,3 +418,4 @@ def two_restaurants(db_path):
                author="Bob", rating=5, text="Fantastic dinner, will be back."),
     ], db_path=db_path)
     return {"db_path": db_path, "rid_a": rid_a, "rid_b": rid_b}
+
