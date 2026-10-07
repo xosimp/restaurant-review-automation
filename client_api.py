@@ -7557,17 +7557,35 @@ def _do_ai_visibility_inner(rid, force=False):
         # carries a kind: BRANDED asks about this restaurant by name, which
         # is a different question from whether it surfaces in an open
         # search, and blending the two into one number answered neither.
-        queries = [
+        # The fixed questions, in the order they fill whatever the Google
+        # searches below leave: what the restaurant is, who it suits, then
+        # the generic discovery questions the searches usually cover.
+        _fixed = [
             {"q": vibe_query or ("Where can I find good " + cuisine.lower() + " in " + city_full + "?"),
              "kind": "cuisine"},
-            {"q": "Top restaurants in " + city_full, "kind": "discovery"},
-            {"q": q3, "kind": "occasion"},
-            {"q": "Where should I eat in " + city_full + " tonight?", "kind": "discovery"},
             {"q": ("Best " + cuisine + " near " + city_full) if _concept_phrase
                   else ("Best " + cuisine.lower() + " restaurants near " + city_full), "kind": "cuisine"},
-            {"q": "Highly rated local restaurants in " + city_full, "kind": "discovery"},
             # Practical intent — a guest who already has a shortlist.
             {"q": "Which restaurants in " + city_full + " are good for a group?", "kind": "practical"},
+            {"q": q3, "kind": "occasion"},
+            {"q": "Top restaurants in " + city_full, "kind": "discovery"},
+            {"q": "Where should I eat in " + city_full + " tonight?", "kind": "discovery"},
+            {"q": "Highly rated local restaurants in " + city_full, "kind": "discovery"},
+        ]
+        # What people actually typed into Google before reaching the site
+        # (Search Console, 10/7/26): up to four of the seven open questions,
+        # most-searched first, each carrying its Google volume and position.
+        # Eight questions either way, so a check costs what it did.
+        try:
+            import web_analytics as _wa
+            _searched = _wa.ai_questions(rid, name, city, city_full)
+            _st = city_full.split(",")[-1].strip() if "," in city_full else ""
+            _taken = {q.pop("key") for q in _searched}
+            _fill = [q for q in _fixed if _wa._question_key(q["q"], _st) not in _taken]
+        except Exception as _we:
+            print(f"[aivis] search questions skipped for rid={rid}: {_we!r}")
+            _searched, _fill = [], _fixed
+        queries = _searched + _fill[:max(0, 7 - len(_searched))] + [
             # Branded recall: does the system know this restaurant at all?
             # Scored separately; it is not evidence of discoverability.
             {"q": "Tell me about " + name + " in " + city_full, "kind": "branded"},
@@ -7843,9 +7861,12 @@ def _do_ai_visibility_inner(rid, force=False):
         # away. Nothing cross-referenced them, so the one comparison an
         # owner most wants — did my competitors come up instead of me —
         # was a pass over data already in memory that nobody made.
-        return {"query": q, "kind": kind, "answer": _clean_ai_answer(answer),
-                "appeared": appeared, "ok": True, "sources": sources,
-                "competitors_named": _competitors_in(answer)}
+        out = {"query": q, "kind": kind, "answer": _clean_ai_answer(answer),
+               "appeared": appeared, "ok": True, "sources": sources,
+               "competitors_named": _competitors_in(answer)}
+        if isinstance(spec, dict) and spec.get("search"):
+            out["search"] = spec["search"]
+        return out
 
     # Submit all queries at once — up to 3 run concurrently for latency,
     # but each one blocks on _pplx_wait_turn() before it actually sends,
@@ -7886,6 +7907,24 @@ def _do_ai_visibility_inner(rid, force=False):
          "share": round(c / len(discovery) * 100) if discovery else 0}
         for n, c in _comp_hits.most_common(8)
     ]
+
+    # Google vs AI (10/7/26): of the Google searches that bring people to the
+    # site and were put to AI, the share — weighted by how often each is
+    # searched — whose answer named the restaurant. A separate figure: the
+    # headline score stays appearances over questions.
+    _sq = [x for x in answered if x.get("search")]
+    _sq_total = sum((x["search"].get("impressions") or 0) for x in _sq)
+    search_demand = None
+    if _sq:
+        _sq_hit = sum((x["search"].get("impressions") or 0) for x in _sq if x.get("appeared"))
+        search_demand = {
+            "questions": len(_sq),
+            "named": sum(1 for x in _sq if x.get("appeared")),
+            "impressions": _sq_total,
+            "covered_pct": round(_sq_hit / _sq_total * 100) if _sq_total else None,
+            "basis": "Google searches that showed your website over the last 28 days (Search Console), "
+                     "asked of " + AIVIS_PLATFORM + " as a guest would; weighted by how often each was searched",
+        }
 
     # GBP completeness score — 10 items x 10 pts = 100
     # Items 1-6: checkable from our own DB (no GMB OAuth needed)
@@ -7995,6 +8034,8 @@ def _do_ai_visibility_inner(rid, force=False):
         "branded_queries": len(branded),
         # Which competitors surfaced in the same answers, and in how many.
         "competitor_appearances": competitor_appearances,
+        # Google vs AI, by search volume; None when no Google search was asked.
+        "search_demand": search_demand,
         # No city on the profile means two locations of the same brand are
         # indistinguishable in an answer, so appearance cannot be judged at
         # all. Surface that rather than silently scoring 0.

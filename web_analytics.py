@@ -52,7 +52,11 @@ HTTP_TIMEOUT = (5, 30)
 BACKFILL_DAYS = 400        # GA4 and Search Console both keep at least this much
 RECENT_DAYS = 10           # restated days re-read on every sync
 QUERY_WINDOW_DAYS = 28
-TOP_QUERIES = 25
+TOP_QUERIES = 25           # what the Website screen lists
+# What is kept (10/7/26): the AI-visibility check asks AI the searches that
+# really bring guests to the site, and the 25 the screen shows were nearly all
+# the restaurant's own name. Search Console returns up to 25,000.
+STORED_QUERIES = 500
 
 BASELINE_WEEKS = 8
 MIN_BASELINE = 6
@@ -394,7 +398,7 @@ def _has_rows(restaurant_id, source, db_path=None) -> bool:
 
 def _store_queries(restaurant_id, site_url, end, db_path=None):
     start = end - timedelta(days=QUERY_WINDOW_DAYS - 1)
-    rows = gsc_query(site_url, start, end, ["query"], limit=TOP_QUERIES)
+    rows = gsc_query(site_url, start, end, ["query"], limit=STORED_QUERIES)
     conn = get_conn(db_path)
     try:
         conn.execute("DELETE FROM web_search_queries WHERE restaurant_id=?", (restaurant_id,))
@@ -735,6 +739,137 @@ def summary(restaurant_id, db_path=None, days=28) -> dict:
     sig = signals(restaurant_id, db_path=db_path)
     out["signals"] = sig.get("items") or []
     out["signals_basis"] = sig.get("basis")
+    return out
+
+
+# ── Google searches → the questions asked of AI search ───────────────────────
+#
+# What people type into Google before landing on the site is the best
+# evidence of what they will ask an AI assistant. The searches that are not
+# the restaurant's own name ("restaurants in st charles il", "food near me")
+# become AI-visibility questions, carrying their Google volume and position,
+# so Intel can say "#1 on Google for this, not named by AI".
+
+AI_SEARCH_QUESTIONS = 4          # of the eight questions a visibility check asks
+MIN_QUESTION_IMPRESSIONS = 20    # below this a search is noise, not demand
+
+# Words in a restaurant's name that say what it is, not who it is: a search
+# for "pizza near me" is not a search for "Gia Mia Pizza Bar".
+_GENERIC_NAME_WORDS = frozenset((
+    "the and of kitchen tap taproom restaurant restaurants bar bars grill grille cafe café pub tavern house "
+    "eatery co company bistro pizzeria pizza brewery brewing lounge diner deli bakery cantina taqueria "
+    "steakhouse sushi bbq burger burgers wings wine coffee tea bagels bagel noodle noodles ramen thai "
+    "mexican italian chinese indian sports social club market hall room").split())
+# Words that change how a search is phrased, not what it is for.
+_FILLER = frozenset("in near the best top a an for of good to around nearby me at on places place spots spot "
+                    "what where are is some find".split())
+
+
+def _qnorm(s) -> str:
+    s = str(s or "").lower().replace("\u2019", "").replace("'", "")
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", s).split())
+
+
+def _stem(w):
+    return w[:-1] if len(w) > 3 and w.endswith("s") else w
+
+
+def brand_words(name) -> set:
+    """The words that make a search about this restaurant: "Simple EJ's
+    Kitchen & Tap" → {simple, ejs, ej}."""
+    out = set()
+    for w in _qnorm(name).split():
+        if len(w) < 2 or w in _GENERIC_NAME_WORDS:
+            continue
+        out.add(w)
+        if w.endswith("s") and len(w) > 2:
+            out.add(w[:-1])
+    return out
+
+
+def is_branded(query, name) -> bool:
+    words = set(_qnorm(query).split())
+    brand = brand_words(name)
+    return bool(brand and any(w in brand or _stem(w) in brand for w in words))
+
+
+def _question_key(text, state="") -> frozenset:
+    """Two phrasings of one search share a key: "restaurants st charles il"
+    and "restaurants in St. Charles, IL" are one question."""
+    drop = _FILLER | ({state.lower()} if state else set())
+    return frozenset(_stem(w) for w in _qnorm(text).split() if w not in drop)
+
+
+def to_ai_question(query, city, city_full) -> str | None:
+    """A Google search as it would be put to an AI assistant, which has no
+    idea where the person is: "near me" becomes near the restaurant's city,
+    a city named without its state gets it, and a search naming no place
+    gets one. None for a search that is only the place itself."""
+    n = _qnorm(query)
+    ncity = _qnorm(city)
+    state = city_full.split(",")[-1].strip() if "," in (city_full or "") else ""
+    if not n or not ncity:
+        return None
+    marker = " \x00 "
+    if ncity in n:
+        n = re.sub(r"\b" + re.escape(ncity) + r"\b(?:\s+" + re.escape(state.lower()) + r"\b)?" if state else
+                   r"\b" + re.escape(ncity) + r"\b", marker, n, count=1)
+    elif "near me" in n:
+        n = n.replace("near me", "near" + marker, 1)
+    else:
+        n = n + " in" + marker
+    rest = [w for w in n.replace("\x00", " ").split() if w not in _FILLER and w != state.lower()]
+    if not rest:
+        return None
+    # The place reads at the end, after a preposition: "st charles restaurants"
+    # and "restaurants st charles il" both ask "restaurants in St. Charles, IL".
+    pre, _, post = n.partition("\x00")
+    pre, post = pre.split(), post.split()
+    if not pre:
+        pre, post = post, []
+    if pre and pre[-1] not in ("in", "near", "around", "of", "by", "from"):
+        pre.append("in")
+    return " ".join(pre + [city_full] + post)
+
+
+def ai_questions(restaurant_id, name, city, city_full, limit=AI_SEARCH_QUESTIONS, db_path=None) -> list:
+    """The non-branded searches that brought people to the site over the last
+    28 days, as AI-visibility questions, most-searched first:
+    [{"q", "kind": "search", "search": {"queries", "impressions", "clicks",
+    "position"}}]. Phrasings of one search are merged and their volume summed."""
+    if not (restaurant_id and city and city_full):
+        return []
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT query, clicks, impressions, position FROM web_search_queries "
+                            "WHERE restaurant_id=? AND impressions>=? ORDER BY impressions DESC",
+                            (restaurant_id, MIN_QUESTION_IMPRESSIONS)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    state = city_full.split(",")[-1].strip() if "," in city_full else ""
+    merged = {}
+    for r in rows:
+        if is_branded(r["query"], name):
+            continue
+        q = to_ai_question(r["query"], city, city_full)
+        if not q:
+            continue
+        key = _question_key(q, state)
+        g = merged.setdefault(key, {"q": q, "queries": [], "impressions": 0.0, "clicks": 0.0, "_pos": 0.0})
+        impr = float(r["impressions"] or 0)
+        g["queries"].append(r["query"])
+        g["impressions"] += impr
+        g["clicks"] += float(r["clicks"] or 0)
+        if r["position"] is not None:
+            g["_pos"] += float(r["position"]) * impr
+    out = []
+    for g in sorted(merged.values(), key=lambda g: -g["impressions"])[:max(0, int(limit))]:
+        out.append({"q": g["q"], "kind": "search", "key": _question_key(g["q"], state),
+                    "search": {"queries": g["queries"][:5], "impressions": round(g["impressions"]),
+                               "clicks": round(g["clicks"]),
+                               "position": round(g["_pos"] / g["impressions"], 1) if g["impressions"] and g["_pos"] else None}})
     return out
 
 

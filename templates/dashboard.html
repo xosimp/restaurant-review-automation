@@ -13988,6 +13988,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .in2-q .q .h .tag{flex-shrink:0;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(227,51,63,.14);color:var(--hb-bad)}
 .in2-q .q.hit .h .tag{background:rgba(78,173,122,.16);color:var(--hb-good)}
 .in2-q .q .a{font-size:13.5px;color:var(--ink3);line-height:1.5;margin-top:4px}
+/* Google vs AI (10/7/26): the searches that bring people to the site, put to AI */
+.in2-gva{margin-top:10px;font-size:14px;color:var(--ink2);line-height:1.55}
+.in2-gva b{color:var(--ink);font-weight:600}
+.in2-q .q .gv{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:4px}
+.in2-q .q .gv b{color:var(--ink2);font-weight:600}
+.in2-q .q .h .src{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember2);margin-bottom:2px}
 .in2-q .q .hist{display:flex;align-items:center;gap:10px;margin-top:8px}.in2-q .q .hist:empty{display:none}.in2-q .q .hist .n{min-width:0;text-align:left;font-size:12.5px}
 /* Rating-comparison hero and analysis card are Intel-specific; scoped so
    this doesn't also push spacing/size around on the shared Labor/Food
@@ -14229,6 +14235,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <section class="in2-aiv-card in2-aiv-wide" aria-label="What AI said, by question">
         <div class="in2-aiv-h"><span class="k">What AI said, by question</span><i id="in2-q-flag"></i></div>
         <div class="in2-aiv-v sm"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
+        <div class="in2-gva" id="in2-gva" hidden></div>
         <div class="in2-q" id="aiv-queries"></div>
         <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
         <div class="in2-qfoot" id="in2-qfoot" hidden>Each answer is from your latest check. The dots are every check of that question, oldest first, lit when you were named.</div>
@@ -29938,9 +29945,39 @@ function renderAIVisibility(d) {
       if (clean.length) clean = clean.charAt(0).toUpperCase() + clean.slice(1);
       var snippet = clean.substring(0, 200) + (clean.length > 200 ? '…' : '');
       var qhide = i >= 2 ? ' in2-extra" style="display:none' : '';
-      qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + qhide + '" data-q="' + esc(q.query) + '"><div class="h"><span>&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div><div class="a">' + esc(snippet) + '</div><div class="hist"></div></div>';
+      // Google vs AI (10/7/26): a question that came from a Google search
+      // says how that search does on Google; a miss says who AI named
+      // instead and which sites it read.
+      var gv = '';
+      if (q.search) {
+        var sq = q.search, more = (sq.queries || []).length - 1;
+        gv += '<div class="gv">On Google: ' + (sq.position != null ? 'you rank about <b class="hb-num">#' + Math.max(1, Math.round(sq.position)) + '</b> · ' : '')
+          + 'shown in <b class="hb-num">' + Number(sq.impressions || 0).toLocaleString() + '</b> searches in 28 days'
+          + ((sq.queries || []).length ? ' · &ldquo;' + esc(sq.queries[0]) + '&rdquo;' + (more > 0 ? ' and <span class="hb-num">' + more + '</span> more' : '') : '') + '</div>';
+      }
+      if (!q.appeared && q.ok !== false) {
+        if ((q.competitors_named || []).length) gv += '<div class="gv">AI named instead: ' + esc(q.competitors_named.slice(0, 4).join(', ')) + '</div>';
+        var doms = [];
+        for (var si = 0; si < (q.sources || []).length && doms.length < 4; si++) {
+          var su = q.sources[si]; su = (su && su.url) || su || '';
+          var dm = String(su).match(/\/\/([^\/]+)/); dm = dm ? dm[1].replace(/^www\./, '') : '';
+          if (dm && doms.indexOf(dm) < 0) doms.push(dm);
+        }
+        if (doms.length) gv += '<div class="gv">AI read: ' + esc(doms.join(', ')) + '</div>';
+      }
+      qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + qhide + '" data-q="' + esc(q.query) + '"><div class="h"><span>' + (q.search ? '<span class="src">From your Google searches</span>' : '') + '&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div>' + gv + '<div class="a">' + esc(snippet) + '</div><div class="hist"></div></div>';
     }
     qEl.innerHTML = qhtml;
+    var gva = document.getElementById('in2-gva'), sd = d.search_demand;
+    if (gva) {
+      if (sd && sd.questions) {
+        gva.innerHTML = 'Google vs AI: <b class="hb-num">' + sd.questions + '</b> of these questions are searches where Google showed your website (<span class="hb-num">'
+          + Number(sd.impressions || 0).toLocaleString() + '</span> times in 28 days). AI named you on <b class="hb-num">'
+          + (sd.covered_pct != null ? sd.covered_pct + '%' : '\u2014') + '</b> of that search volume.';
+        gva.title = sd.basis || '';
+        gva.hidden = false;
+      } else { gva.hidden = true; gva.innerHTML = ''; }
+    }
     in2PaintQHist();
     var qVB = document.getElementById('aiv-q-viewall');
     if (qVB) {
