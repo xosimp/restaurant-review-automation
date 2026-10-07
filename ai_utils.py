@@ -3413,7 +3413,11 @@ def read_call(call_id, db_path=None):
 # ── AI quality events (#58) ──────────────────────────────────────────────────
 QUALITY_KINDS = ("figures", "causes", "bindings", "names", "validation_refused", "line_dropped",
                  "item_dropped", "citation_dropped", "operational_evidence", "safety_disagreement",
-                 "model_refused", "truncated", "unparseable", "fallback", "output_rejected")
+                 "model_refused", "truncated", "unparseable", "fallback", "output_rejected",
+                 # The schedule's quality gate: settled by the code's fill, or
+                 # a model rewrite (AI cost audit 10/7/26 #21); a reviewer that
+                 # could not run (ai_reviewer).
+                 "gate_filled_in_code", "gate_model_rewrite", "reviewer_unavailable")
 AI_QUALITY_RETAIN_DAYS = int(os.getenv("AI_QUALITY_RETAIN_DAYS", "180"))
 
 
