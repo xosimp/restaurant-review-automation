@@ -206,7 +206,8 @@ def test_auto_publish_queues_only_with_the_switch_and_the_record(db_path, monkey
     monkeypatch.setattr(scheduler, "restaurant_now", lambda *a, **k: friday, raising=False)
     monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [models.get_restaurant(rid, db_path=db_path)])
     assert scheduler.run_auto_publish_schedules()["queued"] == 0         # switch off
-    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    # A Thursday draft, so Friday publishes: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    update_restaurant(rid, {"auto_publish_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [models.get_restaurant(rid, db_path=db_path)])
     out = scheduler.run_auto_publish_schedules()
     assert out["queued"] == 1 and reached == ["schedule_publish_pending"]
@@ -221,7 +222,8 @@ def test_auto_publish_never_touches_an_edited_or_already_shared_draft(db_path, m
     # never stored, so this test once checked a restaurant with auto-publish
     # off and attempted nothing (re-audit 10/4/26, PIPE's observation).
     rid = _rid(db_path, module_labor=1)
-    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    # A Thursday draft, so Friday publishes: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    update_restaurant(rid, {"auto_publish_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     assert models.get_restaurant(rid, db_path=db_path).auto_publish_schedule
     for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
         _schedule(db_path, rid, w)
@@ -242,7 +244,8 @@ def test_auto_publish_never_sends_an_unedited_draft_over_the_owners_edited_one(d
     import scheduler, delayed, strategy_jobs, schedule_intel, time_utils
     monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
     rid = _rid(db_path, module_labor=1)
-    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    # A Thursday draft, so Friday publishes: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    update_restaurant(rid, {"auto_publish_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
         _schedule(db_path, rid, w)
     owners = _schedule(db_path, rid, "2099-01-04", edited=True, shared=False)
@@ -823,7 +826,8 @@ def test_auto_publish_does_queue_the_same_week_unedited(db_path, monkeypatch):
     # never stored, so this test once checked a restaurant with auto-publish
     # off and attempted nothing (re-audit 10/4/26, PIPE's observation).
     rid = _rid(db_path, module_labor=1)
-    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    # A Thursday draft, so Friday publishes: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    update_restaurant(rid, {"auto_publish_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     assert models.get_restaurant(rid, db_path=db_path).auto_publish_schedule
     for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
         _schedule(db_path, rid, w)

@@ -746,7 +746,10 @@ def test_the_generate_route_queues_on_the_pool_and_starts_no_thread_of_its_own(d
 
 
 def test_no_more_generations_run_at_once_than_the_pool_has_slots(monkeypatch):
-    monkeypatch.setattr(se, "_GEN_SLOTS", threading.BoundedSemaphore(2))
+    # The slots are se.GenerationSlots now, not a BoundedSemaphore: an
+    # owner's press goes ahead of a queued auto-draft (AI cost audit 10/7/26
+    # #5). The bound is the same.
+    monkeypatch.setattr(se, "_GEN_SLOTS", se.GenerationSlots(2))
     monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
     inside, peak, gate = [0], [0], threading.Event()
     lock = threading.Lock()
@@ -763,6 +766,74 @@ def test_no_more_generations_run_at_once_than_the_pool_has_slots(monkeypatch):
     [t.start() for t in threads]
     [t.join(10) for t in threads]
     assert peak[0] == 2
+
+
+def _slot_order(monkeypatch, slots, announce=()):
+    """Holds every slot, queues background waiters then presses, frees the
+    slots one at a time, and returns the order the waiters got in."""
+    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
+    gate = se.GenerationSlots(slots)
+    monkeypatch.setattr(se, "_GEN_SLOTS", gate)
+    for j in announce:
+        gate.announce(j)
+    order, lock, release = [], threading.Lock(), threading.Event()
+
+    def hold():
+        with se.generation_scope("holder"):
+            release.wait(10)
+
+    def wait(name, prio):
+        with se.generation_scope(name, priority=prio):
+            with lock:
+                order.append(name)
+    holders = [threading.Thread(target=hold) for _ in range(slots)]
+    [t.start() for t in holders]
+    deadline = time.time() + 5
+    while gate.busy < slots and time.time() < deadline:
+        time.sleep(0.01)
+    waiters = []
+    for name, prio in (("draft-1", se.GEN_PRIORITY_BACKGROUND), ("draft-2", se.GEN_PRIORITY_BACKGROUND),
+                       ("press-1", se.GEN_PRIORITY_PRESS)):
+        t = threading.Thread(target=wait, args=(name, prio))
+        t.start()
+        waiters.append(t)
+        while gate.waiting() < len(waiters) and time.time() < deadline:
+            time.sleep(0.01)
+    return gate, order, release, holders, waiters
+
+
+def test_an_owners_press_takes_the_next_slot_ahead_of_queued_auto_drafts(monkeypatch):
+    gate, order, release, holders, waiters = _slot_order(monkeypatch, 1)
+    release.set()
+    [t.join(10) for t in holders + waiters]
+    # Queued last, served first; the drafts keep their own order.
+    assert order == ["press-1", "draft-1", "draft-2"]
+    assert gate.busy == 0 and gate.waiting() == 0
+
+
+def test_a_press_on_its_way_to_the_gate_holds_a_freed_slot_from_the_drafts(monkeypatch):
+    # A press queued on the owner pool is announced (submit_generation): a
+    # slot freed before its thread reaches the gate is not taken by a draft.
+    gate, order, release, holders, waiters = _slot_order(monkeypatch, 1, announce=("press-late",))
+    release.set()
+    [t.join(10) for t in holders]
+    time.sleep(0.3)
+    assert order == ["press-1"], order                    # the drafts wait for the announced press
+    with se.generation_scope("press-late"):
+        order.append("press-late")
+    [t.join(10) for t in waiters]
+    assert order == ["press-1", "press-late", "draft-1", "draft-2"]
+
+
+def test_the_auto_draft_takes_its_slot_behind_presses():
+    import inspect
+    import strategy_jobs
+    src = inspect.getsource(strategy_jobs._draft_one)
+    assert "generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND)" in src
+    sub = inspect.getsource(se.submit_generation)
+    assert "_GEN_SLOTS.announce(job_id)" in sub and "with generation_scope(job_id):" in sub
+    # The number of generations at once is unchanged.
+    assert se._GEN_SLOTS.slots == se.SCHEDULE_GEN_WORKERS
 
 
 def test_the_auto_draft_joins_an_owners_running_generation_instead_of_starting_a_second(db, monkeypatch):
@@ -1066,6 +1137,101 @@ def test_the_quality_gate_is_skipped_when_the_job_has_no_time_left_for_it(db, mo
         se._run_schedule_job("gate-late", rid)
     assert len(calls) == 1 and finished["status"] == "done"
     assert finished["result"]["gate"] == {"ran": False}
+
+
+# ── AI cost audit 10/7/26 #21: the gate fills in code before it pays the model ──
+
+def _gate_events(monkeypatch):
+    seen = []
+    import ai_utils
+    real = ai_utils.record_quality_event
+
+    def rec(surface, kind, **k):
+        if kind.startswith("gate_"):
+            seen.append((kind, k.get("n")))
+        return real(surface, kind, **k)
+    monkeypatch.setattr(ai_utils, "record_quality_event", rec)
+    return seen
+
+
+def _sat_gate():
+    return {"dates": [WEEK[5]], "focus": ["Saturday 2026-10-10 dinner: 2 servers short"],
+            "triggers": {WEEK[5]: ["coverage"]}, "kinds": ["coverage"],
+            "reason": "1 busy day still had a staffing hole after repair"}
+
+
+def _rid_of(job_rows, db):
+    import sqlite3
+    conn = sqlite3.connect(db)
+    try:
+        return [r[0] for r in conn.execute("SELECT id FROM schedule_history ORDER BY id").fetchall()]
+    finally:
+        conn.close()
+
+
+def test_a_gate_the_fill_settles_makes_no_second_model_call(db, monkeypatch):
+    calls = []
+    rid = _build_harness(monkeypatch, db)
+    monkeypatch.setattr(labor, "generate_optimized_schedule", _gen([[_line(d, "Ana") for d in WEEK]], calls))
+    gates = [_sat_gate()]                       # the draft trips it; the filled week does not
+    monkeypatch.setattr(se, "_quality_gate", lambda result: gates.pop(0) if gates else None)
+    monkeypatch.setattr(se, "_gate_keeps", lambda *a: (True, "score"))
+    finished = {}
+    monkeypatch.setattr(se._ops, "finish_async_job", lambda j, st, r: finished.update(status=st, result=r))
+    events = _gate_events(monkeypatch)
+    se._run_schedule_job("gate-fill", rid)
+    assert len(calls) == 1, "the fill in code settled it: no rewrite paid for"
+    res = finished["result"]
+    assert finished["status"] == "done"
+    assert res["gate"]["kept"] == "filled" and res["gate"]["path"] == "code"
+    assert res["gate"]["fill"] == {"tried": True, "kept": True, "resolved": True, "dates": [WEEK[5]]}
+    assert res["redo"]["by"] == "gate" and res["redo"]["dates"] == [WEEK[5]]
+    assert res["slices"] == []                   # nothing the model wrote in this pass
+    assert events == [("gate_filled_in_code", 1)]
+    # The filled draft is the one in force, saved over the draft it read.
+    assert len(_rid_of(None, db)) == 2 and res["history_id"] == _rid_of(None, db)[-1]
+
+
+def test_a_fill_that_is_no_better_goes_to_the_model_from_the_draft(db, monkeypatch):
+    calls = []
+    rid, finished = _gate_harness(monkeypatch, db, [[_line(d, "Ana") for d in WEEK], [_line(WEEK[5], "Bo")]], calls)
+    monkeypatch.setattr(se, "_gate_local", lambda quality, dates: 50.0 if "Bo" in json.dumps(quality) else 10.0)
+    events = _gate_events(monkeypatch)
+    se._run_schedule_job("gate-fill-model", rid)
+    assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
+    first = _rid_of(None, db)[0]
+    res = finished["result"]
+    assert res["gate"]["kept"] == "regenerated"
+    # The rewrite was written over the original draft (the fill was set aside).
+    assert res["redo"]["base_history_id"] == first
+    assert events == [("gate_model_rewrite", 1)]
+
+
+def test_a_fill_that_helps_but_leaves_the_breach_is_rewritten_from_the_fill(db, monkeypatch):
+    calls = []
+    rid = _build_harness(monkeypatch, db)
+    monkeypatch.setattr(labor, "generate_optimized_schedule",
+                        _gen([[_line(d, "Ana") for d in WEEK], [_line(WEEK[5], "Bo")]], calls))
+    gates = [_sat_gate(), _sat_gate()]          # the filled week still trips it on Saturday
+    monkeypatch.setattr(se, "_quality_gate", lambda result: gates.pop(0) if gates else None)
+    monkeypatch.setattr(se, "_gate_keeps", lambda *a: (True, "score"))
+    finished = {}
+    monkeypatch.setattr(se._ops, "finish_async_job", lambda j, st, r: finished.update(status=st, result=r))
+    se._run_schedule_job("gate-fill-then-model", rid)
+    assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
+    ids = _rid_of(None, db)
+    assert len(ids) == 3
+    # The model's rewrite read the filled draft, not the first one.
+    assert finished["result"]["redo"]["base_history_id"] == ids[1]
+
+
+def test_whether_the_gate_survives_reads_its_own_dates_and_reasons():
+    g = _sat_gate()
+    assert se._gate_survives(g, None) is False
+    assert se._gate_survives(g, dict(g)) is True
+    assert se._gate_survives(g, dict(g, dates=[WEEK[4]], triggers={WEEK[4]: ["coverage"]})) is False
+    assert se._gate_survives(g, dict(g, triggers={WEEK[5]: ["leadership"]})) is False
+    assert se._gate_survives({"dates": [WEEK[5]]}, {"dates": [WEEK[5]]}) is True   # no reasons named: any
 
 
 # ── pinned rows (the manager plan's) travel as fixed context, joined once ───

@@ -521,9 +521,19 @@ def test_pr25_the_example_is_in_the_standing_part_and_identical_on_every_call():
     static = sp.static_block(True, NOTE_WORDS)
     ex = static[static.index("<example>"):static.index("</example>")]
     assert ex in sp.static_block(False, NOTE_WORDS)
+    written = ex[ex.index("The shifts written"):ex.index("Why they meet it:")]
     for name, role, s, e, note, planned in sp.EXAMPLE_ROWS:
-        assert f"{name:<4} {role:<9} {s}-{e}" in ex
+        if planned:
+            # A planned manager row is added by code, never written by the
+            # model (AI cost audit 10/7/26 #35 — the example used to list it
+            # as written, and the model's copies were then dropped): it
+            # appears under what the day needed, not among the shifts written.
+            assert f"{name:<4} {role:<9}" not in written
+            assert f"{name} {s}-{e}" in ex[:ex.index("The shifts written")]
+            continue
+        assert f"{name:<4} {role:<9} {s}-{e}" in written
         assert (note in so.NOTE_VALUES) and (not note or f"note: {note}" in ex)
+    assert "kept exactly" not in ex and "added by code" in ex
 
 
 def test_pr25_the_example_meets_its_own_needs_by_the_scorers_rules():

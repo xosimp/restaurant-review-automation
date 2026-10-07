@@ -445,6 +445,11 @@ class Restaurant:
     # The weekday (0 = Monday) the draft is made, restaurant-local; the
     # auto-publish goes the day after (auto_draft_weekday / auto_publish_weekday).
     auto_draft_weekday: int              = 3
+    # 1 once the draft day is somebody's choice (any write of
+    # auto_draft_weekday, update_restaurant stamps it); 0 is "not chosen",
+    # and the effective day is then spread across Monday-Thursday by
+    # restaurant (models.auto_draft_weekday — AI cost audit 10/7/26 #5).
+    auto_draft_weekday_chosen: int       = 0
     external_scheduling_tool: Optional[str] = None   # "Fourth", "7shifts" — a scheduler they already pay for
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
     inventory_updated_at: Optional[str]  = None
@@ -595,8 +600,8 @@ class Restaurant:
     # Graduated trust: extend the rule to 3-star and 4-star once the owner's
     # own edit rate on that band has earned it (auto_approve_trust).
     auto_approve_earned: int         = 0
-    # Publish the draft to staff the day after it is made (Friday for the
-    # default Thursday draft), with a two-hour undo, once the last few drafts
+    # Publish the draft to staff the day after it is made (Friday for a
+    # Thursday draft), with a two-hour undo, once the last few drafts
     # went out unedited (schedule_publish_trust).
     auto_publish_schedule: int       = 0
     # Queue orders to suppliers with a record, inside the usual band, with an
@@ -1297,6 +1302,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # The owner's day for it, and for trusted supplier orders (9/27/26):
         # Thursday and Monday were fixed in the scheduler loop.
         ("restaurants", "auto_draft_weekday", "INTEGER DEFAULT 3"),
+        # Whether that day was chosen (AI cost audit 10/7/26 #5): the column
+        # above defaults to 3 for every row, so a stored Thursday cannot say
+        # whether anybody picked it. 0 reads the spread default instead.
+        ("restaurants", "auto_draft_weekday_chosen", "INTEGER DEFAULT 0"),
         ("restaurants", "auto_order_weekday", "INTEGER DEFAULT 0"),
         ("restaurants", "external_scheduling_tool", "TEXT"),
         ("restaurants", "email_theme", "TEXT DEFAULT 'dark'"),
@@ -4439,6 +4448,8 @@ def init_db(db_path: str = DB_PATH):
     # The demo seed's labor days written before they carried source 'seed'
     # (memory audit 9/29/26, "eligibility"), once.
     stamp_seed_provenance(db_path=db_path)
+    # The draft days already in force kept (AI cost audit 10/7/26 #5), once.
+    mark_chosen_draft_days(db_path=db_path)
     # Labor period history as payroll weeks, the legacy rolling windows
     # marked unread (memory audit 9/29/26, labor_periods) — after
     # ensure_columns() has added labor_history.kind, and after the seed's
@@ -4819,6 +4830,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
         "auto_draft_schedule", "external_scheduling_tool", "auto_draft_weekday", "auto_order_weekday",
+        "auto_draft_weekday_chosen",
         "pause_reason", "converted_at", "contract_signed_at",
     }
     if "weekly_revenue_target" in fields:
@@ -4827,6 +4839,11 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         fields = dict(fields)
         fields["monthly_revenue_target"] = monthly_from_weekly(fields.pop("weekly_revenue_target"))
     updates = {k: v for k, v in fields.items() if k in allowed}
+    if "auto_draft_weekday" in updates and "auto_draft_weekday_chosen" not in updates:
+        # Any write of the draft day is a choice — the owner's picker, an
+        # undo, an admin's edit — and is never replaced by the spread
+        # default again (auto_draft_weekday; AI cost audit 10/7/26 #5).
+        updates["auto_draft_weekday_chosen"] = 1
     # A phone number is kept the way an owner reads it, "(334) 568-9292"
     # (Will, 9/29/26); every reader of owner_phone takes its digits.
     if updates.get("owner_phone"):
@@ -5670,6 +5687,8 @@ def _restaurant_from_row(row) -> Restaurant:
                              and row["auto_draft_schedule"] is not None else 0),
         auto_draft_weekday=(row["auto_draft_weekday"] if "auto_draft_weekday" in row.keys()
                             and row["auto_draft_weekday"] is not None else AUTO_DRAFT_WEEKDAY_DEFAULT),
+        auto_draft_weekday_chosen=(row["auto_draft_weekday_chosen"] if "auto_draft_weekday_chosen" in row.keys()
+                                   and row["auto_draft_weekday_chosen"] is not None else 0),
         external_scheduling_tool=row["external_scheduling_tool"] if "external_scheduling_tool" in row.keys() else None,
     )
 
@@ -12229,6 +12248,48 @@ def in_service(restaurant) -> bool:
     return (status or "").strip().lower() not in BLOCKED_BILLING_STATES
 
 
+AUTO_DRAFT_DAY_CHOSEN_MIGRATION = "auto_draft_weekday_chosen_v1"
+
+
+def mark_chosen_draft_days(db_path=None) -> int:
+    """Once (data_migrations): mark the draft day chosen wherever it already
+    is somebody's day, so the spread default (auto_draft_weekday) moves no
+    restaurant that is already drafting or relying on its day (AI cost
+    audit 10/7/26 #5): an owner who picked a day (activity_log
+    'auto_draft_day_changed'), a stored day other than the column's
+    Thursday default, and every restaurant with the auto-draft or the
+    auto-publish already on — its owner turned it on reading "Thursday", and
+    its auto-publish is Friday. The rest (never opted in, and every
+    restaurant added later) read the spread. Returns rows marked."""
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM data_migrations WHERE name=?",
+                        (AUTO_DRAFT_DAY_CHOSEN_MIGRATION,)).fetchone():
+            conn.rollback()
+            return 0
+        n = conn.execute(
+            "UPDATE restaurants SET auto_draft_weekday_chosen=1 WHERE COALESCE(auto_draft_weekday_chosen, 0)=0 "
+            "AND (COALESCE(auto_draft_schedule, 0)=1 OR COALESCE(auto_publish_schedule, 0)=1 "
+            "OR COALESCE(auto_draft_weekday, ?)<>? "
+            "OR id IN (SELECT restaurant_id FROM activity_log WHERE event_type='auto_draft_day_changed'))",
+            (AUTO_DRAFT_WEEKDAY_DEFAULT, AUTO_DRAFT_WEEKDAY_DEFAULT)).rowcount
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)",
+                     (AUTO_DRAFT_DAY_CHOSEN_MIGRATION, f"{n} restaurants keep the draft day already in force"))
+        conn.commit()
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        # Retried on the next boot: the marker is written only with the rows.
+        print(f"auto-draft day migration failed (will retry at next boot): {e}")
+        return 0
+    finally:
+        conn.close()
+
+
 SEED_PROVENANCE_MIGRATION = "labor_seed_provenance_v1"
 
 
@@ -15024,8 +15085,15 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
 # leave no day to read it and none for the auto-publish, which goes the day
 # after the draft. Orders may go any day.
 WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-AUTO_DRAFT_WEEKDAY_DEFAULT = 3      # Thursday
+AUTO_DRAFT_WEEKDAY_DEFAULT = 3      # Thursday: a restaurant with no id, and the column's own default
 AUTO_DRAFT_WEEKDAYS = (0, 1, 2, 3, 4, 5)
+# Where nobody chose the day, it is spread across Monday-Thursday by
+# restaurant id (AI cost audit 10/7/26 #5). Every restaurant drafted on
+# Thursday: with two generation slots (schedule_engine.SCHEDULE_GEN_WORKERS)
+# and 15-40 minutes a draft, 100 Thursday drafts take 12-33 hours and spill
+# past the Friday auto-publish. Deterministic, so a restaurant's day never
+# moves between ticks; Friday and Saturday stay owner choices only.
+AUTO_DRAFT_SPREAD_WEEKDAYS = (0, 1, 2, 3)
 AUTO_ORDER_WEEKDAY_DEFAULT = 0      # Monday
 AUTO_ORDER_WEEKDAYS = (0, 1, 2, 3, 4, 5, 6)
 
@@ -15038,8 +15106,39 @@ def _weekday_of(restaurant, attr, default, allowed) -> int:
     return v if v in allowed else default
 
 
+def default_auto_draft_weekday(restaurant_id) -> int:
+    """The draft day of a restaurant whose day nobody chose: Monday to
+    Thursday by its id (AUTO_DRAFT_SPREAD_WEEKDAYS), Thursday without one."""
+    try:
+        rid = int(restaurant_id)
+    except (TypeError, ValueError):
+        return AUTO_DRAFT_WEEKDAY_DEFAULT
+    return AUTO_DRAFT_SPREAD_WEEKDAYS[rid % len(AUTO_DRAFT_SPREAD_WEEKDAYS)]
+
+
+def effective_auto_draft_weekday(restaurant_id, stored, chosen) -> int:
+    """The day the draft is made, from the row's own columns: the stored
+    day when somebody chose it (and it is a draft day), else the spread
+    default. One rule for the Restaurant object (auto_draft_weekday) and a
+    reader of the raw columns (reservation_feeds)."""
+    if chosen:
+        try:
+            v = int(stored)
+        except (TypeError, ValueError):
+            v = None
+        if v in AUTO_DRAFT_WEEKDAYS:
+            return v
+    return default_auto_draft_weekday(restaurant_id)
+
+
 def auto_draft_weekday(restaurant) -> int:
-    return _weekday_of(restaurant, "auto_draft_weekday", AUTO_DRAFT_WEEKDAY_DEFAULT, AUTO_DRAFT_WEEKDAYS)
+    """The restaurant's draft day — the one every reader (the auto-draft
+    pass, the auto-publish the day after, the morning brief, the settings
+    both clients show) goes by: the owner's choice, else the spread default
+    (AI cost audit 10/7/26 #5)."""
+    return effective_auto_draft_weekday(getattr(restaurant, "id", None),
+                                        getattr(restaurant, "auto_draft_weekday", None),
+                                        getattr(restaurant, "auto_draft_weekday_chosen", 0))
 
 
 def auto_publish_weekday(restaurant) -> int:

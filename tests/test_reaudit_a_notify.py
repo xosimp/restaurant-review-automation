@@ -305,7 +305,8 @@ def test_the_publish_notice_states_when_it_really_goes_out(db_path, monkeypatch)
     import scheduler, strategy_jobs, schedule_intel, time_utils
     monkeypatch.setattr(schedule_intel, "watched_dates", lambda *a, **k: {"watched"})
     rid = _rid(db_path, module_labor=1)
-    update_restaurant(rid, {"auto_publish_schedule": 1}, db_path=db_path)
+    # A Thursday draft, so Friday publishes: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    update_restaurant(rid, {"auto_publish_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     conn = get_conn(db_path)
     for w in ("2026-09-07", "2026-09-14", "2026-09-21"):
         conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, published_at) "

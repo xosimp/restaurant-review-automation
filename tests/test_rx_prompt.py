@@ -324,7 +324,10 @@ def test_a_one_call_week_is_given_the_time_its_thinking_takes():
     # At the code's only recorded rate (the old 9,600 tokens in 360 s) a call
     # that uses its thinking reserve and writes a week needs ~29 minutes; it
     # was given 360 seconds, inside a 15-minute job.
-    needed = (se.THINKING_TOKENS_RESERVED + 30 * WEEK_ROWS) / (se.ROW_TOKENS_PER_CALL / 360.0)
+    # The thinking reserve is the effort in force's (AI cost audit 10/7/26
+    # #34): THINKING_TOKENS_RESERVED is the largest, what a call is sized
+    # for; its planned seconds read the effort the call runs at.
+    needed = (se.thinking_tokens_reserved() + 30 * WEEK_ROWS) / (se.ROW_TOKENS_PER_CALL / 360.0)
     assert se.call_seconds(WEEK_ROWS) >= needed
     assert se.SCHEDULE_CALL_SECONDS >= se.call_seconds(WEEK_ROWS)
     clock = se.GenerationClock()
@@ -596,3 +599,70 @@ def test_a_call_at_another_effort_does_not_size_the_next_week(db, monkeypatch):
     assert costs["calls"] == 1 and costs["source"] == "comparable"
     assert so.measured_tokens_per_row(rid, model=model, db_path=db, effort="high")["output_tokens_per_row"] \
         == pytest.approx(62353 / 215, abs=0.1)
+
+
+# ── AI cost audit 10/7/26 #3: no exhaustive self-verification ──────────────
+
+def test_the_prompt_leaves_the_counting_to_code():
+    """The model decides the shape and who works; code re-counts coverage,
+    hours and rules afterwards and repairs them. The prompt used to ask it to
+    "count, check and compare as much as you need" and to count every
+    daypart of every date against SHIFT REQUIREMENTS before answering —
+    62,353 of 64,000 output tokens on Simple EJ's week, nearly all thinking."""
+    for structured in (True, False):
+        static = sp.static_block(structured, NOTE_WORDS)
+        assert "count, check and compare as much as you need" not in static
+        assert "For each date you write, count everyone" not in static
+        assert "check every closer's end against that date's close" not in static
+        assert "do not spend effort re-counting or re-verifying your rows" in static
+        assert "code counts every daypart and half hour against SHIFT REQUIREMENTS" in static
+        # What it needs while choosing stays: the ranked rules and how a
+        # daypart is counted.
+        assert "PRIORITIES — the one ranked order" in static and "HOW COVERAGE IS COUNTED" in static
+        assert "[HARD]" in static and "Never break one to meet anything ranked below it." in static
+
+
+# ── AI cost audit 10/7/26 #35: planned manager rows are not written ────────
+
+def test_the_model_is_told_not_to_write_the_planned_manager_rows():
+    import schedule_skeleton as sk
+    static = sp.static_block(True, NOTE_WORDS)
+    pri = static[static.index("PRIORITIES —"):]
+    assert "code adds those rows to your answer: do not write them" in pri
+    assert "keep those rows exactly" not in static
+    plan = {"rows": [{"date": WEEK[0], "employee": "Erik", "role": "Owner", "shift_start": "10:00am",
+                      "shift_end": "5:00pm", "_pinned": sk.PLAN_SOURCE}],
+            "windows": {WEEK[0]: {"from": "10:00am", "to": "11:00pm"}},
+            "managers": [{"name": "Erik", "role": "Owner"}]}
+    block = sk.prompt_block(plan["rows"], plan)
+    assert "Erik 10:00am–5:00pm (Owner)" in block
+    assert "code adds to your answer exactly as listed: do NOT write them" in block
+    assert "keep every one exactly" not in block
+    assert "do not write them" in sk.priority_line(plan["rows"], plan)
+
+
+# ── AI cost audit 10/7/26 #34: the thinking reserve is the effort's ────────
+
+def test_a_calls_planned_time_reads_the_effort_in_force_and_its_size_never_grows(monkeypatch):
+    by = se.THINKING_TOKENS_BY_EFFORT
+    assert by["low"] < by["medium"] < by["high"] == se.THINKING_TOKENS_RESERVED
+    assert se.thinking_tokens_reserved("medium") == by["medium"]
+    assert se.thinking_tokens_reserved("") == 0                       # a model without thinking
+    assert se.thinking_tokens_reserved("unheard-of") == se.THINKING_TOKENS_RESERVED
+    monkeypatch.setattr(se, "schedule_effort_in_force", lambda: "medium")
+    medium = se.call_seconds(WEEK_ROWS)
+    monkeypatch.setattr(se, "schedule_effort_in_force", lambda: "high")
+    high = se.call_seconds(WEEK_ROWS)
+    assert medium < high
+    assert high == pytest.approx(se._assumed_call_seconds(WEEK_ROWS, effort="high"))
+    # The size of a call is planned at the largest reserve whatever the
+    # effort, under the unchanged ceiling: a lower effort never grows a call.
+    assert se.SCHEDULE_TOKEN_CEILING == 64000
+    assert se.ROWS_PER_CALL_BY_TOKENS == (se.SCHEDULE_TOKEN_CEILING - max(by.values()) - se.SUMMARY_TOKENS) \
+        // se.OUTPUT_TOKENS_PER_ROW
+    assert se.SCHEDULE_CALL_SECONDS == int(round(se._assumed_call_seconds(se.CHUNK_ROWS_PER_CALL, effort="high")))
+
+    def broken():
+        raise RuntimeError("no model")
+    monkeypatch.setattr(se, "schedule_effort_in_force", broken)
+    assert se.thinking_tokens_reserved() == se.THINKING_TOKENS_RESERVED   # errs long

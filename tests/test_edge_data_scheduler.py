@@ -188,7 +188,9 @@ def test_auto_draft_reaches_every_opted_in_restaurant_by_thursday_evening(db_pat
     import schedule_engine, push, notify
     rids = [_rid(db_path, name=f"Opted {i}") for i in range(3)]
     for rid in rids:
-        models.update_restaurant(rid, {"auto_draft_schedule": 1, "module_labor": 1}, db_path=db_path)
+        # Thursday chosen: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+        models.update_restaurant(rid, {"auto_draft_schedule": 1, "module_labor": 1, "auto_draft_weekday": 3},
+                                 db_path=db_path)
     clock = [1000.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
 

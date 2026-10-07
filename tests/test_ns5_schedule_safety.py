@@ -261,7 +261,10 @@ def test_notice_short_blocks_a_week_inside_the_notice_window(db_path, rid):
 
 def test_auto_publish_never_sends_inside_the_notice_window(db_path, rid, monkeypatch):
     import scheduler, strategy_jobs, time_utils
-    update_restaurant(rid, {"auto_publish_schedule": 1, "billing_status": "active"}, db_path=db_path)
+    # A Thursday draft, so Friday is the publish day: an unchosen draft day
+    # is spread by restaurant now (AI cost audit 10/7/26 #5).
+    update_restaurant(rid, {"auto_publish_schedule": 1, "billing_status": "active", "auto_draft_weekday": 3},
+                      db_path=db_path)
     sr.save_compliance(rid, {"notice_days": 14}, db_path=db_path)
     _history(db_path, rid, CLEAN)
     friday = dt.datetime(2026, 10, 2, 9, 30)
