@@ -656,6 +656,68 @@ def subject_run(workflow, restaurant_id, subject, db_path=None):
         return None
 
 
+def attach(run_id, subject=None, context=None, db_path=None) -> bool:
+    """Name a finished run's subject after the fact — a draft whose id
+    exists only once the caller stores it (a marketing draft's draft_ref) —
+    and/or merge `context` into its context_json (a task-sheet starter's
+    offered lines, read back when the owner adds them). Never raises."""
+    if not run_id or (subject is None and not context):
+        return False
+    try:
+        conn = _conn(db_path)
+        try:
+            if subject is not None:
+                conn.execute("UPDATE ai_runs SET subject=? WHERE run_id=?", (str(subject)[:120], run_id))
+            if context:
+                row = conn.execute("SELECT context_json FROM ai_runs WHERE run_id=?", (run_id,)).fetchone()
+                try:
+                    cur = json.loads(row["context_json"]) if row and row["context_json"] else {}
+                except (TypeError, ValueError):
+                    cur = {}
+                cur = dict(cur if isinstance(cur, dict) else {}, **context)
+                conn.execute("UPDATE ai_runs SET context_json=? WHERE run_id=?", (json.dumps(cur)[:2000], run_id))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as e:
+        log.info("run not annotated (%s): %s", run_id, e)
+        return False
+
+
+def run_context(workflow, restaurant_id, subject, db_path=None) -> dict:
+    """The context_json of the subject's newest run, as a dict ({} when none)."""
+    row = subject_run(workflow, restaurant_id, subject, db_path=db_path) or {}
+    try:
+        out = json.loads(row.get("context_json") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def record_review(workflow, restaurant_id, subject, verdict, mode="haiku_gate", db_path=None) -> bool:
+    """File a reviewer's verdict given AFTER the run, on the subject's newest
+    run — the auto-approve gate reads a reply drafted hours earlier, just
+    before it would post it unread. Never raises; False when no run matched."""
+    if not isinstance(verdict, Verdict):
+        return False
+    row = subject_run(workflow, restaurant_id, subject, db_path=db_path)
+    if not row:
+        return False
+    try:
+        conn = _conn(db_path)
+        try:
+            conn.execute("UPDATE ai_runs SET reviewer=?, reviewer_score=?, reviewer_notes=? WHERE run_id=?",
+                         (mode, verdict.score, ("; ".join(verdict.reasons)[:500] or None), row["run_id"]))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as e:
+        log.info("review not filed (%s): %s", workflow, e)
+        return False
+
+
 def verdict_from_validation(v) -> Verdict:
     """A Verdict from a response_validation verdict object or word: refuse →
     validation_refuse, withhold → validation_withhold, pass / caveat → ok.

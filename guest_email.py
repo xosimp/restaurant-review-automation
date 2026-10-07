@@ -397,58 +397,121 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
         "6. Give no reason or cause for anything: no 'because', 'due to', 'thanks to' or 'since'.\n"
         "7. No phone numbers or links."
     )
-    message = create_with_retry(
+    import ai_orchestrator as _orch
+    from ai_reviewer import reviewer_for
+    # The draft's one call, on the orchestrator's rung (guest_newsletter_draft:
+    # T2, then T3 — AI cost audit 10/7/26, orchestration Phase 3).
+    _send = lambda route, note: create_with_retry(  # noqa: E731 — keeps the call in this function (readiness scan)
         get_client(),
-        model=model_for("guest_marketing"),
-        max_tokens=700,
-        messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant.id,
         action="guest_newsletter_draft",
         # Rests on no data source: a guest email drafted from the owner's goal.
         readiness=data_health.NOT_APPLICABLE,
+        **route.apply(dict(model=model_for("guest_marketing"), max_tokens=700,
+                           messages=[{"role": "user", "content": prompt + note}])),
     )
-    if getattr(message, "stop_reason", None) == "max_tokens":
-        raise ValueError("newsletter copy was truncated")
-    raw = extract_text(message).strip()
-    found = re.search(r"\{.*\}", raw, re.S)
-    try:
-        data = json.loads(found.group(0)) if found else None
-    except ValueError:
-        data = None
-    if not isinstance(data, dict):
-        # Billed, and useless: the ledger says so (fix round G, #52).
-        from ai_utils import mark_outcome
-        mark_outcome(message, "unparseable", reason="newsletter copy was not JSON")
-        raise ValueError("newsletter copy was unreadable")
-    fields = {k: str(data.get(k) or "").strip() for k in _NEWSLETTER_KEYS}
-    for k in ("subject", "preheader", "headline", "button"):
-        fields[k] = " ".join(fields[k].split())
-    fields["subject"], fields["preheader"] = fields["subject"][:140], fields["preheader"][:140]
-    fields["headline"], fields["button"] = fields["headline"][:120], fields["button"][:40]
-    fields["body"] = re.sub(r"\n{3,}", "\n\n", fields["body"].replace("\r", "")).strip()[:1500]
-    if not (fields["subject"] and fields["body"]):
-        from ai_utils import mark_outcome
-        mark_outcome(message, "unparseable", reason="newsletter copy had no subject or body")
-        raise ValueError("newsletter copy was unreadable")
 
-    offer_source = f"{topic} {goal} {p.get('menu_notes') or ''}"
-    offers = invented_offers(" ".join(fields.values()), offer_source)
-    if offers:
-        raise ValueError("newsletter copy rejected: it offers " + ", ".join(offers[:3])
-                         + ", which nobody told Cavnar AI the restaurant is running")
-    owner_words = f"{goal} {topic}".strip()
-    for k in _NEWSLETTER_KEYS:
-        if not fields[k]:
-            continue
-        unasked = _unasked_contact_details(fields[k], owner_words)
-        if unasked:
-            raise ValueError(f"newsletter copy rejected: the copy contains {unasked}, which the owner never wrote")
-        checked = _validate_copy(fields[k], restaurant.id, p, owner_words)
-        if checked.verdict is not None and checked.verdict.verdict == "refuse":
-            raise ValueError(f"newsletter copy rejected: {refusal_detail(checked.verdict)}")
-        fields[k] = str(checked)
-    return {"subject": fields["subject"], "preheader": fields["preheader"], "headline": fields["headline"],
-            "body": fields["body"], "button_label": fields["button"]}
+    class _NotUsed(str):
+        """A draft that was not used, and why (`trigger`: schema_fail for a
+        reply that wasn't the email, validation_refuse for a broken rule)."""
+        trigger = "validation_refuse"
+
+    def _not_used(why, trigger="validation_refuse"):
+        out = _NotUsed(why)
+        out.trigger = trigger
+        return out
+
+    def _attempt(route, notes):
+        note = ("\n\nYour previous draft was not used: " + "; ".join(notes) + ". Write it again without that."
+                if notes else "")
+        message = _send(route, note)
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            raise ValueError("newsletter copy was truncated")
+        raw = extract_text(message).strip()
+        found = re.search(r"\{.*\}", raw, re.S)
+        try:
+            data = json.loads(found.group(0)) if found else None
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            # Billed, and useless: the ledger says so (fix round G, #52).
+            from ai_utils import mark_outcome
+            mark_outcome(message, "unparseable", reason="newsletter copy was not JSON")
+            return _not_used("the reply was not the email's JSON", "schema_fail")
+        fields = {k: str(data.get(k) or "").strip() for k in _NEWSLETTER_KEYS}
+        for k in ("subject", "preheader", "headline", "button"):
+            fields[k] = " ".join(fields[k].split())
+        fields["subject"], fields["preheader"] = fields["subject"][:140], fields["preheader"][:140]
+        fields["headline"], fields["button"] = fields["headline"][:120], fields["button"][:40]
+        fields["body"] = re.sub(r"\n{3,}", "\n\n", fields["body"].replace("\r", "")).strip()[:1500]
+        if not (fields["subject"] and fields["body"]):
+            from ai_utils import mark_outcome
+            mark_outcome(message, "unparseable", reason="newsletter copy had no subject or body")
+            return _not_used("the email had no subject or body", "schema_fail")
+
+        offer_source = f"{topic} {goal} {p.get('menu_notes') or ''}"
+        offers = invented_offers(" ".join(fields.values()), offer_source)
+        if offers:
+            return _not_used("it offers " + ", ".join(offers[:3])
+                             + ", which nobody told Cavnar AI the restaurant is running")
+        owner_words = f"{goal} {topic}".strip()
+        for k in _NEWSLETTER_KEYS:
+            if not fields[k]:
+                continue
+            unasked = _unasked_contact_details(fields[k], owner_words)
+            if unasked:
+                return _not_used(f"the copy contains {unasked}, which the owner never wrote")
+            checked = _validate_copy(fields[k], restaurant.id, p, owner_words)
+            if checked.verdict is not None and checked.verdict.verdict == "refuse":
+                return _not_used(refusal_detail(checked.verdict))
+            fields[k] = str(checked)
+        return _Draft(subject=fields["subject"], preheader=fields["preheader"], headline=fields["headline"],
+                      body=fields["body"], button_label=fields["button"])
+
+    def _check(out):
+        if isinstance(out, _NotUsed):
+            if out.trigger == "validation_refuse":
+                try:
+                    from ai_utils import record_quality_event
+                    record_quality_event("guest_newsletter_draft", "public_copy_refused", restaurant_id=restaurant.id,
+                                         detail=str(out)[:200], action="guest_newsletter_draft")
+                except Exception:
+                    pass
+            return _orch.Verdict.failed(out.trigger, str(out), label="refuse")
+        return _orch.Verdict.passed()
+
+    # A refused draft used to be a 422 at once; it is written once more on
+    # the next rung, told why, and an email the guards pass is read by the
+    # Haiku rubric before the owner sees it — it reaches the whole list and
+    # cannot be recalled (owner, 10/7/26). A second refusal or flag is the
+    # owner's to see ("newsletter copy rejected: …", the route's 422).
+    brief = "; ".join(x for x in (f"Goal: {goal}" if goal else "", f"Topic: {topic}" if topic else "",
+                                  f"Menu: {p.get('menu_notes')}" if p.get("menu_notes") else "") if x)
+    run = _orch.generate("guest_newsletter_draft", restaurant.id, _attempt, _check,
+                         review=reviewer_for("guest_email", restaurant.id, context=brief), subject="newsletter")
+    if not run.verdict.ok:
+        if run.verdict.trigger == "schema_fail":
+            raise ValueError("newsletter copy was unreadable")
+        if run.verdict.trigger == "reviewer_flag":
+            try:
+                from ai_utils import record_quality_event
+                record_quality_event("guest_newsletter_draft", "output_rejected", restaurant_id=restaurant.id,
+                                     detail=("reviewer flagged: " + "; ".join(run.verdict.reasons))[:200],
+                                     action="guest_newsletter_draft")
+            except Exception:
+                pass
+        raise ValueError("newsletter copy rejected: " + ("; ".join(run.verdict.reasons) or "it didn't pass the checks"))
+    out = run.result
+    # The route keeps the draft (marketing_voice.record_draft): the run is
+    # named after it, so the send or the rewrite lands on this run.
+    out.run_id = run.run_id
+    return out
+
+
+class _Draft(dict):
+    """The drafted email's fields (a plain dict to every reader), carrying
+    the orchestrator run that wrote it as `.run_id`."""
+    run_id = None
 
 
 def _contact_details(text) -> list:

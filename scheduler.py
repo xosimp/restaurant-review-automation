@@ -5483,6 +5483,13 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
             # lowered); what would publish is the stored draft, which it did
             # not pass as written. A person reads it first.
             refusal = REWORD_REVIEW_REASON
+        if not refusal:
+            # The rules engine passed it; the reviewer gate reads it next —
+            # this reply posts with nobody reading it first (AI cost audit
+            # 10/7/26, orchestration: draft_response's unattended reviewer).
+            # A flag holds it for the owner like a refusal; it never posts.
+            from drafter import gate_unattended_reply
+            refusal = gate_unattended_reply(rid, review_id, draft_text, review_text=candidate.get("text") or "")
         if refusal:
             log.warning(f"Auto-approve skipped review {review_id}: {refusal}")
             # Marked for the owner's review, which also takes it out of the

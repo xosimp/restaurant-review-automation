@@ -124,16 +124,18 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", resta
             + UNTRUSTED_NOTE + "\n\nMenu text:\n" + wrap_untrusted(text)
         )
         import data_health
-        msg = create_with_retry(
+        import ai_orchestrator
+        # On the orchestrator's rung (menu_extract_pdf: T1, one call — AI
+        # cost audit 10/7/26, orchestration Phase 3); spot_check_menu checks it.
+        msg = ai_orchestrator.generate("menu_extract_pdf", restaurant_id, lambda route, notes: create_with_retry(
             client,
-            model=model_for("competitor_extract"),
-            max_tokens=400,
-            messages=[{"role": "user", "content": extract_prompt}],
             restaurant_id=restaurant_id,
             action="menu_extract_pdf",
             # Rests on no data source: menu extraction from the supplied PDF.
             readiness=data_health.NOT_APPLICABLE,
-        )
+            **route.apply(dict(model=model_for("competitor_extract"), max_tokens=400,
+                               messages=[{"role": "user", "content": extract_prompt}])),
+        ), subject="menu:pdf").result
         result = extract_text(msg).strip()
         if "NO_MENU_FOUND" in result or len(result) < 30:
             return ""
@@ -231,16 +233,18 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
             + UNTRUSTED_NOTE + "\n\nPage content:\n" + wrap_untrusted(page_text)
         )
         import data_health
-        msg = create_with_retry(
+        import ai_orchestrator
+        # On the orchestrator's rung (menu_extract_url: T1, one call — AI
+        # cost audit 10/7/26, orchestration Phase 3); spot_check_menu checks it.
+        msg = ai_orchestrator.generate("menu_extract_url", restaurant_id, lambda route, notes: create_with_retry(
             client,
-            model=model_for("competitor_extract"),
-            max_tokens=400,
-            messages=[{"role": "user", "content": extract_prompt}],
             restaurant_id=restaurant_id,
             action="menu_extract_url",
             # Rests on no data source: menu extraction from the supplied page.
             readiness=data_health.NOT_APPLICABLE,
-        )
+            **route.apply(dict(model=model_for("competitor_extract"), max_tokens=400,
+                               messages=[{"role": "user", "content": extract_prompt}])),
+        ), subject="menu:url").result
         result = extract_text(msg).strip()
         if "NO_MENU_FOUND" in result or len(result) < 30:
             return ""
@@ -1132,15 +1136,18 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
                      if restaurant_id else _dh_ci.NOT_APPLICABLE)
         prompt = _with_ds_ci(prompt, _ready_ci)
 
-        msg = create_with_retry(
+        import ai_orchestrator
+        # On the orchestrator's rung (competitor_insight: T2, one call — AI
+        # cost audit 10/7/26, orchestration Phase 3); finish_competitor_insight
+        # validates it as before.
+        msg = ai_orchestrator.generate("competitor_insight", restaurant_id, lambda route, notes: create_with_retry(
             client,
-            model=model_for("competitor_insight"),
-            max_tokens=900,
-            messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,
             action="competitor_insight",
             readiness=_ready_ci,
-        )
+            **route.apply(dict(model=model_for("competitor_insight"), max_tokens=900,
+                               messages=[{"role": "user", "content": prompt}])),
+        ), subject="competitor_insight").result
         if getattr(msg, "stop_reason", None) == "max_tokens":
             # An output problem, filed as one (ledger outcome 'truncated',
             # and an AI-quality event) — not a failing job (#58).

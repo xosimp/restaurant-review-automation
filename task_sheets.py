@@ -378,6 +378,9 @@ def add_line(restaurant_id, sheet_id, fields, who=None, db_path=DB_PATH) -> dict
         conn.close()
     sheet = get_sheet(restaurant_id, sheet_id, db_path=db_path)
     line = next(l for l in sheet["lines"] if l["id"] == line_id)
+    # An added line may be one of Cavnar AI's starter lines: the share kept
+    # is filed on the run that offered them (orchestration Phase 5).
+    starter_outcome(restaurant_id, sheet, db_path=db_path)
     return {"line": line, "sheet": sheet, "similar": similar_lines(sheet, line)}
 
 
@@ -1573,33 +1576,90 @@ def starter_lines(restaurant_id, job_code, shift_kind, existing=(), db_path=DB_P
         "people or numbers; no temperatures or amounts in the label (a number line asks for the reading instead); "
         "critical only for food safety, cash and security; in the order the work is done."
     )
-    msg = create_with_retry(get_client(), model=model_for("task_sheets"), max_tokens=1600,
-                            messages=[{"role": "user", "content": prompt}], restaurant_id=restaurant_id,
-                            action="task_sheet_starter", readiness=data_health.NOT_APPLICABLE)
-    text = extract_text(msg)
-    m = re.search(r"\[.*\]", text or "", re.S)
-    try:
-        raw = json.loads(m.group(0)) if m else []
-    except Exception:
-        raw = []
+    import ai_orchestrator as _orch
+    # The draft's one call, on the orchestrator's rung (task_sheet_starter:
+    # T1, then T2 when the reply is not the array or no line of it survives
+    # the check — AI cost audit 10/7/26, orchestration Phase 3).
+    _send = lambda route, note: create_with_retry(  # noqa: E731 — keeps the call in this function (readiness scan)
+        get_client(), restaurant_id=restaurant_id, action="task_sheet_starter",
+        readiness=data_health.NOT_APPLICABLE,
+        **route.apply(dict(model=model_for("task_sheets"), max_tokens=1600,
+                           messages=[{"role": "user", "content": prompt + note}])))
     ctx = rv.ValidationContext(restaurant_id=restaurant_id, surface="task_draft", audience="owner",
                                delivery="interactive", context_text=about)
     have_keys = {_key(x) for x in existing}
-    out = []
-    for item in raw[:STARTER_MAX_LINES]:
-        if not isinstance(item, dict):
-            continue
+
+    def _attempt(route, notes):
+        note = ("\nA first draft was not used: " + "; ".join(notes) + ". Write it again without that.") if notes else ""
+        text = extract_text(_send(route, note))
+        m = re.search(r"\[.*\]", text or "", re.S)
         try:
-            line = _clean_line({k: item.get(k) for k in ("label", "section", "proof", "proof_label", "critical")})
-        except TaskSheetError:
-            continue
-        if _key(line["label"]) in have_keys:
-            continue
-        v = rv.validate(line["label"], ctx)
-        if v.verdict == "refuse" or not v.text.strip():
-            continue
-        line["label"] = v.text.strip()[:LABEL_MAX]
-        line.setdefault("proof", "none")
-        line["critical"] = bool(line.get("critical"))
-        out.append(line)
+            raw = json.loads(m.group(0)) if m else []
+        except Exception:
+            raw = []
+        out, refused = [], []
+        for item in (raw if isinstance(raw, list) else [])[:STARTER_MAX_LINES]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                line = _clean_line({k: item.get(k) for k in ("label", "section", "proof", "proof_label", "critical")})
+            except TaskSheetError:
+                continue
+            if _key(line["label"]) in have_keys:
+                continue
+            v = rv.validate(line["label"], ctx)
+            if v.verdict == "refuse" or not v.text.strip():
+                refused.append(", ".join(v.codes[:2]) or "a line the check refused")
+                continue
+            line["label"] = v.text.strip()[:LABEL_MAX]
+            line.setdefault("proof", "none")
+            line["critical"] = bool(line.get("critical"))
+            out.append(line)
+        return {"lines": out, "raw": bool(raw), "refused": refused}
+
+    def _check(res):
+        if not res["raw"]:
+            return _orch.Verdict.failed("schema_fail", "the reply was not a JSON array of lines")
+        if not res["lines"] and res["refused"]:
+            return _orch.Verdict.failed("validation_refuse",
+                                        "every line was refused (" + "; ".join(dict.fromkeys(res["refused"]))[:200] + ")")
+        return _orch.Verdict.passed()
+    run = _orch.generate("task_sheet_starter", restaurant_id, _attempt, _check,
+                         subject=starter_subject(job_code, shift_kind))
+    out = (run.result or {}).get("lines") or []
+    # The lines offered, kept on the run so the owner's adds are measured
+    # against them (starter_outcome; orchestration Phase 5).
+    _orch.attach(run.run_id, context={"offered": [_key(l["label"])[:40] for l in out]})
     return out
+
+
+def starter_subject(job_code, shift_kind) -> str:
+    """The ai_runs subject of a starter draft for one job code and shift."""
+    return f"task_sheet:{_key(job_code)[:40]}:{shift_kind}"
+
+
+def starter_outcome(restaurant_id, sheet, db_path=None) -> bool:
+    """What the owner kept of Cavnar AI's starter lines, filed on the run
+    that offered them (orchestration Phase 5): quality is the share of the
+    offered lines now on the sheet — all of them accepted, some edited, none
+    nothing filed (a sheet written by hand is not a verdict on the draft).
+    Called when a line is added. Never raises."""
+    try:
+        import ai_orchestrator
+        subject = starter_subject(sheet.get("job_code"), sheet.get("shift_kind"))
+        offered = ai_orchestrator.run_context("task_sheet_starter", restaurant_id, subject,
+                                              db_path=None if db_path == DB_PATH else db_path).get("offered") or []
+        if not offered:
+            return False
+        have = {_key(l.get("label"))[:40] for l in sheet.get("lines") or []}
+        kept = sum(1 for k in offered if k in have)
+        if not kept:
+            return False
+        share = round(kept / len(offered), 3)
+        return ai_orchestrator.record_outcome("task_sheet_starter", restaurant_id, subject,
+                                              "accepted" if kept == len(offered) else "edited",
+                                              quality=None if kept == len(offered) else share,
+                                              detail=f"{kept} of {len(offered)} lines kept",
+                                              db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        return False
