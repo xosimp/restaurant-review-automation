@@ -105,6 +105,13 @@ def _tick():
         scheduler.scheduler_loop()
     except _StopLoop:
         pass
+    # A job a tick hands to a lane (Intel, and since AI cost audit 10/7/26 #6
+    # the AI lane: auto-draft, weekly plan, recipe drafts, digests) finishes
+    # before the next tick is read — in production the next tick is a minute
+    # later; here it is immediate, and under a loaded machine the lane was
+    # still busy, so the next tick gave its hour back.
+    for _lane in scheduler._LANES.values():
+        _lane.join(10)
 
 
 def _only(*prefixes):
