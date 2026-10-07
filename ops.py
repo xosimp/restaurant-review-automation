@@ -2530,6 +2530,14 @@ _RETENTION_DAYS = {
     # 10/7/26 #13): only today's rows are ever read; Google allows Places
     # content to be cached for 30 days at most.
     "places_details_cache": int(os.getenv("RETAIN_PLACES_CACHE_DAYS", "3")),
+    # The orchestration ledgers (ai_orchestrator, AI orchestration design
+    # 10/7/26): a run row per workflow output, its outcome filed days later
+    # and the learner reading 28 days; the kept requests a shadow replay
+    # reads soon or never (redacted, compressed); the route recommendations
+    # the console decides on. ai_route_overrides is configuration, never pruned.
+    "ai_runs":            int(os.getenv("RETAIN_AI_RUNS_DAYS", "180")),
+    "ai_run_requests":    int(os.getenv("RETAIN_AI_RUN_REQUESTS_DAYS", "30")),
+    "ai_route_recommendations": int(os.getenv("RETAIN_AI_ROUTE_RECS_DAYS", "365")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2567,6 +2575,7 @@ _RETENTION_COLUMN = {
     "web_analytics_daily": "day",
     "schedule_model_calls": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
+    "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
     "schedule_observations": "created_at",
 }
@@ -2685,6 +2694,9 @@ _RETENTION_FLOOR_DAYS = {
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a
     # batch's own record for the console's "what did the last pass do".
     "ai_batch_jobs": 7, "ai_batch_items": 7,
+    # The learner reads 28 days of runs and the revert compares the 28 before
+    # an override; a replay needs a fortnight of kept requests to sample.
+    "ai_runs": 60, "ai_run_requests": 14, "ai_route_recommendations": 90,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
