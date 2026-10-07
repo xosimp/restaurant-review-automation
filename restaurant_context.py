@@ -315,6 +315,32 @@ def invalidate(restaurant_id=None, sections=None):
             _L1.pop(k, None)
 
 
+def forget(restaurant_id, sections=None, db_path=None):
+    """Drop a restaurant's cached sections — L1 and the L2 rows — so the
+    next read rebuilds them. For a caller whose own invalidation must reach
+    a section its markers cannot see move (Ask's invalidate_context: a
+    setting saved, an upload, a direct action Ask ran). Never raises."""
+    invalidate(restaurant_id, sections)
+    try:
+        conn = _conn(db_path)
+        try:
+            where, args = [], []
+            if restaurant_id is not None:
+                where.append("restaurant_id=?")
+                args.append(restaurant_id)
+            if sections:
+                names = list(sections)
+                where.append(f"section IN ({','.join('?' * len(names))})")
+                args += names
+            conn.execute("DELETE FROM context_sections" + (" WHERE " + " AND ".join(where) if where else ""),
+                         tuple(args))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("context_sections not forgotten for %s: %s", restaurant_id, e)
+
+
 def _l1_get(key, version):
     with _L1_LOCK:
         hit = _L1.get(key)
@@ -466,11 +492,11 @@ def section(restaurant_id, name, viewer=None, params=None, db_path=None) -> Buil
     return built
 
 
-def packet(restaurant_id, sections, viewer=None, budget_tokens=None, params=None, db_path=None) -> Packet:
+def packet(restaurant_id, sections, viewer=None, token_budget=None, params=None, db_path=None) -> Packet:
     """The named sections for `viewer`, rendered in ORDER (module docstring).
     `params` ({section: {...}}) narrows a section (the memory section's
     surface and subjects, the kpis' modules); it is part of the cache key.
-    `budget_tokens` trims TRIM_ORDER's sections first and says which in a
+    `token_budget` trims TRIM_ORDER's sections first and says which in a
     DATA STATE line."""
     names = [n for n in ORDER if n in set(sections or ())]
     unknown = [n for n in (sections or ()) if n not in SECTIONS]
@@ -479,10 +505,10 @@ def packet(restaurant_id, sections, viewer=None, budget_tokens=None, params=None
     params = params or {}
     built = {n: section(restaurant_id, n, viewer=viewer, params=params.get(n), db_path=db_path) for n in names}
     trimmed = []
-    if budget_tokens:
+    if token_budget:
         total = sum(b.tokens for b in built.values() if b.text)
         for n in TRIM_ORDER:
-            if total <= int(budget_tokens):
+            if total <= int(token_budget):
                 break
             if n in built and built[n].text and SECTIONS[n].trim:
                 total -= built[n].tokens
@@ -638,19 +664,72 @@ def version_memory(req):
             _marker(req, "SELECT COUNT(*), MAX(id) FROM ai_claims WHERE restaurant_id=?", (rid,)),
             _marker(req, "SELECT COUNT(*), MAX(last_seen), MAX(resolved_at) FROM bi_links WHERE restaurant_id=?",
                     (rid,)),
-            req.today().isoformat(), req.params]
+            req.today().isoformat(), req.params] + _surface_markers(req)
+
+
+# The memory sections a caller-named surface may read beyond the owner
+# memory, the answers and Cavnar AI's own reads (AI orchestration, 10/7/26:
+# the DSR narrative and Ask read their own surfaces through this section).
+# The event and market memory and the people have tables of their own, so
+# they get markers. What the scheduling learned and the marketing results
+# are computed from many tables with no one marker: a surface that reads
+# either is versioned in MEMORY_COMPUTED_SECONDS steps — the five minutes
+# Ask's snapshot was always held for — rather than served stale.
+MEMORY_COMPUTED_SECONDS = 300
+_MEMORY_TABLE_MARKERS = {
+    "events": ("event_outcomes", "event_effects"),
+    "market": ("market_events", "own_rating_history"),
+    "people": ("people",),
+}
+
+
+def _surface_markers(req):
+    surface = req.params.get("surface")
+    if not surface or surface == MEMORY_SURFACE:
+        return []
+    import memory_context as mc
+    wanted = mc.SURFACE_SECTIONS.get(surface) or tuple(mc.PROVIDERS)
+    out = []
+    for name, tables in _MEMORY_TABLE_MARKERS.items():
+        if name in wanted:
+            for t in tables:
+                out.append(_marker(req, f"SELECT COUNT(*), MAX(rowid) FROM {t} WHERE restaurant_id=?",
+                                   (req.restaurant_id,)))
+    if {"schedule_memory", "marketing"} & set(wanted):
+        out.append(int(time.time() // MEMORY_COMPUTED_SECONDS))
+    return out
 
 
 def build_memory(req):
     """memory_context for this viewer: the surface and subjects the caller
     names (params), else MEMORY_SURFACE — everything but the owner's rules
-    (their own section) and a chat's own conversation."""
+    (their own section) and a chat's own conversation.
+
+    `whole` (params) keeps a surface's owner rules inside its block, under
+    the one budget the surface always had: a caller whose prompt carried
+    them that way (the DSR narrative, Ask) gets every line it had, in the
+    same order, rather than the rules re-budgeted in a section of their own.
+    `budget_chars` and `now` (an ISO datetime — the morning after the night
+    a report is about) are passed through to memory_context."""
     import memory_context as mc
+    from datetime import datetime as _dt
     surface = str(req.params.get("surface") or MEMORY_SURFACE)
+    try:
+        now = _dt.fromisoformat(str(req.params["now"])) if req.params.get("now") else None
+    except ValueError:
+        now = None
+    extra = {}
+    if req.params.get("budget_chars"):
+        extra["budget_chars"] = int(req.params["budget_chars"])
+    if now is not None:
+        extra["now"] = now
     block = mc.memory_context(req.restaurant_id, surface, viewer=_memory_viewer(req.viewer),
-                              subjects=list(req.params.get("subjects") or ()), db_path=req.db_path)
-    text = block.text_without(("owner_rules",)) if surface == MEMORY_SURFACE or "owner_rules" in (
-        mc.SURFACE_SECTIONS.get(surface) or ()) else block.text
+                              subjects=list(req.params.get("subjects") or ()), db_path=req.db_path, **extra)
+    if req.params.get("whole"):
+        text = block.text
+    else:
+        text = block.text_without(("owner_rules",)) if surface == MEMORY_SURFACE or "owner_rules" in (
+            mc.SURFACE_SECTIONS.get(surface) or ()) else block.text
     if not str(text or "").strip():
         return {"text": "Nothing on file yet.", "missing": True}
     return {"text": text}
@@ -825,13 +904,37 @@ def build_kpis(req):
             "missing": not data}
 
 
+# The restaurants row's fields the cross-module brief reads: the modules on,
+# every target a gap is measured against, the uploads' own stamps. Read by
+# name from the Restaurant dataclass (a cache key — it judges nothing, so
+# it names no target column: tests/test_targets_published_figures.py).
+def _findings_fields():
+    import dataclasses
+    import models
+    names = [f.name for f in dataclasses.fields(models.Restaurant)
+             if f.name.startswith("module_") or "target" in f.name]
+    return tuple(names) + ("inventory_updated_at", "competitor_updated_at")
+
+
 def version_findings(req):
+    """The sources' markers, the links and answers, the restaurants row's
+    targets and modules, and the day. The brief reads a dozen more tables
+    than these markers cover (reviews, diagnoses, stock, campaigns...), so a
+    caller that must never read it older than its own cache asks for
+    `fresh_seconds` (params): the version then also moves on that clock —
+    Ask's snapshot, held five minutes, passes 300, so the section is never
+    older than the snapshot it sits in was."""
     rid = req.restaurant_id
-    return [_source_markers(req),
-            _marker(req, "SELECT COUNT(*), MAX(last_seen), MAX(resolved_at) FROM bi_links WHERE restaurant_id=?",
-                    (rid,)),
-            _marker(req, "SELECT COUNT(*), MAX(id) FROM rec_events WHERE restaurant_id=?", (rid,)),
-            req.today().isoformat()]
+    out = [_source_markers(req),
+           _marker(req, "SELECT COUNT(*), MAX(last_seen), MAX(resolved_at) FROM bi_links WHERE restaurant_id=?",
+                   (rid,)),
+           _marker(req, "SELECT COUNT(*), MAX(id) FROM rec_events WHERE restaurant_id=?", (rid,)),
+           _restaurant_fields(req, _findings_fields()),
+           req.today().isoformat()]
+    fresh = req.params.get("fresh_seconds")
+    if fresh:
+        out.append(int(time.time() // max(1, int(fresh))))
+    return out
 
 
 def _is_owner_view(viewer) -> bool:

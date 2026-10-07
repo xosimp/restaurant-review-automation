@@ -25,8 +25,14 @@ def test_the_plan_reads_ask_memory_as_the_team(monkeypatch):
     # "weekly_plan", read as the team) is the plan's one block, instead of
     # the same constraints, goals and claims paid for twice.
     assert ask_cavnar._memory_context(7, viewer=r) == "" and seen == []
+    # An ordinary owner call is unchanged: the account holders' view. Since
+    # 10/7/26 it goes through restaurant_context's memory section, which
+    # hands memory_context PRINCIPALS for "no login" — what memory_context
+    # itself reads None as.
+    import restaurant_context
+    restaurant_context.invalidate(7)
     ask_cavnar._memory_context(7, viewer=R())
-    assert seen[-1] is None                              # an ordinary owner call is unchanged
+    assert seen[-1] is None or memory_context.is_principals(seen[-1])
 
 
 def test_ask_with_tools_stamps_the_plan_on_a_copy():

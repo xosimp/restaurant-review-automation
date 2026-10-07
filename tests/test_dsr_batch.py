@@ -369,9 +369,18 @@ def test_the_batch_path_reuses_the_synchronous_builders_and_judge():
     sub = inspect.getsource(REAL_NARRATIVE.submit_batch)
     for name in ("_prepare(", "night_readiness(", "request_for(", "ai_batches.submit("):
         assert name in sub, name
+    # The synchronous call is the night's dsr_narrative run (AI orchestration,
+    # 10/7/26): _write reads the prompt and the gate, run() makes the call
+    # with request_for and judges it with _judge — what finish() returns too.
     wr = inspect.getsource(REAL_NARRATIVE._write)
-    for name in ("_prepare(", "night_readiness(", "request_for(", "finish("):
+    for name in ("_prepare(", "night_readiness(", "run("):
         assert name in wr, name
+    rn = inspect.getsource(REAL_NARRATIVE.run)
+    for name in ("request_for(", "_judge(", "orch.generate("):
+        assert name in rn, name
+    assert "_judge(" in inspect.getsource(REAL_NARRATIVE.finish)
+    assert "run(" in inspect.getsource(REAL_NARRATIVE.land_batch)
     cbk = inspect.getsource(pipeline.on_narrative_batch)
     assert "mod.finish(" in cbk and "mod.refusal_for(" in cbk and "land_narrative_batch(" in cbk
+    assert "land_batch" in cbk
     assert REAL_NARRATIVE.BATCH_CALLBACK == "dsr.pipeline:on_narrative_batch"

@@ -30,6 +30,12 @@ os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")
 # ranking test never lands on a held-out day by the calendar; its own tests
 # turn it on with monkeypatch.setenv.
 os.environ.setdefault("LEARNING_HOLDOUT_PCT", "0")
+# The orchestrator's shadow reviewer (ai_orchestrator._shadow_review) scores
+# a random share of passing runs with one more model call on a background
+# thread — the DSR narrative's 20%, Ask's none — so a test counting its fake
+# client's calls would pass or fail by the dice. Off in the suite; its own
+# tests turn it on with monkeypatch.setenv.
+os.environ.setdefault("AI_SHADOW_REVIEW", "0")
 # Cavnar AI's own marketing is not sent without a CAN-SPAM postal address
 # (emails.postal_address, #159). Set here as production must set it; the
 # tests of the unset case delete it.

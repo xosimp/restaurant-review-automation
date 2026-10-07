@@ -133,15 +133,30 @@ def thinking_tokens_reserved(effort=None) -> int:
     return THINKING_TOKENS_BY_EFFORT.get(str(effort).strip().lower(), THINKING_TOKENS_RESERVED)
 
 
-def _assumed_call_seconds(rows, effort=None) -> float:
-    return ((thinking_tokens_reserved(effort) + SUMMARY_TOKENS + max(0.0, float(rows or 0)) * OUTPUT_TOKENS_PER_ROW)
+def output_tokens_per_row(contract=None) -> float:
+    """What one row costs in answer tokens on `contract` — the contract in
+    force (schedule_output.schedule_contract) by default — for a call's
+    planned SECONDS (AI cost audit 10/7/26 #70: a compact row is ~24 tokens
+    to the schema's 30). A call's SIZE is always planned at
+    OUTPUT_TOKENS_PER_ROW, the schema's: a cheaper row never grows a call."""
+    if contract is None:
+        try:
+            contract = _sched_out.schedule_contract()
+        except Exception:
+            return float(OUTPUT_TOKENS_PER_ROW)
+    return _sched_out.answer_tokens_per_row(contract)
+
+
+def _assumed_call_seconds(rows, effort=None, contract=None) -> float:
+    return ((thinking_tokens_reserved(effort) + SUMMARY_TOKENS
+             + max(0.0, float(rows or 0)) * output_tokens_per_row(contract))
             / ASSUMED_OUTPUT_TOKENS_PER_SECOND)
 
 
 # One planned call of a full chunk at the assumed speed, at the largest
-# thinking reserve: what a call adds to the job when nothing about it is
-# known — not even the effort (it errs long, PROMPT-4).
-SCHEDULE_CALL_SECONDS = int(round(_assumed_call_seconds(CHUNK_ROWS_PER_CALL, effort="high")))
+# thinking reserve, on the schema's rows: what a call adds to the job when
+# nothing about it is known — not even the effort (it errs long, PROMPT-4).
+SCHEDULE_CALL_SECONDS = int(round(_assumed_call_seconds(CHUNK_ROWS_PER_CALL, effort="high", contract="schema")))
 SCHEDULE_POST_MODEL_SECONDS = 240
 SCHEDULE_JOB_MIN_SECONDS = 15 * 60
 SCHEDULE_JOB_MAX_SECONDS = 40 * 60
@@ -172,7 +187,43 @@ class GenerationClock:
         self.job_id = job_id
         self.started = float(started if started is not None else time.time())
         self.deadline = self.started + SCHEDULE_JOB_MIN_SECONDS
+        # The days this generation drafts and those finished so far, for the
+        # Building screen's "N of 7 days drafted" (AI cost audit 10/7/26 #36).
+        self.days_planned = None
+        self.days_drafted = set()
         self._record()
+
+    # ── how far the draft has got (#36) ─────────────────────────────────
+    # Written to the job store (ops.set_async_job_progress) only when a day
+    # is newly finished — about seven writes a week, never one a token.
+    # Days are only ever added: a day the stream finished counts as drafted
+    # even if a later step writes it again.
+    def plan_days(self, dates) -> None:
+        """The dates this generation drafts — set once, by the first plan
+        (an owner's redo plans its own days; the quality gate's rewrite,
+        later in the same job, never re-plans the count)."""
+        if self.days_planned is None and dates:
+            self.days_planned = sorted(set(dates))
+            self._record_progress()
+
+    def days_streamed(self, dates) -> None:
+        """Dates an answer has finished — while it streams (schedule_output.
+        DayWatch) or once the engine has kept them."""
+        if self.days_planned is None:
+            return
+        new = (set(dates or ()) & set(self.days_planned)) - self.days_drafted
+        if new:
+            self.days_drafted |= new
+            self._record_progress()
+
+    def progress(self) -> dict:
+        planned = list(self.days_planned or [])
+        return {"days_total": len(planned), "days_drafted": len(self.days_drafted),
+                "dates_drafted": sorted(self.days_drafted)}
+
+    def _record_progress(self):
+        if self.job_id:
+            _ops.set_async_job_progress(self.job_id, self.progress())
 
     def plan(self, calls: int, seconds: float = None) -> None:
         """Size the deadline for `calls` planned model calls — `seconds`,
@@ -1862,6 +1913,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # full input and answer is stored under it and keyed to the saved
         # week (schedule_output.record_call / link_calls, PR-31).
         generation_id=_generation_id,
+        # The output contract, read once for the generation (SCHEDULE_CONTRACT
+        # — AI cost audit 10/7/26 #69, #70): every call of it answers on the
+        # same one, so their schema and their cached prompt are shared.
+        contract=_sched_out.schedule_contract(),
         instruction=instruction or None,
         # What each call is sent (schedule audit 10/3/26): the dates a redo
         # writes and the kept days it is written against (P-9), the days
@@ -2244,7 +2299,11 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     # carries, how long each planned call is given, and whether a cache
     # breakpoint is read before it expires (PROMPT-8).
     kind_base = kwargs.pop("call_kind", None)
-    costs = call_cost_model(kwargs.get("restaurant_id"))
+    # The generation's output contract (AI cost audit 10/7/26 #69, #70): its
+    # measured cost is read from its own calls, and on "shape" each call's
+    # slots are given their people here (assign_shape_slots).
+    contract = _sched_out.schedule_contract(kwargs.get("contract"))
+    costs = call_cost_model(kwargs.get("restaurant_id"), contract=contract)
     per_call = rows_per_call(kwargs.get("restaurant_id"), costs=costs)
     plan = _plan_tasks(expected * len(want) / max(1, len(open_dates)), want, roster_pairs, managers, per_call)
     per_date = expected / max(1, len(open_dates))
@@ -2254,7 +2313,9 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         share = (len(task["people"]) / heads) if task.get("people") is not None else 1.0
         return per_date * len(task["dates"]) * share
     if clock is not None:
-        clock.plan(len(plan), seconds=sum(call_seconds(task_rows(t), costs) for t in plan))
+        clock.plan(len(plan), seconds=sum(call_seconds(task_rows(t), costs, contract=contract) for t in plan))
+        # The days the Building screen counts (#36).
+        clock.plan_days(want)
     try:
         import ai_utils as _ai_c
         read_rate = _ai_c._cache_read_multiplier(schedule_route().model)
@@ -2291,7 +2352,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         # floor alone — the assumed speed is a guess, not a reason to refuse.
         need = MIN_CALL_SECONDS
         if _call_measured(costs):
-            need = max(need, call_seconds(task_rows(t), costs, headroom=False))
+            need = max(need, call_seconds(task_rows(t), costs, headroom=False, contract=contract))
         if calls >= call_cap or (clock is not None and clock.model_seconds_left() < need):
             why = "calls" if calls >= call_cap else "time"
             for task in [t] + queue:
@@ -2304,8 +2365,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         dk = _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, redo, no_one, clock)
         whole = redo is None and t["people"] is None and t["dates"] == open_dates and not kept
         dk["call_kind"] = kind_base or ("week" if whole else "slice")
-        dk["cache_ttls"] = _sp.cache_ttls(len(plan), sharing.get(week_key(t), 1), call_seconds(task_rows(t), costs),
-                                          read_rate)
+        dk["cache_ttls"] = _sp.cache_ttls(len(plan), sharing.get(week_key(t), 1),
+                                          call_seconds(task_rows(t), costs, contract=contract), read_rate)
         entry = {"dates": list(t["dates"]), "part": t["what"], "retried": False}
         try:
             if whole:
@@ -2333,6 +2394,11 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             break
         calls += 1
         seconds += float(part.get("generation_seconds") or 0)
+        if part.get("shape_rows"):
+            # The shape contract (AI cost audit 10/7/26 #69): the model wrote
+            # slots without names; who works each is solved here, against
+            # every row already on the week, before the call's rows are read.
+            part = _assign_part_slots(part, t, rules_c, kept + written_rows, kwargs, roster_pairs, clock)
         merged = merged or part
         tdates = set(t["dates"])
         lines = _answer_lines(part.get("schedule_csv", ""))
@@ -2368,6 +2434,10 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         # A day is done when the model wrote it whole and wrote something:
         # an empty day, or one carrying only planned rows, is still missing.
         done = [d for d in finished if d in model_dates]
+        if clock is not None:
+            # The days kept, for the Building screen's count (#36) — the CSV
+            # fallback and a call whose stream was not watched count here.
+            clock.days_streamed(done)
         parts_kept.append((part, set(done)))
         keep = [x for x in lines if (x[0] in done) or (not x[0] and not cut)]
         written.extend(keep)
@@ -2398,9 +2468,14 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             entry["missing"] = missing
             if missing and not t["retry"]:
                 # One retry, told exactly which days it skipped, asked for
-                # just those days with everything else in view.
+                # just those days with everything else in view. An answer
+                # whose JSON broke partway kept its finished days (#71), and
+                # a shape whose slots nobody could legally work (#69) wrote
+                # them: each retry is told what really went wrong.
                 entry["retried"] = True
-                queue.insert(0, dict(t, dates=missing, retry=True, missed=missing))
+                why = ("broken" if part.get("json_recovered") else
+                       "unstaffed" if set(missing) & set(part.get("shape_unstaffed_dates") or ()) else None)
+                queue.insert(0, dict(t, dates=missing, retry=True, missed=missing, missed_why=why))
             elif missing:
                 for d in missing:
                     unwritten.setdefault(d, "skipped")
@@ -2459,6 +2534,104 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     return merged
 
 
+# ── the shape contract: who works each slot, solved (AI cost audit 10/7/26 #69)
+
+# What one call's slots are given to be staffed, at most (the solver's own
+# budget on the background job); less when the job's model time is short.
+SHAPE_SOLVE_SECONDS = 12.0
+
+
+def assign_shape_slots(slots, context_rows, constraints, signals=None, weights=None, profiles=None,
+                       roster_roles=None, only_dates=None, max_seconds=SHAPE_SOLVE_SECONDS) -> dict:
+    """Give each shape slot (schedule_output.parse_answer on the "shape"
+    contract: a row with no employee) a person, by schedule_solver over the
+    same rules and objective the repair loop's solver stage uses — never a
+    hard rule traded for score: availability, time off, the roles a person
+    holds, hours and the overtime line, rest, days in a row, a minor's
+    limits, a manager on the floor every minute and each role's closer.
+
+    `context_rows` (every row already on the week — the planned managers,
+    the kept days, what earlier calls wrote) are held exactly as they are
+    and count toward each person's week. `only_dates` limits the solve to
+    the slots' dates (their own by default).
+
+    {"assigned": [rows with a name], "unassigned": [slots nobody can
+    legally work — kept out of the week, never filled illegally], "stats":
+    {status, seconds, slots, infeasible, notes}}. With no rule set nothing
+    is assigned."""
+    import schedule_solver as _solver
+    ctx = []
+    for r in context_rows or []:
+        x = dict(r)
+        x["_pinned"] = True          # never reassigned (the pinned-rows contract)
+        ctx.append(x)
+    open_rows = []
+    for r in slots or []:
+        x = {k: v for k, v in dict(r).items() if k != "_slot"}
+        x["employee"] = ""
+        x["_open"] = True            # a slot to staff: the solver counts it toward the day's close
+        open_rows.append(x)
+    out = {"assigned": [], "unassigned": [], "stats": {"status": "nothing_to_solve"}}
+    if not open_rows:
+        return out
+    if constraints is None:
+        out["unassigned"] = open_rows
+        out["stats"] = {"status": "no rule set"}
+        return out
+    dates = sorted({r.get("date") for r in open_rows if r.get("date")}) if only_dates is None else list(only_dates)
+    res = _solver.solve(ctx + open_rows, constraints, signals=signals, weights=weights, profiles=profiles,
+                        only_dates=dates, max_seconds=max(0.5, float(max_seconds or SHAPE_SOLVE_SECONDS)),
+                        roster_roles=roster_roles, pending=getattr(constraints, "pending_off", None))
+    res.pop("problem", None)
+    rows = res.get("rows") or []
+    for r in rows[len(ctx):]:
+        r = {k: v for k, v in r.items() if k not in ("_pinned", "_open")}
+        (out["assigned"] if (r.get("employee") or "").strip() else out["unassigned"]).append(r)
+    out["stats"] = {k: res.get(k) for k in ("status", "proved_optimal", "seconds", "slots", "infeasible", "notes")}
+    return out
+
+
+def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock):
+    """One shape call's slots given their people (assign_shape_slots),
+    against every row already on the week and the call's own planned
+    manager rows: the assigned rows join the call's CSV as if the model had
+    written them, and a slot nobody can legally work is left out — its date
+    is then incomplete, and the retry is told why (`shape_unstaffed_dates`).
+    The solver's inputs are the scorer's own (_quality_signals) over the
+    call's result. A failure to solve leaves every slot out (said), never
+    the job's failure."""
+    part = dict(part)
+    slots = [dict(r) for r in part.get("shape_rows") or []]
+    rid = kwargs.get("restaurant_id")
+    own = [_line_row(x[2]) for x in _answer_lines(part.get("schedule_csv", "")) if x[3]]
+    people = t.get("people")
+    roles = {n: r for n, r in (people if people is not None else roster_pairs or [])}
+    try:
+        sig_in = dict(part, constraints=rules_c, roster=sorted(roles), roster_roles=roles)
+        signals, weights = _quality_signals(rid, sig_in)
+        secs = SHAPE_SOLVE_SECONDS
+        if clock is not None:
+            secs = max(1.0, min(secs, clock.model_seconds_left() - MIN_CALL_SECONDS))
+        got = assign_shape_slots(slots, list(week_rows or []) + own, rules_c, signals=signals, weights=weights,
+                                 profiles=part.get("shift_profiles") or None, roster_roles=roles,
+                                 only_dates=list(t["dates"]), max_seconds=secs)
+    except Exception as e:
+        _soft_fail("shape slot assignment", e, rid)
+        got = {"assigned": [], "unassigned": slots, "stats": {"status": "error"}}
+    if got["assigned"]:
+        part["schedule_csv"] = (part.get("schedule_csv") or "").rstrip("\n") + "\n" + \
+            "\n".join(_sched_out.csv_lines(got["assigned"]))
+    if got["unassigned"]:
+        _quality_note("shape_unstaffed", rid, len(got["unassigned"]),
+                      f"{len(got['unassigned'])} shape slot(s) nobody could legally work left out")
+    part["shape_unstaffed_dates"] = sorted({r.get("date") for r in got["unassigned"] if r.get("date")})
+    part["shape_assignment"] = dict(got["stats"], assigned=len(got["assigned"]),
+                                    unassigned=len(got["unassigned"]))
+    print(f"[schedule] shape slots assigned={len(got['assigned'])} unassigned={len(got['unassigned'])} "
+          f"status={got['stats'].get('status')}")
+    return part
+
+
 # A call is not started with less of the job's model time left than this.
 MIN_CALL_SECONDS = 60
 # How a department part is named to the owner in the draft's note.
@@ -2477,19 +2650,22 @@ def schedule_effort_in_force() -> str:
     return route.effort or _labor_e.SCHEDULE_EFFORT
 
 
-def call_cost_model(restaurant_id=None) -> dict:
+def call_cost_model(restaurant_id=None, contract=None) -> dict:
     """schedule_output.call_costs for the restaurant on the schedule model
     and effort of the route in force (schedule_route: a Sonnet 5.5 week is
-    never sized from Opus calls, nor the reverse); the estimate when there
-    is no restaurant or the store cannot be read (a store failure never
-    fails the week)."""
+    never sized from Opus calls, nor the reverse) and on the generation's
+    output contract (`contract`, else the one in force: a compact row is
+    never sized from schema calls — AI cost audit 10/7/26 #70); the
+    estimate when there is no restaurant or the store cannot be read (a
+    store failure never fails the week)."""
     empty = {"fixed": None, "per_row": None, "source": "estimate", "calls": 0, "seconds_fixed": None,
              "seconds_per_row": None, "seconds_source": "estimate", "tokens_per_second": None, "by_kind": {}}
     if not restaurant_id:
         return empty
     try:
         return _sched_out.call_costs(restaurant_id=restaurant_id, model=schedule_route().model,
-                                     effort=schedule_effort_in_force())
+                                     effort=schedule_effort_in_force(),
+                                     contract=_sched_out.schedule_contract(contract))
     except Exception as e:
         _soft_fail("measured call cost", e, restaurant_id)
         return empty
@@ -2520,12 +2696,13 @@ def rows_per_call(restaurant_id=None, costs=None) -> int:
     return max(min(per_call, MIN_ROWS_PER_CALL), min(per_call, fits))
 
 
-def call_seconds(rows, costs=None, headroom: bool = True) -> float:
+def call_seconds(rows, costs=None, headroom: bool = True, contract=None) -> float:
     """How long a call writing `rows` rows is planned to take (PROMPT-4):
     the restaurant's measured seconds for that many rows (a fixed part and a
     part per row, fitted over its calls), else its measured output speed
-    over what the call writes — its thinking reserve, summary and rows —
-    times CALL_SECONDS_HEADROOM; before any call, the assumed speed."""
+    over what the call writes — its thinking reserve, summary and rows (at
+    `contract`'s tokens a row, #70) — times CALL_SECONDS_HEADROOM; before
+    any call, the assumed speed."""
     costs = costs or {}
     rows = max(0.0, float(rows or 0))
     if costs.get("seconds_source") == "fit":
@@ -2533,10 +2710,10 @@ def call_seconds(rows, costs=None, headroom: bool = True) -> float:
     elif costs.get("tokens_per_second"):
         writes = (float(costs["fixed"]) + float(costs["per_row"]) * rows
                   if costs.get("source") in ("fit", "comparable") and costs.get("per_row") else
-                  thinking_tokens_reserved() + SUMMARY_TOKENS + rows * OUTPUT_TOKENS_PER_ROW)
+                  thinking_tokens_reserved() + SUMMARY_TOKENS + rows * output_tokens_per_row(contract))
         sec = writes / float(costs["tokens_per_second"])
     else:
-        return _assumed_call_seconds(rows)
+        return _assumed_call_seconds(rows, contract=contract)
     return sec * (CALL_SECONDS_HEADROOM if headroom else 1.0)
 
 
@@ -2641,7 +2818,20 @@ def _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, r
         notes += ("\n\nNOBODY ON THE ROSTER CAN WORK " + ", ".join(_iso_day(d) for d in no_one)
                   + " (time off or availability): " + ("it stays" if len(no_one) == 1 else "they stay")
                   + " empty and no other part writes " + ("it" if len(no_one) == 1 else "them") + ".")
-    if t["retry"] and t.get("missed"):
+    if t["retry"] and t.get("missed") and t.get("missed_why") == "broken":
+        # The answer was not cut, but its JSON broke partway (AI cost audit
+        # 10/7/26 #71): the days before the break were kept.
+        notes += ("\n\nYOUR PREVIOUS ANSWER'S JSON BROKE OFF BEFORE " + ", ".join(_iso_day(d) for d in t["missed"])
+                  + ", so " + ("that date was" if len(t["missed"]) == 1 else "those dates were") + " not read. "
+                  "Write " + ("it" if len(t["missed"]) == 1 else "them") + " again as JSON matching the schema, a "
+                  "full day of shifts across every role that normally works it.")
+    elif t["retry"] and t.get("missed") and t.get("missed_why") == "unstaffed":
+        # A shape slot nobody on the roster could legally work (#69).
+        notes += ("\n\nNOBODY ON THE ROSTER COULD LEGALLY WORK THE SLOTS YOUR PREVIOUS ANSWER WROTE FOR "
+                  + ", ".join(_iso_day(d) for d in t["missed"]) + ". Write each of those dates again with slots "
+                  "the ROSTER can staff: roles people can work, times they are available, no more of a role at "
+                  "once than can work it.")
+    elif t["retry"] and t.get("missed"):
         notes += ("\n\nYOUR PREVIOUS ANSWER WROTE NO SHIFTS FOR " + ", ".join(_iso_day(d) for d in t["missed"])
                   + ". Every date in this request must have a full day of shifts across every role that normally "
                   "works it.")

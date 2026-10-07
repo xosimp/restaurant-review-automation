@@ -253,7 +253,10 @@ def test_an_unreadable_newsletter_draft_is_marked(monkeypatch, marks, reply, rea
     monkeypatch.setattr(guest_email, "create_with_retry", lambda *a, **k: _Msg(reply, "c-news"))
     with pytest.raises(ValueError, match="newsletter copy was unreadable"):
         guest_email.draft_newsletter(types.SimpleNamespace(id=9, name="Mark Grill"), goal="Fill Thursday")
-    assert marks == [("c-news", "unparseable", reason)]
+    # An unreadable reply is asked for once more one tier up (the
+    # guest_newsletter_draft ladder, AI orchestration 10/7/26): each billed,
+    # unusable call is marked.
+    assert marks == [("c-news", "unparseable", reason)] * 2
 
 
 def test_an_empty_campaign_draft_is_marked_and_not_handed_back(monkeypatch, marks):

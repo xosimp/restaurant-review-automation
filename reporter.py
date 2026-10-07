@@ -1018,15 +1018,17 @@ Rules:
         from ai_utils import with_data_state as _with_ds_dig
         prompt = _with_ds_dig(prompt, _ready_dig)
 
-        msg = create_with_retry(
+        import ai_orchestrator
+        # On the orchestrator's rung (weekly_digest: T2, one call — AI cost
+        # audit 10/7/26, orchestration Phase 3); the checks below stand.
+        msg = ai_orchestrator.generate("weekly_digest", restaurant_id, lambda route, notes: create_with_retry(
             client,
-            model=model_for("reporter"),
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,
             action="weekly_digest",
             readiness=_ready_dig,
-        )
+            **route.apply(dict(model=model_for("reporter"), max_tokens=500,
+                               messages=[{"role": "user", "content": prompt}])),
+        ), subject="weekly_digest").result
         raw = extract_text(msg).strip()
         # Output problems raise AIOutputRejected (a ValueError): filed below
         # as AI-quality findings, not as a failing job (fix round G #58).

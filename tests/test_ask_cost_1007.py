@@ -259,9 +259,12 @@ def test_a_standard_question_gets_no_pre_read(db_path, monkeypatch):
 
 def test_no_pre_read_for_a_model_that_thinks(db_path, monkeypatch):
     r = _restaurant(db_path, module_reviews=1)
-    monkeypatch.setattr(ask_cavnar, "model_for", lambda purpose: "claude-opus-5-5")
+    # The turn runs on its ask_cavnar policy's route (AI orchestration,
+    # 10/7/26: T2), so the model is the tier's — moved to a thinking model here.
+    monkeypatch.setenv("AI_TIER_T2_MODEL", "claude-opus-5-5")
     calls = _script(monkeypatch, [_Msg("end_turn", [_Text("ok")])])
     ask_cavnar.ask_with_tools(r, "what should I focus on?")
+    assert calls[0]["model"] == "claude-opus-5-5"
     assert len(calls[0]["messages"]) == 1
 
 

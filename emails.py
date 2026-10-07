@@ -188,16 +188,18 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
             + "Plain text only, no markdown.\n\n" + context
         )
         import data_health
-        msg = create_with_retry(
+        import ai_orchestrator
+        # On the orchestrator's rung (email_personalization: T1, one call —
+        # AI cost audit 10/7/26, orchestration Phase 3); the fallback stands.
+        msg = ai_orchestrator.generate("email_personalization", restaurant_id, lambda route, notes: create_with_retry(
             client,
-            model=model_for("email_personalise"),
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
             restaurant_id=restaurant_id,
             action="email_personalization",
             # Rests on no data source: onboarding email copy from typed counts.
             readiness=data_health.NOT_APPLICABLE,
-        )
+            **route.apply(dict(model=model_for("email_personalise"), max_tokens=200,
+                               messages=[{"role": "user", "content": prompt}])),
+        ), subject="email_personalization").result
         text = extract_text(msg).strip()
         if getattr(msg, "stop_reason", None) == "max_tokens":
             # create_with_retry already filed it 'truncated'.

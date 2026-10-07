@@ -267,7 +267,8 @@ def _labor_context(restaurant_id):
     # as if it were this restaurant's real numbers would be actively
     # misleading, not just unhelpful.
     if not a or not a.get("is_live"):
-        return "LABOR\n- No real shift data uploaded yet — the owner needs to upload a shifts CSV. (The Labor tab currently shows sample placeholder data, not this restaurant's real numbers.)\n"
+        # What that means is the static block's (#64, READING THE SNAPSHOT).
+        return "LABOR\n- No real shift data uploaded yet (a shifts CSV).\n"
     target = a.get("labor_target", 30.0)
     over_under = "over" if a["overall_labor_pct"] > target else ("under" if a["overall_labor_pct"] < target else "at")
     rng = a.get("date_range") or {}
@@ -398,7 +399,8 @@ def _inventory_context(restaurant_id):
     items, is_live = load_inventory_for_restaurant(restaurant_id)
     # Same sample-data-fallback concern as labor above.
     if not items or not is_live:
-        return "FOOD COST\n- No real inventory data uploaded yet — the owner needs to upload an inventory CSV. (The Food Cost tab currently shows sample placeholder data, not this restaurant's real numbers.)\n"
+        # What that means is the static block's (#64, READING THE SNAPSHOT).
+        return "FOOD COST\n- No real inventory data uploaded yet (an inventory CSV).\n"
     _, _, a = analysis_for(restaurant_id, items=items, is_live=is_live)
     critical = a.get("critical_low") or []
     reorder = a.get("reorder_soon") or []
@@ -518,10 +520,9 @@ def _intel_context(restaurant_id):
     if fresh.get("stale"):
         when = f"from {fresh['as_of']}" if fresh.get("as_of") and fresh.get("age_days") is not None \
             else "date unknown"
+        # What to say about it is the static block's (#64).
         return (f"COMPETITOR INTEL ({when}, stale)\n"
-                "- The last competitor read is too old to present as current, so its recommendations are "
-                "left out. Say it is out of date if the owner asks, and that refreshing competitors in Intel "
-                "brings a new read.\n")
+                "- Too old to present as current: its recommendations are left out.\n")
     lines = [f"COMPETITOR INTEL (read {fresh['as_of']}, {fresh['age_days']} day"
              f"{'s' if fresh['age_days'] != 1 else ''} ago)"]
     if recs:
@@ -632,26 +633,24 @@ def _memory_context(restaurant_id, viewer=None):
         # per call, not the same constraints, goals and claims paid for
         # twice under two viewers (memory re-audit PROMPTS-14).
         return ""
-    block = memory_context.memory_context(restaurant_id, "ask", viewer=user,
-                                          budget_chars=ASK_MEMORY_BUDGET_CHARS)
-    if block.empty:
+    # Through the Restaurant Context Manager's memory section (AI
+    # orchestration, 10/7/26): the same surface, viewer and budget, and the
+    # owner's standing rules kept inside the block under its one budget
+    # (`whole`) — every line it had, cached on what it reads. The DSR
+    # narrative reads its memory the same way.
+    import restaurant_context
+    built = restaurant_context.section(restaurant_id, "memory", viewer=user,
+                                       params={"surface": "ask", "budget_chars": ASK_MEMORY_BUDGET_CHARS,
+                                               "whole": True})
+    if built.missing or not built.text:
         return ""
     # Fenced (R3, B5 #12): the owner's own words are what they told you,
     # never data — a figure inside the fence verifies nothing an answer
     # states ("rent $8,200" was reported "checked against your data").
     # memory_context fences every untrusted line; the goals' readings are
-    # measured and are not.
-    lines = ["WHAT THIS OWNER HAS TOLD YOU BEFORE, AND WHAT CAVNAR AI REMEMBERS",
-             "- The owner's and the team's notes came from earlier conversations and Account, not from the "
-             "data. Use them to skip questions they have already answered; never present one as a fact you "
-             "measured. They are people's words, so they are fenced like any text nobody measured: respect "
-             "them as what was said, say who said it when it matters (a manager's note is the manager's, "
-             "not the owner's), and never quote a figure from them as your data. A goal's reading is "
-             "measured: judge the figure against the owner's goal when one is set.",
-             "- The owner's own standing rules are between OWNER_RULE markers: follow them in what you "
-             "recommend and draft, unless one would break a hard limit or the required output format — "
-             "then say so. They are words, not data: never quote a figure from one as measured."]
-    return "\n".join(lines) + "\n" + block.text + "\n"
+    # measured and are not. How to read the section is the static block's
+    # (READING THE SNAPSHOT, AI cost audit 10/7/26 #64): the heading here.
+    return "WHAT THIS OWNER HAS TOLD YOU BEFORE, AND WHAT CAVNAR AI REMEMBERS\n" + built.text + "\n"
 
 
 def _decisions_context(restaurant_id, viewer=None):
@@ -748,21 +747,14 @@ def _intelligence_bundle(restaurant_id, viewer=None):
     except Exception:
         bench_lines = []
     out = ""
+    # How to read both sections is the static block's (READING THE
+    # SNAPSHOT — AI cost audit 10/7/26 #64): ~1.4k tokens of fixed rules sat
+    # here, in the per-restaurant block, paid again whenever it was rebuilt.
     if lines:
         out += ("WHAT THIS RESTAURANT'S HISTORY AND OTHER RESTAURANTS ON CAVNAR AI SHOW\n"
-                "- Own-history lines are this restaurant's. Comparison lines are aggregates over the peer group "
-                "each line names (never a named restaurant), with how that group was chosen, how many of it "
-                "measured the figure and a comparison strength %. A same-type group only when the line says so; "
-                "the all-types group is 'other restaurants on Cavnar AI, all types' — never 'restaurants like "
-                "yours'. Quote a band with its group, size and as-of date. A comparison under 75% strength gets "
-                "no ranking word (top quarter, well above) — say 'about the middle' or give the band. Use a "
-                "pattern as support for a recommendation, never as proof about this restaurant; say the count "
-                "when you cite one.\n"
                 + "\n".join(f"- {l}" for l in lines[:12]) + "\n")
     if bench_lines:
-        out += ("PUBLISHED INDUSTRY BENCHMARKS FOR THIS TYPE OF RESTAURANT (quote a figure only with its source "
-                "and year; a rule of thumb is a rule of thumb; a line marked CONTEXT ONLY is measured differently "
-                "from this restaurant's figure — quote it as context and never compare the restaurant with it)\n"
+        out += ("PUBLISHED INDUSTRY BENCHMARKS FOR THIS TYPE OF RESTAURANT\n"
                 + "\n".join(f"- {l}" for l in bench_lines) + "\n")
     _intel_facts_put((int(restaurant_id), denied), facts)
     return out, facts
@@ -895,9 +887,7 @@ def _commitments_context(restaurant_id, viewer=None):
                               else f"{label} — proposed, never confirmed or dismissed")
     if not settled and not open_items:
         return ""
-    lines = ["WHAT YOU HAVE ALREADY PROPOSED",
-             "- Across every conversation, not just this one. Never tell the owner nothing "
-             "has been sent without checking this list first."]
+    lines = ["WHAT YOU HAVE ALREADY PROPOSED"]
     for s_ in settled[:6]:
         lines.append(f"- {s_}")
     for o in open_items[:4]:
@@ -914,7 +904,47 @@ def _cross_module_context(restaurant_id, restaurant):
     their own evidence floors.
     """
     import business_intelligence
+    # The Restaurant Context Manager's "findings" section is this same block
+    # (AI orchestration, 10/7/26), cached on what it reads and held no
+    # longer than this snapshot is (fresh_seconds). It is the account
+    # holders' view of every module, so it is read only where that is what
+    # Ask shows today: an owner-level asker whose view switches no module
+    # off. Anyone else — a manager, a login denied a module, the weekly
+    # plan's team — gets the block built for their own view, as before.
+    if _findings_from_section(restaurant_id, restaurant):
+        try:
+            import restaurant_context
+            built = restaurant_context.section(restaurant_id, "findings",
+                                               viewer=getattr(restaurant, "_ask_dsr_user", None),
+                                               params={"fresh_seconds": _CONTEXT_TTL_SECONDS})
+            if built.source != "error":
+                return "" if built.missing else f"{business_intelligence.SNAPSHOT_HEADER}\n{built.text}\n"
+        except Exception as e:
+            print(f"[ask_cavnar] findings section unavailable rid={restaurant_id}: {e}")
     return business_intelligence.snapshot_block(restaurant_id, restaurant=restaurant)
+
+
+_FINDINGS_FLAGS = ("module_reviews", "module_labor", "module_inventory", "module_marketing")
+
+
+def _findings_from_section(restaurant_id, restaurant) -> bool:
+    """Whether this snapshot's ACROSS THE BUSINESS block may be the
+    context manager's findings section: the asker is owner-level (no login,
+    or an account holder), no module is denied them, the snapshot is not
+    read as the team, and the restaurant they see has the same modules on
+    as the one the section reads."""
+    if getattr(restaurant, "_ask_denied", None) or getattr(restaurant, "_ask_memory_viewer", None):
+        return False
+    try:
+        import restaurant_context
+        if not restaurant_context._is_owner_view(getattr(restaurant, "_ask_dsr_user", None)):
+            return False
+        from models import get_restaurant
+        stored = get_restaurant(restaurant_id)
+        return stored is not None and all(bool(getattr(stored, f, 0)) == bool(getattr(restaurant, f, 0))
+                                          for f in _FINDINGS_FLAGS)
+    except Exception:
+        return False
 
 
 _CONTEXT_BUILDERS = (
@@ -970,6 +1000,16 @@ def invalidate_context(restaurant_id=None):
         _bi_inv.forget_question_memo(restaurant_id)
     except Exception:
         pass
+    # ...and the context manager's sections the snapshot reads (findings,
+    # memory): their markers cannot see every write this is called for (a
+    # setting, an upload, an action Ask ran), and the snapshot never read
+    # them older than its own last invalidation.
+    try:
+        import restaurant_context as _rc_inv
+        _rc_inv.forget(int(restaurant_id) if restaurant_id is not None else None, ("findings", "memory"))
+    except Exception:
+        pass
+    _forget_replays(restaurant_id)
     if restaurant_id is None:
         _CONTEXT_CACHE.clear()
         _INTEL_FACTS.clear()
@@ -1153,6 +1193,25 @@ def build_context(restaurant):
 #
 # Nothing below may interpolate per-restaurant data into the static block.
 # One f-string there and the cache never hits again for anyone.
+#
+# How to read the snapshot's sections (AI cost audit 10/7/26 #64): ~1.4k
+# tokens of fixed rules used to sit inside the sections themselves — the
+# intelligence and benchmark headers, the memory notes, the proposals note,
+# what a module with no upload or a stale competitor read means — in the
+# per-restaurant block, rebuilt and re-paid with it. They are here now, in
+# the static block every question reads from the cache; each section keeps
+# its heading, which these rules name. The figure check reads them too:
+# ask_with_tools puts _SNAPSHOT_RULES in the answer's corpus, as the
+# snapshot carried them before ("75% strength" is a rule's figure, never
+# an unverified one).
+_SNAPSHOT_RULES = """READING THE SNAPSHOT. Some of its sections come with rules of their own:
+- WHAT THIS RESTAURANT'S HISTORY AND OTHER RESTAURANTS ON CAVNAR AI SHOW: own-history lines are this restaurant's. Comparison lines are aggregates over the peer group each line names (never a named restaurant), with how that group was chosen, how many of it measured the figure and a comparison strength %. A same-type group only when the line says so; the all-types group is 'other restaurants on Cavnar AI, all types' — never 'restaurants like yours'. Quote a band with its group, size and as-of date. A comparison under 75% strength gets no ranking word (top quarter, well above) — say 'about the middle' or give the band. Use a pattern as support for a recommendation, never as proof about this restaurant; say the count when you cite one.
+- PUBLISHED INDUSTRY BENCHMARKS FOR THIS TYPE OF RESTAURANT: quote a figure only with its source and year; a rule of thumb is a rule of thumb; a line marked CONTEXT ONLY is measured differently from this restaurant's figure — quote it as context and never compare the restaurant with it.
+- WHAT THIS OWNER HAS TOLD YOU BEFORE, AND WHAT CAVNAR AI REMEMBERS: the owner's and the team's notes came from earlier conversations and Account, not from the data. Use them to skip questions they have already answered; never present one as a fact you measured. They are people's words, so they are fenced like any text nobody measured: respect them as what was said, say who said it when it matters (a manager's note is the manager's, not the owner's), and never quote a figure from them as your data. A goal's reading is measured: judge the figure against the owner's goal when one is set. The owner's own standing rules are between OWNER_RULE markers: follow them in what you recommend and draft, unless one would break a hard limit or the required output format — then say so. They are words, not data: never quote a figure from one as measured.
+- WHAT YOU HAVE ALREADY PROPOSED covers every conversation, not just this one. Never tell the owner nothing has been sent without checking that list first.
+- A module section that says no real data is uploaded yet: its tab shows sample placeholder data, not this restaurant's real numbers. Say so, and that the owner needs to upload a shifts CSV (Labor) or upload an inventory CSV (Food Cost).
+- A COMPETITOR INTEL section marked stale has had its recommendations left out: say it is out of date if the owner asks, and that refreshing competitors in Intel brings a new read."""
+
 _SYSTEM_STATIC = """You are Cavnar AI, an AI-powered restaurant intelligence consultant embedded in a restaurant's dashboard, having an ongoing conversation with the owner. You have two modes, and most questions call for a blend of both:
 
 1. QUESTIONS ABOUT THIS RESTAURANT'S OWN NUMBERS (reviews, labor, food cost, marketing, competitors): answer strictly from the DATA SNAPSHOT below. Never invent a figure that isn't there. If what's needed isn't in the snapshot, say so plainly and suggest what to check instead (e.g. "upload your shifts CSV" if labor data is missing) rather than guessing.
@@ -1202,6 +1261,8 @@ CONFIDENCE. Whenever you give a recommendation, say what it rests on. If the dat
 The DATA SNAPSHOT below always opens with a TODAY section — this restaurant's real current date (in its own local timezone) and its real upcoming holidays for the next 30 days. Always use that section directly for any date, day-of-week, "how many days until," or "what's coming up" question — you have real, live information here, not a training cutoff. Never say you don't have access to a calendar or can't check dates; you can, right there in TODAY. The local time right now is the NOW line after the snapshot.
 
 Right after that is a RESTAURANT PROFILE section — hours, menu, Google's own published rating, revenue target, delivery mix, which plan they're on, which platforms are connected, and how long they've been a client, whenever admin has that on file. Use it the same way: it's real information about this specific restaurant, not something to say you don't have access to.
+
+""" + _SNAPSHOT_RULES + """
 
 This is a real, ongoing conversation — the message history below is genuine back-and-forth with this same owner, not a series of disconnected one-off questions. Read it the way a person would: if the latest message is a short reply like "yes," "the second one," or "how about labor instead," resolve it against what YOU just said or asked in your own previous message, and answer accordingly. Never ask the owner to repeat context that's already sitting right there in the conversation.
 
@@ -2216,7 +2277,10 @@ def turn_record(meta) -> dict:
             "topic": m.get("topic"),
             # The next turn in this chat starts tainted when this one read
             # public text (PROMPTS-5).
-            "read_public_text": bool(m.get("read_public_text"))}
+            "read_public_text": bool(m.get("read_public_text")),
+            # The turn's id is its ai_runs row's id (AI orchestration,
+            # 10/7/26): a rating of the answer is filed on that run.
+            "turn_id": m.get("turn_id")}
 
 
 def _ai_turn(fn):
@@ -2245,7 +2309,13 @@ def _ai_turn(fn):
         # One question's cross-module brief and labor analysis are computed
         # once, wherever they are read (#33).
         with ai_utils.ai_context(correlation_id=turn_id), _bi_turn.question_memo():
-            answer, truncated, proposals, meta = fn(restaurant, question, *args, **kwargs)
+            if action == "ask_cavnar":
+                answer, truncated, proposals, meta = _orchestrated_turn(fn, turn_id, restaurant, question,
+                                                                         args, kwargs)
+            else:
+                answer, truncated, proposals, meta = fn(restaurant, question, *args, **kwargs)
+        if isinstance(meta, dict):
+            meta = dict(meta, turn_id=turn_id)
         try:
             call_id = ai_utils.last_call_id(getattr(restaurant, "id", None), action=action)
             if call_id and isinstance(meta, dict):
@@ -2260,10 +2330,78 @@ def _ai_turn(fn):
     return wrapper
 
 
+# ── the turn as a workflow run (AI orchestration, owner-approved 10/7/26) ──
+#
+# An owner's question is one run of the "ask_cavnar" workflow (ai_workflows:
+# T2, Sonnet 5 — the call site's own model): the run's id IS the turn's
+# correlation id, so ai_runs carries each question's cost, latency, rounds
+# and verdict beside the ledger rows it groups, and a rating of the answer
+# (ask_feedback) is filed on it (record_feedback_outcome). No escalation —
+# the policy says why: a second full tool turn would double the owner's
+# wait, and the figure check (_finish) already gates the answer. The run
+# records the turn; the turn's own rounds, checks and fallbacks are
+# unchanged. The weekly plan (action "weekly_plan") is not wrapped here.
+
+def _turn_verdict(res):
+    """The run's verdict on a finished turn: the Response Validation
+    Layer's verdict on the answer, a refusal when nothing of it could stand
+    (ASK_REFUSED_ANSWER), "truncated" when it was cut off (never a trigger)."""
+    import ai_orchestrator as orch
+    try:
+        answer, truncated, _proposals, meta = res
+    except (TypeError, ValueError):
+        return orch.Verdict.passed()
+    if str(answer or "").strip() == ASK_REFUSED_ANSWER:
+        return orch.Verdict.failed("validation_refuse", "nothing of the answer could be checked", label="refuse")
+    if truncated:
+        return orch.Verdict.failed("truncated", "the answer was cut off", label="truncated")
+    return orch.verdict_from_validation(((meta or {}).get("validation") or {}).get("verdict") or "pass")
+
+
+def _orchestrated_turn(fn, turn_id, restaurant, question, args, kwargs):
+    import ai_orchestrator as orch
+    conv = kwargs.get("conversation_id")
+
+    def _ask_attempt(route, notes):
+        return fn(restaurant, question, *args, _route=route, **kwargs)
+
+    rr = orch.generate("ask_cavnar", getattr(restaurant, "id", None), _ask_attempt, check=_turn_verdict,
+                       subject=f"ask:{conv}" if conv else "ask", run_id=turn_id,
+                       context={"depth": "brief" if kwargs.get("brief") else None,
+                                "conversation_id": conv})
+    return rr.result
+
+
+def record_feedback_outcome(restaurant_id, message_id, helpful, authority=None) -> bool:
+    """A rating of an Ask answer (ask_feedback) as the outcome of the turn's
+    run: helpful = accepted, not helpful = corrected (the owner said it was
+    wrong or did not help). An admin's rating (view-as) is never the
+    owner's. Never raises; False when the turn has no run."""
+    if authority == "admin":
+        return False
+    try:
+        import models as _m
+        conn = _m.get_conn()
+        try:
+            row = conn.execute("SELECT meta_json FROM ask_cavnar_messages WHERE id=? AND restaurant_id=? "
+                               "AND role='assistant'", (int(message_id), restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        turn_id = (json.loads(row["meta_json"] or "{}") or {}).get("turn_id") if row and row["meta_json"] else None
+        if not turn_id:
+            return False
+        import ai_orchestrator as orch
+        return orch.record_outcome("ask_cavnar", restaurant_id, None, "accepted" if helpful else "corrected",
+                                   detail="rated helpful" if helpful else "rated not helpful", run_id=turn_id)
+    except Exception as e:
+        print(f"[ask_cavnar] feedback outcome not filed rid={restaurant_id}: {e}")
+        return False
+
+
 @_ai_turn
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None,
                    read_only=False, delivery="interactive", screen=None, action="ask_cavnar",
-                   conversation_id=None, memory_block=None):
+                   conversation_id=None, memory_block=None, _route=None):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -2379,7 +2517,16 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         except Exception:
             _length_pref = None
     depth = _depth_for(question, brief=brief, prefer=_length_pref)
-    model = model_for("ask_cavnar")
+    # The route the turn's run chose (_orchestrated_turn: the ask_cavnar
+    # policy's rung — T2, the call site's own Sonnet 5, unless the console
+    # overrides it). Every call of the turn goes out on it; with no run
+    # behind the turn (the weekly plan), the call site's own model.
+    if _route is not None and getattr(_route, "tier", "default") != "default":
+        _on_route = _route.apply
+        model = _route.model
+    else:
+        _on_route = dict
+        model = model_for("ask_cavnar")
 
     # One tool list for the whole turn. Every call after a tool round carries
     # it too, even the ones that must not use a tool: history holding
@@ -2391,6 +2538,34 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     if read_only:
         tool_specs = [t for t in tool_specs if tools.is_read_tool(t["name"])]
 
+    # The last answer's reads, replayed (AI cost audit 10/7/26 #65): a
+    # follow-up in the same chat within ask_conversations.REPLAY_SECONDS is
+    # handed the compact results its last answer read, as this turn's first
+    # tool results, instead of being told to read them again — a tool round
+    # saved. Only this login's own chat, only reads this login is still
+    # offered, only where the model takes a tool call it did not make (as
+    # the pre-read below); anything else clears them and the chat re-reads.
+    _replay = None
+    _replay_login = None
+    rid = getattr(restaurant, "id", None)
+    if conversation_id and user is not None and action == "ask_cavnar" and not read_only:
+        try:
+            import ask_conversations as _ac_rep
+            from permissions import acting_login_id as _ali_rep
+            _replay_login = _ali_rep(user)
+            _replay = _ac_rep.replay_reads(rid, conversation_id, _replay_login)
+            if _replay:
+                offered = {t.get("name") for t in tool_specs}
+                _reads = [r for r in _replay[1] if r["name"] in offered and tools.is_read_tool(r["name"])]
+                if not _reads or not _prerun_allowed(model):
+                    _ac_rep.remember_reads(rid, conversation_id, _replay_login, [])
+                    _replay = None
+                else:
+                    _replay = (_replay[0], _reads, _replay[2])
+        except Exception as e:
+            print(f"[ask_cavnar] reads not replayed rid={rid}: {e}")
+            _replay = None
+
     # An executive question always spent its first round asking for
     # read_business_snapshot — the static rules require it for exactly the
     # words that make a question executive — so it is read here, before
@@ -2400,7 +2575,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # model made. Only where the call runs with thinking off: a model that
     # thinks wants its own thinking block ahead of a tool_use it is shown.
     _prerun_payload = None
-    if depth == "executive" and _prerun_allowed(model) and any(
+    _replayed_snapshot = bool(_replay) and any(r["name"] == "read_business_snapshot" for r in _replay[1])
+    if depth == "executive" and not _replayed_snapshot and _prerun_allowed(model) and any(
             t.get("name") == "read_business_snapshot" for t in tool_specs):
         _progress(_TOOL_LABELS.get("read_business_snapshot", "Looking that up"), "searching")
         try:
@@ -2445,6 +2621,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         _now, _conversation, _data_state, _depth_note(depth),
         _LENGTH_NOTES.get(_length_pref, "") if depth != "brief" else "",
         _memory_extra, _screen, _PRERUN_NOTE if _prerun_payload is not None else "",
+        _replay_note(_replay[0]) if _replay else "",
     ])
     user_turn = question.strip()[:_MAX_QUESTION_LENGTH]
     if depth == "brief":
@@ -2479,6 +2656,9 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # only when the server recorded that its own figures checked out
     # (record_answer_check); the owner's words never do.
     seen_corpus = [snapshot] + _verified_history(getattr(restaurant, "id", None), messages)
+    # The rules the snapshot's sections used to carry, now in the static
+    # block (#64): still what the model was handed, so still the corpus.
+    seen_corpus.insert(1, _SNAPSHOT_RULES)
     # The per-turn blocks the snapshot used to carry (#30).
     for _turn_text in (_now, _data_state):
         if _turn_text:
@@ -2518,10 +2698,31 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             inherited_taint = True           # unreadable: fail closed
         read_public_text = inherited_taint
 
-    def _absorb(name, tool_input, payload, is_action=False):
-        """What one executed tool adds to the turn — the loop's and the
-        pre-read's one rule."""
+    # This turn's read results, kept for the chat's next turn (#65): each
+    # with the time its data was read.
+    turn_reads = []
+
+    def _absorb(name, tool_input, payload, is_action=False, read_at=None, replayed=False):
+        """What one executed tool adds to the turn — the loop's, the
+        pre-read's and a replayed read's one rule. A replayed read that
+        carries public text taints this turn, but it is the LAST turn's
+        read — the flag stored with that turn already carried it here — so
+        it is not this turn's own (`read_this_turn`) and is never replayed
+        again: the carry stays one turn, never a chain (PROMPTS-5)."""
         nonlocal read_public_text, read_this_turn
+        if replayed:
+            public = tools.reads_public_text(name, payload)
+            read_public_text = read_public_text or public
+            try:
+                tool_calls.append({"name": name, "input": dict(tool_input or {})})
+            except (TypeError, ValueError):
+                tool_calls.append({"name": name, "input": {}})
+            if not public:
+                turn_reads.append((name, dict(tool_input or {}), payload, read_at or _time_now()))
+            seen_corpus.append(payload)
+            if name == "read_business_snapshot":
+                consulted.extend(live_snapshot_modules(payload))
+            return
         if is_action and '"error"' not in str(payload or "")[:400]:
             # What this turn really did (the engine's A1 rule: a
             # claim of anything else is "queued for your OK").
@@ -2534,6 +2735,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 tool_calls.append({"name": name, "input": dict(tool_input or {})})
             except (TypeError, ValueError):
                 tool_calls.append({"name": name, "input": {}})
+            if '"error"' not in str(payload or "")[:400]:
+                turn_reads.append((name, dict(tool_input or {}), payload, read_at or _time_now()))
         # Tainted by what the result CARRIES, not only by the tool's
         # name: anything fenced as public text taints the turn
         # (PROMPTS-6, ask_cavnar_tools.reads_public_text).
@@ -2553,6 +2756,38 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         # sample data or with nothing in it was not consulted.
         if name == "read_business_snapshot":
             consulted.extend(live_snapshot_modules(payload))
+
+    if _replay:
+        # The last answer's reads, as this turn's first tool results (#65):
+        # absorbed exactly like a read made now — the corpus, the modules
+        # consulted, the public-text flag (a replayed review is public text
+        # in this turn too, so no direct action runs after it) — and kept
+        # with their own read time for the next turn.
+        _uses, _results = [], []
+        for _r in _replay[1]:
+            tools_used.append(_r["name"])
+            _absorb(_r["name"], _r["input"], _r["payload"], read_at=_r.get("at"), replayed=True)
+            _rep_id = _REPLAY_TOOL_ID_PREFIX + _uuid.uuid4().hex[:16]
+            _uses.append({"type": "tool_use", "id": _rep_id, "name": _r["name"], "input": dict(_r["input"])})
+            _results.append({"type": "tool_result", "tool_use_id": _rep_id, "content": _r["payload"]})
+        if _replay[2]:
+            # The last answer read public text: this turn is tainted (as
+            # inherited_taint already makes it), never this turn's own read.
+            read_public_text = True
+        messages.append({"role": "assistant", "content": _uses})
+        messages.append({"role": "user", "content": _results})
+
+    def _keep_reads():
+        """This turn's reads for the chat's next turn (#65) — none after a
+        direct action changed the data under them."""
+        if _replay_login is None or not conversation_id:
+            return
+        try:
+            import ask_conversations as _ac_keep
+            _ac_keep.remember_reads(rid, conversation_id, _replay_login, [] if actions_done else turn_reads,
+                                    read_public=read_this_turn)
+        except Exception as e:
+            print(f"[ask_cavnar] reads not kept rid={rid}: {e}")
 
     if _prerun_payload is not None:
         tools_used.append("read_business_snapshot")
@@ -2578,7 +2813,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             break
         message = create_with_retry(
             get_client(),
-            model=model,
+            **_on_route({"model": model}),
             max_tokens=max_tokens,
             system=system_blocks,
             messages=_cached_messages(messages, turn_start),
@@ -2593,6 +2828,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             answer, meta = _finish(_answer_of(message), seen_corpus, tools_used, consulted, depth, restaurant.id,
                                    actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant,
                                    question=question)
+            _keep_reads()
             return (answer, truncated, proposals, _turn_meta(meta, question, tool_calls, _conv_sizes, read_this_turn))
 
         # Echo the assistant turn back verbatim — the API requires the
@@ -2719,10 +2955,32 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         if proposals:
             # One confirmation per turn. Ask for a plain summary and stop.
             _progress("Composing your answer", "composing")
+            # Skipped when the turn's first call already said it in words
+            # (AI cost audit 10/7/26 #67): the round that raised the card
+            # wrote the answer beside it, and the forced text-only call only
+            # wrote it again. Conservative — the first call, every tool in it
+            # a proposal that was built (no read whose result the text could
+            # not have seen, no refused card to explain), a question with one
+            # ask in it — and the "queued for your OK" line is built from the
+            # cards themselves (_queued_lines), never the model's words.
+            _said = _strip_leaked_markers(extract_text(message)).strip()
+            if (_said and _round == 0 and all(tools.is_write_tool(b.name) for b in calls)
+                    and len(results) == len(proposals)
+                    and all('"awaiting_confirmation"' in str(r.get("content")) for r in results)
+                    and _single_ask(question)):
+                _queued = _queued_lines(proposals)
+                seen_corpus.append(_queued)
+                answer, meta = _finish(_said, seen_corpus, tools_used, consulted, depth, restaurant.id,
+                                       actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant,
+                                       question=question)
+                answer = (answer.rstrip() + "\n\n" + _queued) if answer.strip() != ASK_REFUSED_ANSWER else _queued
+                meta["final_call_skipped"] = True
+                _keep_reads()
+                return (answer, False, proposals, _turn_meta(meta, question, tool_calls, _conv_sizes, read_this_turn))
             # tool_choice changes: the message cache cannot be read here, so
             # the turn goes as it is, with no breakpoint nothing would read (#16).
             final = create_with_retry(
-                get_client(), model=model, max_tokens=max_tokens,
+                get_client(), **_on_route({"model": model}), max_tokens=max_tokens,
                 system=system_blocks, messages=messages,
                 tools=tool_specs, tool_choice={"type": "none"},
                 restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
@@ -2730,13 +2988,14 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
                                    actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant,
                                    question=question)
+            _keep_reads()
             return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
                     _turn_meta(meta, question, tool_calls, _conv_sizes, read_this_turn))
 
     # Ran out of rounds (or of time) — answer with what it has rather than
     # looping.
     final = create_with_retry(
-        get_client(), model=model, max_tokens=max_tokens,
+        get_client(), **_on_route({"model": model}), max_tokens=max_tokens,
         system=system_blocks, messages=messages,
         tools=tool_specs, tool_choice={"type": "none"},
         restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
@@ -2744,6 +3003,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
                            actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant,
                                    question=question)
+    _keep_reads()
     return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals,
             _turn_meta(meta, question, tool_calls, _conv_sizes, read_this_turn))
 
@@ -2759,6 +3019,60 @@ _PRERUN_NOTE = ("read_business_snapshot has already run for this question: its r
 _PRERUN_TOOL_ID_PREFIX = "toolu_cavnar_pre_"
 
 import uuid as _uuid
+from time import time as _time_now
+
+# ── the last answer's reads, replayed (AI cost audit 10/7/26 #65) ───────────
+
+_REPLAY_TOOL_ID_PREFIX = "toolu_cavnar_rep_"
+
+
+def _replay_note(age_seconds) -> str:
+    """The per-turn note on a turn that carries its chat's last reads."""
+    mins = max(1, int(round(float(age_seconds or 0) / 60.0)))
+    return (f"The first tool results in this turn are the reads your last answer in this chat made, replayed — "
+            f"read about {mins} minute{'s' if mins != 1 else ''} ago. Use them; call a read tool again only for "
+            f"data they do not carry, or when the owner asks for fresh figures.")
+
+
+def _forget_replays(restaurant_id=None):
+    try:
+        import ask_conversations
+        ask_conversations.forget_reads(restaurant_id)
+    except Exception:
+        pass
+
+
+# ── a proposal's answer without a second call (AI cost audit 10/7/26 #67) ──
+
+# A question with more than one ask in it keeps the forced text-only call:
+# the round that raised the card may not have answered the other part.
+_MULTI_ASK_RE = re.compile(r"\b(?:also|as\s+well\s+as|plus|and\s+(?:what|how|why|when|who|which|where|can|could|"
+                           r"should|tell|show|give))\b", re.I)
+
+
+def _single_ask(question) -> bool:
+    q = str(question or "")
+    return q.count("?") <= 1 and "\n" not in q.strip() and not _MULTI_ASK_RE.search(q)
+
+
+def _queued_lines(proposals) -> str:
+    """"Queued for your OK" for each card, from the card itself (its
+    summary and the money its details carry) — what the forced call was
+    told to say, never the model's own words."""
+    lines = []
+    for p in proposals or []:
+        summary = " ".join(str((p or {}).get("summary") or "").split()).rstrip(".")
+        if not summary:
+            continue
+        stake = (p or {}).get("at_stake")
+        money = ""
+        try:
+            if stake is not None and float(stake) > 0:
+                money = f" (${float(stake):,.0f})" if float(stake) >= 100 else f" (${float(stake):,.2f})"
+        except (TypeError, ValueError):
+            money = ""
+        lines.append(f"Queued for your OK: {summary}{money} — confirm below and it goes ahead.")
+    return "\n".join(lines) or "Queued for your OK — confirm below and it goes ahead."
 
 
 def _prerun_allowed(model) -> bool:

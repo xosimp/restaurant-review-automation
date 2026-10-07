@@ -4413,7 +4413,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  cache_ttls: tuple = None,
                                  hours_rule_reads: list = None,
                                  role_windows: dict = None,
-                                 role_caps: dict = None) -> dict:
+                                 role_caps: dict = None,
+                                 contract: str = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -5413,14 +5414,21 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _worked_roles = {}
     for _n, _r in employees:
         _worked_roles[_n] = set(_emp_roles.get(_n, ())) | set((held_roles or {}).get(str(_n).strip().lower()) or ())
-    _schema = _sched_out.schedule_schema(
+    # Which contract (AI cost audit 10/7/26 #69, #70): the generation's, the
+    # same for every call of it (schedule_engine passes it), else
+    # SCHEDULE_CONTRACT — "schema" unless the eval has shown another loses
+    # nothing. "compact" is the same rows with one-letter keys; "shape" the
+    # slots alone, the names solved in code.
+    _cbase = _sched_out.schedule_contract(contract)
+    _schema = _sched_out.contract_schema(
+        _cbase,
         employees=[n for n, _r in employees],
         roles=_sched_out.schema_roles(employees, _worked_roles),
         dates=[d for d in week_dates if d not in _closed_set] or list(week_dates),
         times=_sched_out.clock_values(_sched_out.stated_times(open_times, close_times, hours_notes)),
-    ) if schema_enums else _sched_out.schedule_schema()
+    ) if schema_enums else _sched_out.contract_schema(_cbase)
     _note_words = ", ".join(v for v in _sched_out.NOTE_VALUES if v)
-    static_text = _sp.static_block(structured, _note_words, enums=schema_enums)
+    static_text = _sp.static_block(structured, _note_words, enums=schema_enums, contract=_cbase)
 
     # The readiness gate before the call (DH5-2): a schedule rests on the
     # shifts, the POS, sales and the weather. The owner asked for it, so a
@@ -5505,15 +5513,31 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _call["thinking"] = {"type": "adaptive", "display": "summarized"}
     _oc = dict(_call.get("output_config") or {})
     _cut = None
-    _contract = ("schema" if schema_enums else "plain_schema") if structured else "csv"
+    # The contract as recorded (schedule_model_calls.contract): "schema",
+    # "compact" or "shape", "plain_" before it without the enums, "csv" for
+    # the text fallback — the cost model reads each one's calls apart (#70).
+    _contract = (_cbase if schema_enums else "plain_" + _cbase) if structured else "csv"
     _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract,
                 call_kind=call_kind, tier=_route.tier)
+    _client = get_client(timeout=360.0)
+    # The days the answer has finished, as it streams, for the Building
+    # screen's "N of 7 days drafted" (AI cost audit 10/7/26 #36): a job's
+    # generation (its clock has a job id) watches its own stream, once per
+    # finished day; a direct call or the CSV fallback does not.
+    from schedule_engine import current_clock as _sched_clock
+    _gen_clock = _sched_clock()
+    if structured and _gen_clock is not None and getattr(_gen_clock, "job_id", None) \
+            and callable(getattr(getattr(_client, "messages", None), "stream", None)):
+        try:
+            _client = _sched_out.DayWatch(_client, _gen_clock.days_streamed, contract=_cbase, dates=_gen_dates)
+        except Exception as _wx:
+            print(f"[schedule] the days streamed are not watched: {_wx!r}")
     try:
         # Background job, long output: minutes of generation, well past the
         # request-path default. The timeout is the longest silence between
         # streamed events, not the whole call; the job's deadline bounds the
         # whole call (create_with_retry cuts a stream still writing then).
-        msg = create_with_retry(get_client(timeout=360.0), readiness=_ready_sched, **_call)
+        msg = create_with_retry(_client, readiness=_ready_sched, **_call)
     except CallDeadlineExceeded as _dx:
         # Out of the job's time mid-answer (P-22): what streamed is read
         # like a truncated answer — the engine keeps its finished days and
@@ -5579,13 +5603,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
 
     _data_rows, summary_part = [], ""
     _parse = None
+    _shape_rows = []
     summary_bullets = []
     if structured:
         # Never read as CSV: an answer that is not the schema's JSON is
         # salvaged to its complete rows or yields none (PR-28) — garbage
         # lines from a truncated JSON answer used to become "rows".
-        _parse = _sched_out.parse_answer(raw, dates=_gen_dates)
-        _data_rows = _sched_out.csv_lines(_parse["rows"])
+        _parse = _sched_out.parse_answer(raw, dates=_gen_dates, contract=_cbase)
+        # A shape answer's slots carry no names (#69): they go back apart,
+        # for the engine to assign (schedule_engine.assign_shape_slots), and
+        # never into the CSV as nameless lines.
+        _shape_rows = [r for r in _parse["rows"] if r.get("_slot")]
+        _data_rows = _sched_out.csv_lines([r for r in _parse["rows"] if not r.get("_slot")])
         # A row the parse leaves out (a shift that starts and ends at the
         # same time) is handed on as an unreadable line: the job counts it
         # and names it to the owner, as it does a malformed CSV line.
@@ -5597,6 +5626,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _ai_u.mark_outcome(msg, "unparseable", reason="not the schema's JSON")
             _ai_u.record_quality_event("labor_schedule", "unparseable", restaurant_id=restaurant_id,
                                        action="labor_schedule", detail="the schedule answer was not the schema's JSON")
+        elif _parse.get("recovered") and not _truncated:
+            # Not cut, but its JSON broke partway (AI cost audit 10/7/26 #71):
+            # the days before the break are kept, and only the rest is asked
+            # for again — still a malformed answer, so still said.
+            import ai_utils as _ai_u
+            _ai_u.mark_outcome(msg, "unparseable", reason="JSON broke partway; finished days kept")
+            _ai_u.record_quality_event(
+                "labor_schedule", "unparseable", restaurant_id=restaurant_id, action="labor_schedule",
+                n=len(_parse["complete_dates"]),
+                detail=f"the schedule answer's JSON broke partway; {len(_parse['complete_dates'])} finished "
+                       f"day(s) kept, the rest written again")
     else:
         if "---SUMMARY---" in raw:
             _csv_raw, summary_part = raw.split("---SUMMARY---", 1)
@@ -5657,8 +5697,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 detail=f"{len(_pin_dropped)} model row(s) over a planned manager shift dropped")
     csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
     _rows_written = len(_parse["rows"]) if _parse is not None else _model_line_count
+    # "salvaged": not cut, but read only up to where its JSON broke (#71) —
+    # left out of the measured cost a row (schedule_output.call_costs).
     _outcome = ("truncated" if _truncated else
-                "unparseable" if (_parse is not None and not _parse["parsed"]) else "ok")
+                "unparseable" if (_parse is not None and not _parse["parsed"]) else
+                "salvaged" if (_parse is not None and _parse.get("recovered")) else "ok")
     _rec_id = _record_schedule_call(restaurant_id, _call, _call_args, raw, msg, outcome=_outcome, seconds=_seconds,
                                     rows=_rows_written, **_rec)
     _usage = _usage_of(msg)
@@ -5724,6 +5767,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         "complete_dates": list(_parse["complete_dates"]) if _parse is not None else None,
         "partial_dates": list(_parse["partial_dates"]) if _parse is not None else [],
         "salvaged": bool(_parse is not None and _parse["salvaged"]),
+        # Not cut, its JSON broken partway and read up to the break (#71):
+        # the engine's retry says so rather than "wrote no shifts".
+        "json_recovered": bool(_parse is not None and _parse.get("recovered")),
+        # The contract the call answered on (#69, #70), and on "shape" its
+        # slots — rows with no names, for the engine to assign
+        # (schedule_engine.assign_shape_slots); the CSV carries only the
+        # planned manager rows then.
+        "contract": _contract,
+        "shape_rows": _shape_rows,
         # What the call cost and wrote (tokens, seconds, rows, tokens a row)
         # and the id of its stored input (schedule_model_calls).
         "model_call": _model_call,

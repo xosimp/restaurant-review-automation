@@ -15403,7 +15403,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <div class="ac-card-h"><div><h3>Work Cavnar AI does for you</h3><p>Drafting the schedule, sending it, ordering from suppliers you trust &mdash; each one off until you turn it on, and each one undoable.</p></div>
             <div class="r"><span class="ac-status" id="as-auto-ops-status"></span></div></div>
           <div class="ac-rows">
-            <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every <span class="as-draftday-name">Thursday</span>, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
+            <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every <span class="as-draftday-name">Thursday</span>, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish. On by default once Labor is turned on; switch it off any time.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             {# The owner's day for the draft and for trusted orders (9/27/26):
                Thursday and Monday were fixed. Mirrored by the day in the
@@ -21260,9 +21260,10 @@ var _schedPollInterval = null;
 // operational scores and leadership rules, and the passes afterwards
 // genuinely repair rows, check strength and score quality.
 //
-// The timings are estimates, never progress. Generation is one model call
-// and the server cannot report a percentage, so this never claims one — the
-// last step simply holds until the schedule arrives.
+// The timings are estimates, never progress. The one real measure is the
+// days the answer has finished (schedDaysLine, from the poll): the server
+// reports those, never a percentage, so this never claims one — the last
+// step simply holds until the schedule arrives.
 // The first step names last year's same days only when the page says that
 // input exists (labor.last_year_available, read tolerantly - an older
 // server never sends it): a progress line is a claim about the inputs, and
@@ -21282,6 +21283,18 @@ var _schedStepTimer = null;
 // step no longer sits on "Scoring" for most of the wait.
 var _schedStepScale = 1;
 var _schedTiming = null;
+// {days_total, days_drafted, dates_drafted} from a pending poll: the days
+// the answer has finished as it streams (AI cost audit 10/7/26 #36). A real
+// count, unlike the step times above; absent until the first day is done.
+var _schedProgress = null;
+
+// "3 of 7 days drafted", or '' before the first day is finished.
+function schedDaysLine(p) {
+  if (!p || !(+p.days_total > 0) || !(+p.days_drafted > 0)) return '';
+  var n = Math.min(+p.days_drafted, +p.days_total), t = +p.days_total;
+  return '<b><span class="hb-num">' + n + '</span> of <span class="hb-num">' + t + '</span> '
+    + (t === 1 ? 'day' : 'days') + ' drafted</b>. ';
+}
 
 // How long a draft takes, from what the server measured (schedule_engine.
 // typical_generation_seconds): never a guess. With no measured run it says
@@ -21312,12 +21325,12 @@ function renderScheduleEta(startedAt) {
   }
   var slow = t && (t.typical ? secs > t.typical.seconds * 1.5 : secs > 600);
   if (slow) line += ' <b>Taking longer than usual</b> \u2014 it is still working' + (t.until ? ', and stops by <span class="hb-num">' + _schedClock(t.until) + '</span> at the latest' : '') + '.';
-  el.innerHTML = so + line + ' You can leave this page: the draft lands in History.';
+  el.innerHTML = schedDaysLine(_schedProgress) + so + line + ' You can leave this page: the draft lands in History.';
 }
 
 function startScheduleSteps(startedAt) {
   stopScheduleSteps();
-  _schedTiming = null; _schedStepScale = 1;
+  _schedTiming = null; _schedStepScale = 1; _schedProgress = null;
   _schedStepTimer = setInterval(function () { renderScheduleSteps(startedAt); }, 500);
   renderScheduleSteps(startedAt);
 }
@@ -23072,6 +23085,9 @@ function generateSchedule(btn, opts) {
             if (pollData.status === 'pending') {
               // Still inside its deadline: wait out what it says is left.
               if (+pollData.seconds_left > 0) { clearTimeout(_hardTimeout); _hardTimeout = setTimeout(_giveUp, (+pollData.seconds_left + 30) * 1000); }
+              // The days the draft has finished so far, counted from the
+              // answer as it streams (AI cost audit 10/7/26 #36).
+              _schedProgress = pollData.progress || null;
               return;
             }
             clearTimeout(_hardTimeout);

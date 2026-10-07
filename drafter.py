@@ -576,6 +576,44 @@ def recheck_draft_flags(db_path=None) -> int:
     return cleared
 
 
+# A review that names one of these is never drafted on the small tier,
+# whatever its stars: an allergy, an illness, a legal threat or a safety
+# report (the analyser's own strong keywords, plus the words a 4-star
+# "lovely, but my son reacted to…" uses).
+_SERIOUS_RE = re.compile(r"\b(?:allerg\w*|anaphyla\w*|epi-?pens?|gluten|celiac|coeliac|sick|ill|illness|vomit\w*|"
+                         r"threw up|food poison\w*|hospital\w*|lawyers?|attorneys?|lawsuit|sue|suing|"
+                         r"injur\w*|burn(?:ed|t)|unsafe|health department)\b", re.I)
+
+
+def draft_start_tier(rating, text, urgency=None, sentiment=None, severity=None, complaint=None, entities=None):
+    """The rung a reply starts on (ai_workflows draft_response: T1, T2): T1
+    only for a 4-5 star review the analyser read as no complaint — not
+    urgent, no severity above minor, no specific complaint, no staff member
+    named, not negative — and that names nothing serious (_SERIOUS_RE). A
+    review of 3 stars or fewer, or any flag, starts on T2. Deterministic:
+    the review's own fields, never a model's opinion."""
+    try:
+        stars = int(rating)
+    except (TypeError, ValueError):
+        return "T2"
+    if stars < 4 or str(urgency or "").lower() == "high" or str(sentiment or "").lower() == "negative":
+        return "T2"
+    if str(severity or "").lower() not in ("", "minor"):
+        return "T2"
+    if str(complaint or "").strip():
+        return "T2"
+    try:
+        import json as _json
+        ent = _json.loads(entities) if isinstance(entities, str) else (entities or {})
+    except ValueError:
+        ent = {}
+    if isinstance(ent, dict) and ent.get("staff_roles"):
+        return "T2"
+    if _SERIOUS_RE.search(str(text or "")):
+        return "T2"
+    return "T1"
+
+
 def draft_response(review_id: int, rating: int, text: str,
                    sentiment: str, restaurant_name: str,
                    voice_notes: str = "", restaurant_id: int = None,
@@ -598,13 +636,19 @@ def draft_response(review_id: int, rating: int, text: str,
     # NameError rather than falling back.
     platform = "google"
     categories = []
+    # The analyser's own reading of the review (analyser.validate_analysis):
+    # what the drafter's pre-router reads to pick the first tier.
+    flags = {}
     try:
         conn = get_conn()
         row = conn.execute(
-            "SELECT author, platform, categories FROM reviews WHERE id=?", (review_id,)
+            "SELECT author, platform, categories, severity, specific_complaint, entities FROM reviews WHERE id=?",
+            (review_id,)
         ).fetchone()
         conn.close()
         if row:
+            flags = {"severity": row["severity"], "complaint": row["specific_complaint"],
+                     "entities": row["entities"]}
             platform = row["platform"] or "google"
             try:
                 import json as _json_c
@@ -729,72 +773,94 @@ Review ({rating}/5 stars, {sentiment}):
 Write ONLY the response. No preamble, no labels, no quotation marks around the response. Sound like a real person — not a PR firm, not a template."""
 
     import data_health
-    message = create_with_retry(
+    import ai_orchestrator as _orch
+    # The reply's one call, on the orchestrator's rung (draft_response: T1
+    # for a 4-5 star review with no complaint, T2 for the rest — the
+    # pre-router below; one rung up when the public-reply check refuses it.
+    # AI cost audit 10/7/26, orchestration Phase 3).
+    _send = lambda route, note: create_with_retry(  # noqa: E731 — keeps the call in this function (readiness scan)
         get_client(),
-        model=model_for("drafter"),
-        # 300 tokens was the cap for an 80-100 word urgent reply; in a
-        # token-dense language (Japanese, Korean, Chinese) that truncated it
-        # every time, and a truncated draft is never saved (AI-20). The word
-        # count is set by the prompt; this is only room to write it in.
-        max_tokens=1000 if is_urgent_issue else 600,
-        # claude-sonnet-5 rejects `temperature` outright ("deprecated for
-        # this model") — confirmed live via direct API call. This means
-        # every draft_response() call has been failing in production with a
-        # 400 whenever DRAFTER_MODEL isn't overridden away from the sonnet-5
-        # default, until this fix.
-        messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="draft_response",
         # Rests on no data source: a reply to one review, written from that review.
         readiness=data_health.NOT_APPLICABLE,
+        **route.apply(dict(
+            model=model_for("drafter"),
+            # 300 tokens was the cap for an 80-100 word urgent reply; in a
+            # token-dense language (Japanese, Korean, Chinese) that truncated
+            # it every time, and a truncated draft is never saved (AI-20). The
+            # word count is set by the prompt; this is only room to write it in.
+            max_tokens=1000 if is_urgent_issue else 600,
+            # No `temperature`: claude-sonnet-5 rejects it outright
+            # ("deprecated for this model"), and create_with_retry strips it.
+            messages=[{"role": "user", "content": prompt + note}])),
     )
-    if is_refusal(message):
-        # extract_text returns "" for a refusal, which was saved as an empty
-        # draft and the review marked drafted (AI-24). Leave it pending.
-        raise AIRefused("the model declined to draft a reply to this review")
-    draft = extract_text(message).strip()
-    if not draft:
-        # Billed, and unusable: filed as such in the ledger (#52).
-        mark_outcome(message, "unparseable", reason="empty draft")
-        raise ValueError("the model returned an empty draft")
-    if getattr(message, "stop_reason", None) == "max_tokens":
-        # A reply cut off mid-sentence is worse published than absent, and
-        # this one can be published without a human reading it.
-        raise ValueError("draft response was truncated")
 
-    # Strip markdown if AI slips any in
-    draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)
-    draft = re.sub(r'\*(.+?)\*', lambda m: m.group(1), draft)
+    def _attempt(route, notes):
+        note = (f"\n\nA reply you wrote for this review was held before anyone saw it: it {'; '.join(notes)}. "
+                "Write a new one that avoids that entirely.") if notes else ""
+        message = _send(route, note)
+        if is_refusal(message):
+            # extract_text returns "" for a refusal, which was saved as an empty
+            # draft and the review marked drafted (AI-24). Leave it pending.
+            raise AIRefused("the model declined to draft a reply to this review")
+        draft = extract_text(message).strip()
+        if not draft:
+            # Billed, and unusable: filed as such in the ledger (#52).
+            mark_outcome(message, "unparseable", reason="empty draft")
+            raise ValueError("the model returned an empty draft")
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            # A reply cut off mid-sentence is worse published than absent, and
+            # this one can be published without a human reading it.
+            raise ValueError("draft response was truncated")
 
-    # A reply is published on a public listing under the owner's name. The
-    # 1-star prompt once asked the model to "explain what will be done
-    # differently"; the prompt no longer asks, and this still checks what it
-    # wrote, so an invented remediation — staff retrained, a comp, a process
-    # promise — never goes out unread as a statement the restaurant made.
-    # The Response Validation Layer on reply_public (workstream A) runs every
-    # public-reply rule: the commitments and NS5 H5 claims (allergen, fault,
-    # inspection, comp, "won't happen again", a cause nobody gave), the
-    # never-say list, awards and sourcing the owner never wrote, a staff
-    # member named in public, another tenant's name, injection residue.
-    # Refused → the draft is kept for the owner and flagged with the reason,
-    # so no bulk or auto publish counts it.
+        # Strip markdown if AI slips any in
+        draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)
+        draft = re.sub(r'\*(.+?)\*', lambda m: m.group(1), draft)
+
+        # A reply is published on a public listing under the owner's name. The
+        # 1-star prompt once asked the model to "explain what will be done
+        # differently"; the prompt no longer asks, and this still checks what it
+        # wrote, so an invented remediation — staff retrained, a comp, a process
+        # promise — never goes out unread as a statement the restaurant made.
+        # The Response Validation Layer on reply_public (workstream A) runs every
+        # public-reply rule: the commitments and NS5 H5 claims (allergen, fault,
+        # inspection, comp, "won't happen again", a cause nobody gave), the
+        # never-say list, awards and sourcing the owner never wrote, a staff
+        # member named in public, another tenant's name, injection residue.
+        # Refused → written once more one rung up, told why; refused again →
+        # the draft is kept for the owner and flagged with the reason, so no
+        # bulk or auto publish counts it.
+        reason, checked = check_reply(draft, restaurant_id=restaurant_id, review_id=review_id, review_text=text,
+                                      reviewer_name=reviewer_name, voice_notes=voice_notes, never_say=never_say,
+                                      restaurant_name=restaurant_name, sign_off=sign_off, action="draft_response")
+        if fixes and uses_confirmed_fix(draft, fixes):
+            # Drawing on a change the owner marked done: always read before it
+            # goes out, never bulk- or auto-published (drafter_fixes). A refusal
+            # for anything but the stated change keeps its own reason; one that
+            # is only the change (a "commitment" the owner did confirm) says so.
+            refused = [f for f in (getattr(getattr(checked, "verdict", None), "findings", None) or [])
+                       if f.get("severity") == "refuse"]
+            if not reason:
+                draft = checked or draft          # the engine's text, as a clean draft stores it
+                reason = FIX_REVIEW_REASON
+            elif all(f.get("detail") == _COMMITMENT_DETAIL for f in refused):
+                reason = FIX_REVIEW_REASON
+        return draft, reason, checked
+
+    def _check(out):
+        _draft, reason, _checked = out
+        # A draft held because it uses the owner's confirmed change is held
+        # by design, for the owner — never a reason to write it again.
+        if reason and reason != FIX_REVIEW_REASON:
+            return _orch.Verdict.failed("validation_refuse", reason, label="refuse")
+        return _orch.Verdict.passed()
+    run = _orch.generate("draft_response", restaurant_id, _attempt, _check,
+                         start=draft_start_tier(rating, text, urgency=urgency, sentiment=sentiment, **flags),
+                         subject=f"review:{review_id}")
+    draft, reason, checked = run.result
     # Only when asked, so a caller's stand-in update_draft keeps its old signature.
     _only = {"unedited_only": True} if unedited_only else {}
-    reason, checked = check_reply(draft, restaurant_id=restaurant_id, review_id=review_id, review_text=text,
-                                  reviewer_name=reviewer_name, voice_notes=voice_notes, never_say=never_say,
-                                  restaurant_name=restaurant_name, sign_off=sign_off, action="draft_response")
-    if fixes and uses_confirmed_fix(draft, fixes):
-        # Drawing on a change the owner marked done: always read before it
-        # goes out, never bulk- or auto-published (drafter_fixes). A refusal
-        # for anything but the stated change keeps its own reason; one that
-        # is only the change (a "commitment" the owner did confirm) says so.
-        refused = [f for f in (getattr(getattr(checked, "verdict", None), "findings", None) or [])
-                   if f.get("severity") == "refuse"]
-        if not reason:
-            draft = checked or draft          # the engine's text, as a clean draft stores it
-            reason = FIX_REVIEW_REASON
-        elif all(f.get("detail") == _COMMITMENT_DETAIL for f in refused):
-            reason = FIX_REVIEW_REASON
     if reason:
         # Kept as the model wrote it (the engine's text is "" on a refusal),
         # carrying the refusal verdict for the caller.
@@ -813,6 +879,95 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         raise DraftNotReplaced(f"review {review_id} already has an approved or posted reply"
                                + (", or one the owner edited" if unedited_only else ""))
     return draft
+
+
+def reply_subject(review_id) -> str:
+    """The ai_runs subject of the draft_response run that wrote a review's reply."""
+    return f"review:{int(review_id)}"
+
+
+# What a reply's response_action says the owner did with the model's draft
+# (client_api._do_approve), as an orchestrator outcome. Rows nobody read on
+# their own say nothing about the draft's quality (M-3, audit #15): the
+# rule's own approvals, a bulk publish and support through view-as are
+# "ignored" — filed, never scored.
+APPROVAL_OUTCOMES = {"approved_as_is": "accepted", "edited": "edited", "regenerated": None,
+                     "bulk_approved": "ignored", "auto_approved": "ignored", "support_approved": "ignored"}
+
+
+def record_reply_outcome(restaurant_id, review_id, outcome, quality=None, detail=None, db_path=None) -> bool:
+    """File what the owner did with a drafted reply on the run that wrote it
+    (ai_orchestrator.record_outcome; AI cost audit 10/7/26, orchestration
+    Phase 5): approved unedited → accepted, approved after an edit → edited
+    (quality = the share of the draft that survived), skipped, regenerated
+    or rewritten → rejected. Never raises."""
+    try:
+        import ai_orchestrator
+        return ai_orchestrator.record_outcome("draft_response", restaurant_id, reply_subject(review_id), outcome,
+                                              quality=quality, detail=detail, db_path=db_path)
+    except Exception:
+        return False
+
+
+def record_approval_outcome(restaurant_id, review_id, action, db_path=None) -> bool:
+    """The outcome of an approval labelled `action` (client_api's
+    response_action): an edited reply's quality is edit_quality between the
+    model's text (original_draft) and the approved reply; a regenerated
+    draft approved is accepted or edited by the same test. Never raises."""
+    try:
+        outcome = APPROVAL_OUTCOMES.get(action, "ignored")
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT original_draft, draft_response, COALESCE(draft_edited, 0) AS edited "
+                               "FROM reviews WHERE id=? AND restaurant_id=?", (review_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if outcome is None:
+            outcome = "edited" if row and row["edited"] else "accepted"
+        quality = None
+        if outcome == "edited" and row:
+            import ai_orchestrator
+            quality = ai_orchestrator.edit_quality(row["original_draft"] or row["draft_response"] or "",
+                                                   row["draft_response"] or "")
+        return record_reply_outcome(restaurant_id, review_id, outcome, quality=quality, detail=action,
+                                    db_path=db_path)
+    except Exception:
+        return False
+
+
+def gate_unattended_reply(restaurant_id, review_id, draft, review_text="", db_path=None):
+    """The reviewer gate on a reply about to be posted with nobody reading
+    it first — the auto-approve rule (scheduler.auto_approve_five_stars).
+    The rules engine (check_reply) has already passed it; the Haiku rubric
+    (ai_reviewer kind "review_reply") reads what regex cannot: a template
+    that ignores what the guest said, a tone wrong for the rating. Returns
+    the needs-review reason when it flags the reply (it is then left for the
+    owner, never posted) or None. The policy's unattended reviewer decides
+    whether the gate runs (draft_response: haiku_gate; the console may
+    change it). A reviewer that cannot run passes (ai_reviewer), as the
+    rule did before the gate. The verdict is filed on the run that wrote
+    the reply. AI cost audit 10/7/26, orchestration Phase 3."""
+    try:
+        import ai_workflows
+        pol = ai_workflows.policy("draft_response", db_path)
+        if (pol.reviewer_unattended or pol.reviewer) != "haiku_gate":
+            return None
+        import ai_orchestrator
+        from ai_reviewer import reviewer_for
+        v = reviewer_for("review_reply", restaurant_id, context=f"The guest's review: {review_text or ''}")(
+            draft, "haiku_gate")
+        ai_orchestrator.record_review("draft_response", restaurant_id, reply_subject(review_id), v,
+                                      db_path=db_path)
+    except Exception as e:
+        print(f"[drafter] reply gate did not run for review {review_id}: {e!r}")
+        return None
+    if v.ok:
+        return None
+    return GATE_REVIEW_REASON + (": " + "; ".join(v.reasons[:2]) if v.reasons else "")
+
+
+# The needs-review reason of a reply the reviewer gate held (after "This reply …").
+GATE_REVIEW_REASON = "needs a read before it posts"
 
 
 def draft_pending(restaurant_id: int, limit: int = 50):

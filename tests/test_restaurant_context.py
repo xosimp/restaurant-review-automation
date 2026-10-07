@@ -208,13 +208,13 @@ def test_sections_render_in_the_fixed_order_whatever_order_they_are_asked_in(fak
 def test_a_budget_trims_the_lowest_priority_first_and_says_so(fake_section):
     rid = _rid()
     fake_section["text"] = "x " * 4000                  # ~2000 tokens of forecast
-    pk = rc.packet(rid, ("profile", "owner_rules", "weather", "data_state"), budget_tokens=300)
+    pk = rc.packet(rid, ("profile", "owner_rules", "weather", "data_state"), token_budget=300)
     assert pk.trimmed == ["weather"]
     assert "x x x" not in pk.text
     assert "Left out of this context for length: weather" in pk.text
     assert rc.SECTIONS["data_state"].title in pk.text
     # Never trimmed, whatever the budget.
-    tiny = rc.packet(rid, ("profile", "owner_rules", "data_state"), budget_tokens=1)
+    tiny = rc.packet(rid, ("profile", "owner_rules", "data_state"), token_budget=1)
     assert tiny.trimmed == [] and rc.SECTIONS["profile"].title in tiny.text
     for name in ("profile", "owner_rules", "data_state"):
         assert rc.SECTIONS[name].trim is False and name not in rc.TRIM_ORDER

@@ -112,7 +112,10 @@ def test_the_scan_finds_the_known_call_sites():
     # attempt closures (10/7/26).
     for expected in [("inventory.py", "_food_read_attempt"), ("labor.py", "_labor_read_attempt"),
                      ("ask_cavnar.py", "ask_with_tools"), ("reporter.py", "generate_ai_digest_summary"),
-                     ("dsr/narrative.py", "_write"), ("drafter.py", "draft_response")]:
+                     # The DSR narrative calls from its run's attempt closure
+                     # (dsr_narrative workflow, 10/7/26); run() is handed the
+                     # night's readiness by _write and the batch path.
+                     ("dsr/narrative.py", "_dsr_attempt"), ("drafter.py", "draft_response")]:
         assert expected in found, expected
     assert len(SITES) >= 20
 

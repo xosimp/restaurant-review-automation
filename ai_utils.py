@@ -1646,17 +1646,31 @@ def _send(client, kwargs, stream=False, deadline=None):
         streamer = getattr(getattr(client, "messages", None), "stream", None)
         if callable(streamer):
             with streamer(**kwargs) as s:
-                if deadline is None:
+                try:
+                    if deadline is None:
+                        return s.get_final_message()
+                    for _event in s:
+                        if time.time() >= float(deadline):
+                            try:
+                                partial = s.current_message_snapshot
+                            except Exception:
+                                partial = None
+                            s.close()
+                            raise CallDeadlineExceeded(partial=partial)
                     return s.get_final_message()
-                for _event in s:
-                    if time.time() >= float(deadline):
-                        try:
-                            partial = s.current_message_snapshot
-                        except Exception:
-                            partial = None
-                        s.close()
-                        raise CallDeadlineExceeded(partial=partial)
-                return s.get_final_message()
+                except CallDeadlineExceeded:
+                    raise
+                except Exception as e:
+                    # A stream that failed partway (a mid-stream overload or
+                    # 5xx, a dropped connection) was billed for what it had
+                    # sent: the SDK's accumulated message, when it has one,
+                    # rides on the error so its usage is filed (AI cost audit
+                    # 10/7/26 #72).
+                    try:
+                        e._cavnar_partial = s.current_message_snapshot
+                    except Exception:
+                        pass
+                    raise
     return client.messages.create(**kwargs)
 
 
@@ -1817,6 +1831,11 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 raise
             except Exception as e:
                 reason = classify_error(e)
+                # The attempt's partial stream, billed, is filed before any
+                # retry (#72): it used to leave no ledger row at all.
+                _log_stream_cut_safe(getattr(e, "_cavnar_partial", None), model, restaurant_id, action,
+                                     int((time.time() - started) * 1000), attempt + 1, call_id, attribution,
+                                     effort=sent_effort, error=e)
                 # Under a deadline a timed-out call is not sent again as it was:
                 # the same call would time out again in less time, and the caller
                 # re-plans it smaller (the schedule splits it; P-22).
@@ -2363,6 +2382,47 @@ def _log_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, c
         pass
 
 
+STREAM_CUT_REASON = "stream_cut"
+
+
+def _log_stream_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, call_id, attribution,
+                         effort=None, error=None):
+    """The ledger row for one attempt whose stream failed partway — a
+    mid-stream overload or 5xx, a dropped connection — before
+    create_with_retry sends it again or gives up (AI cost audit 10/7/26
+    #72): what had streamed is billed, so it is filed with the tokens the
+    SDK's accumulated message carries, outcome 'error', reason
+    'stream_cut', under the call's own call_id beside the row the call
+    ends with. Nothing is written when the SDK had no message yet (the
+    failure came before the stream started: nothing was billed) or its
+    usage is all zero. The input and cache tokens are the stream's
+    message_start figures; the SDK updates output_tokens only at the
+    stream's end (message_delta), so a cut stream's output reads as what
+    message_start said — the row undercounts the output it was billed for,
+    never overcounts it. Never raises."""
+    try:
+        usage = getattr(partial, "usage", None) if partial is not None else None
+        if usage is None:
+            return None
+        tin = getattr(usage, "input_tokens", 0) or 0
+        tout = getattr(usage, "output_tokens", 0) or 0
+        cw = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        cr = getattr(usage, "cache_read_input_tokens", 0) or 0
+        if not (tin or tout or cw or cr):
+            return None
+        att = attribution or {}
+        return log_ai_usage(
+            restaurant_id, action or "unspecified", model, tin, tout,
+            cache_write_tokens=cw, cache_read_tokens=cr, latency_ms=latency_ms,
+            status="error", outcome="error", reason=STREAM_CUT_REASON, attempts=attempts,
+            error=(f"{type(error).__name__}: {str(error)[:400]}" if error is not None else None),
+            request_id=getattr(partial, "id", None),
+            trigger=att.get("trigger"), actor_user_id=att.get("actor_user_id"),
+            correlation_id=att.get("correlation_id"), call_id=call_id, effort=effort)
+    except Exception:
+        return None
+
+
 def _log_failure_safe(exc, model, restaurant_id, action, attempts=None, reason=None, latency_ms=None,
                       call_id=None, attribution=None, effort=None):
     try:
@@ -2508,8 +2568,12 @@ def mark_outcome(message_or_call_id, outcome, reason=None, db_path=None):
         from models import get_conn, DB_PATH
         conn = get_conn(db_path or DB_PATH)
         try:
-            cur = conn.execute("UPDATE ai_usage SET outcome=?, status=?, reason=COALESCE(?, reason) WHERE call_id=?",
-                               (outcome, _status_for(outcome), (str(reason)[:60] if reason else None), call_id))
+            # An attempt's cut-stream row (#72) shares the call id and keeps
+            # its own verdict: only the answer the caller judged is re-filed.
+            cur = conn.execute("UPDATE ai_usage SET outcome=?, status=?, reason=COALESCE(?, reason) WHERE call_id=? "
+                               "AND COALESCE(reason, '') <> ?",
+                               (outcome, _status_for(outcome), (str(reason)[:60] if reason else None), call_id,
+                                STREAM_CUT_REASON))
             try:
                 conn.execute("UPDATE ai_calls SET outcome=? WHERE call_id=?", (outcome, call_id))
             except sqlite3.OperationalError:
@@ -3492,7 +3556,9 @@ QUALITY_KINDS = ("figures", "causes", "bindings", "names", "validation_refused",
                  # The schedule's quality gate: settled by the code's fill, or
                  # a model rewrite (AI cost audit 10/7/26 #21); a reviewer that
                  # could not run (ai_reviewer).
-                 "gate_filled_in_code", "gate_model_rewrite", "reviewer_unavailable")
+                 "gate_filled_in_code", "gate_model_rewrite", "reviewer_unavailable",
+                 # A public-copy guard refusal (marketing drafts, the newsletter).
+                 "public_copy_refused")
 AI_QUALITY_RETAIN_DAYS = int(os.getenv("AI_QUALITY_RETAIN_DAYS", "180"))
 
 

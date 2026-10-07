@@ -8,8 +8,13 @@ verified narrative or a refusal with an owner-facing reason:
     result = narrative.write(ctx, facts)
     # {"ok": bool, "narrative": dict | None, "reason": str | None}
 
-write() never raises and makes at most one model call (one request, retried
-once by create_with_retry only on a transient provider failure).
+write() never raises. It is one run of the "dsr_narrative" workflow
+(ai_orchestrator, AI orchestration design 10/7/26): one model call as a
+rule (retried once by create_with_retry only on a transient provider
+failure), and a second, one tier up, only when the first answer's shape
+could not be salvaged (run(), below). A later version of a night whose
+facts did not move keeps the earlier narrative with no call at all
+(carry_forward, AI cost audit 10/7/26 #75).
 
 WHEN IT REFUSES WITHOUT A CALL (can_write): the sales block is not ready, or
 fewer than MIN_READY_BLOCKS measured blocks are. Sales plus one more is the
@@ -29,8 +34,12 @@ a list shows its size and first five entries.
 
 WHAT IS CHECKED, deterministically, on what comes back:
   * the shape (validate): every required field, no unknown field, enums,
-    at most three actions, a 2–3 sentence executive summary. Anything else
-    is refused whole — a partial narrative is not shown.
+    at most five actions, three lines a list, a 2–3 sentence executive
+    summary. A shape validate() refuses is salvaged where the rest still
+    stands (salvage, #76): a broken line is dropped and counted; an answer
+    that is not an object, carries a field of its own, an off-list or
+    surplus action, or a lead in the wrong shape is refused whole — a
+    partial lead is never shown — and the run escalates one tier.
   * every item (verify): each cite must be a fact key of a READY block;
     at least one must be a measured figure (for the lead, one outside the
     closeout; an action may not cite the closeout at all — it is the one
@@ -113,7 +122,16 @@ MIN_READY_BLOCKS = 2               # sales + one more measured block
 HISTORY_NIGHTS = 7
 MAX_ISSUES = 5
 MAX_ACTIONS = 5                   # "Tomorrow's priorities" (9/25/26): up to five, each an action
-MAX_LIST_ITEMS = 4
+# Shorter output (AI cost audit 10/7/26 #37): the night wrote 2.1k output
+# tokens — 4 + 4 list lines, eight single slots and five actions. Three a
+# list now, and each single slot one sentence of about SINGLE_WORDS words.
+# Held by the prompt and by validate()/salvage(), not by the wire schema:
+# structured outputs reject array-length and string-length constraints
+# (maxItems, maxLength — "complex array constraints"), and a schema the API
+# refuses fails every night (the grammar 400 of 9/23/26).
+MAX_LIST_ITEMS = 3
+SINGLE_WORDS = 25                 # what the prompt asks of a single slot
+SINGLE_MAX_WORDS = 40             # past this a single slot is the wrong shape (salvage drops it)
 MAX_CITES = 6
 # The lead is 2–3 sentences, each figure cited, and a figure that comes from
 # two facts cites both: Simple EJ's 10/4/26 lead stated ten figures on eleven
@@ -1131,6 +1149,18 @@ def _action(v, where):
             "subject": (subject or "").strip() or None, "cites": cites}, None
 
 
+def _single(v, where):
+    """A single slot: an item, one sentence of at most SINGLE_MAX_WORDS
+    words (#37 — the prompt asks for about SINGLE_WORDS)."""
+    item, err = _item(v, where)
+    if err:
+        return None, err
+    words = len(item["text"].split())
+    if words > SINGLE_MAX_WORDS:
+        return None, f"{where} runs {words} words, past the {SINGLE_MAX_WORDS} a single line holds"
+    return item, None
+
+
 def _sentences(text):
     t = re.sub(r"\b(vs|approx|est|incl|e\.g|i\.e|mr|mrs|ms|dr|st|no)\.", r"\1", text, flags=re.I)
     return len([p for p in re.split(r"(?<=[.!?])[\"”’')\]]*\s+", t.strip()) if p.strip()])
@@ -1177,7 +1207,7 @@ def validate(raw):
         if v is None:
             out[field] = None
             continue
-        out[field], err = _item(v, field)
+        out[field], err = _single(v, field)
         if err:
             return None, err
     acts = raw["actions_tomorrow"]
@@ -1190,6 +1220,102 @@ def validate(raw):
             return None, err
         out["actions_tomorrow"].append(a)
     return out, None
+
+
+def salvage(raw):
+    """What validate() refused, repaired where the rest still stands (AI
+    cost audit 10/7/26 #76): (clean, dropped, None), or (None, [], why) when
+    nothing safe can be kept. A broken LINE is dropped — a list item or an
+    action missing its cites or text, a single slot or the operations
+    summary in the wrong shape or past its length, a list past its
+    MAX_LIST_ITEMS (the first ones kept), a list left out (empty) — and each
+    drop is recorded beside the figure check's (dropped[], the same
+    item_dropped quality event). Every kept line still goes through verify()
+    exactly as before: salvage only decides the shape.
+
+    Never salvaged — the whole answer is refused, as validate() always
+    refused it, and the run escalates on schema_fail: an answer that is not
+    an object; a field of the model's own (an injected instruction's
+    signature — the closeout fixture asks for "owner_note"); an executive
+    summary missing, malformed or not 2–3 sentences (the lead IS the
+    narrative); more than MAX_ACTIONS actions, an action with a field of its
+    own or an urgency, effort or kind off the list (the injected "fourth
+    action" and "wire_money")."""
+    if not isinstance(raw, dict):
+        return None, [], "the answer is not a JSON object"
+    unknown = sorted(set(raw) - set(TOP_KEYS))
+    if unknown:
+        return None, [], f"the answer has fields of its own: {unknown}"
+    if "executive_summary" not in raw:
+        return None, [], "the answer is missing ['executive_summary']"
+    lead, err = _item(raw["executive_summary"], "executive_summary", MAX_LEAD, MAX_LEAD_CITES)
+    if err:
+        return None, [], err
+    n = _sentences(lead["text"])
+    if not 2 <= n <= 3:
+        return None, [], f"the executive summary is {n} sentence{'s' if n != 1 else ''}, not 2–3"
+    acts = raw.get("actions_tomorrow")
+    if isinstance(acts, list):
+        if len(acts) > MAX_ACTIONS:
+            return None, [], f"actions_tomorrow is not a list of at most {MAX_ACTIONS}"
+        for i, x in enumerate(acts):
+            if isinstance(x, dict):
+                if set(x) - set(ACTION_KEYS):
+                    return None, [], f"actions_tomorrow[{i}] has fields of its own"
+                if (x.get("urgency") not in URGENCIES or x.get("effort") not in EFFORTS
+                        or x.get("kind") not in ACTION_KINDS):
+                    return None, [], f"actions_tomorrow[{i}] has an urgency, effort or kind outside the list"
+
+    dropped = []
+
+    def drop(field, v, why):
+        text = v.get("text") if isinstance(v, dict) else v
+        text = " ".join(text.split())[:MAX_TEXT] if isinstance(text, str) else ""
+        dropped.append({"field": field, "text": text, "why": f"the wrong shape: {why}"})
+
+    out = {"executive_summary": lead, OPS_SUMMARY: None}
+    if raw.get(OPS_SUMMARY) is not None:
+        ops, err = _item(raw[OPS_SUMMARY], OPS_SUMMARY, MAX_LEAD, MAX_LEAD_CITES)
+        if err:
+            drop(OPS_SUMMARY, raw[OPS_SUMMARY], err)
+        else:
+            out[OPS_SUMMARY] = ops
+    for field in ITEM_LISTS:
+        out[field] = []
+        v = raw.get(field)
+        if v is None:
+            continue
+        if not isinstance(v, list):
+            drop(field, v, "not a list")
+            continue
+        for i, x in enumerate(v):
+            item, err = _item(x, f"{field}[{i}]")
+            if err:
+                drop(f"{field}[{i}]", x, err)
+            elif len(out[field]) >= MAX_LIST_ITEMS:
+                drop(f"{field}[{i}]", x, f"past the {MAX_LIST_ITEMS} lines {field} holds")
+            else:
+                out[field].append(item)
+    for field in ITEM_SINGLES:
+        v = raw.get(field)
+        out[field] = None
+        if v is None:
+            continue
+        item, err = _single(v, field)
+        if err:
+            drop(field, v, err)
+        else:
+            out[field] = item
+    out["actions_tomorrow"] = []
+    if acts is not None and not isinstance(acts, list):
+        drop("actions_tomorrow", acts, "not a list")
+    for i, x in enumerate(acts if isinstance(acts, list) else ()):
+        a, err = _action(x, f"actions_tomorrow[{i}]")
+        if err:
+            drop(f"actions_tomorrow[{i}]", x, err)
+        else:
+            out["actions_tomorrow"].append(a)
+    return out, dropped, None
 
 
 # ── checking what the model wrote ───────────────────────────────────────────
@@ -1854,8 +1980,8 @@ WHAT TO WRITE
 - executive_summary: 2 to 3 sentences. Lead with the result that mattered most and what in tonight's facts drove it, then what to watch. Measured figures only.
 - Labor for the owner: when labor.salaried_total_pct is under TONIGHT'S FACTS it is the owner's real labor — the hourly labor plus tonight's share of the salaries — and the target judges it. Everywhere but operations_summary, state labor with labor.salaried_total_pct (its gap with labor.salaried_vs_target_pts and labor.target_pct), not labor.pct, and call it labor with salaries.
 - operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, salaries, or comps, voids and refunds. For labor there use labor.pct, never a labor.salaried_* key, and never mention salaries. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Write it whenever sales and one more operations block are measured — every report, the manager's included, opens with a summary; leave it out only when the operations figures cannot carry it.
-- went_well, needs_attention: up to 4 each, one sentence each, most important first. An empty list is fine.
-- biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_opportunity, largest_guest_experience, largest_staffing: one sentence each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch. biggest_win cites measured figures only; largest_opportunity is the largest dollar opportunity, worded as one (could, at stake), never as a saving.
+- went_well, needs_attention: up to {MAX_LIST_ITEMS} each, one short sentence each, most important first. An empty list is fine; never repeat a line from another field.
+- biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_opportunity, largest_guest_experience, largest_staffing: one sentence of at most {SINGLE_WORDS} words each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch. biggest_win cites measured figures only; largest_opportunity is the largest dollar opportunity, worded as one (could, at stake), never as a saving.
 - actions_tomorrow: at most 5, ranked most important first — each an ACTION, never an observation ("Order chicken.", "Schedule another bartender Friday.", "Respond to yesterday's two-star review."), something the manager or owner can start tomorrow with the staff and suppliers they already have.
   text: the action, one imperative sentence. why: the figure that makes it worth doing.
   cites: measured figures only. The manager's closeout may inform an action but an action never cites it.
@@ -2151,15 +2277,22 @@ def _memory(ctx):
     """memory_context's block for the night and the next — "" when there is
     nothing to say or it cannot be read. Never raises."""
     try:
-        import memory_context
+        # Through the Restaurant Context Manager's memory section (AI
+        # orchestration, 10/7/26), the one place a prompt's memory is
+        # assembled and cached: the same surface, viewer (the team),
+        # subjects and morning-after clock as before, and `whole` keeps the
+        # owner's standing rules inside the block under its one budget — the
+        # text the prompt carried, line for line, versioned on what it reads.
+        import restaurant_context
         day = ctx.business_date
-        block = memory_context.memory_context(
-            ctx.restaurant_id, "dsr_narrative", viewer=NARRATIVE_MEMORY_VIEWER,
-            subjects=[f"date:{day.isoformat()}", f"date:{(day + timedelta(days=1)).isoformat()}",
-                      f"dsr:{day.isoformat()}"],
-            now=datetime.combine(day + timedelta(days=1), datetime.min.time()),
+        built = restaurant_context.section(
+            ctx.restaurant_id, "memory", viewer=NARRATIVE_MEMORY_VIEWER,
+            params={"surface": "dsr_narrative", "whole": True,
+                    "subjects": [f"date:{day.isoformat()}", f"date:{(day + timedelta(days=1)).isoformat()}",
+                                 f"dsr:{day.isoformat()}"],
+                    "now": datetime.combine(day + timedelta(days=1), datetime.min.time()).isoformat()},
             db_path=getattr(ctx, "db_path", None))
-        return block.text or ""
+        return "" if built.missing else (built.text or "")
     except Exception as e:
         _capture(e, getattr(ctx, "restaurant_id", None), "memory_context")
         return ""
@@ -2236,12 +2369,21 @@ def _quality(kind, rid, detail, n=1, codes=None):
 def write(ctx, facts):
     """The night's narrative: {"ok": True, "narrative": {...}, "reason":
     None}, or {"ok": False, "narrative": None, "reason": owner-facing
-    sentence}. Never raises; at most one model call."""
+    sentence}. Never raises. One model call as a rule; a second, one tier
+    up, only when the first answer's shape could not be salvaged (the
+    dsr_narrative workflow — run())."""
     try:
-        return _write(ctx, facts)
+        return _public(_write(ctx, facts))
     except Exception as e:
         _capture(e, getattr(ctx, "restaurant_id", None), "write")
         return _refused("The summary couldn't be written for this night — the report is complete without it.")
+
+
+def _public(out):
+    """write()'s three keys, whatever the run carried beside them."""
+    if not isinstance(out, dict):
+        return out
+    return {"ok": bool(out.get("ok")), "narrative": out.get("narrative"), "reason": out.get("reason")}
 
 
 def _prepare(ctx, facts):
@@ -2310,13 +2452,30 @@ def night_readiness(ctx):
                              db_path=ctx.db_path if getattr(ctx, "db_path", None) else None)
 
 
-def request_for(system, user, ready):
+def _stale_only(ready):
+    """The readiness data_state the per-line check reads: only the stale
+    sources — tonight's figures are the night's own, so the POS's present-
+    tense state says nothing about "tonight"."""
+    return {k: v for k, v in ((ready or {}).get("data_state") or {}).items() if k == "stale_sources"}
+
+
+# A thinking tier (the ladder's T3, Sonnet 5.5 at medium effort) spends part
+# of max_tokens thinking: the request gets room for the thinking and the
+# 2k-token answer, and the time a thinking call takes.
+MAX_TOKENS_THINKING = 16000
+AI_TIMEOUT_THINKING_SECONDS = 180.0
+
+
+def request_for(system, user, ready, route=None):
     """The narrative's request — what create_with_retry sends synchronously
-    and what a batch item carries (ai_batches.submit), the same either way."""
+    and what a batch item carries (ai_batches.submit), the same either way.
+    `route` is the rung of the dsr_narrative ladder it goes out on
+    (ai_workflows.Route: the model, and for a thinking tier its effort);
+    None is the call site's own model."""
     from ai_utils import model_for
     if (ready or {}).get("prompt_block"):
         user = f"{user}\n\n{ready['prompt_block']}"
-    return dict(
+    kw = dict(
         model=model_for(PURPOSE), max_tokens=MAX_TOKENS,
         # The system prompt is static and marked for the prompt cache (AI
         # cost audit 10/7/26 #77): kept although one restaurant writes one
@@ -2329,6 +2488,11 @@ def request_for(system, user, ready):
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
         output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}})
+    if route is not None:
+        kw = route.apply(kw)
+        if route.effort:
+            kw["max_tokens"] = max(int(kw.get("max_tokens") or 0), MAX_TOKENS_THINKING)
+    return kw
 
 
 def refusal_for(exc, rid):
@@ -2349,28 +2513,136 @@ def _write(ctx, facts):
     refused, prep = _prepare(ctx, facts)
     if refused is not None:
         return refused
-    rid = ctx.restaurant_id
-    from ai_utils import create_with_retry, get_client
     _ready = night_readiness(ctx)
+    return run(ctx, facts, prep=prep, ready=_ready)
+
+
+# ── the night as a workflow run (AI orchestration, owner-approved 10/7/26) ──
+#
+# The narrative is the "dsr_narrative" workflow (ai_workflows): Sonnet 5
+# (T2) writes it; Sonnet 5.5 at medium thinking (T3) writes it again only on
+# a SCHEMA failure the salvage could not repair (an answer that does not
+# parse, a lead in the wrong shape, an injected field or action) — with the
+# shape check's reasons as its notes. A lead whose figures do not trace, a
+# model refusal or a cut-off answer is never escalated: the first is the
+# figure check doing its job, the others are not the shape. One run per
+# night under subject "dsr:<date>" in ai_runs, every rung tried and why.
+#
+# Through Message Batches the batch item IS the T2 attempt: it carries the
+# run's id as its correlation id (submit_batch), so its half-price ledger
+# row counts toward the run, and when it lands land_batch() opens the run
+# with it as the first rung. If its answer's shape cannot be salvaged, the
+# T3 rung runs at once, synchronously, inside that callback — the cutoff
+# that bounds the batch (dsr.pipeline._batch_cutoff) leaves the margin of
+# one synchronous call, an escalation is rare, and a second batch item
+# would wait up to another hour past the cutoff. The run is one ai_runs row
+# with both rungs.
+#
+# ~20% of passing narratives are scored off the request path by the Haiku
+# "dsr" rubric (shadow_rate; ai_reviewer) — never shown, never blocking.
+
+def _narrative_text(narrative) -> str:
+    """The narrative as the reviewer reads it: the lead, the lists, the
+    single slots and the actions, one line each."""
+    n = narrative if isinstance(narrative, dict) else {}
+    lines = []
+    for it in _kept_items(n):
+        t = it.get("text")
+        if isinstance(t, str) and t.strip():
+            lines.append(t.strip() + (f" — {it['why']}" if isinstance(it.get("why"), str) and it.get("why") else ""))
+    return "\n".join(lines)
+
+
+def _facts_text(facts) -> str:
+    """Tonight's measured figures by key (what the reviewer is shown as the
+    context the writer had — the figures, never the people's words)."""
+    lines = []
+    blocks = _blocks(facts)
+    for bname in _dsr.BLOCKS:
+        b = blocks.get(bname)
+        if bname == "closeout" or not _ready(b):
+            continue
+        for k, v in (b.get("metrics") or {}).items():
+            if _is_number(v) and f"{bname}.{k}" not in BOOKKEEPING_FACTS:
+                lines.append(f"{bname}.{k} = {_fmt(v)}{'%' if _is_pct(k) else ''}")
+    return "\n".join(lines)
+
+
+def run(ctx, facts, prep=None, ready=None, first=None, state=None, declined=None, run_id=None, context=None):
+    """write()'s result through ai_orchestrator.generate (the comment block
+    above). `first` is a batch answer already in hand — the first rung, no
+    call made for it; `state` the state its item carried (prep's otherwise);
+    `declined` the key sets to settle against (None reads them again,
+    joined to the state's — a batch answer lands up to an hour later).
+    The prompt and the readiness gate are read only if a call is made."""
+    import ai_orchestrator as orch
+    rid = ctx.restaurant_id
+    held = {"prep": prep, "ready": ready, "first": first}
+
+    def _prep():
+        if held["prep"] is None:
+            refused, p = _prepare(ctx, facts)
+            if refused is not None:
+                raise ValueError(refused.get("reason") or "not a night to write about")
+            held["prep"] = p
+        return held["prep"]
+
+    def _ready_now():
+        if held["ready"] is None:
+            held["ready"] = night_readiness(ctx)
+        return held["ready"]
+
+    if state is None:
+        state = dict(_prep()["state"], data_state=_stale_only(_ready_now()))
+    if declined is None and prep is not None:
+        declined = prep["declined"]
+
+    def _dsr_attempt(route, notes):
+        if held["first"] is not None:
+            msg, held["first"] = held["first"], None
+        else:
+            from ai_utils import create_with_retry, get_client
+            p = _prep()
+            r = _ready_now()
+            msg = create_with_retry(
+                get_client(timeout=AI_TIMEOUT_THINKING_SECONDS if route.effort else AI_TIMEOUT_SECONDS),
+                retries=AI_RETRIES, restaurant_id=rid, action=PURPOSE, readiness=r,
+                **request_for(p["system"], p["user"] + orch.notes_block(notes), r, route=route))
+        return _judge(ctx, facts, msg, state, declined=declined, route=route)
+
+    def review(res, mode):
+        text = _narrative_text((res[0] or {}).get("narrative"))
+        if not text:
+            return orch.Verdict.passed(label="empty")
+        import ai_reviewer
+        about = (held["prep"] or {}).get("user") or _facts_text(facts)
+        return ai_reviewer.review_text("dsr", text, restaurant_id=rid, context=about, mode=mode)
+
     try:
-        msg = create_with_retry(
-            get_client(timeout=AI_TIMEOUT_SECONDS), retries=AI_RETRIES, restaurant_id=rid, action=PURPOSE,
-            readiness=_ready, **request_for(prep["system"], prep["user"], _ready))
+        rr = orch.generate(PURPOSE, rid, _dsr_attempt, check=lambda res: res[1], review=review,
+                           subject=f"dsr:{ctx.day}", unattended=True, context=context, run_id=run_id)
     except Exception as e:
         return refusal_for(e, rid)
-    return finish(ctx, facts, msg, dict(prep["state"], data_state=_ready.get("data_state") or {}),
-                  declined=prep["declined"])
+    return rr.result[0]
 
 
 def finish(ctx, facts, msg, state, declined=None):
-    """write()'s answer from the model's message: the shape check, the
-    figure and validation checks, the actions settled, the read recorded —
-    the one judge of an answer, whether it came back from the synchronous
-    call or from a batch (dsr.pipeline.on_narrative_batch). `state` is
-    _prepare's plus the readiness data_state; `declined` the three key sets,
-    read again and joined to the ones the prompt carried when not given (a
-    batch answer lands up to an hour later, and an action the owner
-    declined since is dropped too)."""
+    """write()'s answer from one model message (_judge's result, without
+    its verdict) — the one judge of an answer, whichever path brought it."""
+    return _public(_judge(ctx, facts, msg, state, declined=declined)[0])
+
+
+def _judge(ctx, facts, msg, state, declined=None, route=None):
+    """(result, Verdict) for one model message: the shape check (and the
+    salvage of a shape it refuses — #76), the figure and validation checks,
+    the actions settled, the read recorded. `state` is _prepare's plus the
+    readiness data_state; `declined` the three key sets, read again and
+    joined to the ones the prompt carried when not given (a batch answer
+    lands up to an hour later, and an action the owner declined since is
+    dropped too). The Verdict is the run's check: schema_fail (the only
+    escalation trigger) for an answer that does not parse or whose shape
+    the salvage could not repair."""
+    import ai_orchestrator as orch
     from ai_utils import extract_text, is_refusal, model_for, parse_json_reply
     rid = ctx.restaurant_id
     state = state or {}
@@ -2381,43 +2653,67 @@ def finish(ctx, facts, msg, state, declined=None):
     if is_refusal(msg):
         # Was returned with no trace at all (AIOPS-13).
         _quality("model_refused", rid, "the model declined to write tonight's narrative")
-        return _refused("The summary couldn't be written for this night.")
+        return (_refused("The summary couldn't be written for this night."),
+                orch.Verdict.failed("model_refused", "the model declined", label="model_refused"))
     if getattr(msg, "stop_reason", None) == "max_tokens":
         _quality("truncated", rid, "dsr narrative truncated at max_tokens")
-        return _refused("The summary couldn't be written for this night — it came back incomplete.")
+        return (_refused("The summary couldn't be written for this night — it came back incomplete."),
+                orch.Verdict.failed("truncated", "cut off at max_tokens", label="truncated"))
     try:
         raw = parse_json_reply(extract_text(msg), expect=dict, message=msg)
     except ValueError as e:
         _quality("unparseable", rid, f"dsr narrative did not parse: {e}")
-        return _refused("The summary couldn't be written for this night — it came back in the wrong shape.")
+        return (_refused("The summary couldn't be written for this night — it came back in the wrong shape."),
+                orch.Verdict.failed("schema_fail", "the answer was not one JSON object in the required shape",
+                                    label="unparseable"))
     clean, err = validate(raw)
+    shape_dropped = []
     if err:
-        from ai_utils import mark_outcome
-        mark_outcome(msg, "unparseable", reason="failed the narrative's shape check")
-        _quality("output_rejected", rid, f"dsr narrative failed validation: {err}")
-        return _refused("The summary couldn't be written for this night — it came back in the wrong shape.")
+        clean, shape_dropped, why = salvage(raw)
+        if clean is None:
+            from ai_utils import mark_outcome
+            mark_outcome(msg, "unparseable", reason="failed the narrative's shape check")
+            _quality("output_rejected", rid, f"dsr narrative failed validation: {why}")
+            return (_refused("The summary couldn't be written for this night — it came back in the wrong shape."),
+                    orch.Verdict.failed("schema_fail", f"the shape check: {why}", label="output_rejected"))
+    model = (route.model if route is not None and route.model and route.tier != "default"
+             else model_for(PURPOSE))
+    return _assemble(ctx, facts, clean, state, declined, model, msg=msg, shape_dropped=shape_dropped)
 
-    model = model_for(PURPOSE)
-    # Only the stale sources: tonight's figures are the night's own, so the
-    # POS's present-tense state says nothing about "tonight".
-    F = Facts(facts, extra_dates=list(state.get("history_dates") or []) + list(state.get("own_dates") or []),
-              data_state={k: v for k, v in (state.get("data_state") or {}).items() if k == "stale_sources"})
-    body, dropped, lead_why = verify(clean, F)
+
+def _assemble(ctx, facts, clean, state, declined, model, msg=None, shape_dropped=(), carried_from=None,
+              verified=None):
+    """(result, Verdict) from a narrative in the right shape: every line
+    verified against tonight's facts, the actions settled, the read
+    recorded. `shape_dropped` are the lines the salvage dropped, counted
+    with the figure check's. `verified` is (Facts, verify()'s answer) when
+    the caller already ran it."""
+    import ai_orchestrator as orch
+    rid = ctx.restaurant_id
+    if verified is not None:
+        F, (body, dropped, lead_why) = verified
+    else:
+        F = Facts(facts, extra_dates=list(state.get("history_dates") or []) + list(state.get("own_dates") or []),
+                  data_state={k: v for k, v in (state.get("data_state") or {}).items() if k == "stale_sources"})
+        body, dropped, lead_why = verify(clean, F)
     if lead_why:
         _quality("validation_refused", rid,
                  f"dsr narrative lead refused: {lead_why} — {clean['executive_summary']['text'][:160]}")
-        return _refused("The summary was held back — its opening stated a figure the night's numbers don't back up.")
-    n_failed_check = len(dropped)          # verify's drops: a line that failed its check
+        return (_refused("The summary was held back — its opening stated a figure the night's numbers don't back up."),
+                orch.Verdict.failed("validation_refuse", f"the opening: {lead_why}", label="refuse"))
+    dropped = list(shape_dropped or ()) + dropped
+    n_failed_check = len(dropped)          # verify's and the salvage's drops: a line that failed its check
     body["actions_tomorrow"] = settle_actions(body["actions_tomorrow"], F, ctx, declined, dropped)
     if dropped:
         # A model that starts inventing figures shows up as a rate on the AI
         # page, not as one owner's complaint (ai_guard.verify_figures) — and
-        # not as a failing job (#58).
+        # not as a failing job (#58). A line the salvage dropped for its
+        # shape is counted here too (#76).
         _quality("item_dropped", rid, f"dsr narrative dropped {len(dropped)} item(s): "
                  + "; ".join(f"{d['field']}: {d['why']}" for d in dropped)[:240], n=len(dropped))
     checked = (1 + (1 if clean.get(OPS_SUMMARY) else 0) + sum(len(clean[f]) for f in ITEM_LISTS)
                + sum(1 for f in ITEM_SINGLES if clean[f])
-               + len(clean["actions_tomorrow"]))
+               + len(clean["actions_tomorrow"]) + len(shape_dropped or ()))
     narrative = {
         "schema": SCHEMA_VERSION,
         "model": model,
@@ -2449,8 +2745,174 @@ def finish(ctx, facts, msg, state, declined=None):
         # The retired slot, null for shipped clients (RETIRED_SINGLES).
         **{k: None for k in RETIRED_SINGLES},
     }
+    if carried_from is not None:
+        # #75: the version this narrative was carried forward from, re-checked
+        # line by line against this version's facts with no model call.
+        narrative["verification"]["carried_from_version"] = carried_from
     _record_read(ctx, narrative, msg)
-    return {"ok": True, "narrative": narrative, "reason": None}
+    label = "salvaged" if shape_dropped else ("carried" if carried_from is not None else "pass")
+    return {"ok": True, "narrative": narrative, "reason": None}, orch.Verdict.passed(label=label)
+
+
+# ── a later version of the same night (AI cost audit 10/7/26 #75) ───────────
+#
+# A night gets a second version when the POS's figure moves after the report
+# (dsr.pipeline.recheck_final), or when sales land after a provisional one.
+# The narrative used to be written again from scratch each time, a full call
+# for a net that moved by a few dollars. carry_forward() keeps the earlier
+# version's narrative instead — but only when nothing it said can have
+# moved: every fact it cites is still on the night, each figure within
+# CARRY_TOLERANCE of what it was, every list it cites unchanged, no block
+# measured now that was not then (a block the narrative would have had to
+# mention), and every one of its lines passes the full figure check again
+# against the NEW facts (verify — a "$19,850" that is now $19,870 drops, and
+# that alone sends the night to a new call). Correctness first: anything
+# short of all of that is a rewrite. The pipeline offers it only on its own
+# runs (a late or rechecked version), never on a re-run someone asked for.
+CARRY_TOLERANCE_PCT = 0.5          # a cited money or count figure, % of itself
+CARRY_TOLERANCE_POINTS = 0.05      # a cited percentage, in points
+
+
+def _cited(narrative) -> list:
+    out = []
+    for it in _kept_items(narrative if isinstance(narrative, dict) else {}):
+        out += [c for c in (it.get("cites") or []) if isinstance(c, str)]
+    return list(dict.fromkeys(out))
+
+
+def facts_moved(old_narrative, old_facts, new_facts):
+    """Why the facts moved materially for this narrative (a sentence), or
+    None when nothing it cites moved past CARRY_TOLERANCE and no block is
+    measured now that was not then."""
+    old_b, new_b = _blocks(old_facts), _blocks(new_facts)
+    for name in _dsr.BLOCKS:
+        if _ready(new_b.get(name)) and not _ready(old_b.get(name)):
+            return f"the {name} block is in now and was not then"
+    old_F, new_F = Facts(old_facts), Facts(new_facts)
+    for c in _cited(old_narrative):
+        if c in old_F.metrics:
+            if c not in new_F.metrics:
+                return f"{c} is no longer a fact"
+            a, b = old_F.metrics[c], new_F.metrics[c]
+            tol = CARRY_TOLERANCE_POINTS if _is_pct(c) else abs(a) * CARRY_TOLERANCE_PCT / 100.0
+            if abs(a - b) > tol:
+                return f"{c} moved from {_fmt(a)} to {_fmt(b)}"
+        elif c in old_F.details:
+            if json.dumps(old_F.details[c], sort_keys=True, default=str) != json.dumps(
+                    new_F.details.get(c), sort_keys=True, default=str):
+                return f"the {c} list changed"
+        else:
+            return f"{c} was not a fact the narrative could carry"
+    return None
+
+
+def _stored_clean(narrative):
+    """A stored narrative as validate() reads a model's answer, re-checked
+    for shape; None when it does not pass (a narrative from an older schema)."""
+    def item(v):
+        return {"text": v.get("text"), "cites": list(v.get("cites") or [])} if isinstance(v, dict) else None
+    raw = {"executive_summary": item(narrative.get("executive_summary")),
+           "went_well": [item(x) for x in narrative.get("went_well") or []],
+           "needs_attention": [item(x) for x in narrative.get("needs_attention") or []],
+           "actions_tomorrow": [{k: a.get(k) for k in ACTION_KEYS} for a in narrative.get("actions_tomorrow") or []
+                                if isinstance(a, dict)]}
+    if narrative.get(OPS_SUMMARY):
+        raw[OPS_SUMMARY] = item(narrative[OPS_SUMMARY])
+    for k in ITEM_SINGLES:
+        if narrative.get(k):
+            raw[k] = item(narrative[k])
+    clean, err = validate(raw)
+    return clean if not err else None
+
+
+def carry_forward(ctx, facts, previous):
+    """The earlier version's narrative carried onto this version (#75), as
+    write()'s result — or None when it must be written again (the block
+    comment above). `previous` is the earlier version's report row. No
+    model call; never raises."""
+    rid = getattr(ctx, "restaurant_id", None)
+    try:
+        old = (previous or {}).get("narrative")
+        if not isinstance(old, dict) or not isinstance(old.get("executive_summary"), dict):
+            return None
+        if not can_write(facts)[0]:
+            return None
+        if facts_moved(old, (previous or {}).get("facts") or {}, facts):
+            return None
+        clean = _stored_clean(old)
+        if clean is None:
+            return None
+        refused, prep = _prepare(ctx, facts)
+        if refused is not None:
+            return None
+        state = dict(prep["state"], data_state=_stale_only(night_readiness(ctx)))
+        F = Facts(facts, extra_dates=list(state.get("history_dates") or []) + list(state.get("own_dates") or []),
+                  data_state=state["data_state"])
+        # Every figure of every line traced again against the NEW facts,
+        # quietly: one that no longer traces (or a cite no longer a fact)
+        # means the facts moved for it, and the night is written again. The
+        # stored text is the checked text — the validation layer's rewrites
+        # already in it ("(an opportunity, not money saved)") — so the line
+        # checks that ran on the model's words are not run on their own
+        # output; only what the facts decide is re-decided.
+        for it in _kept_items(clean):
+            if any(not F.has(c) for c in it["cites"]):
+                return None
+            for field in ("text", "why"):
+                if it.get(field) and (F.untraced(it[field], it["cites"])
+                                      or F.period_mismatch(it[field], it["cites"])):
+                    return None
+            if it.get("dollars_monthly") is not None and not F.monthly_supported(it["dollars_monthly"],
+                                                                                   it["cites"]):
+                return None
+        body = dict(clean, actions_tomorrow=[dict(a, _field=f"actions_tomorrow[{i}]")
+                                             for i, a in enumerate(clean["actions_tomorrow"])])
+        result, verdict = _assemble(ctx, facts, clean, state, prep["declined"], old.get("model") or PURPOSE,
+                                    carried_from=(previous or {}).get("version"), verified=(F, (body, [], None)))
+        return _public(result) if verdict.ok else None
+    except Exception as e:
+        _capture(e, rid, "carry_forward")
+        return None
+
+
+# ── what the owner did with it (AI orchestration, 10/7/26) ──────────────────
+#
+# The narrative's one deterministic owner signal is the answer to one of its
+# priorities on the recommendation ledger (rec_ledger.record — the report's
+# own buttons, Home, the email's links): Done or Accept is the night's read
+# taken (accepted), "Not for us" is it turned down (rejected). Opening the
+# report says nothing about its quality; a snooze is a "not now". Filed on
+# the run of the newest night whose narrative carried that action's key,
+# the latest answer standing — what the learner ranks routes by.
+ACTION_OUTCOMES = {"completed": "accepted", "accepted": "accepted", "implemented": "accepted",
+                   "dismissed": "rejected"}
+
+
+def record_action_outcome(restaurant_id, key, event, db_path=None) -> bool:
+    """File an owner's answer to a DSR priority (`key` "dsr_action:…") as
+    the outcome of the dsr_narrative run that wrote it. Never raises; False
+    when the event is no signal or no night carried the key."""
+    outcome = ACTION_OUTCOMES.get(event)
+    if not outcome or not str(key or "").startswith("dsr_action:"):
+        return False
+    try:
+        from dsr import store
+        conn = store.get_conn(db_path) if db_path else store.get_conn()
+        try:
+            row = conn.execute(
+                "SELECT business_date FROM dsr_reports WHERE restaurant_id=? AND narrative_json LIKE ? "
+                "ORDER BY business_date DESC, version DESC LIMIT 1",
+                (restaurant_id, f'%"key": {json.dumps(str(key))}%')).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return False
+        import ai_orchestrator as orch
+        return orch.record_outcome(PURPOSE, restaurant_id, f"dsr:{row['business_date']}", outcome,
+                                   detail=f"{event} {key}", db_path=db_path)
+    except Exception as e:
+        _capture(e, restaurant_id, "record_action_outcome")
+        return False
 
 
 # ── through Message Batches (AI cost audit 10/7/26 #19, #20) ───────────────
@@ -2458,7 +2920,8 @@ def finish(ctx, facts, msg, state, declined=None):
 # through ai_batches at half the price. dsr.pipeline decides when (the
 # sweep, with a cutoff before anyone reads it) and owns the report's state;
 # this module only builds the item from the same _prepare / request_for the
-# synchronous call uses, and finish() judges what comes back.
+# synchronous call uses, and land_batch() judges what comes back as the
+# run's first rung.
 BATCH_WORKFLOW = PURPOSE
 BATCH_CALLBACK = "dsr.pipeline:on_narrative_batch"
 
@@ -2470,21 +2933,40 @@ def submit_batch(ctx, facts, custom_id, context=None):
     about — no item was made), {"status": "blocked"} (a gate refused the
     item; the callback has already been told and stored the refusal) or
     {"status": <anything else>} — disabled, duplicate, submit_failed — when
-    the caller should write it synchronously instead. Never raises."""
+    the caller should write it synchronously instead. Never raises.
+
+    The item is the T2 rung of the night's run: it goes out on that route
+    (request_for), under the run's id as its correlation id — so its ledger
+    row is the run's — and the id rides in its context to land_batch()."""
     rid = getattr(ctx, "restaurant_id", None)
     try:
         refused, prep = _prepare(ctx, facts)
         if refused is not None:
             return {"status": "written", "result": refused}
         import ai_batches
+        import ai_orchestrator as orch
+        import ai_utils
+        import ai_workflows as wf
         _ready = night_readiness(ctx)
-        state = dict(prep["state"], data_state={k: v for k, v in (_ready.get("data_state") or {}).items()
-                                                if k == "stale_sources"})
-        out = ai_batches.submit(BATCH_WORKFLOW, [{
-            "custom_id": custom_id, "restaurant_id": rid, "action": PURPOSE,
-            "request": request_for(prep["system"], prep["user"], _ready), "readiness": _ready,
-            "callback": BATCH_CALLBACK, "context": dict(context or {}, state=state)}])
+        state = dict(prep["state"], data_state=_stale_only(_ready))
+        run_id = orch.new_run_id(PURPOSE)
+        route = wf.route_for(wf.policy(PURPOSE), 0)
+        with ai_utils.ai_context(correlation_id=run_id):
+            out = ai_batches.submit(BATCH_WORKFLOW, [{
+                "custom_id": custom_id, "restaurant_id": rid, "action": PURPOSE,
+                "request": request_for(prep["system"], prep["user"], _ready, route=route), "readiness": _ready,
+                "callback": BATCH_CALLBACK, "context": dict(context or {}, state=state, run_id=run_id)}])
         return {"status": out.get(custom_id) or "submit_failed"}
     except Exception as e:
         _capture(e, rid, "submit_batch")
         return {"status": "submit_failed"}
+
+
+def land_batch(ctx, facts, msg, state, run_id=None, custom_id=None):
+    """A batch item's answer (dsr.pipeline.on_narrative_batch): the first
+    rung of the night's run, judged by the synchronous path's own checks
+    (_judge, as finish() is); a shape the salvage cannot repair escalates
+    to T3 here and now, synchronously (the block comment above run()).
+    write()'s result."""
+    return _public(run(ctx, facts, first=msg, state=state or {}, run_id=run_id,
+                       context={"batch": custom_id} if custom_id else {"batch": True}))

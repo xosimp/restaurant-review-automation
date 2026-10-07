@@ -3348,8 +3348,10 @@ def mobile_schedule_status(job_id, current_user):
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
         # How long the job can still run, when it set its deadline (schedule
-        # audit 10/3/26 P-22) — the web twin says the same.
-        return jsonify(ok=True, status="pending", seconds_left=job.get("seconds_left"))
+        # audit 10/3/26 P-22), and the days drafted so far (AI cost audit
+        # 10/7/26 #36) — the web twin says the same.
+        return jsonify(ok=True, status="pending", seconds_left=job.get("seconds_left"),
+                       progress=job.get("progress"))
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
@@ -3948,7 +3950,8 @@ def mobile_guest_campaign_draft(current_user):
         import marketing_voice as _mv
         out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype,
                    draft_ref=_mv.record_draft(rid, "text", str(message), "campaign_draft",
-                                              user_id=current_user.get("id")),
+                                              user_id=current_user.get("id"),
+                                              run_id=getattr(message, "run_id", None)),
                    # What past texts did here per audience (mkt_results): the
                    # Studio shows it beside the audience it suggests.
                    returns_by_segment=_gm_returns(rid))
@@ -4537,10 +4540,12 @@ def mobile_guest_newsletter_draft(current_user):
     try:
         draft = _ge.draft_newsletter(get_restaurant(rid), goal=prompt, topic=topic)
         # The model's letter is kept, so what goes out is measured against it
-        # (marketing_voice; mkt_edits): the send takes `draft_ref` back.
+        # (marketing_voice; mkt_edits): the send takes `draft_ref` back. The
+        # run that wrote it is named after it (its outcome lands there).
         import marketing_voice as _mv
         draft["draft_ref"] = _mv.record_draft(rid, "email", draft.get("body") or "", "newsletter_draft",
-                                              user_id=current_user.get("id"))
+                                              user_id=current_user.get("id"),
+                                              run_id=getattr(draft, "run_id", None))
     except ValueError as e:
         if str(e).startswith("newsletter copy rejected: "):
             return jsonify(ok=False, error="Cavnar AI didn't use that draft — "
@@ -5436,8 +5441,14 @@ def mobile_task_sheet_starter(sheet_id, current_user):
     owner adds the ones he wants (plan principle 5)."""
     if not _may_manage_team(current_user):
         return _refuse_team_write()
-    import task_sheets as ts
     rid = current_user["restaurant_id"]
+    # A model call per press (AI cost audit 10/7/26 #88): the same per-
+    # restaurant window every other drafting route has. The web twin
+    # (client_api.task_sheets_starter) runs this body.
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"tasksheetstarter:{rid}", max_calls=6, window_secs=60):
+        return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
+    import task_sheets as ts
     try:
         sheet = ts.get_sheet(rid, sheet_id)
         lines = ts.starter_lines(rid, sheet["job_code"], sheet["shift_kind"],

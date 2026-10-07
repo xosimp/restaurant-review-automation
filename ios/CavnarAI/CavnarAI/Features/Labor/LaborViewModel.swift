@@ -1716,6 +1716,26 @@ struct RuleViolation: Codable, Identifiable, Equatable {
     }
 }
 
+/// How far a running generation has got: the days its answer has finished
+/// so far (schedule-status's `progress` while pending — AI cost audit
+/// 10/7/26 #36). A real count, never a percentage.
+struct GenerationProgress: Codable, Equatable {
+    let daysTotal: Int
+    let daysDrafted: Int
+
+    enum CodingKeys: String, CodingKey {
+        case daysTotal = "days_total"
+        case daysDrafted = "days_drafted"
+    }
+
+    /// "3 of 7 days drafted", or nil before the first day is finished.
+    var line: String? {
+        guard daysTotal > 0, daysDrafted > 0 else { return nil }
+        let n = min(daysDrafted, daysTotal)
+        return "\(n) of \(daysTotal) \(daysTotal == 1 ? "day" : "days") drafted"
+    }
+}
+
 struct GeneratedSchedule: Codable {
     let ok: Bool
     let status: String?
@@ -1773,6 +1793,9 @@ struct GeneratedSchedule: Codable {
     var calls: Int? = nil
     /// A pending poll's time left on the job's own deadline (P-22).
     var secondsLeft: Int? = nil
+    /// A pending poll's days drafted so far, counted from the answer as it
+    /// streams (AI cost audit 10/7/26 #36).
+    var progress: GenerationProgress? = nil
     // The names the engine actually scheduled from.
     let roster: [String]?
     // Set once the week has been sent to staff — history detail only.
@@ -1921,6 +1944,7 @@ struct GeneratedSchedule: Codable {
         case regeneratedDates = "regenerated_dates"
         case calls, partial, requirements
         case secondsLeft = "seconds_left"
+        case progress
         case managerPlan = "manager_plan"
         case managerCoverage = "manager_coverage"
         case laborView = "labor_view"
@@ -4232,6 +4256,9 @@ final class LaborViewModel {
     // web, or a second phone — so the progress copy says so instead of
     // pretending this tap started it.
     var joinedRunningGeneration = false
+    /// The days the running generation has drafted so far (#36), from each
+    /// pending poll; nil before the first day is finished.
+    var generationProgress: GenerationProgress? = nil
 
     /// Starts the same async AI schedule generation the web Labor tab uses,
     /// then polls until it completes — matches the backend's existing
@@ -4250,6 +4277,7 @@ final class LaborViewModel {
         // A partial redo keeps the week on screen until the new one lands.
         if redo == nil { scheduleResult = nil }
         joinedRunningGeneration = false
+        generationProgress = nil
         hasUnsavedFixes = false
         overriddenRows = []
         saveConflict = nil
@@ -4316,6 +4344,7 @@ final class LaborViewModel {
             scheduleError = error
             isGeneratingSchedule = false
             joinedRunningGeneration = false
+            generationProgress = nil
             regeneratingDates = []
             forgetRunningGeneration()
         }
@@ -4338,6 +4367,10 @@ final class LaborViewModel {
                     // The job's own clock: keep waiting while it has time.
                     if let left = result.secondsLeft, left > 0 {
                         deadline = max(deadline, Date().addingTimeInterval(TimeInterval(left) + 30))
+                    }
+                    // The days drafted so far (#36), shown under the steps.
+                    if let p = result.progress, p != generationProgress {
+                        generationProgress = p
                     }
                     if Date() > deadline {
                         finish(error: "Schedule generation is taking longer than it should \u{2014} check back in a bit.")
