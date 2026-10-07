@@ -26,9 +26,12 @@ What it recommends, and the evidence each needs (thresholds below):
 Nothing is recommended on fewer than MIN_RUNS runs (or MIN_OUTCOMES
 outcomes, for acceptance): a quiet workflow stays where it is.
 """
+import hashlib
 import json
 import logging
+import os
 import statistics
+import threading
 
 import ai_orchestrator as orch
 import ai_workflows as wf
@@ -305,4 +308,369 @@ def run_learning(db_path=None) -> dict:
     except Exception as e:
         log.warning("route reverts failed: %s", e)
         out["failed"] += 1
+    return out
+
+
+# ── shadow arms: a cheaper tier replayed on kept production requests ────────
+#
+# The evidence `start_lower` needs (above). Weekly (job "ai_shadow_arms", on
+# the AI lane), for each workflow whose policy starts on T2 or higher and
+# that a rubric can judge, the next cheaper tier is replayed on a sample of
+# the requests production runs kept (ai_orchestrator.keep_request, ~5% of
+# runs) — through Message Batches, at half price, never on anyone's request
+# path and never shown to anyone. When an answer lands (ai_batch_collect),
+# its run is recorded (ai_runs.shadow_of = the production run) and both texts
+# — production's, from its ai_calls trace, and the candidate's — are scored by
+# the same Haiku rubric with the same context, on one background thread. A
+# production text the trace no longer keeps (AI_TRACE_KEEP_PER_ACTION keeps
+# the newest ten per restaurant and action) is checked for before anything is
+# sent: no comparison, no replay, nothing paid.
+#
+# Bounded: SHADOW_SAMPLE replays per workflow a week, and the whole week's
+# shadow spend (replays and their scoring: every ledger row under a
+# "shadow:" correlation id) inside AI_SHADOW_WEEKLY_USD.
+SHADOW_WEEKLY_USD = float(os.getenv("AI_SHADOW_WEEKLY_USD", "2"))
+SHADOW_SAMPLE = 20
+SHADOW_BATCH_WORKFLOW = "shadow_arms"      # ai_batches' workflow (AI_BATCHES_WORKFLOWS)
+SHADOW_ACTION = "shadow_arms"              # the ledger action: platform spend, never a restaurant's
+# A replay's scoring: two Haiku rubric calls, ~1.5k tokens in and 100 out each.
+SHADOW_REVIEW_ESTIMATE_USD = 0.004
+
+# The rubric (ai_reviewer.RUBRICS) each replayable workflow is judged by.
+# Left out on purpose: review_analysis and the menu extractions (labels and
+# fields — right or wrong against a source a rubric cannot see),
+# staff_translation (fidelity, not tone), email_personalization, staff_brief,
+# task_sheet_starter, the recipe drafts and the content calendar (no rubric
+# judges them yet), and everything in ai_orchestrator.NOT_REPLAYABLE.
+SHADOW_RUBRICS = {
+    "draft_response": "review_reply",
+    "marketing_content": "marketing_post",
+    "guest_campaign_draft": "guest_text",
+    "guest_newsletter_draft": "guest_email",
+    "staff_answer": "staff_answer",
+    "dsr_narrative": "dsr",
+    "labor_insight": "insight_read",
+    "inventory_insight": "insight_read",
+    "review_insight": "insight_read",
+    "marketing_insight": "insight_read",
+    "review_diagnosis": "insight_read",
+    "food_cost_diagnosis": "insight_read",
+    "weekly_digest": "insight_read",
+    "competitor_insight": "insight_read",
+}
+
+# The next cheaper tier than a ladder's first rung. "default" (the call
+# site's own model) and T1 have none.
+_CHEAPER = {"T2": "T1", "T3": "T2", "T4": "T3"}
+
+
+def candidate_tier(workflow, db_path=None):
+    """The tier a shadow arm tries for `workflow`: one below where its
+    policy in force starts, or None."""
+    pol = wf.policy(workflow, db_path)
+    return _CHEAPER.get(pol.ladder[0]) if pol.ladder else None
+
+
+def shadow_workflows(db_path=None) -> list:
+    """[(workflow, candidate tier)] the weekly job replays."""
+    out = []
+    for wfl in SHADOW_RUBRICS:
+        if wfl not in wf.POLICIES or wfl in orch.NOT_REPLAYABLE:
+            continue
+        cand = candidate_tier(wfl, db_path)
+        if cand:
+            out.append((wfl, cand))
+    return out
+
+
+def shadow_spent(days=7, db_path=None) -> float:
+    """Ledger dollars under a "shadow:" correlation id in the last `days`:
+    the replays and the rubric calls that scored them. A range on the
+    correlation index, not a LIKE."""
+    conn = _conn(db_path)
+    try:
+        r = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM ai_usage WHERE correlation_id >= 'shadow:' "
+                         "AND correlation_id < 'shadow;' AND created_at >= datetime('now', ?)",
+                         (f"-{int(days)} days",)).fetchone()
+        return float(r[0] or 0)
+    except Exception:
+        return 0.0
+    finally:
+        conn.close()
+
+
+def _custom_id(run_id, tier):
+    return f"sa-{tier}-" + hashlib.sha1(str(run_id).encode("utf-8")).hexdigest()[:24]
+
+
+def _production_call(conn, run_id, workflow):
+    """(call_id, price_version) of the production run's last good answer —
+    the text it served (a gate's reviewer calls run under the same id with
+    their own action) — or (None, None)."""
+    row = conn.execute("SELECT call_id, price_version FROM ai_usage WHERE correlation_id=? AND action=? "
+                       "AND outcome='ok' AND call_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                       (run_id, workflow)).fetchone()
+    return (row["call_id"], row["price_version"]) if row else (None, None)
+
+
+def _call_output(call_id):
+    """A traced call's output text while ai_calls still keeps it, else None."""
+    if not call_id:
+        return None
+    try:
+        import ai_utils
+        call = ai_utils.read_call(call_id) or {}
+    except Exception:
+        return None
+    text = call.get("output")
+    return text if text and str(text).strip() else None
+
+
+def _request_context(request, limit=3000):
+    """What the writer was given — the kept request's user turns — as the
+    rubric's context: the same for both texts of a pair."""
+    parts = []
+    for m in (request or {}).get("messages") or []:
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            parts.append(c)
+        elif isinstance(c, list):
+            parts.extend(str(b.get("text") or "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return "\n\n".join(p for p in parts if p)[-limit:]
+
+
+def shadow_arms(workflow, candidate_tier, sample=SHADOW_SAMPLE, budget_usd=None, db_path=None) -> dict:
+    """Replay `candidate_tier` on up to `sample` kept production requests of
+    `workflow` through Message Batches (the note above). Skips a request
+    already replayed on that tier, a production run that did not pass or
+    already ran on that tier, and one whose production text is no longer
+    kept. `budget_usd` bounds this call's estimated spend (production's cost
+    at the batch rate — a cheaper tier costs less — plus the scoring).
+    Returns the job counts plus `submitted` and `cost_estimate`."""
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False,
+           "submitted": 0, "cost_estimate": 0.0, "workflow": workflow, "tier": candidate_tier}
+    if workflow not in SHADOW_RUBRICS or workflow in orch.NOT_REPLAYABLE or workflow not in wf.POLICIES:
+        raise ValueError(f"{workflow} is not a shadow-replayable workflow")
+    if candidate_tier not in set(_CHEAPER.values()):
+        raise ValueError(f"the candidate tier must be one of {sorted(set(_CHEAPER.values()))}")
+    import ai_batches
+    import ai_utils
+    import data_health
+    if not ai_batches.enabled(SHADOW_BATCH_WORKFLOW):
+        out["reason"] = "Message Batches are off here (not the production scheduler, or shadow_arms not listed)"
+        return out
+    t = wf._tier_table()[candidate_tier]
+    route = wf.Route(tier=candidate_tier, model=t["model"], effort=t["effort"])
+    items, est_total = [], 0.0
+    conn = _conn(db_path)
+    try:
+        for run_id, rid, request in orch.kept_requests(workflow, limit=max(1, int(sample)) * 3, db_path=db_path):
+            if len(items) >= int(sample):
+                break
+            if conn.execute("SELECT 1 FROM ai_runs WHERE shadow_of=? AND final_tier=?",
+                            (run_id, candidate_tier)).fetchone():
+                out["skipped"] += 1
+                continue
+            prod = conn.execute("SELECT status, cost_usd, final_tier FROM ai_runs WHERE run_id=? "
+                                "AND shadow_of IS NULL", (run_id,)).fetchone()
+            if not prod or prod["status"] != "ok" or prod["final_tier"] == candidate_tier:
+                out["skipped"] += 1
+                continue
+            call_id, price_version = _production_call(conn, run_id, workflow)
+            if not _call_output(call_id):
+                out["skipped"] += 1
+                continue
+            est = float(prod["cost_usd"] or 0) * ai_utils.BATCH_PRICE_MULTIPLIER + 2 * SHADOW_REVIEW_ESTIMATE_USD
+            if budget_usd is not None and est_total + est > float(budget_usd):
+                out["hit_bound"] = True
+                break
+            est_total += est
+            items.append({
+                "custom_id": _custom_id(run_id, candidate_tier), "restaurant_id": None, "action": SHADOW_ACTION,
+                "request": route.apply(request), "callback": "ai_learning:shadow_landed",
+                "readiness": data_health.NOT_APPLICABLE,
+                "context": {"workflow": workflow, "run_id": run_id, "tier": candidate_tier, "rid": rid,
+                            "production_call_id": call_id,
+                            "production_batched": price_version == ai_utils.BATCH_PRICE_VERSION}})
+    finally:
+        conn.close()
+    out["cost_estimate"] = round(est_total, 6)
+    if not items:
+        return out
+    from datetime import date
+    with ai_utils.ai_context(correlation_id=f"shadow:{workflow[:24]}:{date.today().isoformat()}"):
+        res = ai_batches.submit(SHADOW_BATCH_WORKFLOW, items)
+    for state in res.values():
+        out["attempted"] += 1
+        if state == ai_batches.SUBMITTED:
+            out["ok"] += 1
+            out["submitted"] += 1
+        elif state in (ai_batches.DUPLICATE, ai_batches.DISABLED):
+            out["skipped"] += 1
+        else:
+            out["failed"] += 1
+    return out
+
+
+def _write_shadow_run(ctx, *, status, model=None, cost=None, tin=None, tout=None, latency=None, note=None,
+                      detail=None, db_path=None):
+    """The candidate's ai_runs row: shadow_of = the production run."""
+    workflow = ctx.get("workflow") or ""
+    pol = wf.POLICIES.get(workflow)
+    run_id = orch.new_run_id(workflow)
+    conn = _conn(db_path)
+    try:
+        prod = conn.execute("SELECT subject, restaurant_id FROM ai_runs WHERE run_id=?",
+                            (ctx.get("run_id"),)).fetchone()
+        conn.execute(
+            "INSERT INTO ai_runs (run_id, restaurant_id, workflow, agent, policy_version, overridden, subject, "
+            "\"trigger\", unattended, start_tier, final_tier, final_model, attempts, escalations, steps_json, "
+            "status, verdict, reasons, latency_ms, cost_usd, input_tokens, output_tokens, context_json, "
+            "finished_at, shadow_of) "
+            "VALUES (?,?,?,?,?,0,?,'shadow',1,NULL,?,?,1,0,?,?,?,?,?,?,?,?,?,datetime('now'),?)",
+            (run_id, prod["restaurant_id"] if prod else ctx.get("rid"), workflow, pol.agent if pol else None,
+             wf.POLICY_VERSION, prod["subject"] if prod else None, ctx.get("tier"), model,
+             json.dumps([{"tier": ctx.get("tier"), "model": model, "shadow": True}]), status,
+             "pass" if status == "ok" else status, json.dumps([note]) if note else None, latency,
+             round(float(cost), 6) if cost is not None else None, tin, tout,
+             json.dumps(detail)[:2000] if detail else None, ctx.get("run_id")))
+        conn.commit()
+    finally:
+        conn.close()
+    return run_id
+
+
+_SCORE_POOL = None
+_SCORE_LOCK = threading.Lock()
+
+
+def _score_async(fn):
+    """Run a pair's scoring on one background thread — two Haiku calls a
+    replay, never on the collector's loop thread — under the attribution and
+    "shadow:" correlation of the callback that queued it. A restart before
+    it runs leaves the pair unscored, and an unscored pair never counts."""
+    global _SCORE_POOL
+    import ai_utils
+    with _SCORE_LOCK:
+        if _SCORE_POOL is None:
+            from concurrent.futures import ThreadPoolExecutor
+            _SCORE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-shadow-arms")
+    _SCORE_POOL.submit(ai_utils.context_runner(ai_utils.attributed(fn)))
+
+
+def score_pair(workflow, shadow_run_id, candidate_text, production_run_id, production_call_id, db_path=None):
+    """Score both texts of a pair with the workflow's rubric and the same
+    context, and store each score on its own run. A production run a Haiku
+    gate already scored keeps the gate's score (the same rubric, the same
+    text). Returns (production score, candidate score); a side the rubric
+    could not score is None, and that pair does not count."""
+    import ai_reviewer
+    kind = SHADOW_RUBRICS.get(workflow)
+    prod_text = _call_output(production_call_id)
+    if not kind or not prod_text:
+        note = "the production text is no longer kept" if kind else "no rubric for this workflow"
+        conn = _conn(db_path)
+        try:
+            conn.execute("UPDATE ai_runs SET reviewer_notes=? WHERE run_id=?", (note, shadow_run_id))
+            conn.commit()
+        finally:
+            conn.close()
+        return None, None
+    request = next((req for rid_, _r, req in orch.kept_requests(workflow, limit=200, db_path=db_path)
+                    if rid_ == production_run_id), None)
+    context = _request_context(request)
+    vc = ai_reviewer.review_text(kind, candidate_text, restaurant_id=None, context=context, mode="haiku_shadow")
+    vp = ai_reviewer.review_text(kind, prod_text, restaurant_id=None, context=context, mode="haiku_shadow")
+    cs, ps = getattr(vc, "score", None), getattr(vp, "score", None)
+    conn = _conn(db_path)
+    try:
+        conn.execute("UPDATE ai_runs SET reviewer='haiku_shadow', reviewer_score=?, reviewer_notes=? WHERE run_id=?",
+                     (cs, ("; ".join(getattr(vc, "reasons", None) or []))[:500] or None, shadow_run_id))
+        if ps is not None:
+            conn.execute("UPDATE ai_runs SET reviewer_score=?, reviewer=COALESCE(reviewer, 'haiku_shadow') "
+                         "WHERE run_id=? AND (reviewer_score IS NULL OR COALESCE(reviewer,'') != 'haiku_gate')",
+                         (ps, production_run_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return ps, cs
+
+
+def shadow_landed(item, message=None, error=None):
+    """ai_batches callback for one shadow replay: record the candidate's run
+    and queue the pair's scoring. Its cost is the batch ledger row's, put on
+    production's basis — a replay of a synchronous run is compared at what
+    the candidate would cost synchronously (the batch cost ÷ the batch
+    multiplier), a replay of a batched run (the DSR narrative) at the batch
+    cost; both figures stay in context_json. A replay that failed is
+    recorded too, so it is not sent again."""
+    import ai_utils
+    ctx = dict(item.get("context") or {})
+    if error is not None:
+        _write_shadow_run(ctx, status="error", model=item.get("model"),
+                          note=f"{type(error).__name__}: {error}"[:200])
+        return
+    text = ai_utils.extract_text(message) or ""
+    outcome = ai_utils.outcome_of(message)
+    cost = tin = tout = latency = batch_cost = None
+    if item.get("call_id"):
+        conn = _conn()
+        try:
+            row = conn.execute("SELECT cost_usd, input_tokens, output_tokens, latency_ms FROM ai_usage "
+                               "WHERE call_id=? ORDER BY id DESC LIMIT 1", (item.get("call_id"),)).fetchone()
+        finally:
+            conn.close()
+        if row:
+            batch_cost = float(row["cost_usd"] or 0)
+            tin, tout, latency = row["input_tokens"], row["output_tokens"], row["latency_ms"]
+            cost = batch_cost if ctx.get("production_batched") else batch_cost / (ai_utils.BATCH_PRICE_MULTIPLIER or 1.0)
+    ok = outcome == "ok" and bool(text.strip())
+    run_id = _write_shadow_run(
+        ctx, status="ok" if ok else "failed", model=item.get("model"), cost=cost, tin=tin, tout=tout,
+        latency=latency, note=None if ok else f"the replay came back {outcome}",
+        detail={"batch_cost_usd": batch_cost, "priced_as": "batch" if ctx.get("production_batched") else "list",
+                "call_id": item.get("call_id")})
+    if not ok:
+        return
+    workflow, prod_run, prod_call = ctx.get("workflow"), ctx.get("run_id"), ctx.get("production_call_id")
+    _score_async(lambda: score_pair(workflow, run_id, text, prod_run, prod_call))
+
+
+def run_shadow_arms(db_path=None) -> dict:
+    """The weekly job (ai_shadow_arms): each workflow shadow_workflows()
+    names on its next cheaper tier, SHADOW_SAMPLE replays at most, the
+    week's shadow spend inside SHADOW_WEEKLY_USD. ops.run_job's result
+    shape; attempted = workflows tried."""
+    import ai_batches
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "submitted": 0,
+           "budget_usd": SHADOW_WEEKLY_USD}
+    pairs = shadow_workflows(db_path)
+    if not ai_batches.enabled(SHADOW_BATCH_WORKFLOW):
+        out["skipped"] = len(pairs)
+        out["reason"] = "Message Batches are off here"
+        return out
+    spent = shadow_spent(7, db_path)
+    remaining = SHADOW_WEEKLY_USD - spent
+    out["spent_7d"] = round(spent, 4)
+    for wfl, cand in pairs:
+        if remaining <= 0:
+            out["hit_bound"] = True
+            out["skipped"] += 1
+            continue
+        out["attempted"] += 1
+        try:
+            r = shadow_arms(wfl, cand, sample=SHADOW_SAMPLE, budget_usd=remaining, db_path=db_path)
+        except Exception as e:
+            log.warning("shadow arms for %s failed: %s", wfl, e)
+            out["failed"] += 1
+            continue
+        remaining -= float(r.get("cost_estimate") or 0)
+        out["submitted"] += int(r.get("submitted") or 0)
+        out["hit_bound"] = out["hit_bound"] or bool(r.get("hit_bound"))
+        if r.get("failed") and not r.get("ok"):
+            out["failed"] += 1
+        else:
+            out["ok"] += 1
     return out

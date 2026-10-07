@@ -1485,7 +1485,7 @@ never with text: the rebuild cut the visible text across its screens by 69%
   `chip warn`, its title saying enter the result or cancel it — with the
   series' count in amber beside its game count), Customers (Restaurants, Billing, Onboarding, Support
   queue, and the client page), Engineering (Overview, Status page, Audit
-  trail, Team & access, Experiments), Analytics (Overview, Recommendations,
+  trail, Team & access, Experiments, AI routes, AI costs), Analytics (Overview, Recommendations,
   Intelligence) — plus Field tools (audits, cheat
   sheet, status page) at the foot of the rail. Every older hash (`#clients`,
   `#jobs`, `#emails`, `#recommendations/<id>`, …) lands in the area and tab it
@@ -1608,6 +1608,11 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **Admin-only reads carry `.w` too.** A control that opens a prompt and a
   model's output (the call trace) is hidden from a support login like a
   write.
+- **A setting with a default and an override** (Engineering → AI routes, 10/7/26): a three-column table — the
+  field, the code's default, the value in force — where an overridden value is ember with an amber `override`
+  chip. The editor (`formOpen`) gives each field's default as its hint; the server keeps only the fields that
+  differ, so setting one back to its default ends its override, and Revert puts back what the last change
+  replaced. A stored override that no longer validates is an amber line, and the defaults run.
 - **Cmd-K / `/`** opens one palette: every page and action, and the fleet
   search.
 - **A page's reads belong to the visit that asked** (`api()` and `_seq`): a

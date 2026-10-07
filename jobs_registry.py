@@ -463,8 +463,27 @@ JOBS = {
         cadence="every 5 minutes", sla_minutes=60, sends=False, runnable=True,
         label="AI batch collector",
         description="Read the Message Batches that have ended, ledger each answer at the batch rate and "
-                    "hand it to its workflow (the nightly DSR narrative)",
+                    "hand it to its workflow (the nightly DSR narrative, the learner's shadow replays)",
         target=("ai_batches", "run_collector"), max_minutes=10),
+
+    # ── the AI orchestration learner (design 10/7/26, phase 6) ───────────
+    "ai_shadow_arms": dict(
+        # Submits only where Message Batches may (ai_batches.enabled: the
+        # production scheduler, shadow_arms listed); bounded by
+        # AI_SHADOW_WEEKLY_USD and 20 replays a workflow. Sends nothing.
+        cadence="Sun 4am CT (AI lane)", sla_minutes=_W, sends=False, runnable=True,
+        label="AI shadow replays",
+        description="Replay each workflow's next cheaper tier on a sample of kept production requests, at the "
+                    "batch rate, and score both answers with the same rubric — the evidence a cheaper route needs",
+        target=("ai_learning", "run_shadow_arms"), max_minutes=20, lane="ai", retry=True),
+    "ai_route_learning": dict(
+        # Database reads and writes only: recommendations for the console,
+        # and the one automatic step, reverting an override that hurt.
+        cadence="Mon 6am CT", sla_minutes=_W, sends=False, runnable=True,
+        label="AI route learning",
+        description="Rank each workflow's routes by quality per dollar over 28 days of runs, recommend changes "
+                    "for the AI routes console, and revert an override owners accept clearly less often",
+        target=("ai_learning", "run_learning"), max_minutes=10, retry=True),
 
     # ── staff reminders, every 10 minutes (employee audit H3/M8) ─────────
     "staff_reminders": dict(

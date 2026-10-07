@@ -3803,6 +3803,98 @@ def admin_api_schedule_experiment_revert(current_user):
                                                           by=current_user.get("username") or "admin"))
 
 
+# ── AI routes and AI costs (orchestration design 10/7/26, phase 6) ──────────
+# Engineering → AI routes: each workflow's policy in force, its runs by
+# route, the shadow replays and the learner's recommendations; the override
+# editor, revert, Apply / Dismiss. Engineering → AI costs: a month's metered
+# cost per restaurant and workflow (#95), and the ledger against the
+# vendors' invoices (#96). Every write changes how the platform spends money
+# on every restaurant's AI, so each one takes the step-up and is audited with
+# its before and after.
+
+def _ai_console_answer(out, current_user, action, target, ok_status=200):
+    import admin_events
+    status = out.pop("status", None) or (ok_status if out.get("ok") else 400)
+    admin_events.record_admin_action(current_user, action, target=target, before=out.get("before"),
+                                     after=out.get("after") if out.get("ok") else {"refused": out.get("error")},
+                                     result="ok" if out.get("ok") else "refused",
+                                     summary=out.get("message") or out.get("error"))
+    return jsonify(**out), status
+
+
+@admin_bp.route("/admin/api/ai-routes")
+@admin_required
+def admin_api_ai_routes(current_user):
+    """Every workflow's policy in force, 28 days of its runs by route, the
+    shadow pairs and the open recommendations. ?days=28"""
+    import admin_ops
+    return jsonify(**admin_ops.ai_routes_view(days=request.args.get("days", 28, type=int)))
+
+
+@admin_bp.route("/admin/api/ai-routes/<workflow>/override", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_ai_route_override(workflow, current_user):
+    """Set one workflow's override: {override: {ladder, escalate_on,
+    max_escalations, reviewer, reviewer_unattended, shadow_rate, batch,
+    caps}, reason?}. Fields equal to the default are dropped; none left
+    returns the workflow to its defaults. 400 with the registry's own
+    sentence on a value it refuses."""
+    import admin_ops
+    data = request.get_json(silent=True) or {}
+    out = admin_ops.ai_route_set_override(workflow, data.get("override"),
+                                          actor=current_user.get("username") or "admin", reason=data.get("reason"))
+    return _ai_console_answer(out, current_user, "ai_route.override_set", ("workflow", workflow))
+
+
+@admin_bp.route("/admin/api/ai-routes/<workflow>/revert", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_ai_route_revert(workflow, current_user):
+    """Put back the override the current one replaced (or the defaults)."""
+    import admin_ops
+    out = admin_ops.ai_route_revert(workflow, actor=current_user.get("username") or "admin")
+    return _ai_console_answer(out, current_user, "ai_route.reverted", ("workflow", workflow))
+
+
+@admin_bp.route("/admin/api/ai-routes/recommendations/<int:rec_id>", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_ai_route_recommendation(rec_id, current_user):
+    """Apply (as an override) or dismiss one of the learner's open
+    recommendations: {apply: true|false}."""
+    import admin_ops
+    data = request.get_json(silent=True) or {}
+    apply = bool(data.get("apply"))
+    out = admin_ops.ai_route_decide(rec_id, apply, actor=current_user.get("username") or "admin")
+    return _ai_console_answer(out, current_user,
+                              "ai_route.recommendation_applied" if apply else "ai_route.recommendation_dismissed",
+                              ("recommendation", rec_id))
+
+
+@admin_bp.route("/admin/api/ai-costs")
+@admin_required
+def admin_api_ai_costs(current_user):
+    """One UTC month's metered AI and paid-API cost per restaurant and
+    workflow, and the ledger against the entered invoices. ?month=YYYY-MM"""
+    import admin_ops
+    return jsonify(**admin_ops.ai_monthly_costs(month=request.args.get("month")))
+
+
+@admin_bp.route("/admin/api/ai-costs/invoices", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_ai_costs_invoice(current_user):
+    """Enter one vendor's invoice total for one month: {month: YYYY-MM,
+    vendor: anthropic|google_places|perplexity, amount_usd, note?}."""
+    import admin_ops
+    data = request.get_json(silent=True) or {}
+    out = admin_ops.set_ai_vendor_invoice(data.get("month"), data.get("vendor"), data.get("amount_usd"),
+                                          data.get("note"), actor=current_user.get("username") or "admin")
+    return _ai_console_answer(out, current_user, "ai_invoice.recorded",
+                              ("invoice", f"{data.get('vendor')}:{data.get('month')}"))
+
+
 def _admin_days_rid(default_days):
     try:
         days = int(request.args.get("days") or default_days)

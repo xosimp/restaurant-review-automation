@@ -477,6 +477,20 @@ _BOOT_SQL = (
         PRIMARY KEY (restaurant_id, date)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_value_figures_daily_date ON value_figures_daily(date)",
+    # The month's actual invoice per metered vendor (AI cost audit 10/7/26
+    # #96), entered by the operator and audited, so the ledger's own figure
+    # for that month can be read against what was billed — a price table
+    # that drifted from the vendor's shows as a ratio away from 1. One row
+    # per vendor per UTC month; never pruned (a dozen rows a year).
+    """CREATE TABLE IF NOT EXISTS ai_vendor_invoices (
+        month       TEXT NOT NULL,
+        vendor      TEXT NOT NULL,
+        amount_usd  REAL NOT NULL,
+        note        TEXT,
+        entered_by  TEXT,
+        entered_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (month, vendor)
+    )""",
 )
 
 
@@ -6972,3 +6986,336 @@ def ops_state():
         guard(name, fn)
     worst = max((s["state"] for s in systems.values()), key=lambda st: _STATE_RANK.get(st, 1), default="unknown")
     return {"ok": True, "systems": systems, "worst": worst, "generated_at": _utcnow().strftime(_ZFMT)}
+
+
+# ── AI routes: the orchestration console (design 10/7/26, phase 6) ──────────
+#
+# Engineering → AI routes. Per workflow: its agent, the policy in force (the
+# code's default with the console's override, the overridden fields named),
+# the last 28 days of its runs by route (ai_learning.route_stats), the shadow
+# replays' pairs, the learner's open recommendations (Apply / Dismiss) and the
+# override editor. Every write is the route's: step-up, one
+# record_admin_action with before and after. Nothing here calls a model.
+
+def _policy_dict(p):
+    return {"ladder": list(p.ladder), "escalate_on": list(p.escalate_on), "max_escalations": p.max_escalations,
+            "reviewer": p.reviewer, "reviewer_unattended": p.reviewer_unattended, "shadow_rate": p.shadow_rate,
+            "batch": bool(p.batch), "caps": {"calls": p.caps.calls, "usd": p.caps.usd, "seconds": p.caps.seconds},
+            "delivery": p.delivery, "context": list(p.context), "note": p.note}
+
+
+def _json_or(raw, default=None):
+    try:
+        return json.loads(raw) if raw else default
+    except (TypeError, ValueError):
+        return default
+
+
+def ai_routes_view(days=28):
+    """The AI routes payload. Each read that fails is named in `errors`
+    and its figures are absent, never zero."""
+    import ai_learning
+    import ai_orchestrator as orch
+    import ai_workflows as wf
+    days = max(1, min(int(days or 28), 90))
+    errors = []
+
+    def read(name, fn, default):
+        try:
+            return fn()
+        except Exception as e:
+            errors.append({"query": name, "error": str(e)[:200]})
+            return default
+    overrides = {r["workflow"]: r for r in read("ai_route_overrides", orch.override_rows, [])}
+    stats = read("ai_runs", lambda: ai_learning.route_stats(days), None)
+    recs = read("ai_route_recommendations", lambda: ai_learning.recommendations("open"), [])
+    decided = read("ai_route_recommendations",
+                   lambda: ai_learning.recommendations("applied")[:20] + ai_learning.recommendations("dismissed")[:20],
+                   [])
+    pairs = read("ai_runs", lambda: ai_learning._shadow_pairs(days, None), {})
+    try:
+        tiers = wf._tier_table()
+    except Exception as e:
+        errors.append({"query": "tiers", "error": str(e)[:200]})
+        tiers = {}
+    shadow_ok = dict(ai_learning.shadow_workflows())
+    out = []
+    for name, base in sorted(wf.POLICIES.items(), key=lambda kv: (kv[1].agent, kv[0])):
+        ov = overrides.get(name)
+        stored = _json_or(ov["override_json"], {}) if ov else {}
+        invalid = None
+        try:
+            eff = wf.apply_override(base, stored) if stored else base
+        except ValueError as e:
+            eff, invalid = base, str(e)
+        rows = None if stats is None else [s for s in stats if s["workflow"] == name]
+        agg = None
+        if rows is not None:
+            n = sum(r["runs"] for r in rows)
+            agg = {"runs": n}
+            if n:
+                agg["cost_per_run"] = round(sum(r["cost_per_run"] * r["runs"] for r in rows) / n, 5)
+                agg["escalation_rate"] = round(sum(r["escalation_rate"] * r["runs"] for r in rows) / n, 3)
+                agg["pass_rate"] = round(sum(r["pass_rate"] * r["runs"] for r in rows) / n, 3)
+        pair_rows = []
+        for (wfl, tier), ps in (pairs or {}).items():
+            if wfl != name or not ps:
+                continue
+            pair_rows.append({"tier": tier, "pairs": len(ps),
+                              "prod_score": round(sum(p[0] for p in ps) / len(ps), 3),
+                              "cand_score": round(sum(p[1] for p in ps) / len(ps), 3),
+                              "prod_cost": round(sum(p[2] for p in ps) / len(ps), 5),
+                              "cand_cost": round(sum(p[3] for p in ps) / len(ps), 5)})
+        out.append({
+            "workflow": name, "agent": base.agent, "agent_label": wf.AGENTS.get(base.agent, ""),
+            "purpose": base.purpose, "default": _policy_dict(base), "effective": _policy_dict(eff),
+            "override": ({"fields": stored, "previous": _json_or(ov.get("previous_json")),
+                          "updated_by": ov.get("updated_by"), "updated_at": ov.get("updated_at"),
+                          "reason": ov.get("reason"), "invalid": invalid} if ov else None),
+            "overridden": sorted(stored) if stored and not invalid else [],
+            "stats": rows, "totals": agg, "shadow": pair_rows,
+            "shadow_candidate": shadow_ok.get(name),
+            "replayable": name not in orch.NOT_REPLAYABLE,
+            "recommendations": [dict(r, proposed=_json_or(r.get("proposed_json"), {}),
+                                     evidence=_json_or(r.get("evidence_json"), {})) for r in recs
+                                if r["workflow"] == name],
+        })
+    return {"ok": True, "days": days, "policy_version": wf.POLICY_VERSION, "workflows": out,
+            "tiers": tiers, "triggers": wf.TRIGGERS, "reviewers": list(wf.REVIEWERS), "tier_names": list(wf.TIERS),
+            "overridable": list(wf.OVERRIDABLE),
+            "decided": [dict(r, proposed=_json_or(r.get("proposed_json"), {})) for r in decided],
+            "open_recommendations": len(recs), "errors": errors, "query_errors": errors}
+
+
+def _minimal_override(base, override):
+    """The override with every field equal to the default dropped (after
+    the registry's own validation — ValueError on a bad one), as JSON-ready
+    values, so the console highlights only what really differs."""
+    import ai_workflows as wf
+    out = {}
+    for name, value in (override or {}).items():
+        if name not in wf.OVERRIDABLE:
+            raise ValueError(f"{name} cannot be overridden")
+        coerced = wf._coerce(name, value, base)
+        if coerced == getattr(base, name):
+            continue
+        if name == "caps":
+            out[name] = {"calls": coerced.calls, "usd": coerced.usd, "seconds": coerced.seconds}
+        elif isinstance(coerced, tuple):
+            out[name] = list(coerced)
+        else:
+            out[name] = coerced
+    if out:
+        wf.apply_override(base, out)
+    return out
+
+
+def ai_route_set_override(workflow, override, actor="admin", reason=None):
+    """Store the console's override for one workflow (fields equal to the
+    default are dropped; nothing left removes it). {ok, before, after,
+    message} or {ok: False, error, status}."""
+    import ai_orchestrator as orch
+    import ai_workflows as wf
+    base = wf.POLICIES.get(workflow)
+    if base is None:
+        return {"ok": False, "error": f"No workflow named {workflow!r}.", "status": 404}
+    if not isinstance(override, dict):
+        return {"ok": False, "error": "override must be an object of fields.", "status": 400}
+    try:
+        minimal = _minimal_override(base, override)
+        change = orch.set_override(workflow, minimal or None, actor=actor, reason=(reason or "")[:300] or None)
+    except (ValueError, TypeError) as e:
+        return {"ok": False, "error": f"{workflow}: {e}", "status": 400}
+    msg = (f"{workflow} now runs on its override ({', '.join(sorted(minimal))})" if minimal
+           else f"{workflow} is back on the code's defaults")
+    return {"ok": True, "workflow": workflow, "before": change["before"], "after": change["after"], "message": msg}
+
+
+def ai_route_revert(workflow, actor="admin"):
+    """Put back the override this one replaced (or the defaults, when it
+    replaced none)."""
+    import ai_orchestrator as orch
+    import ai_workflows as wf
+    if workflow not in wf.POLICIES:
+        return {"ok": False, "error": f"No workflow named {workflow!r}.", "status": 404}
+    row = next((r for r in orch.override_rows() if r["workflow"] == workflow), None)
+    if not row:
+        return {"ok": False, "error": f"{workflow} has no override to revert — it runs on the code's defaults.",
+                "status": 409}
+    previous = _json_or(row.get("previous_json"))
+    try:
+        change = orch.set_override(workflow, previous or None, actor=actor,
+                                   reason=f"reverted by {actor}"[:300])
+    except ValueError as e:
+        return {"ok": False, "error": f"The previous override no longer validates ({e}); edit it instead.",
+                "status": 409}
+    msg = (f"{workflow}: the previous override is back" if previous
+           else f"{workflow} is back on the code's defaults")
+    return {"ok": True, "workflow": workflow, "before": change["before"], "after": change["after"], "message": msg}
+
+
+def ai_route_decide(rec_id, apply, actor="admin"):
+    """Apply (as an override) or dismiss one open recommendation."""
+    import ai_learning
+    try:
+        rid = int(rec_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "rec_id must be a number.", "status": 400}
+    try:
+        res = ai_learning.decide(rid, bool(apply), actor)
+    except ValueError as e:
+        return {"ok": False, "error": str(e), "status": 409}
+    change = res.get("change") or {}
+    return {"ok": True, "workflow": res["workflow"], "applied": bool(apply), "before": change.get("before"),
+            "after": change.get("after"),
+            "message": (f"Applied to {res['workflow']}" if apply else f"Dismissed for {res['workflow']}")}
+
+
+# ── AI cost by restaurant and workflow, and the invoices (#95, #96) ─────────
+
+AI_INVOICE_VENDORS = ("anthropic", "google_places", "perplexity")
+_MONTH_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
+
+
+def _month_bounds(month):
+    y, m = int(month[:4]), int(month[5:7])
+    nxt = f"{y + (m == 12):04d}-{(m % 12) + 1:02d}-01"
+    return f"{month}-01", nxt
+
+
+def _month_ledger(conn, month):
+    """[{restaurant_id, vendor, action, calls, cost}] for one UTC month: the
+    rollup (ai_usage_daily) for every day before the newest rolled one, and
+    the raw ledger from that day on — the rollup runs nightly, so today and
+    a day it has not reached yet are read raw, never left out. Returns
+    (rows, rolled_through)."""
+    lo, hi = _month_bounds(month)
+    rolled = (_one_dict(conn, "SELECT MAX(day) AS d FROM ai_usage_daily", label="ai_usage_daily") or {}).get("d")
+    cut = max(lo, min(hi, rolled)) if rolled else lo
+    agg = {}
+
+    def add(rid, vendor, action, calls, cost):
+        k = (rid or None, vendor or "anthropic", action or "unspecified")
+        a = agg.setdefault(k, [0, 0.0])
+        a[0] += int(calls or 0)
+        a[1] += float(cost or 0)
+    if cut > lo:
+        for r in _rows_dict(conn, "SELECT restaurant_id, vendor, action, SUM(calls) AS calls, SUM(cost_usd) AS cost "
+                                  "FROM ai_usage_daily WHERE day >= ? AND day < ? GROUP BY rid_key, vendor, action",
+                            (lo, cut), label="ai_usage_daily"):
+            add(r["restaurant_id"], r["vendor"], r["action"], r["calls"], r["cost"])
+    if cut < hi:
+        for r in _rows_dict(conn, "SELECT restaurant_id, COALESCE(vendor,'anthropic') AS vendor, "
+                                  "COALESCE(action,'unspecified') AS action, "
+                                  "SUM(CASE WHEN outcome='blocked' THEN COALESCE(attempts,1) ELSE 1 END) AS calls, "
+                                  "SUM(COALESCE(cost_usd,0)) AS cost FROM ai_usage "
+                                  "WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id, 2, 3",
+                            (cut, hi), label="ai_usage"):
+            add(r["restaurant_id"], r["vendor"], r["action"], r["calls"], r["cost"])
+    rows = [{"restaurant_id": k[0], "vendor": k[1], "action": k[2], "calls": v[0], "cost_usd": round(v[1], 6)}
+            for k, v in agg.items()]
+    return rows, rolled
+
+
+def ai_monthly_costs(month=None):
+    """#95: one UTC month's metered cost per restaurant and per workflow
+    (the ledger action), with Places and Perplexity as their own vendors,
+    totals each way — and #96: the ledger per vendor against the invoice
+    the operator entered for that month, with their ratio."""
+    import ai_workflows as wf
+    now = _utcnow()
+    month = month if month and _MONTH_RE.fullmatch(str(month)) else now.strftime("%Y-%m")
+    months, y, m = [], now.year, now.month
+    for _ in range(12):
+        months.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    with _collecting() as bucket:
+        conn = get_conn()
+        try:
+            rows, rolled = _month_ledger(conn, month)
+            ids = sorted({r["restaurant_id"] for r in rows if r["restaurant_id"]})
+            names = {}
+            if ids:
+                names = {r["id"]: r["name"] for r in _rows_dict(
+                    conn, f"SELECT id, name FROM restaurants WHERE id IN ({','.join('?' * len(ids))})", tuple(ids),
+                    label="restaurants")}
+            inv = {r["vendor"]: r for r in _rows_dict(
+                conn, "SELECT vendor, amount_usd, note, entered_by, entered_at FROM ai_vendor_invoices WHERE month=?",
+                (month,), label="ai_vendor_invoices", optional=True)}
+        finally:
+            conn.close()
+    by_rest, by_wf, by_vendor = {}, {}, {}
+    for r in rows:
+        rid = r["restaurant_id"]
+        r["restaurant"] = names.get(rid) or (f"#{rid}" if rid else "Platform (no restaurant)")
+        pol = wf.POLICIES.get(r["action"])
+        r["agent"] = pol.agent if pol else None
+        b = by_rest.setdefault(rid, {"restaurant_id": rid, "restaurant": r["restaurant"], "calls": 0, "cost_usd": 0.0,
+                                     "by_vendor": {}})
+        b["calls"] += r["calls"]
+        b["cost_usd"] += r["cost_usd"]
+        b["by_vendor"][r["vendor"]] = round(b["by_vendor"].get(r["vendor"], 0) + r["cost_usd"], 6)
+        w = by_wf.setdefault((r["vendor"], r["action"]), {"vendor": r["vendor"], "action": r["action"],
+                                                          "agent": r["agent"], "calls": 0, "cost_usd": 0.0,
+                                                          "restaurants": set()})
+        w["calls"] += r["calls"]
+        w["cost_usd"] += r["cost_usd"]
+        w["restaurants"].add(rid)
+        by_vendor[r["vendor"]] = by_vendor.get(r["vendor"], 0.0) + r["cost_usd"]
+    for b in by_rest.values():
+        b["cost_usd"] = round(b["cost_usd"], 4)
+    workflows = []
+    for w in by_wf.values():
+        workflows.append(dict(w, cost_usd=round(w["cost_usd"], 4), restaurants=len(w["restaurants"])))
+    recon = []
+    for v in AI_INVOICE_VENDORS:
+        ledger = round(by_vendor.get(v, 0.0), 2)
+        i = inv.get(v)
+        amount = round(float(i["amount_usd"]), 2) if i else None
+        recon.append({"vendor": v, "ledger_usd": ledger, "invoice_usd": amount,
+                      "ratio": round(ledger / amount, 3) if amount else None,
+                      "diff_usd": round(ledger - amount, 2) if amount is not None else None,
+                      "note": i.get("note") if i else None, "entered_by": i.get("entered_by") if i else None,
+                      "entered_at": i.get("entered_at") if i else None})
+    return {"ok": True, "month": month, "months": months, "rolled_through": rolled,
+            "rows": sorted(rows, key=lambda r: -r["cost_usd"]),
+            "restaurants": sorted(by_rest.values(), key=lambda b: -b["cost_usd"]),
+            "workflows": sorted(workflows, key=lambda w: -w["cost_usd"]),
+            "by_vendor": {k: round(v, 4) for k, v in by_vendor.items()},
+            "total_usd": round(sum(by_vendor.values()), 4), "total_calls": sum(r["calls"] for r in rows),
+            "reconciliation": recon, "vendors": list(AI_INVOICE_VENDORS),
+            "note": "Ledger cost is the platform's own price table (UTC month). A ratio away from 1.00 against the "
+                    "invoice is price drift, unmetered calls or credits — look before trusting either figure.",
+            **_merge_problems(bucket)}
+
+
+def set_ai_vendor_invoice(month, vendor, amount_usd, note=None, actor="admin"):
+    """Enter or change one vendor's invoice total for one month. The route
+    audits it with before and after. {ok, before, after} or {ok: False, error}."""
+    vendor = (vendor or "").strip().lower()
+    if vendor not in AI_INVOICE_VENDORS:
+        return {"ok": False, "error": f"Unknown vendor. One of: {', '.join(AI_INVOICE_VENDORS)}.", "status": 400}
+    if not _MONTH_RE.fullmatch(str(month or "")):
+        return {"ok": False, "error": "month must be YYYY-MM", "status": 400}
+    try:
+        amount = round(float(amount_usd), 2)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "amount_usd must be a number", "status": 400}
+    if amount < 0 or amount > 1_000_000:
+        return {"ok": False, "error": "amount_usd must be between 0 and 1,000,000", "status": 400}
+    conn = get_conn()
+    try:
+        before = _one_dict(conn, "SELECT amount_usd, note FROM ai_vendor_invoices WHERE month=? AND vendor=?",
+                           (month, vendor), label="ai_vendor_invoices")
+        conn.execute("INSERT INTO ai_vendor_invoices (month, vendor, amount_usd, note, entered_by) VALUES (?,?,?,?,?) "
+                     "ON CONFLICT(month, vendor) DO UPDATE SET amount_usd=excluded.amount_usd, note=excluded.note, "
+                     "entered_by=excluded.entered_by, entered_at=datetime('now')",
+                     (month, vendor, amount, (note or "")[:300] or None, str(actor or "")[:80] or None))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "month": month, "vendor": vendor, "amount_usd": amount, "before": before,
+            "after": {"amount_usd": amount, "note": (note or "")[:300] or None},
+            "message": f"{vendor.replace('_', ' ')} {month} invoice recorded: ${amount:,.2f}"}
