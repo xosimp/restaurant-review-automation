@@ -3492,7 +3492,9 @@ QUALITY_KINDS = ("figures", "causes", "bindings", "names", "validation_refused",
                  # The schedule's quality gate: settled by the code's fill, or
                  # a model rewrite (AI cost audit 10/7/26 #21); a reviewer that
                  # could not run (ai_reviewer).
-                 "gate_filled_in_code", "gate_model_rewrite", "reviewer_unavailable")
+                 "gate_filled_in_code", "gate_model_rewrite", "reviewer_unavailable",
+                 # A public-copy guard refusal (marketing drafts, the newsletter).
+                 "public_copy_refused")
 AI_QUALITY_RETAIN_DAYS = int(os.getenv("AI_QUALITY_RETAIN_DAYS", "180"))
 
 
