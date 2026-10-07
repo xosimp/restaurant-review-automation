@@ -2508,12 +2508,19 @@ def _do_review_insight(rid, viewer=None):
                 "stale": False,
             }
 
-        # One stored read per restaurant and prompt (audit #22): the prompt is
-        # every figure, the diagnosis and today's date, so the same evidence
-        # gives the same words on the web and the phone, and a new read is
-        # written only when something in it changed.
+        # One stored read per restaurant and data (audit #22): every figure
+        # and the diagnosis, so the same evidence gives the same words on
+        # the web and the phone, and a new read is written only when
+        # something in it changed. Keyed on the data, not the date (AI cost
+        # audit 10/7/26 #26): "Today: <date>" and the DATA STATE block's
+        # ages made every morning a new Sonnet call over the same reviews.
+        # The ISO week stands in for the day, so a read's "This week" is
+        # never served into the next week; the week's own numbers (this
+        # week, vs last week) are in the prompt, so they stay in the key.
         import insight_store as _ist_ri
-        _fp_ri = _ist_ri.fingerprint(prompt)
+        _iso_ri = now_chi.isocalendar()
+        _fp_ri = _ist_ri.read_fingerprint(prompt, readiness=_ready_ri, today=today_str,
+                                          week=f"{_iso_ri[0]}-W{_iso_ri[1]:02d}")
         _stored_ri = _ist_ri.get(rid, "reviews", _fp_ri, revalidate=_ri_payload)
         if isinstance(_stored_ri, dict) and _stored_ri.get("insight"):
             # The diagnoses' age, stale flag and "as of" are the current
@@ -3917,6 +3924,13 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         if isinstance(_stored_m, dict) and _stored_m.get("insight"):
             _cache_set(cache_key, dict(_mkt_checks(_stored_m), insight=_stored_m["insight"]))
             return _mkt_insight_out(rid, _stored_m["insight"], raw, _mkt_checks(_stored_m)), 200
+        # This exact prompt was refused within REFUSAL_HOLD_HOURS: the same
+        # input would be refused again, so the held copy is served without
+        # a call (AI cost audit 10/7/26 #48). New data is a new fingerprint.
+        _held_prev = _ist_m.held_refusal(rid, "marketing", _fp_m)
+        if isinstance(_held_prev, dict) and _held_prev.get("insight"):
+            _cache_set(cache_key, _held_prev)
+            return _mkt_insight_out(rid, _held_prev["insight"], raw, _mkt_checks(_held_prev)), 200
         from ai_utils import create_with_retry, extract_text, model_for, get_client
         _client = get_client()
         msg = create_with_retry(
@@ -3935,8 +3949,10 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             # validation layer made of the partial text.
             _read_m = None
         if _read_m is None:
-            # Refused whole: fixed copy, never the refused text, held for the
-            # cache window only so the next open tries again. An AI-quality
+            # Refused whole: fixed copy, never the refused text, held against
+            # this prompt's fingerprint for REFUSAL_HOLD_HOURS (#48) — it was
+            # held five minutes in memory, so every later open resent the
+            # identical prompt and was refused again. An AI-quality
             # finding (#58) with the model's own stop reason when it has one
             # (#52), and the fixed copy it served (#140).
             import ai_utils as _ai_q
@@ -3952,11 +3968,12 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             _ai_q.record_quality_event("marketing_insight", "fallback", restaurant_id=rid,
                                        action="marketing_insight", detail="served the fixed held-back copy")
             _held_m = {"insight": "Cavnar AI held this week's marketing brief back: it said things your data doesn't "
-                                  "support. It tries again the next time this opens.",
+                                  "support. It tries again when your figures change, or in a few hours.",
                        "withheld": True, "figures_verified": True, "unsupported_figures": [],
                        "causes_verified": True, "unsupported_causes": [], "forecast": None,
                        "validation": _checked_m.validation}
             _cache_set(cache_key, _held_m)
+            _ist_m.hold_refusal(rid, "marketing", _fp_m, _held_m)
             return _mkt_insight_out(rid, _held_m["insight"], raw, _mkt_checks(_held_m)), 200
         insight = _read_m.pop("insight")
         _checks = _read_m
@@ -6949,7 +6966,9 @@ def ai_visibility(current_user):
     # POST is the owner pressing Check / Re-run: a live run of every query.
     # GET serves the recorded run (six-hour cache, then the last stored run)
     # - which is all the button ever did, so a "check" came back instantly
-    # with the old answers, verdicts and all (owner, 9/26/26).
+    # with the old answers, verdicts and all (owner, 9/26/26). With no run
+    # on record GET says "not measured yet" (state "not_measured") and never
+    # runs one — AI cost audit 10/7/26 #9.
     payload, status = _do_ai_visibility(current_user["restaurant_id"], force=request.method == "POST")
     # The roadmap is built and presented here, where a person sees it — not
     # in _do_ai_visibility, which Ask's read_ai_visibility tool calls too.
@@ -7055,6 +7074,69 @@ AIVIS_MODEL = os.getenv("AI_VISIBILITY_MODEL", "sonar")
 _PPLX_MIN_INTERVAL = float(os.getenv("PPLX_MIN_REQUEST_INTERVAL", "1.3"))  # 50 RPM = 1.2s; small margin
 _pplx_pace_lock = threading.Lock()
 _pplx_last_sent_at = [0.0]
+# A 429 holds every sender, not only the query that got it (AI cost audit
+# 10/7/26 #7): the limit is the key's, so the two other workers in the run
+# — and the next restaurant in the weekly pass — sending into the same
+# window would only collect 429s of their own. _pplx_wait_turn waits past
+# this as well as past the pacing interval.
+_pplx_hold_until = [0.0]
+
+# Backing off a 429 (AI cost audit 10/7/26 #7). Production, 9/10–10/7/26:
+# every one of the 27 failed queries was "HTTP 429, no answer" — about one
+# query in four — after a single flat 2-second retry, so most eight-query
+# runs came back partial. A 429 now gets up to AIVIS_429_MAX_SENDS sends:
+# Retry-After honoured when Perplexity names a wait (never more than
+# PPLX_RETRY_AFTER_MAX, never past the run's deadline — a longer one is
+# given up on rather than sent into early), else exponential backoff with
+# jitter from PPLX_BACKOFF_BASE. Every other failure keeps its one retry
+# after 2 seconds; a rejected key none.
+AIVIS_429_MAX_SENDS = int(os.getenv("AIVIS_429_MAX_SENDS", "4"))
+_PPLX_RETRY_AFTER_MAX = float(os.getenv("PPLX_RETRY_AFTER_MAX", "8"))
+_PPLX_BACKOFF_BASE = float(os.getenv("PPLX_BACKOFF_BASE", "2"))
+# How long one run may take, start to last send. A Refresh press waits on
+# it (iOS gives the request 110 s), so no backoff may run past it.
+AIVIS_RUN_MAX_SECS = float(os.getenv("AIVIS_RUN_MAX_SECS", "75"))
+
+
+def _pplx_hold(seconds):
+    """Hold every Perplexity send in this process for `seconds` (a 429's
+    wait): the gate is per key, not per query. A no-op under pytest, like
+    the gate it feeds (a mocked 429 must not slow a later test's gate)."""
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    if seconds and seconds > 0:
+        with _pplx_pace_lock:
+            _pplx_hold_until[0] = max(_pplx_hold_until[0], time.monotonic() + float(seconds))
+
+
+def _pplx_429_wait(resp, sends, deadline, now=None):
+    """(seconds to wait before the next send, why) after a 429 on send
+    number `sends`, or (None, why) when the query should stop: out of sends,
+    a Retry-After longer than PPLX_RETRY_AFTER_MAX, or a wait that would end
+    past `deadline` (time.monotonic()). Pure but for the jitter."""
+    import random as _rnd
+    if sends >= AIVIS_429_MAX_SENDS:
+        return None, f"still rate-limited after {sends} sends"
+    left = deadline - (time.monotonic() if now is None else now)
+    retry_after = None
+    try:
+        raw = (getattr(resp, "headers", None) or {}).get("Retry-After")
+        retry_after = float(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError, AttributeError):
+        retry_after = None      # an HTTP-date or junk: back off on our own clock
+    if retry_after is not None and retry_after >= 0:
+        if retry_after > _PPLX_RETRY_AFTER_MAX:
+            return None, f"Retry-After {retry_after:g}s is past the {_PPLX_RETRY_AFTER_MAX:g}s this waits"
+        if retry_after > left:
+            return None, f"Retry-After {retry_after:g}s would run past the run's deadline"
+        return retry_after, f"Retry-After {retry_after:g}s"
+    # Exponential with "equal jitter": half the step fixed, half random, so
+    # three workers that hit the same window do not come back together.
+    step = min(_PPLX_RETRY_AFTER_MAX, _PPLX_BACKOFF_BASE * (2 ** (sends - 1)))
+    wait = step / 2 + _rnd.uniform(0, step / 2)
+    if wait > left:
+        return None, "the backoff would run past the run's deadline"
+    return wait, f"backoff {wait:.1f}s"
 
 
 def _pplx_wait_turn():
@@ -7073,7 +7155,7 @@ def _pplx_wait_turn():
         return
     with _pplx_pace_lock:
         now = time.monotonic()
-        wait = _pplx_last_sent_at[0] + _PPLX_MIN_INTERVAL - now
+        wait = max(_pplx_last_sent_at[0] + _PPLX_MIN_INTERVAL, _pplx_hold_until[0]) - now
         if wait > 0:
             time.sleep(wait)
         _pplx_last_sent_at[0] = time.monotonic()
@@ -7134,6 +7216,43 @@ def _city_from_place_id(place_id: str) -> str:
     # (MOD-INT-4); it is retried on the next call instead.
     if settled:
         _city_cache[place_id] = (datetime.utcnow(), city)
+    return city
+
+
+# The city is kept on the restaurant row (AI cost audit 10/7/26 #46): the
+# process dict above is gone after every deploy, and each deploy re-bought
+# the same Places Details answer. Keyed on the Place ID it was read for, so
+# a corrected ID reads again; re-read past this age in case Google's own
+# address for the listing changed.
+AIVIS_CITY_REFRESH_DAYS = 90
+
+
+def _aivis_city(r) -> str:
+    """The city for this restaurant's AI-visibility questions: the one
+    stored for its current Place ID, else _city_from_place_id (Places
+    Details, metered), stored when it found one. Only a found city is
+    stored; "" is retried next run, as _city_from_place_id already does."""
+    place_id = getattr(r, "google_place_id", None)
+    if not place_id:
+        return ""
+    try:
+        stored = json.loads(getattr(r, "aivis_city_json", None) or "{}")
+    except (TypeError, ValueError):
+        stored = {}
+    if isinstance(stored, dict) and stored.get("place_id") == place_id and stored.get("city"):
+        try:
+            age = (datetime.utcnow() - datetime.strptime(str(stored.get("at"))[:19], "%Y-%m-%d %H:%M:%S")).days
+        except (TypeError, ValueError):
+            age = None
+        if age is not None and age < AIVIS_CITY_REFRESH_DAYS:
+            return stored["city"]
+    city = _city_from_place_id(place_id)
+    if city:
+        try:
+            _models_mod.update_restaurant(r.id, {"aivis_city_json": json.dumps(
+                {"place_id": place_id, "city": city, "at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")})})
+        except Exception as e:
+            print(f"[aivis] city not stored for rid={getattr(r, 'id', None)}: {e!r}")
     return city
 
 
@@ -7442,10 +7561,120 @@ def _aivis_with_live_listing(payload, r, rid):
     return out
 
 
+def _aivis_state(payload) -> str:
+    """"complete" | "partial" | "not_measured" — what a visibility payload
+    is (AI cost audit 10/7/26 #9, #10). Added beside `partial`, never in
+    place of it: both clients already read `partial`."""
+    if not isinstance(payload, dict) or payload.get("state") == "not_measured":
+        return "not_measured"
+    return "partial" if payload.get("partial") else "complete"
+
+
+def _aivis_social_posts_30d(rid) -> int:
+    """Posts PUBLISHED in the trailing 30 days — a row carries a post_id
+    once a platform accepted it; a draft never counts (audit #31)."""
+    _conn = get_conn()
+    try:
+        return _conn.execute(
+            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','-30 days') "
+            "AND post_id IS NOT NULL AND TRIM(post_id) != ''",
+            (rid,)
+        ).fetchone()[0] or 0
+    finally:
+        _conn.close()
+
+
+# How old a stored run may be and still be served (with its date — both
+# clients say "N days ago — treat it as background" past a week). Past it,
+# a read says "not measured yet" rather than running live (#9).
+AIVIS_SERVE_MAX_DAYS = int(os.getenv("AIVIS_SERVE_MAX_DAYS", "35"))
+
+
+def _aivis_not_measured(r, rid):
+    """No run on record. A read — the Intel GET, Ask's read_ai_visibility —
+    says so and never runs one (AI cost audit 10/7/26 #9): a live run is
+    eight Perplexity queries and 10–30 s on a request thread. The listing
+    checklist is still read from records (no call out)."""
+    payload = {
+        "ok": True, "state": "not_measured", "measured": False,
+        "platform": AIVIS_PLATFORM, "model": AIVIS_MODEL,
+        "restaurant_name": getattr(r, "name", "") or "",
+        "neighborhood": getattr(r, "neighborhood", "") or "",
+        "queries": [], "appeared_count": 0, "total_queries": 0, "answered_queries": 0,
+        "partial": False, "failed_queries": [],
+        "branded_score": None, "branded_queries": 0, "competitor_appearances": [],
+        "ai_score": None, "ai_score_low": None, "ai_score_high": None,
+        **ai_visibility_band(None, None),
+        "reason": ("No AI visibility check is on record yet. The weekly check runs on Mondays; "
+                   "Check runs one now."),
+        "listing_read": {"read": False, "description_len": 0, "phone": False, "website": False,
+                         "has_hours": False},
+        "checklist": [],
+    }
+    try:
+        payload["social_posts_30d"] = _aivis_social_posts_30d(rid)
+    except Exception:
+        payload["social_posts_30d"] = 0
+    return _aivis_with_live_listing(payload, r, rid)
+
+
+def _aivis_serve_stored(rid, r):
+    """A read of AI visibility: the process cache, else the newest stored
+    run (complete or partial, flagged), else "not measured yet" — never a
+    live query (AI cost audit 10/7/26 #9). Served before the rate limit
+    (#98): three cached reads a minute were told "Too many visibility
+    checks"."""
+    _hit = _aivis_cache.get(rid)
+    if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _AIVIS_CACHE_SECS:
+        _cached = _aivis_with_live_listing(dict(_hit[1]), r, rid)
+        _cached["cached"] = True
+        _cached["state"] = _aivis_state(_cached)
+        _cached["measured"] = True
+        return _cached, 200
+    # The process cache is gone after every deploy; the recorded run is
+    # still the answer (MOD-INT-5). The weekly job keeps it current; the
+    # Refresh button forces a new run.
+    try:
+        from models import latest_ai_visibility_payload
+        _stored = latest_ai_visibility_payload(rid, max_age_days=AIVIS_SERVE_MAX_DAYS)
+    except Exception:
+        _stored = None
+    if _stored:
+        _cached = dict(_stored[0])
+        _cached["cached"] = True
+        _cached["measured_at"] = _stored[1]
+        _cached["state"] = _aivis_state(_cached)
+        _cached["measured"] = True
+        _aivis_cache[rid] = (datetime.utcnow(), dict(_cached))
+        return _aivis_with_live_listing(_cached, r, rid), 200
+    return _aivis_not_measured(r, rid), 200
+
+
+def _aivis_week(stamp, r) -> tuple:
+    """(ISO year, ISO week) of a UTC "YYYY-MM-DD HH:MM:SS" stamp (or of now,
+    for None) on the restaurant's own calendar — the week the scheduler's
+    weekly pass claims."""
+    from datetime import timezone as _tz
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo(getattr(r, "timezone", None) or "America/Chicago")
+    except Exception:
+        tz = ZoneInfo("America/Chicago")
+    if stamp:
+        when = datetime.strptime(str(stamp)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz.utc)
+    else:
+        when = datetime.now(_tz.utc)
+    return tuple(when.astimezone(tz).isocalendar()[:2])
+
+
 def _do_ai_visibility_inner(rid, force=False):
+    """force=False is a READ: cache, stored run, or "not measured yet" —
+    never a live query (AI cost audit 10/7/26 #9). force=True is a live run:
+    the owner's Check / Refresh (the POST twins) and the scheduler's weekly
+    pass (scheduler.run_weekly_ai_visibility). A live run whose newest
+    stored run is a partial one from this week re-asks only the questions
+    that did not come back (#10)."""
     from ai_utils import ai_rate_limited, ai_budget_exceeded
-    if ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
-        return {"ok": False, "error": "Too many visibility checks — please wait a moment and try again."}, 200
 
     # The restaurant is looked up BEFORE the cache is read. The cache lives
     # six hours in process memory, so a restaurant that was deleted or
@@ -7458,26 +7687,11 @@ def _do_ai_visibility_inner(rid, force=False):
         return {"ok": False, "error": "Restaurant not found"}, 404
 
     if not force:
-        _hit = _aivis_cache.get(rid)
-        if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _AIVIS_CACHE_SECS:
-            _cached = _aivis_with_live_listing(dict(_hit[1]), r, rid)
-            _cached["cached"] = True
-            return _cached, 200
-        # The process cache is gone after every deploy; the recorded run is
-        # still the answer. Serving it beats eight live Perplexity queries on
-        # a request thread (MOD-INT-5). The weekly job keeps it current; the
-        # Refresh button forces a new run.
-        try:
-            from models import latest_ai_visibility_payload
-            _stored = latest_ai_visibility_payload(rid)
-        except Exception:
-            _stored = None
-        if _stored:
-            _cached = dict(_stored[0])
-            _cached["cached"] = True
-            _cached["measured_at"] = _stored[1]
-            _aivis_cache[rid] = (datetime.utcnow(), dict(_cached))
-            return _aivis_with_live_listing(_cached, r, rid), 200
+        return _aivis_serve_stored(rid, r)
+
+    # The burst limit guards live runs only: a read costs nothing (#98).
+    if ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
+        return {"ok": False, "error": "Too many visibility checks — please wait a moment and try again."}, 200
 
     # Perplexity is a paid dependency like any other, so it answers to the
     # same ceiling. It used to be exempt purely because it wasn't Claude.
@@ -7512,7 +7726,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # a neighbourhood-only profile could never register a mention and scored
     # zero for a reason that had nothing to do with the restaurant. The
     # profile field stays as the fallback for a restaurant with no Place ID.
-    resolved_city = _city_from_place_id(getattr(r, "google_place_id", None))
+    resolved_city = _aivis_city(r)
     city_source = "google" if resolved_city else ("profile" if neighborhood else "")
     if resolved_city:
         city = city_full = resolved_city
@@ -7604,6 +7818,26 @@ def _do_ai_visibility_inner(rid, force=False):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     _pplx_key = os.getenv("PERPLEXITY_API_KEY", "")
     appeared_count = 0
+    # No backoff, and no new send, past this (#7).
+    _run_deadline = _pplx_time.monotonic() + AIVIS_RUN_MAX_SECS
+
+    # A partial run stored THIS week is completed, not re-run (AI cost audit
+    # 10/7/26 #10): the questions it answered are kept as answered, only the
+    # ones that did not come back are asked again. Matched by the question's
+    # own text, so a profile change since (a new city, a new cuisine) asks
+    # its changed questions afresh. An older partial run is history: a new
+    # week's run asks everything.
+    _reuse_run_id, _reused = None, {}
+    try:
+        from models import latest_partial_ai_visibility_run
+        _prev = latest_partial_ai_visibility_run(rid)
+        if _prev and _aivis_week(_prev["created_at"], r) == _aivis_week(None, r):
+            _reuse_run_id = _prev["id"]
+            _reused = {q.get("query"): q for q in (_prev["payload"].get("queries") or [])
+                       if isinstance(q, dict) and q.get("ok") and q.get("query")}
+    except Exception as _pe:
+        print(f"[aivis] stored partial run unreadable for rid={rid}: {_pe!r}")
+        _reuse_run_id, _reused = None, {}
 
     def _norm(s):
         return re.sub(r"[^a-z0-9 ]", "", (s or "").lower().replace("’", "").replace("’", ""))
@@ -7744,15 +7978,22 @@ def _do_ai_visibility_inner(rid, force=False):
         answer, sources, err, reason = "", [], None, None
         sends, tin, tout = 0, 0, 0
         _started = _pplx_time.time()
-        # One logical query = one ledger row (AIOPS-15): up to two sends, the
-        # second one only after a failure, recorded as its attempts with the
-        # whole wait as its latency — each retry used to be its own row.
-        for _attempt in (1, 2):
+        # One logical query = one ledger row (AIOPS-15): its sends recorded
+        # as its attempts with the whole wait as its latency — each retry
+        # used to be its own row. A 429 gets up to AIVIS_429_MAX_SENDS sends
+        # (#7); any other failure one retry; a rejected key none.
+        while True:
             if _ai_ops.breaker_state("perplexity")[0] == "open":
                 # A key Perplexity rejected, or a run of failures: the rest of
                 # the run fails fast rather than pacing and retrying (#151).
                 reason = reason or "breaker"
                 err = err or "the Perplexity breaker is open"
+                break
+            if _pplx_time.monotonic() >= _run_deadline:
+                # Queued behind other queries' waits past the run's bound:
+                # not sent, and said so rather than counted as a refusal.
+                reason = reason or "deadline"
+                err = (err + " — " if err else "") + "the run's time ran out"
                 break
             sends += 1
             try:
@@ -7789,23 +8030,27 @@ def _do_ai_visibility_inner(rid, force=False):
                           or ("server" if resp.status_code >= 500 else "no_answer"))
                 if resp.status_code in (401, 403):
                     break       # a rejected key is not fixed in two seconds
-                if _attempt == 1:
+                if resp.status_code == 429:
                     # _pplx_wait_turn() already keeps sends under the 50 RPM
                     # ceiling, so a 429 here means Perplexity's own window
-                    # hasn't cleared yet — honor its Retry-After when it sends
-                    # one instead of guessing a flat delay.
-                    _delay = 2.0
-                    if resp.status_code == 429:
-                        try:
-                            _delay = max(_delay, float(resp.headers.get("Retry-After", _delay)))
-                        except (TypeError, ValueError, AttributeError):
-                            pass
-                    _pplx_time.sleep(_delay)
+                    # hasn't cleared yet: wait what it says (or back off),
+                    # and hold every other sender in the process meanwhile.
+                    _wait, _why = _pplx_429_wait(resp, sends, _run_deadline)
+                    if _wait is None:
+                        err = f"{err} ({_why})"
+                        break
+                    _pplx_hold(_wait)
+                    _pplx_time.sleep(_wait)
+                    continue
+                if sends >= 2:
+                    break
+                _pplx_time.sleep(2.0)
             except Exception as _qe:
                 err = type(_qe).__name__
                 reason = "timeout" if "timeout" in err.lower() else "connection"
-                if _attempt == 1:
-                    _pplx_time.sleep(2)
+                if sends >= 2:
+                    break
+                _pplx_time.sleep(2)
         _latency = int((_pplx_time.time() - _started) * 1000)
         # Meter it. Perplexity used to sit entirely outside the ledger and
         # the budget — the $10/day and $1,500/month ceilings bound Claude
@@ -7821,8 +8066,10 @@ def _do_ai_visibility_inner(rid, force=False):
                                      error=None if answer else err, reason=None if answer else reason,
                                      attempts=sends, latency_ms=_latency)
             else:
-                _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "breaker",
-                                    detail="the Perplexity breaker is open", vendor="perplexity")
+                # Never sent: the breaker was open or the run's time had run
+                # out (#7) — logged as the one it was.
+                _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, reason or "breaker",
+                                    detail=err or "the Perplexity breaker is open", vendor="perplexity")
         except Exception:
             pass
         if answer:
@@ -7830,7 +8077,7 @@ def _do_ai_visibility_inner(rid, force=False):
         elif reason in ("auth", "permission"):
             _ai_ops._note_provider_error("perplexity", "auth", RuntimeError(err or "rejected"))
             _ai_ops.trip_breaker("perplexity", reason)
-        elif reason and reason != "breaker":
+        elif reason and reason not in ("breaker", "deadline"):
             _ai_ops._breaker_record("perplexity", False, reason=reason)
         if not answer:
             # Perplexity did not answer. That is an outage on our side,
@@ -7862,8 +8109,17 @@ def _do_ai_visibility_inner(rid, force=False):
     # ceiling. A manual pre-submission stagger used to try to approximate
     # this here; it's gone now that the real gate lives in _run_query.
     query_results = [None] * len(queries)
+    # This week's answers from a stored partial run stand; only the rest go
+    # out (#10). `reasked` is what this run actually sent.
+    _to_ask = []
+    for _i, _q in enumerate(queries):
+        _kept = _reused.get(_q["q"])
+        if _kept is not None:
+            query_results[_i] = dict(_kept)
+        else:
+            _to_ask.append(_i)
     with ThreadPoolExecutor(max_workers=3) as _pool:
-        _futures = {_pool.submit(_ai_ops.context_runner(_run_query), _q): _i for _i, _q in enumerate(queries)}
+        _futures = {_pool.submit(_ai_ops.context_runner(_run_query), queries[_i]): _i for _i in _to_ask}
         for _fut in as_completed(_futures):
             i = _futures[_fut]
             try:
@@ -7928,13 +8184,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # post_id once a platform accepted it. Every generated draft used to
     # count, so drafting eight captions and posting none completed "Post
     # consistently on social" (audit #31).
-    _conn = get_conn()
-    social_posts_30d = _conn.execute(
-        "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','-30 days') "
-        "AND post_id IS NOT NULL AND TRIM(post_id) != ''",
-        (rid,)
-    ).fetchone()[0] or 0
-    _conn.close()
+    social_posts_30d = _aivis_social_posts_30d(rid)
 
     # Denominator is the queries that came back, not the ones we sent: a
     # throttled query used to drag the score down and then be written into
@@ -7965,20 +8215,34 @@ def _do_ai_visibility_inner(rid, force=False):
         ai_score_low = max(0, round((_c - _m) * 100))
         ai_score_high = min(100, round((_c + _m) * 100))
 
+    _complete = bool(answered) and len(answered) == len(queries)
+    _failed_qs = [qr.get("query") for qr in query_results if not (qr and qr.get("ok"))]
     _run_id = None
     try:
-        from models import record_ai_visibility_run, record_ai_visibility_queries
-        # A partial run is not a measurement. Show it, don't record it.
-        if ai_score is not None and len(answered) == len(queries):
-            _run_id = record_ai_visibility_run(
-                rid, ai_score, gbp_score,
-                answered=len(discovery), appeared=appeared_count,
-                city_basis=f"{city_source}:{_norm(city)}")
-            # What was asked, what came back, and what grounded it. The runs
-            # table held a score and nothing else, so a change could never be
-            # explained — while the drop alert told the owner to open Intel
-            # and see which questions changed.
-            record_ai_visibility_queries(_run_id, rid, query_results)
+        from models import (record_ai_visibility_run, record_ai_visibility_queries,
+                            update_ai_visibility_run)
+        # A partial run is not a measurement, but it is what was learned
+        # (AI cost audit 10/7/26 #10): stored flagged partial with its
+        # missing questions and NO score in the history column, so it is
+        # served and completed — never compared, trended or alerted on.
+        # Nothing at all came back: nothing to keep (an outage, not a run).
+        if ai_score is not None and answered:
+            _basis = f"{city_source}:{_norm(city)}"
+            _kw = dict(answered=len(discovery), appeared=appeared_count, city_basis=_basis,
+                       partial=not _complete, failed_queries=_failed_qs)
+            if _reuse_run_id:
+                update_ai_visibility_run(_reuse_run_id, ai_score, gbp_score, **_kw)
+                _run_id = _reuse_run_id
+            else:
+                _run_id = record_ai_visibility_run(rid, ai_score, gbp_score, **_kw)
+            if _complete:
+                # What was asked, what came back, and what grounded it. The
+                # runs table held a score and nothing else, so a change could
+                # never be explained — while the drop alert told the owner to
+                # open Intel and see which questions changed. Only a complete
+                # run's questions: the diff and the per-question history
+                # compare runs, and a missing answer is not "not mentioned".
+                record_ai_visibility_queries(_run_id, rid, query_results)
     except Exception as _he:
         print(f"[aivis] history write failed for rid={rid}: {_he}")
 
@@ -7998,6 +8262,15 @@ def _do_ai_visibility_inner(rid, force=False):
         # estimate, not a measurement, and say why.
         "answered_queries": len(discovery),
         "partial": len(answered) < len(queries),
+        # What the run is and which questions did not come back (#9, #10),
+        # added beside `partial`: the clients decode `partial`, and a stored
+        # partial run's missing questions are what the next run re-asks.
+        "state": "complete" if _complete else "partial",
+        "measured": True,
+        "failed_queries": _failed_qs,
+        # How many answers this run kept from this week's stored partial
+        # run instead of asking again (0 on a fresh run).
+        "reused_answers": len(queries) - len(_to_ask),
         # Branded recall, kept separate from discovery. None when no branded
         # question was asked or answered.
         "branded_score": branded_score,
@@ -8064,10 +8337,13 @@ def _do_ai_visibility_inner(rid, force=False):
         "resp_rate": resp_rate,
         "listing_read": _listing["listing_read"],
     }
-    # Only a COMPLETE run is worth caching. Caching a partial one would pin a
-    # Perplexity outage in place for six hours and make it look like the
-    # restaurant's real standing.
-    if not _payload["partial"]:
+    # A complete run is cached; a partial one only when it was stored — it
+    # is then what every read serves anyway, flagged partial (`state`,
+    # `partial`, claim_kinds) and never compared (AI cost audit 10/7/26 #10).
+    # Not caching it is what sent every Intel open and Ask call back to
+    # eight live queries. An outage (nothing came back) is neither: the last
+    # stored run keeps being served.
+    if _complete or _run_id:
         _aivis_cache[rid] = (datetime.utcnow(), dict(_payload))
     if _run_id:
         try:

@@ -1631,11 +1631,19 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     # separate five-minute caches and got two different answers. The read
     # is stored with the model's own text, so a new engine version
     # re-validates it (no model call) instead of serving the old verdict.
+    # Keyed on the data, not the date (AI cost audit 10/7/26 #27): "Today's
+    # date", the DATA STATE block's ages and "oldest count ..., 6 days ago"
+    # changed the key every morning, so the same counts paid for a new read
+    # daily. Out of the key: the date, the block (its states, dates and
+    # decision go in instead) and every "N days ago"; in it: the ISO week
+    # (the read speaks of "this week") and every figure and date of data.
     _fp = None
     if restaurant_id:
         try:
             import insight_store as _ist
-            _fp = _ist.fingerprint(prompt)
+            _iso_inv = _now_inv.isocalendar()
+            _fp = _ist.read_fingerprint(prompt, readiness=_ready_food, today=today_inv,
+                                        week=f"{_iso_inv[0]}-W{_iso_inv[1]:02d}")
             _stored = _ist.get(restaurant_id, "food", _fp, revalidate=lambda raw: finish_food_read(raw, _ctx))
             if isinstance(_stored, str) and _stored.strip():
                 return _stored

@@ -2223,11 +2223,20 @@ SCHEDULE_SYSTEM_RULES = ("You write restaurant schedules in the exact output for
                          + STAFF_CONSTRAINTS_RULE)
 
 
-def labor_memory_block(restaurant_id, analysis=None, surface="labor_read") -> tuple:
+def labor_memory_block(restaurant_id, analysis=None, surface="labor_read", key_out=None) -> tuple:
     """(prompt block, [the fenced lines' own words]) — memory_context for
     the labor read, the subjects in play being labor and the weekdays this
     period ran over target on. ("", []) when there is nothing to say or the
-    assembler is unavailable; never raises."""
+    assembler is unavailable; never raises.
+
+    `key_out` (a dict), when given, gets "key_block": the same memory LESS
+    its last-claim section — what the read's stored copy is keyed on (AI
+    cost audit 10/7/26 #11). The last claim is the read's own earlier words
+    and their live state; keying on it made every read change its own key,
+    so the next load missed the store and paid for another one (Simple
+    EJ's: eight labor reads on 9/30/26)."""
+    if key_out is not None:
+        key_out["key_block"] = ""
     if not restaurant_id:
         return "", []
     a = analysis or {}
@@ -2258,6 +2267,11 @@ def labor_memory_block(restaurant_id, analysis=None, surface="labor_read") -> tu
              "lines above or a measured line here. " + MEMORY_FENCE_NOTE + "):\n" + mem.text)
     words = [str(l.get("text") or "") for lines in (getattr(mem, "sections", None) or {}).values()
              for l in lines if isinstance(l, dict) and not l.get("trusted")]
+    if key_out is not None:
+        try:
+            key_out["key_block"] = mem.text_without(("last_claim",))
+        except Exception:
+            key_out["key_block"] = mem.text
     return block, words
 
 
@@ -2499,7 +2513,8 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     # it (TEAM_VIEWER): one stored read serves every login with the labor
     # view, so a principal-only line ("letting Dana go in October") never
     # reaches words a manager reads.
-    memory_block, memory_untrusted = labor_memory_block(restaurant_id, analysis)
+    _mem_key = {}
+    memory_block, memory_untrusted = labor_memory_block(restaurant_id, analysis, key_out=_mem_key)
 
     # The Labor read's lines are recommendations on the ledger now
     # (insight_labor:<hash>, answered on web and iOS like Food's): what the
@@ -2592,11 +2607,21 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # (superseding every unanswered line) and a reset "as of". The model's
     # own text is stored beside it, so a new validation engine re-validates
     # it without a model call. labor._NOTE_CACHE stays a front cache only.
+    # Keyed on the DATA the prompt carries, not the prompt itself (AI cost
+    # audit 10/7/26 #11): the memory block less this read's own last claim
+    # (which every read rewrites), the DATA STATE as states and dates rather
+    # than ages, and the restaurant's local day (the read says "today").
+    # The figures, the answered lines and every other memory line — an
+    # owner rule, a decision — are still in it, so those still make a new
+    # read.
     _fp = None
     if restaurant_id:
         try:
             import insight_store as _ist_lab
-            _fp = _ist_lab.fingerprint(prompt)
+            _key_prompt = (prompt.replace(memory_block, _mem_key.get("key_block") or "")
+                           if memory_block else prompt)
+            _fp = _ist_lab.read_fingerprint(_key_prompt, readiness=_ready_lab,
+                                            extra=(_note_local_day(restaurant_id),))
             stored = _ist_lab.get(restaurant_id, "labor", _fp, revalidate=_finish)
             if isinstance(stored, str) and stored.strip():
                 try:

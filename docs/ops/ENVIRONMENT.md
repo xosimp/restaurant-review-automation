@@ -246,6 +246,9 @@ Changed or added by the AI cost audit (10/7/26):
 | `AI_UNPAID_DAILY_BUDGET_USD` | `"2"` | ai_utils.py |
 | `AI_UNPAID_MONTHLY_BUDGET_USD` | `"25"` | ai_utils.py |
 | `AI_VISIBILITY_CACHE_SECS` | `"21600"` | client_api.py |
+| `AIVIS_429_MAX_SENDS` | `"4"` | client_api.py — sends one visibility question gets when Perplexity answers 429 (AI cost audit 10/7/26 #7) |
+| `AIVIS_RUN_MAX_SECS` | `"75"` | client_api.py — one visibility run's wall clock; no backoff or new send past it |
+| `AIVIS_SERVE_MAX_DAYS` | `"35"` | client_api.py — how old a stored visibility run a read still serves (else "not measured yet"; #9) |
 | `ALERT_STORM_PER_HOUR` | `"10"` | notify.py |
 | `ASK_LOOP_MAX_SECONDS` | `"60"` | ask_cavnar.py |
 | `ASK_MAX_CONCURRENT` | `"2"` | client_api.py |
@@ -277,7 +280,9 @@ Changed or added by the AI cost audit (10/7/26):
 | `METRICS_SYNC_SECONDS` | `"1800"` | scheduler.py |
 | `OPTIN_INVITE_SECONDS` | `"240"` | guest_marketing.py |
 | `POS_RETRY_MAX_SECONDS` | `str(15 * 60` | scheduler.py |
+| `PPLX_BACKOFF_BASE` | `"2"` | client_api.py — first step of a 429's exponential backoff (with jitter) when no Retry-After came |
 | `PPLX_MIN_REQUEST_INTERVAL` | `"1.3"` | client_api.py |
+| `PPLX_RETRY_AFTER_MAX` | `"8"` | client_api.py — the longest Retry-After a 429 is waited out; a longer one gives the question up |
 | `PRICE_PERPLEXITY_SEARCH` | `"0.005"` | ai_utils.py |
 | `PRICE_PLACES_DETAILS` | `"0.017"` | ai_utils.py |
 | `PRICE_PLACES_NEARBY` | `"0.032"` | ai_utils.py |

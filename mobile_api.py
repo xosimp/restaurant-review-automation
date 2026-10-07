@@ -5702,7 +5702,9 @@ def mobile_ai_visibility(current_user):
     style queries, plus a 10-item GBP/profile completeness checklist. Shares
     the same 3-call/60s rate limit as the web route since each call fires
     real, billable Perplexity queries."""
-    # POST (Check / Re-run) runs live, as on the web; GET serves the recorded run.
+    # POST (Check / Re-run) runs live, as on the web; GET serves the recorded
+    # run, or "not measured yet" (state "not_measured") — never a live run
+    # (AI cost audit 10/7/26 #9).
     payload, status = _capi._do_ai_visibility(current_user["restaurant_id"], force=request.method == "POST")
     payload = _capi.present_ai_visibility_roadmap(current_user["restaurant_id"], payload, current_user.get("id"))
     return jsonify(**payload), status

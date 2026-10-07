@@ -178,7 +178,12 @@ def test_a_partial_visibility_run_is_shown_but_not_recorded():
     where an outage became a permanent dip in the owner's trend line."""
     src = open("client_api.py").read()
     assert "len(answered)" in src, "the score still divides by queries sent, not answered"
-    assert "if ai_score is not None and len(answered) == len(queries)" in src
+    # AI cost audit 10/7/26 #10: a partial run is now STORED (so it is served
+    # and completed rather than re-run), but its history column carries no
+    # score — every trend and alert reads `ai_score IS NOT NULL`.
+    assert "_complete = bool(answered) and len(answered) == len(queries)" in src
+    models_src = open("models.py").read()
+    assert "None if partial else ai_score" in models_src
 
 
 # ══ P1-4 · scheduled_hours comes from the shift times, not the model ═══════

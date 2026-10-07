@@ -65,7 +65,13 @@ MIN_DRIVER_DOLLARS = 15.0
 # How far back the CFO read looks, and how long one stays fresh. Food cost
 # moves on the timescale of deliveries and counts, not minutes.
 DIAGNOSIS_WINDOW_DAYS = 28
+# How long since the read was last CHECKED against its drivers (written, or
+# found unchanged by a pass — confirmed_at) before it reads as stale.
 DIAGNOSIS_TTL_HOURS = 24
+# Reused while the ranked drivers it was written from are unchanged (AI cost
+# audit 10/7/26 #28): the 24-hour TTL on a daily job rewrote it every day
+# from the same evidence. Past this age it is rewritten regardless.
+DIAGNOSIS_REFRESH_DAYS = 7
 
 # A month-end projection needs enough of the month behind it to mean anything.
 # Three days into a month, the run rate is noise.
@@ -1894,10 +1900,12 @@ def build_evidence(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) -> dict:
     """Produce and store the root-cause read for one restaurant's food cost.
 
-    One Sonnet call. Skips when a stored diagnosis is still inside
-    DIAGNOSIS_TTL_HOURS and the top driver has not moved — a cause re-derived
-    hourly is the same cause in different words, which reads as instability
-    rather than insight.
+    One Sonnet call. Skips when the stored diagnosis was written from the
+    same ranked drivers (driver_evidence_hash) and is younger than
+    DIAGNOSIS_REFRESH_DAYS — or, as before, is inside DIAGNOSIS_TTL_HOURS
+    with the same lead driver — because a cause re-derived daily is the same
+    cause in different words, which reads as instability rather than
+    insight (AI cost audit 10/7/26 #28). A skipped read is marked checked.
     """
     import os
     import anthropic
@@ -1927,10 +1935,19 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         retire_diagnosis(restaurant_id, f"{lead or 'its lead driver'} is no longer a ranked cost driver",
                          db_path=db_path)
         prior = None
-    if not force and prior and not prior.get("stale"):
+    ev_hash = driver_evidence_hash(drv)
+    if not force and prior:
+        # The same ranked drivers, figures and evidence: the same cause.
+        # Checked, not rewritten (AI cost audit 10/7/26 #28) — or, as
+        # before, inside the TTL with the same lead driver.
+        import review_intelligence as _ri_reuse
         prior_top = (prior.get("drivers") or [{}])[0].get("label")
-        if prior_top == drv["drivers"][0]["label"]:
-            return prior
+        reuse, stamp = _ri_reuse.diagnosis_reusable(
+            _diagnosis_key(restaurant_id, db_path), ev_hash, prior_top == drv["drivers"][0]["label"],
+            refresh_days=DIAGNOSIS_REFRESH_DAYS, ttl_hours=DIAGNOSIS_TTL_HOURS)
+        if reuse:
+            _confirm_diagnosis(restaurant_id, ev_hash if stamp else None, db_path)
+            return dict(prior, stale=False, stale_note=None)
 
     # The readiness gate before the call (DH5-2). A diagnosis is written by
     # the scheduler with nobody reading it first and then re-served for a
@@ -1995,7 +2012,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     # that counts one ingredient up to four times. The month-over-month move
     # is its own line in the profitability read, labelled as such.
     at_stake = drv.get("total_monthly_deduplicated", drv["total_monthly"])
-    _save_diagnosis(restaurant_id, drv, result, at_stake, db_path)
+    _save_diagnosis(restaurant_id, drv, result, at_stake, db_path, evidence_hash=ev_hash)
     result.update({"drivers": drv["drivers"][:6], "dollars_at_stake": round(at_stake, 2),
                    "window_days": DIAGNOSIS_WINDOW_DAYS, "stale": False, "ok": True})
     return result
@@ -2141,7 +2158,7 @@ def _diagnosis_memory(restaurant_id, drv, db_path=DB_PATH) -> str:
                             db_path=db_path)
 
 
-def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
+def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path, evidence_hash=None):
     conn = get_conn(db_path)
     try:
         conn.execute("""
@@ -2149,9 +2166,10 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
                 (restaurant_id, window_days, headline, cause, alternative_cause,
                  what_would_confirm, drivers_json, operational_evidence, confidence,
                  recommended_action, expected_outcome, dollars_at_stake, unsupported_figures,
-                 model_confidence, generated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+                 model_confidence, evidence_hash, generated_at, confirmed_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))
             ON CONFLICT(restaurant_id, window_days) DO UPDATE SET
+                evidence_hash=excluded.evidence_hash, confirmed_at=excluded.confirmed_at,
                 headline=excluded.headline, cause=excluded.cause,
                 alternative_cause=excluded.alternative_cause,
                 what_would_confirm=excluded.what_would_confirm,
@@ -2173,11 +2191,64 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
               # Kept with the read so every surface shows the caveat (M-17).
               json.dumps(result.get("unsupported_figures")) if result.get("unsupported_figures") else None,
               # The model's own band, apart from the capped one (H1).
-              result.get("model_confidence")))
+              result.get("model_confidence"),
+              # The drivers it was written from (#28).
+              evidence_hash))
         conn.commit()
     finally:
         conn.close()
     record_diagnosis_read(restaurant_id, drv, result, at_stake, db_path=db_path)
+
+
+def driver_evidence_hash(drv) -> str:
+    """A hash of the ranked drivers a food diagnosis is written from — each
+    one's kind, label, item, monthly dollars and evidence line, in rank
+    order (AI cost audit 10/7/26 #28). The same drivers are the same
+    evidence; a new count, waste entry or price moves a figure in them."""
+    import hashlib
+    rows = [[d.get("kind"), d.get("label"), d.get("item"), round(_f(d.get("dollars_monthly")), 2), d.get("evidence")]
+            for d in ((drv or {}).get("drivers") or [])[:6] if isinstance(d, dict)]
+    return hashlib.sha256(json.dumps(rows, default=str).encode("utf-8")).hexdigest()[:20]
+
+
+def _diagnosis_key(restaurant_id, db_path=DB_PATH):
+    """{"evidence_hash", "generated_at"} of the stored read, or None —
+    what the reuse rule reads. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return None
+    try:
+        row = _one_row(conn, "SELECT evidence_hash, generated_at FROM food_cost_diagnoses WHERE restaurant_id=? "
+                             "AND window_days=?", (restaurant_id, DIAGNOSIS_WINDOW_DAYS))
+        return {"evidence_hash": row["evidence_hash"], "generated_at": row["generated_at"]} if row else None
+    except Exception as e:
+        print(f"[food_cost_intelligence] diagnosis key unreadable for {restaurant_id}: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def _confirm_diagnosis(restaurant_id, evidence_hash=None, db_path=DB_PATH):
+    """A pass found the read's drivers unchanged: `confirmed_at` is now
+    (get_diagnosis reads staleness from the last check), the words and
+    their date untouched. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return
+    try:
+        sets, args = "confirmed_at=datetime('now')", []
+        if evidence_hash:
+            sets += ", evidence_hash=?"
+            args.append(evidence_hash)
+        conn.execute(f"UPDATE food_cost_diagnoses SET {sets} WHERE restaurant_id=? AND window_days=?",
+                     (*args, restaurant_id, DIAGNOSIS_WINDOW_DAYS))
+        conn.commit()
+    except Exception as e:
+        print(f"[food_cost_intelligence] diagnosis not confirmed for {restaurant_id}: {e}")
+    finally:
+        conn.close()
 
 
 def record_diagnosis_read(restaurant_id, drv, result, at_stake=None, db_path=DB_PATH):
@@ -2286,7 +2357,18 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         age_h = (datetime.utcnow() - when).total_seconds() / 3600.0
     except (ValueError, TypeError):
         age_h = None
-    stale = bool(age_h is None or age_h > DIAGNOSIS_TTL_HOURS)
+    # Stale from the last CHECK, not the words' age (AI cost audit 10/7/26
+    # #28): a read a pass found resting on the same drivers this morning is
+    # current, though written days ago.
+    check_h = age_h
+    _checked = row["confirmed_at"] if "confirmed_at" in row.keys() else None
+    if _checked:
+        try:
+            check_h = (datetime.utcnow() - datetime.strptime(
+                str(_checked).replace("T", " ")[:19], "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600.0
+        except (ValueError, TypeError):
+            check_h = age_h
+    stale = bool(check_h is None or check_h > DIAGNOSIS_TTL_HOURS)
     if stale and not include_stale:
         return None
 

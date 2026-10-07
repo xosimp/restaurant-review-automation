@@ -301,7 +301,10 @@ def test_every_generator_the_reports_name_reads_memory_context():
     assert 'diagnosis_memory(restaurant_id, "review_diagnosis"' in inspect.getsource(review_intelligence)
     assert 'diagnosis_memory(restaurant_id, "food_diagnosis"' in inspect.getsource(food_cost_intelligence)
     import labor
-    assert 'labor_memory_block(restaurant_id, analysis)' in inspect.getsource(labor.get_claude_insights)
+    # key_out (AI cost audit 10/7/26 #11): the same block, less the read's own
+    # last claim, is what its stored copy is keyed on.
+    assert 'labor_memory_block(restaurant_id, analysis, key_out=_mem_key)' in inspect.getsource(
+        labor.get_claude_insights)
     # The four marketing generators all take the block: the post and the
     # calendar (marketing), the Studio text (guest_marketing), the newsletter
     # (guest_email).

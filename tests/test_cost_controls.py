@@ -133,13 +133,17 @@ def test_visibility_has_a_cache_and_a_budget_gate():
     assert "ai_budget_exceeded" in src, "Perplexity still bypasses the ceiling"
 
 
-def test_a_partial_run_is_never_cached():
+def test_an_outage_is_never_cached_and_a_partial_run_only_once_stored():
     """Caching a Perplexity outage would pin it in place for six hours and
-    make it look like the restaurant's real standing."""
+    make it look like the restaurant's real standing. A partial run used to
+    be dropped too — so every read re-ran all eight queries live (AI cost
+    audit 10/7/26 #10). It is now cached only when it was stored, flagged
+    partial; an outage (nothing came back) is neither stored nor cached."""
     import inspect
     import client_api
     src = inspect.getsource(client_api._do_ai_visibility_inner)
-    assert 'if not _payload["partial"]' in src
+    assert "if _complete or _run_id:" in src
+    assert "if ai_score is not None and answered:" in src
 
 
 def test_the_cache_window_is_shorter_than_a_day():
