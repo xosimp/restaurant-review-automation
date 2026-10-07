@@ -7065,6 +7065,7 @@ def _city_from_place_id(place_id: str) -> str:
     if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _CITY_CACHE_SECS:
         return _hit[1]
     city = ""
+    state = ""
     settled = False     # an answer worth remembering, found or not
     try:
         key = config.google_places_key()
@@ -7081,9 +7082,10 @@ def _city_from_place_id(place_id: str) -> str:
                 settled = True
                 for comp in (data.get("result", {}).get("address_components") or []):
                     types = comp.get("types") or []
-                    if "locality" in types:
+                    if "administrative_area_level_1" in types and not state:
+                        state = comp.get("short_name") or ""
+                    if "locality" in types and not city:
                         city = comp.get("long_name") or ""
-                        break
                     if not city and "postal_town" in types:
                         city = comp.get("long_name") or ""
             elif status in ("NOT_FOUND", "INVALID_REQUEST", "ZERO_RESULTS"):
@@ -7094,8 +7096,19 @@ def _city_from_place_id(place_id: str) -> str:
     # cached as "no city" for a day, which scored every run in it as zero
     # (MOD-INT-4); it is retried on the next call instead.
     if settled:
-        _city_cache[place_id] = (datetime.utcnow(), city)
+        _city_cache[place_id] = (datetime.utcnow(), city, state)
     return city
+
+
+def _state_from_place_id(place_id: str) -> str:
+    """The state Google has for this listing ("IL"), from the lookup
+    _city_from_place_id just made; "" when there was none. Every query names
+    it: "St. Charles" alone is read as St. Charles, Missouri (Simple EJ's,
+    10/7/26), and many US town names repeat."""
+    _hit = _city_cache.get(place_id) if place_id else None
+    if _hit and len(_hit) > 2 and (datetime.utcnow() - _hit[0]).total_seconds() < _CITY_CACHE_SECS:
+        return _hit[2] or ""
+    return ""
 
 
 def _aivis_listing(r, rid, gbp_data, gbp_read, gbp_connected, stale_read=False):
@@ -7476,7 +7489,11 @@ def _do_ai_visibility_inner(rid, force=False):
     resolved_city = _city_from_place_id(getattr(r, "google_place_id", None))
     city_source = "google" if resolved_city else ("profile" if neighborhood else "")
     if resolved_city:
-        city = city_full = resolved_city
+        # The city alone matches mentions (an answer says "St. Charles"); the
+        # queries carry the state, so a model never answers for the wrong one.
+        city = resolved_city
+        _state = _state_from_place_id(getattr(r, "google_place_id", None))
+        city_full = f"{resolved_city}, {_state}" if _state else resolved_city
     else:
         city = neighborhood.split("—")[0].split(",")[0].strip() if neighborhood else ""
         city_full = neighborhood.split("—")[0].strip() if neighborhood else ""
