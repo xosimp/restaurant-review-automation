@@ -264,8 +264,34 @@ def _times_rule(structured: bool, enums: bool = True) -> str:
             "\"9:30pm\" — never 24-hour time.")
 
 
-def _output_text(structured: bool, enums: bool = True) -> str:
-    if structured:
+def _output_text(structured: bool, enums: bool = True, contract: str = "schema") -> str:
+    times = "from the schema's clock times" if enums else "as 12-hour clock times with am/pm"
+    if structured and contract == "compact":
+        # The same rows with one-letter keys (schedule_output.ROW_KEYS — AI
+        # cost audit 10/7/26 #70): the key names were a fifth of every row.
+        spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date of THIS REQUEST "
+                "that you staff: its `date` — the ISO date alone, without its weekday — and its `shifts`, each shift "
+                "written with one-letter keys: `e` the employee exactly as the ROSTER spells them, `r` the role, `s` "
+                "the start and `t` the end " + times + " (an end at or before the start runs past midnight), and `n` "
+                "the note when one applies — the weekday and the hours are worked out from the date and the times, so "
+                "write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use "
+                "it to report what the week misses — every requirement, target, floor and request the finished week "
+                "does not meet is checked in code and shown to the owner. Write the JSON object and nothing else.")
+    elif structured and contract == "shape":
+        # The shape alone (#69): code chooses who works each slot
+        # (schedule_engine.assign_shape_slots, the solver).
+        spec = ("OUTPUT — JSON only, matching the schema you were given. You write the SHAPE of each day, never "
+                "names: who works each slot is chosen afterwards in code, from the ROSTER, against every rule — "
+                "availability, hours, rest, overtime, the roles each person can work, the manager and closer rules. "
+                "`days` has one entry per date of THIS REQUEST that you staff: its `date` — the ISO date alone, "
+                "without its weekday — and its `slots`, each written with one-letter keys: `r` the role, `s` the "
+                "start and `t` the end " + times + " (an end at or before the start runs past midnight), `c` how many "
+                "people work exactly that role and those times (a whole number, 1 or more), and `n` the note when "
+                "one applies. Size each day from SHIFT REQUIREMENTS and the ROSTER: never more slots of a role at "
+                "once than the people who can work that role and are available that day. `summary` is at most three "
+                "bullets: the week's biggest decisions and why. Do not use it to report what the week misses — it "
+                "is checked in code and shown to the owner. Write the JSON object and nothing else.")
+    elif structured:
         spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date of THIS REQUEST "
                 "that you staff: its `date` — the ISO date alone, without its weekday — and its `shifts`, each shift's "
                 "`employee` exactly as the ROSTER spells them, its `role`, and its `start` and `end` "
@@ -400,7 +426,7 @@ PRIORITIES = (
 _STATIC = {}
 
 
-def static_block(structured: bool = True, note_words: str = "", enums: bool = True) -> str:
+def static_block(structured: bool = True, note_words: str = "", enums: bool = True, contract: str = "schema") -> str:
     """The standing instructions — byte-identical for every restaurant and
     every call on one output contract, so it is cached (PR-26) — ending in
     PRIORITIES, which the restaurant's own standing rules follow (PR-2).
@@ -408,15 +434,29 @@ def static_block(structured: bool = True, note_words: str = "", enums: bool = Tr
     (schedule_output.NOTE_VALUES), passed by the caller. `enums` False is
     the structured shape without its lists (labor's schema_enums=False
     fallback): the times are not "from the schema's list" there, since
-    there is none (schedule re-audit 10/4/26 PROMPT-7)."""
+    there is none (schedule re-audit 10/4/26 PROMPT-7). `contract` is the
+    structured contract's key spelling (schedule_output.CONTRACTS — AI cost
+    audit 10/7/26 #69, #70): "schema" is byte-identical to what it was;
+    "compact" and "shape" change OUTPUT, and "shape" the one LAYOUT line
+    that says who chooses the people."""
     enums = bool(enums) or not structured
-    key = (bool(structured), note_words, enums)
+    contract = contract if (structured and contract in ("compact", "shape")) else "schema"
+    key = (bool(structured), note_words, enums, contract)
     if key not in _STATIC:
+        layout = LAYOUT if contract != "shape" else LAYOUT.replace(LAYOUT_JUDGEMENT, SHAPE_JUDGEMENT)
         _STATIC[key] = "\n\n".join([
-            LAYOUT, RULE_MARKS, _coverage_text(), DEFAULTS,
+            layout, RULE_MARKS, _coverage_text(), DEFAULTS,
             "NOTES AND TIMES\n" + _notes_rule(structured, note_words) + "\n" + _times_rule(structured, enums),
-            _output_text(structured, enums), _example_text(), PRIORITIES])
+            _output_text(structured, enums, contract), _example_text(), PRIORITIES])
     return _STATIC[key]
+
+
+# What LAYOUT says the model's part is, and what it says on the shape
+# contract, where code chooses the people (#69).
+LAYOUT_JUDGEMENT = "Your part is the judgement: the shape of each day and who works each shift, choosing within the rules below."
+SHAPE_JUDGEMENT = ("Your part is the judgement of the shape: which shifts each day has, in which role, from when to "
+                   "when and how many people on each — choosing within the rules below. Code chooses who works each "
+                   "shift, from the ROSTER, against the same rules.")
 
 
 # ── the ROSTER table (one line per person, PR-33) ────────────────────────────

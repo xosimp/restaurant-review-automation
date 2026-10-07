@@ -4580,8 +4580,15 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
           r.module_marketing, r.owner_name, r.owner_phone,
           r.digest_day, r.digest_enabled, r.created_at,
           r.timezone or "America/Chicago") + alert_vals)
-    conn.commit()
     rid = cur.lastrowid
+    if labor_auto_draft_default(r):
+        # A restaurant made with Labor on drafts next week's schedule by
+        # itself from the start (AI cost audit 10/7/26 #73) — on its spread
+        # draft day (auto_draft_weekday), nothing sent to staff until the
+        # owner publishes, and off in one tap. Every restaurant made before
+        # keeps its own setting: this is the new row's default only.
+        conn.execute("UPDATE restaurants SET auto_draft_schedule=1 WHERE id=?", (rid,))
+    conn.commit()
     conn.close()
     # A restaurant created INTO a location group joins that group's
     # organization, exactly as a group typed in later does (update_restaurant
@@ -4884,6 +4891,17 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         # undo, an admin's edit — and is never replaced by the spread
         # default again (auto_draft_weekday; AI cost audit 10/7/26 #5).
         updates["auto_draft_weekday_chosen"] = 1
+    if "module_labor" in updates and "auto_draft_schedule" not in updates:
+        # Labor switched on for a restaurant made since the default began:
+        # auto-draft comes on with it, unless somebody already chose (AI cost
+        # audit 10/7/26 #73 — _auto_draft_on_labor_switch). Recorded in the
+        # change_log with the switch, like any other change.
+        try:
+            _labor_on = bool(int(updates["module_labor"] or 0))
+        except (TypeError, ValueError):
+            _labor_on = False
+        if _labor_on and _auto_draft_on_labor_switch(restaurant_id, db_path):
+            updates["auto_draft_schedule"] = 1
     # A phone number is kept the way an owner reads it, "(334) 568-9292"
     # (Will, 9/29/26); every reader of owner_phone takes its digits.
     if updates.get("owner_phone"):
@@ -15252,6 +15270,53 @@ def effective_auto_draft_weekday(restaurant_id, stored, chosen) -> int:
         if v in AUTO_DRAFT_WEEKDAYS:
             return v
     return default_auto_draft_weekday(restaurant_id)
+
+
+# Auto-draft on by default for Labor (AI cost audit 10/7/26 #73): a
+# restaurant that turns the Labor module on from this date — created with it,
+# or switching it on later — drafts next week's schedule by itself on its
+# draft day (auto_draft_weekday: the spread default until the owner picks
+# one). Nothing reaches staff until the owner publishes, and the owner turns
+# it off in Labor settings. Never a restaurant made before this date, never
+# a setting somebody has already changed (change_log holds every change of
+# auto_draft_schedule), never a demo.
+AUTO_DRAFT_DEFAULT_SINCE = "2026-10-07"
+
+
+def labor_auto_draft_default(restaurant) -> bool:
+    """Whether a NEW restaurant row starts with auto-draft on: Labor on and
+    not a demo (a demo would buy a draft every week for nobody)."""
+    try:
+        return bool(int(getattr(restaurant, "module_labor", 0) or 0)) and not int(getattr(restaurant, "is_demo", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def _auto_draft_on_labor_switch(restaurant_id, db_path=None) -> bool:
+    """Whether switching Labor on for this restaurant turns auto-draft on
+    with it (#73): Labor is off now, auto-draft is off and nobody ever
+    changed it, the restaurant is no demo and was made on or after
+    AUTO_DRAFT_DEFAULT_SINCE. False whenever any of it cannot be read — an
+    existing restaurant's setting is never flipped on a guess."""
+    try:
+        conn = get_conn(db_path or DB_PATH)
+        try:
+            row = conn.execute("SELECT module_labor, auto_draft_schedule, is_demo, created_at FROM restaurants "
+                               "WHERE id=?", (restaurant_id,)).fetchone()
+            if not row or int(row["module_labor"] or 0) or int(row["auto_draft_schedule"] or 0) \
+                    or int(row["is_demo"] or 0):
+                return False
+            if str(row["created_at"] or "")[:10] < AUTO_DRAFT_DEFAULT_SINCE:
+                return False
+            # Somebody already chose (change_log keeps every change of it):
+            # their choice stands. An unreadable log is no permission.
+            changed = conn.execute("SELECT 1 FROM change_log WHERE restaurant_id=? AND field='auto_draft_schedule' "
+                                   "LIMIT 1", (restaurant_id,)).fetchone()
+            return changed is None
+        finally:
+            conn.close()
+    except Exception:
+        return False
 
 
 def auto_draft_weekday(restaurant) -> int:

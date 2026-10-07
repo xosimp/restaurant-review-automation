@@ -21,11 +21,22 @@ week depends on, before and after the deterministic backstops:
 
 The stored production answer is always scored as the "production" arm, free.
 Prompt variants: "stored" (the exact request the week was generated with),
-"rerender" (the prompt today's code builds from the stored arguments), or
+"rerender" (the prompt today's code builds from the stored arguments),
+"rerender:<contract>" (the same, answered on another output contract —
+schedule_output.CONTRACTS: "rerender:compact" the one-letter-key rows,
+"rerender:shape" the slots without names, whose people are then solved in
+code by schedule_engine.assign_shape_slots against the week's Constraints
+before the week is scored — AI cost audit 10/7/26 #69, #70), or
 "module:function" (a transform of the stored request: fn(request, call) ->
 request; its user turn is the list of text blocks schedule_prompt.
 request_content builds — the standing instructions, the restaurant's week,
-this request). Without --live nothing is called: the plan and an estimate of its
+this request).
+
+    python3 scripts/schedule_model_eval.py --restaurant 5 --tiers T3 \\
+        --prompts rerender,rerender:compact,rerender:shape --live
+
+A shape arm's week also reports `unstaffed_slots`: slots nobody could
+legally work, left out of the week (never filled illegally). Without --live nothing is called: the plan and an estimate of its
 cost (from the stored calls' own token counts) are printed. A live run's calls
 are metered in ai_usage as action "schedule_model_eval" against no restaurant.
 
@@ -47,9 +58,26 @@ PRODUCTION = "production"
 
 # ── arms ───────────────────────────────────────────────────────────────────
 
+def contract_of(prompt):
+    """The output contract a prompt variant asks for: "compact" for
+    "rerender:compact", None for every other variant (the call's own)."""
+    import schedule_output as so
+    head, _, tail = str(prompt or "").partition(":")
+    if head == "rerender" and tail:
+        if tail not in so.CONTRACTS:
+            raise ValueError(f"unknown contract {tail!r} (one of {', '.join(so.CONTRACTS)})")
+        return tail
+    return None
+
+
+def _is_rerender(prompt) -> bool:
+    return prompt == "rerender" or str(prompt or "").startswith("rerender:")
+
+
 def arms_from(models, efforts, prompts) -> list:
-    """[{"name", "model", "effort", "prompt"}] — every combination; a model
-    that takes no effort (the thinking-off shape) gets one arm per prompt."""
+    """[{"name", "model", "effort", "prompt", "contract"}] — every
+    combination; a model that takes no effort (the thinking-off shape) gets
+    one arm per prompt."""
     import labor
     out, seen = [], set()
     for m in models:
@@ -59,7 +87,8 @@ def arms_from(models, efforts, prompts) -> list:
                 if key in seen:
                     continue
                 seen.add(key)
-                out.append({"name": f"{m}/{e or '-'}/{p}", "model": m, "effort": e, "prompt": p})
+                out.append({"name": f"{m}/{e or '-'}/{p}", "model": m, "effort": e, "prompt": p,
+                            "contract": contract_of(p)})
     return out
 
 
@@ -76,7 +105,8 @@ def tier_arms(tiers, prompts) -> list:
             raise ValueError(f"unknown tier {t!r} (one of {sorted(table)})")
         m, e = table[t]["model"], table[t]["effort"]
         for p in prompts:
-            out.append({"name": f"{t}:{m}/{e or '-'}/{p}", "model": m, "effort": e, "prompt": p, "tier": t})
+            out.append({"name": f"{t}:{m}/{e or '-'}/{p}", "model": m, "effort": e, "prompt": p, "tier": t,
+                        "contract": contract_of(p)})
     return out
 
 
@@ -160,8 +190,11 @@ def rows_of_answer(text, call) -> dict:
     import schedule_output as so
     req = call.get("request") or {}
     if (req.get("output_config") or {}).get("format"):
-        p = so.parse_answer(text, dates=call.get("dates"))
-        return {"rows": p["rows"], "complete": p["parsed"] and not p["partial_dates"]}
+        # Read by the contract the call answered on (#69, #70): a shape
+        # answer's slots come back with no names, for run() to assign.
+        p = so.parse_answer(text, dates=call.get("dates"), contract=call.get("contract"))
+        rows = [{k: v for k, v in r.items() if k != "_slot"} for r in p["rows"]]
+        return {"rows": rows, "complete": p["parsed"] and not p["partial_dates"]}
     rows = _csv_rows(text, call.get("dates"))
     return {"rows": rows, "complete": bool(rows)}
 
@@ -171,10 +204,10 @@ def replay_call(call, arm, call_model) -> dict:
     "cost", "seconds", "error"}."""
     t0 = time.time()
     try:
-        if arm["prompt"] == "rerender":
+        if _is_rerender(arm["prompt"]):
             return _rerender(call, arm, call_model, t0)
         request = apply_arm(call.get("request") or {}, arm)
-        if arm["prompt"] not in ("stored", "rerender"):
+        if arm["prompt"] != "stored":
             request = _transform(arm["prompt"])(request, call)
         msg = call_model(request)
     except Exception as e:
@@ -193,11 +226,17 @@ def _rerender(call, arm, call_model, t0) -> dict:
     """The prompt today's code builds from the call's stored arguments,
     answered on `arm`. labor.generate_optimized_schedule runs whole — its
     prompt, schema and parse — with its model call replaced by the arm's
-    and its record of the call switched off (an evaluation is not a week)."""
+    and its record of the call switched off (an evaluation is not a week).
+    An arm with a contract ("rerender:shape") answers on it; a shape
+    answer's slots come back as rows with no names (run() assigns them)."""
     import labor
     inputs = dict(call.get("inputs") or {})
     if not inputs:
         raise ValueError("no stored arguments to rebuild the prompt from")
+    # The arm's contract, else the one the call answered on — never whatever
+    # SCHEDULE_CONTRACT happens to say where the eval runs.
+    import schedule_output as so
+    inputs["contract"] = arm.get("contract") or inputs.get("contract") or so.contract_base(call.get("contract"))
     seen = {}
 
     def _fake_create(client, **kw):
@@ -215,7 +254,8 @@ def _rerender(call, arm, call_model, t0) -> dict:
     msg = seen.get("msg")
     usage = _usage(msg) if msg is not None else {}
     import schedule_versions as sv
-    return {"rows": sv.rows_from_csv(result.get("schedule_csv") or ""),
+    slots = [{k: v for k, v in r.items() if k != "_slot"} for r in result.get("shape_rows") or []]
+    return {"rows": sv.rows_from_csv(result.get("schedule_csv") or "") + slots,
             "complete": not result.get("truncated") and not result.get("partial_dates"),
             "stop_reason": result.get("stop_reason"), "usage": usage,
             "cost": round(_cost(arm["model"], usage), 4) if usage else 0.0,
@@ -229,9 +269,12 @@ def _merge_rows(calls, results) -> list:
     parts written after it)."""
     by_key = {}
     for call, res in zip(calls, results):
-        enum = (((((call.get("request") or {}).get("output_config") or {}).get("format") or {}).get("schema") or {})
-                .get("properties", {}).get("days", {}).get("items", {}).get("properties", {})
-                .get("shifts", {}).get("items", {}).get("properties", {}).get("employee", {}).get("enum"))
+        shift = (((((call.get("request") or {}).get("output_config") or {}).get("format") or {}).get("schema") or {})
+                 .get("properties", {}).get("days", {}).get("items", {}).get("properties", {})
+                 .get("shifts", {}).get("items", {}).get("properties", {}))
+        # The roster enum under the schema's key or the compact one (#70); a
+        # shape schema names nobody, so its call's roster stands in.
+        enum = (shift.get("employee") or shift.get("e") or {}).get("enum")
         chunk = frozenset(enum or [n for n, _r in ((call.get("inputs") or {}).get("roster") or [])])
         dated = {}
         for r in res.get("rows") or []:
@@ -282,6 +325,34 @@ def week_context(generation, calls, db_path=None) -> dict:
     return {"restaurant_id": rid, "week": week, "constraints": c, "roster_roles": dict(roster),
             "hours_budget": budget, "daily_target_hours": targets,
             "trading": [x for x in week if x not in c.closed_dates]}
+
+
+def assign_open_slots(ctx, rows, signals=None) -> tuple:
+    """(rows, unstaffed): rows with no name — a shape answer's slots — given
+    their people by schedule_engine.assign_shape_slots against the week's
+    Constraints, with every named row held as it is; the slots nobody can
+    legally work are left out and counted. Rows that all carry a name come
+    back unchanged."""
+    named = [r for r in rows if (r.get("employee") or "").strip()]
+    open_rows = [r for r in rows if not (r.get("employee") or "").strip()]
+    if not open_rows:
+        return rows, 0
+    from schedule_engine import assign_shape_slots
+    weights = None
+    if signals is None:
+        try:
+            from schedule_engine import quality_inputs_from_db, _quality_signals
+            inputs = quality_inputs_from_db(ctx["restaurant_id"], daily_target_hours=ctx.get("daily_target_hours"),
+                                            week_rows=named)
+            signals, weights = _quality_signals(ctx["restaurant_id"], inputs)
+        except Exception as e:
+            print(f"  slot signals not built ({type(e).__name__}: {e}); solving on the rules alone")
+            c = ctx["constraints"]
+            signals = {"roster": list(getattr(c, "roster_names", None) or []),
+                       "roster_roles": dict(ctx.get("roster_roles") or {})}
+    got = assign_shape_slots(open_rows, named, ctx["constraints"], signals=signals, weights=weights,
+                             roster_roles=ctx.get("roster_roles") or None)
+    return named + got["assigned"], len(got["unassigned"])
 
 
 def default_repair(rows, c, roster_roles=None) -> list:
@@ -390,7 +461,11 @@ def run(weeks, arms, call_model=None, repair=None, live=False, db_path=None) -> 
                 plan.append((arm, [replay_call(call, arm, call_model) for call in calls]))
         for arm, results in plan:
             rows = _merge_rows(calls, results)
+            # A shape arm's slots (or a stored shape week's) are given their
+            # people the way the generation gives them (#69), then scored.
+            rows, unstaffed = assign_open_slots(ctx, rows)
             s = score_week(ctx, rows, repair=repair)
+            s["unstaffed_slots"] = unstaffed
             usage = {k: sum(int((r.get("usage") or {}).get(k) or 0) for r in results)
                      for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")}
             s.update(usage)
@@ -418,7 +493,7 @@ def summarize(scores) -> dict:
             "manager_minutes_before": mean("manager_minutes_before"),
             "manager_minutes_after": mean("manager_minutes_after"),
             "full_time_under_min": mean("full_time_under_min"), "rows_repaired": mean("rows_repaired"),
-            "quality": mean("quality"), "unmet": mean("unmet"),
+            "quality": mean("quality"), "unmet": mean("unmet"), "unstaffed_slots": mean("unstaffed_slots"),
             "input_tokens": mean("input_tokens"), "output_tokens": mean("output_tokens"),
             "seconds": mean("seconds"), "cost": round(total_cost, 4),
             "cost_per_completed_week": round(total_cost / done, 4) if done else None}
@@ -457,7 +532,8 @@ def main(argv=None):
     ap.add_argument("--weeks", type=int, default=12, help="newest stored weeks to replay")
     ap.add_argument("--models", default="claude-opus-5-5,claude-sonnet-5-5")
     ap.add_argument("--efforts", default="high")
-    ap.add_argument("--prompts", default="stored", help="stored, rerender, or module:function (comma-separated)")
+    ap.add_argument("--prompts", default="stored",
+                    help="stored, rerender, rerender:compact, rerender:shape, or module:function (comma-separated)")
     ap.add_argument("--tiers", help="labor_schedule ladder tiers to replay instead of --models/--efforts (e.g. T3,T4)")
     ap.add_argument("--repair", help="module:function(rows, constraints, roster_roles) -> rows")
     ap.add_argument("--live", action="store_true", help="make the calls (costs money); otherwise plan only")
