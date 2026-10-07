@@ -73,6 +73,37 @@ MAX_CSV_ROWS = 25_000
 # slot the turn already holds. Always Ask slot first, then the interactive
 # one, so the two can never be taken in opposite orders.
 ASK_MAX_CONCURRENT = min(int(os.getenv("ASK_MAX_CONCURRENT", "2")), 3)
+
+
+# The chat's rolling summary (a Haiku call, up to ~10s) runs on its own
+# one-thread pool, after the answer: inside the turn it held one of the two
+# Ask slots, and on the JSON fallback it delayed the answer itself (AI cost
+# audit 10/7/26 #31). One worker, so summaries never stack up against each
+# other; under the turn's attribution and correlation id, so the summary call
+# groups with the question it followed.
+_SUMMARY_POOL = None
+_SUMMARY_POOL_LOCK = threading.Lock()
+
+
+def _summarize_later(restaurant_id, conversation_id, user_id=None, correlation_id=None):
+    global _SUMMARY_POOL
+    try:
+        import ai_utils
+        import ask_conversations
+        with _SUMMARY_POOL_LOCK:
+            if _SUMMARY_POOL is None:
+                from concurrent.futures import ThreadPoolExecutor
+                _SUMMARY_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ask-summary")
+
+        def _run():
+            try:
+                ask_conversations.maybe_summarize(restaurant_id, conversation_id, user_id=user_id,
+                                                  correlation_id=correlation_id)
+            except Exception as e:
+                print(f"[ask] conversation summary skipped rid={restaurant_id}: {e}")
+        _SUMMARY_POOL.submit(ai_utils.attributed(_run))
+    except Exception as e:
+        print(f"[ask] conversation summary not queued rid={restaurant_id}: {e}")
 _ASK_SLOTS = threading.BoundedSemaphore(ASK_MAX_CONCURRENT)
 
 def _cache_get(key):
@@ -3051,11 +3082,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
             ops.capture(e, job="ask_cavnar_persist", context=f"restaurant_id={restaurant_id}")
         # Turns that scrolled out of the replayed window go into the chat's
         # rolling summary (only when enough are new; never fails the answer).
-        try:
-            import ask_conversations
-            ask_conversations.maybe_summarize(restaurant_id, conversation_id, user_id=user_id)
-        except Exception as e:
-            print(f"[ask] conversation summary skipped rid={restaurant_id}: {e}")
+        _summarize_later(restaurant_id, conversation_id, user_id, (meta or {}).get("turn_id"))
         # The answer's own concrete suggestions, keyed and presented on "ask"
         # (#48) — read from its text, no second model call.
         import ask_cavnar as _ac_sug
@@ -3181,11 +3208,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             # After the answer is on its way: fold the turns that scrolled out
             # of the replayed window into the chat's rolling summary (memory
             # audit 9/29/26, conversations). Only when enough are new.
-            try:
-                import ask_conversations
-                ask_conversations.maybe_summarize(rid, cid, user_id=uid)
-            except Exception as _se:
-                print(f"[ask] conversation summary skipped rid={rid}: {_se}")
+            _summarize_later(rid, cid, uid, (meta or {}).get("turn_id"))
         except Exception as e:
             from ai_utils import AIBudgetExceeded, AIBusy, AIRefused, user_facing_error
             msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")

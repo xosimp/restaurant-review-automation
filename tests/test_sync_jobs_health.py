@@ -654,6 +654,21 @@ def test_an_ai_visibility_soft_failure_is_captured_and_recorded(tmpdb, monkeypat
     assert dh.health_rows(rid)["visibility"]["last_error"] == "AI budget paused"
 
 
+def test_a_partial_ai_visibility_run_is_not_this_weeks_measurement(tmpdb, monkeypatch):
+    # AI cost audit 10/7/26 #38: a partial run is stored and served flagged,
+    # but the week is not done — the next pass re-asks only what failed.
+    import scheduler, client_api
+    rid = _rid(tmpdb, service_tier="full")
+    monkeypatch.setattr(models, "is_full_tier", lambda r: True)
+    monkeypatch.setattr(client_api, "_do_ai_visibility_inner",
+                        lambda r, force=False: ({"ok": True, "state": "partial", "partial": True}, 200))
+    caught = []
+    monkeypatch.setattr(ops, "capture", lambda e, **k: caught.append(str(e)))
+    out = scheduler.run_weekly_ai_visibility()
+    assert out["ok"] == 0 and out["partial"] == 1 and out["attempted"] == 1 and not caught
+    assert dh.health_rows(rid)["visibility"]["last_error"].startswith("partial run")
+
+
 # ── #40: one primary provider and one eligibility rule ───────────────────────
 
 def test_sync_and_freshness_read_the_same_primary_provider(db_path, monkeypatch):

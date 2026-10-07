@@ -3273,7 +3273,14 @@ def run_weekly_ai_visibility(retry_only=False):
             counts["failed"] += 1
             _record(r.id, "visibility", False, error=str(e), provider="perplexity")
             raise
-        if payload.get("ok"):
+        if payload.get("ok") and (payload.get("partial") or payload.get("state") == "partial"):
+            # Stored and served flagged, but not this week's measurement: not
+            # recorded as done, so the next pass re-asks only the questions
+            # that failed (AI cost audit 10/7/26 #38). Not a job failure either.
+            counts["partial"] = counts.get("partial", 0) + 1
+            _record(r.id, "visibility", False, error="partial run: some questions got no answer",
+                    provider="perplexity")
+        elif payload.get("ok"):
             counts["checked"] += 1
             _record(r.id, "visibility", True, provider="perplexity")
         else:
@@ -3290,7 +3297,7 @@ def run_weekly_ai_visibility(retry_only=False):
     before = len(eligible)
     eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)]
     _n, hit_bound = _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
-    counts.update(attempted=counts["checked"] + counts["failed"], ok=counts["checked"],
+    counts.update(attempted=counts["checked"] + counts["failed"] + counts.get("partial", 0), ok=counts["checked"],
                   skipped=before - len(eligible), hit_bound=bool(hit_bound))
     return counts
 

@@ -399,3 +399,25 @@ def test_the_chat_summary_call_carries_an_id(monkeypatch):
     conv.maybe_summarize(1, 99)
     conv.maybe_summarize(1, 99, correlation_id="ask:abc")
     assert seen[0].startswith("ask_summary:") and seen[1] == "ask:abc"
+
+
+def test_the_chat_summary_runs_after_the_answer_off_the_ask_slot(monkeypatch):
+    # AI cost audit 10/7/26 #31: the Haiku summary held one of the two Ask
+    # slots (and delayed the JSON fallback's answer). It runs on its own pool,
+    # with the turn's correlation id.
+    import threading
+    import ask_conversations as conv
+    import client_api
+    seen, done = [], threading.Event()
+
+    def fake(rid, cid, user_id=None, correlation_id=None, **k):
+        seen.append((rid, cid, user_id, correlation_id, threading.current_thread().name))
+        done.set()
+    monkeypatch.setattr(conv, "maybe_summarize", fake)
+    client_api._summarize_later(3, 44, 9, "ask:turn1")
+    assert done.wait(5)
+    (rid, cid, uid, corr, thread), = seen
+    assert (rid, cid, uid, corr) == (3, 44, 9, "ask:turn1") and thread.startswith("ask-summary")
+    src = open(client_api.__file__, encoding="utf-8").read()
+    assert "ask_conversations.maybe_summarize(restaurant_id, conversation_id, user_id=user_id)" not in src
+    assert "ask_conversations.maybe_summarize(rid, cid, user_id=uid)" not in src
