@@ -206,3 +206,18 @@ def test_marketing_loads_with_the_orb_on_every_tab_and_the_text_card_runs_full_h
         body = SRC[_at(fn):][:1200]
         assert "dr-pulse" not in body and "mktLoading(" in body, fn
     assert ".cp-chs:has(> #cp-ch-social[hidden])>#cp-ch-text{grid-row:1/span 2;align-self:stretch;" in SRC
+
+
+def test_done_for_you_cards_put_their_category_bottom_right():
+    assert ".hb-rcpt .it{position:relative;padding-bottom:36px}" in SRC
+    assert ".hb-rcpt .m{position:absolute;right:16px;bottom:13px;margin:0;" in SRC
+
+
+def test_the_studio_day_row_is_one_full_width_band_that_fades():
+    """Owner, 10/6/26: the boxed black cells read tacky against the page;
+    one band edge to edge, from the top of the week, fading into the page."""
+    assert ".ss .swg-hr>.swg-d{background:transparent;border-radius:0}" in SRC
+    band = SRC[_at(".ss .swg-hr>.swg-d:first-child::before{"):]
+    band = band[:band.index("}")]
+    assert "left:-100vw;right:-100vw" in band and "transparent 0" in band and "transparent 100%" in band
+    assert ".ss .ss-main{overflow-x:hidden}" in SRC

@@ -177,7 +177,10 @@ def test_the_grid_reads_as_rows():
     assert ".swg-chip~.swg-add{display:none}" in s and ".swg-c .swg-add{position:static;display:flex;flex-direction:column;" in s
     # The add is a ghost chip, ember-outlined, with its words inside it — not a
     # floating + beside a native tooltip (10/2/26); a hovered chip outlines too.
-    assert '<span class="t">+ Add a shift</span>' in s and 'title="Add a shift"' not in s
+    assert "(list.length ? '+ Later shift' : '+ Add a shift')" in s and 'title="Add a shift"' not in s
+    # The lower half of a row takes a later shift where there is room (owner, 10/6/26).
+    assert ".swg-c.roomy .swg-chip~.swg-add{display:flex;position:absolute;" in s and "swgRoomy(t);" in s
+    assert "swAddShift(pr[0], pr[1], pr[2] === 'after')" in s and "(list.length ? '|after' : '')" in s
     assert "outline:none;border-color:var(--ember);" in s
     assert '<div class="swg-role"><span class="pill">' in s
     # A darker shade of the page's own grey (owner, 9/26/26), not an ember tint.

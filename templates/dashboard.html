@@ -3269,7 +3269,10 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-rcpt .ok{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 16px -2px var(--hb-pop-glow)}
 .hb-rcpt .t{font-size:15px;color:var(--ink2);line-height:1.45;min-width:0}
 .hb-rcpt .t strong{color:var(--ink);font-weight:600}
-.hb-rcpt .m{font-size:11.5px;color:var(--ink3);margin-top:4px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+/* The category sits in each card's bottom-right corner, level across the
+   row (owner, 10/6/26). */
+.hb-rcpt .it{position:relative;padding-bottom:36px}
+.hb-rcpt .m{position:absolute;right:16px;bottom:13px;margin:0;font-size:11.5px;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;font-weight:700}
 /* the brief as a timeline */
 .hb-tl{position:relative;padding-left:24px;margin-top:2px}
 .hb-tl:before{content:'';position:absolute;left:4px;top:12px;bottom:12px;width:1px;background:var(--hb-line)}
@@ -10074,6 +10077,14 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    Only a screen too narrow for the week's 760px scrolls it sideways. */
 .ss .swg{overflow:visible}
 @media (max-width:860px){.ss .swg{overflow-x:auto}}
+/* The day row is one band, edge to edge of the Studio, from the top of the
+   week down, fading into the page under it - no boxed cells with hard edges
+   (owner, 10/6/26). The band is the first day cell's backdrop, behind every
+   cell of the row; .ss-main clips it at the window's sides. */
+.ss .ss-main{overflow-x:hidden}
+.ss .swg-hr>.swg-d{background:transparent;border-radius:0}
+.ss .swg-hr>.swg-d:first-child::before{content:'';position:absolute;z-index:-1;top:-30px;bottom:-30px;left:-100vw;right:-100vw;pointer-events:none;
+  background:linear-gradient(180deg,transparent 0,var(--ss-band,rgba(0,0,0,.42)) 30px,var(--ss-band,rgba(0,0,0,.42)) calc(100% - 46px),transparent 100%),linear-gradient(180deg,transparent 0,var(--surface) 30px,var(--surface) calc(100% - 46px),transparent 100%)}
 .swg-t{display:grid;grid-template-columns:var(--swg-name,148px) repeat(var(--swg-days,7),minmax(var(--swg-min,86px),1fr));min-width:760px}
 .swg-r{display:contents}
 .swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}
@@ -10117,6 +10128,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-add .t{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;white-space:nowrap}
 .swg-add .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip~.swg-add{display:none}
+.swg-c.roomy .swg-chip~.swg-add{display:flex;position:absolute;left:4px;right:4px;top:var(--free-top,50%);bottom:6px;width:auto;height:auto;overflow:hidden}
 .swg-c:hover .swg-add,.swg-add:focus-visible{opacity:1}
 .swg-c .swg-add:hover,.swg-c .swg-add:focus-visible{background:var(--sf-ai);border-color:var(--ember);color:var(--ember)}
 .swg-foot{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:12px 8px 0;font-size:12.5px;color:var(--ink3)}
@@ -25045,7 +25057,9 @@ function swRenderGrid() {
              // A manager shift planned before the draft, and the clocks going back (M-2, A2-6).
              + (window.sfw1ChipMarks ? sfw1ChipMarks(rw) : '') + '</button>';
         }
-        h += '<button type="button" class="cbtn cbtn-text cbtn-sm swg-add" data-swg-add="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" aria-label="' + _escAttr('Add a shift for ' + q.name + ' on ' + _schedDayOf(days[k])) + '"><span class="t">+ Add a shift</span><span class="s">' + _escHtml(_schedDayOf(days[k]).slice(0, 3)) + ' <span class="hb-num">' + _escHtml(mdy(days[k])) + '</span></span></button></div>';
+        // Under a shift already there, the add is a later one (a double):
+        // shown in the cell's free space below it (swgRoomy).
+        h += '<button type="button" class="cbtn cbtn-text cbtn-sm swg-add" data-swg-add="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + (list.length ? '|after' : '') + '" aria-label="' + _escAttr((list.length ? 'Add a later shift for ' : 'Add a shift for ') + q.name + ' on ' + _schedDayOf(days[k])) + '"><span class="t">' + (list.length ? '+ Later shift' : '+ Add a shift') + '</span><span class="s">' + _escHtml(_schedDayOf(days[k]).slice(0, 3)) + ' <span class="hb-num">' + _escHtml(mdy(days[k])) + '</span></span></button></div>';
       }
       h += '</div>';
     }
@@ -25054,10 +25068,27 @@ function swRenderGrid() {
   if (!t) { host.innerHTML = '<div class="swg-t"></div><div class="swg-foot"><span><i class="bad"></i>breaks a rule</span><span><i class="chg"></i>changed by you</span><span>Hover for why · click for details · double-click to edit · drag to move · + adds one</span></div>'; t = host.querySelector('.swg-t'); }
   t.style.setProperty('--swg-days', String(Math.max(days.length, 1)));
   _schedPatchChildren(t, h);
+  swgRoomy(t);
   if (window.ssRenderShift) ssRenderShift();
   var n = document.getElementById('sw-view-n'); if (n) n.innerHTML = '<span class="hb-num">' + _schedRows.length + '</span> shifts · <span class="hb-num">' + order.length + '</span> people';
   swLive();
 }
+// A cell with a shift and room under it - its row is taller for a double on
+// another day - offers a later shift in that room, so the lower half of a
+// row (the night) can be added to like the top (owner, 10/6/26). A cell
+// without the room adds no height: the row keeps its size.
+function swgRoomy(t) {
+  if (!t) return;
+  var cells = t.querySelectorAll('.swg-c'), i;
+  for (i = 0; i < cells.length; i++) {
+    var c = cells[i], chips = c.querySelectorAll('.swg-chip');
+    c.classList.remove('roomy');
+    if (!chips.length) continue;
+    var last = chips[chips.length - 1], top = last.offsetTop + last.offsetHeight + 4;
+    if (c.clientHeight - top - 6 >= 38) { c.style.setProperty('--free-top', top + 'px'); c.classList.add('roomy'); }
+  }
+}
+window.addEventListener('resize', function () { swgRoomy(document.querySelector('.swg-t')); });
 // Children-only patch: an unchanged row keeps its node (see _schedPatchTbody).
 function _schedPatchChildren(host, html) {
   var tmp = document.createElement('div'), fresh = [], k;
@@ -25120,17 +25151,24 @@ function swCloseEdit(discard) {
   if (discard && _swAddedIdx !== null) { _schedRows.splice(_swAddedIdx, 1); _swAddedIdx = null; _schedRenderTable(); return; }
   if (was !== null) { var c = document.querySelector('[data-swg-chip="' + was + '"]'); if (c) c.className = c.className.replace(/\s*editing/g, ''); }
 }
-function swAddShift(name, date) {
+function swAddShift(name, date, after) {
   if (_schedReadOnly()) return;
   if (_swView === 'list' && !window._ssOpen) { schedAddRow(); return; }
   if (_swAddedIdx !== null) return;
   var days = _swDays(), d0 = date || days[0] || '', emp = name || (_schedRosterNames || [])[0] || '';
-  // The person's own usual times first, then their role's, then 4-10pm.
-  var tpl = null, i;
-  for (i = 0; i < _schedRows.length && !tpl; i++) if (String(_schedRows[i].employee).toLowerCase() === String(emp).toLowerCase()) tpl = _schedRows[i];
+  // The person's own usual times first, then their role's, then 4-10pm. A
+  // later shift (after: one is already on that day) takes only times that
+  // start after that day's last shift ends, else 5-10pm.
+  var low = String(emp).toLowerCase(), from = -1, tpl = null, i;
+  if (after) for (i = 0; i < _schedRows.length; i++) {
+    var r0 = _schedRows[i];
+    if (String(r0.employee).toLowerCase() === low && r0.date === d0) from = Math.max(from, _schedMinutes(r0.shift_end) || 0);
+  }
+  function fits(r) { return !after || (_schedMinutes(r.shift_start) || 0) >= from; }
+  for (i = 0; i < _schedRows.length && !tpl; i++) if (String(_schedRows[i].employee).toLowerCase() === low && fits(_schedRows[i])) tpl = _schedRows[i];
   var role = (tpl && tpl.role) || _schedRoleOf(emp) || '';
-  for (i = 0; i < _schedRows.length && !tpl; i++) if (role && _schedRows[i].role === role) tpl = _schedRows[i];
-  var st = (tpl && tpl.shift_start) || '4:00pm', en = (tpl && tpl.shift_end) || '10:00pm';
+  for (i = 0; i < _schedRows.length && !tpl; i++) if (role && _schedRows[i].role === role && fits(_schedRows[i])) tpl = _schedRows[i];
+  var st = (tpl && tpl.shift_start) || (after ? '5:00pm' : '4:00pm'), en = (tpl && tpl.shift_end) || '10:00pm';
   _schedRows.push({date: d0, day: _schedDayOf(d0) || '', employee: emp, role: role, shift_start: st, shift_end: en, scheduled_hours: _schedHoursBetween(st, en) || '6', notes: ''});
   _swAddedIdx = _schedRows.length - 1;
   _schedRenderTable();
@@ -25142,7 +25180,7 @@ document.addEventListener('click', function (ev) {
   // A shift is an object: hover shows its insight (ssTip), a click selects
   // it and opens its details, a double click edits it (dblclick below).
   var chip = t.closest('[data-swg-chip]'); if (chip) { if (document.getElementById('swp')) swCloseEdit(true); swSelect(+chip.getAttribute('data-swg-chip')); return; }
-  var add = t.closest('[data-swg-add]'); if (add) { var pr = add.getAttribute('data-swg-add').split('|'); swAddShift(pr[0], pr[1]); return; }
+  var add = t.closest('[data-swg-add]'); if (add) { var pr = add.getAttribute('data-swg-add').split('|'); swAddShift(pr[0], pr[1], pr[2] === 'after'); return; }
   var act = t.closest('[data-swp]');
   if (act) {
     var box = document.getElementById('swp'), i = _swEditIdx, what = act.getAttribute('data-swp');
