@@ -131,6 +131,73 @@ MAX_REPLY_CHARS = 1200
 MAX_MARKETING_CHARS = 2200
 
 
+# ── the owner's never-say list ─────────────────────────────────────────────
+#
+# One reading of it for every check and every prompt (Simple EJ's, 10/6/26:
+# their list was "-", meant as "no dashes", and as a raw substring it
+# refused every draft holding a hyphenated word or "8-10pm"). A dash entry
+# means the punctuation dash - an em or en dash, or a hyphen standing apart
+# between spaces - never the hyphen inside a word; a word or phrase matches
+# whole words only ("art" never refuses "start"); anything else matches as
+# written.
+DASH_TERMS = frozenset({"-", "--", "\u2013", "\u2014", "dash", "dashes", "em dash", "em dashes", "em-dash",
+                        "em-dashes", "en dash", "en dashes", "en-dash"})
+_PUNCT_DASH_RE = re.compile(r"[\u2013\u2014]|--|(?<=\s)-(?=\s)")
+_APOS = str.maketrans({"\u2019": "'", "\u2018": "'"})
+
+
+def never_say_terms(never_say) -> list:
+    """The owner's list as terms: comma-separated, trimmed, lowercased."""
+    return [t.strip().lower() for t in str(never_say or "").split(",") if t.strip()]
+
+
+def never_say_hit(text, never_say) -> str | None:
+    """The first term of the owner's list `text` uses, or None."""
+    low = str(text or "").lower().translate(_APOS)
+    for term in never_say_terms(never_say):
+        if term in DASH_TERMS:
+            if _PUNCT_DASH_RE.search(low):
+                return term
+            continue
+        t = term.translate(_APOS)
+        if re.fullmatch(r"[\w' ]+", t):
+            if re.search(r"(?<![\w'])" + re.escape(t) + r"(?![\w'])", low):
+                return term
+        elif t in low:
+            return term
+    return None
+
+
+def strip_never_say_dashes(text, never_say):
+    """(text, n): with a dash on the owner's list, every punctuation dash
+    in `text` becomes what it stood for - "to" between two numbers, else a
+    comma - so a draft is repaired rather than thrown away for one."""
+    body = str(text or "")
+    if not any(t in DASH_TERMS for t in never_say_terms(never_say)):
+        return body, 0
+    n = len(_PUNCT_DASH_RE.findall(body))
+    if not n:
+        return body, 0
+    body = re.sub(r"(?<=\d)\s*(?:[\u2013\u2014]|--)\s*(?=\d)", " to ", body)
+    body = re.sub(r"\s*(?:[\u2013\u2014]|--)\s*|\s+-\s+", ", ", body)
+    body = re.sub(r",\s*([,.!?;:])", r"\1", body)
+    body = re.sub(r"^,\s*", "", body, flags=re.M)
+    return body, n
+
+
+def never_say_prompt(never_say) -> str:
+    """The list as the model reads it: a dash entry said in words."""
+    out, dash = [], False
+    for t in [t.strip() for t in str(never_say or "").split(",") if t.strip()]:
+        if t.lower() in DASH_TERMS:
+            dash = True
+        else:
+            out.append(t)
+    if dash:
+        out.append("dashes as punctuation (\u2014, \u2013 or a spaced -); hyphenated words are fine")
+    return ", ".join(out)
+
+
 def check_public_reply(draft: str, never_say: str = "") -> str | None:
     """Why this reply must not be published automatically, or None.
 
@@ -153,9 +220,9 @@ def check_public_reply(draft: str, never_say: str = "") -> str | None:
         return "the draft contains an email address"
     if _PHONE_RE.search(text):
         return "the draft contains a phone number"
-    for term in [t.strip().lower() for t in (never_say or "").split(",") if t.strip()]:
-        if term in low:
-            return f"the draft contains a never-say term ({term!r})"
+    term = never_say_hit(text, never_say)
+    if term:
+        return f"the draft contains a never-say term ({term!r})"
     return None
 
 
@@ -1776,7 +1843,7 @@ def check_marketing_copy(text: str, never_say: str = "") -> str | None:
     for phrase in _FORBIDDEN_PHRASES:
         if phrase in low:
             return f"the copy contains {phrase!r}"
-    for term in [t.strip().lower() for t in (never_say or "").split(",") if t.strip()]:
-        if term in low:
-            return f"the copy contains a never-say term ({term!r})"
+    term = never_say_hit(body, never_say)
+    if term:
+        return f"the copy contains a never-say term ({term!r})"
     return None

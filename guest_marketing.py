@@ -1720,7 +1720,8 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     # puts in front and a tracked link the owner may add (CS-12, MB-10): a
     # draft of the whole 300 was refused at the send it was drafted for.
     budget = message_budget(getattr(restaurant, "name", None), with_link=True)
-    never_clause = f" Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
+    from ai_guard import never_say_prompt
+    never_clause = f" Never use these words or phrases: {never_say_prompt(p['never_say'])}." if p.get("never_say") else ""
     # Same profile dict marketing.py's own generator uses menu_notes from —
     # this generator was silently dropping it, so a guest text campaign
     # could never reference an actual dish or special the way a social
@@ -1766,6 +1767,34 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
         "in those words. The restaurant has not agreed to one.\n"
         "Return ONLY the message text, nothing else."
     )
+    client = get_client()
+    import data_health
+    # A draft the guards refuse is written once more, told why (owner,
+    # 10/6/26: one slip by the model showed the owner an error) - the social
+    # post's pattern (marketing.generate_social_post). A second refusal is
+    # the owner's to see. Truncated or empty answers are not retried.
+    retry_note = ""
+    for attempt in range(2):
+        try:
+            return _draft_campaign_text_once(client, prompt + retry_note, restaurant, topic, goal, p, budget,
+                                             data_health)
+        except ValueError as e:
+            why = str(e)
+            if attempt or not why.startswith("campaign copy rejected"):
+                raise
+            try:
+                from ai_utils import record_quality_event
+                record_quality_event("guest_campaign_draft", "public_copy_refused", restaurant_id=restaurant.id,
+                                     detail=why[:200], action="guest_campaign_draft")
+            except Exception:
+                pass
+            retry_note = ("\n\nYour previous draft was not used: " + why[len("campaign copy rejected: "):]
+                          + ". Write it again without that.")
+
+
+def _draft_campaign_text_once(client, prompt, restaurant, topic, goal, p, budget, data_health):
+    """One model draft of the guest text, through every guard, or
+    ValueError (draft_campaign_text retries a refusal once)."""
     client = get_client()
     import data_health
     message = create_with_retry(

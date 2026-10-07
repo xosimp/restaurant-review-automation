@@ -3025,7 +3025,9 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-sub .chg .hb-num{font-size:15px;font-weight:700;color:var(--ember)}
 .hb-load{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:13px;min-height:28px}
 .mkt-load{flex-direction:column;justify-content:center;gap:12px;min-height:150px;padding:18px 0;text-align:center;font-size:13.5px}
-.dr-page-load{height:260px;justify-content:center;flex-direction:column;gap:14px;margin-top:30px}
+.dr-page-load{height:300px;justify-content:center;flex-direction:column;gap:18px;margin-top:30px}
+/* Owner, 10/6/26: the reports' orb and its sentence, big enough to notice. */
+.dr-page-load span{font-size:16px;color:var(--ink2)}
 .hb-load canvas{display:block;flex-shrink:0}
 @media (max-width:1000px){.hb-sig{grid-template-columns:1fr}.hb-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.hb-sg:last-child{border-bottom:none;margin-bottom:0}.hb-act{grid-template-columns:1fr;gap:24px}.hb-act>div+div{border-left:none;padding-left:0;padding-top:20px;border-top:1px solid var(--hb-line)}.hb-pulse{justify-content:flex-start}.hb-tbl .hide-m{display:none}}
 @media (max-width:680px){.hb-wrap{padding:20px 18px 44px}.hb-hero svg{height:140px}.hb-row .t{white-space:normal}}
@@ -7292,7 +7294,7 @@ svg:hover .hb-xh{opacity:1}
   // A whole report (or the list of them) loading is the Cavnar orb at page
   // scale, as Home's brief loads - not the thin pulse bar, which is for a
   // quick refresh inside a card (owner, 10/5/26).
-  function loading(label){return '<div class="hb-load dr-page-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="56" height="56" style="width:56px;height:56px"></canvas><span>'+esc(label||'Loading the report')+'</span></div>';}
+  function loading(label){return '<div class="hb-load dr-page-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="96" height="96" style="width:96px;height:96px"></canvas><span>'+esc(label||'Loading the report')+'</span></div>';}
   function pill(status){if(!status)return '';if(TERMINAL[status])return '<span class="dr-pill '+status+'">'+esc(STATUS[status])+'</span>';
     return '<span class="dr-pill running"><i></i>Running</span>';}
   function tile(k,v,s,cls){return '<div class="hb-stat'+(cls?' '+cls:'')+'"><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';}

@@ -2118,6 +2118,14 @@ class _Run:
         if n:
             self.rewrite("C2", "model-stated confidence", f"{n} phrase(s) removed")
             body = "\n".join(_tidy_line(ln) for ln in out.split("\n"))
+        # A dash on the owner's never-say list: punctuation dashes become
+        # what they stood for ("to", a comma) rather than the draft being
+        # thrown away for one (Simple EJ's, 10/6/26).
+        if self.public and ctx.never_say:
+            fixed, n_dash = _g.strip_never_say_dashes(body, ",".join(ctx.never_say))
+            if n_dash:
+                self.rewrite("P1", "dash", f"{n_dash} dash(es) the owner never uses, rewritten")
+                body = fixed
         self._body = body
         # Public text is checked whole by the existing public checks.
         if self.public:

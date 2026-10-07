@@ -111,8 +111,9 @@ def test_round_three_layout_calls():
     assert "box-shadow" not in brand[:brand.index("}")]
     # Reports load with the orb at page scale.
     rep = SRC[_at("  function loading(label){return '<div class=\"hb-load dr-page-load\""):]
-    assert 'canvas class="hb-orb"' in rep[:rep.index("\n")] and 'width="56"' in rep[:rep.index("\n")]
-    assert ".dr-page-load{height:260px;justify-content:center;flex-direction:column" in SRC
+    assert 'canvas class="hb-orb"' in rep[:rep.index("\n")] and 'width="96"' in rep[:rep.index("\n")]
+    assert ".dr-page-load{height:300px;justify-content:center;flex-direction:column" in SRC
+    assert ".dr-page-load span{font-size:16px;" in SRC
     # The recovery email's check, address and Remove sit on one centred line.
     assert '<span class="rec-line"><i class="cv-ok" aria-hidden="true"></i><span>' in SRC
     assert "#rec-status .rec-line{display:flex;align-items:center;" in SRC

@@ -359,7 +359,8 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
     import data_health
 
     p = get_profile_for_restaurant(restaurant.id)
-    never = f" Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
+    from ai_guard import never_say_prompt
+    never = f" Never use these words or phrases: {never_say_prompt(p['never_say'])}." if p.get("never_say") else ""
     menu = (f" Menu & current specials: {p['menu_notes']}. Reference something specific when it fits."
             if p.get("menu_notes") else "")
     goal_clause = f"What the owner wants this email to do, in their words: {goal}.\n" if goal else ""

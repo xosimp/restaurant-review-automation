@@ -3602,7 +3602,8 @@ def _do_mkt_insight(rid, raw=False):
         upcoming = get_upcoming_holidays(now.replace(tzinfo=None))
         recent_str = ", ".join(r["topic"] for r in recent) if recent else "none yet"
         greeting = f"{owner}," if owner else "Hi,"
-        never_clause = f"Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
+        from ai_guard import never_say_prompt
+        never_clause = f"Never use these words or phrases: {never_say_prompt(p['never_say'])}." if p.get("never_say") else ""
         menu_clause = f"Current menu/specials: {p['menu_notes']}." if p.get("menu_notes") else ""
         skip_h = [h.strip().lower() for h in (p.get("skip_holidays") or "").split(",") if h.strip()]
         if skip_h and upcoming:

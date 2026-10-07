@@ -710,7 +710,8 @@ def generate_content(content_type: str, topic: str,
         upcoming = ', '.join(filtered_h) if filtered_h else None
     seasonal_context = f"\nToday's date: {today_date}. Upcoming holidays in next 30 days: {upcoming if upcoming else 'none'}. Only reference holidays that are actually coming up soon."
 
-    never_clause = f"\nNever use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
+    from ai_guard import never_say_prompt
+    never_clause = f"\nNever use these words or phrases: {never_say_prompt(p['never_say'])}." if p.get('never_say') else ""
     menu_clause = f"\nMenu & current specials for {p['name']}: {p['menu_notes']}\nUse this to make content specific and accurate — reference real dishes, specials, and offerings when relevant." if p.get('menu_notes') else ""
 
     # Build explicit location context so AI doesn't invent geography
@@ -1381,7 +1382,8 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
         signal_block = generation_context(restaurant_id) if restaurant_id else ""
     except Exception:
         signal_block = ""
-    never_clause = f"Never use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
+    from ai_guard import never_say_prompt
+    never_clause = f"Never use these words or phrases: {never_say_prompt(p['never_say'])}." if p.get('never_say') else ""
     # What the week holds and where ideas can go (re-audit AUX-3 / AUX-9):
     # the calendar never saw the Opportunity Feed, the accounts connected,
     # the list sizes or which date each weekday is — so Halloween landed on
