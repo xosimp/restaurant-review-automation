@@ -1105,34 +1105,12 @@ struct RosterDetailSheet: View {
             AccountField(label: "At most", text: $maxHours, focus: $focused, field: .maxHours,
                          keyboardType: .decimalPad, isNumber: true, showsDivider: false)
                 .disabled(!editable)
-            // A maximum past the weekly ceiling (or 40) lets the draft take
-            // them into overtime — said beside the field (schedule audit
-            // 10/3/26 P-12).
-            if let max = member?.settings?.maxHours, max > 40 {
-                HomeMixedText.make("Overtime allowed up to \(Self.hours(max))h \u{2014} past the 40h overtime line, "
-                                   + "because their own maximum is higher.", size: 13, weight: 600, color: .cavnarAmber)
-                    .padding(.top, 8)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if let max = member?.settings?.maxHours, max > weeklyCeiling {
-                HomeMixedText.make("Up to \(Self.hours(max))h \u{2014} past the \(Self.hours(weeklyCeiling))h weekly ceiling "
-                                   + "in Schedule rules, because their own maximum is higher.",
-                                   size: 13, weight: 600, color: .cavnarInk2)
-                    .padding(.top, 8)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             Text("Leave blank for no floor or ceiling beyond the week's own limit.")
                 .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)
                 .padding(.top, 8)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    /// The weekly hours ceiling in force (Schedule rules), else its 40h
-    /// default.
-    private var weeklyCeiling: Double {
-        if case .number(let n)? = viewModel.rules["weekly_hours_ceiling"], n > 0 { return n }
-        return 40
     }
 
     private var daypartSection: some View {

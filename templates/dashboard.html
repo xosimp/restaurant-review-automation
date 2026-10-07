@@ -34662,7 +34662,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // rules screen opens the person it names.
     window._sfw2Roster=d;if(ch.certification_labels)_certLabels=ch.certification_labels;
     if(window._sfw2OpenPerson){_rosterOpen[window._sfw2OpenPerson]=true;window._sfw2OpenPerson=null;}
-    var ceiling=(_rules&&_rules.rules&&+_rules.rules.weekly_hours_ceiling)||40,ownerRo=!d.can_edit_owner_facts;
+    var ownerRo=!d.can_edit_owner_facts;
     var days=ch.days||_RV_DAYS,types=ch.employment_type||['full','part'],dps=ch.daypart||['any','morning','night','off'];
     for(i=0;i<list.length;i++)if(_rstActive(list[i]))active++;
     var chip=document.getElementById('roster-chip');if(chip)chip.textContent=list.length?active+' on the roster':'';
@@ -34678,10 +34678,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +'<td>'+_lbSw('active',on,ro)+'</td>'
         +'<td><select class="ac-select" data-rst-f="employment_type" aria-label="Employment type"'+(ro?' disabled':'')+'>'+_lbOpts(types,st.employment_type||types[0],_EMP_LABELS)+'</select></td>'
         +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="min_hours" min="0" max="80" step="1" value="'+(st.min_hours==null?'':esc(st.min_hours))+'" placeholder="—" aria-label="Minimum hours"'+(ro?' disabled':'')+'></td>'
-        +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'>'
-        // A maximum past the weekly ceiling is the owner allowing the hours,
-        // overtime included (schedule audit 10/3/26 P-12).
-        +(window.sfw2MaxNote&&sfw2MaxNote(st.max_hours,ceiling)?'<small class="sfw2-ot">'+esc(sfw2MaxNote(st.max_hours,ceiling))+'</small>':'')+'</td>'
+        // No overtime note under the maximum box (owner, 10/7/26: unnecessary).
+        +'<td><input type="number" class="ac-input ac-num hrs" data-rst-f="max_hours" min="0" max="80" step="1" value="'+(st.max_hours==null?'':esc(st.max_hours))+'" placeholder="—" aria-label="Maximum hours"'+(ro?' disabled':'')+'></td>'
         +'<td><span class="rst-minor">'+_lbSw('is_minor',!!st.is_minor,ro)
         /* Which minor rule table applies (NS5 H4): 14-15 carries the federal
            school-day limits, 16-17 the restaurant's own minor rule. */
@@ -37806,10 +37804,6 @@ window.cavPalette = cavPalette;
     h += '</select></div>'
        + '<div class="ac-field"><label for="pp-min">Min h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-min" data-pp="min_hours" value="' + e(hr.min_hours == null ? '' : hr.min_hours) + '"' + dis + '></div>'
        + '<div class="ac-field"><label for="pp-max">Max h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-max" data-pp="max_hours" value="' + e(hr.max_hours == null ? '' : hr.max_hours) + '"' + dis + '></div></div>';
-    /* A maximum past the weekly ceiling is the owner allowing the hours,
-       overtime included (schedule audit 10/3/26 P-12). */
-    var otn = window.sfw2MaxNote ? sfw2MaxNote(hr.max_hours, (window._sfw2Rules && window._sfw2Rules.rules && +window._sfw2Rules.rules.weekly_hours_ceiling) || 40) : '';
-    if (otn) h += '<div class="sr-note" style="color:var(--amber)">' + e(otn) + '.</div>';
     if (hr.desired_hours || (p.availability && (p.availability.preferred_dayparts || []).length)) h += '<div class="sr-note">They asked for ' + (hr.desired_hours ? '<span class="hb-num">' + e(hr.desired_hours) + 'h</span> a week' : '') + ((p.availability.preferred_dayparts || []).length ? (hr.desired_hours ? ', ' : '') + e(p.availability.preferred_dayparts.join(' and ')) : '') + '.</div>';
     var days = ch.days || [], dps = ch.daypart || ['any', 'morning', 'night', 'off'], av = (p.availability || {}).dayparts || {};
     h += '<div class="sr-k">Availability</div><div class="ps-grid">';
@@ -40174,7 +40168,6 @@ document.addEventListener('click', function (e) {
 .sfw2-dorm-in .t{flex:1 1 220px;min-width:0}
 .rst-tbl .nm .sfw2-also{display:block;font-size:12px;color:var(--ink3);font-weight:400}
 .rst-tbl .nm .mem-pill{margin-left:6px}
-.rst-tbl small.sfw2-ot{display:block;font-size:11.5px;line-height:1.35;color:var(--amber);margin-top:3px;white-space:normal;max-width:120px}
 .rst-more .sfw2-rel{font-size:13.5px;line-height:1.55;color:var(--ink2)}
 .rst-more .sfw2-rel .dim{color:var(--ink3)}
 /* Ratings by role, under the overall score (Operational Score list). */
@@ -40331,14 +40324,6 @@ function sfw2ReliabilityLine(r) {
     bits.push('late rate ' + (r.late_rate == null ? '—' : Math.round(+r.late_rate * 100) + '%'));
   }
   return bits.join(' · ');
-}
-/* A maximum past the weekly ceiling is the owner allowing the hours
-   (A2 P-12): "Overtime allowed up to 45h" past 40, else past the ceiling. */
-function sfw2MaxNote(max, ceiling) {
-  var m = +max, c = +ceiling || 40;
-  if (!(m > 0) || m <= c && m <= 40) return '';
-  if (m > 40) return 'Overtime allowed up to ' + m + 'h';
-  return 'Past your ' + c + 'h ceiling, up to ' + m + 'h';
 }
 /* A strength target per person (D1a SQ-3/4/5): the target is a full crew's
    total, judged per person against the role's largest crew. */

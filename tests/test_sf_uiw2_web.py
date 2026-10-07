@@ -157,14 +157,11 @@ def test_reliability_says_missed_called_out_and_late_over_clocked_shifts(page):
     assert o["sheet_old"] == "12 shifts watched · 1 missed · 0 late · 8% no-show rate · last missed 9/12/26"
 
 
-def test_a_maximum_past_the_ceiling_says_overtime_is_allowed(page):
-    o = _run(page, {
-        "ot": 'sfw2MaxNote(45, 40)', "under": 'sfw2MaxNote(38, 40)', "none": 'sfw2MaxNote(null, 40)',
-        "past_low_ceiling": 'sfw2MaxNote(38, 35)', "at": 'sfw2MaxNote(40, 40)',
-    })
-    assert o["ot"] == "Overtime allowed up to 45h"
-    assert o["under"] == o["none"] == o["at"] == ""
-    assert o["past_low_ceiling"] == "Past your 35h ceiling, up to 38h"
+def test_a_maximum_carries_no_overtime_note(page):
+    """Owner, 10/7/26: "Overtime allowed up to 67h" under Jim's maximum was
+    unnecessary - the box says the number. Gone from the roster and the
+    person sheet (and the iOS person screen)."""
+    assert "sfw2MaxNote" not in page and "Overtime allowed up to" not in page
 
 
 def test_a_strength_target_is_said_per_person_against_the_largest_crew(page):
@@ -258,8 +255,7 @@ def test_the_rules_screen_names_its_conflicts_in_words(page):
 def test_the_roster_row_carries_the_persons_scheduling_facts(page):
     r = _fn(page, "renderRoster")
     for piece in ("window._sfw2Roster=d", "ch.certification_labels", "can_edit_owner_facts", "sfw2RosterFacts(e,ro,ownerRo)",
-                  "sfw2RosterPills(e)", "sfw2RosterAlso(e)", "sfw2RosterAfter(e,ro)", "sfw2MaxNote(st.max_hours,ceiling)",
-                  "weekly_hours_ceiling"):
+                  "sfw2RosterPills(e)", "sfw2RosterAlso(e)", "sfw2RosterAfter(e,ro)"):
         assert piece in r, piece
     b = _block(page, "cav-sfw2")
     facts = _fn(b, "sfw2RosterFacts")
@@ -410,9 +406,9 @@ def test_time_off_reads_the_part_of_the_day(page):
     assert "q.span_label ||" in wait
 
 
-def test_the_person_sheet_labels_certificates_and_says_overtime(page):
+def test_the_person_sheet_labels_certificates(page):
     render = page[page.index("function personRender"):page.index("function ppSave")]
-    assert "ch.certification_labels" in render and "sfw2MaxNote(hr.max_hours" in render
+    assert "ch.certification_labels" in render
 
 
 def test_new_patterns_are_documented():
