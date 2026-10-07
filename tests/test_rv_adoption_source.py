@@ -36,6 +36,9 @@ ALLOWLIST = {
         "menu extraction: spot_check_menu keeps only items found in the source text",
     ("competitor.py", "fetch_menu_from_url"):
         "menu extraction: spot_check_menu keeps only items found in the source page",
+    ("ai_reviewer.py", "review_text"):
+        "a reviewer's score and flags (JSON schema, score clamped 0-1, at most 3 flags): never shown as owner "
+        "prose; a flag is handed to the next attempt as notes and the next draft is validated as usual",
     ("labor.py", "generate_optimized_schedule"):
         "schedule rows (the generation's JSON schema: roster, roles, dates and times as enums, a row's note "
         "one of schedule_output.NOTE_VALUES — the CSV fallback's notes mapped to it): schedule_rules.violations "

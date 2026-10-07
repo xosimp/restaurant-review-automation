@@ -44,6 +44,9 @@ NOT_APPLICABLE_SITES = {
     # (cited line by line; with none on file there is no call).
     ("staff_knowledge.py", "_translate"): "a translation of manager-approved text, held to figure parity",
     ("staff_knowledge.py", "answer"): "an answer from the owner's own house rules and docs, cited line by line",
+    # AI orchestration design (10/7/26): the Haiku rubric reads a draft the
+    # rules engine already passed, and the context its writer was given.
+    ("ai_reviewer.py", "_call"): "a score for a draft that already passed its own gate, from that draft",
 }
 
 

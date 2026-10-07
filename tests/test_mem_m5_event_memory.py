@@ -363,8 +363,11 @@ def test_the_job_returns_the_standard_counts_and_skips_demo_accounts(monkeypatch
 def test_the_nightly_report_records_its_night_when_it_finishes():
     import inspect
     from dsr import pipeline
-    src = inspect.getsource(pipeline._advance)
-    assert "_remember(restaurant, day, db)" in src
+    # _advance hands the finished night to _conclude since the DSR narrative
+    # can wait on a batch (AI cost audit 10/7/26 #20); the night is recorded there.
+    src = inspect.getsource(pipeline._advance) + inspect.getsource(pipeline._conclude)
+    assert "_conclude(" in inspect.getsource(pipeline._advance)
+    assert "_remember(restaurant, day, db)" in inspect.getsource(pipeline._conclude)
     assert "event_memory.record_night" in inspect.getsource(pipeline._remember)
 
 

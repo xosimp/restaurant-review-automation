@@ -234,7 +234,10 @@ def test_the_reviewer_gate_flags_and_the_run_escalates(db):
     assert row["reviewer"] == "haiku_gate" and row["reviewer_score"] == 0.9
 
 
-def test_an_unattended_reply_gets_the_gate_an_approved_one_does_not(db):
+def test_an_unattended_reply_gets_the_gate_an_approved_one_does_not(db, monkeypatch):
+    # The shadow sample (draft_response scores 10% in the background) is off
+    # here: this is about the gate.
+    monkeypatch.setenv("AI_SHADOW_REVIEW", "0")
     modes = []
 
     def review(result, mode):

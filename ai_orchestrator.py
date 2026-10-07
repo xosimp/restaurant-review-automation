@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS ai_route_recommendations (
     decided_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ai_route_recs_status ON ai_route_recommendations(status, workflow);
+CREATE INDEX IF NOT EXISTS idx_ai_route_recs_created ON ai_route_recommendations(created_at);
 
 CREATE TABLE IF NOT EXISTS ai_run_requests (
     run_id TEXT NOT NULL,
@@ -133,6 +134,7 @@ CREATE TABLE IF NOT EXISTS ai_run_requests (
     PRIMARY KEY (run_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_run_requests_wf ON ai_run_requests(workflow, created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_run_requests_created ON ai_run_requests(created_at);
 
 CREATE TABLE IF NOT EXISTS ai_route_overrides (
     workflow TEXT PRIMARY KEY,
