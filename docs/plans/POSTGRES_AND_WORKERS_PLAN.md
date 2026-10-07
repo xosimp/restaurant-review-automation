@@ -1,6 +1,9 @@
 # Postgres, a job queue and more than one web worker (#96)
 
 Plan, 9/29/26 (admin-console fix round, finding #96). Nothing here is built.
+Updated 10/7/26 (AI cost audit #56) with the process-local state that round
+added — the interactive AI slots, the AI background pools, the route-override
+cache — and where each goes in the order of work.
 It is grounded in the code at `fixround-0929`; re-derive every number with the
 command beside it before acting on it.
 
@@ -41,7 +44,21 @@ Process-local state a second worker would duplicate (the inventory:
 | The in-memory telemetry | `http_layer` (`_samples`, `_inflight`, `_rollups`, `_sentry_last`) | each worker reports only its own "now"; persisted rollups add up correctly | nothing — label the live panels per worker |
 | Claim fallback and page memory | `ops._claim_fallback`, `ops._page_memory`, `ops._running_jobs` | fallbacks for a database that cannot be written; `is_running` sees one process (`running_elsewhere` reads the database) | acceptable as fallbacks; keep |
 | Refused-audit window | `admin_events._refused_window` | N × 20 rows per IP per 10 minutes | the table's own cap already bounds it |
-| Caches | `client_api._insight_cache`, `_aivis_cache`, `_city_cache`, `models._tenant_names_cache`, `intelligence.dashboard._build_cache`, `status_manager._schema_ok` | duplicated work, no wrong answer | keep |
+| Caches | `client_api._insight_cache`, `_aivis_cache`, `_city_cache`, `models._tenant_names_cache`, `intelligence.dashboard._build_cache`, `status_manager._schema_ok`, `labor._NOTE_CACHE` (a front cache over `insight_store`) | duplicated work, no wrong answer | keep |
+| The interactive AI slots (AI cost audit 10/7/26) | `ai_utils._INTERACTIVE_SLOTS` (`INTERACTIVE_AI_SLOTS`, default 2) | the "at most two owner-facing model calls in flight" bound becomes 2 × N, and the slot a waiting request is promised exists only on its own worker | a count of claimed rows (the job queue below), or `ai_rate_events`-style rows with a lease stamp |
+| The AI background pools (10/7/26) | Ask's read pool (`ask_cavnar._READ_POOL`, `ASK_READ_WORKERS`), Ask's summary pool (`client_api._SUMMARY_POOL`, one thread), the orchestrator's shadow-review pool (`ai_orchestrator._SHADOW_POOL`, one thread), the learner's scoring pool (`ai_learning._SCORE_POOL`, one thread) | each one-thread pool becomes N threads; the shadow review's sampling rate is per worker, so the share of runs reviewed holds but the spend bound is N × | the job queue (kinds `ask_summary`, `shadow_review`, `shadow_score`) |
+| The route-override cache (10/7/26) | `ai_orchestrator._OVERRIDES` (`OVERRIDE_CACHE_SECONDS`, 60) | an override applied or reverted in the console reaches the other workers up to 60 s later — the same window one worker already has | keep, or a generation stamp in `ai_route_overrides` the cache checks |
+
+Not on the list, on purpose: the Places Details cache (`places_details_cache`,
+AI cost audit 10/7/26 #13) and the context packets (`context_sections`,
+`restaurant_context`) are rows in the database, so every worker reads the
+same ones; the Message Batches queue (`ai_batch_jobs`, `ai_batch_items`) is a
+table claimed with a compare-and-set (`ai_batches._claim`), already the job
+queue's shape. The scheduler's lanes (`scheduler._LANES`: intel, ai and, from
+10/7/26 #54, sweep — the 4-6am restaurant sweeps) and their wake-up event
+(`scheduler._SWEEP_DONE`) live only in the process that holds the scheduler
+lease, so they never multiply with web workers; in `worker.py` they move with
+the scheduler.
 
 The PlatformSupervisor would also run once per worker: two SLA checks every
 five minutes (pages are de-duplicated by the cooldown row, so one page) and
@@ -99,11 +116,21 @@ the queue, beside the scheduler that only enqueues.
 
 1. **Now, still on SQLite**: move the admin ceiling and the AI breakers into
    the database; give the fleet memo a database generation (or build #97);
-   elect the supervisor with a lease. Then two gunicorn workers in one
-   container behind a flag, measured on `request_rollups` (latency by class,
-   saturated minutes) and the write probe's wait (`/health` `database.write_ms`).
+   elect the supervisor with a lease; make the interactive AI slots a
+   database count (a row per call in flight with a lease stamp, so a dead
+   worker's slot frees itself) — the one 10/7/26 bound an owner feels when it
+   doubles, since two workers would let four owner-facing calls race the
+   provider's rate limit. The one-thread AI pools (Ask's summary, the shadow
+   review, the learner's scoring) can stay per worker until step 2: doubling
+   them costs a little spend, never a wrong answer. Then two gunicorn workers
+   in one container behind a flag, measured on `request_rollups` (latency by
+   class, saturated minutes) and the write probe's wait (`/health`
+   `database.write_ms`). `synchronous=NORMAL` (10/7/26 #92) shortens each
+   commit, which is what two workers contend on.
 2. **The job queue on SQLite** (the table and its claim), with the review
-   fetch's AI work as its first consumer.
+   fetch's AI work as its first consumer, then the AI pools above (the
+   summary, the shadow reviews, the learner's scoring) as kinds on it, and
+   the scheduler's sweep lane's jobs as enqueued work rather than a thread.
 3. **Postgres** behind `models.get_conn` and a dialect helper, run as a
    shadow (dual-write the ledgers, compare) before the switch; migrations
    replace boot DDL; backups move to the provider's PITR plus a scrubbed

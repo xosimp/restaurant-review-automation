@@ -198,13 +198,18 @@ def test_a_weekly_pass_re_run_after_a_reclaim_skips_what_is_done(db, monkeypatch
     seen = []
     monkeypatch.setattr(competitor, "run_competitor_analysis", lambda rid: seen.append(rid) or {"ok": True})
     out = scheduler.run_weekly_competitor_analysis()
-    assert seen == ids[1:] and out["skipped"] == 1 and out["ok"] == 2
+    # Sorted: the pass runs COMPETITOR_WORKERS at once (#55), in any order.
+    assert sorted(seen) == ids[1:] and out["skipped"] == 1 and out["ok"] == 2
 
 
 def test_the_weekly_cursor_is_saved_as_each_restaurant_finishes(db, monkeypatch):
     import competitor
     ids = [_rid(db, f"Full {i}", google_place_id=f"pl{i}", service_tier="full") for i in range(3)]
     monkeypatch.setattr(models, "is_full_tier", lambda r: True)
+    # One worker, so "the second restaurant started" means "the first one
+    # finished": since AI cost audit 10/7/26 #55 the pass runs
+    # COMPETITOR_WORKERS (3) at once, and all three would start together.
+    monkeypatch.setattr(scheduler, "COMPETITOR_WORKERS", 1)
     cursors = []
 
     def analyse(rid):

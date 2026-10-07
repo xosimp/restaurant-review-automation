@@ -720,7 +720,8 @@ def test_an_unknown_confidence_falls_to_low():
 
 
 def test_the_diagnose_prompt_requires_an_alternative_and_forbids_reranking():
-    p = fci.DIAGNOSE_PROMPT
+    # The rules are the cached system block since AI cost audit 10/7/26 #63.
+    p = fci.DIAGNOSE_SYSTEM
     assert "alternative_cause" in p
     assert "what_would_confirm" in p
     assert "Do not re-rank them" in p

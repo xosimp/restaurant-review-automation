@@ -2548,9 +2548,12 @@ _RETENTION_DAYS = {
     # comparison stays possible.
     "web_analytics_daily": int(os.getenv("RETAIN_WEB_ANALYTICS_DAYS", "800")),
     # Every schedule call's full input and answer (schedule_output, schedule
-    # audit 10/3/26 PR-31): half a year of real weeks to replay a model,
-    # effort or prompt change against (scripts/schedule_model_eval.py).
-    "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "180")),
+    # audit 10/3/26 PR-31): a quarter of real weeks to replay a model, effort
+    # or prompt change against (scripts/schedule_model_eval.py). 90 days, not
+    # 180 (AI cost audit 10/7/26 #94): its readers read 60, a replay wants a
+    # quarter (the floor), and each row carries a whole compressed request —
+    # the second half-year was volume nothing read.
+    "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
     # The Message Batches queue (ai_batches, AI cost audit 10/7/26 #19): a
     # batch answers within 24 hours and every answer is in ai_usage and
     # ai_calls by then — a month is enough to read what a batch did.

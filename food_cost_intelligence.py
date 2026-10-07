@@ -1541,13 +1541,65 @@ CAUSE_VOCABULARY = """\
 - Staffing or scheduling affecting prep quality and consistency
 - Recipe coverage gaps making usage look lower than it is"""
 
-DIAGNOSE_PROMPT = """You are an experienced restaurant CFO reviewing one restaurant's food cost. You are not writing a summary: the owner can already see their waste total and their inventory value. Your value is the step after the number — what is driving it, what it is costing, and what to do first.
+# The diagnosis prompt in two parts (AI cost audit 10/7/26 #63): the role,
+# the guest-text note, the layout of the message, the cause vocabulary, the
+# evidence rules and the answer's shape are the same for every restaurant —
+# DIAGNOSE_SYSTEM, a cached system block, so the fleet's pass (and its
+# Message Batch) reads one prefix at a tenth of the input price after the
+# first; the restaurant's own figures are DIAGNOSE_USER. The rules are the
+# single prompt's, word for word, with "above" read as "in the message".
+# Above 1,024 tokens on purpose: a shorter prefix is never cached.
+def _diagnose_system():
+    from ai_guard import UNTRUSTED_NOTE
+    return f"""You are an experienced restaurant CFO reviewing one restaurant's food cost. You are not writing a summary: the owner can already see their waste total and their inventory value. Your value is the step after the number — what is driving it, what it is costing, and what to do first.
 
 Return ONLY valid JSON — no markdown, no commentary.
 
-{untrusted_note}
+{UNTRUSTED_NOTE}
 
-RESTAURANT: {restaurant_name}
+HOW THE MESSAGE IS LAID OUT — every section is this one restaurant's own record:
+- RESTAURANT, TODAY and WINDOW: who this is, the date the read is written on, and the days its figures cover.
+- WHERE THE MONEY IS: the cost drivers, measured from this restaurant's own recorded usage and prices and already ranked by dollars weighted by how that kind of fix has measured here, then confidence, then ease — each with its monthly dollars, its confidence, how hard it is to fix, its evidence and what happens if it is ignored, and the combined figure with no ingredient counted twice.
+- FOOD COST POSITION and PROFITABILITY: where food cost and prime cost stand against target and against last month.
+- HOW FAR THESE FIGURES CAN BE TRUSTED: recipe coverage and how much of the waste was inferred rather than logged.
+- WHERE AND WHEN THE WASTE LANDS: the weekday pattern and the seasonal baseline.
+- WHAT THE OTHER MODULES RECORDED OVER THE SAME PERIOD: one line per module that reported (labor, reviews, marketing, the nightly reports' guests). A missing line is a module with no data, never a module that saw nothing.
+- WHAT CHANGED IN BUYING THE DRIVERS' ITEMS: receiving and invoice prices on the drivers' items, the recent window against the one before.
+- WHAT WAS ALREADY TRIED ON THE LEAD DRIVER: the owner's answers to earlier advice and what was measured after.
+- WHAT CAVNAR AI REMEMBERS ABOUT THIS: its earlier reads, what the owner answered, what was measured since, the owner's rules and the team's notes.
+
+CAUSE VOCABULARY — pick from these kinds of cause:
+{CAUSE_VOCABULARY}
+
+EVIDENCE RULES — these bound what you may claim:
+- If an earlier read named a cause for the same driver, its advice was taken and the expected change did not show, do not restate that cause as the most likely one at the same confidence: say it did not hold and weigh the alternative. If it held, you may say what followed is consistent with it — never that it is proven.
+- Never recommend an action the owner already declined, in those words or any others.
+- State no figure — a dollar amount, a percentage, a quantity — that does not appear in the message. Not one, not even rounded.
+- Your `cause` must name at least one driver from "WHERE THE MONEY IS" by its label. You may not introduce a driver that is not listed.
+- Name an ingredient, a dish, a supplier or a weekday ONLY if it appears in the message.
+- The drivers are ALREADY RANKED. Do not re-rank them. Your job is to explain why the top ones are the top ones and what connects them.
+- You may connect food cost to a figure under "WHAT THE OTHER MODULES RECORDED" (the nightly reports' "Guests" line is module "guests" — more guests is more usage, not waste), or to the receiving and invoice line under "WHAT CHANGED IN BUYING" (module "purchasing"), only by naming that figure in `operational_evidence`. If those sections say there is no data, you have NO operational evidence — say so, and let it pull your confidence down.
+- Two things moving together in one window is not proof one caused the other. Say they moved together.
+- Read "HOW FAR THESE FIGURES CAN BE TRUSTED" before you commit. Low recipe coverage or a high inferred-waste share means the underlying usage figures are soft, and your confidence must reflect that regardless of how large the dollar figures look.
+- `confidence` is "high" only when the drivers are specific AND the trust block is clean AND another module points the same way. It is "low" when you are reasoning mostly from totals.
+- If the evidence does not identify a driving cause, say that in `cause` and set confidence "low". An owner acting on a confident guess about their food cost loses real money.
+
+Return this exact shape:
+{{
+  "headline": "one sentence an owner reads first — what is happening to their food cost and what it is worth, max 25 words",
+  "cause": "the most likely driver or combination of drivers, naming them, 1-2 sentences",
+  "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
+  "what_would_confirm": "one concrete thing the owner could check or count this week that would tell the two apart, 1 sentence",
+  "operational_evidence": [{{"module": "labor|reviews|marketing|purchasing|guests", "metric": "what it is", "value": "the figure exactly as given in the message"}}],
+  "confidence": "high" | "medium" | "low",
+  "recommended_action": "the single highest-value thing to do first, startable this week with the staff and suppliers they already have, 1 sentence",
+  "expected_outcome": "what should change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
+}}"""
+
+
+DIAGNOSE_SYSTEM = _diagnose_system()
+
+DIAGNOSE_USER = """RESTAURANT: {restaurant_name}
 TODAY: {today}
 WINDOW: the last {window_days} days
 
@@ -1576,35 +1628,7 @@ WHAT WAS ALREADY TRIED ON THE LEAD DRIVER (the owner's answers and what was meas
 {tried_block}
 
 WHAT CAVNAR AI REMEMBERS ABOUT THIS (its earlier reads, what the owner answered, what was measured since, the owner's rules and the team's notes. {memory_fence_note}):
-{memory_block}
-
-CAUSE VOCABULARY — pick from these kinds of cause:
-{cause_vocabulary}
-
-EVIDENCE RULES — these bound what you may claim:
-- If an earlier read named a cause for the same driver, its advice was taken and the expected change did not show, do not restate that cause as the most likely one at the same confidence: say it did not hold and weigh the alternative. If it held, you may say what followed is consistent with it — never that it is proven.
-- Never recommend an action the owner already declined, in those words or any others.
-- State no figure — a dollar amount, a percentage, a quantity — that does not appear above. Not one, not even rounded.
-- Your `cause` must name at least one driver from "WHERE THE MONEY IS" by its label. You may not introduce a driver that is not listed.
-- Name an ingredient, a dish, a supplier or a weekday ONLY if it appears above.
-- The drivers are ALREADY RANKED. Do not re-rank them. Your job is to explain why the top ones are the top ones and what connects them.
-- You may connect food cost to a figure under "WHAT THE OTHER MODULES RECORDED" (the nightly reports' "Guests" line is module "guests" — more guests is more usage, not waste), or to the receiving and invoice line under "WHAT CHANGED IN BUYING" (module "purchasing"), only by naming that figure in `operational_evidence`. If those sections say there is no data, you have NO operational evidence — say so, and let it pull your confidence down.
-- Two things moving together in one window is not proof one caused the other. Say they moved together.
-- Read "HOW FAR THESE FIGURES CAN BE TRUSTED" before you commit. Low recipe coverage or a high inferred-waste share means the underlying usage figures are soft, and your confidence must reflect that regardless of how large the dollar figures look.
-- `confidence` is "high" only when the drivers are specific AND the trust block is clean AND another module points the same way. It is "low" when you are reasoning mostly from totals.
-- If the evidence does not identify a driving cause, say that in `cause` and set confidence "low". An owner acting on a confident guess about their food cost loses real money.
-
-Return this exact shape:
-{{
-  "headline": "one sentence an owner reads first — what is happening to their food cost and what it is worth, max 25 words",
-  "cause": "the most likely driver or combination of drivers, naming them, 1-2 sentences",
-  "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
-  "what_would_confirm": "one concrete thing the owner could check or count this week that would tell the two apart, 1 sentence",
-  "operational_evidence": [{{"module": "labor|reviews|marketing|purchasing|guests", "metric": "what it is", "value": "the figure exactly as given above"}}],
-  "confidence": "high" | "medium" | "low",
-  "recommended_action": "the single highest-value thing to do first, startable this week with the staff and suppliers they already have, 1 sentence",
-  "expected_outcome": "what should change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
-}}"""
+{memory_block}"""
 
 
 def _drivers_block(drv) -> str:
@@ -1906,17 +1930,42 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     with the same lead driver — because a cause re-derived daily is the same
     cause in different words, which reads as instability rather than
     insight (AI cost audit 10/7/26 #28). A skipped read is marked checked.
+
+    In three parts shared with the Message Batch (AI cost audit 10/7/26
+    #58): diagnosis_plan (retirement, reuse, the readiness gate, the
+    evidence and the message), diagnosis_request (the call) and
+    finish_diagnosis (validation and the save). A batched answer that
+    landed first is stored with its evidence hash, so the reuse rule finds
+    it and no second call is made.
     """
-    import os
-    import anthropic
-    from ai_utils import create_with_retry, extract_text, get_client, model_for
-    from ai_guard import MEMORY_FENCE_NOTE, UNTRUSTED_NOTE
+    # The readiness gate (DH5-2), asked where the call is made and handed to
+    # the plan (which asks it itself for the batch).
+    import data_health as _dh_fd
+    _ready_fd = _dh_fd.unattended_readiness(restaurant_id, "food_cost",
+                                            db_path=db_path if db_path != DB_PATH else None)
+    plan = diagnosis_plan(restaurant_id, db_path=db_path, force=force, readiness=_ready_fd)
+    if plan.get("kind") != "call":
+        return plan.get("result") or {}
+    from ai_utils import create_with_retry, get_client
+    client = get_client()
+    msg = create_with_retry(client, restaurant_id=restaurant_id, action="food_cost_diagnosis",
+                            readiness=_ready_fd, **diagnosis_request(plan["state"]))
+    return finish_diagnosis(restaurant_id, plan["state"], msg, db_path=db_path)
+
+
+def diagnosis_plan(restaurant_id: int, db_path: str = DB_PATH, force: bool = False, readiness=None) -> dict:
+    """What diagnose() would do, before any call: {"kind": "done", "result"}
+    (nothing to read, a refusal, or the stored read reused and marked
+    checked) or {"kind": "call", "state", "readiness"} — `state` everything
+    the call and its validation need, JSON-able so a batched answer is
+    checked against exactly what the model saw."""
+    from ai_guard import MEMORY_FENCE_NOTE
     from models import get_restaurant
     from time_utils import restaurant_now_by_id
 
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return {}
+        return {"kind": "done", "result": {}}
     ev = build_evidence(restaurant_id, db_path=db_path)
     drv = ev["drivers"]
     if not drv.get("drivers"):
@@ -1924,7 +1973,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         # not the current read (memory audit 9/29/26, "stale_diagnoses") —
         # it used to stay the food read's WHY and Home's "why" for months.
         retire_diagnosis(restaurant_id, "no cost driver clears the floor any more", db_path=db_path)
-        return {"ok": False, "reason": drv.get("reason") or "no drivers above the floor"}
+        return {"kind": "done", "result": {"ok": False, "reason": drv.get("reason") or "no drivers above the floor"}}
 
     prior = get_diagnosis(restaurant_id, db_path=db_path, include_stale=True)
     if prior and not lead_still_ranked(prior, drv["drivers"]):
@@ -1947,20 +1996,22 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
             refresh_days=DIAGNOSIS_REFRESH_DAYS, ttl_hours=DIAGNOSIS_TTL_HOURS)
         if reuse:
             _confirm_diagnosis(restaurant_id, ev_hash if stamp else None, db_path)
-            return dict(prior, stale=False, stale_note=None)
+            return {"kind": "done", "reused": True, "result": dict(prior, stale=False, stale_note=None)}
 
     # The readiness gate before the call (DH5-2). A diagnosis is written by
     # the scheduler with nobody reading it first and then re-served for a
     # day, so it is unattended: counts past their horizon or of unknown age
     # refuse it (the prior diagnosis stands; no counts at all is the driver
     # floor's to decide); anything else caveats through the DATA STATE block.
-    import data_health as _dh_fd
-    _ready_fd = _dh_fd.unattended_readiness(restaurant_id, "food_cost",
-                                            db_path=db_path if db_path != DB_PATH else None)
+    _ready_fd = readiness
+    if _ready_fd is None:
+        import data_health as _dh_fd
+        _ready_fd = _dh_fd.unattended_readiness(restaurant_id, "food_cost",
+                                                db_path=db_path if db_path != DB_PATH else None)
     from ai_utils import is_held as _held_fd
     if _held_fd(_ready_fd):
-        return {"ok": False, "reason": f"data not ready: {_ready_fd.get('reason')}",
-                "retry_after": _ready_fd.get("retry_after")}
+        return {"kind": "done", "result": {"ok": False, "reason": f"data not ready: {_ready_fd.get('reason')}",
+                                           "retry_after": _ready_fd.get("retry_after")}}
     _op_block = _operational_block(ev["operational"])
     # The drivers' own items in the receiving and invoice record, and what
     # was already tried on the lead driver (memory audit 9/29/26,
@@ -1968,8 +2019,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     _purch = purchasing_context(restaurant_id, drv["drivers"], db_path=db_path)
     if _ready_fd.get("prompt_block"):
         _op_block = f"{_op_block}\n\n{_ready_fd['prompt_block']}"
-    prompt = DIAGNOSE_PROMPT.format(
-        untrusted_note=UNTRUSTED_NOTE,
+    user = DIAGNOSE_USER.format(
         restaurant_name=restaurant.name,
         today=restaurant_now_by_id(restaurant_id).strftime("%B %d, %Y"),
         window_days=DIAGNOSIS_WINDOW_DAYS,
@@ -1984,25 +2034,65 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         tried_block=_tried_on_lead(restaurant_id, drv, db_path),
         memory_fence_note=MEMORY_FENCE_NOTE,
         memory_block=_diagnosis_memory(restaurant_id, drv, db_path),
-        cause_vocabulary=CAUSE_VOCABULARY,
     )
-    client = get_client()
-    msg = create_with_retry(
-        client, model=model_for("food_cost_diagnosis"),
-        max_tokens=900, messages=[{"role": "user", "content": prompt}],
-        restaurant_id=restaurant_id, action="food_cost_diagnosis", readiness=_ready_fd)
-    if getattr(msg, "stop_reason", None) == "max_tokens":
-        raise ValueError("food cost diagnosis was truncated")
-    # A leading sentence before the JSON failed json.loads (AI-26).
-    from ai_utils import parse_json_reply
-    labels = [d.get("item") or d["label"] for d in drv["drivers"]]
+    import review_intelligence as _ri_state
     _op_lines = dict(_operational_lines(ev["operational"]))
     if _purch.get("line") is not None:
         _op_lines["purchasing"] = _purch["line"]
+    import dataclasses
+    facts = typed_facts(drv, ev["food_cost"], ev["profitability"])
+    state = {
+        "user": user,
+        "ev_hash": ev_hash,
+        "drv": json.loads(json.dumps(drv, default=str)),
+        "labels": [d.get("item") or d["label"] for d in drv["drivers"]],
+        "lines": {k: _ri_state._line_to_state(v) for k, v in _op_lines.items()},
+        "facts": [dataclasses.asdict(f) if dataclasses.is_dataclass(f) else dict(f.__dict__) for f in facts],
+        # One "at stake" figure, the same one the web card and iOS header
+        # show (finish_diagnosis).
+        "at_stake": drv.get("total_monthly_deduplicated", drv["total_monthly"]),
+        "prepared_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    return {"kind": "call", "state": state, "readiness": _ready_fd}
+
+
+def diagnosis_request(state) -> dict:
+    """The request for the call — what create_with_retry sends and what the
+    batch sends. The static rules ride in a cached system block (#63)."""
+    from ai_utils import model_for
+    return dict(model=model_for("food_cost_diagnosis"), max_tokens=900,
+                system=[{"type": "text", "text": DIAGNOSE_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": state["user"]}])
+
+
+def _facts_from_state(raw):
+    import response_validation as rv
+    out = []
+    for f in raw or ():
+        try:
+            out.append(rv.Fact(**f))
+        except Exception:
+            continue
+    return out
+
+
+def finish_diagnosis(restaurant_id, state, msg, db_path: str = DB_PATH) -> dict:
+    """A model answer, checked and stored exactly as the synchronous path
+    always did: truncation refused, the JSON parsed, the drivers it names,
+    every figure and operational line checked against what it was handed
+    (the state), then saved with its evidence hash. Raises ValueError when
+    the answer is refused."""
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ValueError("food cost diagnosis was truncated")
+    # A leading sentence before the JSON failed json.loads (AI-26).
+    from ai_utils import extract_text, parse_json_reply
+    import review_intelligence as _ri_state
+    drv = state["drv"]
+    _op_lines = {k: _ri_state._line_from_state(v) for k, v in (state.get("lines") or {}).items()}
     result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict, message=msg),
-                                 labels, prompt, restaurant_id,
-                                 op_lines=_op_lines,
-                                 facts=typed_facts(drv, ev["food_cost"], ev["profitability"]))
+                                 list(state.get("labels") or []), DIAGNOSE_SYSTEM + "\n\n" + state["user"],
+                                 restaurant_id, op_lines=_op_lines,
+                                 facts=_facts_from_state(state.get("facts")))
 
     # One "at stake" figure, the same one the web card and iOS header show:
     # what the drivers carry, with no ingredient counted twice (M-10). It
@@ -2011,11 +2101,91 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     # "$2,000/mo at stake" on Home (M-11); and without it, the plain sum
     # that counts one ingredient up to four times. The month-over-month move
     # is its own line in the profitability read, labelled as such.
-    at_stake = drv.get("total_monthly_deduplicated", drv["total_monthly"])
-    _save_diagnosis(restaurant_id, drv, result, at_stake, db_path, evidence_hash=ev_hash)
+    at_stake = state["at_stake"]
+    _save_diagnosis(restaurant_id, drv, result, at_stake, db_path, evidence_hash=state.get("ev_hash"))
     result.update({"drivers": drv["drivers"][:6], "dollars_at_stake": round(at_stake, 2),
                    "window_days": DIAGNOSIS_WINDOW_DAYS, "stale": False, "ok": True})
     return result
+
+
+# ── the Message Batch (AI cost audit 10/7/26 #58) ─────────────────────────
+#
+# scheduler.run_food_cost_diagnoses_batch sends each restaurant's call as a
+# batch item once the morning's snapshots are in, at half the price;
+# ai_batches' collector hands the answer to on_diagnosis_batch, which stores
+# it through finish_diagnosis — the same checks and save as a synchronous
+# answer. The 6am pass (scheduler.run_food_cost_diagnoses) is the fallback:
+# it cancels what has not landed and calls for it synchronously.
+
+BATCH_WORKFLOW = "food_cost_diagnosis"
+BATCH_CALLBACK = "food_cost_intelligence:on_diagnosis_batch"
+
+
+def batch_custom_id(restaurant_id, day) -> str:
+    """One custom_id per restaurant and day: a re-run is a duplicate."""
+    return f"fd-{int(restaurant_id)}-{str(day).replace('-', '')}"
+
+
+def diagnosis_batch_items(restaurant_id, day, db_path: str = DB_PATH) -> dict:
+    """Plan this restaurant's read and return its call as an ai_batches
+    item: {"items", "reused", "reason"}. The scheduler sends the fleet's
+    items as one batch, only where ai_batches.enabled."""
+    import review_intelligence as _ri_pack
+    out = {"items": [], "reused": 0, "reason": None}
+    plan = diagnosis_plan(restaurant_id, db_path=db_path)
+    if plan.get("kind") != "call":
+        out["reused"] = 1 if plan.get("reused") else 0
+        out["reason"] = (plan.get("result") or {}).get("reason")
+        return out
+    st = plan["state"]
+    out["items"].append({
+        "custom_id": batch_custom_id(restaurant_id, day), "restaurant_id": restaurant_id,
+        "action": "food_cost_diagnosis", "request": diagnosis_request(st), "callback": BATCH_CALLBACK,
+        "readiness": plan["readiness"], "context": {"day": str(day), "state_z": _ri_pack._pack_state(st)}})
+    return out
+
+
+def _written_since(restaurant_id, stamp, db_path=DB_PATH) -> bool:
+    """Whether the stored read was written after `stamp` (a fresher one —
+    the 6am fallback, a forced run — already stands)."""
+    conn = get_conn(db_path)
+    try:
+        row = _one_row(conn, "SELECT generated_at FROM food_cost_diagnoses WHERE restaurant_id=? AND window_days=?",
+                       (restaurant_id, DIAGNOSIS_WINDOW_DAYS))
+    finally:
+        conn.close()
+    return bool(row and row["generated_at"] and str(row["generated_at"]) >= str(stamp or ""))
+
+
+def on_diagnosis_batch(item, message=None, error=None):
+    """ai_batches' callback for one restaurant's batched read. A failed,
+    blocked or expired item is left to the 6am pass (it calls for it
+    synchronously); an answer is stored through finish_diagnosis unless a
+    fresher read was written since it was asked for. A refused answer is an
+    AI-quality finding, as the 6am pass's failure is a captured one."""
+    if message is None:
+        return
+    import review_intelligence as _ri_pack
+    rid = item.get("restaurant_id")
+    state = _ri_pack._unpack_state((item.get("context") or {}).get("state_z"))
+    if not state:
+        raise ValueError("the batch item carried no diagnosis state")
+    if _written_since(rid, state.get("prepared_at")):
+        return
+    try:
+        finish_diagnosis(rid, state, message)
+    except ValueError as e:
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event("food_cost_diagnosis", "output_rejected", restaurant_id=rid,
+                                   action="food_cost_diagnosis", detail=str(e)[:200])
+        return
+    # A fresh cause makes every cached food-cost narrative out of date, as
+    # after the 6am pass.
+    try:
+        from client_api import invalidate_insight_cache
+        invalidate_insight_cache(rid)
+    except Exception:
+        pass
 
 
 def diagnosis_subjects(drivers) -> list:

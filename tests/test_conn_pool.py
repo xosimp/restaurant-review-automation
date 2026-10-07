@@ -125,3 +125,71 @@ def test_memory_databases_are_never_pooled():
     b = models.get_conn(":memory:")
     assert b.execute("SELECT count(*) FROM sqlite_master WHERE name='t'").fetchone()[0] == 0
     b.close()
+
+
+# ── synchronous=NORMAL under WAL (AI cost audit 10/7/26 #92) ──────────────
+
+def _sync_level(conn):
+    return conn.execute("PRAGMA synchronous").fetchone()[0]
+
+
+def test_a_new_connection_is_wal_with_synchronous_normal(path, monkeypatch):
+    monkeypatch.delenv("SQLITE_SYNCHRONOUS", raising=False)
+    models.close_pooled_connections()
+    c = models.get_conn(path)
+    try:
+        assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert _sync_level(c) == 1          # NORMAL
+    finally:
+        c.close()
+
+
+def test_a_pooled_connection_keeps_its_level_and_full_is_the_override(path, monkeypatch):
+    monkeypatch.delenv("SQLITE_SYNCHRONOUS", raising=False)
+    models.close_pooled_connections()
+    a = models.get_conn(path)
+    a.close()
+    b = models.get_conn(path)                # the same connection, reused
+    assert _sync_level(b) == 1
+    b.close()
+    models.close_pooled_connections()
+    monkeypatch.setenv("SQLITE_SYNCHRONOUS", "full")
+    c = models.get_conn(path)
+    try:
+        assert _sync_level(c) == 2          # FULL, the old behaviour
+    finally:
+        c.close()
+    monkeypatch.setenv("CAVNAR_CONN_POOL", "0")
+    monkeypatch.setenv("SQLITE_SYNCHRONOUS", "NORMAL")
+    d = models.get_conn(path)                # the unpooled path sets it too
+    try:
+        assert _sync_level(d) == 1
+    finally:
+        d.close()
+
+
+def test_normal_is_never_set_outside_wal(monkeypatch):
+    """In a rollback-journal database NORMAL can corrupt on power loss, so a
+    connection whose journal is not WAL (":memory:") keeps FULL."""
+    monkeypatch.delenv("SQLITE_SYNCHRONOUS", raising=False)
+    c = models.get_conn(":memory:")
+    try:
+        assert c.execute("PRAGMA journal_mode").fetchone()[0] != "wal"
+        assert _sync_level(c) == 2
+    finally:
+        c.close()
+    assert models.sqlite_synchronous() == "NORMAL"
+    monkeypatch.setenv("SQLITE_SYNCHRONOUS", "bogus")
+    assert models.sqlite_synchronous() == "NORMAL"
+
+
+def test_a_caller_changing_synchronous_is_never_handed_on(path):
+    a = models.get_conn(path)
+    raw = a._conn
+    a.execute("PRAGMA synchronous=OFF")
+    a.close()
+    b = models.get_conn(path)
+    try:
+        assert b._conn is not raw and _sync_level(b) == 1
+    finally:
+        b.close()

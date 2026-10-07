@@ -14,6 +14,7 @@ workflow: it is written while the owner is asleep, so nobody waits on it.
   pending(workflow, custom_id)   True while its answer has not come back
   cancel(workflow, custom_id)    the caller fell back: the answer, when it
                                  lands, is ledgered and discarded
+  open_items(workflow, rid)      the items still out (a fallback's list)
   run_collector()                the scheduled job (ai_batch_collect, every
                                  ~5 minutes): read the ended batches, ledger
                                  every result, hand each to its callback;
@@ -81,14 +82,16 @@ log = logging.getLogger("ai_batches")
 # DSR narrative, and the learner's weekly shadow replays (ai_learning.
 # shadow_arms — a cheaper tier on kept production requests, which nobody
 # waits on and which would never be worth list price). AI cost audit 10/7/26
-# added four more nobody waits on, each with a synchronous fallback by a
-# cutoff: the weekly competitor read (#59, competitor), the Tuesday recipe
-# drafts (#60, recipes), the weekly digest's narrative written the night
-# before the send (#61, reporter) and the quiet-night post drafts (#62,
-# strategy_jobs). An explicit AI_BATCHES_WORKFLOWS replaces this list, so
-# it must name every one to keep it.
-DEFAULT_WORKFLOWS = ("dsr_narrative,shadow_arms,competitor_insight,recipe_draft,weekly_digest,"
-                     "quiet_night_post")
+# added more nobody waits on, each with a synchronous fallback by a cutoff:
+# the two daily root-cause reads (#58: the review diagnosis sent at 4am, the
+# food-cost one once the morning's snapshots are in, the 6am pass calling
+# synchronously for whatever has not landed — scheduler.run_*_diagnoses), the
+# weekly competitor read (#59, competitor), the Tuesday recipe drafts (#60,
+# recipes), the weekly digest's narrative written before the send (#61,
+# reporter) and the quiet-night post drafts (#62, strategy_jobs). An explicit
+# AI_BATCHES_WORKFLOWS replaces this list, so it must name every one to keep it.
+DEFAULT_WORKFLOWS = ("dsr_narrative,shadow_arms,review_diagnosis,food_cost_diagnosis,competitor_insight,"
+                     "recipe_draft,weekly_digest,quiet_night_post")
 # The batches endpoints carry a whole request set up and a JSONL file back.
 API_TIMEOUT_SECONDS = 60.0
 # The collector's bounds per pass (CLAUDE.md: bounded; the jobs table is the
@@ -497,6 +500,22 @@ def pending(workflow, custom_id):
     caller's "keep waiting?" (against its own cutoff)."""
     row = item(workflow, custom_id)
     return bool(row) and row["status"] in OPEN
+
+
+def open_items(workflow, restaurant_id=None):
+    """The custom_ids of `workflow`'s items still out (queued or submitted),
+    for one restaurant or all — what a fallback pass cancels before it
+    calls synchronously."""
+    conn = _conn()
+    try:
+        sql = "SELECT custom_id FROM ai_batch_items WHERE workflow=? AND status IN (?,?)"
+        args = [workflow, *OPEN]
+        if restaurant_id is not None:
+            sql += " AND restaurant_id=?"
+            args.append(restaurant_id)
+        return [r["custom_id"] for r in conn.execute(sql + " ORDER BY created_at", args).fetchall()]
+    finally:
+        conn.close()
 
 
 def cancel(workflow, custom_id, client=None):

@@ -31,6 +31,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `RESTORE_FROM` | — | Boot-time database restore source (`db_restore.py`, `docs/ops/RECOVERY.md`). While set, the scheduler and live sends stay off. | admin_routes.py, db_restore.py, scheduler.py |
 | `ALLOW_EMPTY_DATABASE` | — | 1 lets the app boot on an empty database where the volume's marker says client data existed (a deliberate fresh start); otherwise that boot is refused and `/health` fails (`status_manager.platform_emptied`). | status_manager.py |
 | `CAVNAR_CONN_POOL` | `1` | Reuse SQLite connections per thread (10/3/26): a new connection re-reads the whole schema, ~2.6ms, against ~0.01ms for a pooled one. Each open handle still has a connection of its own, uncommitted work is rolled back on close, and state a caller changed is reset or the connection is never reused (`models.get_conn`). `0` opens and closes every connection for real — the kill switch if anything looks wrong. | models.py |
+| `SQLITE_SYNCHRONOUS` | `NORMAL` | SQLite's `synchronous` level on every new connection once WAL is confirmed (AI cost audit 10/7/26 #92). `NORMAL` under WAL never corrupts the file and keeps every commit through an app crash, kill or redeploy; a host power loss or OS crash can lose the commits since the last checkpoint (seconds of writes) — the file reads as it was a moment earlier. `FULL` (or `EXTRA`) fsyncs every commit again, SQLite's default. A database not in WAL always keeps FULL (`models.sqlite_synchronous`, `docs/ops/RECOVERY.md`). | models.py |
 | `CAVNAR_FORCE_SECURE_COOKIES` | — | Force the `Secure` cookie flag (and HSTS) off Railway, e.g. behind another TLS proxy. | auth.py |
 | `CAVNAR_SECRET_KEY_EPHEMERAL` | — | Set by the app itself when it had to mint a throwaway `SECRET_KEY`, so presence checks (the admin key panel) don't read it as configured (#125). Never set by hand. | hosted_dashboard.py |
 | `SENTRY_DSN` | `""` | Sentry error reporting. Empty: off. | hosted_dashboard.py, http_layer.py |
@@ -166,7 +167,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `SCHEDULE_CONTRACT` | `schema` | The schedule generator's output contract, read once per generation (`schedule_output.schedule_contract`; AI cost audit 10/7/26 #69, #70): `schema` — rows `{employee, role, start, end, note}`; `compact` — the same rows with one-letter keys `{e, r, s, t, n}` (~24 answer tokens a row to ~30); `shape` — slots `{r, s, t, c, n}` without names, whose people `schedule_engine.assign_shape_slots` solves over the same rules before every repair and gate step. Anything else reads as `schema`. Stays `schema` until `scripts/schedule_model_eval.py --prompts rerender,rerender:compact,rerender:shape` shows no quality loss on stored weeks. | schedule_output.py |
 | `AI_REPLAY_SAMPLE_RATE` | `0.05` | Share of workflow runs whose model requests are kept (redacted, compressed, `ai_run_requests`) so the learner can replay a cheaper route on real inputs. `0` keeps none. | ai_orchestrator.py |
 | `AI_SHADOW_REVIEW` | `"1"` | `0` stops the shadow reviewer (a Haiku rubric scoring a sample of passing runs off the request path). Gates are unaffected. | ai_orchestrator.py |
-| `AI_BATCHES_WORKFLOWS` | `"dsr_narrative,shadow_arms,competitor_insight,recipe_draft,weekly_digest,quiet_night_post"` | Comma-separated workflows allowed to batch (half price, answered within 24 hours); a workflow not named here is written synchronously. `shadow_arms` is the learner's weekly replays — they never run synchronously, so leaving it out stops them. The AI cost audit (10/7/26) added the weekly competitor read (#59, cutoff `competitor.BATCH_CUTOFF_HOURS` 3), the Tuesday recipe drafts (#60, 6 hours), the digest's narrative sent from 2am local on the digest day (#61, cut off at the 9am send) and the quiet-night post (#62, 6 hours): each falls back to a synchronous call when its answer is not back by its cutoff (`ai_batches` cutoff sweep). A value set here replaces the default: name every one to keep it. | ai_batches.py |
+| `AI_BATCHES_WORKFLOWS` | `"dsr_narrative,shadow_arms,review_diagnosis,food_cost_diagnosis,competitor_insight,recipe_draft,weekly_digest,quiet_night_post"` | Comma-separated workflows allowed to batch (half price, answered within 24 hours); a workflow not named here is written synchronously. `shadow_arms` is the learner's weekly replays — they never run synchronously, so leaving it out stops them. `review_diagnosis` and `food_cost_diagnosis` are the morning root-cause reads (#58; left out, the 6am pass calls for every one synchronously at full price). The AI cost audit (10/7/26) added the weekly competitor read (#59, cutoff `competitor.BATCH_CUTOFF_HOURS` 3), the Tuesday recipe drafts (#60, 6 hours), the digest's narrative sent from 2am local on the digest day (#61, cut off at the 9am send) and the quiet-night post (#62, 6 hours): each falls back to a synchronous call when its answer is not back by its cutoff (`ai_batches` cutoff sweep). A value set here replaces the default: name every one to keep it. | ai_batches.py |
 | `AI_SHADOW_WEEKLY_USD` | `"2"` | The most the learner's shadow replays may spend in 7 days — the replays and the rubric calls that score them, every ledger row under a `shadow:` correlation id (`ai_learning.run_shadow_arms`, job `ai_shadow_arms`). At most 20 replays a workflow a week either way. | ai_learning.py |
 | `VALIDATION_RECHECK_DEDUPE_DAYS` | `"7"` | A validation check with no model call behind it (a stored text re-checked, e.g. the reply-draft flags at boot) is not written to `ai_validation_log` when the same text got the same verdict under the same rules version within this many days (W4). `0` writes every check. | ai_utils.py |
 | `AI_INTERACTIVE_ESCALATION_SECONDS` | `20` | How long after an interactive read starts a second, stronger attempt may still begin (`ai_orchestrator.escalation_deadline` — the labor and marketing reads' T1 → T2). Past it the first attempt's outcome stands and the read's own fallback is served: an owner never waits twice. | ai_orchestrator.py |
@@ -262,10 +263,14 @@ Changed or added by the AI cost audit (10/7/26):
 | `BACKUP_EMAIL_MAX_BYTES` | `str(25 * 1024 * 1024` | scheduler.py |
 | `BACKUP_EMAIL_MODE` | `"always"` | scheduler.py |
 | `BACKUP_OFFSITE_MAX_DAYS` | `"35"` | scheduler.py |
+| `BRIEF_INPUT_WAIT_UNTIL_HOUR` | `"8"` | scheduler.py — the Chicago hour until which the morning briefs (and the weekly digest) wait for the 5-6am sweeps they read to settle; from it they go on what is there (AI cost audit 10/7/26 #54) |
 | `CAMPAIGN_ATTRIBUTION_SECONDS` | `str(10 * 60` | guest_marketing.py |
 | `CLAIM_RECLAIM_MINUTES` | `"120"` | ops.py |
+| `COMPETITOR_WORKERS` | `"3"` | scheduler.py — restaurants the weekly competitor analysis reads at once (AI cost audit 10/7/26 #55; was 1) |
 | `DAILY_ALERT_PASS_SECONDS` | `"600"` | notify.py |
+| `DIAGNOSES_BATCH_UNTIL` | `"5:30"` | scheduler.py — Chicago time after which the diagnoses' Message Batches are not sent (no time to land before the 6am pass; AI cost audit 10/7/26 #58) |
 | `DIAGNOSES_MAX_SECONDS` | `str(40 * 60` | scheduler.py |
+| `DIAGNOSES_WORKERS` | `"3"` | scheduler.py — restaurants the review and food cost diagnoses (and their batch planning) run at once (AI cost audit 10/7/26 #53; was 1) |
 | `DIGEST_MAX_SECONDS` | `str(20 * 60` | scheduler.py |
 | `DIGEST_WORKERS` | `"2"` | scheduler.py |
 | `EMAIL_BOUNCE_CRIT_PCT` | `"8"` | admin_ops.py |
@@ -281,6 +286,7 @@ Changed or added by the AI cost audit (10/7/26):
 | `INTERACTIVE_AI_TIMEOUT` | `"40"` | ai_utils.py |
 | `INTERACTIVE_AI_WAIT_SECONDS` | `"3"` | ai_utils.py |
 | `INVENTORY_SYNC_MAX_SECONDS` | `str(15 * 60` | inventory_sync.py |
+| `LABOR_PREWARM_MAX_SECONDS` | `str(20 * 60` | scheduler.py — the bound on the 3am Labor read pre-warm (AI cost audit 10/7/26 #100) |
 | `LEARNING_HOLDOUT_PCT` | `str(HOLDOUT_DEFAULT_PCT` | rec_learning.py |
 | `LEASE_OWNER_GONE_SECONDS` | `"240"` | ops.py |
 | `LEASE_RENEW_SECONDS` | `"60"` | ops.py |
@@ -305,6 +311,8 @@ Changed or added by the AI cost audit (10/7/26):
 | `RETENTION_MAX_SECONDS` | `str(10 * 60` | ops.py |
 | `RETENTION_PASS_MAX_ROWS` | `"200000"` | ops.py |
 | `REVIEW_NEWS_MAX_AGE_DAYS` | `"7"` | notify.py |
+| `REVIEW_QUIET_MAX_PER_DAY` | `"2"` | fetcher.py — a Places-only listing whose Google count grew by fewer reviews a day than this over 14 days is fetched in the quiet slots only (AI cost audit 10/7/26 #45) |
+| `REVIEW_QUIET_SLOTS` | `"8,16"` | fetcher.py — the Chicago review-fetch slots a quiet Places-only restaurant keeps (a subset of 8,12,16,20; never two adjacent skipped) |
 | `REVIEW_REQUEST_DELAY_HOURS` | `DEFAULT_REVIEW_REQUEST_DELAY_HOURS` | guest_marketing.py |
 | `RUN_DEAD_MINUTES` | `"10"` | ops.py |
 | `RUN_PULSE_SECONDS` | `"60"` | ops.py |

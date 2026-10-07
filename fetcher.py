@@ -1,4 +1,5 @@
 import config
+import os
 import requests, csv
 from datetime import datetime, timezone
 from models import Review, save_reviews
@@ -172,6 +173,196 @@ def places_coverage(restaurant_id, db_path=None) -> dict:
     if growth > 0:
         out["share"] = round(min(1.0, stored / growth), 3)
     return out
+
+
+# ── the quiet Places-only cadence (AI cost audit 10/7/26 #45) ────────────────
+#
+# The review fetch runs in four Chicago slots (REVIEW_FETCH_SLOTS). A
+# restaurant read through Places (no Business Profile connection) pays a
+# Places Details call each slot, for at most five reviews, and most listings
+# gain far fewer than one review a slot. One whose Google count grew by
+# fewer than QUIET_MAX_PER_DAY reviews a day over the last QUIET_WINDOW_DAYS
+# is fetched in QUIET_SLOTS only (8am and 4pm): a new review can then take
+# up to ~8 hours in the day (16 overnight, against 12) to appear instead of
+# ~4. Never for a Business Profile restaurant (its reads are free and
+# complete), never while a 1-2 star review arrived in the last
+# QUIET_LOW_STAR_DAYS days, and never without QUIET_WINDOW_DAYS of history
+# to judge by. The decision is remembered per restaurant
+# (`review_fetch_quiet:<rid>` in job_cursors) so every surface that says
+# when reviews are next read says it from the same slots
+# (review_fetch_slots, review_cadence). The two skipped slots are never
+# adjacent, so a quiet restaurant is never two scheduled slots behind and
+# the missed-slot rules (admin_ops.fetch_slots_missed) still hold.
+
+REVIEW_FETCH_SLOTS = (8, 12, 16, 20)
+
+
+def _quiet_slots():
+    raw = os.getenv("REVIEW_QUIET_SLOTS", "8,16")
+    try:
+        slots = tuple(sorted({int(x) for x in str(raw).split(",") if x.strip()} & set(REVIEW_FETCH_SLOTS)))
+    except ValueError:
+        slots = ()
+    return slots or (8, 16)
+
+
+QUIET_SLOTS = _quiet_slots()
+QUIET_MAX_PER_DAY = float(os.getenv("REVIEW_QUIET_MAX_PER_DAY", "2"))
+QUIET_WINDOW_DAYS = 14
+QUIET_LOW_STAR_DAYS = 7
+_HISTORY_KEEP_DAYS = QUIET_WINDOW_DAYS + 7
+
+
+def _history_key(restaurant_id):
+    return f"places_history:{int(restaurant_id)}"
+
+
+def _quiet_key(restaurant_id):
+    return f"review_fetch_quiet:{int(restaurant_id)}"
+
+
+def _cursor_get(conn, key):
+    row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def _cursor_put(conn, key, value):
+    conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                 (key, value))
+
+
+def record_places_total(restaurant_id, total, today=None, db_path=None):
+    """Keep Google's user_ratings_total for today (the latest of the day),
+    for the last _HISTORY_KEEP_DAYS days — what places_growth_per_day reads.
+    Called by scheduler._record_places_gap with each Places fetch's total.
+    Never raises."""
+    import json as _json
+    import models
+    if total is None:
+        return
+    day = (today or datetime.now(timezone.utc).date())
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            try:
+                hist = _json.loads(_cursor_get(conn, _history_key(restaurant_id)) or "{}")
+            except ValueError:
+                hist = {}
+            hist[day.isoformat()] = int(total)
+            keep = sorted(hist)[-_HISTORY_KEEP_DAYS:]
+            _cursor_put(conn, _history_key(restaurant_id), _json.dumps({d: hist[d] for d in keep}))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[places] total history not kept for {restaurant_id}: {e}")
+
+
+def places_growth_per_day(restaurant_id, days=QUIET_WINDOW_DAYS, today=None, db_path=None):
+    """Reviews a day Google's count grew by over the last `days` days, or
+    None when there is not `days` days of history to judge by (a shrinking
+    count — reviews Google removed — reads as no growth)."""
+    import json as _json
+    import models
+    from datetime import date as _date, timedelta as _td
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            hist = _json.loads(_cursor_get(conn, _history_key(restaurant_id)) or "{}")
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if not hist:
+        return None
+    today = today or datetime.now(timezone.utc).date()
+    start = today - _td(days=days)
+    dated = sorted((_date.fromisoformat(d), v) for d, v in hist.items())
+    base = [(d, v) for d, v in dated if d <= start]
+    if not base:
+        return None
+    d0, v0 = base[-1]
+    d1, v1 = dated[-1]
+    span = (d1 - d0).days
+    if span < days:
+        return None
+    return max(0, int(v1) - int(v0)) / float(span)
+
+
+def _low_star_recently(restaurant_id, db_path=None) -> bool:
+    """A 1-2 star review arrived (was fetched, or is dated) in the last
+    QUIET_LOW_STAR_DAYS days."""
+    import models
+    from models import REVIEW_TIME_AXIS_BARE as _axis
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            row = conn.execute(
+                f"SELECT 1 FROM reviews WHERE restaurant_id=? AND rating<=2 AND deleted_at IS NULL "
+                f"AND (fetched_at >= datetime('now', ?) OR {_axis} >= datetime('now', ?)) LIMIT 1",
+                (restaurant_id, f"-{QUIET_LOW_STAR_DAYS} days", f"-{QUIET_LOW_STAR_DAYS} days")).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+    except Exception:
+        # Unreadable: treat as a bad review arriving — never slow down blind.
+        return True
+
+
+def decide_quiet(restaurant_id, has_gbp, today=None, db_path=None) -> bool:
+    """Whether this restaurant is fetched in QUIET_SLOTS only — and the
+    decision remembered for every surface that says when reviews are next
+    read. Never raises (an error keeps the full cadence)."""
+    quiet = False
+    try:
+        if not has_gbp and not _low_star_recently(restaurant_id, db_path=db_path):
+            rate = places_growth_per_day(restaurant_id, today=today, db_path=db_path)
+            quiet = rate is not None and rate < QUIET_MAX_PER_DAY
+    except Exception:
+        quiet = False
+    try:
+        import models
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            _cursor_put(conn, _quiet_key(restaurant_id), "1" if quiet else "0")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[places] quiet cadence not kept for {restaurant_id}: {e}")
+    return quiet
+
+
+def is_quiet(restaurant_id, db_path=None) -> bool:
+    """The last decide_quiet for this restaurant (False when none)."""
+    import models
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            return (_cursor_get(conn, _quiet_key(restaurant_id)) or "0") == "1"
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def review_fetch_slots(restaurant_id, db_path=None) -> tuple:
+    """The Chicago hours this restaurant's reviews are fetched in."""
+    if restaurant_id is not None and is_quiet(restaurant_id, db_path=db_path):
+        return QUIET_SLOTS
+    return REVIEW_FETCH_SLOTS
+
+
+def review_cadence(restaurant_id, db_path=None) -> tuple:
+    """(hours between fetches, the owner's words) for this restaurant —
+    data_freshness.CADENCE["reviews"] unless it is on the quiet cadence."""
+    slots = review_fetch_slots(restaurant_id, db_path=db_path)
+    if slots == REVIEW_FETCH_SLOTS:
+        return 4, "4× a day"
+    n = len(slots)
+    gap = max(b - a for a, b in zip(slots, slots[1:])) if n > 1 else 24
+    return gap, ("twice a day" if n == 2 else f"{n}× a day")
 
 
 def _places_external_id(r: dict) -> str:

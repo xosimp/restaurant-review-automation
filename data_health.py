@@ -271,8 +271,17 @@ def _reliability(s):
             "basis": f"{ok} of the last {attempts} syncs succeeded"}
 
 
+def _cadence(key, s):
+    """(hours, words) for source `key` — the restaurant's own when its state
+    carries one (a quiet Places-only review cadence, _states), else the
+    registry's."""
+    if s and s.get("cadence_hours") is not None:
+        return s["cadence_hours"], s.get("cadence_word") or ""
+    return df.CADENCE.get(key) or (None, "")
+
+
 def _is_live(key, s, now=None) -> bool:
-    hours = (df.CADENCE.get(key) or (None, ""))[0]
+    hours = _cadence(key, s)[0]
     last = _parse(s.get("last_ok_at"))
     return (hours is not None and hours <= df.LIVE_WITHIN_HOURS and last is not None
             and (_utc(now) - last) <= timedelta(hours=hours) and not s.get("error"))
@@ -295,9 +304,10 @@ def source_line(s, now=None, tz=None, pos_connected=None) -> dict:
     pct = s.get("pct")
     synced = ago(s.get("last_ok_at"), now) if s.get("last_ok_at") else ""
     rel = _reliability(s)
-    cadence = (df.CADENCE.get(key) or (None, ""))[1]
+    cadence = _cadence(key, s)[1]
     scheduled = key not in ("labor", "sales") or bool(pos_connected)
-    nxt = next_slot(key, now) if (scheduled and state not in ("not_connected", "disconnected")) else None
+    nxt = next_slot(key, now, hours=s.get("slots")) if (scheduled and state not in ("not_connected",
+                                                                                      "disconnected")) else None
     expected = expected_phrase(nxt, tz, now) if nxt else ""
     pending = is_pending(s)
     expected_line = f"{SLOT_WORD.get(key, label)} runs {expected}" if expected else None
@@ -369,15 +379,17 @@ def _tz(restaurant_or_tz=None):
         return ZoneInfo(SCHED_TZ)
 
 
-def next_slot(key, now=None):
+def next_slot(key, now=None, hours=None):
     """The next scheduled refresh of source `key` as an aware UTC datetime,
     or None for a source nothing refreshes on a clock (counts, deliveries —
-    the owner does them — and weather, fetched on read)."""
+    the owner does them — and weather, fetched on read). `hours` replaces
+    the registry's hours for one restaurant (its quiet review slots)."""
     slot = SLOTS.get(key)
     if not slot:
         return None
     from zoneinfo import ZoneInfo
-    hours, weekday = slot
+    _hours, weekday = slot
+    hours = tuple(hours) if hours else _hours
     local = _utc(now).astimezone(ZoneInfo(SCHED_TZ))
     for back in range(0, 8):
         d = (local + timedelta(days=back)).date()
@@ -453,7 +465,7 @@ def counts_as_current(s, now=None) -> bool:
     if not s or s.get("state") != "current" or s.get("error"):
         return False
     key = s.get("source") or s.get("key")
-    hours = (df.CADENCE.get(key) or (None, ""))[0]
+    hours = _cadence(key, s)[0]
     last = _parse(s.get("last_ok_at"))
     if hours is None or last is None:
         return True
@@ -536,7 +548,12 @@ def connection_lines(restaurant, now=None, db_path=None) -> dict:
     try:
         f = df.review_fetch_state(restaurant, now=now)
         if f.get("state") != "not_connected":
-            nxt = expected_phrase(next_slot("reviews", now), tz, now)
+            try:
+                import fetcher
+                _rslots = fetcher.review_fetch_slots(df._get(restaurant, "id"))
+            except Exception:
+                _rslots = None
+            nxt = expected_phrase(next_slot("reviews", now, hours=_rslots), tz, now)
             at = None
             try:
                 import admin_ops
@@ -612,9 +629,28 @@ def enabled_modules(restaurant) -> list:
 
 
 def _states(restaurant, keys, ctx=None, db_path=None, now=None):
-    if ctx is not None:
-        return ctx.sources(tuple(keys))
-    return df.states(restaurant, keys, db_path=db_path, now=now)
+    states = ctx.sources(tuple(keys)) if ctx is not None else df.states(restaurant, keys, db_path=db_path, now=now)
+    return [_with_own_cadence(restaurant, s) for s in states]
+
+
+def _with_own_cadence(restaurant, s):
+    """A reviews state carrying this restaurant's own fetch slots and
+    cadence when it is on the quiet Places-only cadence (fetcher.
+    review_fetch_slots, AI cost audit 10/7/26 #45) — so the line says "twice
+    a day" and the next read at 4pm, not "4× a day" and noon. A copy: a
+    context's cached state is never changed."""
+    if not s or s.get("key") != "reviews":
+        return s
+    try:
+        import fetcher
+        rid = df._get(restaurant, "id")
+        slots = fetcher.review_fetch_slots(rid)
+        if slots == fetcher.REVIEW_FETCH_SLOTS:
+            return s
+        hours, word = fetcher.review_cadence(rid)
+        return dict(s, slots=list(slots), cadence_hours=hours, cadence_word=word)
+    except Exception:
+        return s
 
 
 def _down(s) -> bool:

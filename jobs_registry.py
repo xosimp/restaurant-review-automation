@@ -48,7 +48,11 @@ lane          run on this bounded worker lane beside the loop, not on the
               loop thread (scheduler._LANES) — the weekly Intel sweeps
               run for hours and blocked briefs, DSR and intraday (#98);
               "ai" holds the long model jobs (auto-draft, weekly plan,
-              recipe drafts, weekly digests — AI cost audit 10/7/26 #6)
+              recipe drafts, weekly digests — AI cost audit 10/7/26 #6;
+              the Labor pre-warm, #100); "sweep" the 4-6am restaurant
+              sweeps and the diagnoses (#54), each waiting on what it
+              reads (scheduler._PulsedOps.settled). A lane run gets the
+              loop's retry when it fails
 
 Owner-facing SLAs are about 3 h for hourly jobs, 26 h for daily, 8 days for
 weekly (#31).
@@ -105,6 +109,14 @@ JOBS = {
         cadence="3am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="POS sync", description="Pull yesterday's sales and labor from every connected POS, then inventory systems",
         target=("scheduler", "run_toast_sync"), max_minutes=75, retry=True),
+    # The Labor read written ahead of the morning open (AI cost audit 10/7/26
+    # #100), for restaurants whose owner opened it in the last week.
+    "labor_prewarm": dict(
+        cadence="3am CT daily, after the POS sync (AI lane)", sla_minutes=_D, sends=False, runnable=True,
+        label="Labor read pre-warm",
+        description="Write the Labor read after the POS sync for restaurants whose Labor read was opened in "
+                    "the last 7 days, so the morning open is a stored read (bounded, resumable)",
+        target=("scheduler", "run_labor_prewarm"), run_kwargs=_chi_now_kw, max_minutes=25, lane="ai"),
     "pos_retry": dict(
         cadence="hourly, until 11am local", sla_minutes=_H, sends=False, runnable=True,
         label="POS retry", description="Retry failed POS syncs whose retry is due (+1h, +3h, +6h; never an auth failure)",
@@ -169,17 +181,17 @@ JOBS = {
                     "standing schedule patterns and the per-person quarterly summaries",
         target=("strategy_jobs", "run_people_nightly"), max_minutes=30, retry=True),
     "inventory_depletion": dict(
-        cadence="5am CT nightly", sla_minutes=_D, sends=False, runnable=True,
+        cadence="5am CT nightly (sweep lane)", sla_minutes=_D, sends=False, runnable=True,
         label="Depletion", description="Deplete inventory from POS sales",
-        target=("scheduler", "run_daily_depletion_sync"), max_minutes=60, retry=True),
+        target=("scheduler", "run_daily_depletion_sync"), max_minutes=60, retry=True, lane="sweep"),
     "food_cost_snapshots": dict(
-        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        cadence="5am CT daily, after depletion (sweep lane)", sla_minutes=_D, sends=False, runnable=True,
         label="Food cost snapshots", description="Write each restaurant's inventory snapshot and score closed forecasts",
-        target=("scheduler", "run_food_cost_snapshots"), max_minutes=60, retry=True),
+        target=("scheduler", "run_food_cost_snapshots"), max_minutes=60, retry=True, lane="sweep"),
     "forecast_scoring": dict(
-        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        cadence="5am CT daily, after the snapshots (sweep lane)", sla_minutes=_D, sends=False, runnable=True,
         label="Forecast scoring", description="Score every frozen forecast whose period has closed",
-        target=("scheduler", "run_forecast_scoring"), max_minutes=60, retry=True),
+        target=("scheduler", "run_forecast_scoring"), max_minutes=60, retry=True, lane="sweep"),
     "event_sync": dict(
         cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Event sync",
@@ -201,17 +213,37 @@ JOBS = {
         label="Quality calibration", description="Suggest Shift Quality weights (calibrate_weights, what Apply writes)",
         target=("strategy_jobs", "run_quality_calibration"), max_minutes=20, retry=True),
     "data_health_daily": dict(
-        cadence="6am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        cadence="6am CT daily, after the snapshots (sweep lane)", sla_minutes=_D, sends=False, runnable=True,
         label="Data health", description="Write each restaurant's Data Health snapshot (data_health_daily)",
-        target=("scheduler", "run_data_health_daily"), max_minutes=60, retry=True),
+        target=("scheduler", "run_data_health_daily"), max_minutes=60, retry=True, lane="sweep"),
     "review_diagnoses": dict(
-        cadence="6am CT daily", sla_minutes=_D, sends=False, runnable=True,
-        label="Review diagnoses", description="Root-cause reads of each restaurant's biggest complaint clusters (bounded, resumable)",
-        target=("scheduler", "run_review_diagnoses"), max_minutes=60, retry=True),
+        cadence="6am CT daily, after its 4am batch (sweep lane)", sla_minutes=_D, sends=False, runnable=True,
+        label="Review diagnoses",
+        description="Root-cause reads of each restaurant's biggest complaint clusters: the 4am batch's answers "
+                    "reused, the rest written now (bounded, resumable)",
+        target=("scheduler", "run_review_diagnoses"), max_minutes=60, retry=True, lane="sweep"),
     "food_cost_diagnoses": dict(
-        cadence="6am CT daily", sla_minutes=_D, sends=False, runnable=True,
-        label="Food cost diagnoses", description="Root-cause reads over each restaurant's ranked cost drivers (bounded, resumable)",
-        target=("scheduler", "run_food_cost_diagnoses"), max_minutes=60, retry=True),
+        cadence="6am CT daily, after the snapshots and its batch (sweep lane)", sla_minutes=_D, sends=False,
+        runnable=True, label="Food cost diagnoses",
+        description="Root-cause reads over each restaurant's ranked cost drivers: the batch's answers reused, "
+                    "the rest written now (bounded, resumable)",
+        target=("scheduler", "run_food_cost_diagnoses"), max_minutes=60, retry=True, lane="sweep"),
+    # The diagnoses' Message Batches (AI cost audit 10/7/26 #58): the calls
+    # the 6am passes would make, sent at half the price ahead of them.
+    "review_diagnoses_batch": dict(
+        cadence="4am CT daily (sweep lane)", sla_minutes=_D, sends=False, runnable=True,
+        label="Review diagnoses batch",
+        description="Plan each restaurant's review diagnoses and send the calls they need as one Message Batch "
+                    "(half price); the 6am pass writes what has not landed",
+        target=("scheduler", "run_review_diagnoses_batch"), run_kwargs=_chi_now_kw, max_minutes=50,
+        retry=True, lane="sweep"),
+    "food_cost_diagnoses_batch": dict(
+        cadence="5am CT daily, after the snapshots, until 5:30 (sweep lane)", sla_minutes=_D, sends=False,
+        runnable=True, label="Food cost diagnoses batch",
+        description="Plan each restaurant's food cost diagnosis and send the calls as one Message Batch "
+                    "(half price); the 6am pass writes what has not landed",
+        target=("scheduler", "run_food_cost_diagnoses_batch"), run_kwargs=_chi_now_kw, max_minutes=50,
+        retry=True, lane="sweep"),
     "outcome_evaluations": dict(
         cadence="6am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Outcome evaluations", description="Close outcome trackers whose window ended; mark goals met",
@@ -221,13 +253,13 @@ JOBS = {
         label="Outcome rechecks", description="Re-check measured results at 90 days and accrue measured savings day by day",
         target=("strategy_jobs", "run_outcome_rechecks"), max_minutes=20, retry=True),
     "learning_memory": dict(
-        cadence="6am CT daily, after the outcome re-checks", sla_minutes=_D, sends=False, runnable=True,
-        label="Learning memory",
+        cadence="6am CT daily, after the outcome re-checks (sweep lane)", sla_minutes=_D, sends=False,
+        runnable=True, label="Learning memory",
         description="The nightly learning pass for every restaurant allowed to teach a learner: score Cavnar "
                     "AI's claims at their horizon, summarise closed quarters of its reads, the what-worked "
                     "record, trackers for changes made, trigger margins, the learning scorecard and the "
                     "cross-module links (bounded, resumable)",
-        target=("scheduler", "run_learning_memory"), max_minutes=60, retry=True),
+        target=("scheduler", "run_learning_memory"), max_minutes=60, retry=True, lane="sweep"),
     "value_figures": dict(
         cadence="6am CT daily, after outcome evaluations (Intel lane)", sla_minutes=_D, sends=False, runnable=True,
         label="Value figures",

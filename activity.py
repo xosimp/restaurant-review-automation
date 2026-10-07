@@ -107,17 +107,21 @@ def _plural(n, one, many=None):
 
 def _next_fetch_slot(restaurant):
     """The next review sweep, in the restaurant's clock — the fetch runs at
-    8/12/4/8 Chicago, so this is that schedule translated for the owner."""
+    8/12/4/8 Chicago (8/4 for a quiet Places-only listing, fetcher.
+    review_fetch_slots, AI cost audit 10/7/26 #45), so this is that schedule
+    translated for the owner."""
     try:
         from time_utils import restaurant_now
         from zoneinfo import ZoneInfo
+        import fetcher
+        slots = fetcher.review_fetch_slots(getattr(restaurant, "id", None))
         now_chi = datetime.now(ZoneInfo("America/Chicago"))
-        for h in (8, 12, 16, 20):
+        for h in slots:
             slot = now_chi.replace(hour=h, minute=0, second=0, microsecond=0)
             if slot > now_chi:
                 break
         else:
-            slot = (now_chi + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+            slot = (now_chi + timedelta(days=1)).replace(hour=slots[0], minute=0, second=0, microsecond=0)
         local = slot.astimezone(restaurant_now(restaurant).tzinfo)
         return local.strftime("%-I%p").lower().replace("m", "m")
     except Exception:
