@@ -347,7 +347,7 @@ def _trigger_now():
 
 
 def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start=None, subject=None,
-             unattended=False, deadline=None, context=None, db_path=None) -> RunResult:
+             unattended=False, deadline=None, context=None, db_path=None, run_id=None) -> RunResult:
     """Run `workflow` once (module docstring). `attempt(route, notes)` makes
     one model call on `route` (an ai_workflows.Route: route.apply(kwargs) sets
     the model and its thinking) and returns the caller's result; `notes` is a
@@ -357,11 +357,15 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
     `start` is the rung the workflow's own pre-router chose (a tier on its
     ladder). `deadline` (time.time()) bounds the whole run. Exceptions from
     `attempt` propagate after the run is recorded — the caller's existing
-    error handling stays what it was."""
+    error handling stays what it was. `run_id` is the run's id when the
+    caller already has a correlation id for this unit of work (an Ask turn's
+    "ask:" id, a batched DSR night's id stamped on its batch item): the
+    ledger rows written under it before the run (a batch answer) count
+    toward the run's cost, and the turn and the run are one id."""
     pol = wf.policy(workflow, db_path)
     parent = _RUN.get()
     depth = (parent or {}).get("depth", 0) + 1
-    run_id = new_run_id(workflow)
+    run_id = str(run_id) if run_id else new_run_id(workflow)
     started = time.time()
     caps = pol.caps
     if deadline is None:

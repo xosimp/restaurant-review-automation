@@ -280,7 +280,16 @@ reports a status instead of a zero:
 **Around the blocks.**
 - `narrative.py` makes the one model call: `write(ctx, facts)` with the
   prompt from `build_prompt`. Every figure is checked against the facts
-  (`PROMPT_LIBRARY.md`).
+  (`PROMPT_LIBRARY.md`). Since 10/7/26 the call is one run of the
+  `dsr_narrative` workflow (`run`: Sonnet 5, then Sonnet 5.5 thinking only
+  on a shape `salvage` could not repair — a broken line is dropped, an
+  injected field or a malformed lead is not repaired); a batch answer is the
+  run's first rung (`land_batch`); an answer to a priority is the run's
+  outcome (`record_action_outcome`, from `rec_ledger.record`); a later
+  version whose cited facts did not move keeps the earlier narrative with no
+  call (`carry_forward`, offered by `pipeline._carry_forward`). Three lines
+  a list, single slots one short sentence (#37). Its memory block is the
+  Restaurant Context Manager's `memory` section.
 - `scorecard.py` is "Did we win today?": a verdict, an overall score out of
   100, wins and risks. Deterministic.
 - `kpis.py` sets each figure beside its direction, its best or worst in
@@ -324,6 +333,8 @@ reports a status instead of a zero:
 **Files**: `ask_cavnar.py` (context snapshot builder + `ask_with_tools`), `ask_cavnar_tools.py` (the tool registry — `len(TOOLS)` is the count), `business_intelligence.py` (the cross-module layer), `home_brief.py` (feeds the opening briefing), `ask_conversations.py` (the rolling chat summary, past chats, what the last answer read), `owner_memory.py` (what the owner tells Cavnar AI, typed).
 
 **Design stance**: an AI-powered restaurant COO, not a chatbot wrapper. Every question gets a fresh `build_context()` snapshot (identity, sibling locations, alerts, memory, module data the restaurant's tier actually has) plus a filtered tool list (`tool_specs(restaurant)` — a tool tagged with a module the restaurant doesn't have is never offered, so the model can't call it and produce an empty-result apology).
+
+**On the orchestrator** (AI orchestration design, 10/7/26): each question is one `ask_cavnar` run (T2, no escalation) whose id is the turn's `ask:` correlation id; a rating of the answer is its outcome (`record_feedback_outcome`). The snapshot's memory and, for an owner-level asker with no module denied, its ACROSS THE BUSINESS block come from `restaurant_context` sections (a manager's view is built for the manager, as before); the sections' fixed reading rules sit in the cached static block (`_SNAPSHOT_RULES`, #64); a follow-up in the same chat within ten minutes is handed the last answer's reads as its first tool results (`ask_conversations.remember_reads` / `replay_reads`, #65); a confirmation card raised beside a written answer skips the forced second call (#67). See PROMPT_LIBRARY.md → *The DSR narrative and Ask on the orchestrator*.
 
 **Screen context** (friction #15, 9/25/26): every question may carry `screen` {panel, entity}; `ask_cavnar.screen_hint` turns it into one server-built line (a review by id from this restaurant, described by rating, platform, date and reply status only), never an instruction — see PROMPT_LIBRARY.md → Ask. The web sends it with every question, and a review card's or an Intel recommendation's "Ask about this" sets the item; the chat id is kept per restaurant in sessionStorage so the panel reopens on it after a reload or a location switch.
 
@@ -613,7 +624,7 @@ See `SYSTEM_ARCHITECTURE.md`'s Auth section for the model and `docs/ops/SECURITY
 
 Files: `restaurant_context.py` (the registry, the caches, the packet and thin builders over the owning modules), `labor.labor_trend_section` (the labor trend, moved out of the labor read), `context_sections` (its L2 table).
 
-Design stance: **one reading of each shared fact, rebuilt only when its data moves.** A prompt used to assemble the restaurant's facts by hand — the labor read its own payroll-week trend, the food read its own menu notes, the marketing read its own brand profile — so two surfaces could state the same figure two ways and every call rebuilt it. `SECTIONS` names twelve (profile, owner_rules, roster, findings, kpis, sales_trend, labor_trend, events, weather, memory, alerts, data_state), each a `"module:function"` builder that reuses the code owning the fact and a version made of change markers. Missing data is a sentence ("No complete payroll week on file yet — state no labor trend."), never a zero. Viewer scoping is the memory assembler's and the permissions module's, never re-decided here. The four page-load reads render the sections that state the same thing they did by hand and key their stored copy on the packet's fingerprint; Ask, the DSR and the schedule are the next to move onto it.
+Design stance: **one reading of each shared fact, rebuilt only when its data moves.** A prompt used to assemble the restaurant's facts by hand — the labor read its own payroll-week trend, the food read its own menu notes, the marketing read its own brand profile — so two surfaces could state the same figure two ways and every call rebuilt it. `SECTIONS` names twelve (profile, owner_rules, roster, findings, kpis, sales_trend, labor_trend, events, weather, memory, alerts, data_state), each a `"module:function"` builder that reuses the code owning the fact and a version made of change markers. Missing data is a sentence ("No complete payroll week on file yet — state no labor trend."), never a zero. Viewer scoping is the memory assembler's and the permissions module's, never re-decided here. The four page-load reads render the sections that state the same thing they did by hand and key their stored copy on the packet's fingerprint. The DSR narrative and Ask read their memory through the `memory` section with their own surface (`whole` keeps the owner's rules inside the block under its one budget, `budget_chars` and `now` pass through; a caller-named surface is also versioned on the event, market and people tables, and in five-minute steps when it reads the schedule or marketing memory), and Ask's owner-level ACROSS THE BUSINESS is the `findings` section (`fresh_seconds`; its version now also carries the restaurants row's modules and targets). `forget(rid, sections)` drops a restaurant's sections from L1 and L2 for a caller whose own invalidation sees a write the markers do not (Ask's `invalidate_context`). The schedule is the next to move onto it.
 
 ## Intelligence engine (`intelligence/`)
 

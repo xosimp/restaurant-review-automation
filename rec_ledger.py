@@ -1626,6 +1626,16 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
                            silence_until=silence_until, rec_id=rec_id, require_existing=require_existing,
                            authority=authority, via=via)
         conn.commit()
+        if added and key.startswith("dsr_action:") and counts_for_restaurant(authority, event):
+            # The restaurant's answer to a DSR priority is the outcome of the
+            # dsr_narrative run that wrote it (AI orchestration, 10/7/26) —
+            # never an admin's (view-as) nor a delegate's own decline.
+            try:
+                from dsr import narrative as _dsr_n
+                _dsr_n.record_action_outcome(restaurant_id, key, event,
+                                             db_path=None if db_path == DB_PATH else db_path)
+            except Exception as e:
+                print(f"[rec_ledger] dsr outcome not filed: {e}")
         return added
     except Exception as e:
         print(f"[rec_ledger] record failed: {e}")

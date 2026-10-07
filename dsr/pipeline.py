@@ -65,7 +65,13 @@ THE RULES, each one pinned by tests/test_dsr_pipeline.py:
   synchronously. Every move of the item is one compare-and-set on the
   report row, so whichever narrative is stored first wins and the other
   is dropped — never two. Close day never batches; a local backend never
-  can.
+  can. A batch answer whose shape cannot be salvaged escalates one tier in
+  its own callback (narrative.land_batch: the night's dsr_narrative run).
+* A later version written by the pipeline itself (late data, a rechecked
+  final night) keeps the earlier version's narrative when nothing it cites
+  moved and every line still checks out against the new facts
+  (_carry_forward — AI cost audit 10/7/26 #75); otherwise it is written
+  again. A re-run someone asked for is always written again.
 * Nothing double-runs. Every run claims (restaurant, business date,
   version) with ops.claim_period; a version that finished keeps its claim
   for good, one that is waiting for a retry gives it back, and one a deploy
@@ -723,6 +729,10 @@ def _write_stage(restaurant, report, ctx, trigger, now_utc, db):
         _save_written(report_id, {"ok": False, "narrative": None, "reason": why}, db)
         return None
     store.set_stage(report_id, "writing", db_path=db)
+    carried = _carry_forward(restaurant, current, ctx, facts_now, trigger, db)
+    if carried is not None:
+        _save_written(report_id, carried, db)
+        return None
     cutoff = _batch_cutoff(restaurant, current, trigger, now_utc, db)
     if cutoff is not None:
         how, out = _submit_narrative(current, ctx, facts_now, trigger, cutoff, now_utc, db)
@@ -735,6 +745,31 @@ def _write_stage(restaurant, report, ctx, trigger, now_utc, db):
             return None
     _save_written(report_id, _write(ctx, facts_now), db)
     return None
+
+
+def _carry_forward(restaurant, report, ctx, facts_now, trigger, db):
+    """A later version of a night keeps the earlier version's narrative when
+    the facts it rests on did not move (narrative.carry_forward, AI cost
+    audit 10/7/26 #75) — write()'s result, or None to write it. Only on the
+    pipeline's own runs (a late-data version, a rechecked final night):
+    someone who re-runs a night (Close day, `force`) asked for it to be
+    written again. Never raises."""
+    if trigger not in (TRIGGER_SWEEP, TRIGGER_LATE) or int(report.get("version") or 1) <= 1:
+        return None
+    try:
+        mod = _import("dsr.narrative")
+        carry = getattr(mod, "carry_forward", None) if mod is not None else None
+        if not callable(carry):
+            return None
+        previous = store.get_finished_report(restaurant.id, report["business_date"], db_path=db)
+        if not previous or previous["id"] == report["id"] or not previous.get("narrative"):
+            return None
+        out = carry(ctx, facts_now, previous)
+        return _normalised(out) if isinstance(out, dict) and out.get("ok") else None
+    except Exception as e:
+        import ops
+        ops.capture(e, job="dsr_narrative", context=f"restaurant_id={restaurant.id} carry forward")
+        return None
 
 
 def _batch_cutoff(restaurant, report, trigger, now_utc, db):
@@ -899,7 +934,17 @@ def on_narrative_batch(item, message=None, error=None):
         if error is not None:
             written = _normalised(mod.refusal_for(error, rid))
         else:
-            written = _normalised(mod.finish(ctx, report["facts"], message, ctx_d.get("state") or {}))
+            # The answer is the first rung of the night's dsr_narrative run
+            # (narrative.land_batch, AI orchestration 10/7/26): judged by
+            # the synchronous checks, and a shape the salvage cannot repair
+            # escalates one tier here, synchronously. A narrative module
+            # without the run judges it alone (mod.finish), as before.
+            land = getattr(mod, "land_batch", None)
+            if callable(land):
+                written = _normalised(land(ctx, report["facts"], message, ctx_d.get("state") or {},
+                                           run_id=ctx_d.get("run_id"), custom_id=cid))
+            else:
+                written = _normalised(mod.finish(ctx, report["facts"], message, ctx_d.get("state") or {}))
     except Exception as e:
         import ops
         ops.capture(e, job="dsr_narrative", context=f"restaurant_id={rid} business_date={report['business_date']} batch")

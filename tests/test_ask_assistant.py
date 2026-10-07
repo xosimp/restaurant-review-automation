@@ -360,7 +360,10 @@ def test_the_snapshot_marks_memory_as_told_not_measured(db_path):
     models.remember_ask_fact(rid, "Wants labor under 26%", db_path=db_path)
     section = ask_cavnar._memory_context(rid)
     assert "Wants labor under 26%" in section
-    assert "never present one as a fact" in section
+    # The rule is the cached static block's now (AI cost audit 10/7/26 #64),
+    # under the section's own heading.
+    assert section.startswith("WHAT THIS OWNER HAS TOLD YOU BEFORE")
+    assert "never present one as a fact" in ask_cavnar._SYSTEM_STATIC
 
 
 def test_no_memory_means_no_section(db_path):

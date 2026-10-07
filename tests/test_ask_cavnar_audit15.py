@@ -333,7 +333,10 @@ def test_confirmed_proposals_reach_the_context_across_conversations(db_path):
     section = ask_cavnar._commitments_context(r.id)
     assert "Fresh Co" in section
     assert "confirmed" in section.lower()
-    assert "Never tell the owner nothing has been sent" in section
+    # The rule moved to the cached static block (AI cost audit 10/7/26 #64),
+    # which names the section by its heading.
+    assert section.startswith("WHAT YOU HAVE ALREADY PROPOSED")
+    assert "Never tell the owner nothing has been sent" in ask_cavnar._SYSTEM_STATIC
 
 
 def test_a_proposal_nobody_answered_is_reported_as_still_open(db_path):

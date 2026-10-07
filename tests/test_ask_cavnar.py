@@ -292,7 +292,9 @@ def test_labor_module_with_no_shifts_says_so(db_path):
     r = _restaurant(db_path, module_labor=1)
     ctx = build_context(r)
     assert "LABOR" in ctx
-    assert "upload a shifts CSV" in ctx
+    # What to do about it is the static block's rule now (#64, 10/7/26).
+    assert "No real shift data uploaded yet" in ctx
+    assert "upload a shifts CSV" in ask_cavnar._SYSTEM_STATIC
 
 
 def test_labor_context_includes_target_comparison_and_savings(db_path, monkeypatch):
@@ -326,7 +328,8 @@ def test_inventory_module_with_no_data_says_so(db_path):
     r = _restaurant(db_path, module_inventory=1)
     ctx = build_context(r)
     assert "FOOD COST" in ctx
-    assert "upload an inventory CSV" in ctx
+    assert "No real inventory data uploaded yet" in ctx
+    assert "upload an inventory CSV" in ask_cavnar._SYSTEM_STATIC
 
 
 def test_inventory_context_names_critical_and_reorder_items(db_path, monkeypatch):

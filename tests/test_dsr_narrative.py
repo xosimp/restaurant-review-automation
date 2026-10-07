@@ -390,7 +390,6 @@ def _broken(mutate):
 
 @pytest.mark.parametrize("reply, needle", [
     ("not json at all", "wrong shape"),
-    (_broken(lambda r: r.pop("actions_tomorrow")), "wrong shape"),
     (_broken(lambda r: r.update(owner_note="hi")), "wrong shape"),
     # one more than MAX_ACTIONS (5 since "Tomorrow's priorities", 9/25/26 — this appended one to three)
     (_broken(lambda r: r["actions_tomorrow"].extend(copy.deepcopy(r["actions_tomorrow"][0])
@@ -398,19 +397,50 @@ def _broken(mutate):
      "wrong shape"),
     (_broken(lambda r: r["actions_tomorrow"][0].update(urgency="asap")), "wrong shape"),
     (_broken(lambda r: r["actions_tomorrow"][0].update(kind="wire_money")), "wrong shape"),
-    (_broken(lambda r: r["actions_tomorrow"][0].update(dollars_monthly="$640")), "wrong shape"),
-    (_broken(lambda r: r["went_well"][0].pop("cites")), "wrong shape"),
-    (_broken(lambda r: r["went_well"][0].update(cites=[])), "wrong shape"),
-    (_broken(lambda r: r["went_well"].extend([_it("x.", "sales.net")] * 3)), "wrong shape"),
     (_broken(lambda r: r["executive_summary"].update(text="Saturday did $19,850 net.")), "wrong shape"),
     (_broken(lambda r: r["executive_summary"].update(text="A. B. C. D.")), "wrong shape"),
     (_broken(lambda r: r.update(executive_summary="Saturday did $19,850 net. Good night.")), "wrong shape"),
     ("[1, 2, 3]", "wrong shape"),
 ])
 def test_invalid_or_partial_output_is_refused(monkeypatch, rest, db_path, reply, needle):
+    """A shape the salvage cannot repair (an injected field or action, a lead
+    in the wrong shape, no object at all) is refused whole — and is the one
+    thing the dsr_narrative run escalates on (AI orchestration, 10/7/26):
+    a second call, one tier up (Sonnet 5.5, thinking), told why. It used to
+    be "never a second call"; the fake answers the same both times, so the
+    night is still refused."""
     out, client = _run(monkeypatch, rest, db_path, strong_night(), reply)
     assert out["ok"] is False and out["narrative"] is None and needle in out["reason"]
-    assert len(client.calls) == 1                     # never a second call to repair it
+    assert len(client.calls) == 2
+    first, second = client.calls
+    assert first["model"] == ai_utils.SONNET and second["model"] == ai_utils.SONNET_55
+    assert second["thinking"] == {"type": "adaptive"} and second["output_config"]["effort"] == "medium"
+    assert second["max_tokens"] >= narrative.MAX_TOKENS_THINKING
+    assert "AN EARLIER DRAFT OF THIS WAS SET ASIDE" in second["messages"][0]["content"]
+    assert "AN EARLIER DRAFT" not in first["messages"][0]["content"]
+
+
+@pytest.mark.parametrize("mutate, field", [
+    (lambda r: r.pop("actions_tomorrow"), None),
+    (lambda r: r["actions_tomorrow"][0].update(dollars_monthly="$640"), "actions_tomorrow[0]"),
+    (lambda r: r["went_well"][0].pop("cites"), "went_well[0]"),
+    (lambda r: r["went_well"][0].update(cites=[]), "went_well[0]"),
+    (lambda r: r["went_well"].extend([_it("x.", "sales.net")] * 3), "went_well[3]"),
+    (lambda r: r.update(biggest_risk=_it(" ".join(["word"] * 45) + ".", "sales.net")), "biggest_risk"),
+])
+def test_a_broken_line_is_salvaged_not_the_whole_narrative(monkeypatch, rest, db_path, mutate, field):
+    """#76 (AI cost audit 10/7/26): validate() still refuses these, but the
+    rest of the answer stands — the broken line is dropped and counted with
+    the figure check's drops, and no second call is made."""
+    out, client = _run(monkeypatch, rest, db_path, strong_night(), _broken(mutate))
+    assert out["ok"], out
+    assert len(client.calls) == 1
+    shape = [d for d in _dropped(out) if d["why"].startswith("the wrong shape:")]
+    if field:
+        assert [d["field"] for d in shape][:1] == [field]
+    v = out["narrative"]["verification"]
+    assert v["kept"] == v["checked"] - len(v["dropped"])
+    assert len(out["narrative"]["went_well"]) <= narrative.MAX_LIST_ITEMS
 
 
 def test_a_truncated_answer_is_refused(monkeypatch, rest, db_path):
@@ -457,11 +487,11 @@ def test_a_true_figure_the_line_forgot_to_cite_is_traced_to_its_fact(monkeypatch
     The fact is added to the line's cites (which the manager view redacts
     by) instead — and a figure that no fact holds is still dropped."""
     r = strong_reply()
-    r["went_well"].append(_it("Sales hit $19,850.", "labor.pct"))
+    r["went_well"][2] = _it("Sales hit $19,850.", "labor.pct")      # three a list since #37
     r["needs_attention"].append(_it("Sales hit $19,990.", "labor.pct"))
     out, _ = _run(monkeypatch, rest, db_path, strong_night(), r)
     assert [d["field"] for d in _dropped(out)] == ["needs_attention[2]"]
-    assert out["narrative"]["went_well"][3] == _it("Sales hit $19,850.", "labor.pct", "sales.net")
+    assert out["narrative"]["went_well"][2] == _it("Sales hit $19,850.", "labor.pct", "sales.net")
 
 
 def test_a_traced_budget_figure_leaves_the_managers_view_with_its_line():
@@ -544,12 +574,14 @@ def test_a_line_resting_only_on_words_is_dropped(monkeypatch, rest, db_path):
 
 def test_dates_must_be_the_reports_own_and_never_iso(monkeypatch, rest, db_path):
     r = strong_reply()
-    r["went_well"].append(_it("Saturday 9/19/26 closed the week strong.", "sales.net"))
-    r["needs_attention"].append(_it("Worst start since 2026-09-01.", "sales.net"))
-    r["needs_attention"].append(_it("A repeat of 8/2/26.", "sales.net"))
+    # Three lines a list since #37 (10/7/26): the lines under test replace
+    # the fixture's last ones rather than run past the cap.
+    r["went_well"][2] = _it("Saturday 9/19/26 closed the week strong.", "sales.net")
+    r["needs_attention"] = r["needs_attention"][:1] + [_it("Worst start since 2026-09-01.", "sales.net"),
+                                                       _it("A repeat of 8/2/26.", "sales.net")]
     out, _ = _run(monkeypatch, rest, db_path, strong_night(), r)
     fields = sorted(d["field"] for d in _dropped(out))
-    assert fields == ["needs_attention[2]", "needs_attention[3]"]
+    assert fields == ["needs_attention[1]", "needs_attention[2]"]
     assert "2026-09-01" in _dropped(out)[0]["why"]
 
 
@@ -976,11 +1008,17 @@ def test_an_operations_summary_that_is_not_manager_safe_is_dropped_not_the_narra
     assert needle in d["why"], d["why"]
 
 
-def test_a_malformed_operations_summary_refuses_like_any_other_shape_error(monkeypatch, rest, db_path):
+def test_a_malformed_operations_summary_is_dropped_by_the_salvage_not_the_narrative(monkeypatch, rest, db_path):
+    """It used to refuse the whole narrative like any shape error; since the
+    salvage (AI cost audit 10/7/26 #76) an optional line in the wrong shape
+    is dropped and counted, and the Manager DSR has no opening, as when a
+    manager-unsafe one is dropped."""
     r = ops_reply()
     r["operations_summary"] = {"text": "Labor ran 34.8%."}          # no cites
-    out, _ = _run(monkeypatch, rest, db_path, ops_night(), r)
-    assert not out["ok"]
+    out, client = _run(monkeypatch, rest, db_path, ops_night(), r)
+    assert out["ok"] and out["narrative"]["operations_summary"] is None and len(client.calls) == 1
+    (d,) = [d for d in _dropped(out) if d["field"] == "operations_summary"]
+    assert d["why"].startswith("the wrong shape:")
 
 
 def test_the_manager_view_leads_with_the_operations_summary_when_the_lead_cites_the_budget():
