@@ -5022,6 +5022,15 @@ def scheduler_loop():
                 from event_intel.gameday import run_event_push
                 _ops.run_job("event_push", run_event_push, restaurants=_slot, claim="intraday")
 
+            # Every tick, claimed per 5-minute slot — the Message Batches
+            # collector (ai_batches.run_collector, AI cost audit 10/7/26
+            # #19): ended batches' answers ledgered at the batch rate and
+            # handed to their callbacks. Before the DSR sweep, so a narrative
+            # that came back is finalised in the same tick.
+            if _ops.claim_period("ai_batch_collect", f"{today}-{now.hour}-{now.minute // 5}"):
+                from ai_batches import run_collector as _run_batch_collector
+                _ops.run_job("ai_batch_collect", _run_batch_collector)
+
             # Every tick, claimed per 10-minute slot — the nightly DSR
             # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
             # the POS close-day poll, block retries, the provisional

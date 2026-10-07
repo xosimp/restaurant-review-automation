@@ -139,8 +139,11 @@ def test_every_call_site_parse_failure_the_packet_names_passes_its_message():
     import dsr.narrative as narrative
     import food_cost_intelligence
     import review_intelligence
+    # The DSR narrative's answer is parsed in narrative.finish since AI cost
+    # audit 10/7/26 #20 — the one judge of a synchronous answer and a batch
+    # answer alike; _write only makes the call.
     for fn in (analyser.analyse_review, review_intelligence.diagnose, food_cost_intelligence.diagnose,
-               narrative._write):
+               narrative.finish):
         assert "message=m" in inspect.getsource(fn), fn.__qualname__
 
 

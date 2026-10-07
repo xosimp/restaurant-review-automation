@@ -4400,6 +4400,10 @@ def init_db(db_path: str = DB_PATH):
     # exists (AI orchestration design, 10/7/26).
     import ai_orchestrator as _ai_orch
     _ai_orch.init_ai_orchestration(db_path)
+    # The Message Batches queue (ai_batch_jobs, ai_batch_items: AI cost audit
+    # 10/7/26 #19) — at boot, never on a submit or a collect.
+    import ai_batches as _ai_batches
+    _ai_batches.init_ai_batches(db_path)
     # The lasting, attributed change history (change_log, kept forever) and
     # the one-time carry-over of the target and profile changes activity_log
     # holds — memory audit 9/29/26. At boot, never on a write path.

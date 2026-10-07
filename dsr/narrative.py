@@ -2244,10 +2244,17 @@ def write(ctx, facts):
         return _refused("The summary couldn't be written for this night — the report is complete without it.")
 
 
-def _write(ctx, facts):
+def _prepare(ctx, facts):
+    """Everything the call is built from, read before it: (refusal, None)
+    when the night is not one to write about, else (None, prep) — the
+    prompt's two halves, the declined keys (settle_actions drops them) and
+    `state`, the JSON-able part of what finish() checks the answer against
+    (the dates the prompt let the model name). Shared by the synchronous
+    call (_write) and a batch item (submit_batch), so both send the same
+    request and judge its answer the same way."""
     ok, why = can_write(facts)
     if not ok:
-        return _refused(why)
+        return _refused(why), None
     rid = ctx.restaurant_id
 
     history, history_dates = [], []
@@ -2283,37 +2290,94 @@ def _write(ctx, facts):
     memory_text = _memory(ctx)
     system, user = build_prompt(ctx, facts, history, open_issues, decisions_text,
                                 _declined_lines(declined[0], declined[1]), memory_text=memory_text, own=own)
+    state = {"history_dates": [str(d) for d in history_dates],
+             "own_dates": [str(d) for d in (own or {}).get("dates") or []],
+             "declined": [sorted(str(k) for k in part if k) for part in declined]}
+    return None, {"system": system, "user": user, "declined": declined, "state": state}
 
-    from ai_utils import (AIBudgetExceeded, AIProviderDown, DataNotReady, create_with_retry, extract_text,
-                          get_client, is_refusal, model_for, parse_json_reply)
-    # The readiness gate before the call (DH5-2). The night's figures are
-    # the report's own (can_write above is its data floor, and a night with
-    # sales missing is already provisional); what the registry adds is
-    # whether the POS behind them is failing, said in the DATA STATE block
-    # and handed to the per-line check (Facts.rv_check) as stale sources.
-    # A source that is not connected is left out of the block: this read
-    # is built from the night's close-out, not from it.
+
+def night_readiness(ctx):
+    """The readiness gate before the call (DH5-2). The night's figures are
+    the report's own (can_write is its data floor, and a night with sales
+    missing is already provisional); what the registry adds is whether the
+    POS behind them is failing, said in the DATA STATE block and handed to
+    the per-line check (Facts.rv_check) as stale sources. A source that is
+    not connected is left out of the block: this read is built from the
+    night's close-out, not from it."""
     import data_health as _dh_dsr
-    _ready = _dh_dsr.readiness(rid, "dsr", delivery="unattended", sources=("pos",), include_not_connected=False,
-                               db_path=ctx.db_path if getattr(ctx, "db_path", None) else None)
-    if _ready.get("prompt_block"):
-        user = f"{user}\n\n{_ready['prompt_block']}"
-    model = model_for(PURPOSE)
+    return _dh_dsr.readiness(ctx.restaurant_id, "dsr", delivery="unattended", sources=("pos",),
+                             include_not_connected=False,
+                             db_path=ctx.db_path if getattr(ctx, "db_path", None) else None)
+
+
+def request_for(system, user, ready):
+    """The narrative's request — what create_with_retry sends synchronously
+    and what a batch item carries (ai_batches.submit), the same either way."""
+    from ai_utils import model_for
+    if (ready or {}).get("prompt_block"):
+        user = f"{user}\n\n{ready['prompt_block']}"
+    return dict(
+        model=model_for(PURPOSE), max_tokens=MAX_TOKENS,
+        # The system prompt is static and marked for the prompt cache (AI
+        # cost audit 10/7/26 #77): kept although one restaurant writes one
+        # narrative a night — restaurants close within minutes of each
+        # other, so at scale the sweep's calls land inside one 5-minute
+        # cache window and every one after the first reads the prefix at a
+        # tenth of the input rate; and batched (submit_batch) the nights of
+        # one sweep pass share the prefix in the same way. Below the
+        # model's minimum cacheable length the marker costs nothing.
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user}],
+        output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}})
+
+
+def refusal_for(exc, rid):
+    """write()'s refusal for a call that never produced a message — the
+    readiness gate, the budget, the breaker, or the provider failing. The
+    same sentences whether the call was synchronous or a batch item the
+    gates stopped (dsr.pipeline.on_narrative_batch)."""
+    from ai_utils import AIBudgetExceeded, AIProviderDown, DataNotReady
+    if isinstance(exc, DataNotReady):
+        return _refused(f"The summary wasn't written for this night — {exc.readiness.get('reason') or 'the data is not ready'}.")
+    if isinstance(exc, (AIBudgetExceeded, AIProviderDown)):
+        return _refused(str(exc))
+    _capture(exc, rid, "model call")
+    return _refused("The summary couldn't be written for this night — the AI service didn't answer.")
+
+
+def _write(ctx, facts):
+    refused, prep = _prepare(ctx, facts)
+    if refused is not None:
+        return refused
+    rid = ctx.restaurant_id
+    from ai_utils import create_with_retry, get_client
+    _ready = night_readiness(ctx)
     try:
         msg = create_with_retry(
             get_client(timeout=AI_TIMEOUT_SECONDS), retries=AI_RETRIES, restaurant_id=rid, action=PURPOSE,
-            model=model, max_tokens=MAX_TOKENS,
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": user}],
-            output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
-            readiness=_ready)
-    except DataNotReady as e:
-        return _refused(f"The summary wasn't written for this night — {e.readiness.get('reason') or 'the data is not ready'}.")
-    except (AIBudgetExceeded, AIProviderDown) as e:
-        return _refused(str(e))
+            readiness=_ready, **request_for(prep["system"], prep["user"], _ready))
     except Exception as e:
-        _capture(e, rid, "model call")
-        return _refused("The summary couldn't be written for this night — the AI service didn't answer.")
+        return refusal_for(e, rid)
+    return finish(ctx, facts, msg, dict(prep["state"], data_state=_ready.get("data_state") or {}),
+                  declined=prep["declined"])
+
+
+def finish(ctx, facts, msg, state, declined=None):
+    """write()'s answer from the model's message: the shape check, the
+    figure and validation checks, the actions settled, the read recorded —
+    the one judge of an answer, whether it came back from the synchronous
+    call or from a batch (dsr.pipeline.on_narrative_batch). `state` is
+    _prepare's plus the readiness data_state; `declined` the three key sets,
+    read again and joined to the ones the prompt carried when not given (a
+    batch answer lands up to an hour later, and an action the owner
+    declined since is dropped too)."""
+    from ai_utils import extract_text, is_refusal, model_for, parse_json_reply
+    rid = ctx.restaurant_id
+    state = state or {}
+    if declined is None:
+        fresh = _declined(rid, ctx.db_path)
+        kept = list(state.get("declined") or ())
+        declined = tuple(set(fresh[i]) | set(kept[i] if i < len(kept) else ()) for i in range(3))
     if is_refusal(msg):
         # Was returned with no trace at all (AIOPS-13).
         _quality("model_refused", rid, "the model declined to write tonight's narrative")
@@ -2333,10 +2397,11 @@ def _write(ctx, facts):
         _quality("output_rejected", rid, f"dsr narrative failed validation: {err}")
         return _refused("The summary couldn't be written for this night — it came back in the wrong shape.")
 
+    model = model_for(PURPOSE)
     # Only the stale sources: tonight's figures are the night's own, so the
     # POS's present-tense state says nothing about "tonight".
-    F = Facts(facts, extra_dates=list(history_dates) + list((own or {}).get("dates") or []),
-              data_state={k: v for k, v in (_ready.get("data_state") or {}).items() if k == "stale_sources"})
+    F = Facts(facts, extra_dates=list(state.get("history_dates") or []) + list(state.get("own_dates") or []),
+              data_state={k: v for k, v in (state.get("data_state") or {}).items() if k == "stale_sources"})
     body, dropped, lead_why = verify(clean, F)
     if lead_why:
         _quality("validation_refused", rid,
@@ -2386,3 +2451,40 @@ def _write(ctx, facts):
     }
     _record_read(ctx, narrative, msg)
     return {"ok": True, "narrative": narrative, "reason": None}
+
+
+# ── through Message Batches (AI cost audit 10/7/26 #19, #20) ───────────────
+# The nightly narrative is written while the owner is asleep, so it can go
+# through ai_batches at half the price. dsr.pipeline decides when (the
+# sweep, with a cutoff before anyone reads it) and owns the report's state;
+# this module only builds the item from the same _prepare / request_for the
+# synchronous call uses, and finish() judges what comes back.
+BATCH_WORKFLOW = PURPOSE
+BATCH_CALLBACK = "dsr.pipeline:on_narrative_batch"
+
+
+def submit_batch(ctx, facts, custom_id, context=None):
+    """Send tonight's narrative request as one batch item. Returns
+    {"status": "submitted"} (the answer comes to BATCH_CALLBACK),
+    {"status": "written", "result": write()'s refusal} (not a night to write
+    about — no item was made), {"status": "blocked"} (a gate refused the
+    item; the callback has already been told and stored the refusal) or
+    {"status": <anything else>} — disabled, duplicate, submit_failed — when
+    the caller should write it synchronously instead. Never raises."""
+    rid = getattr(ctx, "restaurant_id", None)
+    try:
+        refused, prep = _prepare(ctx, facts)
+        if refused is not None:
+            return {"status": "written", "result": refused}
+        import ai_batches
+        _ready = night_readiness(ctx)
+        state = dict(prep["state"], data_state={k: v for k, v in (_ready.get("data_state") or {}).items()
+                                                if k == "stale_sources"})
+        out = ai_batches.submit(BATCH_WORKFLOW, [{
+            "custom_id": custom_id, "restaurant_id": rid, "action": PURPOSE,
+            "request": request_for(prep["system"], prep["user"], _ready), "readiness": _ready,
+            "callback": BATCH_CALLBACK, "context": dict(context or {}, state=state)}])
+        return {"status": out.get(custom_id) or "submit_failed"}
+    except Exception as e:
+        _capture(e, rid, "submit_batch")
+        return {"status": "submit_failed"}

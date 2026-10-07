@@ -2521,6 +2521,11 @@ _RETENTION_DAYS = {
     # audit 10/3/26 PR-31): half a year of real weeks to replay a model,
     # effort or prompt change against (scripts/schedule_model_eval.py).
     "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "180")),
+    # The Message Batches queue (ai_batches, AI cost audit 10/7/26 #19): a
+    # batch answers within 24 hours and every answer is in ai_usage and
+    # ai_calls by then — a month is enough to read what a batch did.
+    "ai_batch_jobs":      int(os.getenv("RETAIN_AI_BATCHES_DAYS", "30")),
+    "ai_batch_items":     int(os.getenv("RETAIN_AI_BATCHES_DAYS", "30")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2556,6 +2561,7 @@ _RETENTION_COLUMN = {
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
     "schedule_model_calls": "created_at",
+    "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
     "schedule_observations": "created_at",
 }
@@ -2669,6 +2675,9 @@ _RETENTION_FLOOR_DAYS = {
     # The schedule-call record: the measured tokens a row reads 60 days, and
     # a replay wants a quarter of real weeks at the least.
     "schedule_model_calls": 90,
+    # Every answer is in ai_usage / ai_calls within a day; a week keeps a
+    # batch's own record for the console's "what did the last pass do".
+    "ai_batch_jobs": 7, "ai_batch_items": 7,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",

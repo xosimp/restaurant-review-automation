@@ -57,6 +57,15 @@ THE RULES, each one pinned by tests/test_dsr_pipeline.py:
   pushes them (held through quiet hours) — once per night, plus one
   "Updated" when a provisional night goes final. It runs after the save and
   can never fail or roll back the report; a failed night tells nobody.
+* The narrative can go through Message Batches at half the price (AI cost
+  audit 10/7/26 #20): on the sweep's own runs, where ai_batches.enabled,
+  the request is a batch item and the version waits in "writing" until the
+  answer lands (on_narrative_batch stores it; the next pass finishes the
+  night) or the cutoff passes (_batch_cutoff) and the pass writes it
+  synchronously. Every move of the item is one compare-and-set on the
+  report row, so whichever narrative is stored first wins and the other
+  is dropped — never two. Close day never batches; a local backend never
+  can.
 * Nothing double-runs. Every run claims (restaurant, business date,
   version) with ops.claim_period; a version that finished keeps its claim
   for good, one that is waiting for a retry gives it back, and one a deploy
@@ -70,6 +79,7 @@ shipped yet is "Not available yet" rather than an import error at boot.
 import importlib
 import json
 import logging
+import os
 from datetime import date, datetime, time as _time, timedelta, timezone
 
 import dsr
@@ -117,6 +127,26 @@ NEVER_HOLDS = ("closeout", "service")
 NO_SUMMARY_SALES_PENDING = "Not enough data yet for a summary — sales are still syncing"
 NO_SUMMARY_NO_SALES = "No summary without the night's sales"
 NO_SUMMARY_FAILED = "The summary couldn't be written for this night"
+
+# The narrative through Message Batches (AI cost audit 10/7/26 #20): half
+# the price, answered within the hour as a rule. Only the sweep's own runs
+# (a night finishing, a provisional night's late version) batch — never
+# Close day, which someone is watching. The version waits in "writing" until
+# the answer lands or the cutoff passes; then the sweep writes it
+# synchronously and the batch's answer, if it ever comes, is discarded.
+# The cutoff is the earliest of: BATCH_CUTOFF_MINUTES after submission; the
+# end of the restaurant's alert quiet hours (when a held push goes out),
+# less BATCH_MARGIN_MINUTES; and, for a night nothing has gone out for yet,
+# the moment nights_missing would call it missing, less the margin (the
+# morning brief, hours later, reads a finished night). The margin covers the
+# sweep's 10-minute slot and the synchronous call. Less than
+# BATCH_MIN_WINDOW_MINUTES to the cutoff: no batch, it is written now.
+BATCH_CUTOFF_MINUTES = int(os.getenv("DSR_BATCH_CUTOFF_MINUTES", "45"))
+BATCH_MARGIN_MINUTES = 20
+BATCH_MIN_WINDOW_MINUTES = 15
+# A collector that claimed the answer this long ago and never stored it
+# (killed mid-callback) has lost it: the sweep writes the narrative itself.
+BATCH_STALE_CLAIM_MINUTES = 15
 
 
 def _db(db_path):
@@ -296,16 +326,21 @@ def _write(ctx, facts):
         mod = _import("dsr.narrative")
         if mod is None:
             return {"ok": False, "narrative": None, "reason": NOT_AVAILABLE_YET}
-        out = mod.write(ctx, facts)
-        ok = isinstance(out, dict) and bool(out.get("ok")) and isinstance(out.get("narrative"), dict)
-        if ok:
-            json.dumps(out["narrative"])
-            return {"ok": True, "narrative": out["narrative"], "reason": None}
-        reason = out.get("reason") if isinstance(out, dict) else None
-        return {"ok": False, "narrative": None, "reason": str(reason or NO_SUMMARY_FAILED)[:300]}
+        return _normalised(mod.write(ctx, facts))
     except Exception as e:
         ops.capture(e, job="dsr_narrative", context=f"restaurant_id={ctx.restaurant_id} business_date={ctx.day}")
         return {"ok": False, "narrative": None, "reason": NO_SUMMARY_FAILED}
+
+
+def _normalised(out):
+    """A narrative result as the report stores it — the synchronous call's
+    and a batch answer's alike. Raises when the narrative will not store."""
+    ok = isinstance(out, dict) and bool(out.get("ok")) and isinstance(out.get("narrative"), dict)
+    if ok:
+        json.dumps(out["narrative"])
+        return {"ok": True, "narrative": out["narrative"], "reason": None}
+    reason = out.get("reason") if isinstance(out, dict) else None
+    return {"ok": False, "narrative": None, "reason": str(reason or NO_SUMMARY_FAILED)[:300]}
 
 
 # ── claims ──────────────────────────────────────────────────────────────────
@@ -416,7 +451,8 @@ def run_night(restaurant, business_date, trigger, now_utc=None, db_path=None, fo
     none (already final/failed), waiting (a retry not due yet), in_progress
     (another run holds the claim), awaiting_close, retry, final, provisional,
     failed, still_awaiting / expired (a provisional night's late-data check),
-    error_retry, error."""
+    narrative_batched / narrative_pending (the narrative went as a batch
+    item / is still out), error_retry, error."""
     db = _db(db_path)
     now_utc = now_utc or datetime.utcnow()
     day = _as_date(business_date)
@@ -542,6 +578,19 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
 
     ctx = dsr.Context(restaurant, day, db_path=db, now_utc=now_utc, trigger=trigger)
 
+    if status == "writing" and stages.get("narrative_batch"):
+        # The narrative is out as a batch item (AI cost audit 10/7/26 #20):
+        # nothing is collected again — its answer is judged against the
+        # facts it was asked about — and the version goes on from writing.
+        ctx.blocks = dict(facts.get("blocks") or {})
+        closed = stages.get("closed_by")
+        ctx.day_closed = closed if closed in ("pos", "close_time", "manual") else False
+        awaiting = [n for n in dsr.BLOCKS if (ctx.blocks.get(n) or {}).get("status") == dsr.AWAITING]
+        waiting = _write_stage(restaurant, report, ctx, trigger, now_utc, db)
+        if waiting is not None:
+            return waiting
+        return _conclude(restaurant, report_id, day, awaiting, now_utc, db)
+
     # awaiting_close: nothing is collected until the POS has closed the day,
     # or the deadline says to go with what there is.
     if status in ("scheduled", "awaiting_close"):
@@ -617,24 +666,17 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     # its predictions — recorded only while that night is still ahead.
     _tomorrow(restaurant, report_id, day, trigger, now_utc, db)
 
-    # writing: one narrative, only over a night whose sales are in.
-    sales_status = (ctx.blocks.get("sales") or {}).get("status")
-    if sales_status == dsr.READY:
-        facts_now = store.get_report_by_id(report_id, db_path=db)["facts"]
-        able, why = _can_write(facts_now)
-        if able:
-            store.set_stage(report_id, "writing", db_path=db)
-            written = _write(ctx, facts_now)
-        else:
-            written = {"ok": False, "narrative": None, "reason": why}
-        store.save_narrative(report_id, written["narrative"], db_path=db)
-        store.note(report_id, "narrative", {"status": "written" if written["ok"] else "skipped",
-                                            "reason": written["reason"]}, db_path=db)
-    else:
-        store.save_narrative(report_id, None, db_path=db)
-        store.note(report_id, "narrative", {"status": "skipped", "reason": NO_SUMMARY_SALES_PENDING
-                                            if sales_status == dsr.AWAITING else NO_SUMMARY_NO_SALES}, db_path=db)
+    # writing: one narrative, only over a night whose sales are in — written
+    # now, or sent as a batch item the version waits for in "writing".
+    waiting = _write_stage(restaurant, report, ctx, trigger, now_utc, db)
+    if waiting is not None:
+        return waiting
+    return _conclude(restaurant, report_id, day, awaiting, now_utc, db)
 
+
+def _conclude(restaurant, report_id, day, awaiting, now_utc, db):
+    """The version's end, once its narrative is decided: final or
+    provisional, then the notices and the night's memory."""
     # Provisional only when a REQUIRED block is still missing; every other
     # block still awaiting goes out labelled with its reason (facts.missing).
     required_missing = [n for n in REQUIRED_BLOCKS if n in awaiting]
@@ -650,6 +692,221 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     _remember(restaurant, day, db)
     return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
                    required_missing=required_missing)
+
+
+# ── the narrative: written now, or through Message Batches ──────────────────
+
+def _save_written(report_id, written, db):
+    store.save_narrative(report_id, written["narrative"], db_path=db)
+    store.note(report_id, "narrative", {"status": "written" if written["ok"] else "skipped",
+                                        "reason": written["reason"]}, db_path=db)
+
+
+def _write_stage(restaurant, report, ctx, trigger, now_utc, db):
+    """The writing stage. Returns None once the version's narrative is
+    decided and stored (written, skipped, or a batch answer that landed), or
+    the run's result while the version waits for its batch item."""
+    report_id = report["id"]
+    sales_status = (ctx.blocks.get("sales") or {}).get("status")
+    if sales_status != dsr.READY:
+        store.save_narrative(report_id, None, db_path=db)
+        store.note(report_id, "narrative", {"status": "skipped", "reason": NO_SUMMARY_SALES_PENDING
+                                            if sales_status == dsr.AWAITING else NO_SUMMARY_NO_SALES}, db_path=db)
+        return None
+    current = store.get_report_by_id(report_id, db_path=db)
+    facts_now = current["facts"]
+    batch = (current.get("stages") or {}).get("narrative_batch")
+    if batch:
+        return _batch_progress(restaurant, current, ctx, facts_now, batch, trigger, now_utc, db)
+    able, why = _can_write(facts_now)
+    if not able:
+        _save_written(report_id, {"ok": False, "narrative": None, "reason": why}, db)
+        return None
+    store.set_stage(report_id, "writing", db_path=db)
+    cutoff = _batch_cutoff(restaurant, current, trigger, now_utc, db)
+    if cutoff is not None:
+        how, out = _submit_narrative(current, ctx, facts_now, trigger, cutoff, now_utc, db)
+        if how == "waiting":
+            return out
+        if how == "landed":
+            return None
+        if how == "written":
+            _save_written(report_id, out, db)
+            return None
+    _save_written(report_id, _write(ctx, facts_now), db)
+    return None
+
+
+def _batch_cutoff(restaurant, report, trigger, now_utc, db):
+    """When the sweep stops waiting for a batched narrative (naive UTC), or
+    None when this one is written now: not the sweep's own run, batches off
+    or not allowed here (ai_batches.enabled — never on a local backend), no
+    batch path in the narrative module, or too little time before the
+    cutoff (see BATCH_CUTOFF_MINUTES)."""
+    if trigger not in (TRIGGER_SWEEP, TRIGGER_LATE):
+        return None
+    mod = _import("dsr.narrative")
+    if mod is None or not callable(getattr(mod, "submit_batch", None)):
+        return None
+    try:
+        import ai_batches
+        if not ai_batches.enabled(getattr(mod, "BATCH_WORKFLOW", "dsr_narrative")):
+            return None
+        margin = timedelta(minutes=BATCH_MARGIN_MINUTES)
+        cutoff = now_utc + timedelta(minutes=BATCH_CUTOFF_MINUTES)
+        from dsr.deliver import quiet_until
+        quiet_end = quiet_until(restaurant, now_utc)
+        if quiet_end is not None:
+            cutoff = min(cutoff, quiet_end - margin)
+        day = _as_date(report["business_date"])
+        if store.get_finished_report(restaurant.id, day, db_path=db) is None:
+            missing_at = to_utc(restaurant, deadline_at(restaurant, day)) + MISSING_AFTER_DEADLINE
+            cutoff = min(cutoff, missing_at - margin)
+        if cutoff - now_utc < timedelta(minutes=BATCH_MIN_WINDOW_MINUTES):
+            return None
+        return cutoff
+    except Exception as e:
+        import ops
+        ops.capture(e, job="dsr_narrative", context=f"restaurant_id={restaurant.id} batch cutoff")
+        return None
+
+
+def _batch_custom_id(report):
+    return f"dsr-{int(report['restaurant_id'])}-{report['business_date']}-v{int(report['version'])}"
+
+
+def _submit_narrative(report, ctx, facts_now, trigger, cutoff, now_utc, db):
+    """Send the narrative as a batch item. ("waiting", run result) when it
+    went; ("landed", None) when a gate refused it and its callback has
+    stored the refusal; ("written", result) when the night is not one to
+    write about; ("sync", None) when it must be written now instead."""
+    report_id = report["id"]
+    cid = _batch_custom_id(report)
+    # Marked BEFORE the item exists, so a callback told at once (a gate
+    # refused it) finds the version waiting for it.
+    store.note(report_id, "narrative_batch", {"custom_id": cid, "status": "pending", "submitted_at": _stamp(now_utc),
+                                              "cutoff_at": _stamp(cutoff)}, db_path=db)
+    mod = _import("dsr.narrative")
+    out = mod.submit_batch(ctx, facts_now, cid, context={"report_id": report_id, "trigger": trigger,
+                                                         "business_date": ctx.day})
+    status = (out or {}).get("status")
+    if status == "submitted":
+        nxt = min(now_utc + timedelta(minutes=POLL_MINUTES), cutoff)
+        store.schedule_retry(report_id, nxt, db_path=db, count=False)
+        return "waiting", _result("narrative_batched", store.get_report_by_id(report_id, db_path=db),
+                                  cutoff_at=_stamp(cutoff), next_attempt_at=_stamp(nxt))
+    if status == "written":
+        store.swap_narrative_batch(report_id, cid, ("pending",), "not_sent", db_path=db)
+        return "written", _normalised(out.get("result"))
+    batch = (store.get_report_by_id(report_id, db_path=db).get("stages") or {}).get("narrative_batch") or {}
+    if batch.get("status") == "landed":
+        return "landed", None
+    store.swap_narrative_batch(report_id, cid, ("pending",), "fallback", reason=str(status or "")[:40], db_path=db)
+    return "sync", None
+
+
+def _batch_progress(restaurant, report, ctx, facts_now, batch, trigger, now_utc, db):
+    """A version waiting for its batched narrative, on a later run: None once
+    the narrative is stored (the answer landed, or the cutoff passed and it
+    was written now), else the run's result while it still waits."""
+    import ai_batches
+    report_id, cid = report["id"], batch.get("custom_id")
+    state = batch.get("status")
+    if state == "landed" or "narrative" in (report.get("stages") or {}):
+        return None
+    cutoff = _parse_utc(batch.get("cutoff_at")) or now_utc
+    if state == "pending":
+        row = ai_batches.item(getattr(_import("dsr.narrative"), "BATCH_WORKFLOW", "dsr_narrative"), cid)
+        out_there = bool(row) and row["status"] in ai_batches.OPEN + (ai_batches.COLLECTING,)
+        if out_there and trigger != TRIGGER_MANUAL and now_utc < cutoff:
+            nxt = min(now_utc + timedelta(minutes=POLL_MINUTES), cutoff)
+            store.schedule_retry(report_id, nxt, db_path=db, count=False)
+            return _result("narrative_pending", report, cutoff_at=_stamp(cutoff), next_attempt_at=_stamp(nxt))
+        why = "cutoff" if out_there else "item_" + str((row or {}).get("status") or "missing")
+        if trigger == TRIGGER_MANUAL:
+            why = "close_day"
+        if not store.swap_narrative_batch(report_id, cid, ("pending",), "fallback", reason=why,
+                                          fell_back_at=_stamp(now_utc), db_path=db):
+            # The collector took the answer a moment ago: go on from there.
+            return _batch_moved(restaurant, report_id, ctx, facts_now, trigger, now_utc, db)
+        ai_batches.cancel(getattr(_import("dsr.narrative"), "BATCH_WORKFLOW", "dsr_narrative"), cid)
+    elif state == "collecting":
+        claimed = _parse_utc(batch.get("claimed_at"))
+        if claimed is not None and (datetime.utcnow() - claimed) < timedelta(minutes=BATCH_STALE_CLAIM_MINUTES):
+            nxt = now_utc + timedelta(minutes=POLL_MINUTES // 2 or 1)
+            store.schedule_retry(report_id, nxt, db_path=db, count=False)
+            return _result("narrative_pending", report, next_attempt_at=_stamp(nxt))
+        if not store.swap_narrative_batch(report_id, cid, ("collecting",), "fallback", reason="stale_claim",
+                                          fell_back_at=_stamp(now_utc), db_path=db):
+            return _batch_moved(restaurant, report_id, ctx, facts_now, trigger, now_utc, db)
+    elif state == "failed":
+        # The batch came back without an answer (errored, expired): now.
+        if not store.swap_narrative_batch(report_id, cid, ("failed",), "fallback", reason="batch_failed",
+                                          fell_back_at=_stamp(now_utc), db_path=db):
+            return _batch_moved(restaurant, report_id, ctx, facts_now, trigger, now_utc, db)
+    # "fallback" (this run's, or one a deploy killed before it stored) and
+    # anything unknown: the narrative is written now, synchronously.
+    able, why = _can_write(facts_now)
+    _save_written(report_id, _write(ctx, facts_now) if able else {"ok": False, "narrative": None, "reason": why},
+                  db)
+    return None
+
+
+def _batch_moved(restaurant, report_id, ctx, facts_now, trigger, now_utc, db):
+    """A compare-and-set lost to the collector: read where the item is now
+    and go on from that state (it only ever moves forward)."""
+    again = store.get_report_by_id(report_id, db_path=db)
+    nb = (again.get("stages") or {}).get("narrative_batch") or {}
+    return _batch_progress(restaurant, again, ctx, facts_now, nb, trigger, now_utc, db)
+
+
+def on_narrative_batch(item, message=None, error=None):
+    """ai_batches' callback for the night's narrative (narrative.BATCH_CALLBACK).
+    The answer is judged by narrative.finish — the synchronous path's own
+    checks, quality events and stored read — and stored on the version only
+    if the version is still waiting for THIS item: the item is claimed
+    (pending -> collecting) before anything runs and stored with one
+    compare-and-set (store.land_narrative_batch), so a sweep that already
+    fell back to the synchronous call wins and this answer is dropped —
+    never two narratives. A gate's refusal is stored as the synchronous
+    path would store it; a batch that came back without an answer marks the
+    item failed and makes the version due, so the next sweep writes it now.
+    The sweep then finishes the version (final, the notices)."""
+    import ai_batches
+    db = _db(None)
+    ctx_d = (item or {}).get("context") or {}
+    report_id, cid = ctx_d.get("report_id"), (item or {}).get("custom_id")
+    if not report_id or not cid:
+        return
+    if isinstance(error, ai_batches.BatchItemFailed):
+        if store.swap_narrative_batch(report_id, cid, ("pending",), "failed", reason=error.kind, db_path=db):
+            store.schedule_retry(report_id, None, db_path=db, count=False)
+        return
+    if not store.swap_narrative_batch(report_id, cid, ("pending",), "collecting", claimed_at=_stamp(datetime.utcnow()),
+                                      db_path=db):
+        return
+    report = store.get_report_by_id(report_id, db_path=db)
+    from models import get_restaurant
+    restaurant = get_restaurant(report["restaurant_id"], db_path=db) if report else None
+    if report is None or restaurant is None or report["status"] != "writing":
+        store.swap_narrative_batch(report_id, cid, ("collecting",), "failed", reason="version_moved", db_path=db)
+        return
+    rid = restaurant.id
+    try:
+        mod = _import("dsr.narrative")
+        ctx = dsr.Context(restaurant, report["business_date"], db_path=db, trigger=ctx_d.get("trigger"))
+        ctx.blocks = dict((report.get("facts") or {}).get("blocks") or {})
+        if error is not None:
+            written = _normalised(mod.refusal_for(error, rid))
+        else:
+            written = _normalised(mod.finish(ctx, report["facts"], message, ctx_d.get("state") or {}))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="dsr_narrative", context=f"restaurant_id={rid} business_date={report['business_date']} batch")
+        written = {"ok": False, "narrative": None, "reason": NO_SUMMARY_FAILED}
+    store.land_narrative_batch(report_id, cid, written["narrative"],
+                               {"status": "written" if written["ok"] else "skipped", "reason": written["reason"]},
+                               db_path=db)
 
 
 NO_HOURS_SERVICE_START_HOUR = 5    # a night with no opening hours "starts" at 5am, for predictions
@@ -1014,7 +1271,9 @@ def run_sweep(now_utc=None, db_path=None):
 
 
 # run_night actions that moved nothing (nothing to judge) and that failed.
-_IDLE_ACTIONS = ("before_close", "closed_day", "none", "waiting", "in_progress")
+# A night waiting on its batched narrative (narrative_pending) moved nothing
+# either; the run that sent it (narrative_batched) did its work and counts.
+_IDLE_ACTIONS = ("before_close", "closed_day", "none", "waiting", "in_progress", "narrative_pending")
 _FAILED_ACTIONS = ("error", "error_retry", "failed")
 
 # The missing-night check is read on the request path (ops.check_platform_sla
@@ -1057,6 +1316,12 @@ def nights_missing(db_path=None, now_utc=None, use_cache=True):
             continue
         row = (latest.get(r.id) or {}).get(night.isoformat())
         if row and row["status"] in store.FINISHED:
+            continue
+        if row and int(row.get("version") or 1) > 1 and \
+                store.get_finished_report(r.id, night, db_path=db) is not None:
+            # A later version still in flight (a late-data version waiting
+            # on its batched narrative, AI cost audit 10/7/26 #20) does not
+            # hide the version the owner already has.
             continue
         try:
             if not pos.connected_provider(r.id)[0]:
