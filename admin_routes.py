@@ -3317,9 +3317,13 @@ from ai_guard import safe_error as _safe_err
 
 
 def _run_competitor_job(job_id, restaurant_id):
-    from competitor import run_competitor_analysis
+    from competitor import run_competitor_analysis, rediscovery_requested
     try:
-        result = run_competitor_analysis(restaurant_id)
+        # A Refresh someone pressed searches the neighbourhood again; the
+        # scheduled runs re-read the stored set until discovery is due
+        # (AI cost audit 10/7/26 #39).
+        with rediscovery_requested():
+            result = run_competitor_analysis(restaurant_id)
         _ops.finish_async_job(job_id, "done" if result.get("ok") else "error", result)
     except Exception as e:
         import traceback as _tb
@@ -3337,20 +3341,45 @@ def refresh_competitor_intel(current_user):
     _r = _gr(current_user["restaurant_id"])
     if not (_r and _r.module_reviews and _r.module_labor and _r.module_inventory and _r.module_marketing):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
-    return jsonify(ok=True, job_id=start_competitor_job(current_user["restaurant_id"]))
+    # An admin (the console, or view-as) may force a new run past the
+    # freshness short-circuit; an owner's press inside it is served the
+    # stored read (AI cost audit 10/7/26 #42).
+    _body = request.get_json(silent=True) or {}
+    force = bool(current_user.get("is_admin")) and str(_body.get("force") or request.args.get("force") or "") \
+        .lower() in ("1", "true", "yes")
+    job_id = start_competitor_job(current_user["restaurant_id"], force=force)
+    if force:
+        import admin_events
+        admin_events.record_admin_action(current_user, "competitor_intel.force_refresh",
+                                         restaurant_id=current_user["restaurant_id"], target=f"job:{job_id}")
+    return jsonify(ok=True, job_id=job_id)
 
 
-def start_competitor_job(restaurant_id):
+def start_competitor_job(restaurant_id, force=False):
     """This restaurant's one running competitor refresh: start it, or join
     the one already pending. Every press used to start another background
     thread of paid Google Places + Claude calls (SEC-31 / DATA-29); the claim
     is checked and inserted in one write (ops.claim_async_job), the same way
     schedule generation joins a running job. Shared with the app's
-    /mobile/api/intel/refresh-competitors."""
+    /mobile/api/intel/refresh-competitors.
+
+    A read under competitor.REFRESH_FRESH_HOURS old, made with the
+    owner-added competitors the restaurant has now, is the job's result as
+    it stands (competitor.fresh_stored_read: the run's payload plus `fresh`,
+    `updated_at` and a `note` the owner is shown) — a Refresh pressed twice
+    in an afternoon bought the same nearby search, Details calls and Claude
+    read twice (AI cost audit 10/7/26 #42). `force` (an admin) skips that."""
     import threading, uuid
+    stored = None
+    if not force:
+        import competitor as _competitor
+        stored = _competitor.fresh_stored_read(restaurant_id)
     job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "competitor_intel", restaurant_id)
     if not joined:
-        threading.Thread(target=_run_competitor_job, args=(job_id, restaurant_id), daemon=True).start()
+        if stored is not None:
+            _ops.finish_async_job(job_id, "done", stored)
+        else:
+            threading.Thread(target=_run_competitor_job, args=(job_id, restaurant_id), daemon=True).start()
     return job_id
 
 @admin_bp.route("/api/competitor-intel-status/<job_id>", methods=["GET"])

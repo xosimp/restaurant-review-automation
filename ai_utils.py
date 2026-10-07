@@ -1813,19 +1813,80 @@ _PER_CALL_PRICING = {
     # Perplexity charges a per-search fee on top of tokens.
     "perplexity-search":     float(os.getenv("PRICE_PERPLEXITY_SEARCH", "0.005")),
     # Google Places Details / Nearby / Text Search, roughly $17 / $32 / $32
-    # per 1,000.
+    # per 1,000 — the BASE request, Basic Data fields included.
     "google-places-details": float(os.getenv("PRICE_PLACES_DETAILS", "0.017")),
     "google-places-nearby":  float(os.getenv("PRICE_PLACES_NEARBY", "0.032")),
     "google-places-textsearch": float(os.getenv("PRICE_PLACES_TEXTSEARCH", "0.032")),
+    # The legacy data SKUs billed on top of a request that asks for their
+    # fields (AI cost audit 10/7/26 #43): Atmosphere Data (rating, reviews,
+    # user_ratings_total, price_level...) $5 / 1,000 and Contact Data
+    # (opening_hours, website, phone) $3 / 1,000. Every Places request was
+    # booked at its base price, so a details call with rating and reviews —
+    # most of them — was under-counted by ~$0.005. Not keyed by a ledger
+    # SKU: places_fee adds them to the base. Google's per-SKU free monthly
+    # allowances can make the invoice lower than this ledger; reconcile with
+    # Cloud Billing, never by lowering these.
+    "google-places-atmosphere": float(os.getenv("PRICE_PLACES_ATMOSPHERE", "0.005")),
+    "google-places-contact":    float(os.getenv("PRICE_PLACES_CONTACT", "0.003")),
 }
+
+# Legacy Places field → data SKU (AI cost audit 10/7/26 #43). Basic Data is
+# included in the base request; a field named in neither set below is
+# priced as BOTH add-ons, so an unlisted field over-counts the budget rather
+# than slipping under it. A path ("geometry/location") is priced by its head.
+_PLACES_BASIC_FIELDS = frozenset({
+    "address_component", "address_components", "adr_address", "business_status", "formatted_address",
+    "geometry", "icon", "icon_mask_base_uri", "icon_background_color", "name", "permanently_closed",
+    "photo", "photos", "place_id", "plus_code", "type", "types", "url", "utc_offset", "vicinity",
+    "wheelchair_accessible_entrance"})
+_PLACES_CONTACT_FIELDS = frozenset({
+    "current_opening_hours", "formatted_phone_number", "international_phone_number", "opening_hours",
+    "secondary_opening_hours", "website"})
+_PLACES_ATMOSPHERE_FIELDS = frozenset({
+    "curbside_pickup", "delivery", "dine_in", "editorial_summary", "price_level", "rating", "reservable",
+    "reviews", "serves_beer", "serves_breakfast", "serves_brunch", "serves_dinner", "serves_lunch",
+    "serves_vegetarian_food", "serves_wine", "takeout", "user_ratings_total"})
+
+
+def _places_fields(params) -> frozenset:
+    """The requested `fields` of a Places request, as a set of names."""
+    raw = (params or {}).get("fields") or ""
+    return frozenset(f.strip() for f in str(raw).split(",") if f.strip())
+
+
+def places_fee(kind, params) -> float:
+    """What one answered Places request costs on the legacy price list
+    (AI cost audit 10/7/26 #43): the base request, plus Atmosphere and
+    Contact Data when a requested field is in them. A Details request with
+    no `fields` returns — and is billed for — every field; a Nearby or Text
+    Search always returns them all (≈$0.040)."""
+    base = _PER_CALL_PRICING.get(f"google-places-{kind}", 0.0)
+    atmosphere = _PER_CALL_PRICING.get("google-places-atmosphere", 0.0)
+    contact = _PER_CALL_PRICING.get("google-places-contact", 0.0)
+    fields = _places_fields(params) if kind == "details" else frozenset()
+    if not fields:
+        return base + atmosphere + contact
+    heads = {f.split("/")[0] for f in fields}
+    unknown = heads - _PLACES_BASIC_FIELDS - _PLACES_CONTACT_FIELDS - _PLACES_ATMOSPHERE_FIELDS
+    fee = base
+    if unknown or heads & _PLACES_ATMOSPHERE_FIELDS:
+        fee += atmosphere
+    if unknown or heads & _PLACES_CONTACT_FIELDS:
+        fee += contact
+    return fee
 # A vendor family named instead of a SKU (log_api_call's `vendor`).
 _VENDOR_DEFAULT_SKU = {"perplexity": "perplexity-search", "google_places": "google-places-details"}
 
 
 def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_tokens=0,
                  db_path=None, status="ok", error=None, model=None, outcome=None, attempts=None,
-                 latency_ms=None, reason=None, request_id=None, correlation_id=None, call_id=None):
+                 latency_ms=None, reason=None, request_id=None, correlation_id=None, call_id=None,
+                 fee=None):
     """Record a non-Claude paid dependency in the same ledger.
+
+    `fee`, when given, is the per-request price in place of the SKU's list
+    price (places_fee: a Places request priced by the data SKUs its fields
+    pull in, AI cost audit 10/7/26 #43).
 
     `vendor` is the billed SKU ('perplexity-search', 'google-places-details')
     or a vendor family ('perplexity', 'google_places'); `model` is what was
@@ -1839,7 +1900,8 @@ def log_api_call(restaurant_id, action, vendor, calls=1, input_tokens=0, output_
     model = model or sku
     outcome = outcome or ("ok" if status == "ok" else ("blocked" if status == "blocked" else "error"))
     billed = outcome in ("ok", "refused", "truncated", "unparseable")
-    per_call = _PER_CALL_PRICING.get(sku, 0.0) * max(0, int(calls or 0))
+    unit = float(fee) if fee is not None else _PER_CALL_PRICING.get(sku, 0.0)
+    per_call = unit * max(0, int(calls or 0))
     token_cost = _estimate_cost(model, input_tokens, output_tokens) if (input_tokens or output_tokens) else 0.0
     cost = (per_call + token_cost) if billed else 0.0
     try:
@@ -2480,7 +2542,7 @@ def places_error(body):
 
 
 def meter_places(restaurant_id, action, kind="details", status="ok", error=None, latency_ms=None,
-                 reason=None, outcome=None):
+                 reason=None, outcome=None, fee=None):
     """Google Places is billed per request. Audit #7 found it outside the
     ledger and the budget entirely, so a Places-only restaurant's four daily
     review fetches and the weekly competitor run were real money that no
@@ -2491,7 +2553,7 @@ def meter_places(restaurant_id, action, kind="details", status="ok", error=None,
     try:
         log_api_call(restaurant_id, action, f"google-places-{kind}",
                      calls=1, status=status, error=error, latency_ms=latency_ms, reason=reason,
-                     outcome=outcome)
+                     outcome=outcome, fee=fee)
     except Exception:
         pass
 
@@ -2648,6 +2710,23 @@ _AI_OPS_DDL = (
         hits   INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (day, bucket)
     )""",
+    # One Places Details answer per place, day, field set and variant (AI
+    # cost audit 10/7/26 #13): places_request serves a later request for the
+    # same place the same day from here when a superset of its fields was
+    # fetched — free, no ledger row. Public Places content only (the
+    # response body for one place_id), shared across restaurants that track
+    # the same place; pruned by ops.prune_ledgers well inside Google's
+    # 30-day limit on caching Places content.
+    """CREATE TABLE IF NOT EXISTS places_details_cache (
+        place_id     TEXT NOT NULL,
+        day          TEXT NOT NULL,
+        fields       TEXT NOT NULL,
+        variant      TEXT NOT NULL DEFAULT '{}',
+        payload_json TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (place_id, day, fields, variant)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_places_details_cache_created ON places_details_cache(created_at)",
 )
 
 
@@ -3503,6 +3582,121 @@ class PlacesUnavailable(RuntimeError):
 # day resets; the stop is still recorded (and warned on) when it is over.
 PLACES_ESSENTIAL_ACTIONS = frozenset({"review_fetch"})
 
+# Actions that never READ the Details cache (they still fill it): the review
+# fetch runs four times a day precisely to see a review posted since the
+# last one — an urgent complaint must not wait for tomorrow's cache key.
+PLACES_UNCACHED_ACTIONS = frozenset({"review_fetch"})
+# Request parameters that are not part of what Google answers with.
+_PLACES_CACHE_IGNORED = frozenset({"key", "place_id", "fields", "sessiontoken"})
+
+
+def _places_cache_variant(params, fields) -> dict:
+    """The parameters besides the field list that shape a Details answer
+    (language, reviews_sort...). reviews_sort only matters when reviews are
+    asked for."""
+    out = {str(k): str(v) for k, v in (params or {}).items()
+           if k not in _PLACES_CACHE_IGNORED and v is not None}
+    if "reviews" not in fields:
+        out.pop("reviews_sort", None)
+    return out
+
+
+def _places_cache_day(restaurant_id) -> str:
+    """The cache's day: the requesting restaurant's own calendar date (a
+    morning check and an evening refresh are the same business day), UTC
+    when no restaurant is known."""
+    if restaurant_id:
+        try:
+            from time_utils import restaurant_now_by_id
+            return restaurant_now_by_id(restaurant_id).date().isoformat()
+        except Exception:
+            pass
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _places_cache_get(params, restaurant_id):
+    """The cached Details body for this request, or None: an answer for the
+    same place on the same day whose field set covers every requested field
+    and whose variant matches (AI cost audit 10/7/26 #13). Never raises."""
+    pid, fields = (params or {}).get("place_id"), _places_fields(params)
+    if not pid or not fields:
+        return None
+    want = _places_cache_variant(params, fields)
+    try:
+        conn = _conn()
+        try:
+            rows = conn.execute("SELECT fields, variant, payload_json FROM places_details_cache "
+                                "WHERE place_id=? AND day=?", (str(pid), _places_cache_day(restaurant_id))).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("places cache read skipped: %s", e)
+        return None
+    for row in rows:
+        have = frozenset(f for f in str(row["fields"] or "").split(",") if f)
+        if not fields <= have:
+            continue
+        try:
+            variant = json.loads(row["variant"] or "{}")
+        except ValueError:
+            continue
+        if "reviews" not in fields:
+            variant.pop("reviews_sort", None)
+        if variant != want:
+            continue
+        try:
+            body = json.loads(row["payload_json"])
+        except ValueError:
+            continue
+        if isinstance(body, dict) and body.get("status") == "OK":
+            return body
+    return None
+
+
+def _places_cache_put(params, restaurant_id, body):
+    """Keep one OK Details answer for the rest of the day. Never raises."""
+    pid, fields = (params or {}).get("place_id"), _places_fields(params)
+    if not pid or not fields or not isinstance(body, dict) or body.get("status") != "OK":
+        return
+    try:
+        conn = _conn()
+        try:
+            conn.execute("INSERT OR REPLACE INTO places_details_cache (place_id, day, fields, variant, payload_json) "
+                         "VALUES (?,?,?,?,?)",
+                         (str(pid), _places_cache_day(restaurant_id), ",".join(sorted(fields)),
+                          json.dumps(_places_cache_variant(params, fields), sort_keys=True), json.dumps(body)))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("places cache write skipped: %s", e)
+
+
+def reset_places_cache(db_path=None):
+    """Empty the Details cache — for the test suite, where every test's
+    place ids start over."""
+    try:
+        conn = _conn(db_path)
+        try:
+            conn.execute("DELETE FROM places_details_cache")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("places cache not cleared: %s", e)
+
+
+class _CachedPlacesHTTP:
+    """The HTTP side of a cache hit: a 200 that raises nothing."""
+    status_code = 200
+    ok = True
+    headers = {}
+    text = ""
+
+    def raise_for_status(self):
+        return None
+
 
 def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=10):
     """GET https://maps.googleapis.com/maps/api/place/<endpoint>/json — the
@@ -3521,7 +3715,14 @@ def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=
     `restaurant_id`/`action` default to ai_context's (then the request
     session's) when not given, for the helpers that take no restaurant. An
     action in PLACES_ESSENTIAL_ACTIONS counts toward the ceiling but is
-    never refused by it."""
+    never refused by it.
+
+    A Details request is served from places_details_cache when the same
+    place was answered today with a superset of its fields (AI cost audit
+    10/7/26 #13) — no request, no ledger row, no cost, and not held back
+    by the ceiling or the breaker, since nothing is sent. Every OK Details
+    answer fills it; PLACES_UNCACHED_ACTIONS never read it. An answered
+    request is priced by the data SKUs its fields pull in (places_fee, #43)."""
     kind = _PLACES_KIND.get(endpoint, endpoint)
     rid = _context_restaurant() if restaurant_id is _UNSET else restaurant_id
     act = action or (_CTX.get() or {}).get("action") or "places"
@@ -3529,6 +3730,10 @@ def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=
     if not (params or {}).get("key"):
         log_blocked(rid, act, sku_model, "no_key", detail="GOOGLE_PLACES_API_KEY is not set", vendor="google_places")
         raise PlacesUnavailable("no_key", "Google Places isn't configured on this server.")
+    if kind == "details" and act not in PLACES_UNCACHED_ACTIONS:
+        cached = _places_cache_get(params, rid)
+        if cached is not None:
+            return _PlacesResponse(_CachedPlacesHTTP(), cached)
     over = places_budget_exceeded(rid)
     if over:
         _record_budget_stop(over, rid, vendor="google_places")
@@ -3582,8 +3787,10 @@ def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=
                      reason=(pstatus or f"http_{code}").lower()[:40], latency_ms=latency_ms)
         _breaker_release_probe("google_places")
     else:
-        meter_places(rid, act, kind, latency_ms=latency_ms)
+        meter_places(rid, act, kind, latency_ms=latency_ms, fee=places_fee(kind, params))
         _breaker_record("google_places", True)
+        if kind == "details":
+            _places_cache_put(params, rid, body)
     return _PlacesResponse(resp, body, body_error)
 
 
@@ -3614,11 +3821,13 @@ class _PlacesResponse:
 
 def reset_process_state(db_path=None):
     """Clear this process's AI-operations memory: breakers, budget cache,
-    warning and blocked-row memos, the rate limiter (memory and table). For
-    the test suite, where every test starts from ids 1, 2, 3 again."""
+    warning and blocked-row memos, the rate limiter (memory and table), the
+    Places Details cache. For the test suite, where every test starts from
+    ids 1, 2, 3 again."""
     reset_breaker()
     _budget_cache.clear()
     _warned_memo.clear()
     with _blocked_lock:
         _blocked_memo.clear()
     reset_rate_limits(db_path)
+    reset_places_cache(db_path)

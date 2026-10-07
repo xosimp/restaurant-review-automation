@@ -29582,7 +29582,7 @@ function refreshCompetitorIntel(btn){
       fetch('/api/competitor-intel-status/'+jobId).then(apiJson).then(function(s){
         if(s.status === 'pending'){setTimeout(poll, 2000);return;}
         _resetBtn();
-        if(s.ok){toast('Competitor data updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
+        if(s.ok){toast(s.note||'Competitor data updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
         else{toast('Error: '+(s.error||'failed'),'error');}
       }).catch(function(){setTimeout(poll, 2000);});
     };
@@ -33841,7 +33841,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var tries=0;(function poll(){tries++;if(tries>40){toast('Still working — check back in a minute','error');return;}
         fetch('/api/competitor-intel-status/'+d.job_id).then(apiJson).then(function(s){
           if(s.status==='pending'){setTimeout(poll,2000);return;}
-          if(s.ok){toast('Competitors updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
+          if(s.ok){toast(s.note||'Competitors updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
           else toast(s.error||'Refresh failed','error');
         }).catch(function(){setTimeout(poll,2000);});})();
     });
