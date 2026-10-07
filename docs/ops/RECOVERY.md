@@ -160,12 +160,20 @@ Three copies exist, newest first in the backup ledger
 (`SELECT id, finished_at, local_ok, offsite_ok, offsite_target, sha256 FROM backup_runs ORDER BY id DESC LIMIT 5;`,
 or `/admin` → Engineering → Overview → Backups, `GET /admin/api/backup`):
 
-- **The local snapshot** on the volume, taken at 2am and kept
-  `BACKUP_RETAIN_DAYS` days (14 in production; the code default is 7):
+- **The local snapshot** on the volume, taken at 2am — a `VACUUM INTO`
+  copy, integrity-checked, then gzipped and read back:
+  `cavnar_ai_backup_YYYY-MM-DD.db.gz`. The newest `BACKUP_RETAIN_COUNT`
+  (3) are kept (AI cost audit 10/7/26 #8; it was seven days of
+  uncompressed `.db` files — any `.db` still there is from before the
+  change, restores the same way and is pruned first):
 
   ```bash
   railway ssh -- ls -lh /app/data/backups/
   ```
+
+  To open one by hand, decompress it first (`gunzip -k <file>.db.gz`, or
+  `scheduler.gunzip_snapshot(src, dest)` in the container); `RESTORE_FROM`
+  takes the `.gz` as it is.
 
   **The local snapshots are complete and directly restorable.** They are not
   redacted — the scrub applies only to copies that leave the server. This
@@ -257,10 +265,13 @@ demo accounts, and `/health` used to go green on an empty platform.
 The restore is a boot step instead (`db_restore.py`):
 
 1. In Railway → web → Variables, set
-   `RESTORE_FROM=/app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db` (or the
-   decrypted off-site copy's path on the volume).
+   `RESTORE_FROM=/app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db.gz` (or a
+   plain `.db` — an older local snapshot, or the decrypted off-site copy's
+   path on the volume).
    Saving it redeploys. The new process swaps the snapshot in before its
-   first connection: it checks the snapshot (integrity and a `restaurants`
+   first connection: a gzipped one is decompressed beside the database
+   first (`reviews.db.restoring` — room for one database is needed); it
+   checks the snapshot (integrity and a `restaurants`
    table), keeps the old file and its `-wal`/`-shm` as
    `reviews.db.broken-<time>`, copies the snapshot in, and checks the
    restaurant count matches. A snapshot that fails a check fails the deploy
@@ -283,8 +294,10 @@ first, so nothing can open the file):
 ```bash
 railway ssh -- mv /app/data/reviews.db /app/data/reviews.db.broken-$(date +%s)
 railway ssh -- rm -f /app/data/reviews.db-wal /app/data/reviews.db-shm
-railway ssh -- cp /app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db /app/data/reviews.db
+railway ssh -- sh -c 'gunzip -c /app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db.gz > /app/data/reviews.db'
 ```
+
+(an older plain snapshot: `cp` it instead of `gunzip -c`).
 
 ### 5. Confirm
 
@@ -345,9 +358,12 @@ write — and every save, draft and send fails until space is freed.
    ```bash
    railway ssh -- du -sh /app/data/* | sort -h | tail
    ```
-3. Free space: lower `BACKUP_RETAIN_DAYS`, delete the oldest snapshots
-   (**never the newest**), or grow the volume in Railway. Once the off-site
-   copy is reliably running, fewer local days are needed.
+3. Free space: lower `BACKUP_RETAIN_COUNT` (3 gzipped snapshots by
+   default), delete the oldest snapshots (**never the newest**), or grow
+   the volume in Railway. Once the off-site copy is reliably running, fewer
+   local copies are needed. A leftover `offsite_work_*.db` is a crashed
+   run's scratch copy (possibly already scrubbed — never restore it); the
+   next backup deletes it.
 4. `ops.prune_ledgers` trims old ledger rows nightly after each backup
    (chunked, bounded); it can be run early from `/admin` → Operations →
    Jobs → `prune_ledgers`. It deletes only when the newest backup wrote its
@@ -355,9 +371,12 @@ write — and every save, draft and send fails until space is freed.
    a failed snapshot the prune is held, counted failed and paged
    (`retention_held`), so nothing is deleted that no copy holds — free the
    space, let a backup succeed, then run it.
-5. The backup refuses to START with less than 3.5 × the database free
-   (`BACKUP_FREE_SPACE_FACTOR`) — it fails and pages rather than filling the
-   volume at 2am. Engineering → Overview → Backups shows growth per day and
+5. The backup refuses to START with less than 1.5 × the database free
+   (`BACKUP_FREE_SPACE_FACTOR`: the `VACUUM INTO` copy plus its gzip) — it
+   fails and pages rather than filling the volume at 2am. The off-site copy
+   checks its own room just before it is made (1.4 × the snapshot, for the
+   encrypted file); short of it, that copy fails and pages and the local
+   snapshot stands. Engineering → Overview → Backups shows growth per day and
    days to full (`ops.storage_trend`, from each night's backup row).
 
 A full volume is the one failure where doing nothing gets worse quietly.
@@ -508,7 +527,8 @@ The admin console needs a password, and — once enrolled or with
 The drill is a job: `scheduler.run_restore_drill`, run automatically on
 the 2nd of Jan/Apr/Jul/Oct after the 2am backup, and on demand from
 `/admin` → Jobs → **restore_drill**. It copies the newest snapshot to a
-scratch file beside it and FAILS on a snapshot older than 26 hours, then
+scratch file beside it (decompressing a gzipped one — the step
+`RESTORE_FROM` takes too) and FAILS on a snapshot older than 26 hours, then
 runs `integrity_check`, counts restaurants, reads the newest review and
 alert, counts Google tokens in the snapshot against production (the
 un-redaction proof), runs `init_db()` over the copy the way a real restore

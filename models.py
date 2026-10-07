@@ -5372,6 +5372,14 @@ def _request_cache():
 def _invalidate_request_cache(restaurant_id=None):
     """Drop memoised reads after a write, so a read-after-write in the same
     request sees the write. Called by update_restaurant."""
+    # The AI budget tier and paying-client count are memoised per process
+    # for 60s (ai_utils, AI cost audit 10/7/26 #89) — in or out of a
+    # request, so dropped before the request-only early return below.
+    try:
+        import ai_utils as _ai_memo
+        _ai_memo.invalidate_budget_memo(int(restaurant_id) if restaurant_id is not None else None)
+    except Exception:
+        pass
     cache = _request_cache()
     if cache is None:
         return

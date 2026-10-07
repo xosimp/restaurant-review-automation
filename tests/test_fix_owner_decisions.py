@@ -38,6 +38,9 @@ def _rid(billing_status, is_demo=0, name="Decision Co"):
     conn.commit()
     conn.close()
     ai_utils._budget_cache.clear()
+    # Tier and client count are memoised for 60s (AI cost audit 10/7/26
+    # #89); the raw UPDATE above is no write path's invalidation.
+    ai_utils.invalidate_budget_memo()
     return rid
 
 

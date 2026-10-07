@@ -14,6 +14,11 @@ get_conn, the scheduler stays off while the variable is set, and a marker
 beside the database stops a later boot from restoring the same snapshot a
 second time over newer writes. Remove the variable once the restore is
 confirmed.
+
+A local snapshot is gzipped since 10/7/26 (cavnar_ai_backup_<date>.db.gz,
+AI cost audit #8): RESTORE_FROM takes it as it is — decompressed beside the
+database first, then checked and swapped exactly like a plain one, which
+still works for a snapshot from before the change.
 """
 import logging
 import os
@@ -32,6 +37,11 @@ def _marker_path(db_path, snapshot):
     st = os.stat(snapshot)
     tag = f"{os.path.basename(snapshot)}-{int(st.st_mtime)}-{st.st_size}"
     return os.path.join(os.path.dirname(os.path.abspath(db_path)), f".restored-{tag}")
+
+
+def _is_gzip(path) -> bool:
+    with open(path, "rb") as f:
+        return f.read(2) == b"\x1f\x8b"
 
 
 def _count_restaurants(path):
@@ -61,22 +71,43 @@ def restore_if_requested(db_path=None) -> dict:
                     "Remove RESTORE_FROM to restart the scheduler.", snapshot)
         return {"restored": False, "reason": "already restored", "snapshot": snapshot}
 
-    conn = sqlite3.connect(f"file:{snapshot}?mode=ro", uri=True)
+    tmp = db_path + ".restoring"
+    # A gzipped snapshot is decompressed beside the database first — into
+    # the same temporary name the swap below uses — and everything after
+    # reads that file. Nothing live is touched until it has passed.
+    gz = _is_gzip(snapshot)
+    source = snapshot
+    if gz:
+        import gzip
+        with gzip.open(snapshot, "rb") as src, open(tmp, "wb") as out:
+            shutil.copyfileobj(src, out, 3 * 1024 * 1024)
+        source = tmp
     try:
-        ok = conn.execute("PRAGMA integrity_check").fetchone()[0]
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    finally:
-        conn.close()
-    if ok != "ok" or "restaurants" not in tables:
-        raise RuntimeError(f"RESTORE_FROM={snapshot} failed its checks (integrity {ok!r}, "
-                           f"restaurants table {'present' if 'restaurants' in tables else 'missing'}); nothing was changed")
-    expected = _count_restaurants(snapshot)
+        conn = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+        try:
+            ok = conn.execute("PRAGMA integrity_check").fetchone()[0]
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            conn.close()
+        if ok != "ok" or "restaurants" not in tables:
+            raise RuntimeError(f"RESTORE_FROM={snapshot} failed its checks (integrity {ok!r}, "
+                               f"restaurants table {'present' if 'restaurants' in tables else 'missing'}); "
+                               "nothing was changed")
+        expected = _count_restaurants(source)
+    except Exception:
+        if gz:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise
 
     # Every commit in the files themselves before they move: pooled
     # connections (models.get_conn, 10/3/26) keep the write-ahead log open,
     # so a copy of the main file alone could miss the newest writes.
     import models as _models
-    _models.checkpoint(snapshot)
+    if not gz:
+        _models.checkpoint(snapshot)
     if os.path.exists(db_path):
         _models.checkpoint(db_path)
     stamp = int(time.time())
@@ -86,8 +117,8 @@ def restore_if_requested(db_path=None) -> dict:
     for suffix in ("-wal", "-shm"):
         if os.path.exists(db_path + suffix):
             os.replace(db_path + suffix, f"{db_path}{suffix}.broken-{stamp}")
-    tmp = db_path + ".restoring"
-    shutil.copyfile(snapshot, tmp)
+    if not gz:
+        shutil.copyfile(snapshot, tmp)
     os.replace(tmp, db_path)
 
     got = _count_restaurants(db_path)

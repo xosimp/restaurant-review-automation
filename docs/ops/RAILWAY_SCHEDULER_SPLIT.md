@@ -156,8 +156,8 @@ the order to move it are in `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`):
     45 seconds stale
   * the bounded pools (the two admin pools — `ops.run_admin_task` and the
     one admin job pool, `admin_routes._submit_admin_job` — the webhook and
-    push delivery pools, `ASK_MAX_CONCURRENT`) — each bound would be N times
-    its value
+    push delivery pools, `ASK_MAX_CONCURRENT`, `INTERACTIVE_AI_SLOTS`) — each
+    bound would be N times its value
   * `http_layer`'s in-memory latency window and in-flight gauge — each
     worker reports only its own traffic (the persisted per-minute rollups
     add up correctly)

@@ -154,11 +154,16 @@ def test_the_global_pool_grows_with_paying_clients(db_path):
     bound — so the blast radius got worse with every client won."""
     base = ai_utils.global_monthly_budget(db_path)
     assert base == ai_utils.AI_GLOBAL_MONTHLY_BUDGET_USD
-    for rid in range(1, 21):
+    # Sixty, not twenty: at $30 a client (AI cost audit 10/7/26 #23, was
+    # $200) the $1,500 floor covers the first fifty clients outright.
+    for rid in range(1, 61):
         _restaurant(db_path, rid, "active")
+    # The client count is memoised for 60s (#89); these rows were written
+    # with raw SQL, which no write path's invalidation sees.
+    ai_utils.invalidate_budget_memo()
     grown = ai_utils.global_monthly_budget(db_path)
     assert grown > base
-    assert grown == 20 * ai_utils.AI_GLOBAL_PER_CLIENT_USD
+    assert grown == 60 * ai_utils.AI_GLOBAL_PER_CLIENT_USD
 
 
 def test_a_small_client_base_still_has_a_real_backstop(db_path):

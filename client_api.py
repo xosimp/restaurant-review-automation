@@ -63,6 +63,15 @@ MAX_CSV_ROWS = 25_000
 # Each open Ask stream holds a request thread for its whole tool loop. The
 # ceiling must stay under gunicorn's 4 threads, or four people asking at
 # once leave nothing to serve login or /health (AI-1).
+#
+# An Ask turn ALSO takes one of ai_utils' interactive slots (AI cost audit
+# 10/7/26 #4) — the process-wide ceiling on request threads waiting on a
+# model, shared with the insight panels — taken on the request thread,
+# held for the whole turn and given back in the worker's finally with the
+# Ask slot. The worker runs under interactive_slot_held(), so the turn
+# counts once, not once per tool round, and its own calls never wait on a
+# slot the turn already holds. Always Ask slot first, then the interactive
+# one, so the two can never be taken in opposite orders.
 ASK_MAX_CONCURRENT = min(int(os.getenv("ASK_MAX_CONCURRENT", "2")), 3)
 _ASK_SLOTS = threading.BoundedSemaphore(ASK_MAX_CONCURRENT)
 
@@ -3004,9 +3013,13 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
 
         # `user` scopes what the answer may draw on to what this login's role
         # can read — a manager never gets food cost through Ask either.
-        answer, truncated, proposals, meta = ask_with_tools(
-            restaurant, question, history=history, user=user, screen=screen, conversation_id=conversation_id,
-            **({'brief': True} if brief else {}))
+        # One interactive slot for the whole turn (#4): its tool rounds
+        # count once, and keep Ask's own timeouts.
+        from ai_utils import interactive_slot
+        with interactive_slot():
+            answer, truncated, proposals, meta = ask_with_tools(
+                restaurant, question, history=history, user=user, screen=screen, conversation_id=conversation_id,
+                **({'brief': True} if brief else {}))
 
         message_id = None
         try:
@@ -3057,12 +3070,13 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
                 "message_id": message_id, "suggestions": suggestions,
                 **_ask_meta(meta)}, 200
     except Exception as e:
-        from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
+        from ai_utils import AIBudgetExceeded, AIBusy, AIRefused, user_facing_error
         msg, status = user_facing_error(e)
         # A budget stop is a decision this product made on purpose, not a
         # fault — it does not belong in the failure digest beside real ones.
         # Nor does a refusal: nothing broke, and it is not saved as an answer.
-        if not isinstance(e, (AIBudgetExceeded, AIRefused)):
+        # Nor does "busy" (#4): the ledger has its 'busy' row.
+        if not isinstance(e, (AIBudgetExceeded, AIBusy, AIRefused)):
             import ops
             ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
         return {"ok": False, "error": msg}, status
@@ -3119,6 +3133,11 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
     _via_chat = "view_as" if _acting_via(user) else None
 
     def work():
+        from ai_utils import interactive_slot_held
+        with interactive_slot_held():
+            _work()
+
+    def _work():
         cid = conversation_id
         try:
             from ask_cavnar import ask_with_tools
@@ -3161,13 +3180,14 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             except Exception as _se:
                 print(f"[ask] conversation summary skipped rid={rid}: {_se}")
         except Exception as e:
-            from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
+            from ai_utils import AIBudgetExceeded, AIBusy, AIRefused, user_facing_error
             msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")
-            if not isinstance(e, (AIBudgetExceeded, AIRefused)):
+            if not isinstance(e, (AIBudgetExceeded, AIBusy, AIRefused)):
                 import ops
                 ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
             events.put({"type": "error", "error": msg})
         finally:
+            _release_interactive()
             _ASK_SLOTS.release()
             events.put(None)
 
@@ -3177,14 +3197,32 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
     # client that opens several streams, and thread creation is unbounded
     # against a model API with its own rate limits. The semaphore makes the
     # ceiling explicit and releases in the worker's finally.
+    import ai_utils as _ai_slots
+    _slot = {"held": False}
+
+    def _release_interactive():
+        if _slot["held"]:
+            _slot["held"] = False
+            _ai_slots.release_interactive_slot()
+
+    def _busy():
+        events.put({"type": "error", "error": (
+            "Cavnar AI is answering a few other questions right now — "
+            "try again in a moment.")})
+        events.put(None)
+
     if not _ASK_SLOTS.acquire(blocking=False):
-        def _busy():
-            events.put({"type": "error", "error": (
-                "Cavnar AI is answering a few other questions right now — "
-                "try again in a moment.")})
-            events.put(None)
+        threading.Thread(target=_busy, daemon=True).start()
+    elif not _ai_slots.acquire_interactive_slot():
+        # Every interactive slot is held (#4) — by other answers or insight
+        # panels. The Ask slot goes straight back; nothing was started.
+        _ASK_SLOTS.release()
+        _ai_slots.log_blocked(rid, "ask_cavnar", None, "busy",
+                              detail=f"all {_ai_slots.INTERACTIVE_AI_SLOTS} interactive slots were in use",
+                              vendor="anthropic")
         threading.Thread(target=_busy, daemon=True).start()
     else:
+        _slot["held"] = True
         try:
             # The asker is the actor on the stream's model calls (#148): the
             # worker thread has no request to read it from.
@@ -3194,6 +3232,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             # Thread creation itself failing is the memory-pressure case this
             # semaphore exists for, and it is the one path where the slot is
             # held by a worker that will never reach its finally.
+            _release_interactive()
             _ASK_SLOTS.release()
             import ops
             ops.capture(_te, job="ask_cavnar_stream", context=f"restaurant_id={rid}")

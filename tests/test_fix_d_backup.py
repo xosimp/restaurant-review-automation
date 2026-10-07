@@ -326,8 +326,10 @@ def test_object_storage_copy_is_encrypted_scrubbed_and_checksummed(live, monkeyp
     assert runs[-1]["offsite_ok"] == 1 and runs[-1]["sha256"] == uploaded["headers"]["x-amz-content-sha256"]
     assert runs[-1]["db_bytes"] and runs[-1]["free_bytes"]
     # The local snapshot keeps its credentials: it is the restore artifact.
-    snap = live["tmp"] / "backups" / "cavnar_ai_backup_2026-09-29.db"
-    assert b"tok-live" in snap.read_bytes()
+    # Gzipped since AI cost audit 10/7/26 #8 — read through the gzip.
+    import gzip
+    snap = live["tmp"] / "backups" / "cavnar_ai_backup_2026-09-29.db.gz"
+    assert b"tok-live" in gzip.decompress(snap.read_bytes())
     assert ops.backup_status()["state"] == "ok"
 
 
@@ -370,7 +372,9 @@ def test_not_enough_free_space_fails_before_writing(live, monkeypatch):
     monkeypatch.setattr(_sh, "disk_usage", lambda p: type("U", (), {"free": 10, "total": 10 ** 9, "used": 0})())
     with pytest.raises(scheduler.BackupFailed, match="free space"):
         scheduler.backup_db()
+    # Neither form (gzipped since AI cost audit 10/7/26 #8).
     assert not (live["tmp"] / "backups" / "cavnar_ai_backup_2026-09-29.db").exists()
+    assert not (live["tmp"] / "backups" / "cavnar_ai_backup_2026-09-29.db.gz").exists()
     assert _runs(live["path"])[-1]["local_ok"] == 0
 
 

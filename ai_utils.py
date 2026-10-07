@@ -87,8 +87,16 @@ AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", "150"))
 # refuse AI for everyone. The floor keeps the backstop meaningful at one or
 # two clients; the per-client allowance means the ceiling grows with the
 # business instead of throttling it.
+#
+# $30 a paying client (AI cost audit 10/7/26 #23; it was $200). A full-tier
+# restaurant runs well under a dollar a day — $15-25 a month with a weekly
+# Opus schedule — so $200 each let the pool climb to ~8x real use before it
+# noticed anything: at 50 clients a runaway could spend $10,000 a month with
+# every client still "under the pool". $30 is real use plus headroom; the
+# $1,500 floor still covers the first fifty clients outright, and the pool
+# only starts growing past that.
 AI_GLOBAL_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MONTHLY_BUDGET_USD", "1500"))
-AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "200"))
+AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "30"))
 # ...but never above this. A backstop that grows without limit stops being a
 # backstop (AI-12): at a few hundred clients a runaway loop could spend tens
 # of thousands of dollars before the "shared ceiling" noticed. Raising it is
@@ -96,7 +104,61 @@ AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "200"))
 AI_GLOBAL_MAX_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MAX_MONTHLY_BUDGET_USD", "10000"))
 
 
+# _paying_client_count and _budget_tier run before EVERY Claude call, each a
+# query of its own, beside a spend total that is already cached for 60s (AI
+# cost audit 10/7/26 #89). A tier or the client count changes when billing
+# does — a handful of times a month — so both are memoised for the same
+# window, and a write to `restaurants` drops a restaurant's entry at once
+# (models._invalidate_request_cache calls invalidate_budget_memo), so an
+# upgrade is never refused on yesterday's tier for a minute. Keyed by the
+# database too: tests and the restore drill read other files.
+_MEMO_SECS = _BUDGET_CACHE_SECS = 60
+_budget_memo = {}
+_budget_lock = threading.Lock()
+
+
+def _memo_get(key):
+    with _budget_lock:
+        hit = _budget_memo.get(key)
+    if hit and time.time() - hit[0] < _MEMO_SECS:
+        return True, hit[1]
+    return False, None
+
+
+def _memo_put(key, value):
+    with _budget_lock:
+        if len(_budget_memo) > 5000:
+            _budget_memo.clear()
+        _budget_memo[key] = (time.time(), value)
+
+
+def invalidate_budget_memo(restaurant_id=None):
+    """Forget the memoised tier (and the paying-client count) after a write
+    to `restaurants` — all of it with no restaurant named."""
+    with _budget_lock:
+        if restaurant_id is None:
+            _budget_memo.clear()
+            return
+        for key in list(_budget_memo):
+            if key[0] == "paying" or (key[0] == "tier" and key[2] == restaurant_id):
+                _budget_memo.pop(key, None)
+
+
+def _memo_db(db_path):
+    if db_path:
+        return str(db_path)
+    try:
+        import models
+        return str(models.DB_PATH)
+    except Exception:
+        return ""
+
+
 def _paying_client_count(db_path=None):
+    key = ("paying", _memo_db(db_path))
+    hit, value = _memo_get(key)
+    if hit:
+        return value
     try:
         from models import get_conn, DB_PATH
         conn = get_conn(db_path or DB_PATH)
@@ -105,9 +167,12 @@ def _paying_client_count(db_path=None):
             f"WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN {_PAID_STATES_SQL}"
         ).fetchone()["c"]
         conn.close()
-        return int(n or 0)
+        n = int(n or 0)
     except Exception:
+        # Not memoised: a failed read must not pin the pool to its floor.
         return 0
+    _memo_put(key, n)
+    return n
 
 
 def global_monthly_budget(db_path=None):
@@ -168,6 +233,17 @@ AI_TRIAL_POOL_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_MONTHLY_USD", "500"))
 # costs anything that matters. 0 disables that ceiling.
 AI_PLACES_DAILY_BUDGET_USD = float(os.getenv("AI_PLACES_DAILY_BUDGET_USD", "3"))
 AI_PLACES_MONTHLY_BUDGET_USD = float(os.getenv("AI_PLACES_MONTHLY_BUDGET_USD", "30"))
+# ...and the platform's, every restaurant's Places spend and every call no
+# restaurant is named on (AI cost audit 10/7/26 #22). The ceilings above
+# bound one restaurant; nothing bounded the fleet, and an unattributed loop
+# (a helper with no restaurant, a script) answered to no ceiling at all.
+# Sized at about three times what the fleet is expected to spend: a
+# restaurant runs a few dollars a month (four review fetches a day, the
+# weekly competitor sweep and the daily rating re-read), so a few dozen
+# restaurants are ~$100 — $300 stops a runaway inside a month without ever
+# meeting normal use, and 80% pages Will first. The review fetch is still
+# never refused (PLACES_ESSENTIAL_ACTIONS). 0 disables it.
+AI_PLACES_GLOBAL_MONTHLY_USD = float(os.getenv("AI_PLACES_GLOBAL_MONTHLY_USD", "300"))
 
 # Spend past this share of a ceiling is a warning: an issue on the console
 # and, for the global pool, a page — before the ceiling stops anything.
@@ -206,6 +282,20 @@ def _budget_tier(restaurant_id, db_path=None):
     caller who benefits from the open direction."""
     if restaurant_id is None:
         return TIER_PAID   # global/system calls are not attributable to a client
+    key = ("tier", _memo_db(db_path), restaurant_id)
+    hit, value = _memo_get(key)
+    if hit:
+        return value
+    tier = _read_budget_tier(restaurant_id, db_path)
+    if tier is not None:
+        _memo_put(key, tier)
+        return tier
+    return TIER_PAID
+
+
+def _read_budget_tier(restaurant_id, db_path=None):
+    """The tier as the database says it, or None when the read failed (the
+    caller fails open to paid, and does not memoise the failure)."""
     try:
         from models import get_conn, DB_PATH
         conn = get_conn(db_path or DB_PATH)
@@ -227,7 +317,7 @@ def _budget_tier(restaurant_id, db_path=None):
             return TIER_TRIAL
         return TIER_UNPAID
     except Exception:
-        return TIER_PAID
+        return None
 
 
 def _is_paid_account(restaurant_id, db_path=None):
@@ -253,7 +343,10 @@ _TIER_LABELS = {
 
 # Spend only moves when a call completes, and a SUM over ai_usage on every
 # call would be pure overhead on a path that already takes seconds.
-_BUDGET_CACHE_SECS = 60
+# (_BUDGET_CACHE_SECS is set with the tier memo above.) Every write to it
+# holds _budget_lock (AI cost audit 10/7/26 #90): note_ai_spend's
+# read-add-write raced a concurrent call's, and two calls finishing together
+# on two request threads lost one call's cost from the running total.
 _budget_cache = {}
 
 
@@ -336,19 +429,24 @@ def _prune_budget_cache(current_windows):
     but nothing removed it, so the dict grew by one key per restaurant per day
     for the life of the process — and note_ai_spend walks the whole dict on
     every AI call."""
-    for key in list(_budget_cache):
-        if key[1] not in current_windows:
-            _budget_cache.pop(key, None)
+    with _budget_lock:
+        for key in list(_budget_cache):
+            if key[1] not in current_windows:
+                _budget_cache.pop(key, None)
 
 
 def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False, scope="ai", trials_only=False):
     now = time.time()
-    hit = _budget_cache.get(cache_key)
+    with _budget_lock:
+        hit = _budget_cache.get(cache_key)
     if hit and now - hit[0] < _BUDGET_CACHE_SECS:
         return hit[1]
+    # The read runs outside the lock: a SUM over the ledger must not hold
+    # every other call's budget check.
     spend = _spend_since(sql_window, restaurant_id, db_path, paid_only=paid_only, scope=scope,
                          trials_only=trials_only)
-    _budget_cache[cache_key] = (now, spend)
+    with _budget_lock:
+        _budget_cache[cache_key] = (now, spend)
     return spend
 
 
@@ -431,40 +529,50 @@ def ai_budget_status(restaurant_id=None, db_path=None):
     return _finish_status(out)
 
 
+PLACES_GLOBAL_LABEL = "monthly Google Places budget across all clients"
+
+
 def places_budget_status(restaurant_id=None, db_path=None):
-    """One restaurant's Google Places spend against its own ceilings, or,
-    with no restaurant, the platform's Places spend (no ceiling — a fleet
-    total, for the console)."""
+    """One restaurant's Google Places spend against its own ceilings, plus
+    the platform's (`global_month`, AI_PLACES_GLOBAL_MONTHLY_USD, #22); with
+    no restaurant, the platform's alone — as `month` (what the console has
+    always read) and `global_month`."""
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     day = now.strftime("%Y-%m-%d 00:00:00")
     month = now.strftime("%Y-%m-01 00:00:00")
     _prune_budget_cache((day, month))
+    fleet = {"spend": _cached_spend(("places:all", month), month, None, db_path, scope="places"),
+             "budget": AI_PLACES_GLOBAL_MONTHLY_USD, "resets_at": _resets_at("month")}
     if restaurant_id is None:
-        return _finish_status({"month": {"spend": _cached_spend(("places:all", month), month, None, db_path,
-                                                                scope="places"),
-                                         "budget": 0.0, "resets_at": _resets_at("month")}})
+        return _finish_status({"month": dict(fleet), "global_month": dict(fleet)})
     key = _places_key(restaurant_id)
     return _finish_status({
         "day": {"spend": _cached_spend((key, day), day, restaurant_id, db_path, scope="places"),
                 "budget": AI_PLACES_DAILY_BUDGET_USD, "resets_at": _resets_at("day")},
         "month": {"spend": _cached_spend((key, month), month, restaurant_id, db_path, scope="places"),
                   "budget": AI_PLACES_MONTHLY_BUDGET_USD, "resets_at": _resets_at("month")},
+        "global_month": fleet,
     })
 
 
 def places_budget_exceeded(restaurant_id=None, db_path=None):
-    """Which Places ceiling this restaurant has reached, as words, or None.
-    Unattributed requests (no restaurant) answer to no per-restaurant
-    ceiling. Fails open, like ai_budget_exceeded."""
-    if restaurant_id is None:
-        return None
+    """Which Places ceiling this request has reached, as words, or None.
+    The platform's ceiling binds every request, attributed or not (#22); a
+    restaurant's own day and month bind only its own. Fails open, like
+    ai_budget_exceeded."""
     try:
         st = places_budget_status(restaurant_id, db_path)
-        for scope, label in (("day", "daily Google Places budget"), ("month", "monthly Google Places budget")):
+        scopes = [("global_month", PLACES_GLOBAL_LABEL)]
+        if restaurant_id is not None:
+            scopes += [("day", "daily Google Places budget"), ("month", "monthly Google Places budget")]
+        for scope, label in scopes:
             if st.get(scope, {}).get("over"):
                 return label
-        _note_budget_warnings(st, restaurant_id, vendor="google_places")
+        # With no restaurant, `month` is the same fleet window as
+        # global_month: warned on once, as the platform's.
+        _note_budget_warnings(st if restaurant_id is not None else {"global_month": st.get("global_month")},
+                              restaurant_id, vendor="google_places")
         return None
     except Exception as e:
         log.warning("places budget check failed (rid=%s): %s", restaurant_id, e)
@@ -537,7 +645,12 @@ def _record_budget_stop(scope, restaurant_id, vendor="anthropic"):
                f"ceiling is raised (AI_TRIAL_POOL_DAILY_USD / AI_TRIAL_POOL_MONTHLY_USD).",
                "Paying clients are not affected. If these are real trials, raise the ceiling; if not, "
                "look at who created them. Open the admin console → Operations → AI to see what spent it."])
-    if "across all clients" in str(scope):
+    if scope == PLACES_GLOBAL_LABEL:
+        _page("budget_stop:google_places", "Cavnar AI: Google lookups are paused for every client (budget)",
+              [f"The {scope} was reached — every Google Places request except the review fetch is refused "
+               "until the month resets or the ceiling is raised (AI_PLACES_GLOBAL_MONTHLY_USD).",
+               "Open the admin console → Operations → AI to see which restaurant or action spent it."])
+    elif "across all clients" in str(scope):
         _page(f"budget_stop:{vendor}", "Cavnar AI: AI is paused for every client (budget)",
               [f"The {scope} was reached — every AI call is refused until it resets or the "
                f"ceiling is raised (AI_GLOBAL_MONTHLY_BUDGET_USD / AI_GLOBAL_MAX_MONTHLY_BUDGET_USD).",
@@ -580,7 +693,13 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
                   [f"All trial accounts together: {detail}.",
                    "At 100% every trial's AI calls are refused until it resets; paying clients are not "
                    "affected. Raise AI_TRIAL_POOL_DAILY_USD / AI_TRIAL_POOL_MONTHLY_USD if the trials are real."])
-        if scope == "global_month":
+        if scope == "global_month" and vendor == "google_places":
+            _page("budget_warn:google_places", "Cavnar AI: the platform Google Places budget is past "
+                                              f"{int(AI_BUDGET_WARN_PCT)}%",
+                  [f"Google Places spend across every restaurant is {detail}.",
+                   "At 100% every Places request except the review fetch is refused until the month "
+                   "resets. Raise AI_PLACES_GLOBAL_MONTHLY_USD if the spend is real."])
+        elif scope == "global_month":
             _page(f"budget_warn:{vendor}", "Cavnar AI: the platform AI budget is past "
                                           f"{int(AI_BUDGET_WARN_PCT)}%",
                   [f"Monthly spend across all paying clients is {detail}.",
@@ -602,14 +721,18 @@ def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None):
         scopes = ("g", restaurant_id)
         # A trial's spend moves the trial pool too — looked up only while a
         # pool total is cached, so a paying client's call never pays for it.
-        if (restaurant_id is not None and any(k[0] == "trial_pool" for k in list(_budget_cache))
-                and _budget_tier(restaurant_id) == TIER_TRIAL):
+        with _budget_lock:
+            pool_cached = any(k[0] == "trial_pool" for k in _budget_cache)
+        if restaurant_id is not None and pool_cached and _budget_tier(restaurant_id) == TIER_TRIAL:
             scopes += ("trial_pool",)
-    for key in list(_budget_cache):
-        if key[0] in scopes:
-            hit = _budget_cache.get(key)
-            if hit:
-                _budget_cache[key] = (hit[0], hit[1] + cost_usd)
+    # One read-add-write under the lock (#90): two calls finishing at once
+    # each read the same total and the second write dropped the first's cost.
+    with _budget_lock:
+        for key in list(_budget_cache):
+            if key[0] in scopes:
+                hit = _budget_cache.get(key)
+                if hit:
+                    _budget_cache[key] = (hit[0], hit[1] + cost_usd)
 
 
 # ── circuit breaker ─────────────────────────────────────────────────────────
@@ -822,6 +945,12 @@ def user_facing_error(exc, fallback="Couldn't get an answer right now — try ag
     """
     if isinstance(exc, AIBudgetExceeded):
         return str(exc), 429
+    # Before AIProviderDown, which it is: "busy" is this server's own
+    # threads (AI cost audit 10/7/26 #4), not the provider — a moment's
+    # wait clears it, so it says so, with the retryable 503.
+    if isinstance(exc, AIBusy):
+        return ("Cavnar AI is busy with other requests right now — nothing is lost, "
+                "try again in a moment."), 503
     if isinstance(exc, AIProviderDown):
         return str(exc), 503
     if isinstance(exc, AIRefused):
@@ -1021,6 +1150,131 @@ def get_client(timeout=None):
                                     max_retries=0)
             _clients[cache_key] = c
         return c
+
+
+# ── the interactive-call guard (AI cost audit 10/7/26 #4) ──────────────────
+#
+# gunicorn runs ONE worker with FOUR request threads (Procfile), and every
+# model call made from a request holds its thread for the whole call: an
+# insight panel calls Sonnet inline (up to DEFAULT_AI_TIMEOUT a try, three
+# tries — four and a half minutes), and an Ask stream holds its thread for
+# its whole tool loop. Four slow calls at once and nothing is left to serve
+# a login, a page, /health or a Stripe webhook — the platform reads as down
+# while it waits on someone else's model.
+#
+# So a model call made on a request thread first takes one of
+# INTERACTIVE_AI_SLOTS process-wide slots (default 2: at least two of the
+# four threads always stay free for everything that is not a model call),
+# waiting at most INTERACTIVE_AI_WAIT_SECONDS. No slot: AIBusy — a
+# zero-cost 'busy' row on the ledger and "busy, try again in a moment" in
+# the words every route already shows (user_facing_error / insight_error).
+# Off a request — the scheduler, a background job, the schedule generation
+# pool, an Ask stream's worker thread — nothing is taken: those threads are
+# not the ones logins wait for, and the lanes and pools bound them already.
+#
+# A request-thread call also defaults to a shorter leash: INTERACTIVE_AI_
+# TIMEOUT a try and one retry (worst case ~85s, not ~275s), unless its
+# caller named a timeout (get_client(timeout=...), a `timeout`, a
+# `deadline`) or `retries` itself.
+#
+# A turn of several calls (an Ask answer: a tool loop) takes ONE slot for
+# the whole turn with interactive_slot() — or acquire_interactive_slot() on
+# the request thread and release_interactive_slot() in the worker that
+# finishes it — so it counts once, never once per round, and can never
+# deadlock against itself: inside a held slot create_with_retry takes none
+# and keeps its caller's own timeouts. One process, one count: the same
+# multiply-with-workers caveat as ASK_MAX_CONCURRENT (CLAUDE.md, gunicorn
+# --workers).
+INTERACTIVE_AI_SLOTS = max(1, int(os.getenv("INTERACTIVE_AI_SLOTS", "2")))
+INTERACTIVE_AI_WAIT_SECONDS = float(os.getenv("INTERACTIVE_AI_WAIT_SECONDS", "3"))
+INTERACTIVE_AI_TIMEOUT = float(os.getenv("INTERACTIVE_AI_TIMEOUT", "40"))
+INTERACTIVE_AI_RETRIES = 1
+DEFAULT_AI_RETRIES = 2
+_INTERACTIVE_SLOTS = threading.BoundedSemaphore(INTERACTIVE_AI_SLOTS)
+# True while this context holds a slot (a turn, or the call itself), so a
+# nested call — or a pool thread run in a copy of this context — takes none.
+_INTERACTIVE_HELD = contextvars.ContextVar("cavnar_ai_interactive_held", default=False)
+
+_BUSY_MESSAGE = "Cavnar AI is busy with other requests right now — try again in a moment."
+
+
+class AIBusy(AIProviderDown):
+    """No interactive slot came free in time (#4). An AIProviderDown, so
+    every caller that already treats an outage as "no answer now, nothing
+    lost, nothing counted against the item" (is_platform_stop) does the same
+    here; user_facing_error gives it its own words."""
+
+
+def on_request_thread() -> bool:
+    """Whether this code runs inside a Flask request (a request thread)."""
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
+
+
+def acquire_interactive_slot(wait=None) -> bool:
+    """Take one interactive slot, waiting at most `wait` seconds
+    (INTERACTIVE_AI_WAIT_SECONDS by default). False when none came free.
+    The caller releases it with release_interactive_slot() — from whichever
+    thread finishes the work."""
+    return _INTERACTIVE_SLOTS.acquire(timeout=INTERACTIVE_AI_WAIT_SECONDS if wait is None else max(0.0, wait))
+
+
+def release_interactive_slot():
+    try:
+        _INTERACTIVE_SLOTS.release()
+    except ValueError:
+        log.error("interactive AI slot released more often than it was taken")
+
+
+@contextlib.contextmanager
+def interactive_slot_held():
+    """Mark the block as running under a slot taken elsewhere (the request
+    thread that started an Ask stream): its calls take none of their own."""
+    token = _INTERACTIVE_HELD.set(True)
+    try:
+        yield
+    finally:
+        _INTERACTIVE_HELD.reset(token)
+
+
+@contextlib.contextmanager
+def interactive_slot(wait=None):
+    """Hold one interactive slot for a multi-call turn on a request thread,
+    so it counts once. Re-entrant (a block already holding one takes no
+    other); off a request it takes nothing. Raises AIBusy when no slot
+    came free in time."""
+    if _INTERACTIVE_HELD.get() or not on_request_thread():
+        yield False
+        return
+    if not acquire_interactive_slot(wait):
+        raise AIBusy(_BUSY_MESSAGE)
+    try:
+        with interactive_slot_held():
+            yield True
+    finally:
+        release_interactive_slot()
+
+
+def interactive_slots_free() -> int:
+    """Slots free right now (for the console and the tests)."""
+    return getattr(_INTERACTIVE_SLOTS, "_value", 0)
+
+
+def _interactive_timeout(client):
+    """The shorter per-try timeout for a request-thread call whose client is
+    the default one; None when the caller chose its own client timeout (or
+    the client is a test double that has none)."""
+    t = getattr(client, "timeout", None)
+    read = getattr(t, "read", t)
+    if isinstance(read, bool) or not isinstance(read, (int, float)):
+        return None
+    if float(read) != float(DEFAULT_AI_TIMEOUT):
+        return None
+    secs = min(float(read), INTERACTIVE_AI_TIMEOUT)
+    return anthropic.Timeout(secs, connect=min(AI_CONNECT_TIMEOUT, secs))
 
 
 # ── attribution: who or what made this call (#148) ─────────────────────────
@@ -1406,7 +1660,7 @@ def _send(client, kwargs, stream=False, deadline=None):
     return client.messages.create(**kwargs)
 
 
-def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action=None, readiness=None, **kwargs):
+def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, action=None, readiness=None, **kwargs):
     """client.messages.create(**kwargs) with exponential backoff on
     transient failures. Raises the last exception if all attempts fail.
 
@@ -1438,7 +1692,13 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     attempts, the total latency including backoff, the provider request id,
     who or what triggered it and a call id shared with its ai_calls trace.
     The returned message carries that id as `_cavnar_call_id`
-    (mark_outcome() files an 'unparseable' against it)."""
+    (mark_outcome() files an 'unparseable' against it).
+
+    On a request thread the call first takes an interactive slot (AI cost
+    audit 10/7/26 #4 — see the guard above): AIBusy when none comes free,
+    and, unless the caller named them, INTERACTIVE_AI_TIMEOUT a try and
+    INTERACTIVE_AI_RETRIES. Elsewhere `retries` defaults to
+    DEFAULT_AI_RETRIES (2), as it always did."""
     model = kwargs.get("model", "unknown")
     trigger, actor, corr = _attribution()
     attribution = {"trigger": trigger, "actor_user_id": actor, "correlation_id": corr}
@@ -1495,88 +1755,116 @@ def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action
     except AIProviderDown:
         log_blocked(restaurant_id, action, model, "breaker", detail="the provider breaker is open", **attribution)
         raise
-    call_id = _new_call_id()
-    attempt = 0
-    # Wall time from the first attempt to the answer, backoff included, so
-    # "is Ask slow?" has an answer and a success after two 429s does not
-    # look clean (#52).
-    started = time.time()
-    while True:
-        try:
-            if deadline is not None:
-                # Each attempt waits at most the time left (P-22).
-                kwargs["timeout"] = _attempt_timeout(client, deadline)
-            message = _send(client, kwargs, stream, deadline=deadline)
-        except CallDeadlineExceeded as e:
-            # The job's own clock, not the provider: never a breaker failure,
-            # and what streamed before the cut is billed, so it is filed with
-            # its tokens as a truncated answer (#52).
-            e.call_id = call_id
-            latency = int((time.time() - started) * 1000)
-            _log_cut_safe(e.partial, model, restaurant_id, action, latency, attempt + 1, call_id, attribution)
-            _record_trace_safe(call_id, kwargs, e.partial, restaurant_id, action, "truncated", attribution,
-                               attempts=attempt + 1, latency_ms=latency)
+    # The interactive slot (#4): taken after every refusal that costs no
+    # thread time (readiness, deadline, budget, breaker), held for the
+    # attempts and the backoff between them, given back however they end.
+    took_slot = False
+    if not _INTERACTIVE_HELD.get() and on_request_thread():
+        if not acquire_interactive_slot():
+            # If the breaker check above let this call through as its one
+            # probe, hand the probe back: a busy server proves nothing about
+            # the provider, and the next caller should probe at once.
             _breaker_release_probe("anthropic")
-            raise
-        except Exception as e:
-            reason = classify_error(e)
-            # Under a deadline a timed-out call is not sent again as it was:
-            # the same call would time out again in less time, and the caller
-            # re-plans it smaller (the schedule splits it; P-22).
-            if _is_retryable(e) and not (deadline is not None and reason == "timeout"):
-                attempt += 1
-                if attempt <= retries and (deadline is None or time.time() + backoff ** attempt < float(deadline)):
-                    time.sleep(backoff ** attempt)
-                    continue
-                # Retry budget exhausted — this is the "AI is down" signal the
-                # operator digest exists for, so record it before re-raising.
-                _log_failure_safe(e, model, restaurant_id, action, attempts=attempt, reason=reason,
+            log_blocked(restaurant_id, action, model, "busy",
+                        detail=f"all {INTERACTIVE_AI_SLOTS} interactive slots were in use", **attribution)
+            raise AIBusy(_BUSY_MESSAGE)
+        took_slot = True
+        if retries is None:
+            retries = INTERACTIVE_AI_RETRIES
+        if deadline is None and "timeout" not in kwargs:
+            _short = _interactive_timeout(client)
+            if _short is not None:
+                kwargs["timeout"] = _short
+    if retries is None:
+        retries = DEFAULT_AI_RETRIES
+    held = _INTERACTIVE_HELD.set(True) if took_slot else None
+    try:
+        call_id = _new_call_id()
+        attempt = 0
+        # Wall time from the first attempt to the answer, backoff included, so
+        # "is Ask slow?" has an answer and a success after two 429s does not
+        # look clean (#52).
+        started = time.time()
+        while True:
+            try:
+                if deadline is not None:
+                    # Each attempt waits at most the time left (P-22).
+                    kwargs["timeout"] = _attempt_timeout(client, deadline)
+                message = _send(client, kwargs, stream, deadline=deadline)
+            except CallDeadlineExceeded as e:
+                # The job's own clock, not the provider: never a breaker failure,
+                # and what streamed before the cut is billed, so it is filed with
+                # its tokens as a truncated answer (#52).
+                e.call_id = call_id
+                latency = int((time.time() - started) * 1000)
+                _log_cut_safe(e.partial, model, restaurant_id, action, latency, attempt + 1, call_id, attribution)
+                _record_trace_safe(call_id, kwargs, e.partial, restaurant_id, action, "truncated", attribution,
+                                   attempts=attempt + 1, latency_ms=latency)
+                _breaker_release_probe("anthropic")
+                raise
+            except Exception as e:
+                reason = classify_error(e)
+                # Under a deadline a timed-out call is not sent again as it was:
+                # the same call would time out again in less time, and the caller
+                # re-plans it smaller (the schedule splits it; P-22).
+                if _is_retryable(e) and not (deadline is not None and reason == "timeout"):
+                    attempt += 1
+                    if attempt <= retries and (deadline is None or time.time() + backoff ** attempt < float(deadline)):
+                        time.sleep(backoff ** attempt)
+                        continue
+                    # Retry budget exhausted — this is the "AI is down" signal the
+                    # operator digest exists for, so record it before re-raising.
+                    _log_failure_safe(e, model, restaurant_id, action, attempts=attempt, reason=reason,
+                                      latency_ms=int((time.time() - started) * 1000), call_id=call_id,
+                                      attribution=attribution)
+                    _record_trace_safe(call_id, kwargs, None, restaurant_id, action, "error", attribution,
+                                       attempts=attempt, latency_ms=int((time.time() - started) * 1000))
+                    try:
+                        import ops
+                        ops.capture(e, job="ai_call", context=str(model))
+                    except Exception:
+                        pass
+                    if reason == "overloaded":
+                        _note_provider_error("anthropic", reason, e)
+                    # Only an EXHAUSTED retry budget counts toward the breaker:
+                    # one transient 429 that the retry absorbed is the system
+                    # working, not a provider that is down.
+                    _breaker_record("anthropic", False, reason=reason)
+                    raise
+                # Not retryable (bad request, auth, a malformed response) — still
+                # a failed AI call the admin console should see next to the
+                # successes, in the same table.
+                _log_failure_safe(e, model, restaurant_id, action, attempts=attempt + 1, reason=reason,
                                   latency_ms=int((time.time() - started) * 1000), call_id=call_id,
                                   attribution=attribution)
                 _record_trace_safe(call_id, kwargs, None, restaurant_id, action, "error", attribution,
-                                   attempts=attempt, latency_ms=int((time.time() - started) * 1000))
+                                   attempts=attempt + 1, latency_ms=int((time.time() - started) * 1000))
+                if reason in _CONFIG_REASONS:
+                    _note_provider_error("anthropic", reason, e)
+                if reason in ("auth", "credit"):
+                    # A revoked key or an empty balance fails every call alike:
+                    # stop sending them, and let the probe find the fix.
+                    trip_breaker("anthropic", reason)
+                else:
+                    _breaker_release_probe("anthropic")
+                raise
+            latency_ms = int((time.time() - started) * 1000)
+            usage_id = _log_usage_safe(message, model, restaurant_id, action, latency_ms=latency_ms,
+                                       attempts=attempt + 1, call_id=call_id, attribution=attribution)
+            _breaker_record("anthropic", True)
+            if getattr(message, "usage", None) is not None:
+                _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome_of(message), attribution,
+                                   attempts=attempt + 1, latency_ms=latency_ms, usage_id=usage_id)
+                _note_last_call(call_id, restaurant_id, action or "unspecified")
                 try:
-                    import ops
-                    ops.capture(e, job="ai_call", context=str(model))
+                    setattr(message, "_cavnar_call_id", call_id)
                 except Exception:
                     pass
-                if reason == "overloaded":
-                    _note_provider_error("anthropic", reason, e)
-                # Only an EXHAUSTED retry budget counts toward the breaker:
-                # one transient 429 that the retry absorbed is the system
-                # working, not a provider that is down.
-                _breaker_record("anthropic", False, reason=reason)
-                raise
-            # Not retryable (bad request, auth, a malformed response) — still
-            # a failed AI call the admin console should see next to the
-            # successes, in the same table.
-            _log_failure_safe(e, model, restaurant_id, action, attempts=attempt + 1, reason=reason,
-                              latency_ms=int((time.time() - started) * 1000), call_id=call_id,
-                              attribution=attribution)
-            _record_trace_safe(call_id, kwargs, None, restaurant_id, action, "error", attribution,
-                               attempts=attempt + 1, latency_ms=int((time.time() - started) * 1000))
-            if reason in _CONFIG_REASONS:
-                _note_provider_error("anthropic", reason, e)
-            if reason in ("auth", "credit"):
-                # A revoked key or an empty balance fails every call alike:
-                # stop sending them, and let the probe find the fix.
-                trip_breaker("anthropic", reason)
-            else:
-                _breaker_release_probe("anthropic")
-            raise
-        latency_ms = int((time.time() - started) * 1000)
-        usage_id = _log_usage_safe(message, model, restaurant_id, action, latency_ms=latency_ms,
-                                   attempts=attempt + 1, call_id=call_id, attribution=attribution)
-        _breaker_record("anthropic", True)
-        if getattr(message, "usage", None) is not None:
-            _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome_of(message), attribution,
-                               attempts=attempt + 1, latency_ms=latency_ms, usage_id=usage_id)
-            _note_last_call(call_id, restaurant_id, action or "unspecified")
-            try:
-                setattr(message, "_cavnar_call_id", call_id)
-            except Exception:
-                pass
-        return message
+            return message
+    finally:
+        if took_slot:
+            _INTERACTIVE_HELD.reset(held)
+            release_interactive_slot()
 
 
 def with_data_state(prompt, readiness) -> str:
@@ -2747,8 +3035,13 @@ _AI_OPS_DDL = (
 def init_ai_ops(db_path=None):
     """Boot DDL for the AI-operations tables and ai_usage's new columns, then
     the one-time data work (vendor backfill, the Sonnet 5 / Perplexity
-    reprice, the rollup of history already in the ledger). Called from
-    models.init_db. The data work never fails the boot."""
+    reprice). Called from models.init_db. The data work never fails the boot.
+
+    The daily rollup is NOT a boot step any more (AI cost audit 10/7/26 #91):
+    it read the whole ledger before the first request was served, inside
+    Railway's 120-second healthcheck window, and its own job already runs
+    nightly as the first step of ops.prune_ledgers — before any raw row it
+    summarises is deleted. A day the boot used to roll is rolled that night."""
     from models import get_conn, DB_PATH
     path = db_path or DB_PATH
     conn = get_conn(path)
@@ -2768,7 +3061,7 @@ def init_ai_ops(db_path=None):
         conn.commit()
     finally:
         conn.close()
-    for step in (_backfill_vendor, _reprice_legacy_rows, rollup_usage):
+    for step in (_backfill_vendor, _reprice_legacy_rows):
         try:
             step(db_path=path)
         except Exception as e:
@@ -3433,9 +3726,9 @@ def rollup_usage(db_path=None, recent_days=2):
     """Rebuild ai_usage_daily (and ai_validation_daily) from the raw rows for
     the last `recent_days` UTC days plus any day that has raw rows but no
     rollup yet, then prune the AI-operations tables. Idempotent: a day is
-    recomputed whole. Run at boot (init_ai_ops), by the nightly retention
-    pass before it prunes a raw AI row (ops.prune_ledgers — a failed rollup
-    keeps them), and safe to run any time. Returns {"days": n,
+    recomputed whole. Run by the nightly retention pass before it prunes a
+    raw AI row (ops.prune_ledgers — a failed rollup keeps them; no longer at
+    boot, #91), and safe to run any time. Returns {"days": n,
     "validation_days": n, "pruned": {...}}."""
     from models import get_conn, DB_PATH
     path = db_path or DB_PATH
@@ -3466,13 +3759,46 @@ def rollup_usage(db_path=None, recent_days=2):
     return out
 
 
+def _day_range(day):
+    """[day, next day) as created_at bounds. created_at is SQLite's
+    'YYYY-MM-DD HH:MM:SS' (or an ISO 'T' stamp), so a string range is the
+    same day as date(created_at) — and, unlike date(created_at)=?, it can
+    use the created_at index (#91)."""
+    from datetime import date, timedelta
+    d = date.fromisoformat(day)
+    return d.isoformat(), (d + timedelta(days=1)).isoformat()
+
+
 def _days_to_roll(conn, raw, rolled, recent_days):
+    """Days with raw rows and no rollup yet, plus the recent ones (always
+    recomputed). Was a SELECT DISTINCT of date() over every created_at in the
+    ledger — a full scan, since no index covers date() of a column (AI cost audit
+    10/7/26 #91). Now: the oldest raw row (one index probe), then for each
+    day from it to today that has no rollup, one bounded probe of the index —
+    at most the ledger's retention window of probes (120 days), however many
+    rows a day holds."""
+    from datetime import date, timedelta
     have = {r[0] for r in conn.execute(f"SELECT DISTINCT day FROM {rolled}").fetchall()}
-    raw_days = [r[0] for r in conn.execute(
-        f"SELECT DISTINCT date(created_at) FROM {raw} WHERE created_at IS NOT NULL").fetchall() if r[0]]
+    oldest = conn.execute(f"SELECT MIN(created_at) FROM {raw} WHERE created_at IS NOT NULL").fetchone()[0]
     recent = {conn.execute("SELECT date('now', ?)", (f"-{int(i)} days",)).fetchone()[0]
               for i in range(max(1, recent_days))}
-    return sorted(d for d in raw_days if d not in have or d in recent)
+    if not oldest:
+        return []
+    try:
+        d = date.fromisoformat(str(oldest)[:10])
+    except ValueError:
+        return []
+    today = date.fromisoformat(conn.execute("SELECT date('now')").fetchone()[0])
+    out = []
+    while d <= today:
+        day = d.isoformat()
+        if day not in have or day in recent:
+            lo, hi = _day_range(day)
+            if conn.execute(f"SELECT 1 FROM {raw} WHERE created_at >= ? AND created_at < ? LIMIT 1",
+                            (lo, hi)).fetchone():
+                out.append(day)
+        d += timedelta(days=1)
+    return out
 
 
 def _roll_usage_day(conn, day):
@@ -3482,7 +3808,8 @@ def _roll_usage_day(conn, day):
         "COALESCE(outcome, CASE WHEN COALESCE(status,'ok')='ok' THEN 'ok' ELSE 'error' END) AS outcome, "
         "COALESCE(attempts, 1) AS attempts, COALESCE(input_tokens,0) AS tin, COALESCE(output_tokens,0) AS tout, "
         "COALESCE(cache_write_tokens,0) AS cw, COALESCE(cache_read_tokens,0) AS cr, COALESCE(cost_usd,0) AS cost, "
-        "latency_ms, COALESCE(\"trigger\",'') AS trig FROM ai_usage WHERE date(created_at)=?", (day,)).fetchall()
+        "latency_ms, COALESCE(\"trigger\",'') AS trig FROM ai_usage WHERE created_at >= ? AND created_at < ?",
+        _day_range(day)).fetchall()
     groups = {}
     for r in rows:
         k = (r["restaurant_id"] or 0, r["restaurant_id"], r["vendor"], r["action"], r["model"])
@@ -3515,7 +3842,8 @@ def _roll_usage_day(conn, day):
 
 def _roll_validation_day(conn, day):
     rows = conn.execute("SELECT restaurant_id, surface, COALESCE(mode,'?') AS mode, verdict, rules "
-                        "FROM ai_validation_log WHERE date(created_at)=?", (day,)).fetchall()
+                        "FROM ai_validation_log WHERE created_at >= ? AND created_at < ?",
+                        _day_range(day)).fetchall()
     groups = {}
     for r in rows:
         k = (r["restaurant_id"] or 0, r["surface"] or "?", r["mode"])
@@ -3753,6 +4081,9 @@ def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=
         _record_budget_stop(over, rid, vendor="google_places")
         if act not in PLACES_ESSENTIAL_ACTIONS:
             log_blocked(rid, act, sku_model, "budget", detail=over, vendor="google_places")
+            if over == PLACES_GLOBAL_LABEL:
+                raise PlacesUnavailable("budget", "Google lookups are paused for now — the platform's monthly "
+                                                  "Google Places budget is spent.")
             raise PlacesUnavailable("budget", f"Google lookups are paused for this restaurant — its {over} is spent.")
     try:
         _breaker_check("google_places")
@@ -3839,7 +4170,9 @@ def reset_process_state(db_path=None):
     Places Details cache. For the test suite, where every test starts from
     ids 1, 2, 3 again."""
     reset_breaker()
-    _budget_cache.clear()
+    with _budget_lock:
+        _budget_cache.clear()
+        _budget_memo.clear()
     _warned_memo.clear()
     with _blocked_lock:
         _blocked_memo.clear()

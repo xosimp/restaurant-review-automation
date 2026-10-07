@@ -182,7 +182,8 @@ def test_the_loop_no_longer_names_the_days():
     assert 'now.weekday() == 3 and _ops.claim_period("auto_draft_schedule"' not in loop
     assert 'now.weekday() == 0 and _ops.claim_period("trusted_orders"' not in loop
     assert 'now.weekday() == 4 and _ops.claim_period("auto_publish_schedule"' not in loop
-    assert '_ops.run_job("auto_draft_schedule", run_auto_draft_schedules, now=now)' in loop
+    # On the AI lane since AI cost audit 10/7/26 #6, not the loop thread.
+    assert '_ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now)' in loop
     assert "local.weekday() != auto_publish_weekday(r)" in src
     jobs = open("strategy_jobs.py", encoding="utf-8").read()
     assert "local.weekday() != auto_order_weekday(r)" in jobs

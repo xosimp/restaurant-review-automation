@@ -343,9 +343,10 @@ def test_memory_can_be_read_and_forgotten_by_the_owner(db_path, monkeypatch):
     assert sr._do_memory_forget(u)[1] == 404
 
 
-def test_backup_retention_default_is_a_week_and_deps_are_pinned():
+def test_backup_retention_default_is_three_snapshots_and_deps_are_pinned():
     import scheduler
-    assert scheduler.BACKUP_RETAIN_DAYS == 7 or os.getenv("BACKUP_RETAIN_DAYS")
+    # Counted, not aged, since AI cost audit 10/7/26 #8 (was 7 days).
+    assert scheduler.BACKUP_RETAIN_COUNT == 3 or os.getenv("BACKUP_RETAIN_COUNT")
     req = open("requirements.txt").read()
     assert "flask==" in req and "werkzeug==" in req and "cryptography==" in req
     assert "pip-audit" in open(".github/workflows/ci.yml").read()
