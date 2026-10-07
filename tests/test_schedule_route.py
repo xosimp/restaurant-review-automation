@@ -384,3 +384,11 @@ def test_a_hard_week_is_recorded_as_pre_routed(db, monkeypatch):
     (row,) = _runs(db)
     assert row["start_tier"] == "T4" and row["final_tier"] == "T4" and row["escalations"] == 0
     assert json.loads(row["context_json"])["pre_route"] == ["the restaurant's first schedule"]
+
+
+def test_the_evaluated_roster_does_not_start_on_opus():
+    # Simple EJ's 67-person roster (prod, 10/7/26) is the week Sonnet 5.5
+    # matched Opus on: a threshold under it sent every EJ's week to Opus.
+    assert se.HARD_WEEK_ROSTER >= 67 * 1.5
+    assert not any("roster" in r for r in se.hard_week_reasons(WEEK, roster_size=67, owner_rules=0,
+                                                                prior_generations=2))

@@ -531,14 +531,16 @@ WORKFLOW = "labor_schedule"
 #     a special day the owner closed, not a weekday the restaurant never
 #     trades);
 #   * more people on the roster offered to the model than HARD_WEEK_ROSTER
-#     (Simple EJ's ~215-row week, which Sonnet 5.5 matched Opus on, is well
-#     under it);
+#     — set at about twice the roster the eval cleared: Simple EJ's 67-person
+#     roster (prod, 10/7/26) is the week Sonnet 5.5 matched Opus on, so a
+#     threshold under it would have sent every EJ's week to Opus against the
+#     evidence; past ~120 is untested;
 #   * more owner standing rules in force than HARD_WEEK_OWNER_RULES;
 #   * the restaurant's first generation (no schedule_history row yet);
 #   * a new draft of a week whose last run escalated.
 HARD_WEEK_HOLIDAYS = ("New Year's Eve", "New Year's Day", "Valentine's Day", "Easter", "Mother's Day",
                       "Fourth of July", "Thanksgiving", "Christmas Eve", "Christmas Day")
-HARD_WEEK_ROSTER = 60
+HARD_WEEK_ROSTER = 120
 HARD_WEEK_OWNER_RULES = 12
 
 _SCHED_RUN = contextvars.ContextVar("schedule_generation_run", default=None)
