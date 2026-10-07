@@ -880,9 +880,9 @@ def priority_line(pinned_rows, plan=None, dates=None) -> str:
             + (f"; standing in as the manager on their dates: {', '.join(a['name'] for a in plan['acting'])}"
                if plan.get("acting") else "") + ".")
     if ran:
-        text += (" Their shifts are planned in MANAGER COVERAGE below: keep those rows exactly, never write a "
-                 "second shift for those managers on those dates, and keep every other shift inside each date's "
-                 "manager window.")
+        text += (" Their shifts are planned in MANAGER COVERAGE below and code adds them to your answer: do not "
+                 "write them, never write another shift for those managers on those dates, and keep every other "
+                 "shift inside each date's manager window.")
         if gaps:
             text += (" Where it names a stretch no manager can legally cover, staff that stretch as usual — the owner "
                      "is told in the review.")
@@ -943,10 +943,15 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
     kept = {n: float(h) for n, h in (plan.get("kept_hours") or {}).items() if h}
     for n, h in kept.items():
         totals[n] = totals.get(n, 0.0) + h
+    # The model is told NOT to write these rows (AI cost audit 10/7/26 #35):
+    # labor.generate_optimized_schedule merges them in by code and drops any
+    # copy the model still writes (merge_pinned_lines, an item_dropped
+    # quality event), so "keep every one exactly as written" only paid for
+    # output tokens that were thrown away.
     block = ("\n\nMANAGER COVERAGE — ALREADY SCHEDULED (PRIORITIES 1a). The owner's rule: a manager or owner on "
              "the floor every minute anyone is. Cavnar AI planned these shifts before you, from each manager's "
-             "standing shifts, availability, time off and usual days. They are fixed rows: keep every one exactly "
-             "as written — same person, times and role — and never write a second shift for these people on "
+             "standing shifts, availability, time off and usual days. They are fixed rows that code adds to your "
+             "answer exactly as listed: do NOT write them, and never write another shift for these people on "
              "these dates. Keep every other shift on a date inside its manager window. These rows count toward "
              "SHIFT REQUIREMENTS for their role.\n" + "\n".join(lines))
     if totals:
@@ -959,8 +964,8 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
 def requirements_note() -> str:
     """One line under SHIFT REQUIREMENTS so the table cannot contradict the
     plan (P-8): its manager-role numbers come from punches."""
-    return ("\n  Manager coverage is not decided by this table: the MANAGER COVERAGE rows are fixed, and they "
-            "count toward any manager-role number above.")
+    return ("\n  Manager coverage is not decided by this table: the MANAGER COVERAGE rows are fixed and added by "
+            "code, and they count toward any manager-role number above.")
 
 
 def _pins(pinned, dates=None, people=None) -> list:

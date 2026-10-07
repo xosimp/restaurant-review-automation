@@ -198,7 +198,9 @@ class _StopLoop(BaseException):
 
 
 def test_a_time_bounded_auto_draft_pass_is_finished_later_the_same_thursday(db, monkeypatch):
-    rids = [_restaurant(db, name=f"Draft {i}", module_labor=1, auto_draft_schedule=1) for i in range(3)]
+    # Thursday chosen: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    rids = [_restaurant(db, name=f"Draft {i}", module_labor=1, auto_draft_schedule=1, auto_draft_weekday=3,
+                        auto_draft_weekday_chosen=1) for i in range(3)]
     drafted = []
 
     def stub_generation(job_id, rid, **kw):

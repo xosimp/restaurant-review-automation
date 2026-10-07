@@ -148,6 +148,9 @@ RESTAURANT_UNTRACKED = frozenset({
     # demo was converted, from when a restaurant teaches learners.
     "labor_target_source", "food_cost_target_source", "hourly_rate_source", "target_setters_json",
     "profile_source", "profile_confirmed_at", "demo_cleared_at", "learning_since",
+    # Stamped whenever auto_draft_weekday is written (that change is the
+    # tracked one): the day is somebody's choice, not the spread default.
+    "auto_draft_weekday_chosen",
     # A consent acknowledgement is its own record (who and when).
     "optin_invites_ack_at", "optin_invites_ack_by",
     # The operator's private notes about the account (support_notes is the

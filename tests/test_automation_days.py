@@ -1,8 +1,9 @@
 """The owner's days for the work Cavnar AI does on its own (owner 9/27/26):
-the schedule draft (Thursday unless changed; the auto-publish follows it by
-a day) and trusted supplier orders (Monday unless changed). Both were fixed
-in the scheduler loop; each restaurant now runs on its own day, in its own
-zone."""
+the schedule draft (the owner's day, else Monday-Thursday spread by
+restaurant — AI cost audit 10/7/26 #5, it was Thursday for everyone; the
+auto-publish follows it by a day) and trusted supplier orders (Monday unless
+changed). Both were fixed in the scheduler loop; each restaurant now runs on
+its own day, in its own zone."""
 from datetime import datetime
 
 import pytest
@@ -28,13 +29,19 @@ def _rid(db_path, name="Days Co", **kw):
 
 # ── the model ───────────────────────────────────────────────────────────────
 
-def test_the_days_default_to_thursday_and_monday_and_save(db):
+def test_the_days_default_and_save(db):
+    # The draft day defaults to the spread (AI cost audit 10/7/26 #5 — it
+    # was Thursday for every restaurant, which this test used to assert);
+    # the stored column still holds its old default, unchosen.
     rid = _rid(db)
     r = models.get_restaurant(rid)
-    assert (r.auto_draft_weekday, r.auto_order_weekday) == (3, 0)
-    assert models.auto_publish_weekday(r) == 4                       # Friday
+    assert (r.auto_draft_weekday, r.auto_draft_weekday_chosen, r.auto_order_weekday) == (3, 0, 0)
+    spread = models.default_auto_draft_weekday(rid)
+    assert spread in (0, 1, 2, 3)
+    assert (models.auto_draft_weekday(r), models.auto_publish_weekday(r)) == (spread, spread + 1)
     models.update_restaurant(rid, {"auto_draft_weekday": 1, "auto_order_weekday": 6})
     r = models.get_restaurant(rid)
+    assert r.auto_draft_weekday_chosen == 1                          # any write of the day is a choice
     assert (models.auto_draft_weekday(r), models.auto_publish_weekday(r), models.auto_order_weekday(r)) == (1, 2, 6)
 
 
@@ -42,9 +49,71 @@ def test_a_day_out_of_range_reads_as_the_default():
     # A Sunday draft would publish on the Monday its week starts.
     class R:
         auto_draft_weekday = 6
+        auto_draft_weekday_chosen = 1
         auto_order_weekday = 9
     assert models.auto_draft_weekday(R()) == 3 and models.auto_order_weekday(R()) == 0
     assert models.auto_publish_weekday(R()) == 4
+
+
+# ── AI cost audit 10/7/26 #5: an unchosen draft day is spread ──────────────
+
+def test_an_unchosen_draft_day_is_spread_monday_to_thursday_by_restaurant(db):
+    rids = [_rid(db, name=f"Spread {i}") for i in range(8)]
+    days = [models.auto_draft_weekday(models.get_restaurant(rid)) for rid in rids]
+    assert days == [rid % 4 for rid in rids]                          # deterministic, Monday-Thursday
+    assert set(days) == {0, 1, 2, 3}
+    for rid, d in zip(rids, days):
+        assert models.auto_publish_weekday(models.get_restaurant(rid)) == d + 1
+    # A chosen day is kept, Thursday included — never replaced by the spread.
+    models.update_restaurant(rids[0], {"auto_draft_weekday": 3})
+    assert models.auto_draft_weekday(models.get_restaurant(rids[0])) == 3
+    # Friday and Saturday stay owner choices.
+    assert 4 not in models.AUTO_DRAFT_SPREAD_WEEKDAYS and 5 not in models.AUTO_DRAFT_SPREAD_WEEKDAYS
+    # One rule for the object and the raw columns.
+    for rid in rids[1:]:
+        r = models.get_restaurant(rid)
+        assert models.effective_auto_draft_weekday(rid, r.auto_draft_weekday, r.auto_draft_weekday_chosen) \
+            == models.auto_draft_weekday(r)
+
+
+def test_the_draft_days_already_in_force_are_kept_once(db):
+    import sqlite3
+    on = _rid(db, name="Opted in")
+    publish = _rid(db, name="Publishes")
+    picked = _rid(db, name="Picked Wednesday")
+    logged = _rid(db, name="Picked Thursday")
+    never = _rid(db, name="Never opted in")
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE restaurants SET auto_draft_schedule=1 WHERE id=?", (on,))
+    conn.execute("UPDATE restaurants SET auto_publish_schedule=1 WHERE id=?", (publish,))
+    conn.execute("UPDATE restaurants SET auto_draft_weekday=2 WHERE id=?", (picked,))
+    conn.execute("INSERT INTO activity_log (restaurant_id, event_type, event_data) VALUES (?, ?, ?)",
+                 (logged, "auto_draft_day_changed", "{}"))
+    conn.execute("UPDATE restaurants SET auto_draft_weekday_chosen=0")
+    conn.execute("DELETE FROM data_migrations WHERE name=?", (models.AUTO_DRAFT_DAY_CHOSEN_MIGRATION,))
+    conn.commit()
+    conn.close()
+    assert models.mark_chosen_draft_days(db_path=db) == 4
+    chosen = {rid: models.get_restaurant(rid).auto_draft_weekday_chosen for rid in (on, publish, picked, logged, never)}
+    assert chosen == {on: 1, publish: 1, picked: 1, logged: 1, never: 0}
+    # Simple EJ's case: opted in on the old default, it keeps drafting Thursday.
+    assert models.auto_draft_weekday(models.get_restaurant(on)) == 3
+    assert models.auto_draft_weekday(models.get_restaurant(picked)) == 2
+    assert models.auto_draft_weekday(models.get_restaurant(never)) == models.default_auto_draft_weekday(never)
+    # Once: a restaurant opted in later reads the spread.
+    models.update_restaurant(never, {"auto_draft_schedule": 1})
+    assert models.mark_chosen_draft_days(db_path=db) == 0
+    assert models.get_restaurant(never).auto_draft_weekday_chosen == 0
+
+
+def test_the_chosen_flag_is_whitelisted_untracked_and_migrated():
+    import inspect
+    import change_log
+    src = inspect.getsource(models.update_restaurant)
+    assert '"auto_draft_weekday_chosen"' in src
+    assert "auto_draft_weekday_chosen" in change_log.RESTAURANT_UNTRACKED
+    assert '("restaurants", "auto_draft_weekday_chosen", "INTEGER DEFAULT 0")' in inspect.getsource(models.ensure_columns)
+    assert "mark_chosen_draft_days(db_path=db_path)" in inspect.getsource(models.init_db)
 
 
 # ── the routes (web and phone share them) ───────────────────────────────────
@@ -68,7 +137,11 @@ def test_the_draft_day_is_set_through_the_auto_draft_route(client, db, monkeypat
     rid = _rid(db, module_labor=1)
     _as(monkeypatch, rid)
     got = client.get("/api/labor/auto-draft").get_json()
-    assert (got["weekday"], got["day"], got["publish_day"]) == (3, "Thursday", "Friday")
+    # The effective day, the spread default (#5) — the same payload both
+    # clients read, so the web and the phone show the day it really drafts.
+    spread = models.default_auto_draft_weekday(rid)
+    assert (got["weekday"], got["day"], got["publish_day"]) == (
+        spread, models.WEEKDAY_NAMES[spread], models.WEEKDAY_NAMES[spread + 1])
     got = client.post("/api/labor/auto-draft", json={"weekday": 1}).get_json()
     assert got["ok"], got
     assert (got["day"], got["publish_day"], got["enabled"]) == ("Tuesday", "Wednesday", False)
@@ -122,6 +195,8 @@ def test_the_draft_runs_on_each_restaurants_own_day(db, monkeypatch):
     tue = _rid(db, name="Tue", module_labor=1)
     for rid in (thu, tue):
         models.update_restaurant(rid, {"auto_draft_schedule": 1})
+    # Thursday chosen: an unchosen day is spread by restaurant now (#5).
+    models.update_restaurant(thu, {"auto_draft_weekday": 3})
     models.update_restaurant(tue, {"auto_draft_weekday": 1})
     strategy_jobs.run_auto_draft_schedules(db_path=db, now=datetime(2026, 9, 22, 9, 0))    # Tuesday
     assert ran == [tue]
@@ -195,6 +270,8 @@ def test_reservations_sync_the_day_before_each_draft(db, monkeypatch):
     mon = _rid(db, name="Mon", module_labor=1)
     for rid in (thu, mon):
         models.update_restaurant(rid, {"reservation_provider": "opentable"})
+    # Thursday chosen: an unchosen day is spread by restaurant now (#5).
+    models.update_restaurant(thu, {"auto_draft_weekday": 3})
     models.update_restaurant(mon, {"auto_draft_weekday": 0})
     seen = []
     monkeypatch.setattr(reservation_feeds, "sync", lambda rid, **k: seen.append(rid) or {"error": None})

@@ -54,7 +54,18 @@ import demand_signals as _signals
 # split, not the week: a cut answer keeps its finished days and the rest is
 # written again smaller.
 SCHEDULE_TOKEN_CEILING = 64000          # labor.SCHEDULE_MAX_TOKENS_THINKING (a test holds them equal)
-THINKING_TOKENS_RESERVED = 40000        # adaptive thinking at effort "high" (an upper bound at "medium"), left room before rows
+# The thinking a call leaves room for, by the effort it runs at (AI cost
+# audit 10/7/26 #34): one figure "at effort high" planned every call's time
+# after the effort dropped to medium (labor.SCHEDULE_EFFORT, 10/6/26). A
+# call's planned seconds read the effort in force (thinking_tokens_reserved);
+# its SIZE never does — the rows a call carries are sized for the largest
+# reserve, so lowering the effort never grows a call toward the ceiling
+# (SCHEDULE_TOKEN_CEILING is unchanged). The one call on record (high,
+# 62,353 output tokens for 215 rows) is why "high" is not lowered; "medium"
+# is a planning figure until medium calls are recorded (call_costs reads
+# them by effort and replaces it).
+THINKING_TOKENS_BY_EFFORT = {"low": 20000, "medium": 32000, "high": 40000}
+THINKING_TOKENS_RESERVED = max(THINKING_TOKENS_BY_EFFORT.values())   # what a call is sized for, at any effort
 SUMMARY_TOKENS = 1500                   # the three bullets and the JSON around the rows
 OUTPUT_TOKENS_PER_ROW = _sched_out.ANSWER_TOKENS_PER_ROW_ESTIMATE   # one row of schedule_output.schedule_schema()
 ROW_TOKENS_PER_CALL = 9600              # what one call is held to writing, for its minutes
@@ -106,14 +117,31 @@ ASSUMED_OUTPUT_TOKENS_PER_SECOND = ROW_TOKENS_PER_CALL / 360.0
 CALL_SECONDS_HEADROOM = 1.25
 
 
-def _assumed_call_seconds(rows) -> float:
-    return ((THINKING_TOKENS_RESERVED + SUMMARY_TOKENS + max(0.0, float(rows or 0)) * OUTPUT_TOKENS_PER_ROW)
+def thinking_tokens_reserved(effort=None) -> int:
+    """The thinking a schedule call at `effort` is planned to spend (#34):
+    THINKING_TOKENS_BY_EFFORT at the effort in force (schedule_effort_in_force)
+    by default; 0 on a model that runs without thinking (""); the largest
+    reserve for an effort it does not know, or when the effort in force
+    cannot be read — a plan that errs long."""
+    if effort is None:
+        try:
+            effort = schedule_effort_in_force()
+        except Exception:
+            return THINKING_TOKENS_RESERVED
+    if effort == "":
+        return 0
+    return THINKING_TOKENS_BY_EFFORT.get(str(effort).strip().lower(), THINKING_TOKENS_RESERVED)
+
+
+def _assumed_call_seconds(rows, effort=None) -> float:
+    return ((thinking_tokens_reserved(effort) + SUMMARY_TOKENS + max(0.0, float(rows or 0)) * OUTPUT_TOKENS_PER_ROW)
             / ASSUMED_OUTPUT_TOKENS_PER_SECOND)
 
 
-# One planned call of a full chunk at the assumed speed: what a call adds to
-# the job when nothing about it is known.
-SCHEDULE_CALL_SECONDS = int(round(_assumed_call_seconds(CHUNK_ROWS_PER_CALL)))
+# One planned call of a full chunk at the assumed speed, at the largest
+# thinking reserve: what a call adds to the job when nothing about it is
+# known — not even the effort (it errs long, PROMPT-4).
+SCHEDULE_CALL_SECONDS = int(round(_assumed_call_seconds(CHUNK_ROWS_PER_CALL, effort="high")))
 SCHEDULE_POST_MODEL_SECONDS = 240
 SCHEDULE_JOB_MIN_SECONDS = 15 * 60
 SCHEDULE_JOB_MAX_SECONDS = 40 * 60
@@ -121,8 +149,9 @@ SCHEDULE_JOB_MAX_SECONDS = 40 * 60
 # At most this many generations run at once in this process (P-39): each
 # was a daemon thread of its own, and their CPU-bound passes held the GIL
 # against every other restaurant's requests on a four-thread web process.
-# Owners' presses queue on the pool; the Thursday auto-draft takes a slot
-# the same way (generation_scope).
+# Owners' presses queue on the pool; the weekly auto-draft takes a slot
+# the same way (generation_scope), behind any press waiting for one
+# (GenerationSlots — AI cost audit 10/7/26 #5).
 SCHEDULE_GEN_WORKERS = max(1, int(os.getenv("SCHEDULE_GEN_WORKERS", "2")))
 
 
@@ -186,25 +215,103 @@ def current_clock():
     return _CLOCK.get()
 
 
-_GEN_SLOTS = threading.BoundedSemaphore(SCHEDULE_GEN_WORKERS)
+# Who goes first for a free slot (AI cost audit 10/7/26 #5): an owner's
+# press, then a background generation (the weekly auto-draft). FIFO within
+# each. A plain semaphore woke whichever waiter the OS picked, so an owner
+# pressing Generate on a draft morning waited behind every queued draft.
+GEN_PRIORITY_PRESS = 0
+GEN_PRIORITY_BACKGROUND = 1
+# A press announced (submit_generation) but never seen at the gate stops
+# holding the background back after this long (a pool that died with it).
+GEN_ANNOUNCE_MAX_SECONDS = 2 * 60 * 60
+
+
+class GenerationSlots:
+    """SCHEDULE_GEN_WORKERS slots taken highest priority first. A press is
+    announced when it is queued on the owner pool (submit_generation), so a
+    slot freed while its pool thread is still on its way to the gate is held
+    for it rather than taken by a waiting auto-draft. Never more holders than
+    slots: the bound is the same as the semaphore's (P-39)."""
+
+    def __init__(self, slots: int):
+        self.slots = max(1, int(slots))
+        self.busy = 0
+        self._cv = threading.Condition()
+        self._waiting = []          # heap of (priority, seq)
+        self._seq = 0
+        self._announced = {}        # job_id -> time it was announced
+
+    def announce(self, job_id) -> None:
+        with self._cv:
+            self._announced[job_id] = time.time()
+
+    def withdraw(self, job_id) -> None:
+        """A press that will never reach the gate (its submit failed)."""
+        with self._cv:
+            self._announced.pop(job_id, None)
+            self._cv.notify_all()
+
+    def _presses_on_the_way(self) -> bool:
+        cutoff = time.time() - GEN_ANNOUNCE_MAX_SECONDS
+        for j in [j for j, t in self._announced.items() if t < cutoff]:
+            self._announced.pop(j, None)
+        return bool(self._announced)
+
+    def acquire(self, priority=GEN_PRIORITY_PRESS, job_id=None) -> None:
+        import heapq
+        with self._cv:
+            self._announced.pop(job_id, None)
+            self._seq += 1
+            ticket = (int(priority), self._seq)
+            heapq.heappush(self._waiting, ticket)
+            try:
+                while not (self.busy < self.slots and self._waiting[0] == ticket
+                           and not (ticket[0] > GEN_PRIORITY_PRESS and self._presses_on_the_way())):
+                    # A timed wait, so an announcement that expires is noticed.
+                    self._cv.wait(30)
+            except BaseException:
+                self._waiting.remove(ticket)
+                heapq.heapify(self._waiting)
+                self._cv.notify_all()
+                raise
+            heapq.heappop(self._waiting)
+            self.busy += 1
+            # The next in line may fit a second free slot.
+            self._cv.notify_all()
+
+    def release(self) -> None:
+        with self._cv:
+            self.busy = max(0, self.busy - 1)
+            self._cv.notify_all()
+
+    def waiting(self) -> int:
+        with self._cv:
+            return len(self._waiting)
+
+
+_GEN_SLOTS = GenerationSlots(SCHEDULE_GEN_WORKERS)
 _gen_pool = None
 _gen_pool_lock = threading.Lock()
 
 
 @contextlib.contextmanager
-def generation_scope(job_id):
+def generation_scope(job_id, priority=GEN_PRIORITY_PRESS):
     """One generation's slot and clock: waits for one of the
     SCHEDULE_GEN_WORKERS slots (P-39), then starts the clock (P-22) — a
     generation queued behind two others does not spend its time waiting.
     submit_generation runs an owner's job inside it; the auto-draft enters it
-    itself (strategy_jobs._draft_one)."""
-    with _GEN_SLOTS:
+    itself (strategy_jobs._draft_one) at GEN_PRIORITY_BACKGROUND, so a press
+    takes the next free slot ahead of it (AI cost audit 10/7/26 #5)."""
+    _GEN_SLOTS.acquire(priority, job_id=job_id)
+    try:
         clock = GenerationClock(job_id)
         token = _CLOCK.set(clock)
         try:
             yield clock
         finally:
             _CLOCK.reset(token)
+    finally:
+        _GEN_SLOTS.release()
 
 
 def submit_generation(job_id, restaurant_id, **job_kwargs):
@@ -220,6 +327,8 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
             _gen_pool = concurrent.futures.ThreadPoolExecutor(max_workers=SCHEDULE_GEN_WORKERS,
                                                               thread_name_prefix="schedule-gen")
     job = _run_schedule_job            # the job as it stands when the owner pressed, not when a slot frees
+    # Held for before its pool thread reaches the gate (GenerationSlots).
+    _GEN_SLOTS.announce(job_id)
 
     def _run(*a, **k):
         try:
@@ -231,7 +340,11 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
             # never waits on a job nothing will finish.
             _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
             _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
-    return _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
+    try:
+        return _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
+    except BaseException:
+        _GEN_SLOTS.withdraw(job_id)
+        raise
 
 
 def generation_request(restaurant_id, week_start=None, dates=None, history_id=None, instruction=None,
@@ -2083,7 +2196,7 @@ def call_seconds(rows, costs=None, headroom: bool = True) -> float:
     elif costs.get("tokens_per_second"):
         writes = (float(costs["fixed"]) + float(costs["per_row"]) * rows
                   if costs.get("source") in ("fit", "comparable") and costs.get("per_row") else
-                  THINKING_TOKENS_RESERVED + SUMMARY_TOKENS + rows * OUTPUT_TOKENS_PER_ROW)
+                  thinking_tokens_reserved() + SUMMARY_TOKENS + rows * OUTPUT_TOKENS_PER_ROW)
         sec = writes / float(costs["tokens_per_second"])
     else:
         return _assumed_call_seconds(rows)
@@ -6166,6 +6279,86 @@ def _gate_local(quality: dict, dates) -> float:
     return num / (den or 1.0)
 
 
+EXPECTED_SCHEDULE_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
+
+
+def _gate_fill_answer(answer, restaurant_id, history_id, dates):
+    """The model's answer (`answer`, copied as it came back) with the gate's
+    dates written as the saved draft `history_id` now has them — what the
+    gate's fill in code re-runs through the repair loop as a redo of those
+    dates (AI cost audit 10/7/26 #21). Nothing in it is the model's new
+    work: no generation to link calls to, no model seconds, no slices. None
+    when there is no answer or no row on those dates."""
+    if not answer or not history_id or not dates:
+        return None
+    try:
+        from models import get_schedule_history_detail as _gshd_fill
+        text = (_gshd_fill(int(history_id), restaurant_id) or {}).get("schedule_csv") or ""
+    except Exception as e:
+        print(f"[schedule] gate: draft not read for the fill: {e!r}")
+        return None
+    lines = text.split("\n")
+    want = set(dates)
+    body = [ln for ln in lines[1:] if ln.strip() and ln.split(",", 1)[0].strip().strip('"') in want]
+    if not body:
+        return None
+    out = copy.deepcopy(answer)
+    out["schedule_csv"] = (lines[0] or EXPECTED_SCHEDULE_HEADER) + "\n" + "\n".join(body)
+    out["unwritten_dates"] = []
+    out["generation_seconds"] = 0.0
+    out["generation_id"] = None
+    out["slices"] = []
+    out["gate_fill"] = True
+    return out
+
+
+def _gate_survives(gate, again) -> bool:
+    """Whether what tripped `gate` is still there in `again` (the gate read
+    over the filled week): one of its dates trips again for one of the same
+    reasons — for any reason when either gate does not name them."""
+    if not again:
+        return False
+    first, now = gate.get("triggers") or {}, again.get("triggers") or {}
+    for d in gate.get("dates") or []:
+        if d not in (again.get("dates") or []):
+            continue
+        was, is_ = set(first.get(d) or ()), set(now.get(d) or ())
+        if not was or not is_ or (was & is_):
+            return True
+    return False
+
+
+def _record_gate_path(restaurant_id, path, dates) -> None:
+    """Which path settled a quality gate (#21), counted beside the schedule's
+    other AI-quality rates (ai_quality_events): "code" — the fill resolved
+    it, no second model call; "model" — the model rewrote the days."""
+    try:
+        import ai_utils as _ai_gate
+        _ai_gate.record_quality_event(
+            "labor_schedule", "gate_filled_in_code" if path == "code" else "gate_model_rewrite",
+            restaurant_id=restaurant_id, action="labor_schedule", n=len(dates or []) or 1,
+            detail=("quality gate settled in code: " if path == "code" else "quality gate sent to the model: ")
+            + ", ".join(sorted(dates or [])))
+    except Exception as e:
+        print(f"[schedule] gate path not recorded: {e!r}")
+
+
+def _gate_model_rewrite(job_id, restaurant_id, week_start, gate, fallback, instruction, clock):
+    """The quality gate's model rewrite of its days, after the code's fill
+    did not settle them (#21), over `fallback` — the draft now in force (the
+    fill when it was kept). With too little of the job's model time left
+    (P-22) the draft in force is the answer."""
+    if clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS:
+        print(f"[schedule] quality gate rewrite skipped: {int(clock.model_seconds_left())}s of model time left")
+        _ops.finish_async_job(job_id, "done", _json_ready(fallback["payload"]))
+        return
+    print(f"[schedule] quality gate: regenerating {gate['dates']} ({gate.get('reason')})")
+    _record_gate_path(restaurant_id, "model", gate["dates"])
+    return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=gate["dates"],
+                             base_history_id=fallback["history_id"], focus=gate.get("focus") or [gate.get("reason")],
+                             gate=False, _fallback=fallback, instruction=instruction)
+
+
 def _restore_draft(restaurant_id, keep_id, drop_id=None):
     """Make `keep_id` the week's current draft again: saving the rewrite
     superseded it. The rewrite (and any later unsent draft of the week from
@@ -7202,7 +7395,8 @@ def _in_frozen_inputs(fn):
 
 @_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
-                      focus=None, gate=True, _fallback=None, instruction=None, _model_result=None, _reruns=0):
+                      focus=None, gate=True, _fallback=None, instruction=None, _model_result=None, _reruns=0,
+                      _gate_fill=None):
     """week_start picks the week (any date in it); dates + base_history_id
     regenerate only those days of an existing draft, the rest pinned.
     focus names what was weak in those days for the prompt; gate allows one
@@ -7225,7 +7419,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     edit saved to that draft while the model wrote is never lost. One on a
     kept day is taken in — the job runs again from the model's answer
     (`_model_result`, nothing paid twice) over the draft as it now stands;
-    one on a day being redone keeps the owner's edit and saves nothing."""
+    one on a day being redone keeps the owner's edit and saves nothing.
+
+    `_gate_fill` is the quality gate (_quality_gate) this run is the code's
+    fill for (AI cost audit 10/7/26 #21): the gate's dates re-run through
+    the repair loop from the draft's own rows (`_model_result`, nothing
+    paid), the model's rewrite only when what tripped the gate survives."""
     if dates and not focus:
         gate = False
     if job_id and _model_result is None and not focus and not _ops.job_still_pending(job_id):
@@ -7279,6 +7478,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 # Without a copy an edit on a kept day refuses the save
                 # instead of running again (said, never lost).
                 _ops.capture(_cpx, job="schedule_generate", context=f"restaurant_id={restaurant_id} — redo answer copy")
+        # The model's answer as it came back, before any pass changed it: the
+        # quality gate's fill in code re-runs the gate's dates from it (AI
+        # cost audit 10/7/26 #21). Without a copy the gate goes straight to
+        # the model's rewrite, as it did before.
+        _gate_answer = None
+        if gate and not redo and _model_result is None:
+            try:
+                _gate_answer = copy.deepcopy(result)
+            except Exception as _gcx:
+                print(f"[schedule] gate: answer not copied, no fill in code: {_gcx!r}")
         # A partial redo rewrites only these days; the passes below that can
         # change rows (fixes, the repair loop, the budget trim) leave the
         # owner's kept days exactly as they were.
@@ -7307,7 +7516,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # The owner's reason rides `instruction` into the prompt and is
             # recorded from the request (schedule_versions.record_rejection).
             result["redo"] = {"dates": sorted(set(dates)), "base_history_id": int(base_history_id),
-                              "by": "gate" if focus else "owner"}
+                              "by": "gate" if (focus or _gate_fill) else "owner"}
         from models import get_staff_notes as _gsn_sched, get_close_times as _gct_sched, get_role_close_buffers as _grcb_sched
         _raw_notes = frozen_read(("staff_notes", restaurant_id), lambda: _gsn_sched(restaurant_id)) or []
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
@@ -8164,7 +8373,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=dates,
                                              base_history_id=base_history_id, focus=focus, gate=gate,
                                              _fallback=_fallback, instruction=instruction, _model_result=_answer,
-                                             _reruns=_reruns + 1)
+                                             _reruns=_reruns + 1, _gate_fill=_gate_fill)
                 raise ScheduleGenerationError(_verdict)
             _timer.add("save", time.monotonic() - _t_save)
             result["stage_seconds"] = _timer.as_dict()
@@ -8403,6 +8612,34 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             after_local = _gate_local(result.get("quality") or {}, _fallback["dates"])
             better, _why_kept = _gate_keeps(before_local, after_local, _q_now, _fallback["score"],
                                             _fallback.get("rules"), _rules_now)
+            if _gate_fill is not None:
+                # The code's fill of the gate's days (#21): kept by the same
+                # test as a rewrite; done when what tripped the gate on those
+                # days is gone, else the model rewrites them — from the fill
+                # when it was kept, from the draft when it was not.
+                _survives = (not better) or _gate_survives(_gate_fill, _quality_gate(result))
+                _fill = {"tried": True, "kept": bool(better), "resolved": not _survives,
+                         "dates": list(_fallback["dates"])}
+                if not _survives:
+                    _record_gate_path(restaurant_id, "code", _fallback["dates"])
+                    _payload["gate"] = {"ran": True, "kept": "filled", "path": "code", "fill": _fill,
+                                        "dates": list(_fallback["dates"]),
+                                        "reason": "Cavnar AI filled the weakest days from your own team, without "
+                                                  "rewriting them."}
+                    _ops.finish_async_job(job_id, "done", _json_ready(_payload))
+                    return
+                if better:
+                    _next = {"score": _q_now, "history_id": _history_id, "dates": _fallback["dates"],
+                             "quality": result.get("quality") or {}, "rules": _rules_now,
+                             "payload": dict(_payload, gate={"ran": True, "kept": "filled", "path": "code",
+                                                             "fill": _fill, "dates": list(_fallback["dates"]),
+                                                             "reason": "Cavnar AI filled what it could of the "
+                                                                       "weakest days from your own team."})}
+                else:
+                    _restore_draft(restaurant_id, _fallback["history_id"], _history_id)
+                    _next = dict(_fallback, payload=dict(_fallback["payload"], gate=dict(
+                        (_fallback["payload"] or {}).get("gate") or {}, fill=_fill)))
+                return _gate_model_rewrite(job_id, restaurant_id, week_start, _gate_fill, _next, instruction, clock)
             if not better:
                 _restore_draft(restaurant_id, _fallback["history_id"], _history_id)
                 _fb = dict(_fallback["payload"])
@@ -8423,8 +8660,25 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         if _gate and _history_id:
             try:
                 import inspect as _insp
+                _fill_answer = _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"])
+                if _fill_answer is not None:
+                    # Code first (AI cost audit 10/7/26 #21): every trigger
+                    # needs somebody free who could fix it, so the repair
+                    # loop gets the gate's days again — top-up, solver and
+                    # optimizer with a fresh budget — before a second model
+                    # call is paid for. The model's rewrite follows only
+                    # when the breach survives (_gate_model_rewrite).
+                    print(f"[schedule] quality gate: filling {_gate['dates']} in code ({_gate['reason']})")
+                    return _run_schedule_job(
+                        job_id, restaurant_id, week_start=week_start, dates=_gate["dates"],
+                        base_history_id=_history_id, gate=False, _model_result=_fill_answer, _gate_fill=_gate,
+                        _fallback={"score": _q_now, "history_id": _history_id, "dates": _gate["dates"],
+                                   "quality": result.get("quality") or {}, "rules": _rules_now,
+                                   "payload": dict(_payload, gate={"ran": True, **_gate})},
+                        instruction=instruction)
                 if "focus" in _insp.signature(_build_schedule_result).parameters:
                     print(f"[schedule] quality gate: regenerating {_gate['dates']} ({_gate['reason']})")
+                    _record_gate_path(restaurant_id, "model", _gate["dates"])
                     return _run_schedule_job(
                         job_id, restaurant_id, week_start=week_start, dates=_gate["dates"],
                         base_history_id=_history_id, focus=_gate["focus"], gate=False,
@@ -8455,6 +8709,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _restore_draft(restaurant_id, _fallback["history_id"], locals().get("_history_id"))
             except Exception:
                 pass
+            if _gate_fill is not None:
+                # The code's fill failed (#21): the model's rewrite is still
+                # owed the gate's days, from the draft as it was.
+                return _gate_model_rewrite(job_id, restaurant_id, week_start, _gate_fill, _fallback, instruction,
+                                           clock)
             _fb = dict(_fallback["payload"])
             _fb["gate"] = {"ran": True, "kept": "original", "dates": _fallback["dates"],
                            "reason": "Cavnar AI tried to rewrite the weakest days but couldn't just now, so your draft is as it was."}

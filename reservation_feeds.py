@@ -141,19 +141,24 @@ def run_reservation_sync(db_path=None, weekday=None) -> dict:
     scheduler runs this daily). Unconfigured ones cost one dict each and
     are counted, not retried. Returns the standard counts (#39): a feed
     whose provider is not live yet is skipped, one that fails is failed."""
-    from models import AUTO_DRAFT_WEEKDAY_DEFAULT
+    # The effective draft day, by the one rule (models.
+    # effective_auto_draft_weekday): a day nobody chose is spread across
+    # Monday-Thursday by restaurant (AI cost audit 10/7/26 #5), so the raw
+    # column's Thursday is not the draft day.
+    from models import effective_auto_draft_weekday
     db_path = _path(db_path)
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT id, auto_draft_weekday FROM restaurants WHERE reservation_provider IS NOT NULL "
-                            "AND reservation_provider<>'' AND module_labor=1").fetchall()
+        rows = conn.execute("SELECT id, auto_draft_weekday, auto_draft_weekday_chosen FROM restaurants "
+                            "WHERE reservation_provider IS NOT NULL AND reservation_provider<>'' "
+                            "AND module_labor=1").fetchall()
     except Exception:
         rows = []
     finally:
         conn.close()
     ids = [r["id"] for r in rows
-           if weekday is None or (r["auto_draft_weekday"] if r["auto_draft_weekday"] is not None
-                                  else AUTO_DRAFT_WEEKDAY_DEFAULT) == (weekday + 1) % 7]
+           if weekday is None or effective_auto_draft_weekday(r["id"], r["auto_draft_weekday"],
+                                                              r["auto_draft_weekday_chosen"]) == (weekday + 1) % 7]
     synced = skipped = failed = 0
     for rid in ids:
         res = sync(rid, db_path=db_path)

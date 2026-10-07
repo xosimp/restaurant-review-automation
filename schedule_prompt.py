@@ -156,6 +156,14 @@ def clock(m) -> str:
 _clock = clock
 
 
+# The model is told its part is the judgement, and that code re-counts and
+# repairs afterwards (AI cost audit 10/7/26 #3). The prompt used to ask it to
+# "count, check and compare as much as you need" and to count every daypart
+# of every date against SHIFT REQUIREMENTS before answering: on Simple EJ's
+# 215-row week that was 62,353 of 64,000 output tokens, nearly all thinking,
+# for counts the repair loop, the manager plan, the solver, close_out_gaps,
+# rebalance_overtime and the quality gate all make again in code. The rules
+# it must respect while choosing stay (RULE_MARKS, PRIORITIES).
 LAYOUT = (
     "You are writing next week's staff schedule for one restaurant, with a short summary of your biggest "
     "decisions.\n\n"
@@ -169,8 +177,11 @@ LAYOUT = (
     "3. THIS REQUEST — the dates to write now, what each shift on them needs (SHIFT REQUIREMENTS), and what the rest "
     "of the week already gives each person.\n"
     "Every date in this request reads as a weekday and an ISO date (\"Fri 2026-10-09\"), so you know the day; in "
-    "your answer a date is the ISO date alone, without its weekday, as OUTPUT says. Work the week out before you "
-    "answer: count, check and compare as much as you need.")
+    "your answer a date is the ISO date alone, without its weekday, as OUTPUT says.\n"
+    "Your part is the judgement: the shape of each day and who works each shift, choosing within the rules below. "
+    "After you answer, code counts every daypart and half hour against SHIFT REQUIREMENTS, re-checks every closer, "
+    "everyone's hours and every rule, and repairs what falls short, so do not spend effort re-counting or "
+    "re-verifying your rows: choose once, well, and write them.")
 
 RULE_MARKS = (
     "HOW RULES ARE MARKED\n"
@@ -207,9 +218,7 @@ def _coverage_text() -> str:
         "- A shift that starts after midnight belongs to the night before: write it on that night's date (a "
         "12:30am-4:00am porter after Friday's close is dated Friday).\n"
         "- A date's close time is the latest any shift that date may end, except a role the rules say stays after "
-        "close. Use the close of that exact date: a busier day changes the headcount, never the close.\n"
-        "- For each date you write, count everyone who counts toward each daypart and check the count against that "
-        "date's SHIFT REQUIREMENTS, and check every closer's end against that date's close.")
+        "close. Use the close of that exact date: a busier day changes the headcount, never the close.")
 
 
 DEFAULTS = (
@@ -316,22 +325,29 @@ EXAMPLE_RAMPS = {
 def _example_text() -> str:
     def ramp(role, part):
         return ", ".join(f"{n} from {t}" for t, n in EXAMPLE_RAMPS[(role, part)])
+    # Only the rows the model writes: the planned manager rows are added by
+    # code (labor.generate_optimized_schedule merges them in) and listed
+    # under what the day needed, never as written (AI cost audit 10/7/26
+    # #35 — the example used to list them as written, and the model's
+    # copies were then dropped as item_dropped).
     rows = []
     for name, role, s, e, note, planned in EXAMPLE_ROWS:
-        tail = "  [fixed MANAGER COVERAGE row, kept exactly]" if planned else (f"  note: {note}" if note else "")
+        if planned:
+            continue
+        tail = f"  note: {note}" if note else ""
         rows.append(f"  {name:<4} {role:<9} {s}-{e}{tail}")
     return (
         "<example>\n"
         f"A made-up Friday at a made-up restaurant — the method, never this restaurant's numbers. Open {EXAMPLE_OPEN}, "
         f"close {EXAMPLE_CLOSE}.\n"
         "What the day needed:\n"
-        "  MANAGER COVERAGE (fixed): Dana 10:00am-5:00pm and Eli 4:30pm-10:30pm (Manager).\n"
+        "  MANAGER COVERAGE (fixed, added by code): Dana 10:00am-5:00pm and Eli 4:30pm-10:30pm (Manager).\n"
         f"  lunch | Server 2, Line Cook 2 | by the half hour: Server {ramp('Server', 'morning')}\n"
         f"  dinner | Server 4 (floor 2), Line Cook 3 | by the half hour: Server {ramp('Server', 'night')}\n"
-        "The shifts written:\n" + "\n".join(rows) + "\n"
+        "The shifts written (Dana's and Eli's are not among them — code adds them):\n" + "\n".join(rows) + "\n"
         "Why they meet it:\n"
         "  - Managers: Dana is on from the first cook in at 10:00am, Eli until the last person out at 10:30pm, and "
-        "they overlap 4:30pm-5:00pm — a manager every minute. Their rows were kept exactly and never written again.\n"
+        "they overlap 4:30pm-5:00pm — a manager every minute. Code added their rows; the answer did not write them.\n"
         "  - Lunch servers: Ana and Ben = 2, one from 11:00am and two from 11:30am, as the ramp asks.\n"
         "  - Dinner servers: Ben, Cy, Di and Ed = 4. Ben's 11:30am-7:00pm covers the whole lunch window and 90 "
         "minutes of dinner's 5:30pm-8:30pm, so he is one of lunch's 2 AND one of dinner's 4 — counted once at "
@@ -351,8 +367,9 @@ PRIORITIES = (
     "  1. Hard constraints — never broken for anything below:\n"
     "     1a. A manager or owner on the floor every minute anyone is scheduled — the owner's highest staffing rule: "
     "somebody is always in charge of the floor. It gives way only to a manager's own availability and time off and "
-    "the legal limits on their hours and rest. Where MANAGER COVERAGE plans the managers' shifts, keep those rows "
-    "exactly and write no second shift for those managers on those dates; a stretch it says no manager can legally "
+    "the legal limits on their hours and rest. Where MANAGER COVERAGE plans the managers' shifts, code adds those "
+    "rows to your answer: do not write them, and write no other shift for those managers on those dates; a stretch "
+    "it says no manager can legally "
     "cover is staffed as usual, and the owner is told.\n"
     "     1b. Employee availability and approved time off (the person cannot be there), STAFF CONSTRAINTS, closed "
     "dates, and each person's own limits in the ROSTER and the rules — the roles they may work, a minor's hours, rest "

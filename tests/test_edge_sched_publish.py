@@ -440,7 +440,9 @@ def friday(db, monkeypatch):
 
 
 def _auto_restaurant(db):
-    return _restaurant(db, auto_publish_schedule=1, module_labor=1, billing_status="active")
+    # A Thursday draft, so Friday publishes: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    return _restaurant(db, auto_publish_schedule=1, module_labor=1, billing_status="active", auto_draft_weekday=3,
+                       auto_draft_weekday_chosen=1)
 
 
 def _queued(db, rid):

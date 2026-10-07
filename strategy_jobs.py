@@ -1237,9 +1237,11 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
     # hour, each starting at the cursor, and a restaurant is attempted at
     # most once a day (claimed before the paid generation).
     #
-    # Each restaurant on ITS day (auto_draft_weekday, Thursday unless the
-    # owner picked another) from AUTO_DRAFT_HOUR in its own zone; the loop
-    # used to gate every restaurant on Chicago's Thursday 6am.
+    # Each restaurant on ITS day (auto_draft_weekday: the owner's pick, else
+    # Monday-Thursday spread by restaurant — AI cost audit 10/7/26 #5, a
+    # Thursday for everyone queued every draft on two generation slots)
+    # from AUTO_DRAFT_HOUR in its own zone; the loop used to gate every
+    # restaurant on Chicago's Thursday 6am.
     from models import auto_draft_weekday
     from time_utils import restaurant_now, restaurant_tz, OPERATOR_TZ
     from zoneinfo import ZoneInfo
@@ -1308,7 +1310,7 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     (schedule_engine.generation_scope) like any generation, with the same
     wall clock."""
     import ops
-    from schedule_engine import generation_scope, generation_request
+    from schedule_engine import generation_scope, generation_request, GEN_PRIORITY_BACKGROUND
     # What it asks, as an owner's press of Generate for next week would: an
     # owner's identical press joins it, and it never joins (or is joined by)
     # a generation of anything else (re-audit 10/4/26 UI-8).
@@ -1324,7 +1326,9 @@ def _draft_one(r, db_path, _se, _bump, period=None):
             ops.release_period(f"auto_draft:{r.id}", period)
         _bump("skipped")
         return
-    with generation_scope(job_id):
+    # Behind any owner's press (AI cost audit 10/7/26 #5): an owner who
+    # presses Generate takes the next free slot ahead of queued drafts.
+    with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND):
         _se._run_schedule_job(job_id, r.id)
     # _run_schedule_job reports its own failures into the job row rather
     # than raising, so the push below must wait on that verdict — telling

@@ -435,15 +435,16 @@ def test_auto_draft_skips_opt_outs_external_tools_and_a_week_already_drafted(db_
     off = _rid(db_path, name="Off", module_labor=1)
     ext = _rid(db_path, name="Ext", module_labor=1)
     recent = _rid(db_path, name="Recent", module_labor=1)
-    models.update_restaurant(on, {"auto_draft_schedule": 1}, db_path=db_path)
-    models.update_restaurant(ext, {"auto_draft_schedule": 1, "external_scheduling_tool": "7shifts"},
-                             db_path=db_path)
-    models.update_restaurant(recent, {"auto_draft_schedule": 1}, db_path=db_path)
+    # Thursday chosen: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    models.update_restaurant(on, {"auto_draft_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
+    models.update_restaurant(ext, {"auto_draft_schedule": 1, "auto_draft_weekday": 3,
+                                   "external_scheduling_tool": "7shifts"}, db_path=db_path)
+    models.update_restaurant(recent, {"auto_draft_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     # The week it would write (Thursday 9/24 → the week of 9/28) already has
     # a draft: skipped. A draft of another week, however recent, is not next
     # week handled (re-audit 10/4/26 PIPE-3).
     other = _rid(db_path, name="Other", module_labor=1)
-    models.update_restaurant(other, {"auto_draft_schedule": 1}, db_path=db_path)
+    models.update_restaurant(other, {"auto_draft_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     conn = get_conn(db_path)
     conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, generated_at) "
                  "VALUES (?, '2026-09-28', datetime('now','-6 days'))", (recent,))
@@ -462,7 +463,8 @@ def test_auto_draft_does_not_announce_a_draft_that_failed(db_path, monkeypatch):
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "error"})
     monkeypatch.setattr("push.fire_push", lambda *a, **k: pushed.append(a))
     rid = _rid(db_path, module_labor=1)
-    models.update_restaurant(rid, {"auto_draft_schedule": 1}, db_path=db_path)
+    # Thursday chosen: an unchosen draft day is spread by restaurant now (AI cost audit 10/7/26 #5).
+    models.update_restaurant(rid, {"auto_draft_schedule": 1, "auto_draft_weekday": 3}, db_path=db_path)
     assert strategy_jobs.run_auto_draft_schedules(db_path=db_path, now=_THURSDAY_9AM)["drafted"] == 0 and not pushed
 
 
