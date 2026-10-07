@@ -13,6 +13,7 @@ latest version, so history questions ("every day labor was over 25%") are
 indexed SQL, not a model reading old reports.
 """
 import json
+import re
 from datetime import datetime
 
 import models as _models_mod
@@ -327,7 +328,7 @@ def schedule_retry(report_id, next_attempt_at, db_path=DB_PATH, count=True):
 # stages_json keys that are progress notes rather than stages: when each
 # block was collected, how the day was known closed, the narrative's outcome,
 # failure and crash counts, the version this one completes.
-NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes", "rerun")
+NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes", "rerun", "narrative_batch")
 
 
 def note(report_id, key, value, db_path=DB_PATH):
@@ -343,6 +344,58 @@ def note(report_id, key, value, db_path=DB_PATH):
         stages[key] = value
         conn.execute("UPDATE dsr_reports SET stages_json=? WHERE id=?", (json.dumps(stages), report_id))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── the narrative's batch item (dsr.pipeline, AI cost audit 10/7/26 #20) ────
+# stages_json["narrative_batch"] = {custom_id, status, submitted_at,
+# cutoff_at, ...}. The sweep and the batch collector's callback both move it,
+# from different processes' threads, so every move is ONE compare-and-set
+# UPDATE on the row: whichever lands first wins, the other finds the status
+# moved and stands down — never two narratives for one version.
+
+def swap_narrative_batch(report_id, custom_id, from_statuses, to_status, db_path=DB_PATH, **extra):
+    """Move the narrative's batch item from one of `from_statuses` to
+    `to_status` (stamping `extra` fields beside it) if, and only if, it is
+    still that item in one of those states. True when this call moved it."""
+    paths, args = ["'$.narrative_batch.status'", "?"], [to_status]
+    for k, v in extra.items():
+        if not re.match(r"^[a-z_]+$", k):
+            raise ValueError(f"bad field {k!r}")
+        paths += [f"'$.narrative_batch.{k}'", "?"]
+        args.append(v)
+    froms = tuple(from_statuses)
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            f"UPDATE dsr_reports SET stages_json=json_set(stages_json, {', '.join(paths)}) WHERE id=? "
+            "AND json_extract(stages_json, '$.narrative_batch.custom_id')=? "
+            f"AND json_extract(stages_json, '$.narrative_batch.status') IN ({','.join('?' * len(froms))})",
+            (*args, report_id, custom_id, *froms))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def land_narrative_batch(report_id, custom_id, narrative, outcome, db_path=DB_PATH):
+    """The batch's answer, stored as the version's narrative in one UPDATE —
+    the narrative, its outcome note, the item marked landed and the version
+    made due at once (next_attempt_at NULL) so the next sweep finishes it —
+    only while the version is still writing and the item is still the one
+    the collector claimed. True when it was stored."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE dsr_reports SET narrative_json=?, next_attempt_at=NULL, stages_json=json_set(stages_json, "
+            "'$.narrative', json(?), '$.narrative_batch.status', 'landed', '$.narrative_batch.landed_at', ?) "
+            "WHERE id=? AND status='writing' AND json_extract(stages_json, '$.narrative_batch.custom_id')=? "
+            "AND json_extract(stages_json, '$.narrative_batch.status')='collecting'",
+            (json.dumps(narrative) if narrative is not None else None, json.dumps(outcome), _now(), report_id,
+             custom_id))
+        conn.commit()
+        return cur.rowcount == 1
     finally:
         conn.close()
 

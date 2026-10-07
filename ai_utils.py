@@ -1925,13 +1925,24 @@ def _price_for(model):
     return _UNKNOWN_MODEL_PRICING
 
 
+# A request sent through the Message Batches API (ai_batches.py) is billed
+# at half the list price — every token, the cache write and read rates
+# included (AI cost audit 10/7/26 #19). Its ledger row is priced with this
+# multiplier and stamped BATCH_PRICE_VERSION, so a cost report, the budgets
+# and _reprice_legacy_rows (which only touches unversioned rows) all read it
+# as what it cost; a synchronous call is never priced this way.
+BATCH_PRICE_MULTIPLIER = 0.5
+BATCH_PRICE_VERSION = PRICE_VERSION + "+batch"
+
+
 def _estimate_cost(model, input_tokens, output_tokens,
-                   cache_write_tokens=0, cache_read_tokens=0, rates=None):
+                   cache_write_tokens=0, cache_read_tokens=0, rates=None, batch=False):
     in_rate, out_rate = rates or _price_for(model)
-    return (((input_tokens or 0) / 1_000_000) * in_rate
+    cost = (((input_tokens or 0) / 1_000_000) * in_rate
             + ((output_tokens or 0) / 1_000_000) * out_rate
             + ((cache_write_tokens or 0) / 1_000_000) * in_rate * _CACHE_WRITE_MULTIPLIER
             + ((cache_read_tokens or 0) / 1_000_000) * in_rate * _cache_read_multiplier(model))
+    return cost * BATCH_PRICE_MULTIPLIER if batch else cost
 
 
 def _log_usage_safe(message, model, restaurant_id, action, latency_ms=None, attempts=None, call_id=None,
@@ -2008,13 +2019,14 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
                  status="ok", error=None, cache_write_tokens=0, cache_read_tokens=0,
                  latency_ms=None, vendor=None, outcome=None, stop_reason=None, attempts=None,
                  request_id=None, trigger=None, actor_user_id=None, correlation_id=None,
-                 call_id=None, reason=None, cost_usd=None):
+                 call_id=None, reason=None, cost_usd=None, batch=False):
     """One ledger row; returns its id. `outcome` defaults from the legacy
     `status`; the row's status is derived from the outcome, so every older
     reader of `status` still sees ok / error. Tokens are billed whatever the
     outcome — a refusal and a truncation cost what they cost — and a blocked
     row costs nothing. Unattributed calls are attributed here
-    (ai_context / the request / the stack)."""
+    (ai_context / the request / the stack). `batch` prices the tokens at the
+    Message Batches rate and stamps BATCH_PRICE_VERSION (ai_batches.py)."""
     from models import get_conn, DB_PATH
     path = db_path or DB_PATH
     conn = get_conn(path)
@@ -2029,13 +2041,15 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
         correlation_id = correlation_id or c
     if cost_usd is None:
         billed = (input_tokens or output_tokens or cache_write_tokens or cache_read_tokens) and outcome != "blocked"
-        cost_usd = (_estimate_cost(model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens)
+        cost_usd = (_estimate_cost(model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens,
+                                   batch=batch)
                     if billed else 0.0)
     _row = (restaurant_id, action, model, input_tokens, output_tokens, cost_usd, status,
             (str(error)[:500] if error is not None else None), cache_write_tokens or 0, cache_read_tokens or 0,
             latency_ms, vendor, outcome, (str(stop_reason)[:40] if stop_reason else None), attempts,
             (str(request_id)[:120] if request_id else None), trigger, actor_user_id,
-            (str(correlation_id)[:80] if correlation_id else None), PRICE_VERSION, call_id,
+            (str(correlation_id)[:80] if correlation_id else None),
+            BATCH_PRICE_VERSION if batch else PRICE_VERSION, call_id,
             (str(reason)[:60] if reason else None))
     try:
         try:

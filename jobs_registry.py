@@ -454,6 +454,16 @@ JOBS = {
         label="DSR delivery", description="Send the DSR pushes held through each restaurant's quiet hours, once they end",
         target=("dsr.deliver", "release_held"), max_minutes=10),
 
+    # ── Message Batches, every 5 minutes (AI cost audit 10/7/26 #19) ─────
+    "ai_batch_collect": dict(
+        # Collects only where the scheduler may run (ai_batches.run_collector);
+        # its callbacks store results, they send nothing (the DSR sweep does).
+        cadence="every 5 minutes", sla_minutes=60, sends=False, runnable=True,
+        label="AI batch collector",
+        description="Read the Message Batches that have ended, ledger each answer at the batch rate and "
+                    "hand it to its workflow (the nightly DSR narrative)",
+        target=("ai_batches", "run_collector"), max_minutes=10),
+
     # ── staff reminders, every 10 minutes (employee audit H3/M8) ─────────
     "staff_reminders": dict(
         # Sends: gated inside on scheduling_allowed (staff_reminders._allowed).

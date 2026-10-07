@@ -4395,6 +4395,10 @@ def init_db(db_path: str = DB_PATH):
     # attribution columns — at boot, never on a call path (fix round G).
     from ai_utils import init_ai_ops
     init_ai_ops(db_path)
+    # The Message Batches queue (ai_batch_jobs, ai_batch_items: AI cost audit
+    # 10/7/26 #19) — at boot, never on a submit or a collect.
+    import ai_batches as _ai_batches
+    _ai_batches.init_ai_batches(db_path)
     # The lasting, attributed change history (change_log, kept forever) and
     # the one-time carry-over of the target and profile changes activity_log
     # holds — memory audit 9/29/26. At boot, never on a write path.

@@ -492,6 +492,8 @@ The full route contract is `API_REFERENCE.md` → *Admin console API*.
 
 **Design stance**: a job that fails says so (the standard counts, a partial state, a watchdog on its own bound), a job that stops is noticed from outside the process (the heartbeat, `/health`, the dead-man ping, SMS to the operator), and nothing a laptop runs can reach a real person (`scheduler.scheduling_allowed`). Work over every restaurant is bounded and resumable (`resumable_sweep`, `strategy_jobs._BoundedWalk`). The backup is not done until a copy is off the volume. How it runs: `SYSTEM_ARCHITECTURE.md`; what to do when it breaks: `docs/ops/RECOVERY.md`.
 
+
+**Message Batches** (`ai_batches.py`, AI cost audit 10/7/26 #19): model calls nobody waits on go through Anthropic's Message Batches API at half the price — the same gates as `create_with_retry` before anything is sent, every answer ledgered (`ai_usage`, priced `…+batch`) and traced by the `ai_batch_collect` job, then handed to its `"module:function"` callback; the caller keeps its own cutoff and falls back to a synchronous call (`cancel`), and whichever answer is stored first wins. The nightly DSR narrative is the one workflow (`dsr.pipeline`, `narrative.submit_batch` / `finish`). Only where `scheduler.scheduling_allowed()`.
 ---
 
 ## Billing and contracts
