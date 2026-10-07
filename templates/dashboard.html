@@ -10319,8 +10319,20 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 /* Estimated savings' math (_ssSavingsMath): a card under the tile on hover
    or keyboard focus, in the floating-card language (.swp). */
 .ss-tile.has-math{cursor:help;outline:none}
+/* A tile that goes somewhere (Warnings, owner 10/7/26): the whole tile is the
+   target, a lift and an ember edge on hover, "See them" under its figure. */
+.ss-tile.go{cursor:pointer;outline:none;transition:border-color .14s ease,transform .14s ease,box-shadow .14s ease}
+.ss-tile.go:hover{border-color:var(--sf-ai-line);transform:translateY(-1px)}
+.ss-tile.go:focus-visible{box-shadow:0 0 0 2px var(--ember),var(--elev-card)}
+.ss-tile .ss-go{display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;font-weight:600;color:var(--ember2)}
+.ss-tile.go:hover .ss-go i{transform:translateX(2px)}.ss-tile .ss-go i{font-style:normal;transition:transform .14s ease}
+.sw-sec.ss-flash{animation:rv2JumpFlash 1.4s ease;border-radius:12px}
+@media (prefers-reduced-motion:reduce){.ss-tile.go,.ss-tile .ss-go i{transition:none}.ss-tile.go:hover{transform:none}.sw-sec.ss-flash{animation:none}}
 .ss-tile.has-math:focus-visible{box-shadow:0 0 0 2px var(--ember),var(--elev-card)}
 .ss-math{position:absolute;z-index:30;right:0;top:calc(100% + 10px);width:360px;max-width:calc(100vw - 32px);padding:16px 18px;border-radius:14px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-float);opacity:0;visibility:hidden;transform:translateY(-4px);transition:opacity .14s ease,transform .14s ease,visibility 0s linear .14s;pointer-events:none;text-align:left}
+/* With no room under the tile in the visible area it opens above it
+   (_ssMathPlace, on hover or focus - owner 10/7/26: it opened off-screen). */
+.ss-math.up{top:auto;bottom:calc(100% + 10px);transform:translateY(4px)}
 .ss-tile.has-math:hover .ss-math,.ss-tile.has-math:focus-within .ss-math{opacity:1;visibility:visible;transform:none;transition:opacity .14s ease,transform .14s ease}
 .ss-math .mh{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:10px}
 .ss-math .mr{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:7px 0;border-bottom:1px solid var(--hb-line2)}
@@ -25970,7 +25982,7 @@ function ssRenderSummary() {
   var basisWord = lv ? (lv.basis === 'all_in' ? 'all-in' : 'hourly pay only') : '';
   var sc = q.score, band = q.band ? String(q.band) : '';
   var C = 2 * Math.PI * 30, off = sc != null ? C * (1 - Math.max(0, Math.min(100, +sc)) / 100) : C;
-  function tile(cls, k, v, s, extra) { return '<div class="ss-tile ' + cls + (extra && extra.indexOf('ss-math') > -1 ? ' has-math" tabindex="0' : '') + '"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + '</div>' + (extra || '') + '</div>'; }
+  function tile(cls, k, v, s, extra, attrs) { return '<div class="ss-tile ' + cls + (extra && extra.indexOf('ss-math') > -1 ? ' has-math" tabindex="0' : '') + '"' + (attrs || '') + '><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + '</div>' + (extra || '') + '</div>'; }
   var h = '<div class="ss-sum-hd"><div class="ok"><svg viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><div>'
     + '<div class="ss-kick">Schedule complete</div><h1>The week is built</h1><div class="w">'
     + (ds.length ? 'Week of <span class="hb-num">' + _escHtml(mdy(ds[0])) + '</span> – <span class="hb-num">' + _escHtml(mdy(ds[ds.length - 1])) + '</span> · ' : '')
@@ -25987,8 +25999,11 @@ function ssRenderSummary() {
   var ot = pc ? +pc.overtime_hours || 0 : null;
   h += tile(ot === null ? '' : (ot > 0 ? 'bad' : 'good'), 'Overtime', ot === null ? '—' : '<span class="hb-num">' + _schedHrs(ot) + '</span><small>h</small>',
             ot === null ? 'Priced once the draft is saved' : (ot > 0 ? '<span class="hb-num">' + _schedMoney(pc.overtime_premium || 0) + '</span> in premium pay' : 'Nobody past <span class="hb-num">40h</span>'));
-  h += tile(hard ? 'bad' : (soft ? 'warn' : 'good'), 'Warnings', '<span class="hb-num">' + (hard + soft) + '</span>',
-            hard ? '<span class="hb-num">' + hard + '</span> break a hard rule · fix before sending' : (soft ? 'Soft rules only · worth a look' : 'Every rule kept'));
+  h += tile((hard ? 'bad' : (soft ? 'warn' : 'good')) + ((hard + soft) ? ' go' : ''), 'Warnings', '<span class="hb-num">' + (hard + soft) + '</span>',
+            hard ? '<span class="hb-num">' + hard + '</span> break a hard rule · fix before sending' : (soft ? 'Soft rules only · worth a look' : 'Every rule kept'),
+            // The tile takes the owner to the list itself (owner, 10/7/26).
+            (hard + soft) ? '<span class="ss-go">See ' + ((hard + soft) === 1 ? 'it' : 'them') + ' <i aria-hidden="true">\u2192</i></span>' : '',
+            (hard + soft) ? ' role="button" tabindex="0" data-ss-warn="1" aria-label="See the ' + (hard + soft) + ' warning' + ((hard + soft) === 1 ? '' : 's') + ' on the schedule"' : '');
   h += tile('hero', 'Estimated savings', sav === null ? '—' : '<span class="hb-num">' + _schedMoney(sav) + '</span>',
             sav === null ? 'Needs a measured labor % for your recent weeks and this draft’s forecast'
               : 'this week vs your last <span class="hb-num">' + (rec.days || 14) + '</span> days at <span class="hb-num">' + rec.pct + '%</span> labor (' + basisWord + '), on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
@@ -26348,9 +26363,64 @@ document.addEventListener('click', function (ev) {
   var tb = t.closest('[data-ss-tab]'); if (tb) { ssTab(tb.getAttribute('data-ss-tab')); return; }
   var rt = t.closest('[data-ss-rtab]'); if (rt) { ssRightTab(rt.getAttribute('data-ss-rtab')); return; }
 });
+// The Warnings tile opens the list on the Schedule step (owner, 10/7/26):
+// the Fix tab, filtered to what the week has, scrolled to and flashed; with
+// one warning about one shift, that shift is found in the week too.
+function ssOpenWarnings() {
+  var rv = _ssReview || (_swData && _swData.review) || {};
+  window._rvFilter = (+rv.hard || 0) ? 'hard' : 'soft'; window._rvAll = false;
+  studioGo('schedule'); ssRightTab('fix');
+  if (window.renderScheduleReview) renderScheduleReview();
+  setTimeout(function () {
+    var sec = document.querySelector('.sw-sec[data-sw="warn"]'); if (!sec) return;
+    if (sec.scrollIntoView) sec.scrollIntoView({behavior: 'smooth', block: 'start'});
+    sec.className = sec.className.replace(/\s*ss-flash/g, ''); void sec.offsetWidth; sec.className += ' ss-flash';
+    var lines = sec.querySelectorAll('.sr-list .sr-line'), shows = sec.querySelectorAll('[data-rv-show]');
+    if (lines.length === 1 && shows.length === 1) ssShowWarnRow(+shows[0].getAttribute('data-rv-show'));
+  }, 80);
+}
+// A warning's Show: the shift's chip in the week, scrolled to and flashed,
+// with the warning list left open beside it.
+function ssShowWarnRow(ix) {
+  var c = document.querySelector('[data-swg-chip="' + ix + '"]'); if (!c) return;
+  if (c.scrollIntoView) c.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'center'});
+  c.className = c.className.replace(/\s*flash/g, ''); void c.offsetWidth; c.className += ' flash';
+  setTimeout(function () { c.className = c.className.replace(/\s*flash/g, ''); }, 1200);
+}
+// The savings math opens where it can be read: under the tile, or above it
+// when the visible part of the page has no room below (owner, 10/7/26).
+function _ssMathPlace(tileEl) {
+  var m = tileEl && tileEl.querySelector('.ss-math'); if (!m) return;
+  var lo = 0, hi = window.innerHeight || document.documentElement.clientHeight, p = tileEl.parentNode;
+  while (p && p.nodeType === 1) {
+    var oy = window.getComputedStyle(p).overflowY;
+    if (oy === 'auto' || oy === 'scroll' || oy === 'hidden') { var pr = p.getBoundingClientRect(); lo = Math.max(lo, pr.top); hi = Math.min(hi, pr.bottom); break; }
+    p = p.parentNode;
+  }
+  var bar = document.querySelector('.ss-top'); if (bar) { var br = bar.getBoundingClientRect(); if (br.bottom > lo && br.top < hi) lo = Math.max(lo, br.bottom); }
+  var r = tileEl.getBoundingClientRect(), need = m.offsetHeight + 14;
+  var below = hi - r.bottom, above = r.top - lo;
+  var up = below < need && above > below;
+  m.className = m.className.replace(/\s*\bup\b/g, '') + (up ? ' up' : '');
+}
+document.addEventListener('mouseover', function (ev) {
+  var t = ev.target && ev.target.closest ? ev.target.closest('.ss-tile.has-math') : null;
+  if (t && !t.contains(ev.relatedTarget)) _ssMathPlace(t);
+});
+document.addEventListener('focusin', function (ev) {
+  var t = ev.target && ev.target.closest ? ev.target.closest('.ss-tile.has-math') : null;
+  if (t) _ssMathPlace(t);
+});
+document.addEventListener('keydown', function (ev) {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  var t = ev.target; if (!t || !t.getAttribute || t.getAttribute('data-ss-warn') !== '1') return;
+  ev.preventDefault(); ssOpenWarnings();
+});
 // Warnings' Hard | Soft filter, Show all, and the Every shift fold.
 document.addEventListener('click', function (ev) {
   var t = ev.target; if (!t || !t.closest) return;
+  if (t.closest('[data-ss-warn]')) { ssOpenWarnings(); return; }
+  var sw = t.closest('[data-rv-show]'); if (sw) { ssShowWarnRow(+sw.getAttribute('data-rv-show')); return; }
   var f = t.closest('[data-rv-filter]');
   if (f) { window._rvFilter = f.getAttribute('data-rv-filter'); window._rvAll = false; if (window.renderScheduleReview) renderScheduleReview(); return; }
   if (t.closest('[data-rv-all]')) { window._rvAll = !window._rvAll; if (window.renderScheduleReview) renderScheduleReview(); return; }
@@ -34247,7 +34317,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         // any other (A2-7), its words the server's label when it sent no
         // detail (F1-14: role_not_held, closer_unavailable, trainee_unpaired).
         if(gv.day_level)h+='<div class="sr-line '+(gv.hard?'bad':'warn')+'"><span class="d"></span><span><b>'+esc(window.sfw1DayDate?sfw1DayDate(gv.date,gv.day):(dday||''))+'</b> — '+num(gv.detail||gv.label||gv.kind)+'</span></div>';
-        else h+='<div class="sr-line '+(gv.hard?'bad':'warn')+'"><span class="d"></span><span><b>'+esc(gv.employee||'')+'</b> · '+where+' — '+num(gv.detail||gv.label||gv.kind)+'</span></div>';}
+        else h+='<div class="sr-line '+(gv.hard?'bad':'warn')+'"><span class="d"></span><span><b>'+esc(gv.employee||'')+'</b> · '+where+' — '+num(gv.detail||gv.label||gv.kind)+'</span>'
+          // The shift it is about, found in the week (owner, 10/7/26).
+          +(g.n===1&&gv.index!==null&&gv.index!==undefined&&(window._schedRows||[])[gv.index]?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rv-show="'+gv.index+'">Show</button>':'')+'</div>';}
       if(order.length>10)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rv-all="1">'+(window._rvAll?'Show fewer':'Show all <span class="hb-num">'+order.length+'</span>')+'</button>';
       h+='</div>';
     }
