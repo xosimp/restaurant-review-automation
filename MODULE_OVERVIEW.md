@@ -609,6 +609,12 @@ See `SYSTEM_ARCHITECTURE.md`'s Auth section for the model and `docs/ops/SECURITY
 
 **What outlives a prune.** `change_log` is the lasting, attributed history of settings, targets, prices, menu, roster and hours (who — owner, manager, admin, sync, seeded — and when), append-only and in no retention registry; `models.update_restaurant` writes it inside its own transaction, and the roster, menu, price, par and goal writers call `record`. It answers "which labor target applied last March" (`value_as_of`, read by Ask's `read_target_history`), gives the "changed since" caution its who (`rec_trust.owner_changes`) and gives outcomes their concurrent changes. `history_rollups` writes, before raw rows go, summaries kept forever with no guest text: `alert_monthly`, `engagement_monthly`, newsletter results stamped at 30 days, `review_monthly_stats` (in the review purge's own transaction), `inventory_weekly_summary` and `ingredient_cost_monthly`; a month is rolled only while its raw rows are all there. The prune runs each table's rollup first (`ops._RETENTION_ROLLUP`) and refuses a window set below its floor.
 
+## The Restaurant Context Manager (`restaurant_context.py`, AI orchestration design Phase 2, 10/7/26)
+
+Files: `restaurant_context.py` (the registry, the caches, the packet and thin builders over the owning modules), `labor.labor_trend_section` (the labor trend, moved out of the labor read), `context_sections` (its L2 table).
+
+Design stance: **one reading of each shared fact, rebuilt only when its data moves.** A prompt used to assemble the restaurant's facts by hand — the labor read its own payroll-week trend, the food read its own menu notes, the marketing read its own brand profile — so two surfaces could state the same figure two ways and every call rebuilt it. `SECTIONS` names twelve (profile, owner_rules, roster, findings, kpis, sales_trend, labor_trend, events, weather, memory, alerts, data_state), each a `"module:function"` builder that reuses the code owning the fact and a version made of change markers. Missing data is a sentence ("No complete payroll week on file yet — state no labor trend."), never a zero. Viewer scoping is the memory assembler's and the permissions module's, never re-decided here. The four page-load reads render the sections that state the same thing they did by hand and key their stored copy on the packet's fingerprint; Ask, the DSR and the schedule are the next to move onto it.
+
 ## Intelligence engine (`intelligence/`)
 
 The platform's learning layer — see `INTELLIGENCE_ENGINE.md` for the full

@@ -2538,6 +2538,11 @@ _RETENTION_DAYS = {
     "ai_runs":            int(os.getenv("RETAIN_AI_RUNS_DAYS", "180")),
     "ai_run_requests":    int(os.getenv("RETAIN_AI_RUN_REQUESTS_DAYS", "30")),
     "ai_route_recommendations": int(os.getenv("RETAIN_AI_ROUTE_RECS_DAYS", "365")),
+    # The Restaurant Context Manager's stored sections (restaurant_context,
+    # Phase 2, 10/7/26): a cache, one row per restaurant, section and viewer
+    # scope, rewritten on every new version — a row not rebuilt in a month
+    # is a scope nobody reads any more (a login that left, a changed role).
+    "context_sections":   int(os.getenv("RETAIN_CONTEXT_SECTIONS_DAYS", "30")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2576,6 +2581,7 @@ _RETENTION_COLUMN = {
     "schedule_model_calls": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
+    "context_sections": "built_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
     "schedule_observations": "created_at",
 }
@@ -2697,6 +2703,8 @@ _RETENTION_FLOOR_DAYS = {
     # The learner reads 28 days of runs and the revert compares the 28 before
     # an override; a replay needs a fortnight of kept requests to sample.
     "ai_runs": 60, "ai_run_requests": 14, "ai_route_recommendations": 90,
+    # A cache: a pruned row is rebuilt on the next packet that needs it.
+    "context_sections": 1,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",

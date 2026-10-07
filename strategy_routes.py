@@ -3235,6 +3235,11 @@ def _do_rec_event(u):
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
                     meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True,
                     authority=authority, via=_rl.request_via(u))
+    if ok and authority != "admin":
+        # A module read's line answered is the read's outcome, filed on the
+        # run that wrote it (AI orchestration design, Phase 2, 10/7/26).
+        import insight_store as _ist_ans
+        _ist_ans.file_read_answer(_rid(u), key.strip(), event, authority=authority)
     out = {"ok": True, "recorded": ok}
     if not still_open:
         out["already_answered"] = True

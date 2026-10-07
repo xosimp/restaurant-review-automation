@@ -91,7 +91,15 @@ def _sites():
                              and f is not fn and n in list(ast.walk(f))]
                     if inner:
                         continue
-                    sites.append((mod, fn.name, n, fn))
+                    # The gate is asked where the call's run starts: an
+                    # orchestrated read's attempt is a closure handed to
+                    # ai_orchestrator.generate (AI orchestration design,
+                    # 10/7/26), and the function around it asks readiness
+                    # once for every rung — so the check reads the
+                    # OUTERMOST function holding the call.
+                    outer = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                             and f is not fn and fn in list(ast.walk(f))]
+                    sites.append((mod, fn.name, n, outer[0] if outer else fn))
     return sites
 
 
@@ -100,7 +108,9 @@ SITES = _sites()
 
 def test_the_scan_finds_the_known_call_sites():
     found = {(m, f) for m, f, _n, _fn in SITES}
-    for expected in [("inventory.py", "get_claude_insights"), ("labor.py", "get_claude_insights"),
+    # The labor and food reads call the model from their orchestrated
+    # attempt closures (10/7/26).
+    for expected in [("inventory.py", "_food_read_attempt"), ("labor.py", "_labor_read_attempt"),
                      ("ask_cavnar.py", "ask_with_tools"), ("reporter.py", "generate_ai_digest_summary"),
                      ("dsr/narrative.py", "_write"), ("drafter.py", "draft_response")]:
         assert expected in found, expected

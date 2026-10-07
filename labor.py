@@ -2113,7 +2113,16 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     fingerprint = (_analysis_fingerprint(analysis)
                    + (":" + hashlib.sha1("\n".join(answered).encode("utf-8")).hexdigest()[:10] if answered else "")
                    + ":" + _note_local_day(restaurant_id))
-    key = (restaurant_id, fingerprint + f":m{mem_v}")
+    # The context sections the read renders (Phase 2, 10/7/26): a new
+    # payroll week on file is a new note, whatever the analysis says.
+    pk = ""
+    if restaurant_id:
+        try:
+            import restaurant_context as _rc_note
+            pk = ":" + _rc_note.packet(restaurant_id, LABOR_READ_SECTIONS, viewer=TEAM_VIEWER).fingerprint
+        except Exception:
+            pk = ""
+    key = (restaurant_id, fingerprint + f":m{mem_v}" + pk)
     hit = _NOTE_CACHE.get(key)
     if hit is not None:
         return hit[0]
@@ -2175,6 +2184,13 @@ def note_generated_at(restaurant_id):
 # delegate's authority, no private line); memory_context also reads the
 # labor_read and schedule surfaces as TEAM whatever viewer is passed.
 from memory_context import TEAM as TEAM_VIEWER
+
+# The restaurant_context sections the labor read renders (a subset of the
+# labor_insight policy's context: the owner's rules and the memory come
+# through labor_memory_block, ranked for this read's subjects; the DATA
+# STATE through the readiness gate's own block), and the run's subject.
+LABOR_READ_SECTIONS = ("labor_trend",)
+LABOR_READ_SUBJECT = "labor_read"
 
 # The schedule prompt's rule for the STAFF CONSTRAINTS block (INT #42, the
 # lead's decision, 9/29/26): the manager's notes are binding as scheduling
@@ -2282,6 +2298,63 @@ def labor_memory_block(restaurant_id, analysis=None, surface="labor_read", key_o
     return block, words
 
 
+def labor_trend_section(restaurant_id) -> dict:
+    """The restaurant_context "labor_trend" section (AI orchestration
+    design, Phase 2, 10/7/26): labor by payroll week and the one
+    week-on-week comparison, in the words the labor read has always given
+    the model — moved here from get_claude_insights so the labor read, Home,
+    the DSR and Ask state the same weeks the same way, built once per
+    change of labor_history (restaurant_context.version_labor_trend).
+
+    Memory audit 9/29/26, labor_periods: the history used to be a rolling
+    window appended on every sync and every note build, so the same 14 days
+    recosted from 31.1% to 29.5% came back three seconds later as "Labor's
+    down 1.6 points from last upload". A trend is only ever the latest
+    COMPLETE week against the week before it, back to back and costed on
+    the same basis (models.labor_period_change).
+
+    {"text": "- ...\\n- ...", "facts", "data": {"has_trend", "trend_diff",
+    "weeks"}, "missing"} — `missing` (no complete week) says so in its text."""
+    from models import get_labor_history, labor_period_change
+    from time_utils import mdy_range as _mdy_range
+    import response_validation as _rv_lt
+    lines, facts = [], []
+    weeks = [h for h in get_labor_history(restaurant_id, limit=4) if h.get("complete")][:3]
+    if weeks:
+        # M/D/YY — the model repeats what it is given (A-25).
+        lines.append("- Labor by payroll week (for trend comparison): "
+                     + "; ".join(f"{_mdy_range(h['period_start'], h['period_end'])}: "
+                                 f"{h['labor_pct']}% labor" for h in weeks))
+        for h in weeks:
+            facts.append(_rv_lt.Fact(f"labor.week.{str(h['period_start'])[:10]}.pct", h.get("labor_pct"), "%",
+                                     "measured", "week", entity=_mdy_range(h["period_start"], h["period_end"])))
+    has_trend, trend_diff = False, None
+    change = labor_period_change(restaurant_id)
+    if change.get("comparable") and change.get("delta") is not None:
+        has_trend = True
+        trend_diff = change["delta"]
+        if abs(trend_diff) >= 1:
+            cur, prev = change["latest"], change["previous"]
+            lines.append(f"- TREND: Labor % is {'UP' if trend_diff > 0 else 'DOWN'} "
+                         f"{abs(trend_diff):.1f} points week on week "
+                         f"({_mdy_range(cur['period_start'], cur['period_end'])} against "
+                         f"{_mdy_range(prev['period_start'], prev['period_end'])}) — "
+                         "mention this trend explicitly")
+    elif change.get("reason") == "recosted":
+        lines.append("- The last two weeks were costed on different pay rates or a different "
+                     "labor source (recosted, not comparable) — do NOT state a trend, a direction "
+                     "or a point change between them, and do not write a forecast.")
+    elif change.get("reason") == "gap" and weeks:
+        lines.append("- The last two weeks with figures are not back to back — do NOT state a "
+                     "trend, a direction or a point change between them, and do not write a forecast.")
+    data = {"has_trend": has_trend, "trend_diff": trend_diff,
+            "weeks": [{k: h.get(k) for k in ("period_start", "period_end", "labor_pct")} for h in weeks]}
+    if not lines:
+        return {"text": "No complete payroll week on file yet — state no labor trend.", "data": data,
+                "missing": True}
+    return {"text": "\n".join(lines), "facts": facts, "data": data}
+
+
 def labor_target_whose(restaurant_id) -> str:
     """The suffix " (your goal of 26% by 12/1/26)": whose target the read
     judges against, from the one resolver (thresholds.target_for: the owner's
@@ -2356,46 +2429,28 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         except Exception:
             pass
 
-    # Labor by payroll week, for trend awareness (memory audit 9/29/26,
-    # labor_periods). The history used to be a rolling window appended on
-    # every sync and every note build — this function saved one itself —
-    # so the same 14 days recosted from 31.1% to 29.5% came back three
-    # seconds later as "Labor's down 1.6 points from last upload". A trend
-    # is now only ever the latest COMPLETE week against the week before it,
-    # back to back and costed on the same basis (models.labor_period_change).
+    # Labor by payroll week, for trend awareness — the restaurant_context
+    # "labor_trend" section (AI orchestration design, Phase 2, 10/7/26):
+    # the lines this read always carried (labor_trend_section, memory audit
+    # 9/29/26 labor_periods), built once per change of labor_history and
+    # stated in the same words on Home, the DSR and Ask. The packet's
+    # fingerprint keys the stored read below with the read's own data.
     trend_context = ""
     has_trend = False
     trend_diff = None           # the last complete week's labor % minus the week before's
+    _packet = None
     if restaurant_id:
         try:
-            from models import get_labor_history, labor_period_change
-            from time_utils import mdy_range as _mdy_range
-            weeks = [h for h in get_labor_history(restaurant_id, limit=4) if h.get("complete")][:3]
-            if weeks:
-                # M/D/YY — the model repeats what it is given (A-25).
-                trend_context = ("\n- Labor by payroll week (for trend comparison): "
-                                 + "; ".join(f"{_mdy_range(h['period_start'], h['period_end'])}: "
-                                             f"{h['labor_pct']}% labor" for h in weeks))
-            change = labor_period_change(restaurant_id)
-            if change.get("comparable") and change.get("delta") is not None:
-                has_trend = True
-                trend_diff = change["delta"]
-                if abs(trend_diff) >= 1:
-                    cur, prev = change["latest"], change["previous"]
-                    trend_context += (f"\n- TREND: Labor % is {'UP' if trend_diff > 0 else 'DOWN'} "
-                                      f"{abs(trend_diff):.1f} points week on week "
-                                      f"({_mdy_range(cur['period_start'], cur['period_end'])} against "
-                                      f"{_mdy_range(prev['period_start'], prev['period_end'])}) — "
-                                      "mention this trend explicitly")
-            elif change.get("reason") == "recosted":
-                trend_context += ("\n- The last two weeks were costed on different pay rates or a different "
-                                  "labor source (recosted, not comparable) — do NOT state a trend, a direction "
-                                  "or a point change between them, and do not write a forecast.")
-            elif change.get("reason") == "gap" and weeks:
-                trend_context += ("\n- The last two weeks with figures are not back to back — do NOT state a "
-                                  "trend, a direction or a point change between them, and do not write a forecast.")
+            import restaurant_context as _rc_lab
+            _packet = _rc_lab.packet(restaurant_id, LABOR_READ_SECTIONS, viewer=TEAM_VIEWER)
+            _lt = _packet.section("labor_trend")
+            if _lt.text and not _lt.missing:
+                trend_context = "\n" + _lt.text
+            has_trend = bool(_lt.data.get("has_trend"))
+            trend_diff = _lt.data.get("trend_diff")
         except Exception as le:
             print(f"[labor trend] {le}")
+            _packet = None
 
     # Role breakdown context
     role_context = ""
@@ -2627,8 +2682,12 @@ The Recommendations section must start with exactly the word "Recommendations:" 
             import insight_store as _ist_lab
             _key_prompt = (prompt.replace(memory_block, _mem_key.get("key_block") or "")
                            if memory_block else prompt)
+            # ...and the context packet's fingerprint (Phase 2): the shared
+            # sections' versions, so a stored read is never served past a
+            # change to the facts it was written from.
             _fp = _ist_lab.read_fingerprint(_key_prompt, readiness=_ready_lab,
-                                            extra=(_note_local_day(restaurant_id),))
+                                            extra=(_note_local_day(restaurant_id),)
+                                            + ((_packet.fingerprint,) if _packet is not None else ()))
             stored = _ist_lab.get(restaurant_id, "labor", _fp, revalidate=_finish)
             if isinstance(stored, str) and stored.strip():
                 try:
@@ -2641,19 +2700,43 @@ The Recommendations section must start with exactly the word "Recommendations:" 
             print(f"[labor insight store] {_se}")
             _fp = None
 
-    msg = create_with_retry(
-        get_client(),
-        model=model_for("labor_insight"),
-        max_tokens=650,
-        messages=[{"role": "user", "content": prompt}],
-        restaurant_id=restaurant_id,
-        action="labor_insight",
-        readiness=_ready_lab,
-    )
-    raw = extract_text(msg).strip()
-    if getattr(msg, "stop_reason", None) == "max_tokens":
-        raise ValueError("labor insight was truncated")
-    out = _finish(raw)
+    # The read runs as the "labor_insight" workflow (AI orchestration
+    # design, owner-approved 10/7/26): Haiku first (T1), Sonnet (T2) only
+    # when the Response Validation Layer refused or withheld the T1 text —
+    # with the engine's reasons appended to the prompt — and only while the
+    # owner is still inside one read's wait (escalation_deadline); past it,
+    # the T1 outcome stands and its own fallback copy is served. A cut-off
+    # answer is never escalated (it raises, as it always did).
+    import ai_orchestrator as _orch_lab
+
+    def _labor_read_attempt(route, notes):
+        msg = create_with_retry(
+            get_client(),
+            restaurant_id=restaurant_id,
+            action="labor_insight",
+            readiness=_ready_lab,
+            **route.apply(dict(model=model_for("labor_insight"), max_tokens=650,
+                               messages=[{"role": "user", "content": prompt + _orch_lab.notes_block(notes)}])),
+        )
+        _raw = extract_text(msg).strip()
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            raise ValueError("labor insight was truncated")
+        return _raw, _finish_labor_read(_raw, ctx, greeting, fc_line, restaurant_id, served=False)
+
+    run = _orch_lab.generate(
+        "labor_insight", restaurant_id, _labor_read_attempt,
+        check=lambda res: _orch_lab.read_verdict(res[1], LABOR_READ_UNCHECKED),
+        subject=f"{LABOR_READ_SUBJECT}:{_note_local_day(restaurant_id)}",
+        deadline=_orch_lab.escalation_deadline(),
+        context={"packet": _packet.fingerprint if _packet is not None else None,
+                 "versions": _packet.versions if _packet is not None else {}})
+    raw, out = run.result
+    if LABOR_READ_UNCHECKED in str(out):
+        # Recorded once, for the copy actually served — a refused T1 that a
+        # T2 replaced served nothing (#140).
+        import ai_utils as _ai_fb
+        _ai_fb.record_quality_event("labor_insight", "fallback", restaurant_id=restaurant_id,
+                                    action="labor_insight", detail="served the fixed unchecked-read copy")
     # The computed forecast is recorded (and later scored) whatever the
     # read's verdict: it is Python's figure, not the model's. Once, when the
     # read is written — a stored read served again records nothing new.
@@ -2681,7 +2764,7 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     return out
 
 
-def _finish_labor_read(raw, ctx, greeting, fc_line, restaurant_id):
+def _finish_labor_read(raw, ctx, greeting, fc_line, restaurant_id, served=True):
     """The model's labor text as the owner is shown it: the FORECAST line it
     wrote anyway removed (the computed one stands in), markdown stripped,
     held to the Response Validation Layer (surface labor_insight), and the
@@ -2714,8 +2797,11 @@ def _finish_labor_read(raw, ctx, greeting, fc_line, restaurant_id):
         _ai_q.record_quality_event("labor_insight", "validation_refused", restaurant_id=restaurant_id,
                                    action="labor_insight", codes=codes,
                                    detail=f"labor read refused by validation: {', '.join(codes)}")
-        _ai_q.record_quality_event("labor_insight", "fallback", restaurant_id=restaurant_id,
-                                   action="labor_insight", detail="served the fixed unchecked-read copy")
+        # `served` False: an attempt inside an orchestrated run, whose
+        # fallback is recorded only if it is the copy finally served.
+        if served:
+            _ai_q.record_quality_event("labor_insight", "fallback", restaurant_id=restaurant_id,
+                                       action="labor_insight", detail="served the fixed unchecked-read copy")
         return rv.Validated(f"{greeting} " + LABOR_READ_UNCHECKED, validation=out.validation, verdict=out.verdict)
     shown = str(out)
     # The FORECAST line is computed, not written by the model, so it is added

@@ -87,7 +87,11 @@ def test_new_figures_write_a_new_read(monkeypatch):
     labor._NOTE_CACHE.clear()
     labor.labor_note(rid, _analysis(overall_labor_pct=36.0, total_labor_cost=3600.0), restaurant_name="R",
                      owner_name="Sam")
-    assert seen["calls"] == 2
+    # A new read (not the stored one): the stub's fixed text still says 34%
+    # against figures of 36%, so the validation layer sets the T1 attempt
+    # aside and the labor_insight run climbs to T2 once (AI orchestration
+    # design, 10/7/26) — two model calls for the second read, three in all.
+    assert seen["calls"] == 3
 
 
 def test_the_read_is_stored_with_the_models_own_text_for_revalidation(monkeypatch):

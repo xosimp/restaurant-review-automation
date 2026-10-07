@@ -283,6 +283,9 @@ GENERATORS = [
     ("marketing", "marketing_memory_block", "marketing"),           # M6: the four marketing generators
     ("drafter", None, "reply_drafter"),                             # M6: the reply drafter
     ("competitor", None, "competitor_read"),                        # M6: the competitor read
+    # The Restaurant Context Manager's two memory sections (Phase 2, 10/7/26).
+    ("restaurant_context", None, "context_owner_rules"),
+    ("restaurant_context", None, "context_memory"),
 ]
 
 

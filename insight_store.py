@@ -998,3 +998,37 @@ def record_weekly_forecast(restaurant_id, kind, predicted, basis=None, today=Non
     except Exception as e:
         print(f"[insight_store] forecast not recorded rid={restaurant_id} {kind}: {e}")
         return {"recorded": False, "reason": "could not be stored"}
+
+
+# ── what the owner did with a read (AI orchestration design, Phase 2) ───────
+#
+# Each module read's numbered lines are recommendations on the ledger
+# (insight_<module>:<key>). An answer to one is what the owner did with the
+# read that wrote it, filed on that read's run (ai_orchestrator.record_outcome
+# — the quality signal the learner ranks routes by): Done or Track is the read
+# accepted, Not for us is it rejected. A snooze says nothing about quality.
+READ_WORKFLOWS = {
+    "insight_labor": ("labor_insight", "labor_read"),
+    "insight_food": ("inventory_insight", "food_read"),
+    "insight_review": ("review_insight", "review_read"),
+    "insight_marketing": ("marketing_insight", "marketing_read"),
+}
+READ_ANSWER_OUTCOMES = {"completed": "accepted", "accepted": "accepted", "dismissed": "rejected"}
+
+
+def file_read_answer(restaurant_id, key, event, authority=None, db_path=None) -> bool:
+    """File an answer to a read's line as the read's outcome. Only a person
+    at the restaurant answering (never support through view-as, never a
+    system replay); never raises. False when nothing was filed."""
+    prefix = str(key or "").split(":", 1)[0]
+    wf = READ_WORKFLOWS.get(prefix)
+    outcome = READ_ANSWER_OUTCOMES.get(event)
+    if not wf or not outcome or authority not in ("principal", "delegate"):
+        return False
+    try:
+        import ai_orchestrator
+        return ai_orchestrator.record_latest_outcome(wf[0], restaurant_id, outcome, subject_prefix=wf[1] + ":",
+                                                     detail=f"{event} {str(key)[:80]}", db_path=db_path)
+    except Exception as e:
+        print(f"[insight_store] read outcome not filed: {e}")
+        return False

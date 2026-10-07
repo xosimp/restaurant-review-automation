@@ -1166,6 +1166,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     """
     if not is_live:
         return SAMPLE_DATA_NOTICE
+    _packet_inv = None
     name_line = f"Owner name: {owner_name}" if owner_name else ""
     rest_line  = f"Restaurant: {restaurant_name}" if restaurant_name else ""
     wow_context = ""
@@ -1317,20 +1318,25 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             except Exception as _te:
                 print(f"[inventory trends] {_te}")
 
-        # Menu connection — if restaurant has menu_notes, suggest menu decisions for repeat waste
+        # Menu connection — if restaurant has menu_notes, suggest menu decisions for repeat waste.
+        # The notes come from the restaurant_context "profile" section (AI
+        # orchestration design, Phase 2, 10/7/26) — the one reading of the
+        # restaurants row every prompt names the restaurant from; its
+        # fingerprint keys the stored read below.
         try:
-            from models import get_restaurant as _gr_inv
-            rest = _gr_inv(restaurant_id)
-            if rest and rest.menu_notes:
-                menu_notes = rest.menu_notes[:300]
-            if rest and rest.menu_notes and analysis["waste_items"]:
+            _prof = food_read_profile(restaurant_id)
+            _packet_inv = _prof.pop("_packet", None)
+            _menu = str(_prof.get("menu_notes") or "")
+            if _menu:
+                menu_notes = _menu[:300]
+            if _menu and analysis["waste_items"]:
                 top_waste_item = analysis["waste_items"][0]["item"]
                 # menu_notes is owner-authored free text and reaches the model
                 # verbatim; ingredient names arrive from CSV upload and Toast
                 # sync. Fenced the same way the review paths fence their input.
                 from ai_guard import wrap_untrusted
                 menu_context = (
-                    "\n- Menu context: " + wrap_untrusted(rest.menu_notes[:300])
+                    "\n- Menu context: " + wrap_untrusted(_menu[:300])
                     + f". If {top_waste_item} appears in multiple dishes, consider whether "
                       "portion sizes or menu placement should change."
                 )
@@ -1338,9 +1344,9 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # counts, who it buys from) were written and never read (memory
             # audit 9/29/26, "dead_memory"): they reach the read, fenced like
             # every other thing a person typed.
-            if rest and (getattr(rest, "inventory_notes", None) or "").strip():
+            if str(_prof.get("inventory_notes") or "").strip():
                 from ai_guard import wrap_untrusted as _wu_inv
-                inventory_notes = rest.inventory_notes.strip()[:400]
+                inventory_notes = str(_prof["inventory_notes"]).strip()[:400]
                 menu_context += ("\n- Notes about how this kitchen counts and buys (from setup): "
                                  + _wu_inv(inventory_notes))
         except Exception:
@@ -1642,8 +1648,10 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
         try:
             import insight_store as _ist
             _iso_inv = _now_inv.isocalendar()
+            # ...and the context packet's fingerprint (Phase 2, 10/7/26).
             _fp = _ist.read_fingerprint(prompt, readiness=_ready_food, today=today_inv,
-                                        week=f"{_iso_inv[0]}-W{_iso_inv[1]:02d}")
+                                        week=f"{_iso_inv[0]}-W{_iso_inv[1]:02d}",
+                                        extra=((_packet_inv.fingerprint,) if _packet_inv is not None else ()))
             _stored = _ist.get(restaurant_id, "food", _fp, revalidate=lambda raw: finish_food_read(raw, _ctx))
             if isinstance(_stored, str) and _stored.strip():
                 return _stored
@@ -1651,28 +1659,46 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
             print(f"[inventory insight store] {_se}")
             _fp = None
 
-    msg = create_with_retry(
-        get_client(timeout=45.0),
-        model=model_for("inventory_insight"),
-        # The recommendations now carry a dollar figure and an effort level
-        # each, and the opening paragraph can carry a Why
-        # sentence. 950 was sized for the old bare-action format and the
-        # truncation guard below would have started firing.
-        max_tokens=1200,
-        messages=[{"role": "user", "content": prompt}],
-        restaurant_id=restaurant_id,
-        action="inventory_insight",
-        readiness=_ready_food,
-    )
-    result = extract_text(msg).strip()
-    if getattr(msg, "stop_reason", None) == "max_tokens":
-        raise ValueError("food cost insight was truncated")
-    # Strip any markdown that slips through
-    import re as _re_inv
-    result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
-    result = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), result)
-    result = _re_inv.sub(r'#{1,6}\s', '', result)
-    out = finish_food_read(result, _ctx)
+    # The read runs as the "inventory_insight" workflow (AI orchestration
+    # design, owner-approved 10/7/26): Sonnet (T2) only, no escalation — the
+    # run is recorded (ai_runs) and its owner outcome filed when a line is
+    # answered; the validation and the fallback copy are the read's own.
+    import ai_orchestrator as _orch_inv
+
+    def _food_read_attempt(route, notes):
+        msg = create_with_retry(
+            get_client(timeout=45.0),
+            restaurant_id=restaurant_id,
+            action="inventory_insight",
+            readiness=_ready_food,
+            # The recommendations now carry a dollar figure and an effort level
+            # each, and the opening paragraph can carry a Why
+            # sentence. 950 was sized for the old bare-action format and the
+            # truncation guard below would have started firing.
+            **route.apply(dict(model=model_for("inventory_insight"), max_tokens=1200,
+                               messages=[{"role": "user", "content": prompt + _orch_inv.notes_block(notes)}])),
+        )
+        _res = extract_text(msg).strip()
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            raise ValueError("food cost insight was truncated")
+        # Strip any markdown that slips through
+        import re as _re_inv
+        _res = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), _res)
+        _res = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), _res)
+        _res = _re_inv.sub(r'#{1,6}\s', '', _res)
+        return _res, finish_food_read(_res, _ctx, served=False)
+
+    _run_inv = _orch_inv.generate(
+        "inventory_insight", restaurant_id, _food_read_attempt,
+        check=lambda res: _orch_inv.read_verdict(res[1], FOOD_READ_UNCHECKED),
+        subject=f"{FOOD_READ_SUBJECT}:{_now_inv.date().isoformat()}",
+        deadline=_orch_inv.escalation_deadline(),
+        context={"packet": _packet_inv.fingerprint if _packet_inv is not None else None})
+    result, out = _run_inv.result
+    if FOOD_READ_UNCHECKED in str(out):
+        import ai_utils as _ai_fb
+        _ai_fb.record_quality_event("inventory_insight", "fallback", restaurant_id=restaurant_id,
+                                    action="inventory_insight", detail="served the fixed unchecked-read copy")
     if _fp and out.strip():
         try:
             import insight_store as _ist2
@@ -1680,6 +1706,36 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
         except Exception as _pe:
             print(f"[inventory insight store] {_pe}")
     return out
+
+
+# The restaurant_context sections the food read renders (a subset of the
+# inventory_insight policy's context: the owner's rules and the memory come
+# through food_read_memory, the DATA STATE through the readiness gate), and
+# the run's subject.
+FOOD_READ_SECTIONS = ("profile",)
+FOOD_READ_SUBJECT = "food_read"
+
+
+def food_read_profile(restaurant_id) -> dict:
+    """The restaurant's profile as the food read reads it: the
+    restaurant_context "profile" section's data (menu and inventory notes)
+    with the packet under "_packet" — or, should the context manager be
+    unreadable, the restaurants row itself (no "_packet"), so the read
+    never loses a line it carried."""
+    try:
+        import restaurant_context
+        import memory_context
+        pk = restaurant_context.packet(restaurant_id, FOOD_READ_SECTIONS,
+                                       viewer=memory_context.team_viewer("food_read"))
+        prof = pk.section("profile")
+        if not prof.missing and prof.data:
+            return dict(prof.data, _packet=pk)
+    except Exception as e:
+        print(f"[inventory] context profile unreadable for {restaurant_id}: {e}")
+    from models import get_restaurant as _gr_inv
+    rest = _gr_inv(restaurant_id)
+    return {"menu_notes": getattr(rest, "menu_notes", None) or "",
+            "inventory_notes": getattr(rest, "inventory_notes", None) or ""} if rest else {}
 
 
 # Shown in place of a food read the Response Validation Layer refused
@@ -1905,10 +1961,12 @@ def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), 
                                 policy={"action": "inventory_insight"})
 
 
-def finish_food_read(text: str, ctx):
+def finish_food_read(text: str, ctx, served=True):
     """The food read to show (a response_validation.Validated str): the
     engine's text with the legacy UNVERIFIED line when it carries caveats,
-    or FOOD_READ_UNCHECKED when the engine refused it."""
+    or FOOD_READ_UNCHECKED when the engine refused it. `served` False is an
+    attempt inside an orchestrated run: its fallback is recorded by the
+    caller, only when it is the copy finally served."""
     import response_validation as rv
     out = rv.enforce(text, ctx)
     if str(out).strip():
@@ -1920,8 +1978,9 @@ def finish_food_read(text: str, ctx):
     _ai_q.record_quality_event("inventory_insight", "validation_refused", restaurant_id=ctx.restaurant_id,
                                action="inventory_insight", codes=codes,
                                detail=f"food read refused by validation: {', '.join(codes)}")
-    _ai_q.record_quality_event("inventory_insight", "fallback", restaurant_id=ctx.restaurant_id,
-                               action="inventory_insight", detail="served the fixed unchecked-read copy")
+    if served:
+        _ai_q.record_quality_event("inventory_insight", "fallback", restaurant_id=ctx.restaurant_id,
+                                   action="inventory_insight", detail="served the fixed unchecked-read copy")
     return rv.Validated(FOOD_READ_UNCHECKED, validation=out.validation, verdict=out.verdict)
 
 

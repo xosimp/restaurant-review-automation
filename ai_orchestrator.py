@@ -658,7 +658,9 @@ def subject_run(workflow, restaurant_id, subject, db_path=None):
 
 def verdict_from_validation(v) -> Verdict:
     """A Verdict from a response_validation verdict object or word: refuse →
-    validation_refuse, withhold → validation_withhold, pass / caveat → ok."""
+    validation_refuse, withhold → validation_withhold, pass / caveat → ok.
+    The reasons are the engine's own findings that set the text aside
+    (finding_reasons), so the next rung is told what to avoid."""
     word = getattr(v, "verdict", None) or getattr(v, "decision", None) or (v if isinstance(v, str) else None)
     reasons = []
     for attr in ("reasons", "details", "hits"):
@@ -666,8 +668,105 @@ def verdict_from_validation(v) -> Verdict:
         if val:
             reasons = [str(x) for x in (val if isinstance(val, (list, tuple)) else [val])][:4]
             break
+    if not reasons and getattr(v, "findings", None):
+        reasons = finding_reasons(v)
     if word in ("refuse", "refused"):
         return Verdict.failed("validation_refuse", *reasons, label="refuse")
     if word in ("withhold", "withheld"):
         return Verdict.failed("validation_withhold", *reasons, label="withhold")
     return Verdict.passed(label=word or "pass")
+
+
+# ── the reads' helpers (Phase 2, 10/7/26) ───────────────────────────────────
+
+# Findings whose span is never repeated to the model: a name or an echo of
+# guest text is exactly what must not be written again, and quoting it in a
+# note would hand it back.
+_NO_SPAN_RULES = ("N1", "T1", "I1", "S1")
+
+
+def finding_reasons(v, limit=4) -> list:
+    """Short, owner-safe reasons from a response_validation Verdict's
+    findings that refused, withheld or dropped text: the rule's own words
+    (response_validation.RULES) and, where safe, the words it caught."""
+    try:
+        import response_validation as rv
+        rules = rv.RULES
+    except Exception:
+        rules = {}
+    out = []
+    for f in getattr(v, "findings", None) or ():
+        if not isinstance(f, dict) or f.get("severity") not in ("refuse", "withhold", "drop"):
+            continue
+        what = rules.get(f.get("rule"), f.get("rule") or "a check failed")
+        span = " ".join(str(f.get("span") or "").split())[:60]
+        line = f'{what}: "{span}"' if span and f.get("rule") not in _NO_SPAN_RULES else what
+        if line not in out:
+            out.append(line)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def read_verdict(shown, fallback_text=None) -> Verdict:
+    """The check on one read attempt whose result is the text the owner
+    would be shown (a response_validation.Validated str): the engine's
+    verdict — and a refusal whenever the read had to serve its own fixed
+    copy (`fallback_text` in it), whatever word the verdict carried (an
+    empty answer leaves nothing standing without a "refuse" finding)."""
+    v = verdict_from_validation(getattr(shown, "verdict", None))
+    if v.ok and fallback_text and fallback_text in str(shown or ""):
+        return Verdict.failed("validation_refuse", "the check left nothing of the read standing", label="refuse")
+    return v
+
+
+def notes_block(notes) -> str:
+    """What the next rung's prompt is told about the attempt below it ("" on
+    the first attempt). The check's reasons only — never the earlier text."""
+    notes = [" ".join(str(n).split()) for n in (notes or ()) if str(n).strip()]
+    if not notes:
+        return ""
+    return ("\n\nAN EARLIER DRAFT OF THIS WAS SET ASIDE by the check that holds every line to the data above, "
+            "for these reasons — write it again without them:\n" + "\n".join(f"- {n}" for n in notes[:6]))
+
+
+# An interactive read escalates only while the owner is still within the
+# time one read takes (design, 10/7/26: never make an owner wait twice). The
+# orchestrator checks the deadline before each rung: a first attempt that
+# took longer than this leaves no room, and the read's own fallback is served.
+INTERACTIVE_ESCALATION_SECONDS = float(os.getenv("AI_INTERACTIVE_ESCALATION_SECONDS", "20"))
+
+
+def escalation_deadline(seconds=None) -> float:
+    """The `deadline` an interactive read passes to generate()."""
+    return time.time() + float(INTERACTIVE_ESCALATION_SECONDS if seconds is None else seconds)
+
+
+OUTCOME_LOOKBACK_DAYS = 14
+
+
+def record_latest_outcome(workflow, restaurant_id, outcome, subject_prefix=None, detail=None, db_path=None,
+                          within_days=OUTCOME_LOOKBACK_DAYS) -> bool:
+    """record_outcome against the newest finished run of `workflow` for the
+    restaurant (whose subject starts with `subject_prefix`), within
+    `within_days`: an owner answers a read's line days after the run that
+    wrote it, and a stored read is served without a new run. Never raises."""
+    try:
+        conn = _conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT run_id FROM ai_runs WHERE workflow=? AND restaurant_id IS ? AND shadow_of IS NULL "
+                "AND status='ok' AND created_at >= datetime('now', ?) "
+                + ("AND subject LIKE ? " if subject_prefix else "")
+                + "ORDER BY created_at DESC LIMIT 1",
+                (workflow, restaurant_id, f"-{int(within_days)} days")
+                + ((str(subject_prefix) + "%",) if subject_prefix else ())).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("no run to file the outcome on (%s): %s", workflow, e)
+        return False
+    if not row:
+        return False
+    return record_outcome(workflow, restaurant_id, None, outcome, detail=detail, run_id=row["run_id"],
+                          db_path=db_path)
