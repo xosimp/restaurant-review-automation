@@ -58,6 +58,16 @@ struct AddCompetitorSheet: View {
                         isSearching = false
                     }
                 }
+                // Why an add was refused (the ten owner-added cap), under the
+                // search field; after its .onChange, which belongs to the field.
+                if let addError {
+                    Text(addError)
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarRed)
+                        .lineSpacing(3)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
 
                 // Why an add was refused (the ten owner-added cap), under the
                 // search field — a view after the field's modifier chain, never
