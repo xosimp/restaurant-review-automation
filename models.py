@@ -4395,6 +4395,11 @@ def init_db(db_path: str = DB_PATH):
     # attribution columns — at boot, never on a call path (fix round G).
     from ai_utils import init_ai_ops
     init_ai_ops(db_path)
+    # The orchestration tables (ai_runs, route overrides, recommendations,
+    # kept requests) and the ledger's correlation index — after ai_usage
+    # exists (AI orchestration design, 10/7/26).
+    import ai_orchestrator as _ai_orch
+    _ai_orch.init_ai_orchestration(db_path)
     # The lasting, attributed change history (change_log, kept forever) and
     # the one-time carry-over of the target and profile changes activity_log
     # holds — memory audit 9/29/26. At boot, never on a write path.
