@@ -254,9 +254,16 @@ def test_the_rules_screen_names_its_conflicts_in_words(page):
 
 def test_the_roster_row_carries_the_persons_scheduling_facts(page):
     r = _fn(page, "renderRoster")
-    for piece in ("window._sfw2Roster=d", "ch.certification_labels", "can_edit_owner_facts", "sfw2RosterFacts(e,ro,ownerRo)",
+    for piece in ("window._sfw2Roster=d", "ch.certification_labels", "can_edit_owner_facts",
                   "sfw2RosterPills(e)", "sfw2RosterAlso(e)", "sfw2RosterAfter(e,ro)"):
         assert piece in r, piece
+    # The facts live in the person sheet's scheduling half (owner, 10/7/26:
+    # one place per person, Details), not under the row.
+    sheet = _fn(page, "_rstSheetInner")
+    for piece in ("sfw2RosterFacts(e,ro,ownerRo)", "data-rst-day=", 'data-rst-wf=\"earliest\"', "data-rst-certs=",
+                  "What they said", "Trained up"):
+        assert piece in sheet, piece
+    assert "data-rst-toggle" not in page and "_rosterOpen" not in page, "the row no longer opens in place"
     b = _block(page, "cav-sfw2")
     facts = _fn(b, "sfw2RosterFacts")
     for piece in ("r.floor_manager", "st.acting_manager", "st.standing_shifts", "st.trainee", "st.closes_for",
@@ -408,7 +415,8 @@ def test_time_off_reads_the_part_of_the_day(page):
 
 def test_the_person_sheet_labels_certificates(page):
     render = page[page.index("function personRender"):page.index("function ppSave")]
-    assert "ch.certification_labels" in render
+    assert "rstSheetHtml(p.name)" in render and "data-pp-day" not in render and "data-pp-cert" not in render
+    assert "_certLabel" in _fn(page, "_rstSheetInner")
 
 
 def test_new_patterns_are_documented():

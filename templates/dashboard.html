@@ -725,6 +725,19 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
    one person's facts: .ac-field rows that save on change, an .ac-status. */
 #person-body .ps-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;margin:10px 0 4px}
 #person-body .sr-k{margin:26px 0 4px}
+/* The scheduling half (rstSheetHtml): one row a day - the day, its part of
+   the day, from, until - then the roster's facts two to a row. */
+#person-inner{max-width:640px}
+#person-body .pp-av{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+#person-body .pp-av-row{display:grid;grid-template-columns:96px minmax(0,1fr) 112px 112px;gap:10px;align-items:center}
+#person-body .pp-av-row .dy{font-size:13.5px;font-weight:600;color:var(--ink)}
+#person-body .pp-av-row .ac-input{text-align:center;padding:0 8px}
+#person-body .pp-av-row .ac-select.morning,#person-body .pp-av-row .ac-select.night{color:var(--ember);font-weight:600}
+#person-body .pp-av-row .ac-select.off{color:var(--ink3)}
+#person-body .pp-roster .rst-cap{padding:8px 0 0}
+#person-body .pp-roster .rst-more{padding:18px 0 0;gap:18px}
+#person-body .pp-roster .rst-more>div{min-width:240px}
+@media (max-width:560px){ #person-body .pp-av-row{grid-template-columns:1fr 1fr} #person-body .pp-av-row .dy{grid-column:1/-1} }
 #person-body label{font-size:12px;color:#c8bfb0}
 /* One field size, branded (owner, 9/26/26): Safari's native selects sat
    30px tall beside 50px inputs, in a grid that wrapped three to a row. */
@@ -10797,15 +10810,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .rst-tbl th.r{text-align:right}
 .rst-tbl td{padding:9px 8px 9px 0;border-bottom:1px solid var(--hb-line2);vertical-align:middle;color:var(--ink2)}
 .rst-tbl td.r{text-align:right}
-.rst-tbl .nm{font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap}
+.rst-tbl .nm{font-weight:600;color:var(--ink);white-space:nowrap}
 .rst-tbl .nm small{display:block;font-size:12px;color:var(--ink3);font-weight:400}
-.rst-tbl .nm .car{display:inline-block;margin-left:6px;color:var(--ink3);transition:transform .2s ease;font-size:11px}
-.rst-tbl tr.open .nm .car{transform:rotate(180deg);color:var(--ember)}
 .rst-tbl tr.off td{opacity:.5}
 .rst-tbl tr.off .nm small{color:var(--hb-warn)}
 .rst-tbl .ac-input,.rst-tbl .ac-select{padding:5px 8px;font-size:13.5px;border-radius:7px;width:auto}
 .rst-tbl .hrs{width:62px;text-align:center}
-.rst-tbl .rst-grid td{padding:10px 0 14px;background:var(--sf-recess)}
 .rst-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:0 10px}
 .rst-days>div{text-align:center}
 .rst-days .dy{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
@@ -34530,7 +34540,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   function _chipVals(box,attr){var out=[],els=box?box.querySelectorAll('.ct.on['+attr+']'):[],i;for(i=0;i<els.length;i++)out.push(els[i].getAttribute(attr));return out;}
 
   // ── Roster & settings ──
-  var _roster=null,_rosterOpen={};
+  var _roster=null;
   var _EMP_LABELS={full:'Full time',part:'Part time'};
   var _DP_LABELS={any:'any',morning:'morning',night:'night',off:'off'};
   window.toggleRosterPanel=function(){_lbToggle('roster',loadRoster,'Manage ↓');};
@@ -34549,7 +34559,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // one POST, one toast.
   document.addEventListener('change',function(ev){
     var t=ev.target;if(!t||!t.getAttribute||t.getAttribute('data-rst-win')===null)return;
-    var tr=t;while(tr&&tr.tagName!=='TR')tr=tr.parentNode;if(!tr)return;
+    var tr=t;while(tr&&tr.getAttribute&&tr.getAttribute('data-rst')===null)tr=tr.parentNode;if(!tr||!tr.getAttribute)return;
     var name=tr.getAttribute('data-rst');if(!name)return;
     var ins=tr.querySelectorAll('[data-rst-win]'),win={},i;
     for(i=0;i<ins.length;i++){var dy=ins[i].getAttribute('data-rst-win'),f=ins[i].getAttribute('data-rst-wf'),v=ins[i].value.trim();if(!v)continue;win[dy]=win[dy]||{};win[dy][f]=v;}
@@ -34661,7 +34671,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // (schedule fix round 10/3/26, cav-sfw2); "Set standing shifts" on the
     // rules screen opens the person it names.
     window._sfw2Roster=d;if(ch.certification_labels)_certLabels=ch.certification_labels;
-    if(window._sfw2OpenPerson){_rosterOpen[window._sfw2OpenPerson]=true;window._sfw2OpenPerson=null;}
+    if(window._sfw2OpenPerson){var _op=window._sfw2OpenPerson;window._sfw2OpenPerson=null;if(window.openPersonSheet)openPersonSheet(_op);}
     var ownerRo=!d.can_edit_owner_facts;
     var days=ch.days||_RV_DAYS,types=ch.employment_type||['full','part'],dps=ch.daypart||['any','morning','night','off'];
     for(i=0;i<list.length;i++)if(_rstActive(list[i]))active++;
@@ -34670,9 +34680,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var h=(ro?'<div class="lb2-ro">Your login can view the team but not change their settings.</div>':'')
       +'<div style="overflow-x:auto"><table class="rst-tbl"><thead><tr><th>Name</th><th>Score</th><th>Reliability</th><th>On roster</th><th>Type</th><th>Min h</th><th>Max h</th><th>Under 18</th></tr></thead><tbody>';
     for(i=0;i<list.length;i++){
-      var e=list[i],st=e.settings||{},on=_rstActive(e),open=!!_rosterOpen[e.name],nm=esc(e.name);
-      h+='<tr class="'+(on?'':'off')+(open?' open':'')+'" data-rst="'+nm+'">'
-        +'<td class="nm" data-rst-toggle="'+nm+'">'+nm+'<span class="car">&#9662;</span> <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="'+nm+'">Details</button>'+(window.sfw2RosterPills?sfw2RosterPills(e):'')+'<small>'+esc(e.role||'')+(on?'':((e.role?' · ':'')+'not on the roster'))+(window.sfw2RosterAlso?sfw2RosterAlso(e):'')+'</small></td>'
+      var e=list[i],st=e.settings||{},on=_rstActive(e),nm=esc(e.name);
+      h+='<tr class="'+(on?'':'off')+'" data-rst="'+nm+'">'
+        // One place per person: Details (owner, 10/7/26 - the row's own
+        // dropdown repeated the sheet). Its settings live in the sheet.
+        +'<td class="nm">'+nm+' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="'+nm+'">Details</button>'+(window.sfw2RosterPills?sfw2RosterPills(e):'')+'<small>'+esc(e.role||'')+(on?'':((e.role?' · ':'')+'not on the roster'))+(window.sfw2RosterAlso?sfw2RosterAlso(e):'')+'</small></td>'
         +'<td>'+(e.score?'<span class="rst-score" title="Operational Score">'+esc(e.score)+'</span>':'<span class="rst-score none" title="Not rated yet">—</span>')+'</td>'
         +'<td>'+_rstRel(e.reliability)+'</td>'
         +'<td>'+_lbSw('active',on,ro)+'</td>'
@@ -34687,16 +34699,32 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +'</span></td></tr>';
       // Not worked in six weeks: Deactivate or Still here (E-3).
       if(window.sfw2RosterAfter)h+=sfw2RosterAfter(e,ro);
-      if(open){
-        var av=st.daypart_availability||{},tw=st.time_windows||{},certs=st.certifications||[],j;
-        h+='<tr class="rst-grid" data-rst="'+nm+'"><td colspan="8"><div class="rst-days">';
-        for(j=0;j<days.length;j++){var v=av[days[j]]||'any';h+='<div><div class="dy">'+esc(days[j].slice(0,3))+'</div><select class="ac-select '+esc(v)+'" data-rst-day="'+esc(days[j])+'" aria-label="'+esc(days[j])+'"'+(ro?' disabled':'')+'>'+_lbOpts(dps,v,_DP_LABELS)+'</select></div>';}
-        h+='</div><div class="rst-cap">any = either shift &middot; morning / night = only that one &middot; off = never that day'+(e.last_worked?' &middot; last worked '+esc(mdy(e.last_worked)):'')+(e.can_close?' &middot; can close':'')+'</div>';
-        // Earliest start and latest finish per weekday — the hours they
-        // can work, tighter than a daypart.
-        h+='<div class="rst-win">';
-        for(j=0;j<days.length;j++){var w=tw[days[j]]||{};h+='<div><div class="dy">'+esc(days[j].slice(0,3))+'</div><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="earliest" value="'+esc(w.earliest||'')+'" placeholder="from" aria-label="'+esc(days[j])+' earliest start" maxlength="8"'+(ro?' disabled':'')+'><input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="latest" value="'+esc(w.latest||'')+'" placeholder="until" aria-label="'+esc(days[j])+' latest finish" maxlength="8"'+(ro?' disabled':'')+'></div>';}
-        h+='</div><div class="rst-cap">Earliest start and latest finish, like 10:00am and 9:00pm. Blank means any time.</div>';
+    }
+    el.innerHTML=h+'</tbody></table></div>';
+    _rstPairs();
+    // The person sheet's scheduling half reads the same roster.
+    var pp=document.getElementById('pp-roster');if(pp)pp.innerHTML=_rstSheetInner(pp.getAttribute('data-rst'));
+  };
+  /* The person sheet's scheduling half (owner, 10/7/26: one place per
+     person, the Details sheet): each day's part of the day with its
+     earliest start and latest finish on one row, then who runs the floor,
+     standing shifts, training, closes for, reliability, experience,
+     certifications, what they said and what they are trained up on. It
+     saves through the roster's own handlers (data-rst on its box). */
+  function _rstEntry(name){var list=(_roster&&_roster.roster)||[],k=String(name||'').replace(/\s+/g,' ').replace(/^\s+|\s+$/g,'').toLowerCase(),i;
+    for(i=0;i<list.length;i++)if(String(list[i].name||'').replace(/\s+/g,' ').replace(/^\s+|\s+$/g,'').toLowerCase()===k)return list[i];return null;}
+  function _rstSheetInner(name){
+    var d=_roster,e=_rstEntry(name);
+    if(!d)return '<div class="dr-pulse" role="status" aria-label="Loading"><i></i></div>';
+    if(!e)return '<div class="sr-note">Not on the scheduling roster yet — they show up once they work a shift or are added to the team.</div>';
+    var ro=!d.can_edit,ownerRo=!d.can_edit_owner_facts,ch=d.choices||{},days=ch.days||_RV_DAYS,dps=ch.daypart||['any','morning','night','off'];
+    var st=e.settings||{},av=st.daypart_availability||{},tw=st.time_windows||{},certs=st.certifications||[],nm=esc(e.name),j,h='<div class="pp-av">';
+    for(j=0;j<days.length;j++){var v=av[days[j]]||'any',w=tw[days[j]]||{};
+      h+='<div class="pp-av-row"><span class="dy">'+esc(days[j])+'</span>'
+        +'<div class="ac-field"><select class="ac-select '+esc(v)+'" data-rst-day="'+esc(days[j])+'" aria-label="'+esc(days[j])+'"'+(ro?' disabled':'')+'>'+_lbOpts(dps,v,{any:'Any time',morning:'Mornings',night:'Nights',off:'Off'})+'</select></div>'
+        +'<input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="earliest" value="'+esc(w.earliest||'')+'" placeholder="from" aria-label="'+esc(days[j])+' earliest start" maxlength="8"'+(ro?' disabled':'')+'>'
+        +'<input class="ac-input" data-rst-win="'+esc(days[j])+'" data-rst-wf="latest" value="'+esc(w.latest||'')+'" placeholder="until" aria-label="'+esc(days[j])+' latest finish" maxlength="8"'+(ro?' disabled':'')+'></div>';}
+    h+='</div><div class="rst-cap">Mornings or Nights = only that part of the day · Off = never that day. From and until, like 10:00am and 9:00pm; blank means any time.'+(e.last_worked?' Last worked '+esc(mdy(e.last_worked))+'.':'')+'</div>';
         h+='<div class="rst-more">';
         // Who runs the floor and who stands in, the days they always work,
         // training, the roles they close for and their reliability
@@ -34710,12 +34738,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         h+='<div><div class="k">What they said</div><div class="said">'+(said.length?said.join(' · '):'Nothing stated yet')+'<small>From the staff portal. A wish the draft honours where coverage allows; it is theirs to change.</small></div></div>';
         var up=((window._laborIntel||{}).could_hold||{})[e.name]||[];
         h+='<div><div class="k">Trained up</div><div>'+(up.length?up.map(function(r){return '<span class="rst-up">'+esc(r)+'</span>';}).join(''):'<span class="said" style="color:var(--ink3)">'+(window._laborIntel?'No station they have shadowed enough to hold yet.':'<span class="dr-pulse" role="status" aria-label="Loading"><i></i></span>')+'</span>')+'</div></div>';
-        h+='</div></td></tr>';
-      }
-    }
-    el.innerHTML=h+'</tbody></table></div>';
-    _rstPairs();
-  };
+    return h+'</div>';
+  }
+  window.rstSheetHtml=function(name){var e=_rstEntry(name);if(!_roster&&window.loadRoster)loadRoster();
+    return '<div id="pp-roster" class="pp-roster" data-rst="'+esc(e?e.name:name)+'">'+_rstSheetInner(name)+'</div>';};
   function _rstFind(name){var list=(_roster&&_roster.roster)||[],i;for(i=0;i<list.length;i++)if(list[i].name===name)return list[i];return null;}
   function _rstSave(name,patch,after){
     patch.employee_name=name;
@@ -34729,9 +34755,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   }
   document.addEventListener('change',function(ev){
     var t=ev.target;if(!t||!t.getAttribute)return;
-    var body=document.getElementById('roster-body');if(!body||!body.contains(t))return;
-    var tr=t;while(tr&&tr.tagName!=='TR')tr=tr.parentNode;
-    if(!tr)return;
+    var body=document.getElementById('roster-body'),sheet=document.getElementById('pp-roster');
+    if(!(body&&body.contains(t))&&!(sheet&&sheet.contains(t)))return;
+    var tr=t;while(tr&&tr.getAttribute&&tr.getAttribute('data-rst')===null)tr=tr.parentNode;
+    if(!tr||!tr.getAttribute)return;
     var name=tr.getAttribute('data-rst');if(!name)return;
     var f=t.getAttribute('data-rst-f'),day=t.getAttribute('data-rst-day'),patch={};
     if(f==='active'||f==='is_minor'||f==='experienced')patch[f]=!!t.checked;
@@ -34744,13 +34771,6 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       t.className='ac-select '+t.value;
     } else return;
     _rstSave(name,patch,(f==='active'||f==='is_minor')?renderRoster:null);
-  });
-  document.addEventListener('click',function(ev){
-    var t=ev.target;if(!t||!t.getAttribute)return;
-    var el=t;while(el&&el.getAttribute&&el.getAttribute('data-rst-toggle')===null)el=el.parentNode;
-    if(!el||!el.getAttribute)return;
-    var name=el.getAttribute('data-rst-toggle');if(name===null)return;
-    _rosterOpen[name]=!_rosterOpen[name];renderRoster();
   });
   function _rstPairs(){
     var d=_roster,el=document.getElementById('roster-pairs'),fm=document.getElementById('roster-pair-form');if(!el||!fm)return;
@@ -37804,15 +37824,11 @@ window.cavPalette = cavPalette;
     h += '</select></div>'
        + '<div class="ac-field"><label for="pp-min">Min h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-min" data-pp="min_hours" value="' + e(hr.min_hours == null ? '' : hr.min_hours) + '"' + dis + '></div>'
        + '<div class="ac-field"><label for="pp-max">Max h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-max" data-pp="max_hours" value="' + e(hr.max_hours == null ? '' : hr.max_hours) + '"' + dis + '></div></div>';
-    if (hr.desired_hours || (p.availability && (p.availability.preferred_dayparts || []).length)) h += '<div class="sr-note">They asked for ' + (hr.desired_hours ? '<span class="hb-num">' + e(hr.desired_hours) + 'h</span> a week' : '') + ((p.availability.preferred_dayparts || []).length ? (hr.desired_hours ? ', ' : '') + e(p.availability.preferred_dayparts.join(' and ')) : '') + '.</div>';
-    var days = ch.days || [], dps = ch.daypart || ['any', 'morning', 'night', 'off'], av = (p.availability || {}).dayparts || {};
-    h += '<div class="sr-k">Availability</div><div class="ps-grid">';
-    for (i = 0; i < days.length; i++) {
-      h += '<div class="ac-field"><label for="pp-d' + i + '">' + e(days[i]) + '</label><select class="ac-select" id="pp-d' + i + '" data-pp-day="' + e(days[i]) + '"' + dis + '>';
-      for (var k = 0; k < dps.length; k++) h += opt(dps[k], dps[k] === 'any' ? 'Any time' : (dps[k] === 'morning' ? 'Mornings' : (dps[k] === 'night' ? 'Nights' : 'Off')), av[days[i]] || 'any');
-      h += '</select></div>';
-    }
-    h += '</div>';
+    /* Availability and the scheduling facts are the roster's, here and
+       nowhere else on the Team list (owner, 10/7/26): each day's part of the
+       day with from / until, then floor, standing shifts, training, closes
+       for, reliability, experience, certifications, what they said. */
+    h += '<div class="sr-k">Availability</div>' + (window.rstSheetHtml ? rstSheetHtml(p.name) : '');
     var portal = (p.availability || {}).portal;
     if (portal && portal.updated_at) h += '<div class="sr-note">What they said in the staff portal is kept with the next draft too (updated <span class="hb-num">' + e(md(portal.updated_at)) + '</span>).</div>';
     var rt = p.rating || {};
@@ -37820,16 +37836,6 @@ window.cavPalette = cavPalette;
        + '<div class="ac-field"><label for="pp-rate">Operational Score</label><select class="ac-select" id="pp-rate" data-pp="rating"' + dis + '>' + opt('', 'Not rated', rt.score);
     for (i = 1; i <= 5; i++) h += opt(i, String(i), rt.score);
     h += '</select></div><div class="ac-field"><label for="pp-close">Can close</label><label class="ac-switch"><input type="checkbox" id="pp-close" data-pp="can_close"' + (rt.can_close ? ' checked' : '') + dis + '><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>';
-    var certs = ch.certifications || [], have = p.certifications || [];
-    h += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
-    for (i = 0; i < certs.length; i++) {
-      var on = have.indexOf(certs[i]) !== -1;
-      /* Each certificate in its own words (schedule audit 10/3/26 E-15):
-         "Floor manager (can run the shift)" apart from the food-safety card. */
-      var cl = (ch.certification_labels || {})[certs[i]] || (certs[i].charAt(0).toUpperCase() + certs[i].slice(1).replace(/_/g, ' '));
-      h += '<button type="button" class="cbtn cbtn-sm ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + '" data-pp-cert="' + e(certs[i]) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + dis + '>' + e(cl) + '</button>';
-    }
-    h += '</div>';
     var pr = p.pay_rate;
     if (pr) h += '<div class="sr-k">Pay</div><div>' + (pr.rate ? '<span class="hb-num">$' + e((+pr.rate).toFixed(2)) + '</span>/h — ' + (pr.source === 'role' ? 'the ' + e(pr.role) + ' rate' : 'the blended rate') : 'No rate on file') + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="closePersonSheet();if(window.acctGo)acctGo(\'restaurant\',\'as-tg-card\');else if(window.cavNav)cavNav(\'account/restaurant\')">Set rates</button></div>';
     if (p.can_manage_login && p.has_login) {
@@ -37861,12 +37867,8 @@ window.cavPalette = cavPalette;
   };
   document.addEventListener('change', function (ev) {
     var t = ev.target; if (!t || !t.getAttribute || !_person) return;
-    var f = t.getAttribute('data-pp'), day = t.getAttribute('data-pp-day'), body = {};
-    if (day) {
-      var sels = document.querySelectorAll('#person-body [data-pp-day]'), av = {}, i;
-      for (i = 0; i < sels.length; i++) av[sels[i].getAttribute('data-pp-day')] = sels[i].value;
-      ppSave({daypart_availability: av}); return;
-    }
+    // Availability and certificates save through the roster (rstSheetHtml).
+    var f = t.getAttribute('data-pp'), body = {};
     if (!f) return;
     if (f === 'can_close' || f === 'active') body[f] = !!t.checked;
     else if (f === 'rating') body.rating = t.value === '' ? null : +t.value;
@@ -37880,13 +37882,6 @@ window.cavPalette = cavPalette;
   document.addEventListener('click', function (ev) {
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-person-open]') : null;
     if (t) { ev.preventDefault(); ev.stopPropagation(); openPersonSheet(t.getAttribute('data-person-open')); return; }
-    var c = ev.target && ev.target.closest ? ev.target.closest('[data-pp-cert]') : null;
-    if (c && _person && !c.disabled) {
-      var have = (_person.certifications || []).slice(), k = c.getAttribute('data-pp-cert'), at = have.indexOf(k);
-      if (at === -1) have.push(k); else have.splice(at, 1);
-      ppSave({certifications: have});
-      return;
-    }
     var m = $id('person-modal');
     if (m && ev.target === m) closePersonSheet();
   }, true);
@@ -40591,8 +40586,8 @@ function sfw2RuleCheck(chk) {
     return out;
   }
   document.addEventListener('click', function (ev) {
-    var body = $id('roster-body'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dorm],[data-sfw2-open]') : null;
-    if (!t || !body || !body.contains(t) || t.disabled) return;
+    var body = $id('roster-body'), sheet = $id('pp-roster'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dorm],[data-sfw2-open]') : null;
+    if (!t || !((body && body.contains(t)) || (sheet && sheet.contains(t))) || t.disabled) return;
     var cfBox = t.closest('[data-sfw2-cf-box]'), name = t.getAttribute('data-name') || (cfBox ? cfBox.getAttribute('data-sfw2-cf-box') : '');
     var r = entry(name), st = (r && r.settings) || {}, v, list, i;
     if (t.hasAttribute('data-sfw2-open')) {
