@@ -5058,6 +5058,9 @@ def _do_ask_feedback(u):
     try:
         import ask_cavnar
         ask_cavnar.invalidate_context(_rid(u))
+        # The rating is the outcome of the turn's ai_runs row (AI
+        # orchestration, 10/7/26): helpful = accepted, not = corrected.
+        ask_cavnar.record_feedback_outcome(_rid(u), mid, helpful, authority=authority)
     except Exception as e:
         print(f"[ask] context not refreshed after feedback rid={_rid(u)}: {e}")
     # What their ratings now say about answer length — a preference they can

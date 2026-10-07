@@ -319,6 +319,94 @@ def last_answer_read_public(restaurant_id, conversation_id, viewer_id=None, db_p
         return True
 
 
+# ── the last answer's reads, replayed (AI cost audit 10/7/26 #65) ───────────
+#
+# A follow-up ("and last week?", "why?") was told what the last answer read
+# and to read it again — a tool round, the whole turn re-sent, for data the
+# model had seconds ago. For REPLAY_SECONDS after an answer its compact read
+# results are kept here, per chat and per login, and the next turn in that
+# chat is handed them as its first tool results (ask_cavnar.ask_with_tools):
+# in the corpus its figures are checked against, and carrying the public-
+# text flag exactly as a read made in the turn would. In-process and
+# bounded (a concurrency-free cache like the snapshot's — one gunicorn
+# worker, CLAUDE.md); anything that changes the data under them drops them
+# (ask_cavnar.invalidate_context). Only a result up to REPLAY_PAYLOAD_CHARS
+# is kept whole — a larger one is never cut (cut JSON is not the data); it
+# is read again as before.
+REPLAY_SECONDS = 600
+REPLAY_PAYLOAD_CHARS = 4000
+REPLAY_TOTAL_CHARS = 10000
+REPLAY_MAX_READS = 6
+_REPLAY_MAX = 2000
+_REPLAYS = {}
+_REPLAYS_LOCK = threading.Lock()
+
+
+def remember_reads(restaurant_id, conversation_id, viewer_id, reads, read_public=False):
+    """Keep one answer's read results ([(name, input, payload, read_at)] —
+    read_at the time.time() the data was read: a replayed read keeps its
+    own, so a chain of follow-ups never keeps data past REPLAY_SECONDS) for
+    the chat's next turn. Replaces whatever the chat kept before (only the
+    LAST answer's reads are replayed); an answer that read nothing keepable
+    clears it."""
+    import time as _t
+    if not restaurant_id or not conversation_id:
+        return
+    key = (int(restaurant_id), int(conversation_id), viewer_id)
+    kept, total = [], 0
+    now = _t.time()
+    for r in reads or ():
+        name, tool_input, payload = r[0], r[1], r[2]
+        at = float(r[3]) if len(r) > 3 and r[3] else now
+        if now - at >= REPLAY_SECONDS:
+            continue
+        text = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+        if len(text) > REPLAY_PAYLOAD_CHARS or total + len(text) > REPLAY_TOTAL_CHARS:
+            continue
+        kept.append({"name": str(name), "input": dict(tool_input or {}), "payload": text, "at": at})
+        total += len(text)
+        if len(kept) >= REPLAY_MAX_READS:
+            break
+    with _REPLAYS_LOCK:
+        _REPLAYS.pop(key, None)
+        if not kept:
+            return
+        while len(_REPLAYS) >= _REPLAY_MAX:
+            _REPLAYS.pop(next(iter(_REPLAYS)), None)
+        _REPLAYS[key] = (now, kept, bool(read_public))
+
+
+def replay_reads(restaurant_id, conversation_id, viewer_id):
+    """(age_seconds of the oldest read, [{name, input, payload, at}],
+    read_public) — the chat's last answer's reads still under REPLAY_SECONDS
+    old — or None."""
+    import time as _t
+    if not restaurant_id or not conversation_id:
+        return None
+    key = (int(restaurant_id), int(conversation_id), viewer_id)
+    now = _t.time()
+    with _REPLAYS_LOCK:
+        hit = _REPLAYS.get(key)
+    if not hit:
+        return None
+    reads = [dict(r) for r in hit[1] if now - r["at"] < REPLAY_SECONDS]
+    if not reads:
+        with _REPLAYS_LOCK:
+            _REPLAYS.pop(key, None)
+        return None
+    return now - min(r["at"] for r in reads), reads, hit[2]
+
+
+def forget_reads(restaurant_id=None):
+    """Drop the kept reads of a restaurant (or all) — the data under them changed."""
+    with _REPLAYS_LOCK:
+        if restaurant_id is None:
+            _REPLAYS.clear()
+            return
+        for k in [k for k in _REPLAYS if k[0] == int(restaurant_id)]:
+            _REPLAYS.pop(k, None)
+
+
 def _call_text(t):
     args = t.get("input") or {}
     try:
@@ -363,9 +451,15 @@ def memory_lines(req):
             calls = last_answer_tools(rid, cid, viewer_id=uid, db_path=req.db_path)
             if calls:
                 # Only the reads that ran are stored (PROMPTS-5): this names
-                # what was read, never an action to repeat.
+                # what was read, never an action to repeat. While its results
+                # are kept (#65) they are this turn's first tool results.
+                fresh = replay_reads(rid, cid, uid)
+                then = (". The results kept from it are this turn's first tool results — use them, and read "
+                        "again only for data they do not carry or when the owner asks for fresh figures; never "
+                        "guess it." if fresh else
+                        ". Re-read with the read tools if you need that data — never guess it.")
                 out.append({"text": ("Your last answer in this chat read: " + "; ".join(_call_text(t) for t in calls[:8])
-                                     + ". Re-read with the read tools if you need that data — never guess it."),
+                                     + then),
                             "source": "system", "trusted": False, "weight": 7.0, "subject": f"conversation:{cid}"})
     if uid is not None:
         line = often_asks_line(rid, uid, db_path=req.db_path)

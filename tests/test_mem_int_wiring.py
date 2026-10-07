@@ -288,13 +288,22 @@ GENERATORS = [
     ("restaurant_context", None, "context_memory"),
 ]
 
+# Generators that read their surface through the Restaurant Context
+# Manager's "memory" section (restaurant_context.build_memory calls
+# memory_context with the surface they name — AI orchestration, 10/7/26)
+# rather than calling memory_context themselves.
+VIA_CONTEXT_MANAGER = {("dsr.narrative", "_memory"), ("ask_cavnar", "_memory_context")}
+
 
 def test_every_generator_the_reports_name_reads_memory_context():
     import importlib
     for mod_name, fn, surface in GENERATORS:
         mod = importlib.import_module(mod_name)
         src = inspect.getsource(getattr(mod, fn)) if fn else inspect.getsource(mod)
-        assert "memory_context(" in src, (mod_name, fn)
+        if (mod_name, fn) in VIA_CONTEXT_MANAGER:
+            assert 'restaurant_context.section(' in src and '"memory"' in src, (mod_name, fn)
+        else:
+            assert "memory_context(" in src, (mod_name, fn)
         if surface:
             assert f'"{surface}"' in src, (mod_name, fn, surface)
     # Each surface a generator reads is one SURFACE_SECTIONS knows.
@@ -336,7 +345,12 @@ def test_every_memory_context_call_site_is_a_listed_generator():
             continue
         if re.search(r"\.memory_context\(", text):
             sites.add(rel[:-3].replace("/", "."))
-    assert sites == {m for m, _f, _s in GENERATORS}, sites ^ {m for m, _f, _s in GENERATORS}
+    # A module whose every generator reads through the context manager has
+    # no call of its own (restaurant_context is the call site).
+    direct = {m for m, f, _s in GENERATORS
+              if (m, f) not in VIA_CONTEXT_MANAGER
+              or any(m2 == m and (m2, f2) not in VIA_CONTEXT_MANAGER for m2, f2, _s2 in GENERATORS)}
+    assert sites == direct, sites ^ direct
 
 
 def test_every_registered_memory_table_has_a_floor_and_readers_and_answers_are_kept():

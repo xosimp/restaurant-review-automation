@@ -48,8 +48,10 @@ ALLOWLIST = {
 # (module, function that calls the model) → the function in the same module
 # that runs the engine on its output.
 VALIDATED_IN = {
-    # _write → verify → check_item → Facts.rv_check (validate_lines per item).
-    ("dsr/narrative.py", "_write"): "rv_check",
+    # run (the night's dsr_narrative workflow run, AI orchestration 10/7/26 —
+    # the call moved out of _write into its attempt) → _judge → _assemble →
+    # verify → check_item → Facts.rv_check (validate_lines per item).
+    ("dsr/narrative.py", "run"): "rv_check",
 }
 
 # Callers of ask_cavnar.ask_with_tools that only relay its answer: the answer
