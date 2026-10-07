@@ -151,8 +151,9 @@ def strong_reply():
         ],
         "biggest_risk": None,
         "biggest_win": _it("Net sales were 15.3% above last Saturday.", "sales.net", "sales.net_last_week"),
-        "biggest_financial_opportunity": _it("Food cost drivers carry $640 a month that can be recovered.",
-                                             "food.recoverable_monthly"),
+        # AI cost audit 10/7/26 #78: this fixture wrote the same $640 into
+        # biggest_financial_opportunity AND largest_opportunity (below) — the
+        # duplicate the merge removed. The reply is the current schema's.
         "biggest_staffing_concern": None,
         "actions_tomorrow": [
             _act("Order extra brioche buns before service.", "Brioche buns are one of 2 items low on stock.",
@@ -174,7 +175,6 @@ def strong_reply():
         "largest_opportunity": _it("About $640 a month of food cost could be recovered.",
                                    "food.recoverable_monthly"),
         "largest_guest_experience": None,
-        "largest_staffing": None,
     }
 
 
@@ -195,8 +195,6 @@ def weak_reply():
         "biggest_risk": _it("Estimated food cost is running 2.6 points over its 30% target.", "food.est_cost_pct",
                             "food.target_pct"),
         "biggest_win": None,
-        "biggest_financial_opportunity": _it("$1,180 a month in food cost is recoverable.",
-                                             "food.recoverable_monthly"),
         "biggest_staffing_concern": _it("2 no-shows left the floor short.", "labor.no_shows"),
         "actions_tomorrow": [
             _act("Cut one server from Tuesday dinner on the next schedule.",
@@ -206,9 +204,9 @@ def weak_reply():
                  ["reviews.urgent"]),
         ],
         "highest_priority_issue": _it("Labor at 34.8% is the night's biggest miss.", "labor.pct"),
-        "largest_opportunity": None,
+        # #78: the opportunity's one slot (it was biggest_financial_opportunity).
+        "largest_opportunity": _it("$1,180 a month in food cost is recoverable.", "food.recoverable_monthly"),
         "largest_guest_experience": _it("The urgent review needs a reply.", "reviews.urgent"),
-        "largest_staffing": None,
     }
 
 

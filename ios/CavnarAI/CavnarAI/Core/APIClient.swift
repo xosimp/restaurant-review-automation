@@ -518,8 +518,10 @@ actor APIClient {
 
     /// One event from an SSE stream — Ask Cavnar's /stream routes only, for
     /// now. Same envelope shape both the web client and the backend's
-    /// generator emit: "progress" while a tool runs, "answer" once, or
-    /// "error".
+    /// generator emit: "progress" while a tool runs, "sentence" /
+    /// "sentence_reset" for the validated preview, "answer" once, or
+    /// "error". Every field but `type` is optional, so a new event type
+    /// still decodes and is ignored by a client that does not know it.
     struct SSEEvent: Decodable {
         let type: String
         let label: String?
@@ -527,6 +529,9 @@ actor APIClient {
         /// while this happens. Sent alongside the label so the client
         /// renders the right motion without string-matching the text.
         let state: String?
+        /// A "sentence" event's text: the next validated sentence of the
+        /// answer, with the separator before it (AI cost audit 10/7/26 #68).
+        var text: String? = nil
         let answer: String?
         let truncated: Bool?
         let proposals: [AskProposal]?
@@ -558,7 +563,7 @@ actor APIClient {
         let suggestions: [AskSuggestion]?
 
         enum CodingKeys: String, CodingKey {
-            case type, label, state, answer, truncated, proposals, error, confidence, suggestions, meta
+            case type, label, state, answer, text, truncated, proposals, error, confidence, suggestions, meta
             case declinedRepeats = "declined_repeats"
             case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"

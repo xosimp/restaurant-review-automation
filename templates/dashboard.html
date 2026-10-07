@@ -16790,6 +16790,34 @@ window.sendAskCavnar = function() {
   // plain endpoint - that re-ask recorded every proposal twice (re-audit
   // D19). Only a stream that never started falls back.
   var _askStarted = false, _askDone = false;
+  // The answer's sentences as the server streams them (AI cost audit
+  // 10/7/26 #68): each one has already passed the same validation the whole
+  // answer gets, so what shows is never unchecked text. A preview only -
+  // the answer event replaces it, and sentence_reset (a tool round, a
+  // retried call) clears it.
+  var _askPreviewText = '', _askPreviewWrap = null, _askPreviewBubble = null;
+  function _askPreviewShow(text) {
+    if (_askDone || !text) return;
+    var messages = document.getElementById('ask-cavnar-messages');
+    if (!messages) return;
+    _askPreviewText += text;
+    if (!_askPreviewWrap) {
+      _askPreviewWrap = document.createElement('div');
+      _askPreviewWrap.className = 'ask-b ai';
+      _askPreviewWrap.innerHTML = ASK_ORB_SM;
+      _askPreviewBubble = document.createElement('div');
+      _askPreviewBubble.className = 'bb';
+      _askPreviewWrap.appendChild(_askPreviewBubble);
+      // Above the thinking orb, which keeps running under the text.
+      messages.insertBefore(_askPreviewWrap, loadingBubble.parentNode === messages ? loadingBubble : null);
+    }
+    _askPreviewBubble.innerHTML = _askMd(_askPreviewText);
+    messages.scrollTop = messages.scrollHeight;
+  }
+  function _askPreviewClear() {
+    if (_askPreviewWrap && _askPreviewWrap.parentNode) _askPreviewWrap.parentNode.removeChild(_askPreviewWrap);
+    _askPreviewWrap = null; _askPreviewBubble = null; _askPreviewText = '';
+  }
 
   function _finish(d) {
     if (_askDone) return;
@@ -16800,7 +16828,18 @@ window.sendAskCavnar = function() {
     if (_askCavnarLoadingOrb && window.CavnarOrb) { CavnarOrb.destroy(_askCavnarLoadingOrb); _askCavnarLoadingOrb = null; }
     loadingBubble.remove();
     var answer = d.ok ? d.answer : (d.error || 'Something went wrong — try again.');
-    _appendAskCavnarMessage(answer, false);
+    if (d.ok && _askPreviewBubble) {
+      // The streamed sentences were a preview: the answer is drawn into the
+      // same bubble, so it extends (or quietly corrects) what is already
+      // on screen instead of a second copy landing under it.
+      _askPreviewBubble.innerHTML = _askMd(answer);
+      _askAnchor = _askPreviewWrap;
+      _askPreviewWrap = null; _askPreviewBubble = null; _askPreviewText = '';
+      _askScroll(document.getElementById('ask-cavnar-messages'));
+    } else {
+      _askPreviewClear();
+      _appendAskCavnarMessage(answer, false);
+    }
     // The model stopped at its length limit, so the answer ends mid-thought.
     // Said under the bubble, as iOS does, so half an answer never reads as
     // the whole of it.
@@ -16869,6 +16908,10 @@ window.sendAskCavnar = function() {
       try { evt = JSON.parse(line); } catch (e) { return; }
       if (evt.type === 'progress') {
         _setAskCavnarLoadingState(loadingBubble, evt.label, evt.state);
+      } else if (evt.type === 'sentence') {
+        _askPreviewShow(evt.text);
+      } else if (evt.type === 'sentence_reset') {
+        _askPreviewClear();
       } else if (evt.type === 'answer') {
         // Every field the server streams is carried through, not a hand-
         // picked list: a field-by-field rebuild dropped the evidence strip

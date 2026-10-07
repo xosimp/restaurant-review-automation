@@ -288,7 +288,9 @@ reports a status instead of a zero:
   outcome (`record_action_outcome`, from `rec_ledger.record`); a later
   version whose cited facts did not move keeps the earlier narrative with no
   call (`carry_forward`, offered by `pipeline._carry_forward`). Three lines
-  a list, single slots one short sentence (#37). Its memory block is the
+  a list, single slots one short sentence (#37); six single slots, the
+  two overlapping pairs merged (`MERGED_SINGLES`, #78 — stored reports keep
+  and render both keys). Its memory block is the
   Restaurant Context Manager's `memory` section.
 - `scorecard.py` is "Did we win today?": a verdict, an overall score out of
   100, wins and risks. Deterministic.
@@ -335,6 +337,8 @@ reports a status instead of a zero:
 **Design stance**: an AI-powered restaurant COO, not a chatbot wrapper. Every question gets a fresh `build_context()` snapshot (identity, sibling locations, alerts, memory, module data the restaurant's tier actually has) plus a filtered tool list (`tool_specs(restaurant)` — a tool tagged with a module the restaurant doesn't have is never offered, so the model can't call it and produce an empty-result apology).
 
 **On the orchestrator** (AI orchestration design, 10/7/26): each question is one `ask_cavnar` run (T2, no escalation) whose id is the turn's `ask:` correlation id; a rating of the answer is its outcome (`record_feedback_outcome`). The snapshot's memory and, for an owner-level asker with no module denied, its ACROSS THE BUSINESS block come from `restaurant_context` sections (a manager's view is built for the manager, as before); the sections' fixed reading rules sit in the cached static block (`_SNAPSHOT_RULES`, #64); a follow-up in the same chat within ten minutes is handed the last answer's reads as its first tool results (`ask_conversations.remember_reads` / `replay_reads`, #65); a confirmation card raised beside a written answer skips the forced second call (#67). See PROMPT_LIBRARY.md → *The DSR narrative and Ask on the orchestrator*.
+
+**Streaming** (AI cost audit 10/7/26 #68): the stream routes send the answer's sentences as the model writes them, each only once the answer so far has passed the first-pass validation through it (`ask_cavnar._SentencePreview`, `response_validation.sentence_ends`); the `answer` event stays authoritative and replaces the preview in the same bubble (web `_askPreviewShow`, iOS `streamingPreview`). Tool rounds never show. `ASK_STREAM_SENTENCES=0` turns it off — see PROMPT_LIBRARY.md.
 
 **Screen context** (friction #15, 9/25/26): every question may carry `screen` {panel, entity}; `ask_cavnar.screen_hint` turns it into one server-built line (a review by id from this restaurant, described by rating, platform, date and reply status only), never an instruction — see PROMPT_LIBRARY.md → Ask. The web sends it with every question, and a review card's or an Intel recommendation's "Ask about this" sets the item; the chat id is kept per restaurant in sessionStorage so the panel reopens on it after a reload or a location switch.
 

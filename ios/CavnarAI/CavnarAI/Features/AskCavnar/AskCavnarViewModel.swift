@@ -385,6 +385,12 @@ final class AskCavnarViewModel {
     /// Labels already completed this turn, oldest first. Cleared with
     /// statusLabel at the end of a request.
     var progressTrail: [String] = []
+    /// The answer's opening as the server streams it, sentence by sentence
+    /// (AI cost audit 10/7/26 #68). Every sentence has already passed the
+    /// same validation as the whole answer, so nothing unchecked shows. A
+    /// preview only: the "answer" event replaces it, and "sentence_reset"
+    /// (a tool round, a retried call) clears it. Empty outside a request.
+    var streamingPreview = ""
     /// The orb's motion for the current moment, from the stream's `state`
     /// field. `.connecting` from the instant a question is sent until the
     /// first progress event arrives, so the orb never sits still.
@@ -938,7 +944,8 @@ final class AskCavnarViewModel {
         isLoading = true
         statusLabel = nil
         orbState = .connecting
-        defer { isLoading = false; statusLabel = nil; progressTrail = []; orbState = .connecting }
+        streamingPreview = ""
+        defer { isLoading = false; statusLabel = nil; progressTrail = []; orbState = .connecting; streamingPreview = "" }
 
         do {
             try await streamAnswer(for: asked, screen: screen)
@@ -1001,8 +1008,9 @@ final class AskCavnarViewModel {
     }
 
     /// Consumes the SSE stream: "progress" updates statusLabel as each tool
-    /// runs, "answer" appends the final message, "error" surfaces the
-    /// server's own message. Mirrors the web client's fetch/ReadableStream
+    /// runs, "sentence" grows the validated preview ("sentence_reset"
+    /// clears it), "answer" appends the final message, "error" surfaces the
+    /// server's own message. Any other type is ignored. Mirrors the web client's fetch/ReadableStream
     /// loop — same events, same fallback-on-failure shape.
     private func streamAnswer(for question: String, screen: AskScreen?) async throws {
         var gotAnswer = false
@@ -1045,14 +1053,28 @@ final class AskCavnarViewModel {
                 if let raw = event.state, let mapped = CavnarOrbState(rawValue: raw) {
                     orbState = mapped
                 }
+            case "sentence":
+                // Validated server-side before it was sent; shown in the
+                // in-flight bubble until the answer replaces it.
+                sawProgress = true
+                streamingPreview += event.text ?? ""
+            case "sentence_reset":
+                streamingPreview = ""
             case "answer":
                 gotAnswer = true
                 adopt(conversationId: event.conversationId)
+                // Already on screen as the preview: the answer lands without
+                // typing out again, so the swap reads as the same text
+                // settling (and correcting itself if the final pass changed it).
+                let previewed = !streamingPreview.isEmpty
+                streamingPreview = ""
                 appendAnswer(from: event.answer ?? "", truncated: event.truncated == true,
                             proposals: event.proposals ?? [], evidence: event.evidence,
-                            messageId: event.messageId, suggestions: event.suggestions ?? [])
+                            messageId: event.messageId, suggestions: event.suggestions ?? [],
+                            revealed: previewed)
             case "error":
                 gotAnswer = true
+                streamingPreview = ""
                 appendAnswer(from: event.error ?? "Something went wrong.", truncated: false,
                             proposals: [], evidence: nil)
             default:
@@ -1072,7 +1094,7 @@ final class AskCavnarViewModel {
 
     private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal],
                               evidence: AskEvidence?, messageId: Int? = nil,
-                              suggestions: [AskSuggestion] = []) {
+                              suggestions: [AskSuggestion] = [], revealed: Bool = false) {
         guard answerGeneration == SessionScope.generation else { return }
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = cleaned.isEmpty
@@ -1083,7 +1105,8 @@ final class AskCavnarViewModel {
         let ev = (evidence?.isEmpty == false) ? evidence : nil
         messages.append(ChatMessage(text: display, isUser: false, wasTruncated: truncated,
                                     proposals: proposals, evidence: ev, messageId: messageId,
-                                    suggestions: suggestions.filter(\.showsAnswers)))
+                                    suggestions: suggestions.filter(\.showsAnswers),
+                                    hasRevealed: revealed))
     }
 }
 

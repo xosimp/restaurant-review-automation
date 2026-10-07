@@ -1809,6 +1809,40 @@ def _split_line(line):
     return prefix, out
 
 
+def sentence_ends(text: str, final: bool = False) -> list:
+    """Where each complete sentence of `text` ends — offsets into `text`,
+    split exactly as the engine splits it (lines, then _split_line: a list
+    marker or label stays with its sentence). A sentence is complete once
+    the text past it shows it ended: the next sentence has begun on its
+    line, or its line has ended; with `final` the text is whole and its last
+    sentence is complete too. For a caller that validates text as it is
+    written (Ask's sentence preview, AI cost audit 10/7/26 #68): the text
+    through any of these offsets is a prefix the engine reads as whole
+    sentences."""
+    text = str(text or "")
+    ends = []
+    pos = 0
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.strip():
+            m = _LIST_PREFIX_RE.match(line)
+            prefix = m.group(1) if m else re.match(r"^\s*", line).group(0)
+            parts = _SPLIT_RE.split(line[len(prefix):])
+            off = pos + len(prefix)
+            line_ends = []
+            for j in range(0, len(parts), 2):
+                off += len(parts[j])
+                if parts[j].strip():
+                    line_ends.append(off)
+                if j + 1 < len(parts):
+                    off += len(parts[j + 1])
+            if i == len(lines) - 1 and not final:
+                line_ends = line_ends[:-1]
+            ends += line_ends
+        pos += len(line) + 1
+    return ends
+
+
 # ── the fact index ──────────────────────────────────────────────────────────
 
 _GENERIC_KEY_WORDS = {"week", "weekly", "month", "monthly", "year", "yearly", "annual", "night", "nightly", "daily",

@@ -161,8 +161,28 @@ ACTION_KINDS = {
     "investigate": (None, "check a figure that looks wrong before acting on it"),
 }
 ITEM_LISTS = ("went_well", "needs_attention")
-ITEM_SINGLES = ("biggest_risk", "biggest_win", "biggest_financial_opportunity", "biggest_staffing_concern",
-                "highest_priority_issue", "largest_opportunity", "largest_guest_experience", "largest_staffing")
+ITEM_SINGLES = ("biggest_risk", "biggest_win", "biggest_staffing_concern",
+                "highest_priority_issue", "largest_opportunity", "largest_guest_experience")
+# Merged (AI cost audit 10/7/26 #78): two pairs of single slots asked the
+# model for the same sentence twice. biggest_financial_opportunity and
+# largest_opportunity are both the night's largest dollar opportunity (the
+# report's insights label both "Biggest opportunity", and real nights wrote
+# the same $756 of recoverable waste into each); largest_staffing and
+# biggest_staffing_concern are both the night's staffing line (labelled
+# "Staffing" by the insights and the app, which never even decoded
+# largest_staffing; real nights wrote "1.4 points over the 26% target" into
+# each). The model now writes one of each pair. A reply carrying a merged
+# key — a batch submitted under the old schema, collected after a deploy,
+# or a stored narrative re-checked (_stored_clean) — has it moved into the
+# surviving slot when that slot is empty (merge_slots), never refused as "a
+# field of its own". Stored reports keep both keys and every client still
+# reads both, so an old night renders exactly as it did. biggest_risk /
+# highest_priority_issue are NOT merged: a risk is what could go wrong, the
+# priority is what to do first (often an action on an opportunity), and the
+# report restates each against a different section (dsr.access
+# RESTATED_INSIGHTS).
+MERGED_SINGLES = {"biggest_financial_opportunity": "largest_opportunity",
+                  "largest_staffing": "biggest_staffing_concern"}
 # Retired (NS3 C2, R13): "largest_money_saving" named a SAVING, nothing held
 # what it could cite, and its own test fixture put an opportunity in it — the
 # web showed a $420 budget shortfall under "Largest saving". The model slot is
@@ -1166,13 +1186,33 @@ def _sentences(text):
     return len([p for p in re.split(r"(?<=[.!?])[\"”’')\]]*\s+", t.strip()) if p.strip()])
 
 
+def merge_slots(raw):
+    """`raw` with each merged-away single slot (MERGED_SINGLES) moved into the
+    slot that replaced it — only when that slot is empty; when both say
+    something the surviving slot's line stands. A copy; anything else is
+    returned as it came."""
+    if not isinstance(raw, dict) or not any(k in raw for k in MERGED_SINGLES):
+        return raw
+    out = dict(raw)
+    for old, new in MERGED_SINGLES.items():
+        if old in out:
+            v = out.pop(old)
+            if v is not None and out.get(new) is None:
+                out[new] = v
+    return out
+
+
 def validate(raw):
     """(clean, None) when `raw` is exactly the narrative's shape, else
     (None, what is wrong). Nothing is repaired: a missing field, a field of
     the model's own, a fourth action or an off-list enum refuses the whole
-    answer — the same answer is what an injected instruction would produce."""
+    answer — the same answer is what an injected instruction would produce.
+    A merged slot (MERGED_SINGLES — a reply under the schema before #78, an
+    in-flight batch) is not a field of its own: merge_slots moves it into
+    the slot that replaced it first."""
     if not isinstance(raw, dict):
         return None, "the answer is not a JSON object"
+    raw = merge_slots(raw)
     unknown = sorted(set(raw) - set(TOP_KEYS))
     if unknown:
         return None, f"the answer has fields of its own: {unknown}"
@@ -1243,6 +1283,7 @@ def salvage(raw):
     action" and "wire_money")."""
     if not isinstance(raw, dict):
         return None, [], "the answer is not a JSON object"
+    raw = merge_slots(raw)
     unknown = sorted(set(raw) - set(TOP_KEYS))
     if unknown:
         return None, [], f"the answer has fields of its own: {unknown}"
@@ -1981,7 +2022,7 @@ WHAT TO WRITE
 - Labor for the owner: when labor.salaried_total_pct is under TONIGHT'S FACTS it is the owner's real labor — the hourly labor plus tonight's share of the salaries — and the target judges it. Everywhere but operations_summary, state labor with labor.salaried_total_pct (its gap with labor.salaried_vs_target_pts and labor.target_pct), not labor.pct, and call it labor with salaries.
 - operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, salaries, or comps, voids and refunds. For labor there use labor.pct, never a labor.salaried_* key, and never mention salaries. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Write it whenever sales and one more operations block are measured — every report, the manager's included, opens with a summary; leave it out only when the operations figures cannot carry it.
 - went_well, needs_attention: up to {MAX_LIST_ITEMS} each, one short sentence each, most important first. An empty list is fine; never repeat a line from another field.
-- biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_opportunity, largest_guest_experience, largest_staffing: one sentence of at most {SINGLE_WORDS} words each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch. biggest_win cites measured figures only; largest_opportunity is the largest dollar opportunity, worded as one (could, at stake), never as a saving.
+- biggest_risk, biggest_win, biggest_staffing_concern, highest_priority_issue, largest_opportunity, largest_guest_experience: one sentence of at most {SINGLE_WORDS} words each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch. biggest_win cites measured figures only; largest_opportunity is the largest dollar opportunity, worded as one (could, at stake), never as a saving; biggest_staffing_concern is the night's one staffing line.
 - actions_tomorrow: at most 5, ranked most important first — each an ACTION, never an observation ("Order chicken.", "Schedule another bartender Friday.", "Respond to yesterday's two-star review."), something the manager or owner can start tomorrow with the staff and suppliers they already have.
   text: the action, one imperative sentence. why: the figure that makes it worth doing.
   cites: measured figures only. The manager's closeout may inform an action but an action never cites it.
@@ -1996,9 +2037,9 @@ Return only this JSON object:
 {{"executive_summary": {{"text": "...", "cites": ["..."]}},
  "operations_summary": {{"text": "...", "cites": ["..."]}} (or left out),
  "went_well": [{{"text": "...", "cites": ["..."]}}], "needs_attention": [...],
- "biggest_risk": {{"text": "...", "cites": [...]}} (or left out), "biggest_win": ..., "biggest_financial_opportunity": ..., "biggest_staffing_concern": ...,
+ "biggest_risk": {{"text": "...", "cites": [...]}} (or left out), "biggest_win": ..., "biggest_staffing_concern": ...,
  "actions_tomorrow": [{{"text": "...", "why": "...", "dollars_monthly": null, "urgency": "before_service", "effort": "low", "kind": "control_hours", "subject": null, "cites": ["..."]}}],
- "highest_priority_issue": ..., "largest_opportunity": ..., "largest_guest_experience": ..., "largest_staffing": ...}}"""
+ "highest_priority_issue": ..., "largest_opportunity": ..., "largest_guest_experience": ...}}"""
 
 _NAME_KEYS = ("name", "item", "label", "title", "role", "category", "supplier")
 
@@ -2821,6 +2862,11 @@ def _stored_clean(narrative):
     for k in ITEM_SINGLES:
         if narrative.get(k):
             raw[k] = item(narrative[k])
+    # A narrative stored before the merge (#78): its merged slot's line is
+    # carried in the slot that replaced it, when that one said nothing.
+    for old, new in MERGED_SINGLES.items():
+        if narrative.get(old) and not raw.get(new):
+            raw[new] = item(narrative[old])
     clean, err = validate(raw)
     return clean if not err else None
 

@@ -1633,7 +1633,18 @@ def _attempt_timeout(client, deadline):
     return anthropic.Timeout(secs, connect=min(AI_CONNECT_TIMEOUT, secs))
 
 
-def _send(client, kwargs, stream=False, deadline=None):
+def _stream_event(on_stream, event):
+    """Hands one stream event to a caller's `on_stream` (None = a new attempt
+    starts). A caller's failure never fails the call it is watching."""
+    if on_stream is None:
+        return
+    try:
+        on_stream(event)
+    except Exception as e:
+        print(f"[ai_utils] on_stream callback failed: {e}")
+
+
+def _send(client, kwargs, stream=False, deadline=None, on_stream=None):
     """One attempt: messages.create, or messages.stream collected into the
     finished Message when the caller asked to stream. A test double with no
     stream() is called the ordinary way.
@@ -1641,16 +1652,24 @@ def _send(client, kwargs, stream=False, deadline=None):
     With a `deadline` a stream is read event by event and cut when the time
     is up: its timeout only bounds the silence between events, so a call
     that kept writing used to run on regardless (P-22). The cut raises
-    CallDeadlineExceeded carrying what had streamed."""
+    CallDeadlineExceeded carrying what had streamed.
+
+    With `on_stream` every event is handed to it as it arrives, after a None
+    at the start of the attempt (a retried attempt writes its text again
+    from the beginning): Ask's sentence preview reads the answer's text as
+    it is written (AI cost audit 10/7/26 #68). The call still returns the
+    one finished Message."""
     if stream:
         streamer = getattr(getattr(client, "messages", None), "stream", None)
         if callable(streamer):
+            _stream_event(on_stream, None)
             with streamer(**kwargs) as s:
                 try:
-                    if deadline is None:
+                    if deadline is None and on_stream is None:
                         return s.get_final_message()
                     for _event in s:
-                        if time.time() >= float(deadline):
+                        _stream_event(on_stream, _event)
+                        if deadline is not None and time.time() >= float(deadline):
                             try:
                                 partial = s.current_message_snapshot
                             except Exception:
@@ -1733,6 +1752,10 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
     # refuses one past ~21k max_tokens on a default client. The caller asks
     # with stream=True and still gets one finished Message back.
     stream = bool(kwargs.pop("stream", False))
+    # A streamed call's caller may watch it as it is written (`on_stream`,
+    # see _send) — never sent to the API.
+    on_stream = kwargs.pop("on_stream", None) if stream else None
+    kwargs.pop("on_stream", None)
     # A job with a wall-clock limit of its own (the schedule generation:
     # schedule audit 10/3/26 P-22) passes `deadline` (a time.time() value):
     # no retry starts past it, each attempt's timeout is the time left at
@@ -1816,7 +1839,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 if deadline is not None:
                     # Each attempt waits at most the time left (P-22).
                     kwargs["timeout"] = _attempt_timeout(client, deadline)
-                message = _send(client, kwargs, stream, deadline=deadline)
+                message = _send(client, kwargs, stream, deadline=deadline, on_stream=on_stream)
             except CallDeadlineExceeded as e:
                 # The job's own clock, not the provider: never a breaker failure,
                 # and what streamed before the cut is billed, so it is filed with
