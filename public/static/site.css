@@ -41,7 +41,8 @@ p{margin:0}
 .nav{position:fixed;top:0;left:0;right:0;z-index:100;padding-top:env(safe-area-inset-top,0px);transition:background .35s ease,border-color .35s ease;border-bottom:1px solid transparent}
 .nav.solid{background:rgba(11,9,7,.78);backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%);border-color:var(--line)}
 .nav .in{display:flex;align-items:center;gap:28px;height:68px}
-.nav .wm{display:block;height:17px;width:auto}
+.nav .wm{display:block;height:22px;width:auto}
+@media (max-width:560px){.nav .wm{height:19px}}
 .nav .links{display:flex;gap:26px;margin-left:auto;font-size:14px}
 .nav .links a{color:var(--ink2);text-decoration:none;transition:color .2s}
 .nav .links a:hover,.nav .links a[aria-current]{color:var(--ink)}
@@ -178,7 +179,8 @@ p{margin:0}
 .stage .spoke{stroke:rgba(240,235,224,.035)}
 .stage .pulse{fill:#fff;opacity:0;filter:drop-shadow(0 0 6px #fff)}
 .stage .orbitring{fill:none;stroke:rgba(240,235,224,.05);stroke-dasharray:2 7}
-.node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:8px;width:118px;text-align:center;pointer-events:none}
+/* The dot, not the dot-and-label stack, sits on the point the lines end at */
+.node{position:absolute;transform:translate(-50%,-7px);display:flex;flex-direction:column;align-items:center;gap:8px;width:118px;text-align:center;pointer-events:none}
 .node i{width:14px;height:14px;border-radius:50%;background:#2a221c;border:1px solid var(--line2);transition:background .45s ease,border-color .45s ease,box-shadow .45s ease,transform .45s var(--spring)}
 .node span{font-size:12.5px;color:var(--ink3);transition:color .45s ease;line-height:1.25}
 .node.on i{background:var(--ember2);border-color:var(--ember2);transform:scale(1.25);box-shadow:0 0 0 6px rgba(232,149,106,.12),0 0 24px var(--ember)}

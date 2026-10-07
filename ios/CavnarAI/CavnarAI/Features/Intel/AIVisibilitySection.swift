@@ -76,7 +76,7 @@ struct AIVisibilitySection: View {
                         // sits above roadmapSection in normal layout, so
                         // this has zero effect on the non-pressed state —
                         // it only matters for exactly this overflow case.
-                        queriesSection(queries)
+                        queriesSection(queries, demand: result.searchDemand)
                             .zIndex(1)
                     }
                     if let checklist = result.checklist {
@@ -397,25 +397,28 @@ struct AIVisibilitySection: View {
     /// the whole composed Text — same technique platformCard/contactsGrid
     /// elsewhere in this app already rely on for "make this number pop."
     private func heroInsightText(_ result: AIVisibilityResult) -> Text? {
+        // appeared_count is the OPEN questions only, so it is out of
+        // answered_queries (7), never total_queries (8): "Tell me about
+        // <name>" names the restaurant and is recall, not discovery (10/7/26).
         let appeared = result.appearedCount ?? 0
-        let total = result.totalQueries ?? 0
+        let total = result.answeredQueries ?? result.totalQueries ?? 0
         guard total > 0 else { return nil }
         if appeared == 0 {
-            // The two phrases here are the whole point of the sentence —
-            // they're the actual work the owner has to do — so they carry
-            // their own bigger, ember style instead of sitting flat inside
-            // the surrounding prose (same technique as highlightedNumber).
-            return Text("Not yet appearing in AI search — normal for independent restaurants this early. ")
-                + highlightedPhrase("More reviews")
-                + Text(" and ")
-                + highlightedPhrase("a complete Google Business Profile")
-                + Text(" are what get you there.")
+            // AI answers these from other sites; the ones it read are listed
+            // under each question (10/7/26 — more reviews and a complete
+            // Google listing were the advice, and the answers showed AI
+            // reading directories, review sites and local lists instead).
+            return Text("Not yet appearing in AI search — normal for independent restaurants this early. AI answers from ")
+                + highlightedPhrase("other sites")
+                + Text(": directories, review sites and local lists. The ones it read are under each question below; ")
+                + highlightedPhrase("getting onto them")
+                + Text(" is what moves this.")
         }
         var text = Text("Appears in ")
             + highlightedNumber(appeared)
             + Text(" of ")
             + highlightedNumber(total)
-            + Text(" AI search queries.")
+            + Text(" open AI search questions.")
         if let topGap = (result.checklist ?? []).filter({ !$0.done }).max(by: { $0.pts < $1.pts }) {
             text = text + Text(" \(topGap.action) is the fastest way to close the gap.")
         }
@@ -534,12 +537,18 @@ struct AIVisibilitySection: View {
     // query in its own bordered card; a single-line truncated answer plus
     // a status chip carries the same "did we appear" signal at a glance.
 
-    private func queriesSection(_ queries: [AIVisibilityQuery]) -> some View {
+    private func queriesSection(_ queries: [AIVisibilityQuery], demand: AIVisibilitySearchDemand?) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("LATEST CHECK: WHAT AI SAID")
                 .font(.cavnarBody(14, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
+            if let demand, let n = demand.questions, n > 0 {
+                googleVsAIText(demand, questions: n)
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(spacing: 0) {
                 ForEach(Array(queries.enumerated()), id: \.element.id) { index, q in
                     queryRow(q)
@@ -553,6 +562,18 @@ struct AIVisibilitySection: View {
 
     private func queryRow(_ q: AIVisibilityQuery) -> some View {
         QueryResultRow(q: q)
+    }
+
+    /// Google vs AI (10/7/26): the Google searches put to AI, and the share of
+    /// their search volume whose answer named the restaurant.
+    private func googleVsAIText(_ d: AIVisibilitySearchDemand, questions: Int) -> Text {
+        Text("Google vs AI: ")
+            + Text("\(questions)").font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+            + Text(" of these questions are searches where Google showed your website (")
+            + Text((d.impressions ?? 0).formatted()).font(.cavnarNumber(14, weight: 500))
+            + Text(" times in 28 days). AI named you on ")
+            + Text(d.coveredPct.map { "\($0)%" } ?? "\u{2014}").font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarInk)
+            + Text(" of that search volume.")
     }
 
     // MARK: - Roadmap
@@ -873,12 +894,57 @@ private struct QueryResultRow: View {
 
     @State private var isPressed = false
 
+    /// "AI read: tripadvisor.com, opentable.com", each site a link to the
+    /// page the answer read.
+    private func aiReadLinks(_ links: [(domain: String, url: URL)]) -> AttributedString {
+        var out = AttributedString("AI read: ")
+        for (i, l) in links.enumerated() {
+            var run = AttributedString(l.domain)
+            run.link = l.url
+            run.underlineStyle = .single
+            out += run
+            if i < links.count - 1 { out += AttributedString(", ") }
+        }
+        return out
+    }
+
+    /// "On Google: about #4 · shown in 3,796 searches in 28 days". Position is
+    /// Search Console's average, so it reads as "about".
+    private func googleLine(_ s: AIVisibilitySearch) -> Text {
+        var t = Text("On Google: ")
+        if let p = s.position {
+            t = t + Text("about ") + Text("#\(max(1, Int(p.rounded())))").font(.cavnarNumber(12.5, weight: 600))
+                + Text(" \u{00B7} ")
+        }
+        return t + Text("shown in ") + Text((s.impressions ?? 0).formatted()).font(.cavnarNumber(12.5, weight: 600))
+            + Text(" searches in 28 days")
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
+                if q.search != nil {
+                    Text("FROM YOUR GOOGLE SEARCHES")
+                        .font(.cavnarBody(10.5, weight: 700))
+                        .tracking(1.0)
+                        .foregroundStyle(Color.cavnarEmber2)
+                }
                 Text("\u{201C}\(q.query)\u{201D}")
                     .font(.cavnarBody(14.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
+                if let search = q.search {
+                    googleLine(search)
+                        .font(.cavnarBody(12.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !q.appeared, !q.sourceLinks.isEmpty {
+                    Text(aiReadLinks(Array(q.sourceLinks.prefix(4))))
+                        .font(.cavnarBody(12.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .tint(Color.cavnarInk2)
+                        .lineLimit(2)
+                }
                 Text(q.answer)
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
@@ -895,7 +961,7 @@ private struct QueryResultRow: View {
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     if let comps = q.competitorsNamed, !comps.isEmpty {
-                        Text("named " + comps.prefix(2).joined(separator: ", ")
+                        Text((q.appeared ? "also named " : "AI named instead: ") + comps.prefix(2).joined(separator: ", ")
                              + (comps.count > 2 ? " +\(comps.count - 2)" : ""))
                             .font(.cavnarBody(12))
                             .foregroundStyle(Color.cavnarAmber)

@@ -16,12 +16,57 @@ struct AIVisibilityQuery: Decodable, Identifiable {
     let sources: [String]?
     // Competitors of this restaurant that the same answer named.
     let competitorsNamed: [String]?
+    // A question that came from the restaurant's own Google searches
+    // (Search Console, 10/7/26): how that search does on Google.
+    let search: AIVisibilitySearch?
 
     var id: String { query }
 
+    /// The sites the answer read, as bare domains ("tripadvisor.com").
+    var sourceDomains: [String] { sourceLinks.map(\.domain) }
+
+    /// Each site once, with the page the answer actually read: a bare
+    /// "thebranchmoms.com" sent the owner to a homepage, not the sports-bar
+    /// list it cited (10/7/26).
+    var sourceLinks: [(domain: String, url: URL)] {
+        var out: [(domain: String, url: URL)] = []
+        for s in sources ?? [] {
+            guard let url = URL(string: s), let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https", let host = url.host else { continue }
+            let d = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+            if !out.contains(where: { $0.domain == d }) { out.append((d, url)) }
+        }
+        return out
+    }
+
     enum CodingKeys: String, CodingKey {
-        case query, answer, appeared, kind, sources
+        case query, answer, appeared, kind, sources, search
         case competitorsNamed = "competitors_named"
+    }
+}
+
+/// How a Google search does on Google: the searches merged into the question,
+/// how many times Google showed the site for them in 28 days, and the average
+/// position.
+struct AIVisibilitySearch: Decodable {
+    let queries: [String]?
+    let impressions: Int?
+    let clicks: Int?
+    let position: Double?
+}
+
+/// Google vs AI: of the Google search volume put to AI, the share whose answer
+/// named the restaurant. Beside the score, never folded into it.
+struct AIVisibilitySearchDemand: Decodable {
+    let questions: Int?
+    let named: Int?
+    let impressions: Int?
+    let coveredPct: Int?
+    let basis: String?
+
+    enum CodingKeys: String, CodingKey {
+        case questions, named, impressions, basis
+        case coveredPct = "covered_pct"
     }
 }
 
@@ -173,6 +218,8 @@ struct AIVisibilityResult: Decodable {
     let brandedQueries: Int?
     // Which competitors surfaced in the same answers.
     let competitorAppearances: [CompetitorAppearance]?
+    // Google vs AI, by search volume; nil when no Google search was asked.
+    let searchDemand: AIVisibilitySearchDemand?
 
     /// True only when every question came back AND we know the city. Any
     /// other state means the score is not a measurement of this restaurant.
@@ -289,6 +336,7 @@ struct AIVisibilityResult: Decodable {
         case brandedScore = "branded_score"
         case brandedQueries = "branded_queries"
         case competitorAppearances = "competitor_appearances"
+        case searchDemand = "search_demand"
         case socialPosts30d = "social_posts_30d"
         case reviewTotal = "review_total"
         case respRate = "resp_rate"

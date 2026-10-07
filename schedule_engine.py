@@ -4797,12 +4797,23 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
             # the only tail there is — but ONLY if it is the adjacent week.
             # A three-week-old draft seeded "7 days in a row" warnings for
             # people working three days; no seed is better than a stale one.
+            # Never a draft whose week has already begun unpublished: the
+            # restaurant is working some other schedule, so its rows are
+            # nobody's week (schedule_rules._published_tail's rule, 10/6/26).
+            # Simple EJ's 10/5 draft, published by mistake and taken back,
+            # still seeded "8 days in a row" here after the rule check had
+            # stopped reading it (10/7/26); the time clock answers instead.
             from datetime import timedelta as _tdl
+            try:
+                from time_utils import restaurant_now_by_id
+                today = restaurant_now_by_id(restaurant_id, naive=True).strftime("%Y-%m-%d")
+            except Exception:
+                today = _dt.now().strftime("%Y-%m-%d")
             floor = (_dt.strptime(before, "%Y-%m-%d") - _tdl(days=2)).strftime("%Y-%m-%d")
             entries = get_schedule_history(restaurant_id, limit=5)
             for e in entries:
                 ws, we = (e.get("week_start") or ""), (e.get("week_end") or "")
-                if ws >= before or not we or we < floor:
+                if ws >= before or not we or we < floor or ws[:10] <= today:
                     continue
                 detail = get_schedule_history_detail(e["id"], restaurant_id)
                 csv_text = (detail or {}).get("schedule_csv") or ""
@@ -5155,6 +5166,9 @@ def _quality_signals(restaurant_id, result, **extra):
         # Owners and managers are not held to it (schedule_rules.max_shift_applies).
         signals["max_shift_exempt"] = sorted(n.strip().lower() for n in (c.roster_names or [])
                                              if not _rules.max_shift_applies(c, n))
+        # Owners and salaried managers: not scored on how much they work.
+        signals["hours_exempt"] = sorted(n.strip().lower() for n in (c.roster_names or [])
+                                         if not _rules.hours_rules_apply(c, n))
         signals["weekly_ceiling"] = c.compliance.get("weekly_hours_ceiling")
         # Keyed by display name, which is what the contexts carry; the
         # constraints key by lowercase. (An earlier version built this and

@@ -313,3 +313,24 @@ def test_the_city_column_has_its_four_touch_points():
     assert '("restaurants", "aivis_city_json", "TEXT")' in src
     assert '"aivis_city_json"' in inspect.getsource(models.update_restaurant)
     assert 'aivis_city_json=row["aivis_city_json"]' in src
+
+
+def test_the_state_rides_with_the_stored_city_after_a_deploy(monkeypatch):
+    # The city is kept on the row (#46) and the queries name the state (St.
+    # Charles, IL — never MO). After a deploy the process cache is empty and
+    # the stored city skips the Places lookup, so the state comes from the row.
+    import json as _json
+    import types
+    import client_api
+    client_api._city_cache.clear()
+    r = types.SimpleNamespace(id=5, google_place_id="ChIJ-x", aivis_city_json=_json.dumps(
+        {"place_id": "ChIJ-x", "city": "St. Charles", "state": "IL", "at": "2099-01-01 00:00:00"}))
+    looked = []
+    monkeypatch.setattr(client_api, "_city_from_place_id", lambda pid: looked.append(pid) or "St. Charles")
+    assert client_api._aivis_city(r) in ("St. Charles",)
+    assert client_api._state_from_place_id("ChIJ-x", r) == "IL"
+    # A row stored before the state was kept reads once more.
+    r.aivis_city_json = _json.dumps({"place_id": "ChIJ-x", "city": "St. Charles", "at": "2099-01-01 00:00:00"})
+    monkeypatch.setattr(client_api._models_mod, "update_restaurant", lambda *a, **k: None)
+    client_api._aivis_city(r)
+    assert looked == ["ChIJ-x"]

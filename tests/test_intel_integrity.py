@@ -21,7 +21,7 @@ import notify
 # ── The visibility score is a range over a real sample ─────────────────────
 
 def _payload(monkeypatch, db_path, *, answers, place_id="ChIJx", neighborhood="Geneva",
-             name="Gia Mia"):
+             name="Gia Mia", city="Geneva", state="", sent=None, concept=None):
     """Run the real visibility path with Perplexity and Places stubbed."""
     import client_api
     real = models.get_conn
@@ -32,11 +32,14 @@ def _payload(monkeypatch, db_path, *, answers, place_id="ChIJx", neighborhood="G
     conn.execute("INSERT INTO restaurants (id,name,owner_email,google_place_id,neighborhood,"
                  "vibe,known_for) VALUES (1,?,?,?,?,'lively pizza bar','wood-fired pizza')",
                  (name, "o@x.test", place_id, neighborhood))
+    if concept:
+        conn.execute("UPDATE restaurants SET concept=? WHERE id=1", (concept,))
     conn.commit()
     conn.close()
     monkeypatch.setattr(client_api, "get_restaurant",
                         lambda rid: models.get_restaurant(rid, db_path))
-    monkeypatch.setattr(client_api, "_city_from_place_id", lambda pid: "Geneva" if pid else "")
+    monkeypatch.setattr(client_api, "_city_from_place_id", lambda pid: city if pid else "")
+    monkeypatch.setattr(client_api, "_state_from_place_id", lambda pid, r=None: state if pid else "")
     monkeypatch.setattr(client_api, "get_review_stats",
                         lambda rid: {"total": 10, "response_rate": 50})
     client_api._aivis_cache.clear()
@@ -54,7 +57,11 @@ def _payload(monkeypatch, db_path, *, answers, place_id="ChIJx", neighborhood="G
     monkeypatch.setattr(client_api, "get_restaurant",
                         lambda rid: models.get_restaurant(rid, db_path))
     import requests as _rq
-    monkeypatch.setattr(_rq, "post", lambda *a, **kw: _Resp())
+    def _post(*a, **kw):
+        if sent is not None:
+            sent.append(kw["json"]["messages"][-1]["content"])
+        return _Resp()
+    monkeypatch.setattr(_rq, "post", _post)
     monkeypatch.setenv("PERPLEXITY_API_KEY", "k")
     monkeypatch.setattr(client_api, "ai_budget_exceeded", lambda rid: None, raising=False)
     payload, _ = client_api._do_ai_visibility_inner(1, force=True)
@@ -1125,3 +1132,62 @@ def test_a_run_stored_before_the_listing_read_was_kept_is_read_back_from_its_che
                                                     "website": False, "has_hours": True}
     old["checklist"][2]["measured"] = False
     assert client_api._stored_listing_read(old)["read"] is False
+
+
+def test_the_state_rides_on_every_query_so_a_model_never_answers_for_the_wrong_town(db_path, monkeypatch):
+    """Simple EJ's (10/7/26): "Top restaurants in St. Charles" is read as St.
+    Charles, Missouri. Every query names the state Google has on file; a
+    mention still matches on the city alone."""
+    sent = []
+    p = _payload(monkeypatch, db_path, answers=["Try Gia Mia in St. Charles."] * 12, neighborhood="",
+                 city="St. Charles", state="IL", sent=sent)
+    assert sent and all("St. Charles, IL" in q for q in sent), sent
+    assert p["city"] == "St. Charles, IL"
+    assert p["ai_score"] is not None and p["ai_score"] > 0   # "in St. Charles" still counts
+
+
+def test_the_place_lookup_keeps_the_state(monkeypatch):
+    import client_api
+    import ai_utils
+    import config
+
+    class _R:
+        def json(self):
+            return {"status": "OK", "result": {"address_components": [
+                {"long_name": "St. Charles", "short_name": "St Charles", "types": ["locality", "political"]},
+                {"long_name": "Kane County", "short_name": "Kane County", "types": ["administrative_area_level_2"]},
+                {"long_name": "Illinois", "short_name": "IL", "types": ["administrative_area_level_1", "political"]}]}}
+    monkeypatch.setattr(config, "google_places_key", lambda: "k")
+    monkeypatch.setattr(ai_utils, "places_request", lambda *a, **k: _R())
+    client_api._city_cache.clear()
+    assert client_api._city_from_place_id("pid-ej") == "St. Charles"
+    assert client_api._state_from_place_id("pid-ej") == "IL"
+    assert client_api._state_from_place_id("never-looked-up") == ""
+
+
+def test_a_query_that_gained_the_state_is_still_the_same_question(db_path):
+    """The week the queries started naming the state, the diff read every hit
+    as newly gained and the history split each question in two."""
+    conn = models.get_conn(db_path)
+    for run, (q, hit, at) in enumerate([("Top restaurants in St. Charles", 1, "2026-09-30 10:00:00"),
+                                        ("Top restaurants in St. Charles, IL", 1, "2026-10-07 10:00:00")], start=1):
+        conn.execute("INSERT INTO ai_visibility_query_runs (run_id, restaurant_id, query, query_kind, appeared, created_at) "
+                     "VALUES (?,?,?,?,?,?)", (run, 9, q, "discovery", hit, at))
+    conn.commit()
+    conn.close()
+    d = models.ai_visibility_query_diff(9, db_path=db_path)
+    assert d["gained"] == [] and d["compared"] == 1 and len(d["held"]) == 1
+    h = models.ai_visibility_query_history(9, db_path=db_path)
+    assert len(h["queries"]) == 1 and h["queries"][0]["query"] == "Top restaurants in St. Charles, IL"
+    assert h["queries"][0]["appeared"] == [True, True]
+
+
+def test_the_cuisine_questions_ask_for_the_concept_not_a_signature_dish(db_path, monkeypatch):
+    """Simple EJ's (10/7/26): two of eight questions asked for "chimichurri
+    wings", the first item of known_for. With a concept set, they ask for
+    what a guest searches: sports bars."""
+    sent = []
+    _payload(monkeypatch, db_path, answers=["Gia Mia in Geneva."] * 12, sent=sent, concept="sports_bar")
+    text = " | ".join(sent)
+    assert "sports bars" in text and "wood-fired pizza" not in text, sent
+    assert "Best sports bars near Geneva" in text

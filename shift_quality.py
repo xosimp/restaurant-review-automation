@@ -413,6 +413,9 @@ class ShiftContext:
     # Owners and managers: not held to the shift-length maximum
     # (schedule_rules.max_shift_applies), lowercased names.
     max_shift_exempt: set = field(default_factory=set)
+    # Owners and salaried managers: the hours dimensions skip them (fatigue,
+    # minimum hours; schedule_rules.hours_rules_apply, 10/7/26).
+    hours_exempt: set = field(default_factory=set)
     weekly_ceiling: float | None = None
     hours_limits: dict = field(default_factory=dict)   # {name: (min, max)}
     # Names the owner marked as experienced (staff_settings.experienced),
@@ -1725,6 +1728,12 @@ def _fatigue_findings(names, ctx: ShiftContext) -> dict:
     out = {k: [] for k in ("overloaded", "long_runs", "long_shifts", "heavy_weeks",
                            "sustained_busy", "sustained_hours")}
     for name in names:
+        # An owner or a manager is not scored on how much they work - days
+        # in a row, heavy weeks, long shifts or sustained load (Simple EJ's,
+        # 10/7/26: "erik is always at the store"; schedule_rules.
+        # hours_rules_apply is the same people).
+        if str(name or "").strip().lower() in ctx.hours_exempt:
+            continue
         assignments = ctx.week_assignments.get(name) or []
         mine = [a for a in assignments if not a.get("prior")]
         hard = sum(1 for a in mine if _is_busy(a))
@@ -1855,7 +1864,11 @@ def week_min_hours(contexts: list) -> DimensionResult | None:
     if not contexts:
         return None
     ctx = contexts[0]
-    limits = {n: lim for n, lim in (ctx.hours_limits or {}).items() if n and lim and lim[0]}
+    # An owner's or a salaried manager's minimum is not scored (10/7/26):
+    # they are at the store as long as they choose.
+    exempt = getattr(ctx, "hours_exempt", None) or set()
+    limits = {n: lim for n, lim in (ctx.hours_limits or {}).items()
+              if n and lim and lim[0] and str(n).strip().lower() not in exempt}
     if not limits:
         return None
     by_low = {}
@@ -5132,6 +5145,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             pairs=signals.get("pairs") or {},
             max_shift_hours=signals.get("max_shift_hours"),
             max_shift_exempt={str(n).strip().lower() for n in (signals.get("max_shift_exempt") or ())},
+            hours_exempt={str(n).strip().lower() for n in (signals.get("hours_exempt") or ())},
             weekly_ceiling=signals.get("weekly_ceiling"),
             hours_limits=signals.get("hours_limits") or {},
             elsewhere=signals.get("elsewhere") or {},

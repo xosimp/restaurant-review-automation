@@ -118,7 +118,11 @@ def _history(db_path, rid, week_start, week_end, csv_text, published=False):
     return cur.lastrowid
 
 
-def test_a_stale_draft_never_seeds_the_prior_week(db_path, rid):
+def test_a_stale_draft_never_seeds_the_prior_week(db_path, rid, monkeypatch):
+    # Built two weeks ahead, before last week's draft has begun.
+    import datetime as dt
+    import time_utils
+    monkeypatch.setattr(time_utils, "restaurant_now_by_id", lambda *a, **k: dt.datetime(2026, 9, 26, 9, 0))
     stale = HEADER + "2026-09-13,Sunday,Ana,Server,4:00pm,10:00pm,6.0,\n"
     _history(db_path, rid, "2026-09-07", "2026-09-13", stale)                # three weeks old
     assert schedule_engine._prior_week_assignments(rid, before=WEEK[0]) == {}
@@ -126,6 +130,20 @@ def test_a_stale_draft_never_seeds_the_prior_week(db_path, rid):
     _history(db_path, rid, "2026-09-28", "2026-10-04", adjacent)
     seeded = schedule_engine._prior_week_assignments(rid, before=WEEK[0])
     assert list(seeded) == ["Ana"] and seeded["Ana"][0]["date"] == "2026-10-04"
+
+
+def test_a_draft_whose_week_began_unpublished_seeds_no_fatigue(db_path, rid, monkeypatch):
+    """Simple EJ's, 10/7/26: the 10/5 draft (published by mistake, taken
+    back) had Jose all seven days; the rule check had stopped reading it
+    (10/6/26) but Shift Quality's fatigue still said "8 days in a row" on
+    the next week. Once its week has begun unpublished, it is nobody's."""
+    import datetime as dt
+    import time_utils
+    monkeypatch.setattr(time_utils, "restaurant_now_by_id", lambda *a, **k: dt.datetime(2026, 9, 30, 9, 0))
+    began = HEADER + "".join(f"2026-09-{d:02d},Day,Jose,Cook,9:00am,5:00pm,8.0,\n" for d in range(28, 31)) \
+        + "".join(f"2026-10-{d:02d},Day,Jose,Cook,9:00am,5:00pm,8.0,\n" for d in range(1, 5))
+    _history(db_path, rid, "2026-09-28", "2026-10-04", began)
+    assert "Jose" not in schedule_engine._prior_week_assignments(rid, before=WEEK[0])
 
 
 def test_a_published_adjacent_week_wins_over_a_newer_stale_one(db_path, rid):

@@ -4204,7 +4204,13 @@ def ai_visibility_roadmap(d) -> list:
     checklist = d.get("checklist") or []
     reviews_done = any("google review" in str(c.get("label") or "").lower() and c.get("done") for c in checklist)
     response_done = any("response rate" in str(c.get("label") or "").lower() and c.get("done") for c in checklist)
-    missing = sum(1 for c in checklist if not c.get("done"))
+    # What the percentage is out of (10/7/26): the scored listing items that
+    # could be read. Setup items are not scored, and an item that needs the
+    # Google listing connected is unread, not missing — counting both read
+    # "100% complete — 6 items left" at Simple EJ's.
+    _scored = [c for c in checklist if c.get("kind") != "setup"]
+    missing = sum(1 for c in _scored if c.get("measured") is not False and not c.get("done"))
+    unread = sum(1 for c in _scored if c.get("measured") is False)
     posts = int(d.get("social_posts_30d") or 0)
     total = int(d.get("review_total") or 0)
     rate = int(round(float(d.get("resp_rate") or 0)))
@@ -4229,7 +4235,8 @@ def ai_visibility_roadmap(d) -> list:
          "why": (f"Your public listing and review record score {gbp_pct}. This covers what someone finds when they "
                  "look you up: your description, hours, phone, website, and how many recent reviews you have."),
          "detail": (f"{gbp_pct} complete — {missing} item{'' if missing == 1 else 's'} left" if missing
-                    else f"{gbp_pct} complete")},
+                    else (f"{gbp_pct} of what can be read — {unread} more need{'s' if unread == 1 else ''} "
+                          "your Google listing connected" if unread else f"{gbp_pct} complete"))},
         {"key": "aiv_roadmap:social", "title": "Post consistently on social", "impact": "Long-term",
          "action": "Go to marketing", "module": "marketing", "done": posts >= 8,
          "why": (f"You've logged {posts} marketing piece{'' if posts == 1 else 's'} this month. Posts that name "
@@ -7209,6 +7216,7 @@ def _city_from_place_id(place_id: str) -> str:
     if _hit and (datetime.utcnow() - _hit[0]).total_seconds() < _CITY_CACHE_SECS:
         return _hit[1]
     city = ""
+    state = ""
     settled = False     # an answer worth remembering, found or not
     try:
         key = config.google_places_key()
@@ -7225,9 +7233,10 @@ def _city_from_place_id(place_id: str) -> str:
                 settled = True
                 for comp in (data.get("result", {}).get("address_components") or []):
                     types = comp.get("types") or []
-                    if "locality" in types:
+                    if "administrative_area_level_1" in types and not state:
+                        state = comp.get("short_name") or ""
+                    if "locality" in types and not city:
                         city = comp.get("long_name") or ""
-                        break
                     if not city and "postal_town" in types:
                         city = comp.get("long_name") or ""
             elif status in ("NOT_FOUND", "INVALID_REQUEST", "ZERO_RESULTS"):
@@ -7238,7 +7247,7 @@ def _city_from_place_id(place_id: str) -> str:
     # cached as "no city" for a day, which scored every run in it as zero
     # (MOD-INT-4); it is retried on the next call instead.
     if settled:
-        _city_cache[place_id] = (datetime.utcnow(), city)
+        _city_cache[place_id] = (datetime.utcnow(), city, state)
     return city
 
 
@@ -7262,7 +7271,10 @@ def _aivis_city(r) -> str:
         stored = json.loads(getattr(r, "aivis_city_json", None) or "{}")
     except (TypeError, ValueError):
         stored = {}
-    if isinstance(stored, dict) and stored.get("place_id") == place_id and stored.get("city"):
+    # A row stored before the state was kept ("state" missing) reads again
+    # once, so every query can name the state (St. Charles, IL — not MO).
+    if (isinstance(stored, dict) and stored.get("place_id") == place_id and stored.get("city")
+            and "state" in stored):
         try:
             age = (datetime.utcnow() - datetime.strptime(str(stored.get("at"))[:19], "%Y-%m-%d %H:%M:%S")).days
         except (TypeError, ValueError):
@@ -7273,10 +7285,31 @@ def _aivis_city(r) -> str:
     if city:
         try:
             _models_mod.update_restaurant(r.id, {"aivis_city_json": json.dumps(
-                {"place_id": place_id, "city": city, "at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")})})
+                {"place_id": place_id, "city": city, "state": _state_from_place_id(place_id),
+                 "at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")})})
         except Exception as e:
             print(f"[aivis] city not stored for rid={getattr(r, 'id', None)}: {e!r}")
     return city
+
+
+def _state_from_place_id(place_id: str, r=None) -> str:
+    """The state Google has for this listing ("IL"), from the lookup
+    _city_from_place_id just made, else the one stored on the restaurant
+    row with its city (`r`, AI cost audit 10/7/26 #46 — the process cache is
+    empty after a deploy); "" when there was none. Every query names it:
+    "St. Charles" alone is read as St. Charles, Missouri (Simple EJ's,
+    10/7/26), and many US town names repeat."""
+    _hit = _city_cache.get(place_id) if place_id else None
+    if _hit and len(_hit) > 2 and (datetime.utcnow() - _hit[0]).total_seconds() < _CITY_CACHE_SECS:
+        return _hit[2] or ""
+    if r is not None:
+        try:
+            stored = json.loads(getattr(r, "aivis_city_json", None) or "{}")
+        except (TypeError, ValueError):
+            stored = {}
+        if isinstance(stored, dict) and stored.get("place_id") == place_id:
+            return stored.get("state") or ""
+    return ""
 
 
 def _aivis_listing(r, rid, gbp_data, gbp_read, gbp_connected, stale_read=False):
@@ -7752,12 +7785,28 @@ def _do_ai_visibility_inner(rid, force=False):
     resolved_city = _aivis_city(r)
     city_source = "google" if resolved_city else ("profile" if neighborhood else "")
     if resolved_city:
-        city = city_full = resolved_city
+        # The city alone matches mentions (an answer says "St. Charles"); the
+        # queries carry the state, so a model never answers for the wrong one.
+        city = resolved_city
+        _state = _state_from_place_id(getattr(r, "google_place_id", None), r)
+        city_full = f"{resolved_city}, {_state}" if _state else resolved_city
     else:
         city = neighborhood.split("—")[0].split(",")[0].strip() if neighborhood else ""
         city_full = neighborhood.split("—")[0].strip() if neighborhood else ""
-    # Short cuisine descriptor from known_for first word(s), fallback to "restaurant"
-    cuisine = (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
+    # What a guest would search for. The restaurant's concept when one is set
+    # ("sports bars"): known_for's first item is a signature dish, and Simple
+    # EJ's asked about "chimichurri wings" in two of its eight questions, which
+    # nobody searches for (10/7/26). known_for stays the fallback.
+    _concept_phrase = ""
+    try:
+        from intelligence import categories as _cats
+        for _c in (getattr(r, "concept", None), getattr(r, "category", None)):
+            if _c and _cats.valid(_c) and _c != "other":
+                _concept_phrase = _cats.LABELS.get(_c, "").lower()
+                break
+    except Exception:
+        _concept_phrase = ""
+    cuisine = _concept_phrase or (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
 
     # Was "Where can I find " + the full vibe sentence + " in [city]?" —
     # vibe is a paragraph-length internal profile description (e.g.
@@ -7804,16 +7853,35 @@ def _do_ai_visibility_inner(rid, force=False):
         # carries a kind: BRANDED asks about this restaurant by name, which
         # is a different question from whether it surfaces in an open
         # search, and blending the two into one number answered neither.
-        queries = [
+        # The fixed questions, in the order they fill whatever the Google
+        # searches below leave: what the restaurant is, who it suits, then
+        # the generic discovery questions the searches usually cover.
+        _fixed = [
             {"q": vibe_query or ("Where can I find good " + cuisine.lower() + " in " + city_full + "?"),
              "kind": "cuisine"},
-            {"q": "Top restaurants in " + city_full, "kind": "discovery"},
-            {"q": q3, "kind": "occasion"},
-            {"q": "Where should I eat in " + city_full + " tonight?", "kind": "discovery"},
-            {"q": "Best " + cuisine.lower() + " restaurants near " + city_full, "kind": "cuisine"},
-            {"q": "Highly rated local restaurants in " + city_full, "kind": "discovery"},
+            {"q": ("Best " + cuisine + " near " + city_full) if _concept_phrase
+                  else ("Best " + cuisine.lower() + " restaurants near " + city_full), "kind": "cuisine"},
             # Practical intent — a guest who already has a shortlist.
             {"q": "Which restaurants in " + city_full + " are good for a group?", "kind": "practical"},
+            {"q": q3, "kind": "occasion"},
+            {"q": "Top restaurants in " + city_full, "kind": "discovery"},
+            {"q": "Where should I eat in " + city_full + " tonight?", "kind": "discovery"},
+            {"q": "Highly rated local restaurants in " + city_full, "kind": "discovery"},
+        ]
+        # What people actually typed into Google before reaching the site
+        # (Search Console, 10/7/26): up to four of the seven open questions,
+        # most-searched first, each carrying its Google volume and position.
+        # Eight questions either way, so a check costs what it did.
+        try:
+            import web_analytics as _wa
+            _searched = _wa.ai_questions(rid, name, city, city_full)
+            _st = city_full.split(",")[-1].strip() if "," in city_full else ""
+            _taken = {q.pop("key") for q in _searched}
+            _fill = [q for q in _fixed if _wa._question_key(q["q"], _st) not in _taken]
+        except Exception as _we:
+            print(f"[aivis] search questions skipped for rid={rid}: {_we!r}")
+            _searched, _fill = [], _fixed
+        queries = _searched + _fill[:max(0, 7 - len(_searched))] + [
             # Branded recall: does the system know this restaurant at all?
             # Scored separately; it is not evidence of discoverability.
             {"q": "Tell me about " + name + " in " + city_full, "kind": "branded"},
@@ -8122,9 +8190,12 @@ def _do_ai_visibility_inner(rid, force=False):
         # away. Nothing cross-referenced them, so the one comparison an
         # owner most wants — did my competitors come up instead of me —
         # was a pass over data already in memory that nobody made.
-        return {"query": q, "kind": kind, "answer": _clean_ai_answer(answer),
-                "appeared": appeared, "ok": True, "sources": sources,
-                "competitors_named": _competitors_in(answer)}
+        out = {"query": q, "kind": kind, "answer": _clean_ai_answer(answer),
+               "appeared": appeared, "ok": True, "sources": sources,
+               "competitors_named": _competitors_in(answer)}
+        if isinstance(spec, dict) and spec.get("search"):
+            out["search"] = spec["search"]
+        return out
 
     # Submit all queries at once — up to 3 run concurrently for latency,
     # but each one blocks on _pplx_wait_turn() before it actually sends,
@@ -8174,6 +8245,24 @@ def _do_ai_visibility_inner(rid, force=False):
          "share": round(c / len(discovery) * 100) if discovery else 0}
         for n, c in _comp_hits.most_common(8)
     ]
+
+    # Google vs AI (10/7/26): of the Google searches that bring people to the
+    # site and were put to AI, the share — weighted by how often each is
+    # searched — whose answer named the restaurant. A separate figure: the
+    # headline score stays appearances over questions.
+    _sq = [x for x in answered if x.get("search")]
+    _sq_total = sum((x["search"].get("impressions") or 0) for x in _sq)
+    search_demand = None
+    if _sq:
+        _sq_hit = sum((x["search"].get("impressions") or 0) for x in _sq if x.get("appeared"))
+        search_demand = {
+            "questions": len(_sq),
+            "named": sum(1 for x in _sq if x.get("appeared")),
+            "impressions": _sq_total,
+            "covered_pct": round(_sq_hit / _sq_total * 100) if _sq_total else None,
+            "basis": "Google searches that showed your website over the last 28 days (Search Console), "
+                     "asked of " + AIVIS_PLATFORM + " as a guest would; weighted by how often each was searched",
+        }
 
     # GBP completeness score — 10 items x 10 pts = 100
     # Items 1-6: checkable from our own DB (no GMB OAuth needed)
@@ -8300,6 +8389,8 @@ def _do_ai_visibility_inner(rid, force=False):
         "branded_queries": len(branded),
         # Which competitors surfaced in the same answers, and in how many.
         "competitor_appearances": competitor_appearances,
+        # Google vs AI, by search volume; None when no Google search was asked.
+        "search_demand": search_demand,
         # No city on the profile means two locations of the same brand are
         # indistinguishable in an answer, so appearance cannot be judged at
         # all. Surface that rather than silently scoring 0.

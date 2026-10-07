@@ -14683,6 +14683,17 @@ def record_ai_visibility_queries(run_id: int, restaurant_id: int, queries: list,
         conn.close()
 
 
+import re as _re_aivis
+_STATE_SUFFIX_RE = _re_aivis.compile(r",\s*[A-Z]{2}\b")
+
+
+def _aivis_query_key(query) -> str:
+    """One question across checks, whether or not it named the state: since
+    10/7/26 queries say "St. Charles, IL" where earlier ones said "St.
+    Charles", and comparing on the raw text read every hit as newly gained."""
+    return _STATE_SUFFIX_RE.sub("", str(query or ""))
+
+
 def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Which questions changed between the last two complete runs.
 
@@ -14700,7 +14711,7 @@ def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict
     now_id, prev_id = runs[0]["run_id"], runs[1]["run_id"]
 
     def _rows(rid):
-        return {r["query"]: bool(r["appeared"]) for r in conn.execute(
+        return {_aivis_query_key(r["query"]): bool(r["appeared"]) for r in conn.execute(
             "SELECT query, appeared FROM ai_visibility_query_runs WHERE run_id=?", (rid,))}
     now, prev = _rows(now_id), _rows(prev_id)
     conn.close()
@@ -14731,8 +14742,11 @@ def ai_visibility_query_history(restaurant_id: int, runs: int = 8, db_path: str 
     finally:
         conn.close()
     by_q = {}
-    for r in rows:
-        q = by_q.setdefault(r["query"], {"query": r["query"], "kind": r["query_kind"], "appeared": [None] * len(ids)})
+    # Oldest run first, so the wording shown is the latest one asked.
+    for r in sorted(rows, key=lambda r: ids.index(r["run_id"])):
+        q = by_q.setdefault(_aivis_query_key(r["query"]),
+                            {"query": r["query"], "kind": r["query_kind"], "appeared": [None] * len(ids)})
+        q["query"] = r["query"]
         q["appeared"][ids.index(r["run_id"])] = bool(r["appeared"])
     out = []
     for q in by_q.values():
