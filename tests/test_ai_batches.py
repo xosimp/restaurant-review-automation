@@ -146,8 +146,11 @@ def test_the_kill_switch_and_the_workflow_list(batches, monkeypatch):
     monkeypatch.delenv("AI_BATCHES_WORKFLOWS")
     monkeypatch.delenv("AI_BATCHES_ENABLED")
     # The learner's shadow replays joined the DSR narrative (orchestration
-    # design 10/7/26, phase 6): replays nobody waits on, at half price.
-    assert ai_batches.workflows() == {"dsr_narrative", "shadow_arms"}, "the default batch workflows"
+    # design 10/7/26, phase 6): replays nobody waits on, at half price. AI
+    # cost audit 10/7/26 #59-#62 added the weekly competitor read, the
+    # Tuesday recipe drafts, the digest's narrative and the quiet-night post.
+    assert ai_batches.workflows() == {"dsr_narrative", "shadow_arms", "competitor_insight", "recipe_draft",
+                                      "weekly_digest", "quiet_night_post"}, "the default batch workflows"
 
 
 def test_a_bad_custom_id_or_callback_is_refused_at_submit(batches, db):

@@ -229,9 +229,14 @@ final class InvoiceScanViewModel {
 
     private func send(_ data: Data, filename: String, mimeType: String) async {
         do {
-            let r: ScanResponse = try await client.upload("/mobile/api/food-cost/invoices",
-                                                          fileData: data, filename: filename,
-                                                          mimeType: mimeType)
+            // Read as a job this screen polls (`async`, AI cost audit 10/7/26
+            // #57): the upload returns at once and the read runs off the
+            // server's request threads. An older server answers the scan
+            // itself, which resolveAIJob passes straight through.
+            let started: APIClient.AIJobAnswer<ScanResponse> = try await client.upload(
+                "/mobile/api/food-cost/invoices", fileData: data, filename: filename, mimeType: mimeType,
+                query: ["async": "1"])
+            let r: ScanResponse = try await client.resolveAIJob(started)
             guard r.ok, let inv = r.invoice else {
                 errorMessage = r.error ?? "The invoice couldn't be read."
                 return

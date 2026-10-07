@@ -448,8 +448,12 @@ def test_the_digest_drops_a_module_line_it_never_asked_for():
     """Enforced as well as asked for: a prompt rule is a request, and this
     email goes out with nobody reading it first."""
     src = inspect.getsource(reporter.generate_ai_digest_summary)
-    assert "_allowed = {k.lower() for k in required_lines}" in src
+    # The model writes only HEADLINE, ACTION and MARKETING since AI cost
+    # audit 10/7/26 #82 (model_lines); REVIEWS, LABOR and INVENTORY are
+    # written from the figures, and one the model wrote anyway is not read.
+    assert "_allowed = {k.lower() for k in model_lines}" in src
     assert "that module reported no data this week" in src
+    assert "for key in [k.lower() for k in TEMPLATED_DIGEST_LINES if k.lower() in parsed]" in src
 
 
 def test_the_digest_correlations_compare_numbers_not_prose():

@@ -773,7 +773,9 @@ def test_a_utc_competitor_stamp_is_dated_in_the_restaurants_own_day(db_path):
     st = df.source_state(_row(db_path, rid), "competitor", db_path=db_path)
     assert st["as_of_iso"] == "2026-09-23"
     import inspect, competitor
-    src = inspect.getsource(competitor.run_competitor_analysis)
+    # The storing moved into _store_analysis (AI cost audit 10/7/26 #59: a
+    # batched read lands there too).
+    src = inspect.getsource(competitor._store_analysis)
     assert "_dt_utc.now(_tz.utc).isoformat" in src
 
 

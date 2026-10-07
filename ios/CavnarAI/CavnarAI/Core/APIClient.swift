@@ -290,9 +290,10 @@ actor APIClient {
         fileData: Data,
         filename: String,
         mimeType: String,
-        timeout: TimeInterval = 120
+        timeout: TimeInterval = 120,
+        query: [String: String] = [:]
     ) async throws -> Response {
-        var request = try buildRequest(path: path, method: HTTPMethod.post.rawValue, body: nil, query: [:])
+        var request = try buildRequest(path: path, method: HTTPMethod.post.rawValue, body: nil, query: query)
         let boundary = "cavnar-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = timeout
@@ -337,6 +338,85 @@ actor APIClient {
     static func idempotencyKey(path: String, fileData: Data) -> String {
         let digest = SHA256.hash(data: fileData).map { String(format: "%02x", $0) }.joined()
         return "\(path):\(digest)"
+    }
+
+    // MARK: - Owner AI jobs (AI cost audit 10/7/26 #57)
+
+    /// What a route asked with `async` answers: a job to poll (`jobId`), or —
+    /// from a server that runs it synchronously, or a refusal before any
+    /// job started — the route's own answer, decoded as `Response` (`now`).
+    struct AIJobAnswer<Response: Decodable>: Decodable {
+        let jobId: String?
+        let waitSeconds: Int?
+        let now: Response?
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            jobId = try? c.decodeIfPresent(String.self, forKey: .jobId)
+            waitSeconds = try? c.decodeIfPresent(Int.self, forKey: .waitSeconds)
+            now = jobId == nil ? try Response(from: decoder) : nil
+        }
+
+        private enum Keys: String, CodingKey {
+            case jobId = "job_id"
+            case waitSeconds = "wait_seconds"
+        }
+    }
+
+    private struct AIJobPoll: Decodable {
+        let status: String?
+        let secondsLeft: Int?
+        enum CodingKeys: String, CodingKey {
+            case status
+            case secondsLeft = "seconds_left"
+        }
+    }
+
+    /// The route's answer: `answer.now` when it answered at once, else the
+    /// job polled to its end (`awaitAIJob`).
+    func resolveAIJob<Response: Decodable>(_ answer: AIJobAnswer<Response>) async throws -> Response {
+        if let now = answer.now { return now }
+        guard let jobId = answer.jobId else {
+            throw APIError(kind: .decoding, message: "Couldn't understand the server's response.")
+        }
+        return try await awaitAIJob(jobId, waitSeconds: answer.waitSeconds)
+    }
+
+    /// Polls /mobile/api/ai-jobs/<id> until the job is done, then decodes
+    /// what it answered as `Response` — exactly what the synchronous route
+    /// would have answered: its refusal (a 4xx/5xx) throws the same
+    /// APIError with the server's own sentence. A poll lost in transit (a
+    /// deploy restarting, a weak signal) is waited out while the job's own
+    /// time lasts; leaving the screen cancels the wait, not the job.
+    func awaitAIJob<Response: Decodable>(_ jobId: String, waitSeconds: Int? = nil) async throws -> Response {
+        var deadline = Date().addingTimeInterval(TimeInterval((waitSeconds ?? 240) + 30))
+        var misses = 0
+        while true {
+            try await Task.sleep(for: .milliseconds(1500))
+            let polled: (value: AIJobPoll, body: Data)
+            do {
+                polled = try await sendKeepingBody("/mobile/api/ai-jobs/\(jobId)", hapticOnError: false)
+            } catch let error as APIError where error.status == nil && Date() <= deadline && misses < 20 {
+                misses += 1
+                continue
+            }
+            misses = 0
+            if polled.value.status == "pending" {
+                if let left = polled.value.secondsLeft, left > 0 {
+                    deadline = max(deadline, Date().addingTimeInterval(TimeInterval(left + 30)))
+                }
+                if Date() > deadline {
+                    throw APIError(kind: .timedOut,
+                                   message: "That is taking longer than it should. Try again in a moment.")
+                }
+                continue
+            }
+            do {
+                return try JSONDecoder.cavnar.decode(Response.self, from: polled.body)
+            } catch {
+                throw APIError(kind: .decoding, message: "Couldn't understand the server's response.")
+            }
+        }
     }
 
     /// A session_expired answer describes the token that request carried.

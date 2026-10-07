@@ -3854,10 +3854,7 @@ def mobile_generate_calendar(current_user):
 def mobile_generate_content(current_user):
     """Twin of /api/generate-content — one body, client_api._do_generate_content."""
     data = request.get_json() or {}
-    payload, status = _capi._do_generate_content(
-        current_user["restaurant_id"], data.get("type"), data.get("topic"),
-        from_calendar=bool(data.get("from_calendar")), user_id=current_user.get("id"),
-    )
+    payload, status = _capi.generate_content_answer(current_user, data)
     return jsonify(**payload), status
 
 
@@ -3935,6 +3932,23 @@ def mobile_guest_campaign_draft(current_user):
     if ai_rate_limited(f"guestcampaign:{rid}", max_calls=8, window_secs=60):
         return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
     data = request.get_json() or {}
+    # The Studio's text channel as a job to poll when the client asks
+    # (ai_async, AI cost audit 10/7/26 #57); an older app is answered as
+    # before. The same goal pressed again joins the draft already running.
+    import ai_async
+    if ai_async.wants_async():
+        key = {k: data.get(k) for k in ("prompt", "type", "topic")}
+        job_id, joined = ai_async.start("campaign_text", rid, key, guest_campaign_draft_result,
+                                        dict(current_user), data, by_user=current_user.get("id"))
+        return jsonify(**ai_async.started_answer(job_id, joined, "campaign_text")), 202
+    payload, status = guest_campaign_draft_result(current_user, data)
+    return jsonify(**payload), status
+
+
+def guest_campaign_draft_result(current_user, data):
+    """The text draft and its answer, (payload, status) — on the request
+    thread or on the owner AI job pool."""
+    rid = current_user["restaurant_id"]
     try:
         from guest_marketing import draft_campaign_message, plan_campaign
         restaurant = get_restaurant(rid)
@@ -3957,20 +3971,20 @@ def mobile_guest_campaign_draft(current_user):
                    returns_by_segment=_gm_returns(rid))
         if plan:
             out.update(segment=plan["segment"], goal=plan["goal"], target_day=plan["target_day"])
-        return jsonify(**out)
+        return out, 200
     except ValueError as e:
         # The guard refused the copy (an invented offer, a link, too long):
         # say which, so the owner knows why nothing came back (M-24).
         if str(e).startswith("campaign copy rejected: "):
-            return jsonify(ok=False, error="Cavnar AI didn't use that draft — "
-                           + str(e)[len("campaign copy rejected: "):] + ". Try again, or write it yourself."), 422
+            return {"ok": False, "error": "Cavnar AI didn't use that draft — "
+                    + str(e)[len("campaign copy rejected: "):] + ". Try again, or write it yourself."}, 422
         import ops
         ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
-        return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
+        return {"ok": False, "error": "Couldn't draft a message right now — try again in a moment."}, 500
     except Exception as e:
         import ops
         ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
-        return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
+        return {"ok": False, "error": "Couldn't draft a message right now — try again in a moment."}, 500
 
 
 @mobile_bp.route("/guest-winback")
@@ -4524,7 +4538,8 @@ def mobile_guest_newsletter_send_new(current_user, newsletter_id):
 def mobile_guest_newsletter_draft(current_user):
     """The Campaign Studio's email from the owner's goal (`prompt`):
     subject, preheader, headline, the letter and the button's words
-    (guest_email.draft_newsletter). Nothing is sent."""
+    (guest_email.draft_newsletter). Nothing is sent. A job to poll when the
+    client asks (`async` — ai_async, AI cost audit 10/7/26 #57)."""
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
@@ -4536,6 +4551,20 @@ def mobile_guest_newsletter_draft(current_user):
     topic = str(data.get("topic") or "").strip()[:280]
     if not (prompt or topic):
         return jsonify(ok=False, error="Say what the email should do."), 400
+    import ai_async
+    if ai_async.wants_async():
+        job_id, joined = ai_async.start("campaign_email", rid, {"prompt": prompt, "topic": topic},
+                                        guest_newsletter_draft_result, dict(current_user), prompt, topic,
+                                        by_user=current_user.get("id"))
+        return jsonify(**ai_async.started_answer(job_id, joined, "campaign_email")), 202
+    payload, status = guest_newsletter_draft_result(current_user, prompt, topic)
+    return jsonify(**payload), status
+
+
+def guest_newsletter_draft_result(current_user, prompt, topic):
+    """The email draft and its answer, (payload, status) — on the request
+    thread or on the owner AI job pool."""
+    rid = current_user["restaurant_id"]
     import guest_email as _ge
     try:
         draft = _ge.draft_newsletter(get_restaurant(rid), goal=prompt, topic=topic)
@@ -4548,22 +4577,22 @@ def mobile_guest_newsletter_draft(current_user):
                                               run_id=getattr(draft, "run_id", None))
     except ValueError as e:
         if str(e).startswith("newsletter copy rejected: "):
-            return jsonify(ok=False, error="Cavnar AI didn't use that draft — "
-                           + str(e)[len("newsletter copy rejected: "):] + ". Try again, or write it yourself."), 422
+            return {"ok": False, "error": "Cavnar AI didn't use that draft — "
+                    + str(e)[len("newsletter copy rejected: "):] + ". Try again, or write it yourself."}, 422
         import ops
         ops.capture(e, job="guest_newsletter_draft", context=f"restaurant_id={rid}")
-        return jsonify(ok=False, error="Couldn't draft the email right now — try again in a moment."), 500
+        return {"ok": False, "error": "Couldn't draft the email right now — try again in a moment."}, 500
     except Exception as e:
         import ops
         ops.capture(e, job="guest_newsletter_draft", context=f"restaurant_id={rid}")
-        return jsonify(ok=False, error="Couldn't draft the email right now — try again in a moment."), 500
+        return {"ok": False, "error": "Couldn't draft the email right now — try again in a moment."}, 500
     r = get_restaurant(rid)
     # The goal's plan, as the text draft returns it: the studio sets its
     # audience from whichever channel answers first.
     from guest_marketing import plan_campaign
     plan = plan_campaign(prompt) if prompt else {}
-    return jsonify(ok=True, button_url=(getattr(r, "menu_url", None) or "") if r else "",
-                   **{k: plan[k] for k in ("type", "segment", "goal", "target_day") if k in plan}, **draft)
+    return dict(ok=True, button_url=(getattr(r, "menu_url", None) or "") if r else "",
+                **{k: plan[k] for k in ("type", "segment", "goal", "target_day") if k in plan}, **draft), 200
 
 
 @mobile_bp.route("/guest-newsletter/preview", methods=["POST"])

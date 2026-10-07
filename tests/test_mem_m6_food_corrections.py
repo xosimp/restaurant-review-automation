@@ -197,8 +197,10 @@ def test_the_recipe_prompt_shows_the_owners_confirmed_recipes_of_the_same_kind(d
                                                        "confidence": "medium"}], "note": None}))],
         stop_reason="end_turn")
     import ai_utils
-    monkeypatch.setattr(ai_utils, "create_with_retry", lambda client, **kw: seen.append(kw["messages"][0]["content"])
-                        or msg)
+    # The prompt is two text blocks since AI cost audit 10/7/26 #60 (the
+    # cached ingredient list, then the examples and the dish): read as one.
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda client, **kw: seen.append(
+        "\n".join(b["text"] for b in kw["messages"][0]["content"])) or msg)
     out = recipes.draft_missing(rid, client=object(), items=[{"id": pep, "name": "Pepperoni Pizza"}])
     assert out["drafted"] == 1
     assert "Margherita Pizza: Mozzarella 6 oz; Pizza Dough 1 each" in seen[-1]

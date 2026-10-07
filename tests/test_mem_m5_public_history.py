@@ -136,7 +136,9 @@ def test_what_is_on_file_is_replayed_into_the_history_at_boot():
 def test_a_competitor_check_keeps_the_market_history():
     import inspect
     import competitor
-    src = inspect.getsource(competitor.run_competitor_analysis)
+    # The storing moved into _store_analysis (AI cost audit 10/7/26 #59: a
+    # batched read lands there too).
+    src = inspect.getsource(competitor._store_analysis)
     assert "event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed, at=_now_ct)" in src
     # The closure check also takes the statuses already read (AI cost audit
     # 10/7/26 #41), so the call continues past _closed_custom.

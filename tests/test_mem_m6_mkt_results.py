@@ -203,5 +203,6 @@ def test_the_marketing_and_competitor_reads_are_kept_as_history():
     mkt = inspect.getsource(client_api._do_mkt_insight)
     assert 'ai_reads.record_read(rid, "marketing_read", insight, subject="marketing"' in mkt
     assert mkt.index("_ist_m.put(rid, \"marketing\"") < mkt.index("ai_reads.record_read")
-    comp = inspect.getsource(competitor.run_competitor_analysis)
+    # The storing moved into _store_analysis (AI cost audit 10/7/26 #59).
+    comp = inspect.getsource(competitor._store_analysis)
     assert 'ai_reads.record_read(restaurant_id, "competitor_read", str(insight), subject="intel"' in comp

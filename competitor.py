@@ -948,138 +948,191 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         return ""
     try:
         client = get_client()
+        prompt, _ready_ci = _insight_prompt(restaurant_name, competitors, owner_name, restaurant_profile,
+                                            tz_name, restaurant_id, ready=_insight_readiness(restaurant_id))
+        import ai_orchestrator
+        # On the orchestrator's rung (competitor_insight: T2, one call — AI
+        # cost audit 10/7/26, orchestration Phase 3); finish_competitor_insight
+        # validates it as before.
+        msg = ai_orchestrator.generate("competitor_insight", restaurant_id, lambda route, notes: create_with_retry(
+            client,
+            restaurant_id=restaurant_id,
+            action="competitor_insight",
+            readiness=_ready_ci,
+            **route.apply(_insight_request(prompt)),
+        ), subject="competitor_insight").result
+        text = _insight_text(msg, restaurant_id)
+        return finish_competitor_insight(text, prompt, competitors, restaurant_name,
+                                         own_price_level=(restaurant_profile or {}).get("price_level"),
+                                         restaurant_id=restaurant_id, owner_name=owner_name,
+                                         registry_state=_ready_ci.get("data_state")) if text is not None else ""
+    except Exception as e:
+        print(f"[Competitor] generate_competitor_insight error: {e}")
+        try:
+            import ops
+            ops.capture(e, job="competitor_insight", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+        return ""
 
-        _PRICE_WORDS = {1: "$ (inexpensive)", 2: "$$ (moderate)",
-                        3: "$$$ (expensive)", 4: "$$$$ (very expensive)"}
-        comp_summary = ""
-        # Every review handed to the model gets an id ("R1", "R2", ...) that a
-        # recommendation must cite, and the id is kept on the review so the
-        # screen can show which reviews a recommendation rests on — the same
-        # rule review diagnoses follow with review ids (audit #31).
-        _ref_n = 0
-        for c in competitors:
-            for r in (c.get("reviews") or [])[:5]:
-                _ref_n += 1
-                r["ref"] = f"R{_ref_n}"
-        for c in competitors:
-            # Use up to 5 reviews, 250 chars each for richer insight
-            rev_list = c.get("reviews", [])
-            if rev_list:
-                # Competitor review text is written by the public, so it —
-                # and only it — is fenced (R8, B5 #8): the ratings, review
-                # counts and price levels around it are Google's data, and
-                # fencing them too meant the figure check could never verify
-                # a true "4.5★, 812 reviews", so its UNVERIFIED flag carried
-                # no information. See UNTRUSTED_NOTE in the prompt.
-                #
-                # Each review now carries its age. Google picks these five
-                # by its own relevance ranking, not by recency, so without a
-                # date a complaint from three years ago read as what a
-                # competitor is doing wrong now — and that is what the
-                # "DOING POORLY" section was built from.
-                reviews_text = "\n  ".join([
-                    f'[{r.get("ref")} · {r["rating"]}★, {r.get("time") or "date unknown"}] "{r["text"][:250].strip()}"'
-                    for r in rev_list[:5]
-                ])
-            else:
-                reviews_text = "No recent reviews"
-            # price_level is a real Google field. It was fetched and used to
-            # filter candidates, then thrown away — so the model was asked to
-            # judge price positioning from adjectives in five reviews while
-            # the actual figure sat unused two functions away.
-            _pl = c.get("price_level")
-            price_line = f"\n  Google price level: {_PRICE_WORDS.get(_pl, 'not listed')}" if _pl else "\n  Google price level: not listed"
-            _prov = c.get("rating_is_provisional")
-            _how = c.get("match_basis")
-            match_line = f"\n  How this one was selected: {_how}" if _how else ""
-            _dist = c.get("distance_m")
-            dist_line = f"\n  About {round(_dist/1000, 1)} km away" if _dist else ""
-            prov_line = ("\n  NOTE: this rating rests on very few reviews — treat it as provisional "
+
+def _insight_request(prompt, route=None) -> dict:
+    """The competitor read's request on `route` (the orchestrator's rung;
+    None = the call site's own model) — sent now or carried by a batch item."""
+    kw = dict(model=model_for("competitor_insight"), max_tokens=900, messages=[{"role": "user", "content": prompt}])
+    return route.apply(kw) if route is not None else kw
+
+
+def _insight_text(msg, restaurant_id) -> str:
+    """The model's answer as text for finish_competitor_insight, or None when
+    it was cut off — whether it came back now or from a batch."""
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        # An output problem, filed as one (ledger outcome 'truncated',
+        # and an AI-quality event) — not a failing job (#58).
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event("competitor_insight", "truncated", restaurant_id=restaurant_id,
+                                   detail="competitor insight was truncated at max_tokens; no read stored")
+        return None
+    return extract_text(msg).strip()
+
+
+def _insight_prompt(restaurant_name, competitors, owner_name=None, restaurant_profile=None, tz_name=None,
+                    restaurant_id=None, ready=None):
+    """(prompt, readiness) for the competitor read — what the synchronous
+    call sends and what a batch item carries (AI cost audit 10/7/26 #59).
+    `ready` is the readiness its caller asked (_insight_readiness). Each
+    competitor's reviews are given their "R<n>" ids here, in place."""
+    _PRICE_WORDS = {1: "$ (inexpensive)", 2: "$$ (moderate)",
+                    3: "$$$ (expensive)", 4: "$$$$ (very expensive)"}
+    comp_summary = ""
+    # Every review handed to the model gets an id ("R1", "R2", ...) that a
+    # recommendation must cite, and the id is kept on the review so the
+    # screen can show which reviews a recommendation rests on — the same
+    # rule review diagnoses follow with review ids (audit #31).
+    _ref_n = 0
+    for c in competitors:
+        for r in (c.get("reviews") or [])[:5]:
+            _ref_n += 1
+            r["ref"] = f"R{_ref_n}"
+    for c in competitors:
+        # Use up to 5 reviews, 250 chars each for richer insight
+        rev_list = c.get("reviews", [])
+        if rev_list:
+            # Competitor review text is written by the public, so it —
+            # and only it — is fenced (R8, B5 #8): the ratings, review
+            # counts and price levels around it are Google's data, and
+            # fencing them too meant the figure check could never verify
+            # a true "4.5★, 812 reviews", so its UNVERIFIED flag carried
+            # no information. See UNTRUSTED_NOTE in the prompt.
+            #
+            # Each review now carries its age. Google picks these five
+            # by its own relevance ranking, not by recency, so without a
+            # date a complaint from three years ago read as what a
+            # competitor is doing wrong now — and that is what the
+            # "DOING POORLY" section was built from.
+            reviews_text = "\n  ".join([
+                f'[{r.get("ref")} · {r["rating"]}★, {r.get("time") or "date unknown"}] "{r["text"][:250].strip()}"'
+                for r in rev_list[:5]
+            ])
+        else:
+            reviews_text = "No recent reviews"
+        # price_level is a real Google field. It was fetched and used to
+        # filter candidates, then thrown away — so the model was asked to
+        # judge price positioning from adjectives in five reviews while
+        # the actual figure sat unused two functions away.
+        _pl = c.get("price_level")
+        price_line = f"\n  Google price level: {_PRICE_WORDS.get(_pl, 'not listed')}" if _pl else "\n  Google price level: not listed"
+        _prov = c.get("rating_is_provisional")
+        _how = c.get("match_basis")
+        match_line = f"\n  How this one was selected: {_how}" if _how else ""
+        _dist = c.get("distance_m")
+        dist_line = f"\n  About {round(_dist/1000, 1)} km away" if _dist else ""
+        prov_line = ("\n  NOTE: this rating rests on very few reviews — treat it as provisional "
                          "and do not compare against it as a settled figure.") if _prov else ""
-            comp_summary += f"""
+        comp_summary += f"""
 - {c["name"]} ({(str(c["rating"]) + "★") if c.get("rating") else "no rating yet"}, {c["review_count"]} reviews){price_line}{dist_line}{match_line}{prov_line}
   Recent customer reviews (with how long ago each was written):
   {wrap_untrusted(reviews_text) if rev_list else reviews_text}
 """
 
-        greeting = f"Hi {owner_name}" if owner_name else "Hi"
+    greeting = f"Hi {owner_name}" if owner_name else "Hi"
 
-        # Build restaurant profile context
-        profile = restaurant_profile or {}
-        profile_lines = []
-        if profile.get("vibe"):
-            profile_lines.append(f"Concept/vibe: {profile['vibe']}")
-        if profile.get("known_for"):
-            profile_lines.append(f"Known for: {profile['known_for']}")
-        if profile.get("neighborhood"):
-            profile_lines.append(f"Location: {profile['neighborhood']}")
-        # If no profile data, try to infer from competitor types as a last resort
-        if not profile_lines:
-            profile_lines.append(f"Name: {restaurant_name}")
-            profile_lines.append("Independent restaurant — focus recommendations on service, hospitality, and marketing")
-        profile_context = "\n".join(profile_lines)
+    # Build restaurant profile context
+    profile = restaurant_profile or {}
+    profile_lines = []
+    if profile.get("vibe"):
+        profile_lines.append(f"Concept/vibe: {profile['vibe']}")
+    if profile.get("known_for"):
+        profile_lines.append(f"Known for: {profile['known_for']}")
+    if profile.get("neighborhood"):
+        profile_lines.append(f"Location: {profile['neighborhood']}")
+    # If no profile data, try to infer from competitor types as a last resort
+    if not profile_lines:
+        profile_lines.append(f"Name: {restaurant_name}")
+        profile_lines.append("Independent restaurant — focus recommendations on service, hospitality, and marketing")
+    profile_context = "\n".join(profile_lines)
 
-        # Add upcoming holidays for timely recommendations
-        try:
-            from marketing import get_upcoming_holidays as _get_hols_c
-            from time_utils import restaurant_now
-            _now_hc = restaurant_now(tz_name, naive=True)
-            _upcoming_hc = _get_hols_c(_now_hc)
-            holiday_rec_context = f"\nUpcoming holidays/events in the next 30 days: {_upcoming_hc}. Consider these when making recommendations." if _upcoming_hc else ""
-            today_comp = _now_hc.strftime("%B %d, %Y")
-        except Exception:
-            holiday_rec_context = ""
-            from datetime import datetime as _dt_hc2
-            today_comp = _dt_hc2.now().strftime("%B %d, %Y")
+    # Add upcoming holidays for timely recommendations
+    try:
+        from marketing import get_upcoming_holidays as _get_hols_c
+        from time_utils import restaurant_now
+        _now_hc = restaurant_now(tz_name, naive=True)
+        _upcoming_hc = _get_hols_c(_now_hc)
+        holiday_rec_context = f"\nUpcoming holidays/events in the next 30 days: {_upcoming_hc}. Consider these when making recommendations." if _upcoming_hc else ""
+        today_comp = _now_hc.strftime("%B %d, %Y")
+    except Exception:
+        holiday_rec_context = ""
+        from datetime import datetime as _dt_hc2
+        today_comp = _dt_hc2.now().strftime("%B %d, %Y")
 
-        # The recommendations below are asked for as something a manager can
-        # start THIS SHIFT and push THIS WEEK, and the only temporal context
-        # was a holiday list. Labor already fetches a real NWS forecast and
-        # frames it carefully; competitor intel had none of it, so it advised
-        # on patio pushes into a week of rain.
-        weather_ctx = ""
-        try:
-            if restaurant_id:
-                from models import get_restaurant as _gr_w
-                from weather import get_forecast_for_week as _fc
-                from datetime import timedelta as _td_w
-                _r_w = _gr_w(restaurant_id)
-                _days = [(_now_hc + _td_w(days=i)).strftime("%Y-%m-%d") for i in range(7)]
-                _fcast = _fc(_r_w, _days) or []
-                if _fcast:
-                    _lines = [f"  {w['day_name']}: {w['high_f']}°F, {w['short_forecast']}"
-                              + (f", {w['precip_pct']}% rain" if w.get("precip_pct") else "")
-                              for w in _fcast[:7]]
-                    weather_ctx = (
-                        "\n\nWeather where this restaurant is, for the week these recommendations "
+    # The recommendations below are asked for as something a manager can
+    # start THIS SHIFT and push THIS WEEK, and the only temporal context
+    # was a holiday list. Labor already fetches a real NWS forecast and
+    # frames it carefully; competitor intel had none of it, so it advised
+    # on patio pushes into a week of rain.
+    weather_ctx = ""
+    try:
+        if restaurant_id:
+            from models import get_restaurant as _gr_w
+            from weather import get_forecast_for_week as _fc
+            from datetime import timedelta as _td_w
+            _r_w = _gr_w(restaurant_id)
+            _days = [(_now_hc + _td_w(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+            _fcast = _fc(_r_w, _days) or []
+            if _fcast:
+                _lines = [f"  {w['day_name']}: {w['high_f']}°F, {w['short_forecast']}"
+                          + (f", {w['precip_pct']}% rain" if w.get("precip_pct") else "")
+                          for w in _fcast[:7]]
+                weather_ctx = (
+                    "\n\nWeather where this restaurant is, for the week these recommendations "
                         "cover:\n" + "\n".join(_lines) +
-                        "\n  Use it only where it changes what is sensible — a patio or outdoor "
+                    "\n  Use it only where it changes what is sensible — a patio or outdoor "
                         "push into a wet week, a delivery angle on a cold one. Weather is a nudge, "
                         "never the reason for a recommendation on its own, and a forecast is not "
                         "what will happen."
-                    )
-        except Exception as _we:
-            print(f"[Competitor] weather context unavailable: {_we}")
+                )
+    except Exception as _we:
+        print(f"[Competitor] weather context unavailable: {_we}")
 
-        # What Cavnar AI remembers about this restaurant (memory audit
-        # 9/29/26: memory_context, surface 'competitor_read' — the owner's
-        # constraints, the last read and its verdict, the answers they gave),
-        # fenced and dated M/D/YY by the reader; "" when there is nothing.
-        memory_ctx = ""
-        if restaurant_id:
-            try:
-                import memory_context as _mc
-                _mt = _mc.memory_context(restaurant_id, "competitor_read", subjects=("intel",)).text
-                if _mt:
-                    from ai_guard import MEMORY_FENCE_NOTE as _MFN
-                    memory_ctx = ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context, not evidence: a "
+    # What Cavnar AI remembers about this restaurant (memory audit
+    # 9/29/26: memory_context, surface 'competitor_read' — the owner's
+    # constraints, the last read and its verdict, the answers they gave),
+    # fenced and dated M/D/YY by the reader; "" when there is nothing.
+    memory_ctx = ""
+    if restaurant_id:
+        try:
+            import memory_context as _mc
+            _mt = _mc.memory_context(restaurant_id, "competitor_read", subjects=("intel",)).text
+            if _mt:
+                from ai_guard import MEMORY_FENCE_NOTE as _MFN
+                memory_ctx = ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context, not evidence: a "
                                   "recommendation the owner already answered is not made again, and nothing here "
                                   "is a competitor fact. " + _MFN + "\n" + _mt)
-            except Exception as _me:
-                print(f"[Competitor] memory unavailable for {restaurant_id}: {_me}")
+        except Exception as _me:
+            print(f"[Competitor] memory unavailable for {restaurant_id}: {_me}")
 
-        from competitor_intel_format import NOTHING_TO_ACT_ON
-        prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
+    from competitor_intel_format import NOTHING_TO_ACT_ON
+    prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
 Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
 
 {UNTRUSTED_NOTE}
@@ -1126,48 +1179,20 @@ If nothing in these reviews is worth acting on, write exactly this one line unde
 
 Tone: sharp, direct, trusted business advisor. Every line is a single punchy sentence, not a paragraph — cut qualifiers, cut context, cut anything that isn't the point itself. Name specific competitors and cite specific review themes anyway, just in fewer words. Always use $ signs before dollar amounts."""
 
-        # The readiness gate before the call (DH5-2). This read is written
-        # from the rivals fetched for it just now, so its own source (the
-        # last competitor read) is what it replaces, never a reason to hold
-        # it; the one registry-dated input it carries is the weather.
-        import data_health as _dh_ci
-        from ai_utils import with_data_state as _with_ds_ci
-        _ready_ci = (_dh_ci.readiness(restaurant_id, "intel", sources=("weather",), include_not_connected=False)
-                     if restaurant_id else _dh_ci.NOT_APPLICABLE)
-        prompt = _with_ds_ci(prompt, _ready_ci)
+    from ai_utils import with_data_state as _with_ds_ci
+    _ready_ci = ready if ready is not None else _insight_readiness(restaurant_id)
+    prompt = _with_ds_ci(prompt, _ready_ci)
+    return prompt, _ready_ci
 
-        import ai_orchestrator
-        # On the orchestrator's rung (competitor_insight: T2, one call — AI
-        # cost audit 10/7/26, orchestration Phase 3); finish_competitor_insight
-        # validates it as before.
-        msg = ai_orchestrator.generate("competitor_insight", restaurant_id, lambda route, notes: create_with_retry(
-            client,
-            restaurant_id=restaurant_id,
-            action="competitor_insight",
-            readiness=_ready_ci,
-            **route.apply(dict(model=model_for("competitor_insight"), max_tokens=900,
-                               messages=[{"role": "user", "content": prompt}])),
-        ), subject="competitor_insight").result
-        if getattr(msg, "stop_reason", None) == "max_tokens":
-            # An output problem, filed as one (ledger outcome 'truncated',
-            # and an AI-quality event) — not a failing job (#58).
-            import ai_utils as _ai_q
-            _ai_q.record_quality_event("competitor_insight", "truncated", restaurant_id=restaurant_id,
-                                       detail="competitor insight was truncated at max_tokens; no read stored")
-            return ""
-        text = extract_text(msg).strip()
-        return finish_competitor_insight(text, prompt, competitors, restaurant_name,
-                                         own_price_level=(restaurant_profile or {}).get("price_level"),
-                                         restaurant_id=restaurant_id, owner_name=owner_name,
-                                         registry_state=_ready_ci.get("data_state"))
-    except Exception as e:
-        print(f"[Competitor] generate_competitor_insight error: {e}")
-        try:
-            import ops
-            ops.capture(e, job="competitor_insight", context=f"restaurant_id={restaurant_id}")
-        except Exception:
-            pass
-        return ""
+
+def _insight_readiness(restaurant_id):
+    """The readiness gate before the call (DH5-2). This read is written from
+    the rivals fetched for it just now, so its own source (the last
+    competitor read) is what it replaces, never a reason to hold it; the one
+    registry-dated input it carries is the weather."""
+    import data_health as _dh_ci
+    return (_dh_ci.readiness(restaurant_id, "intel", sources=("weather",), include_not_connected=False)
+            if restaurant_id else _dh_ci.NOT_APPLICABLE)
 
 
 # ── the Response Validation Layer on competitor intel (workstream A) ────────
@@ -2121,14 +2146,24 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
         if not competitors:
             return {"ok": False, "error": "No nearby competitors found"}
 
+        profile = {
+            "vibe": restaurant.vibe or "",
+            "known_for": restaurant.known_for or "",
+            "neighborhood": restaurant.neighborhood or "",
+        }
+        # The weekly read on the scheduler's sweep goes through Message
+        # Batches (AI cost audit 10/7/26 #59): nobody waits on it, so half
+        # price; it is stored when the collector hands the answer back
+        # (on_insight_batch). An owner's or admin's Refresh is written now.
+        queued = _submit_insight_batch(restaurant, competitors, profile, _closed_custom, _discovered_at,
+                                       custom_ids, _known_status)
+        if queued is not None:
+            return queued
+
         insight = generate_competitor_insight(
             restaurant.name, competitors,
             owner_name=restaurant.owner_name,
-            restaurant_profile={
-                "vibe": restaurant.vibe or "",
-                "known_for": restaurant.known_for or "",
-                "neighborhood": restaurant.neighborhood or "",
-            },
+            restaurant_profile=profile,
             tz_name=getattr(restaurant, "timezone", None),
             restaurant_id=restaurant_id,
         )
@@ -2141,79 +2176,225 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
             return {"ok": False, "error": "Competitor analysis could not be generated",
                     "competitors": competitors}
 
-        # Store in DB — stamped in the restaurant's local time so "generated
-        # today" reads correctly on their dashboard
-        from time_utils import restaurant_now
-        _now_ct = restaurant_now(restaurant, naive=True)
-        # The read's verdict and engine version are stored beside it
-        # (intel_blob), so a later engine version re-validates it on read.
-        result = intel_blob(competitors, insight, _now_ct.strftime("%Y-%m-%d"), _closed_custom,
-                            discovered_at=_discovered_at, custom_ids=custom_ids)
-        # The freshness stamp is UTC with an offset (DH1-16): the local wall
-        # clock with no offset was read as UTC by ai_guard.freshness and
-        # time_utils.parse_stamp, five to ten hours off. The blob's own date
-        # above stays the restaurant's local day, which is what it displays.
-        from datetime import datetime as _dt_utc, timezone as _tz
-        conn = get_conn()
-        conn.execute(
-            "UPDATE restaurants SET competitor_intel=?, competitor_updated_at=? WHERE id=?",
-            (json.dumps(result), _dt_utc.now(_tz.utc).isoformat(timespec="seconds"), restaurant_id)
-        )
-        conn.commit()
-        conn.close()
-        import models as _models_inv
-        _models_inv._invalidate_request_cache(restaurant_id)
-        # The read kept as history (ai_reads, memory audit 9/29/26): the blob is
-        # overwritten every Monday, so what last week's read said was gone; the
-        # next competitor read sees it through memory_context's last_claim section.
-        try:
-            import ai_reads
-            ai_reads.record_read(restaurant_id, "competitor_read", str(insight), subject="intel",
-                                 meta={"kind": "competitor", "verdict": ai_reads.verdict_of(insight),
-                                       "competitors": [c.get("name") for c in competitors][:8],
-                                       "date": _now_ct.strftime("%Y-%m-%d")})
-        except Exception as _are:
-            print(f"[Competitor] read not kept as history: {_are}")
-        # One JSON blob overwritten every Monday was the entire record, so
-        # nothing could show that a competitor's rating fell, that a new one
-        # opened, or that a complaint theme appeared. A snapshot per run is
-        # what makes any of that answerable later.
-        # Before this run's snapshot: which of last run's places that dropped
-        # out Google says closed (not every dropout is a closure).
-        _closed = _closures_among_dropped(restaurant_id, competitors, _closed_custom,
-                                          prev_blob=prev, known_status=_known_status)
-        try:
-            from models import record_competitor_snapshot
-            record_competitor_snapshot(restaurant_id, competitors)
-        except Exception as _se:
-            print(f"[Competitor] snapshot failed: {_se}")
-        # The market's history, kept forever (memory audit 9/29/26,
-        # public_history): the snapshots are pruned at a year, so openings,
-        # closures and rating moves are kept as events, with a monthly
-        # rating series. Never raises. Dated on the restaurant's clock, as
-        # the read above is — the server's UTC date is tomorrow from 7pm
-        # Central (event re-audit 2 RX-06).
-        try:
-            import event_memory
-            event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed, at=_now_ct)
-        except Exception as _me:
-            print(f"[Competitor] market history not kept: {_me}")
-        print(f"[Competitor] Analysis complete for {restaurant.name}")
-        try:
-            from webhooks import fire_webhook as _fw_intel
-            _fw_intel(restaurant_id, "intel.updated", {
-                "competitors_analyzed": len(competitors),
-                "generated_at": result["generated_at"],
-            })
-        except Exception:
-            pass
-        # The model's raw text and the prompt stay in the stored row for
-        # re-validation; they are not part of what a caller is handed.
-        return {"ok": True, **{k: v for k, v in result.items() if k not in ("insight_raw", "validation_input")}}
+        return _store_analysis(restaurant, competitors, insight, _closed_custom, _discovered_at, custom_ids, prev,
+                               _known_status)
     except Exception as e:
         print(f"[Competitor] run_competitor_analysis error: {e}")
         from ai_guard import safe_error
         return {"ok": False, "error": safe_error(e, "Competitor analysis could not be completed.")}
+
+
+def _store_analysis(restaurant, competitors, insight, _closed_custom, _discovered_at, custom_ids, prev,
+                    _known_status) -> dict:
+    """A finished read stored: the blob, its history, the market snapshot and
+    the webhook — run_competitor_analysis's last step, and a batched read's
+    when it lands (on_insight_batch). Returns what the run returns."""
+    from models import get_conn
+    restaurant_id = restaurant.id
+    # Store in DB — stamped in the restaurant's local time so "generated
+    # today" reads correctly on their dashboard
+    from time_utils import restaurant_now
+    _now_ct = restaurant_now(restaurant, naive=True)
+    # The read's verdict and engine version are stored beside it
+    # (intel_blob), so a later engine version re-validates it on read.
+    result = intel_blob(competitors, insight, _now_ct.strftime("%Y-%m-%d"), _closed_custom,
+                        discovered_at=_discovered_at, custom_ids=custom_ids)
+    # The freshness stamp is UTC with an offset (DH1-16): the local wall
+    # clock with no offset was read as UTC by ai_guard.freshness and
+    # time_utils.parse_stamp, five to ten hours off. The blob's own date
+    # above stays the restaurant's local day, which is what it displays.
+    from datetime import datetime as _dt_utc, timezone as _tz
+    conn = get_conn()
+    conn.execute(
+        "UPDATE restaurants SET competitor_intel=?, competitor_updated_at=? WHERE id=?",
+        (json.dumps(result), _dt_utc.now(_tz.utc).isoformat(timespec="seconds"), restaurant_id)
+    )
+    conn.commit()
+    conn.close()
+    import models as _models_inv
+    _models_inv._invalidate_request_cache(restaurant_id)
+    # The read kept as history (ai_reads, memory audit 9/29/26): the blob is
+    # overwritten every Monday, so what last week's read said was gone; the
+    # next competitor read sees it through memory_context's last_claim section.
+    try:
+        import ai_reads
+        ai_reads.record_read(restaurant_id, "competitor_read", str(insight), subject="intel",
+                             meta={"kind": "competitor", "verdict": ai_reads.verdict_of(insight),
+                                   "competitors": [c.get("name") for c in competitors][:8],
+                                   "date": _now_ct.strftime("%Y-%m-%d")})
+    except Exception as _are:
+        print(f"[Competitor] read not kept as history: {_are}")
+    # One JSON blob overwritten every Monday was the entire record, so
+    # nothing could show that a competitor's rating fell, that a new one
+    # opened, or that a complaint theme appeared. A snapshot per run is
+    # what makes any of that answerable later.
+    # Before this run's snapshot: which of last run's places that dropped
+    # out Google says closed (not every dropout is a closure).
+    _closed = _closures_among_dropped(restaurant_id, competitors, _closed_custom,
+                                      prev_blob=prev, known_status=_known_status)
+    try:
+        from models import record_competitor_snapshot
+        record_competitor_snapshot(restaurant_id, competitors)
+    except Exception as _se:
+        print(f"[Competitor] snapshot failed: {_se}")
+    # The market's history, kept forever (memory audit 9/29/26,
+    # public_history): the snapshots are pruned at a year, so openings,
+    # closures and rating moves are kept as events, with a monthly
+    # rating series. Never raises. Dated on the restaurant's clock, as
+    # the read above is — the server's UTC date is tomorrow from 7pm
+    # Central (event re-audit 2 RX-06).
+    try:
+        import event_memory
+        event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed, at=_now_ct)
+    except Exception as _me:
+        print(f"[Competitor] market history not kept: {_me}")
+    print(f"[Competitor] Analysis complete for {restaurant.name}")
+    try:
+        from webhooks import fire_webhook as _fw_intel
+        _fw_intel(restaurant_id, "intel.updated", {
+            "competitors_analyzed": len(competitors),
+            "generated_at": result["generated_at"],
+        })
+    except Exception:
+        pass
+    # The model's raw text and the prompt stay in the stored row for
+    # re-validation; they are not part of what a caller is handed.
+    return {"ok": True, **{k: v for k, v in result.items() if k not in ("insight_raw", "validation_input")}}
+
+
+# ── the weekly read through Message Batches (AI cost audit 10/7/26 #59) ─────
+# The Monday read (and the daily check's re-read) runs on the scheduler with
+# nobody waiting: its one model call goes as a batch item at half price,
+# answered within the hour as a rule. The places, reviews and figures are
+# gathered first, as always; the item carries them, and the answer is
+# judged by the same finish_competitor_insight and stored by the same
+# _store_analysis. A read the batch cannot answer (errored, expired, or not
+# back by BATCH_CUTOFF_HOURS — ai_batches' cutoff sweep) is written
+# synchronously from what was gathered; a gate's refusal (the budget, the
+# breaker) is a failed attempt, as the synchronous call's would be.
+BATCH_WORKFLOW = "competitor_insight"
+BATCH_CALLBACK = "competitor:on_insight_batch"
+BATCH_CUTOFF_HOURS = 3
+
+
+def _batch_allowed() -> bool:
+    """Only unattended work batches: the scheduler's own sweep, where
+    Message Batches may run (ai_batches.enabled — never a local backend)."""
+    try:
+        import ai_batches
+        import ai_utils
+        return ai_utils._attribution()[0] == "scheduler" and ai_batches.enabled(BATCH_WORKFLOW)
+    except Exception:
+        return False
+
+
+def _submit_insight_batch(restaurant, competitors, profile, closed_custom, discovered_at, custom_ids,
+                          known_status):
+    """Send the read as a batch item. The run's answer while it is out
+    ({"ok": True, "batched": True, ...}), or None when it must be written
+    now (not the scheduler's sweep, batches off, the submit failed). Never
+    raises."""
+    if not competitors or not ANTHROPIC_KEY or not _batch_allowed():
+        return None
+    rid = restaurant.id
+    try:
+        import uuid
+        from datetime import datetime, timedelta
+        import ai_batches
+        import ai_orchestrator
+        import ai_workflows as wf
+        prompt, ready = _insight_prompt(restaurant.name, competitors, restaurant.owner_name, profile,
+                                        getattr(restaurant, "timezone", None), rid, ready=_insight_readiness(rid))
+        run_id = ai_orchestrator.new_run_id(BATCH_WORKFLOW)
+        cid = f"ci-{int(rid)}-{uuid.uuid4().hex[:12]}"
+        out = ai_batches.submit(BATCH_WORKFLOW, [{
+            "custom_id": cid, "restaurant_id": rid, "action": "competitor_insight",
+            "request": _insight_request(prompt, wf.route_for(wf.policy(BATCH_WORKFLOW), 0)), "readiness": ready,
+            "callback": BATCH_CALLBACK, "correlation_id": run_id,
+            "cutoff_at": datetime.utcnow() + timedelta(hours=BATCH_CUTOFF_HOURS),
+            "context": {"run_id": run_id, "prompt": prompt, "competitors": competitors, "profile": profile,
+                        "closed_custom": closed_custom, "discovered_at": discovered_at,
+                        "custom_ids": list(custom_ids or ()), "known_status": known_status,
+                        "data_state": (ready or {}).get("data_state")}}])
+        state = out.get(cid)
+        if state == ai_batches.SUBMITTED:
+            return {"ok": True, "batched": True, "competitors_analyzed": len(competitors)}
+        if state == ai_batches.BLOCKED:
+            # A gate refused it (its callback recorded the attempt): the
+            # synchronous call would have been refused the same way.
+            return {"ok": False, "error": "Competitor analysis could not be generated", "competitors": competitors}
+        return None
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="competitor_insight", context=f"restaurant_id={rid} batch submit")
+        except Exception:
+            pass
+        return None
+
+
+def _record_attempt(restaurant_id, ok, error=None):
+    try:
+        import data_health
+        data_health.record_attempt(restaurant_id, "competitor", ok, provider="places", error=error)
+    except Exception as e:
+        print(f"[Competitor] attempt not recorded for {restaurant_id}: {e}")
+
+
+def on_insight_batch(item, message=None, error=None):
+    """ai_batches' callback for the weekly read. The answer is the run's
+    first rung (ai_orchestrator.generate under the run id the item was sent
+    with), judged by finish_competitor_insight and stored by _store_analysis;
+    no answer (errored, expired, past the cutoff) writes it synchronously
+    from what was gathered; a gate's refusal is recorded as a failed
+    attempt. The outcome lands in source_health as the sweep's would."""
+    import ai_batches
+    rid = (item or {}).get("restaurant_id")
+    ctx = (item or {}).get("context") or {}
+    if not rid:
+        return
+    from models import get_restaurant
+    restaurant = get_restaurant(rid)
+    if restaurant is None:
+        return
+    competitors = ctx.get("competitors") or []
+    profile = ctx.get("profile") or {}
+    try:
+        if error is not None and not isinstance(error, ai_batches.BatchItemFailed):
+            _record_attempt(rid, False, f"competitor read refused: {type(error).__name__}")
+            return
+        if error is not None:
+            insight = generate_competitor_insight(restaurant.name, competitors, owner_name=restaurant.owner_name,
+                                                  restaurant_profile=profile,
+                                                  tz_name=getattr(restaurant, "timezone", None), restaurant_id=rid)
+        else:
+            import ai_orchestrator
+            prompt = ctx.get("prompt") or ""
+            # The data state the prompt was written with (finish_competitor_
+            # insight reads it as the synchronous call's would). The policy
+            # has one rung and no check, so the answer is the run.
+            ready = {"data_state": ctx.get("data_state")}
+            msg = ai_orchestrator.generate(BATCH_WORKFLOW, rid, lambda route, notes: message,
+                                           subject="competitor_insight", unattended=True,
+                                           run_id=ctx.get("run_id")).result
+            text = _insight_text(msg, rid)
+            insight = finish_competitor_insight(text, prompt, competitors, restaurant.name,
+                                                own_price_level=profile.get("price_level"), restaurant_id=rid,
+                                                owner_name=restaurant.owner_name,
+                                                registry_state=ready.get("data_state")) if text is not None else ""
+        if not (insight or "").strip():
+            _record_attempt(rid, False, "Competitor analysis could not be generated")
+            return
+        _store_analysis(restaurant, competitors, insight, ctx.get("closed_custom") or [], ctx.get("discovered_at"),
+                        ctx.get("custom_ids") or [], _stored_blob(restaurant), ctx.get("known_status") or {})
+        _record_attempt(rid, True)
+    except Exception as e:
+        _record_attempt(rid, False, str(e)[:200])
+        try:
+            import ops
+            ops.capture(e, job="competitor_insight", context=f"restaurant_id={rid} batch")
+        except Exception:
+            pass
 
 
 # ── the daily ratings check (owner, 10/2/26) ─────────────────────────────────

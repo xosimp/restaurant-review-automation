@@ -26,7 +26,9 @@ ALLOWLIST = {
         "review classification JSON: _validate_entities / _severity_floor / _escalate_urgency",
     ("recipes.py", "extract_from_image"):
         "recipe extraction from a photo: line_confidence caps each line; the owner confirms every line",
-    ("recipes.py", "draft_missing"):
+    # The call moved from draft_missing into one dish's run when the
+    # Tuesday job's drafts began to batch (AI cost audit 10/7/26 #60).
+    ("recipes.py", "_draft_run"):
         "recipe drafts: line_confidence caps each line; the owner confirms every line",
     ("invoices.py", "extract"):
         "invoice extraction: propose() keeps every write in Python; confirmed per line",

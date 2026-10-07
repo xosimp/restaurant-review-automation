@@ -16,7 +16,10 @@ workflow: it is written while the owner is asleep, so nobody waits on it.
                                  lands, is ledgered and discarded
   run_collector()                the scheduled job (ai_batch_collect, every
                                  ~5 minutes): read the ended batches, ledger
-                                 every result, hand each to its callback
+                                 every result, hand each to its callback;
+                                 then hand back each item still out past
+                                 its own cutoff_at (BatchItemFailed
+                                 "cutoff") for a synchronous call
   init_ai_batches()              boot DDL (models.init_db)
 
 AN ITEM is {custom_id, restaurant_id, action, request, callback, context,
@@ -77,9 +80,15 @@ log = logging.getLogger("ai_batches")
 # Workflows that batch unless AI_BATCHES_WORKFLOWS names others: the nightly
 # DSR narrative, and the learner's weekly shadow replays (ai_learning.
 # shadow_arms — a cheaper tier on kept production requests, which nobody
-# waits on and which would never be worth list price). An explicit
-# AI_BATCHES_WORKFLOWS replaces this list, so it must name both to keep both.
-DEFAULT_WORKFLOWS = "dsr_narrative,shadow_arms"
+# waits on and which would never be worth list price). AI cost audit 10/7/26
+# added four more nobody waits on, each with a synchronous fallback by a
+# cutoff: the weekly competitor read (#59, competitor), the Tuesday recipe
+# drafts (#60, recipes), the weekly digest's narrative written the night
+# before the send (#61, reporter) and the quiet-night post drafts (#62,
+# strategy_jobs). An explicit AI_BATCHES_WORKFLOWS replaces this list, so
+# it must name every one to keep it.
+DEFAULT_WORKFLOWS = ("dsr_narrative,shadow_arms,competitor_insight,recipe_draft,weekly_digest,"
+                     "quiet_night_post")
 # The batches endpoints carry a whole request set up and a JSONL file back.
 API_TIMEOUT_SECONDS = 60.0
 # The collector's bounds per pass (CLAUDE.md: bounded; the jobs table is the
@@ -90,6 +99,10 @@ COLLECT_MAX_SECONDS = 120
 # finished it (a deploy killed the process mid-callback) is closed as
 # failed — never handed to its callback twice.
 STALE_COLLECTING_MINUTES = 15
+# Items past their own cutoff handed back per collector pass (AI cost audit
+# 10/7/26 #59-#62): each callback falls back to a synchronous call, so the
+# pass is bounded; the rest are the next pass's, oldest cutoff first.
+CUTOFF_MAX_ITEMS = 10
 
 # Item states.
 QUEUED = "queued"              # written; batches.create has not answered yet
@@ -177,11 +190,17 @@ _DDL = (
         submitted_at   TEXT,
         claimed_at     TEXT,
         collected_at   TEXT,
+        cutoff_at      TEXT,
         PRIMARY KEY (workflow, custom_id)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_ai_batch_items_batch ON ai_batch_items(batch_id)",
     "CREATE INDEX IF NOT EXISTS idx_ai_batch_items_created ON ai_batch_items(created_at)",
 )
+# Added after the table shipped (AI cost audit 10/7/26 #59-#62): the time
+# (naive UTC) past which an item still out is cancelled and its callback
+# told BatchItemFailed("cutoff"), so its caller writes it synchronously.
+_ITEM_COLUMNS = (("cutoff_at", "TEXT"),)
+_INDEXES_AFTER = ("CREATE INDEX IF NOT EXISTS idx_ai_batch_items_cutoff ON ai_batch_items(status, cutoff_at)",)
 
 
 def init_ai_batches(db_path=None):
@@ -189,6 +208,12 @@ def init_ai_batches(db_path=None):
     conn = _conn(db_path)
     try:
         for sql in _DDL:
+            conn.execute(sql)
+        have = {r[1] for r in conn.execute("PRAGMA table_info(ai_batch_items)").fetchall()}
+        for col, decl in _ITEM_COLUMNS:
+            if col not in have:
+                conn.execute(f"ALTER TABLE ai_batch_items ADD COLUMN {col} {decl}")
+        for sql in _INDEXES_AFTER:
             conn.execute(sql)
         conn.commit()
     finally:
@@ -349,7 +374,14 @@ def submit(workflow, items, client=None):
     "submit_failed" (batches.create failed; nothing was sent). Raises
     ValueError for an item that breaks the contract (a bad custom_id or a
     callback that does not resolve) — a programming error, found at submit
-    rather than a day later."""
+    rather than a day later.
+
+    Two optional item keys (AI cost audit 10/7/26 #59-#62): `cutoff_at` (a
+    datetime, or naive-UTC text) — still out past it, the item is cancelled
+    by the collector's cutoff sweep and its callback told
+    BatchItemFailed("cutoff"), so the caller writes it synchronously; and
+    `correlation_id` — the item's own ledger group (a workflow run's id)
+    where several runs share one batch, in place of the one in force."""
     import ai_utils
     items = list(items or [])
     if not items:
@@ -370,16 +402,19 @@ def submit(workflow, items, client=None):
             request = _shape(it.get("request"))
             model = request.get("model", "unknown")
             rid, action = it.get("restaurant_id"), it.get("action") or "unspecified"
-            error = _gate(rid, action, model, it.get("readiness"), attribution)
+            item_corr = it.get("correlation_id") or corr
+            error = _gate(rid, action, model, it.get("readiness"), dict(attribution, correlation_id=item_corr))
+            cutoff = it.get("cutoff_at")
+            cutoff = cutoff[:19].replace("T", " ") if isinstance(cutoff, str) else _stamp(cutoff)
             cur = conn.execute(
                 'INSERT OR IGNORE INTO ai_batch_items (workflow, custom_id, restaurant_id, action, model, callback, '
-                'context_json, request_z, status, reason, "trigger", actor_user_id, correlation_id) '
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                'context_json, request_z, status, reason, "trigger", actor_user_id, correlation_id, cutoff_at) '
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (workflow, cid, rid, action, model, it["callback"],
                  json.dumps(it.get("context") or {}, default=str),
                  None if error else zlib.compress(json.dumps(request, default=str).encode("utf-8")),
                  BLOCKED if error else QUEUED, (type(error).__name__ if error else None),
-                 trigger, actor, (str(corr)[:80] if corr else None)))
+                 trigger, actor, (str(item_corr)[:80] if item_corr else None), cutoff))
             conn.commit()
             if cur.rowcount != 1:
                 out[cid] = DUPLICATE
@@ -703,15 +738,54 @@ class _Missing:
     type = "missing"
 
 
+def _sweep_cutoffs(client, started, out):
+    """Items still out past their own cutoff_at (AI cost audit 10/7/26
+    #59-#62): each cancelled (its answer, if it ever lands, is ledgered and
+    dropped) and its callback told BatchItemFailed("cutoff"), so its caller
+    writes it synchronously now. Oldest cutoff first, at most
+    CUTOFF_MAX_ITEMS a pass and inside the collector's time bound."""
+    conn = _conn()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT workflow, custom_id FROM ai_batch_items WHERE status IN (?,?) AND cutoff_at IS NOT NULL "
+            "AND cutoff_at <= ? ORDER BY cutoff_at LIMIT ?", (*OPEN, _now(), CUTOFF_MAX_ITEMS + 1)).fetchall()]
+    finally:
+        conn.close()
+    if len(rows) > CUTOFF_MAX_ITEMS:
+        rows, out["hit_bound"] = rows[:CUTOFF_MAX_ITEMS], True
+    for r in rows:
+        if time.monotonic() - started > COLLECT_MAX_SECONDS:
+            out["hit_bound"] = True
+            break
+        if not cancel(r["workflow"], r["custom_id"], client=client):
+            continue                       # the collector took it a moment ago
+        row = item(r["workflow"], r["custom_id"])
+        if row is None:
+            continue
+        err = _invoke(row, error=BatchItemFailed("cutoff", "not answered by its cutoff"))
+        _update(r["workflow"], r["custom_id"], reason="past its cutoff", callback_error=err)
+        out["cut_off"] = out.get("cut_off", 0) + 1
+
+
+def _capture_sweep(e):
+    try:
+        import ops
+        ops.capture(e, job="ai_batch_collect", context="cutoff sweep")
+    except Exception:
+        pass
+
+
 def run_collector(client=None):
     """The scheduled job (ai_batch_collect, every ~5 minutes): every batch
     still out, oldest first, asked whether it has ended; an ended one's
     results ledgered and handed to their callbacks. Bounded by
     COLLECT_MAX_BATCHES and COLLECT_MAX_SECONDS; the jobs table is the queue,
-    so a pass cut short leaves the rest for the next. Only on the production
+    so a pass cut short leaves the rest for the next. Then each item still
+    out past its own cutoff is handed back for a synchronous call
+    (_sweep_cutoffs, counted in `cut_off`). Only on the production
     scheduler's host. Returns the standard counts: attempted = batches that
     had ended, skipped = batches still running."""
-    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "items": 0}
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "items": 0, "cut_off": 0}
     if not _scheduling_allowed():
         return dict(out, reason="not the production scheduler host")
     conn = _conn()
@@ -721,12 +795,16 @@ def run_collector(client=None):
             "ORDER BY submitted_at, batch_id LIMIT ?", (COLLECT_MAX_BATCHES + 1,)).fetchall()]
     finally:
         conn.close()
+    started = time.monotonic()
     if not jobs:
+        try:
+            _sweep_cutoffs(client, started, out)
+        except Exception as e:
+            _capture_sweep(e)
         return out
     if len(jobs) > COLLECT_MAX_BATCHES:
         jobs, out["hit_bound"] = jobs[:COLLECT_MAX_BATCHES], True
     client = client or _client()
-    started = time.monotonic()
     for job in jobs:
         if time.monotonic() - started > COLLECT_MAX_SECONDS:
             out["hit_bound"] = True
@@ -763,4 +841,9 @@ def run_collector(client=None):
                 c.commit()
             finally:
                 c.close()
+    # After the results: an answer that landed this pass is never cut off.
+    try:
+        _sweep_cutoffs(client, started, out)
+    except Exception as e:
+        _capture_sweep(e)
     return out

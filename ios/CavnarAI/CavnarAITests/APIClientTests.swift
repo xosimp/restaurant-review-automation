@@ -121,6 +121,69 @@ final class APIClientTests: XCTestCase {
         }
     }
 
+    // MARK: - Owner AI jobs (AI cost audit 10/7/26 #57)
+
+    private struct DraftAnswer: Decodable { let ok: Bool; let message: String?; let error: String? }
+
+    func testAnAsyncStartIsPolledToTheRoutesOwnAnswer() async throws {
+        let polls = Box(0)
+        MockURLProtocol.requestHandler = { request in
+            let path = request.url!.path
+            let ok = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if path == "/mobile/api/guest-campaign/draft" {
+                return (ok, Data(#"{"ok": true, "async": true, "status": "pending", "job_id": "abc", "wait_seconds": 60}"#.utf8))
+            }
+            polls.value += 1
+            if polls.value == 1 {
+                return (ok, Data(#"{"ok": true, "status": "pending", "job_id": "abc"}"#.utf8))
+            }
+            return (ok, Data(#"{"ok": true, "status": "done", "job_id": "abc", "message": "See you Tuesday"}"#.utf8))
+        }
+        let client = makeClient()
+        let started: APIClient.AIJobAnswer<DraftAnswer> = try await client.send("/mobile/api/guest-campaign/draft",
+                                                                                method: .post)
+        XCTAssertEqual(started.jobId, "abc")
+        let answer: DraftAnswer = try await client.resolveAIJob(started)
+        XCTAssertEqual(answer.message, "See you Tuesday")
+        XCTAssertEqual(polls.value, 2)
+    }
+
+    func testAServerThatAnswersAtOnceIsPassedThrough() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let ok = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (ok, Data(#"{"ok": true, "message": "Written now"}"#.utf8))
+        }
+        let client = makeClient()
+        let started: APIClient.AIJobAnswer<DraftAnswer> = try await client.send("/mobile/api/guest-campaign/draft",
+                                                                                method: .post)
+        XCTAssertNil(started.jobId)
+        let answer: DraftAnswer = try await client.resolveAIJob(started)
+        XCTAssertEqual(answer.message, "Written now")
+    }
+
+    func testAJobsRefusalThrowsTheServersOwnSentence() async {
+        MockURLProtocol.requestHandler = { request in
+            if request.url!.path == "/mobile/api/ai-jobs/xyz" {
+                let r = HTTPURLResponse(url: request.url!, statusCode: 422, httpVersion: nil, headerFields: nil)!
+                return (r, Data(#"{"ok": false, "status": "done", "error": "Cavnar AI didn't use that draft"}"#.utf8))
+            }
+            let ok = HTTPURLResponse(url: request.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!
+            return (ok, Data(#"{"ok": true, "job_id": "xyz"}"#.utf8))
+        }
+        let client = makeClient()
+        do {
+            let started: APIClient.AIJobAnswer<DraftAnswer> = try await client.send("/mobile/api/guest-campaign/draft",
+                                                                                    method: .post)
+            let _: DraftAnswer = try await client.resolveAIJob(started)
+            XCTFail("a 422 job answer must throw")
+        } catch let error as APIClient.APIError {
+            XCTAssertEqual(error.status, 422)
+            XCTAssertEqual(error.message, "Cavnar AI didn't use that draft")
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
+    }
+
     // Both branches of the offline decision, driven directly — reaching
     // classify() through send() only ever exercises whichever state the
     // machine running the tests happens to be in.
