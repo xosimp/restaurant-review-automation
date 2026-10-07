@@ -9841,8 +9841,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 <style>
 /* ── Labor (lb2-*) — Home/Reviews language: hero ribbon, three chart tiles,
    schedule tools as rows. The three staffing tables keep their own look. */
-#studio{--ss-dayrow:rgba(14,12,10,.06);--hb-inner:rgba(14,12,10,.035)}
-[data-theme="dark"] #studio{--ss-dayrow:rgba(0,0,0,.3);--hb-inner:rgba(255,255,255,.04)}
+#studio{--ss-dayrow:rgba(14,12,10,.06);--hb-inner:rgba(14,12,10,.035);--ss-band:rgba(14,12,10,.05)}
+[data-theme="dark"] #studio{--ss-dayrow:rgba(0,0,0,.3);--hb-inner:rgba(255,255,255,.04);--ss-band:rgba(0,0,0,.18)}
 #panel-labor,#studio{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
 [data-theme="dark"] #panel-labor,[data-theme="dark"] #studio{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-labor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
@@ -10086,10 +10086,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* The band stops at the week's own card (owner, 10/7/26): clipped by the
    window alone it ran on across the Overview / Fix column. overflow-x:clip,
    not hidden - hidden makes the card a scroll box and the row stops sticking.
-   Its fade is short (14px in, 18px out): the 30-46px fade read as a blur. */
+   Its fade is short (14px in, 18px out): the 30-46px fade read as a blur.
+   Its colour is the page's own a shade darker (--ss-band over --paper), not
+   black: it reads as the header and blends in (owner, 10/7/26). */
 .ss .sw-center{overflow-x:clip}
 .ss .swg-hr>.swg-d:first-child::before{content:'';position:absolute;z-index:-1;top:-14px;bottom:-14px;left:-100vw;right:-100vw;pointer-events:none;
-  background:linear-gradient(180deg,transparent 0,var(--ss-band,rgba(0,0,0,.42)) 14px,var(--ss-band,rgba(0,0,0,.42)) calc(100% - 18px),transparent 100%),linear-gradient(180deg,transparent 0,var(--surface) 14px,var(--surface) calc(100% - 18px),transparent 100%)}
+  background:linear-gradient(180deg,transparent 0,var(--ss-band) 14px,var(--ss-band) calc(100% - 18px),transparent 100%),linear-gradient(180deg,transparent 0,var(--paper) 14px,var(--paper) calc(100% - 18px),transparent 100%)}
 .swg-t{display:grid;grid-template-columns:var(--swg-name,148px) repeat(var(--swg-days,7),minmax(var(--swg-min,86px),1fr));min-width:760px}
 .swg-r{display:contents}
 .swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}
