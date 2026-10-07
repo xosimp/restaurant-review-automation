@@ -256,6 +256,7 @@ Changed or added by the AI cost audit (10/7/26):
 | `AIVIS_SERVE_MAX_DAYS` | `"35"` | client_api.py — how old a stored visibility run a read still serves (else "not measured yet"; #9) |
 | `ALERT_STORM_PER_HOUR` | `"10"` | notify.py |
 | `ASK_LOOP_MAX_SECONDS` | `"60"` | ask_cavnar.py |
+| `ASK_STREAM_SENTENCES` | `"1"` | ask_cavnar.py — `0` turns off the Ask stream's validated sentence preview (no `sentence` events, no streamed model call; AI cost audit 10/7/26 #68) |
 | `ASK_MAX_CONCURRENT` | `"2"` | client_api.py |
 | `BACKUP_EMAIL_MAX_BYTES` | `str(25 * 1024 * 1024` | scheduler.py |
 | `BACKUP_EMAIL_MODE` | `"always"` | scheduler.py |

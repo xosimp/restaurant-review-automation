@@ -82,7 +82,7 @@ struct AskCavnarView: View {
                             }
                             if viewModel.isLoading {
                                 LoadingBubble(label: viewModel.statusLabel, trail: viewModel.progressTrail, orbState: viewModel.orbState,
-                                              paused: motionPaused)
+                                              paused: motionPaused, preview: viewModel.streamingPreview)
                             }
                             // Scroll target for the in-progress reveal above
                             // — reserved space the scroll view can settle into.
@@ -753,6 +753,10 @@ private struct LoadingBubble: View {
     /// Drives the orb's motion — connecting, searching, composing and so on.
     var orbState: CavnarOrbState = .connecting
     var paused: Bool = false
+    /// The answer's validated sentences so far (AI cost audit 10/7/26 #68),
+    /// rendered as the answer will be; the final answer replaces the whole
+    /// bubble without retyping it.
+    var preview: String = ""
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -763,7 +767,11 @@ private struct LoadingBubble: View {
                     .font(.cavnarBody(13.5, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
-                if let label {
+                if !preview.isEmpty {
+                    TypewriterText(fullText: preview, size: 16, color: Color.cavnarInk, lineSpacing: 5,
+                                   startRevealed: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let label {
                     ForEach(Array(trail.enumerated()), id: \.offset) { _, done in
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark")

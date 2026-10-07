@@ -139,8 +139,12 @@ def _narrative_strings(n):
         items = [t for t in (text(i) for i in n.get(f) or []) if t]
         if items:
             out[f] = items
-    for f in ("biggest_risk", "biggest_win", "biggest_financial_opportunity", "biggest_staffing_concern"):
-        if text(n.get(f)):
+    # largest_opportunity is the night's opportunity line since the merge
+    # (dsr.narrative.MERGED_SINGLES, #78); a stored night's
+    # biggest_financial_opportunity is still read.
+    for f in ("biggest_risk", "biggest_win", "biggest_financial_opportunity", "largest_opportunity",
+              "biggest_staffing_concern"):
+        if text(n.get(f)) and text(n[f]) not in out.values():
             out[f] = text(n[f])
     acts = [{"do": a.get("text"), "why": a.get("why"), "urgency": a.get("urgency")}
             for a in n.get("actions_tomorrow") or [] if isinstance(a, dict) and a.get("text")]

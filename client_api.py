@@ -3208,7 +3208,11 @@ def ask_cavnar_api(current_user):
 
 def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_conversation=False, brief=False,
                                 user=None, screen=None):
-    """Server-sent events: progress while tools run, then the answer.
+    """Server-sent events: progress while tools run, then the answer —
+    with the answer's validated sentences streamed ahead of it as a preview
+    (`sentence` / `sentence_reset`, AI cost audit 10/7/26 #68; the `answer`
+    event stays authoritative and a client that ignores the new events
+    renders exactly what it did before).
 
     Shared by the web and mobile stream routes so iOS gets the same live
     "Reading your reviews" progress the web client already shows, instead
@@ -3252,6 +3256,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
         cid = conversation_id
         try:
             from ask_cavnar import ask_with_tools
+            import ask_cavnar as _ac_stream
             from models import save_ask_message, get_ask_history, log_ask_action
             restaurant = get_restaurant(rid)
             if not restaurant:
@@ -3263,6 +3268,10 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 restaurant, question, history=history, user=user, screen=screen, conversation_id=cid,
                 on_progress=lambda label, state: events.put(
                     {"type": "progress", "label": label, "state": state}),
+                # Validated sentences of the answer as it is written (AI cost
+                # audit 10/7/26 #68): a preview the `answer` event replaces.
+                # ASK_STREAM_SENTENCES=0 sends none (ask_with_tools reads it).
+                on_sentence=_ac_stream.sentence_events(events.put),
                 **({"brief": True} if brief else {}))
             mid = None
             try:

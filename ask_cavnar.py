@@ -1861,9 +1861,8 @@ def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions
     (BM3-3)."""
     import dataclasses
     import response_validation as rv
-    _ds = answer_data_state(restaurant_id, tools_used, consulted, snapshot_keys)
-    ctx = _validation_context(corpus, restaurant_id, actions_done=actions_done, data_state=_ds,
-                              bench_facts=snapshot_benchmark_facts(restaurant_id, viewer))
+    ctx, _ds = _first_pass_context(corpus, tools_used, consulted, restaurant_id, actions_done=actions_done,
+                                   snapshot_keys=snapshot_keys, viewer=viewer)
     first = rv.validate(answer, ctx)
     _who = getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
     meta = _meta(answer, corpus, tools_used, consulted, depth, restaurant_id, verdict=first, question=question,
@@ -1892,6 +1891,196 @@ def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions
     meta["validation_findings"] = [{k: f.get(k) for k in ("rule", "severity", "span", "detail", "action", "sentence")
                                     if f.get(k) is not None} for f in verdict.findings][:40]
     return shown, _recorded(shown, meta, restaurant_id)
+
+
+def _first_pass_context(corpus, tools_used, consulted, restaurant_id, actions_done=(), snapshot_keys=(),
+                        viewer=None) -> tuple:
+    """(ValidationContext, data_state) for the first pass over an Ask
+    answer: the context _finish validates the whole answer under, and the
+    one the sentence preview holds each streamed sentence to (AI cost audit
+    10/7/26 #68) — one builder, so the two can never check against
+    different corpora."""
+    _ds = answer_data_state(restaurant_id, tools_used, consulted, snapshot_keys)
+    ctx = _validation_context(corpus, restaurant_id, actions_done=actions_done, data_state=_ds,
+                              bench_facts=snapshot_benchmark_facts(restaurant_id, viewer))
+    return ctx, _ds
+
+
+# ── validated sentences, streamed (AI cost audit 10/7/26 #68) ───────────────
+#
+# An answer used to arrive whole: an executive answer is up to 4,000 tokens,
+# and the owner watched "Composing your answer" for all of them — the
+# biggest felt delay in Ask. Raw token streaming would show text the
+# Response Validation Layer has not seen (it rewrites and drops sentences
+# afterwards, and the confidence % needs the whole answer). So the final
+# round's text is buffered as the model writes it, and a sentence goes to
+# the client only once the answer so far, through that sentence, passes the
+# same first-pass validation _finish gives the whole answer — the same
+# corpus, typed facts, data state and figure check — with nothing rewritten,
+# dropped, caveated or withheld. The first sentence that would not stand
+# exactly as written stops the preview for that round: everything from it
+# on waits for the final answer, so the preview is always the opening of
+# the answer and never has a hole in it. The final `answer` event is
+# authoritative: the client replaces the preview with it (the second pass
+# under the computed confidence, the declined-advice caveats and the
+# evidence strip only exist there). Tool rounds are never shown: a round
+# that starts a tool_use block withdraws whatever it previewed
+# (`sentence_reset`), and a round that offers tools previews nothing until
+# it has written _PREVIEW_OPEN_SENTENCES sentences — a one-line "let me
+# check" before a tool call never flashes up. Only the first text block is
+# read (extract_text's answer); thinking is never read.
+#
+# ASK_STREAM_SENTENCES=0 turns it off: no stream, no sentence events — the
+# turn is exactly what it was before.
+
+_PREVIEW_OPEN_SENTENCES = 2
+
+
+def sentence_streaming_on() -> bool:
+    """ASK_STREAM_SENTENCES (default on), read at call time."""
+    return str(_os.getenv("ASK_STREAM_SENTENCES", "1")).strip().lower() not in ("0", "false", "off", "no", "")
+
+
+def _clean_streamed(text) -> str:
+    """The streamed text as _answer_of will clean it: no fence markers, no
+    leading blank. Offsets into it stay stable as text is appended (a marker
+    cut in two is always in the unfinished tail)."""
+    from ai_guard import OWNER_RULE_CLOSE, OWNER_RULE_OPEN, UNTRUSTED_OPEN, UNTRUSTED_CLOSE
+    for marker in (UNTRUSTED_OPEN, UNTRUSTED_CLOSE, OWNER_RULE_OPEN, OWNER_RULE_CLOSE):
+        text = text.replace(marker, "")
+    return text.lstrip()
+
+
+def preview_passes(text, ctx) -> bool:
+    """True when `text` (the answer so far, through a complete sentence)
+    stands exactly as written under the first pass: not refused, nothing
+    rewritten or dropped, and no finding above info. The one exception is a
+    whole-answer disclosure (M1 with no sentence of its own and no span in
+    the text): the final answer carries it as a caveat beside the text, and
+    no sentence changes for it."""
+    import response_validation as rv
+    v = rv.validate(text, ctx)
+    if v.verdict == "refuse" or " ".join(str(v.text or "").split()) != " ".join(str(text or "").split()):
+        return False
+    low = str(text or "").lower()
+    for f in v.findings:
+        if f.get("severity") == "info":
+            continue
+        if f.get("rule") == "M1" and not f.get("sentence") and str(f.get("span") or "").lower() not in low:
+            continue
+        return False
+    return True
+
+
+def sentence_events(put):
+    """The stream route's on_sentence: a validated sentence becomes a
+    {"type": "sentence", "text"} event and a withdrawal a
+    {"type": "sentence_reset"} — sent only when a sentence was sent since
+    the last one, so a client never sees a reset with nothing to clear."""
+    sent = {"n": 0}
+
+    def on_sentence(text):
+        if text is None:
+            if sent["n"]:
+                sent["n"] = 0
+                put({"type": "sentence_reset"})
+            return
+        sent["n"] += 1
+        put({"type": "sentence", "text": text})
+    return on_sentence
+
+
+class _SentencePreview:
+    """The sentence preview for one Ask turn. `emit(text)` sends a validated
+    sentence (with the separator before it, so the chunks concatenate to the
+    answer's opening); `emit(None)` withdraws everything sent so far.
+    `context_of()` builds the round's ValidationContext, once, when the
+    round first has a sentence to check."""
+
+    def __init__(self, emit, context_of):
+        self._emit = emit
+        self._context_of = context_of
+        # A new attempt at the turn (the orchestrator's) withdraws whatever
+        # an earlier one previewed; sentence_events drops it when nothing was.
+        self._shown = True
+        self.begin(opens_tools=True)
+
+    def begin(self, opens_tools):
+        """A model call (a round of the turn) is about to start."""
+        self._withdraw()
+        self._opens_tools = bool(opens_tools)
+        self._ctx = None
+        self._restart()
+
+    def _restart(self):
+        self._buf = ""
+        self._upto = 0
+        self._held = False
+        self._text_index = None
+
+    def _withdraw(self):
+        if self._shown:
+            self._shown = False
+            try:
+                self._emit(None)
+            except Exception:
+                pass
+
+    def on_event(self, event):
+        """ai_utils' on_stream: None when an attempt (re)starts, else one
+        SDK stream event."""
+        if event is None:
+            self._withdraw()
+            self._restart()
+            return
+        et = getattr(event, "type", None)
+        if et == "content_block_start":
+            kind = getattr(getattr(event, "content_block", None), "type", None)
+            if kind == "tool_use":
+                # A tool round: what it wrote is never the answer.
+                self._withdraw()
+                self._held = True
+            elif kind == "text" and self._text_index is None:
+                self._text_index = getattr(event, "index", None)
+            return
+        if et != "content_block_delta" or self._held:
+            return
+        delta = getattr(event, "delta", None)
+        if getattr(delta, "type", None) != "text_delta":
+            return
+        idx = getattr(event, "index", None)
+        if self._text_index is None:
+            self._text_index = idx
+        elif idx != self._text_index:
+            return
+        self._buf += str(getattr(delta, "text", "") or "")
+        self._advance()
+
+    def _advance(self):
+        import response_validation as rv
+        clean = _clean_streamed(self._buf)
+        ends = [e for e in rv.sentence_ends(clean) if e > self._upto]
+        if self._opens_tools and not self._shown and len(ends) < _PREVIEW_OPEN_SENTENCES:
+            return
+        for end in ends:
+            try:
+                if self._ctx is None:
+                    self._ctx = self._context_of()
+                ok = preview_passes(clean[:end], self._ctx)
+            except Exception as e:
+                print(f"[ask_cavnar] sentence preview check failed: {e}")
+                ok = False
+            if not ok:
+                self._held = True
+                return
+            chunk = clean[self._upto:end]
+            self._upto = end
+            self._shown = True
+            try:
+                self._emit(chunk)
+            except Exception:
+                self._held = True
+                return
 
 
 def _verified_history(restaurant_id, messages, db_path=None) -> list:
@@ -2401,7 +2590,7 @@ def record_feedback_outcome(restaurant_id, message_id, helpful, authority=None) 
 @_ai_turn
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None,
                    read_only=False, delivery="interactive", screen=None, action="ask_cavnar",
-                   conversation_id=None, memory_block=None, _route=None):
+                   conversation_id=None, memory_block=None, on_sentence=None, _route=None):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -2424,6 +2613,13 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     `on_progress(label)`, if given, is called as each tool runs so a
     streaming caller can show what's happening — the tool loop can take
     several round trips, and a silent spinner for that long reads as broken.
+
+    `on_sentence(text)`, if given (and ASK_STREAM_SENTENCES is on), is
+    called with each sentence of the answer as it is written, once the
+    answer so far has passed the first-pass validation through it;
+    `on_sentence(None)` withdraws what was sent (a tool round, a retried
+    call). A preview only: the returned answer is authoritative (AI cost
+    audit 10/7/26 #68, _SentencePreview).
 
     `read_only` offers (and runs) read tools only — for unattended callers
     such as the weekly plan, where nobody is present to confirm anything and
@@ -2805,6 +3001,20 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             raise AIRefused("the model declined to answer this question")
         return _strip_leaked_markers(extract_text(msg))
 
+    # The sentence preview (#68): every call of the turn streams, and only
+    # the round that turns out to be the answer shows anything.
+    _preview = None
+    if on_sentence is not None and sentence_streaming_on():
+        _preview = _SentencePreview(on_sentence, lambda: _first_pass_context(
+            seen_corpus, tools_used, consulted, restaurant.id, actions_done=actions_done,
+            snapshot_keys=_snapshot_keys, viewer=restaurant)[0])
+
+    def _streamed(opens_tools):
+        if _preview is None:
+            return {}
+        _preview.begin(opens_tools)
+        return {"stream": True, "on_stream": _preview.on_event}
+
     _progress("Thinking", "solving")
     import time as _time
     _loop_started = _time.time()
@@ -2821,6 +3031,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             restaurant_id=restaurant.id,
             action=action,
             readiness=_ready_ask,
+            **_streamed(True),
         )
         truncated = getattr(message, "stop_reason", None) == "max_tokens"
 
@@ -2984,6 +3195,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 system=system_blocks, messages=messages,
                 tools=tool_specs, tool_choice={"type": "none"},
                 restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
+                **_streamed(False),
             )
             answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
                                    actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant,
@@ -2999,6 +3211,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         system=system_blocks, messages=messages,
         tools=tool_specs, tool_choice={"type": "none"},
         restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
+        **_streamed(False),
     )
     answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
                            actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant,
