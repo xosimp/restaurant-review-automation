@@ -256,15 +256,23 @@ def test_an_hourly_manager_stays_under_the_overtime_line():
 def test_scarce_hours_cover_every_close_before_any_morning():
     """With one manager for a 7-day week the close of each night comes
     first (the uncovered stretches are mornings), and what nobody can
-    cover is named with why."""
+    cover is named with why. An owner is not held to days in a row
+    (schedule_rules.hours_rules_apply, 10/7/26), so Erik closes all seven;
+    an hourly manager stops at six."""
     plan = sk.plan_manager_coverage(_c(managers={"erik": "Owner"}), WEEK)
     assert plan["uncovered"]
     for u in plan["uncovered"]:
         assert u["start"] == _window(plan, u["date"])[0], u          # a morning (or the whole day), never the close
     closed_nights = [d for d in WEEK if _cover(plan, d) and _cover(plan, d)[-1][1] == _window(plan, d)[1]]
+    assert len(closed_nights) == 7
+    assert plan["hours"]["Erik"] <= sk.SALARIED_WEEK_CAP
+
+    plan = sk.plan_manager_coverage(_c(managers={"andrew": "Manager FOH"}), WEEK)
+    for u in plan["uncovered"]:
+        assert u["start"] == _window(plan, u["date"])[0], u
+    closed_nights = [d for d in WEEK if _cover(plan, d) and _cover(plan, d)[-1][1] == _window(plan, d)[1]]
     assert len(closed_nights) == 6                                    # the seventh would be a 7th day in a row
     assert any("7 days in a row" in u["why"] for u in plan["uncovered"])
-    assert plan["hours"]["Erik"] <= sk.SALARIED_WEEK_CAP
 
 
 def test_the_fair_split_ranks_by_room_not_salaried_first():

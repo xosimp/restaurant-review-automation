@@ -4110,9 +4110,12 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
             b = c.bucket(r.get("date", "")) if r.get("date") else ""
             per_bucket[b] = per_bucket.get(b, 0.0) + row_hours(r)
         name = items[0][1].get("employee")
+        # An owner or a salaried manager is not held to the hours rules
+        # (hours_rules_apply, 10/7/26) - but a weekly cap the owner set is.
+        hours_held = hours_rules_apply(c, key)
         # Two names an open question joins are held to the stricter limit.
         mx = min((c.max_hours(n) for n in {(r.get("employee") or "").strip() for _, r in items}),
-                 default=c.max_hours(name))
+                 default=c.max_hours(name)) if (hours_held or c.salaried_cap_set(name)) else None
         for b, total in per_bucket.items():
             if mx and total > mx + 0.05 and b:
                 for i, r in items:
@@ -4129,7 +4132,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         # week's draft no room on those days but overtime (schedule audit
         # 10/3/26 E-10). Soft: a reserve to keep, not a breach — the
         # rebalance keeps it where a teammate has the room.
-        if not c.is_salaried(name):
+        if hours_held and not c.is_salaried(name):
             for b, total in per_bucket.items():
                 tail = c.bucket_tail(b)
                 if not b or len(tail) < TAIL_RESERVE_MIN_DAYS:
@@ -4144,7 +4147,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                                   f"{total:g}h of the {mdy_payroll(b)} payroll week by {_mdy(r_last.get('date'))} — "
                                   f"no room before overtime left for {_tail_days_text(tail)}",
                                   bucket=b, severity=round(total - (ot - c.tail_reserve(ot, b)), 2)))
-        mn = c.min_hours(name)
+        mn = c.min_hours(name) if hours_held else None
         if mn:
             this_week = sum(row_hours(r) for _, r in items)
             if this_week + 0.05 < mn:
@@ -4160,7 +4163,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         # flag (moving or cutting it fixes the day); each flag's severity is
         # the day's excess so far, and the breach is the day's worst. Two
         # names an open "same person?" question joins share one day (E-25).
-        dot = None if c.is_salaried(name) else c.compliance.get("daily_ot_hours")
+        dot = None if (c.is_salaried(name) or not hours_held) else c.compliance.get("daily_ot_hours")
         days = {}
         for i, r in items:
             days.setdefault(r.get("date") or "", []).append((i, r))
@@ -4212,7 +4215,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         spans = [(i, r, s, e) for i, r, s, e in spans if s]
         tail = [(None, r, *shift_span(r, c.tz)) for r in tail_rows]
         tail = [(i, r, s, e) for i, r, s, e in tail if s]
-        need = float(c.compliance.get("min_rest_hours") or 0)
+        need = float(c.compliance.get("min_rest_hours") or 0) if hours_held else 0.0
         # Owners and managers keep their own turnarounds (rest_rule_applies);
         # overlaps still count for everyone.
         if need and all(not rest_rule_applies(c, m) for m in members):
@@ -4256,7 +4259,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         # the severity is the days past it summed over them, so splitting a
         # nine-day run into two of four is progress the repair can see
         # (schedule audit 10/3/26 P-30), and the flag names the longest.
-        max_run = c.compliance.get("max_consecutive_days")
+        max_run = c.compliance.get("max_consecutive_days") if hours_held else None
         if max_run:
             worked_dates = {r.get("date") for _, r in items if r.get("date")}
             worked_dates |= {r.get("date") for r in tail_rows if r.get("date")}
@@ -4272,7 +4275,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                               severity=sum(len(run) - int(max_run) for run in over)))
         # consecutive days off inside the generated week
         req = c.compliance.get("part_time_days_off") if c.employment.get(key) == "part" else c.compliance.get("min_consecutive_days_off")
-        if req and c.week_dates:
+        if req and c.week_dates and hours_held:
             worked = {r.get("date") for _, r in items}
             off = [d for d in c.week_dates if d not in worked]
             # Anyone working at all is checked: Monday/Wednesday/Friday has
@@ -4877,6 +4880,23 @@ def max_shift_applies(c, name_or_key) -> bool:
     the floor-manager certificate). Someone only standing in as a manager
     on a date is still held to it."""
     return c.key(name_or_key) not in (c.managers or {})
+
+
+def hours_rules_apply(c, name_or_key) -> bool:
+    """Whether the rules about how much someone works hold this person: the
+    payroll-week ceiling, days in a row, consecutive days off, rest between
+    shifts, daily overtime, the overtime-line reserve and their minimum hours.
+    The owners and salaried managers max_shift_applies sets free are at the
+    store as long as they choose (Simple EJ's, 10/7/26: "erik is
+    always at the store and most managers work over 40 hours anyways since
+    they are salaried"). Overlaps, time off, availability, roles and the
+    minor rules still hold them. An hourly manager stays held - their
+    overtime is real money - and a cap the owner set is still theirs
+    (violations keeps it)."""
+    if max_shift_applies(c, name_or_key):
+        return True
+    role = str((c.managers or {}).get(c.key(name_or_key)) or "").lower()
+    return not ("owner" in role or c.is_salaried(name_or_key))
 
 
 def is_manager_role(role) -> bool:
