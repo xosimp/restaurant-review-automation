@@ -492,11 +492,11 @@ def section(restaurant_id, name, viewer=None, params=None, db_path=None) -> Buil
     return built
 
 
-def packet(restaurant_id, sections, viewer=None, budget_tokens=None, params=None, db_path=None) -> Packet:
+def packet(restaurant_id, sections, viewer=None, token_budget=None, params=None, db_path=None) -> Packet:
     """The named sections for `viewer`, rendered in ORDER (module docstring).
     `params` ({section: {...}}) narrows a section (the memory section's
     surface and subjects, the kpis' modules); it is part of the cache key.
-    `budget_tokens` trims TRIM_ORDER's sections first and says which in a
+    `token_budget` trims TRIM_ORDER's sections first and says which in a
     DATA STATE line."""
     names = [n for n in ORDER if n in set(sections or ())]
     unknown = [n for n in (sections or ()) if n not in SECTIONS]
@@ -505,10 +505,10 @@ def packet(restaurant_id, sections, viewer=None, budget_tokens=None, params=None
     params = params or {}
     built = {n: section(restaurant_id, n, viewer=viewer, params=params.get(n), db_path=db_path) for n in names}
     trimmed = []
-    if budget_tokens:
+    if token_budget:
         total = sum(b.tokens for b in built.values() if b.text)
         for n in TRIM_ORDER:
-            if total <= int(budget_tokens):
+            if total <= int(token_budget):
                 break
             if n in built and built[n].text and SECTIONS[n].trim:
                 total -= built[n].tokens
