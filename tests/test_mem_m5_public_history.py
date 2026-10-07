@@ -138,7 +138,9 @@ def test_a_competitor_check_keeps_the_market_history():
     import competitor
     src = inspect.getsource(competitor.run_competitor_analysis)
     assert "event_memory.record_market_snapshot(restaurant_id, competitors, closed=_closed, at=_now_ct)" in src
-    assert "_closures_among_dropped(restaurant_id, competitors, _closed_custom)" in src
+    # The closure check also takes the statuses already read (AI cost audit
+    # 10/7/26 #41), so the call continues past _closed_custom.
+    assert "_closures_among_dropped(restaurant_id, competitors, _closed_custom," in src
 
 
 def test_churn_events_the_old_rule_wrote_are_retracted():

@@ -20,10 +20,18 @@ class PlacesReviews(list):
     total = None
 
 
+# The review fetch's fields. rating, types and price_level ride along (AI
+# cost audit 10/7/26 #24): reviews already bill the Atmosphere SKU that
+# rating and price_level are in, and types is Basic Data, so the listing's
+# own public rating comes free with every fetch — the separate daily
+# own_rating Details call it replaced was $0.022 a restaurant a day.
+REVIEW_FETCH_FIELDS = "reviews,user_ratings_total,rating,types,price_level"
+
+
 def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
     # author_url rides along inside each review; user_ratings_total is how a
     # window with more than five new reviews is seen (MOD-REV-11).
-    params = {"place_id": place_id, "fields": "reviews,user_ratings_total",
+    params = {"place_id": place_id, "fields": REVIEW_FETCH_FIELDS,
               "key": GOOGLE_API_KEY, "reviews_sort": "newest"}
     # Metered (an error at no cost) and breaker-counted by places_request;
     # anything but a real answer raises, so the caller neither stamps
@@ -35,6 +43,7 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
     if refused:
         raise refused
     raw = (body.get("result") or {}).get("reviews", [])
+    _remember_listing(place_id, body.get("result") or {})
     tz = _restaurant_tz(restaurant_id)
     out = PlacesReviews()
     try:
@@ -74,6 +83,22 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
             review_date=written.strftime('%Y-%m-%dT%H:%M:%S'),
         ))
     return out
+
+
+def _remember_listing(place_id, result):
+    """The listing's own public rating, review count, types and price level
+    from the review fetch, kept as the competitor refresh keeps them
+    (competitor._remember_own_listing — which never lets this Places value
+    overwrite a fresher Business Profile one). Never raises: the reviews are
+    what this fetch is for."""
+    if not isinstance(result, dict) or not (result.get("rating") or result.get("types")):
+        return
+    try:
+        import competitor
+        competitor._remember_own_listing(place_id, result.get("types"), result.get("price_level"),
+                                         result.get("rating"), result.get("user_ratings_total"))
+    except Exception as e:
+        print(f"[places] own listing not kept for {place_id}: {e}")
 
 
 # ── Places coverage (CA3 F13) ────────────────────────────────────────────────

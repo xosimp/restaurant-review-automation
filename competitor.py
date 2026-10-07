@@ -395,6 +395,10 @@ def remove_competitor_from_cache(restaurant_id: int, place_id: str) -> bool:
     if len(new_competitors) == len(competitors):
         return False
     blob["competitors"] = new_competitors
+    # The read now stands for the owner's list without it, so a Refresh
+    # right after a removal is served the stored read (#42), not a new run.
+    if isinstance(blob.get("custom_ids"), list):
+        blob["custom_ids"] = [p for p in blob["custom_ids"] if p != place_id]
     update_restaurant(restaurant_id, {"competitor_intel": json.dumps(blob)})
     return True
 
@@ -447,6 +451,58 @@ def search_places_near(query: str, lat: float = None, lng: float = None, max_res
         return []
 
 
+# ── Places economy (AI cost audit 10/7/26) ───────────────────────────────────
+#
+# Every Places request costs real money per call; these are the rules that
+# keep one competitor read from buying the same public facts twice.
+REDISCOVER_DAYS = 28            # #39: nearby discovery at most monthly — inside Google's 30-day content limit
+REVIEWS_REUSE_HOURS = 24        # #15: the daily check's newest reviews stand in for a run's own lookup
+OWN_RATING_FRESH_HOURS = 24     # #24: a rating this fresh is not bought again
+REFRESH_FRESH_HOURS = 6         # #42: an owner Refresh inside this serves the stored read
+CUSTOM_COMPETITORS_MAX = 10     # #40: owner-added competitors, each a Details call every run
+# One field set for every competitor lookup — the daily check, a run's
+# refresh of a stored competitor, the review lookup — so the Details cache
+# (ai_utils.places_request, #13) answers any of them from any other the same
+# day. name and business_status are Basic Data (free with the request);
+# rating, user_ratings_total and reviews are the one Atmosphere SKU.
+COMPETITOR_FIELDS = "name,rating,user_ratings_total,business_status,reviews"
+# An owner-added competitor: the same, plus what the comparison shows about
+# it — one call, reviews included (#40; it used to be two).
+CUSTOM_FIELDS = COMPETITOR_FIELDS + ",types,vicinity,price_level"
+
+
+def _own_listing_key(google_place_id) -> str:
+    return f"own_listing_at:{google_place_id}"
+
+
+def _business_profile_rating_fresh(conn, restaurant_id, hours=OWN_RATING_FRESH_HOURS) -> bool:
+    """Whether the Business Profile connection read this restaurant's rating
+    in the last `hours` (own_rating_history keeps each reading's source).
+    Unknown reads as not fresh."""
+    try:
+        return conn.execute("SELECT 1 FROM own_rating_history WHERE restaurant_id=? AND source='business_profile' "
+                            "AND recorded_at >= datetime('now', ?) LIMIT 1",
+                            (restaurant_id, f"-{int(hours)} hours")).fetchone() is not None
+    except Exception:
+        return False
+
+
+def _stamp_age_hours(value):
+    """Hours since a stored timestamp (time_utils.parse_stamp's formats), or
+    None when there is none."""
+    from datetime import datetime as _dt, timezone as _tz
+    from time_utils import parse_stamp
+    stamp = parse_stamp(value) if value else None
+    if stamp is None:
+        return None
+    return max(0.0, (_dt.now(_tz.utc) - stamp).total_seconds() / 3600.0)
+
+
+def _now_stamp() -> str:
+    from datetime import datetime as _dt, timezone as _tz
+    return _dt.now(_tz.utc).isoformat(timespec="seconds")
+
+
 def _remember_own_listing(google_place_id, types, price_level, rating=None, rating_count=None):
     """Keep the restaurant's OWN Google types and price level (Benchmarking
     audit #8, BM2-2): they were fetched on every competitor refresh and
@@ -459,34 +515,54 @@ def _remember_own_listing(google_place_id, types, price_level, rating=None, rati
     try:
         import models as _m
         conn = _m.get_conn()
+        rated = []
         try:
             ids = [r["id"] for r in conn.execute("SELECT id FROM restaurants WHERE google_place_id=?",
                                                  (google_place_id,)).fetchall()]
-            if ids:
+            # A caller with no types in hand (an answer that carried only the
+            # rating) leaves the stored ones alone instead of blanking them.
+            if ids and types is not None:
                 conn.execute("UPDATE restaurants SET google_types=?, google_price_level=? WHERE google_place_id=?",
                              (json.dumps([str(t) for t in (types or [])][:20]),
                               int(price_level) if isinstance(price_level, (int, float)) else None, google_place_id))
-                # The listing's public Google rating, the one every guest sees
-                # (owner, 9/26/26): only the Business Profile connection wrote
-                # it, so a Places-only restaurant was shown its imported
-                # reviews' average instead. The same details call carries it.
-                if isinstance(rating, (int, float)) and rating > 0:
-                    from datetime import datetime as _dt_r, timezone as _tz_r
+                # When they were last read from Google: a competitor discovery
+                # reuses them instead of a Details call of its own only while
+                # they are inside Google's 30-day limit (AI cost audit 10/7/26 #39).
+                try:
+                    conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?, datetime('now'), "
+                                 "datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                                 "updated_at=excluded.updated_at", (_own_listing_key(google_place_id),))
+                except Exception as e:
+                    print(f"[competitor] own listing stamp not kept for {google_place_id}: {e}")
+            # The listing's public Google rating, the one every guest sees
+            # (owner, 9/26/26): only the Business Profile connection wrote
+            # it, so a Places-only restaurant was shown its imported
+            # reviews' average instead. The same details call carries it —
+            # but never over a Business Profile reading from the last day
+            # (AI cost audit 10/7/26 #24): that one is Google's own figure
+            # for the account, read free, and it is the fresher of the two.
+            if isinstance(rating, (int, float)) and rating > 0:
+                from datetime import datetime as _dt_r, timezone as _tz_r
+                stamp = _dt_r.now(_tz_r.utc).isoformat(timespec="seconds")
+                for rid in ids:
+                    if _business_profile_rating_fresh(conn, rid):
+                        continue
                     conn.execute("UPDATE restaurants SET gbp_rating=?, gbp_review_count=COALESCE(?, gbp_review_count), "
-                                 "gbp_rating_updated_at=? WHERE google_place_id=?",
-                                 (round(float(rating), 1), int(rating_count) if isinstance(rating_count, (int, float)) else None,
-                                  _dt_r.now(_tz_r.utc).isoformat(timespec="seconds"), google_place_id))
-                conn.commit()
+                                 "gbp_rating_updated_at=? WHERE id=?",
+                                 (round(float(rating), 1),
+                                  int(rating_count) if isinstance(rating_count, (int, float)) else None, stamp, rid))
+                    rated.append(rid)
+            conn.commit()
         finally:
             conn.close()
         for rid in ids:
             _m._invalidate_request_cache(rid)
         # The rating is overwritten in place; its week-by-week history is
         # kept (memory audit 9/29/26, public_history).
-        if isinstance(rating, (int, float)) and rating > 0:
+        if rated:
             import event_memory
             from time_utils import restaurant_now_by_id
-            for rid in ids:
+            for rid in rated:
                 # The week on the restaurant's clock, never the server's UTC
                 # date (a Sunday-evening reading was next week's: RX-06).
                 event_memory.record_own_rating(rid, rating, rating_count, source="places",
@@ -533,7 +609,7 @@ def refresh_own_rating(restaurant_id: int, background: bool = True) -> None:
 
 
 def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5,
-                           usage: dict = None) -> list:
+                           usage: dict = None, own: dict = None) -> list:
     """Find nearby restaurants using the Google Places API.
 
     `usage`, when given, is filled with the billed Places requests this made
@@ -545,7 +621,11 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
 
     A refused lookup is never an empty market: a Places error or a request
     refused before it was sent (PlacesUnavailable) is raised, not turned
-    into [] (the Intel invariant)."""
+    into [] (the Intel invariant).
+
+    `own` ({"lat", "lng", "types", "price_level", "name"}), when given, is
+    the restaurant's own listing as already stored (_stored_own_listing):
+    its Details call is then not made (AI cost audit 10/7/26 #39)."""
     if not PLACES_API_KEY or not google_place_id:
         return []
     if usage is None:
@@ -553,31 +633,37 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
 
     def _billed(kind):
         usage[kind] = usage.get(kind, 0) + 1
+    from ai_utils import places_error as _pe, PlacesError as _PlacesError
     try:
-        # First get the restaurant's coordinates and types from its place ID
-        r = _places_request("details", {
-            "place_id": google_place_id,
-            "fields": "geometry,name,vicinity,types,price_level,rating,user_ratings_total",
-            "key": PLACES_API_KEY,
-        }, timeout=8)
-        _billed("details")
-        data = r.json()
-        from ai_utils import places_error as _pe, PlacesError as _PlacesError
-        if _pe(data):
-            raise _pe(data)
-        if data.get("status") != "OK":
-            raise _PlacesError(data.get("status") or "NOT_FOUND", "no details for this listing")
-        result_data = data.get("result", {})
-        geometry = result_data.get("geometry", {})
-        location = geometry.get("location", {})
-        if not location.get("lat") or not location.get("lng"):
-            return []
-        lat, lng = location["lat"], location["lng"]
-        own_name = result_data.get("name", "")
-        own_types = result_data.get("types", [])
-        own_price = result_data.get("price_level")
-        _remember_own_listing(google_place_id, own_types, own_price,
-                              result_data.get("rating"), result_data.get("user_ratings_total"))
+        if own and own.get("lat") is not None and own.get("lng") is not None and own.get("types"):
+            lat, lng = own["lat"], own["lng"]
+            own_name = own.get("name") or ""
+            own_types = list(own.get("types") or [])
+            own_price = own.get("price_level")
+        else:
+            # First get the restaurant's coordinates and types from its place ID
+            r = _places_request("details", {
+                "place_id": google_place_id,
+                "fields": "geometry,name,vicinity,types,price_level,rating,user_ratings_total",
+                "key": PLACES_API_KEY,
+            }, timeout=8)
+            _billed("details")
+            data = r.json()
+            if _pe(data):
+                raise _pe(data)
+            if data.get("status") != "OK":
+                raise _PlacesError(data.get("status") or "NOT_FOUND", "no details for this listing")
+            result_data = data.get("result", {})
+            geometry = result_data.get("geometry", {})
+            location = geometry.get("location", {})
+            if not location.get("lat") or not location.get("lng"):
+                return []
+            lat, lng = location["lat"], location["lng"]
+            own_name = result_data.get("name", "")
+            own_types = result_data.get("types", [])
+            own_price = result_data.get("price_level")
+            _remember_own_listing(google_place_id, own_types, own_price,
+                                  result_data.get("rating"), result_data.get("user_ratings_total"))
 
         # Build a keyword from the restaurant's type to filter similar competitors
         # Exclude generic types that apply to everything
@@ -732,42 +818,66 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         return []
 
 
+def _reviews_from(result, max_reviews: int = 5) -> list:
+    """A Details answer's reviews in the shape the competitor blob keeps:
+    author, rating, text, Google's relative `time`, the ISO `date` (shown
+    as M/D/YY, not "3 months ago") and `ts`, the review's own epoch second —
+    what "newer than the last read" is decided on (AI cost audit 10/7/26 #15)."""
+    out = []
+    for rev in ((result or {}).get("reviews") or [])[:max_reviews]:  # Google Places returns max 5
+        day, ts = None, None
+        try:
+            if rev.get("time"):
+                from datetime import datetime as _dt, timezone as _tz
+                ts = int(rev["time"])
+                day = _dt.fromtimestamp(ts, tz=_tz.utc).date().isoformat()
+        except (TypeError, ValueError, OverflowError):
+            day, ts = None, None
+        out.append({
+            "author": rev.get("author_name", "Guest"),
+            "rating": rev.get("rating", 3),
+            "text": rev.get("text", ""),
+            "time": rev.get("relative_time_description", ""),
+            "date": day,
+            "ts": ts,
+        })
+    return out
+
+
+def _lookup_competitor(place_id: str, fields: str = COMPETITOR_FIELDS):
+    """One Details answer for a competitor — newest reviews first — as its
+    `result` dict, or None when Google did not answer OK. Raises
+    PlacesUnavailable (refused before it was sent); any other failure is
+    None. Served from the day's Details cache when the place was read
+    today (#13)."""
+    # Newest first (owner, 9/26/26): Google's default is its "most
+    # relevant" five, which cited a months-old review as what a neighbour
+    # is doing now.
+    try:
+        r = _places_request("details", {
+            "place_id": place_id,
+            "fields": fields,
+            "reviews_sort": "newest",
+            "key": PLACES_API_KEY,
+        }, timeout=8)
+        data = r.json()
+    except PlacesUnavailable:
+        raise
+    except Exception as e:
+        print(f"[Competitor] lookup of {place_id} failed: {e}")
+        return None
+    if not isinstance(data, dict) or data.get("status") != "OK":
+        return None
+    return data.get("result") or {}
+
+
 def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
     """Get recent reviews for a competitor."""
     if not PLACES_API_KEY:
         return []
     try:
-        # Newest first (owner, 9/26/26): Google's default is its "most
-        # relevant" five, which cited a months-old review as what a
-        # neighbour is doing now. The review's own date travels with it
-        # (`date`, ISO) so it is shown as M/D/YY, not "3 months ago".
-        r = _places_request("details", {
-            "place_id": place_id,
-            "fields": "name,rating,reviews",
-            "reviews_sort": "newest",
-            "key": PLACES_API_KEY,
-        }, timeout=8)
-        data = r.json()
-        if data.get("status") != "OK":
-            return []
-        reviews = data["result"].get("reviews", [])[:max_reviews]  # Google Places API returns max 5
-        out = []
-        for rev in reviews:
-            day = None
-            try:
-                if rev.get("time"):
-                    from datetime import datetime as _dt, timezone as _tz
-                    day = _dt.fromtimestamp(int(rev["time"]), tz=_tz.utc).date().isoformat()
-            except (TypeError, ValueError, OverflowError):
-                day = None
-            out.append({
-                "author": rev.get("author_name", "Guest"),
-                "rating": rev.get("rating", 3),
-                "text": rev.get("text", ""),
-                "time": rev.get("relative_time_description", ""),
-                "date": day,
-            })
-        return out
+        res = _lookup_competitor(place_id)
+        return _reviews_from(res, max_reviews) if res is not None else []
     except Exception as e:
         print(f"[Competitor] get_competitor_reviews error: {e}")
         return []
@@ -1177,16 +1287,25 @@ def _checked_intel(checked, ctx, competitors, restaurant_name="", own_price_leve
     return rv.Validated(text, validation=validation, verdict=verdict)
 
 
-def intel_blob(competitors, insight, generated_at, closed_custom=None) -> dict:
+def intel_blob(competitors, insight, generated_at, closed_custom=None, discovered_at=None,
+               custom_ids=None) -> dict:
     """The restaurants.competitor_intel blob: the read, and beside it the
     verdict it was shown under (`validation`, carrying the engine's
     version), so a later engine version re-validates the stored read on the
     next open (current_intel) instead of serving an old verdict. The model's
     raw text is deliberately NOT stored here: the whole blob is handed to
     the web (/api/competitor-intel), and the raw text still holds what the
-    engine took out (another tenant's name, a dropped sentence)."""
+    engine took out (another tenant's name, a dropped sentence).
+
+    `discovered_at` (UTC ISO: when the nearby set was last searched, #39) and
+    `custom_ids` (the owner-added list the read was made with, #42) are kept
+    beside it when given."""
     blob = {"competitors": competitors, "insight": str(insight or ""), "generated_at": generated_at,
             "closed_custom": closed_custom or []}
+    if discovered_at:
+        blob["discovered_at"] = discovered_at
+    if custom_ids is not None:
+        blob["custom_ids"] = list(custom_ids)
     val = getattr(insight, "validation", None)
     if val is not None:
         blob["validation"] = val
@@ -1538,8 +1657,155 @@ def _previous_competitor(restaurant, place_id):
         return None
     for c in (blob.get("competitors") or []) if isinstance(blob, dict) else []:
         if isinstance(c, dict) and c.get("place_id") == place_id:
-            return {k: v for k, v in c.items() if k != "reviews"}
+            return {k: v for k, v in c.items() if k not in _REVIEW_KEYS}
     return None
+
+
+# The keys a stored competitor carries its reviews under: `reviews` (the set
+# the read was written from) and `reviews_at` (when that set was fetched);
+# `latest_reviews` / `latest_reviews_at`, the newest five the daily check
+# read (AI cost audit 10/7/26 #15).
+_REVIEW_KEYS = ("reviews", "reviews_at", "latest_reviews", "latest_reviews_at")
+
+
+def _stored_blob(restaurant) -> dict:
+    """restaurants.competitor_intel as a dict ({} when none or unreadable)."""
+    try:
+        blob = json.loads(getattr(restaurant, "competitor_intel", None) or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return blob if isinstance(blob, dict) else {}
+
+
+def _fresh_reviews(c, hours=REVIEWS_REUSE_HOURS):
+    """(reviews, fetched_at) a stored competitor already holds from inside
+    the last `hours` — the daily check's newest five first, else the set
+    the last run fetched — or (None, None) when it must be looked up."""
+    if not isinstance(c, dict):
+        return None, None
+    for key, at in (("latest_reviews", "latest_reviews_at"), ("reviews", "reviews_at")):
+        age = _stamp_age_hours(c.get(at))
+        if age is not None and age < hours and isinstance(c.get(key), list):
+            return list(c[key]), c[at]
+    return None, None
+
+
+def _newest_ts(reviews):
+    """The newest review's epoch second in a stored set, or None. A set
+    stored before reviews carried `ts` is read by its ISO `date` — the end
+    of that day, so a review from the same day is never counted newer."""
+    best = None
+    for r in reviews or []:
+        if not isinstance(r, dict):
+            continue
+        ts = r.get("ts")
+        if not isinstance(ts, (int, float)) and r.get("date"):
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                ts = int(_dt.fromisoformat(str(r["date"])[:10]).replace(tzinfo=_tz.utc).timestamp()) + 86399
+            except ValueError:
+                ts = None
+        if isinstance(ts, (int, float)) and (best is None or ts > best):
+            best = ts
+    return best
+
+
+def _newer_reviews(latest, analysed) -> int:
+    """How many of the daily check's reviews are newer than every review the
+    last read was written from (#15: the one thing a read cannot already
+    know). A read written from no reviews counts every one."""
+    floor = _newest_ts(analysed)
+    return sum(1 for r in latest or [] if isinstance(r, dict) and isinstance(r.get("ts"), (int, float))
+               and (floor is None or r["ts"] > floor))
+
+
+def _custom_ids(restaurant) -> list:
+    """The owner-added competitors' Place IDs, in order, duplicates dropped."""
+    out = []
+    for pid in str(getattr(restaurant, "custom_competitors", None) or "").split(","):
+        pid = pid.strip()
+        if pid and pid not in out:
+            out.append(pid)
+    return out
+
+
+def _custom_signature(blob) -> set:
+    """The owner-added competitors the stored read was made with: its
+    `custom_ids`, or — on a read stored before it kept them — its custom
+    entries and the owner-added ones it found closed."""
+    if not isinstance(blob, dict):
+        return set()
+    if isinstance(blob.get("custom_ids"), list):
+        return {str(p) for p in blob["custom_ids"]}
+    ids = {c.get("place_id") for c in blob.get("competitors") or [] if isinstance(c, dict) and c.get("custom")}
+    ids |= {c.get("place_id") for c in blob.get("closed_custom") or [] if isinstance(c, dict)}
+    return {p for p in ids if p}
+
+
+def _discovery_due(blob, custom_ids) -> bool:
+    """Whether this run searches Google for the nearby set again (AI cost
+    audit 10/7/26 #39): when there is no stored set, when the last search is
+    REDISCOVER_DAYS old (so names, types and price levels never sit past
+    Google's 30-day content limit), or when the owner's own list changed.
+    Otherwise the run re-reads the stored place_ids."""
+    if not any(isinstance(c, dict) and c.get("place_id") and not c.get("custom")
+               for c in blob.get("competitors") or []):
+        return True
+    age = _stamp_age_hours(blob.get("discovered_at"))
+    if age is None or age >= REDISCOVER_DAYS * 24:
+        return True
+    return _custom_signature(blob) != set(custom_ids or [])
+
+
+def _own_listing_fresh(google_place_id, days=REDISCOVER_DAYS) -> bool:
+    """Whether the restaurant's own types and price level were read from
+    Google inside `days` (_remember_own_listing stamps it)."""
+    try:
+        import models as _m
+        conn = _m.get_conn()
+        try:
+            row = conn.execute("SELECT updated_at FROM job_cursors WHERE key=?",
+                               (_own_listing_key(google_place_id),)).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return False
+    age = _stamp_age_hours(row["updated_at"]) if row else None
+    return age is not None and age < days * 24
+
+
+def _stored_own_listing(restaurant):
+    """The restaurant's own location, types and price level as stored
+    (restaurants.latitude / longitude / google_types / google_price_level),
+    for a discovery that then needs no Details call of its own (#39) — or
+    None when any is missing or the types are past Google's 30-day limit."""
+    lat, lng = getattr(restaurant, "latitude", None), getattr(restaurant, "longitude", None)
+    try:
+        types = json.loads(getattr(restaurant, "google_types", None) or "null")
+    except (TypeError, ValueError):
+        types = None
+    if lat is None or lng is None or not isinstance(types, list) or not types:
+        return None
+    if not _own_listing_fresh(restaurant.google_place_id):
+        return None
+    return {"lat": lat, "lng": lng, "types": types, "price_level": getattr(restaurant, "google_price_level", None),
+            "name": getattr(restaurant, "name", "") or ""}
+
+
+def _apply_lookup(c, res, at):
+    """Fold one Details answer for a stored competitor into its entry: the
+    numbers, the open/closed status, the newest reviews."""
+    if res.get("name"):
+        c["name"] = res["name"]
+    if res.get("rating") is not None:
+        c["rating"] = res["rating"]
+    if res.get("user_ratings_total") is not None:
+        c["review_count"] = int(res.get("user_ratings_total") or 0)
+        c["rating_is_provisional"] = c["review_count"] < MIN_REVIEWS_FOR_A_MEANINGFUL_RATING
+    if res.get("business_status"):
+        c["business_status"] = res["business_status"]
+    c["reviews"], c["reviews_at"] = _reviews_from(res), at
+    return c
 
 
 
@@ -1552,10 +1818,34 @@ CLOSURE_CHECKS_MAX = 10
 CLOSED_STATUSES = ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY")
 
 
-def _closures_among_dropped(restaurant_id, competitors, closed_custom=()):
+def _status_from_daily_check(restaurant_id, prev_blob):
+    """{place_id: business_status} as the daily ratings check stored it,
+    when that check ran today or yesterday on the restaurant's clock — the
+    closure check then asks Google nothing for them (AI cost audit 10/7/26
+    #41). {} otherwise."""
+    if not isinstance(prev_blob, dict) or not prev_blob.get("ratings_checked_at"):
+        return {}
+    try:
+        from datetime import timedelta as _td
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id).date()
+        checked = str(prev_blob["ratings_checked_at"])[:10]
+        if checked not in (today.isoformat(), (today - _td(days=1)).isoformat()):
+            return {}
+    except Exception:
+        return {}
+    return {c["place_id"]: c["business_status"] for c in prev_blob.get("competitors") or []
+            if isinstance(c, dict) and c.get("place_id") and c.get("business_status")}
+
+
+def _closures_among_dropped(restaurant_id, competitors, closed_custom=(), prev_blob=None, known_status=None):
     """[{place_id, name, status}] for places tracked on the last run, missing
     from this one, that Google says are closed — plus owner-added ones found
-    closed this run. A lookup that fails says nothing. Never raises."""
+    closed this run. A status this run already read (`known_status`) or the
+    daily check stored today or yesterday (`prev_blob`) is used as it is; only
+    the rest are asked. A lookup that fails says nothing. Never raises."""
+    known = dict(_status_from_daily_check(restaurant_id, prev_blob))
+    known.update(known_status or {})
     out = [dict(c) for c in closed_custom or () if c.get("status") in CLOSED_STATUSES]
     seen = {c["place_id"] for c in out}
     try:
@@ -1574,7 +1864,15 @@ def _closures_among_dropped(restaurant_id, competitors, closed_custom=()):
         return out
     now = {c.get("place_id") for c in competitors or []}
     dropped = [(pid, name) for pid, name in prev.items() if pid not in now and pid not in seen]
-    for pid, name in dropped[:CLOSURE_CHECKS_MAX]:
+    asked = 0
+    for pid, name in dropped:
+        if pid in known:
+            if known[pid] in CLOSED_STATUSES:
+                out.append({"place_id": pid, "name": name, "status": known[pid]})
+            continue
+        if asked >= CLOSURE_CHECKS_MAX:
+            continue
+        asked += 1
         try:
             r = _places_request("details", {"place_id": pid, "fields": "name,business_status",
                                             "key": PLACES_API_KEY}, action="competitor_closure_check", timeout=8)
@@ -1603,46 +1901,134 @@ def _intel_run(fn):
     return wrapper
 
 
+import contextlib as _contextlib
+import contextvars as _contextvars
+
+# Set while an owner's (or an admin's) Refresh runs the analysis: the
+# nearby set is searched again whatever its age (#39 "on owner request").
+# A context variable, not an argument, so the job runner's call stays
+# run_competitor_analysis(restaurant_id).
+_REDISCOVER = _contextvars.ContextVar("competitor_rediscover", default=False)
+
+
+@_contextlib.contextmanager
+def rediscovery_requested():
+    """Within this block, run_competitor_analysis searches Google for the
+    nearby set again instead of re-reading the stored one."""
+    token = _REDISCOVER.set(True)
+    try:
+        yield
+    finally:
+        _REDISCOVER.reset(token)
+
+
 @_intel_run
-def run_competitor_analysis(restaurant_id: int) -> dict:
-    """Full pipeline: fetch competitors, get reviews, generate insight."""
+def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
+    """Full pipeline: fetch competitors, get reviews, generate insight.
+
+    The Places spend is kept to what is new (AI cost audit 10/7/26): the
+    nearby search runs only when discovery is due (#39, `_discovery_due`, or
+    `rediscover` / rediscovery_requested()) — otherwise the stored
+    place_ids are re-read; the restaurant's own location comes from what is
+    stored; a competitor whose newest reviews were read inside
+    REVIEWS_REUSE_HOURS is not looked up again (#15); an owner-added one is
+    one Details call with its reviews (#40); and every Details call is
+    served from the day's cache when the place was already read today (#13)."""
     try:
         from models import get_restaurant, get_conn, update_restaurant
         restaurant = get_restaurant(restaurant_id)
         if not restaurant or not restaurant.google_place_id:
             return {"ok": False, "error": "No Google Place ID set"}
 
+        prev = _stored_blob(restaurant)
+        prev_by_id = {c["place_id"]: c for c in prev.get("competitors") or []
+                      if isinstance(c, dict) and c.get("place_id")}
+        custom_ids = _custom_ids(restaurant)
+        if len(custom_ids) > CUSTOM_COMPETITORS_MAX:
+            # The add routes refuse an eleventh; an admin-typed list longer
+            # than that is read up to the cap, every one a Details call a run.
+            print(f"[Competitor] {len(custom_ids)} owner-added competitors for {restaurant_id}; "
+                  f"the first {CUSTOM_COMPETITORS_MAX} are read")
+            custom_ids = custom_ids[:CUSTOM_COMPETITORS_MAX]
+        if rediscover is None:
+            rediscover = _REDISCOVER.get() or _discovery_due(prev, custom_ids)
+        _run_at = _now_stamp()
+        _known_status = {}
+
         from ai_utils import PlacesError as _PlacesError
         _usage = {}
-        try:
-            competitors = get_nearby_competitors(restaurant.google_place_id, usage=_usage)
-        except PlacesUnavailable as pu:
-            # Refused before it was sent (no key, the Places breaker, this
-            # restaurant's Places ceiling) — already a blocked ledger row.
-            return {"ok": False, "error": pu.owner_message, "places_status": pu.reason}
-        except _PlacesError as pe:
+        if rediscover:
             try:
-                import ops
-                ops.capture(pe, job="competitor_intel", context=f"restaurant_id={restaurant_id}")
-            except Exception:
-                pass
-            return {"ok": False, "error": pe.owner_message, "places_status": pe.status}
+                _own = _stored_own_listing(restaurant)
+                _kw = {"usage": _usage}
+                if _own:
+                    _kw["own"] = _own
+                competitors = get_nearby_competitors(restaurant.google_place_id, **_kw)
+            except PlacesUnavailable as pu:
+                # Refused before it was sent (no key, the Places breaker, this
+                # restaurant's Places ceiling) — already a blocked ledger row.
+                return {"ok": False, "error": pu.owner_message, "places_status": pu.reason}
+            except _PlacesError as pe:
+                try:
+                    import ops
+                    ops.capture(pe, job="competitor_intel", context=f"restaurant_id={restaurant_id}")
+                except Exception:
+                    pass
+                return {"ok": False, "error": pe.owner_message, "places_status": pe.status}
+            _discovered_at = _run_at
+            # A place tracked before brings the reviews it was read with
+            # inside the reuse window (#15) — a Details call saved per place.
+            for c in competitors:
+                _reviews, _at = _fresh_reviews(prev_by_id.get(c.get("place_id")))
+                if _reviews is not None:
+                    c["reviews"], c["reviews_at"] = _reviews, _at
+        else:
+            # The stored set, re-read (#39): Google allows a place_id to be
+            # kept indefinitely; the figures beside it are refreshed below.
+            # A place the daily check found closed leaves the set and is
+            # reported by the closure check from that status.
+            competitors = []
+            for c in prev.get("competitors") or []:
+                if not isinstance(c, dict) or not c.get("place_id") or c.get("custom"):
+                    continue
+                if c.get("business_status") in CLOSED_STATUSES:
+                    _known_status[c["place_id"]] = c["business_status"]
+                    continue
+                entry = {k: v for k, v in c.items() if k not in _REVIEW_KEYS and k != "stale"}
+                _reviews, _at = _fresh_reviews(c)
+                if _reviews is not None:
+                    entry["reviews"], entry["reviews_at"] = _reviews, _at
+                else:
+                    entry["_refresh"] = True
+                competitors.append(entry)
+            _discovered_at = prev.get("discovered_at")
         # Every Places request this run makes — own details, one to three
         # nearby searches, a details per competitor, the owner-added ones —
         # is metered by places_request as it is made (#123).
 
         # Add any manually specified competitor Place IDs
         _closed_custom = []
-        if restaurant.custom_competitors:
-            custom_ids = [pid.strip() for pid in restaurant.custom_competitors.split(',') if pid.strip()]
+        if custom_ids:
             existing_ids = {c['place_id'] for c in competitors}
             for pid in custom_ids:
                 if pid not in existing_ids:
+                    # Read inside the reuse window (the daily check covers
+                    # owner-added ones too): carried as it stands, no call.
+                    _last_full = prev_by_id.get(pid)
+                    _reviews, _at = _fresh_reviews(_last_full) if (_last_full or {}).get("custom") else (None, None)
+                    if _reviews is not None and _last_full.get("business_status", "OPERATIONAL") == "OPERATIONAL":
+                        entry = {k: v for k, v in _last_full.items() if k not in _REVIEW_KEYS and k != "stale"}
+                        entry.update(custom=True, match_basis="added by you", reviews=_reviews, reviews_at=_at)
+                        competitors.append(entry)
+                        existing_ids.add(pid)
+                        continue
                     try:
+                        # One call, reviews included (#40): it was a details
+                        # call here and a second for the reviews below.
                         r = _places_request("details", {
                             "place_id": pid,
-                            "fields": "name,rating,user_ratings_total,types,vicinity,"
-                                      "business_status,price_level",
+                            "fields": CUSTOM_FIELDS,
+                            "reviews_sort": "newest",
                             "key": PLACES_API_KEY,
                         }, timeout=8)
                         d = r.json().get("result", {})
@@ -1652,6 +2038,8 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                         # stayed in the comparison forever with its frozen
                         # rating, and the AI wrote strategy against it.
                         _status = d.get("business_status") or "OPERATIONAL"
+                        if d.get("name"):
+                            _known_status[pid] = _status
                         if d.get("name") and _status == "OPERATIONAL":
                             competitors.append({
                                 "place_id": pid,
@@ -1663,11 +2051,14 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                                 "price_level": d.get("price_level"),
                                 "match_basis": "added by you",
                                 "custom": True,
+                                "business_status": _status,
                                 # The same floor the discovered ones carry: a
                                 # rating on too few reviews is provisional
                                 # whoever added the place (B6 sub-audit).
                                 "rating_is_provisional": int(d.get("user_ratings_total") or 0)
                                                          < MIN_REVIEWS_FOR_A_MEANINGFUL_RATING,
+                                "reviews": _reviews_from(d),
+                                "reviews_at": _run_at,
                             })
                         elif d.get("name"):
                             print(f"[Competitor] custom competitor {d['name']} is {_status} — skipped")
@@ -1688,16 +2079,40 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         if not competitors:
             return {"ok": False, "error": "No nearby competitors found"}
 
-        # Enrich with reviews in parallel — 5 sequential calls → 1 parallel batch
+        # Enrich with reviews in parallel — 5 sequential calls → 1 parallel
+        # batch — for the competitors not already holding fresh ones: a
+        # stored competitor gets one Details call that refreshes its figures
+        # with its reviews; a just-discovered one (its figures came with the
+        # search) only its reviews.
+        def _enrich(c):
+            if c.pop("_refresh", False):
+                try:
+                    res = _lookup_competitor(c["place_id"])
+                except PlacesUnavailable:
+                    res = None
+                if res is not None:
+                    return _apply_lookup(c, res, _now_stamp())
+                return dict(c, reviews=[], stale=True)
+            return dict(c, reviews=get_competitor_reviews(c["place_id"]), reviews_at=_now_stamp())
+
         from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
         from ai_utils import context_runner as _ctx_runner
-        with ThreadPoolExecutor(max_workers=5) as _pool:
-            # Each worker runs in a copy of this run's ai_context, so every
-            # review lookup is metered to this restaurant and this run.
-            _futs = {_pool.submit(_ctx_runner(get_competitor_reviews), c["place_id"]): i
-                     for i, c in enumerate(competitors)}
-            for _fut in _as_completed(_futs):
-                competitors[_futs[_fut]]["reviews"] = _fut.result()
+        _todo = [i for i, c in enumerate(competitors) if "reviews" not in c]
+        if _todo:
+            with ThreadPoolExecutor(max_workers=5) as _pool:
+                # Each worker runs in a copy of this run's ai_context, so every
+                # review lookup is metered to this restaurant and this run.
+                _futs = {_pool.submit(_ctx_runner(_enrich), competitors[i]): i for i in _todo}
+                for _fut in _as_completed(_futs):
+                    competitors[_futs[_fut]] = _fut.result()
+        for c in competitors:
+            if c.get("business_status") in CLOSED_STATUSES and not c.get("custom"):
+                _known_status[c["place_id"]] = c["business_status"]
+        # A stored competitor found closed by this run's own lookup leaves.
+        competitors = [c for c in competitors
+                       if c.get("custom") or c.get("business_status") not in CLOSED_STATUSES]
+        if not competitors:
+            return {"ok": False, "error": "No nearby competitors found"}
 
         insight = generate_competitor_insight(
             restaurant.name, competitors,
@@ -1725,7 +2140,8 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         _now_ct = restaurant_now(restaurant, naive=True)
         # The read's verdict and engine version are stored beside it
         # (intel_blob), so a later engine version re-validates it on read.
-        result = intel_blob(competitors, insight, _now_ct.strftime("%Y-%m-%d"), _closed_custom)
+        result = intel_blob(competitors, insight, _now_ct.strftime("%Y-%m-%d"), _closed_custom,
+                            discovered_at=_discovered_at, custom_ids=custom_ids)
         # The freshness stamp is UTC with an offset (DH1-16): the local wall
         # clock with no offset was read as UTC by ai_guard.freshness and
         # time_utils.parse_stamp, five to ten hours off. The blob's own date
@@ -1757,7 +2173,8 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         # what makes any of that answerable later.
         # Before this run's snapshot: which of last run's places that dropped
         # out Google says closed (not every dropout is a closure).
-        _closed = _closures_among_dropped(restaurant_id, competitors, _closed_custom)
+        _closed = _closures_among_dropped(restaurant_id, competitors, _closed_custom,
+                                          prev_blob=prev, known_status=_known_status)
         try:
             from models import record_competitor_snapshot
             record_competitor_snapshot(restaurant_id, competitors)
@@ -1796,19 +2213,36 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
 #
 # The full analysis (nearby search, details, reviews and a Claude read) runs
 # weekly — a week-old rating comparison read as current until Monday. Every
-# morning this re-reads ONLY the tracked competitors' ratings, review counts
-# and open/closed status, and the restaurant's own rating: one Places
-# details call each (~13), never a search, never a model call. The stored
-# comparison is updated in place; when something moved enough to change
-# what the read says, the full analysis runs again the same morning.
-RATING_MOVE = 0.1             # stars, either way
+# morning this re-reads ONLY the tracked competitors — rating, review count,
+# open/closed status and their newest five reviews, one Places details call
+# each (~13), never a search, never a model call — and the restaurant's own
+# rating when nothing fresher is on file. The stored comparison is updated
+# in place. The full analysis runs again the same morning only for what a
+# stored read cannot already say (AI cost audit 10/7/26 #14): a competitor
+# closed, reviews newer than the ones the read was written from (#15), or a
+# burst of new reviews. A rating move alone is not one of them — the new
+# figure is written into the comparison here, and a Claude read is not
+# bought to restate it.
+RATING_MOVE = 0.1             # stars, either way — reported, not a reason to re-read
 REVIEW_BURST = 15             # new reviews since the last check
 DAILY_CHECK_MAX = 15          # competitors re-read per restaurant per day
 
 
+def _own_rating_fresh(restaurant, hours=OWN_RATING_FRESH_HOURS) -> bool:
+    """Whether the restaurant's own public rating was read in the last
+    `hours` — by the Business Profile connection (free) or by the review
+    fetch, which carries it (#24). The daily check then buys no own_rating
+    call."""
+    age = _stamp_age_hours(getattr(restaurant, "gbp_rating_updated_at", None))
+    return age is not None and age < hours
+
+
 def check_ratings(restaurant_id: int) -> dict:
-    """{"ok", "checked", "moved": [why...], "reanalyse": bool} — re-read the
-    stored competitors' ratings and the restaurant's own. Never raises."""
+    """{"ok", "checked", "moved": [why...], "reanalyse": bool, "triggers":
+    [why...]} — re-read the stored competitors and, when nothing fresher is
+    on file, the restaurant's own rating. `moved` names every change the
+    morning found; `reanalyse` is True only for one in `triggers` (a
+    closure, newer reviews, a review burst — #14). Never raises."""
     try:
         from models import get_restaurant, get_conn
         import models as _m
@@ -1817,14 +2251,17 @@ def check_ratings(restaurant_id: int) -> dict:
         blob = json.loads(raw) if raw else None
         if not blob or not blob.get("competitors"):
             return {"ok": False, "reason": "no competitor read to refresh yet"}
-        moved, checked = [], 0
+        moved, triggers, checked = [], [], 0
         for c in blob["competitors"][:DAILY_CHECK_MAX]:
             pid = c.get("place_id")
             if not pid:
                 continue
             try:
-                resp = _places_request("details", {"place_id": pid, "fields": "rating,user_ratings_total,business_status",
-                                                   "key": PLACES_API_KEY},
+                # The same fields every competitor lookup asks (the Details
+                # cache answers one from another), newest reviews first:
+                # they ride on the Atmosphere SKU the rating already bills (#15).
+                resp = _places_request("details", {"place_id": pid, "fields": COMPETITOR_FIELDS,
+                                                   "reviews_sort": "newest", "key": PLACES_API_KEY},
                                        restaurant_id=restaurant_id, action="competitor_daily", timeout=8)
                 data = resp.json()
             except PlacesUnavailable:
@@ -1840,18 +2277,35 @@ def check_ratings(restaurant_id: int) -> dict:
             if new_r is not None and old_r is not None and abs(float(new_r) - float(old_r)) >= RATING_MOVE - 1e-9:
                 moved.append(f"{c.get('name')}: {old_r}★ → {new_r}★")
             if new_n - old_n >= REVIEW_BURST:
-                moved.append(f"{c.get('name')}: {new_n - old_n} new reviews")
+                why = f"{c.get('name')}: {new_n - old_n} new reviews"
+                moved.append(why)
+                triggers.append(why)
             status = res.get("business_status")
-            if status and status != "OPERATIONAL" and not c.get("closed"):
-                moved.append(f"{c.get('name')}: {status.replace('_', ' ').lower()}")
+            if status and status != "OPERATIONAL" and not c.get("closed") \
+                    and c.get("business_status") != status:
+                why = f"{c.get('name')}: {status.replace('_', ' ').lower()}"
+                moved.append(why)
+                triggers.append(why)
+            if status:
+                # Kept whatever it says: the closure check reuses it (#41).
                 c["business_status"] = status
+            if "reviews" in res:
+                latest = _reviews_from(res)
+                newer = _newer_reviews(latest, c.get("reviews"))
+                if newer:
+                    why = f"{c.get('name')}: {newer} review{'s' if newer != 1 else ''} since the last read"
+                    moved.append(why)
+                    triggers.append(why)
+                c["latest_reviews"], c["latest_reviews_at"] = latest, _now_stamp()
             if new_r is not None:
                 c["rating"] = new_r
             c["review_count"] = new_n
             c["rating_is_provisional"] = new_n < MIN_REVIEWS_FOR_A_MEANINGFUL_RATING
-        # The restaurant's own rating, from the same morning.
+        # The restaurant's own rating, from the same morning — unless the
+        # Business Profile connection or the review fetch read it in the
+        # last day (#24).
         pid = getattr(r, "google_place_id", None)
-        if pid:
+        if pid and not _own_rating_fresh(r):
             try:
                 resp = _places_request("details", {"place_id": pid, "fields": "rating,user_ratings_total,types,price_level",
                                                    "key": PLACES_API_KEY},
@@ -1878,7 +2332,42 @@ def check_ratings(restaurant_id: int) -> dict:
                                                 at=restaurant_now(r, naive=True))
         except Exception as e:
             print(f"[competitor] market history not kept on the daily check: {e}")
-        return {"ok": True, "checked": checked, "moved": moved, "reanalyse": bool(moved)}
+        return {"ok": True, "checked": checked, "moved": moved, "triggers": triggers,
+                "reanalyse": bool(triggers)}
     except Exception as e:
         print(f"[competitor] daily ratings check failed for {restaurant_id}: {e}")
         return {"ok": False, "reason": "the ratings check failed"}
+
+
+# ── the owner's Refresh, when the read is already fresh (#42) ────────────────
+
+def fresh_stored_read(restaurant_id, hours=REFRESH_FRESH_HOURS):
+    """The stored read, as a refresh job's result, when it is under `hours`
+    old and was made with the owner-added competitors the restaurant has now
+    — an owner's Refresh then returns it instead of buying a new nearby
+    search, Details calls and a Claude read (AI cost audit 10/7/26 #42).
+    The payload is the run's own shape ({"ok": True, competitors, insight,
+    generated_at, ...}) plus `fresh: True`, `updated_at` and `note` ("Already
+    up to date — refreshed 2h ago"). None when a new run is due. Never raises."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        if not r or not r.google_place_id:
+            return None
+        blob = _stored_blob(r)
+        if not blob.get("competitors") or not str(blob.get("insight") or "").strip():
+            return None
+        age = _stamp_age_hours(getattr(r, "competitor_updated_at", None))
+        if age is None or age >= hours:
+            return None
+        if _custom_signature(blob) != set(_custom_ids(r)[:CUSTOM_COMPETITORS_MAX]):
+            return None
+        hrs = int(age)
+        when = "under an hour ago" if hrs < 1 else f"{hrs}h ago"
+        out = {k: v for k, v in blob.items() if k not in ("insight_raw", "validation_input")}
+        out.update(ok=True, fresh=True, updated_at=r.competitor_updated_at,
+                   note=f"Already up to date — refreshed {when}")
+        return out
+    except Exception as e:
+        print(f"[competitor] stored read not checked for {restaurant_id}: {e}")
+        return None

@@ -5652,6 +5652,13 @@ def mobile_add_competitor(current_user):
         return jsonify(ok=False, error="Missing place_id"), 400
     existing = [pid.strip() for pid in (restaurant.custom_competitors or "").split(",") if pid.strip()]
     if place_id not in existing:
+        # Every tracked competitor is a Google lookup on every read; ten
+        # added by hand is the cap (AI cost audit 10/7/26 #40). The web's
+        # /api/intel/add-competitor runs this same body.
+        from competitor import CUSTOM_COMPETITORS_MAX
+        if len(existing) >= CUSTOM_COMPETITORS_MAX:
+            return jsonify(ok=False, error=f"You're already tracking {CUSTOM_COMPETITORS_MAX} competitors "
+                                           f"you added. Remove one to add another."), 400
         existing.append(place_id)
         update_restaurant(rid, {"custom_competitors": ",".join(existing)})
     return jsonify(ok=True)

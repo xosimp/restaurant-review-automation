@@ -693,6 +693,11 @@ def test_the_city_cache_expires(monkeypatch):
     import requests as _rq
     monkeypatch.setattr(_rq, "get", lambda *a, **kw: _R())
     monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+    # This is about client_api's own city cache; the day's Places Details
+    # cache (AI cost audit 10/7/26 #13) would answer the second lookup
+    # beneath it, so it is held empty here.
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "_places_cache_get", lambda *a, **k: None)
     client_api._city_from_place_id("P1")
     client_api._city_from_place_id("P1")
     assert len(calls) == 2, "the cache never expired"

@@ -725,6 +725,12 @@ class Restaurant:
     last_activity: Optional[str]    = None
     gbp_rating: Optional[float]     = None
     gbp_review_count: Optional[int] = None
+    # UTC ISO stamp of the last reading of gbp_rating (gmb.fetch_location_rating
+    # or competitor._remember_own_listing). The column existed and was
+    # written but never hydrated, so every getattr of it read None: the
+    # 12-hour GBP refresh gate was always due and the daily own-rating check
+    # could not see a fresh rating (AI cost audit 10/7/26 #24).
+    gbp_rating_updated_at: Optional[str] = None
     id: Optional[int]               = None
     created_at: str = field(default_factory=lambda: __import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'))
 
@@ -5611,6 +5617,7 @@ def _restaurant_from_row(row) -> Restaurant:
         last_activity=row["last_activity"] if "last_activity" in row.keys() else None,
         gbp_rating=row["gbp_rating"] if "gbp_rating" in row.keys() else None,
         gbp_review_count=row["gbp_review_count"] if "gbp_review_count" in row.keys() else None,
+        gbp_rating_updated_at=row["gbp_rating_updated_at"] if "gbp_rating_updated_at" in row.keys() else None,
         owner_name=row["owner_name"] if "owner_name" in row.keys() else None,
         owner_phone=row["owner_phone"] if "owner_phone" in row.keys() else None,
         digest_day=row["digest_day"] if "digest_day" in row.keys() else "monday",

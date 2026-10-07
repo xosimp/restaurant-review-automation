@@ -63,14 +63,18 @@ def test_a_quiet_morning_updates_the_numbers_and_reads_nothing_again(rid, monkey
     assert blob["insight"] == "read"
 
 
-def test_a_rating_move_a_review_burst_or_a_closure_asks_for_a_new_read(rid, monkeypatch):
+def test_a_review_burst_or_a_closure_asks_for_a_new_read_and_a_rating_move_is_only_reported(rid, monkeypatch):
+    # A rating move alone is written into the comparison in place, never a
+    # new Claude read (AI cost audit 10/7/26 #14): it is in `moved`, not in
+    # `triggers`. tests/test_places_economy.py holds the rating-only case.
     fake, _calls = _places({"p1": {"rating": 4.3, "user_ratings_total": 300, "business_status": "OPERATIONAL"},
                             "p2": {"rating": 4.3, "user_ratings_total": 140, "business_status": "CLOSED_PERMANENTLY"}})
     monkeypatch.setattr(competitor, "_places_request", fake)
     out = competitor.check_ratings(rid)
     assert out["reanalyse"]
     assert any("4.5★ → 4.3★" in m for m in out["moved"])
-    assert any("20 new reviews" in m for m in out["moved"]) and any("closed permanently" in m for m in out["moved"])
+    assert not any("4.5★ → 4.3★" in t for t in out["triggers"])
+    assert any("20 new reviews" in m for m in out["triggers"]) and any("closed permanently" in m for m in out["triggers"])
 
 
 def test_the_job_is_registered_and_scheduled():

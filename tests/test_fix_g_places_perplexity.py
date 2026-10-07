@@ -74,7 +74,11 @@ def _stub_get(monkeypatch, answer):
 def test_an_ok_request_is_metered_once_at_its_sku_price(db_path, monkeypatch):
     rid = _rid(db_path)
     _stub_get(monkeypatch, _Resp({"status": "OK", "result": {}}))
-    r = ai_utils.places_request("details", {"place_id": "x", "key": "k"}, restaurant_id=rid, action="t")
+    # Basic Data fields only: the base Details price. (A request with no
+    # `fields` is billed every data SKU since AI cost audit 10/7/26 #43 —
+    # tests/test_places_economy.py prices the tiers.)
+    r = ai_utils.places_request("details", {"place_id": "x", "fields": "name,business_status", "key": "k"},
+                                restaurant_id=rid, action="t")
     assert r.json() == {"status": "OK", "result": {}}
     (row,) = _places_rows(db_path)
     assert (row["restaurant_id"], row["action"], row["model"], row["outcome"]) == (rid, "t", "google-places-details", "ok")
@@ -190,7 +194,11 @@ def test_the_owners_search_is_metered_as_a_text_search(db_path, monkeypatch):
         assert competitor.search_places_near("Rival")[0]["name"] == "Rival"
     (row,) = _places_rows(db_path)
     assert (row["restaurant_id"], row["model"]) == (rid, "google-places-textsearch")
-    assert row["cost_usd"] == pytest.approx(ai_utils._PER_CALL_PRICING["google-places-textsearch"])
+    # A legacy Text Search returns every field, so it bills the base request
+    # plus the Atmosphere and Contact Data SKUs (AI cost audit 10/7/26 #43).
+    assert row["cost_usd"] == pytest.approx(ai_utils._PER_CALL_PRICING["google-places-textsearch"]
+                                            + ai_utils._PER_CALL_PRICING["google-places-atmosphere"]
+                                            + ai_utils._PER_CALL_PRICING["google-places-contact"])
 
 
 def test_the_visibility_city_lookup_is_metered(db_path, monkeypatch):
@@ -235,19 +243,23 @@ def test_owner_added_competitors_and_every_review_lookup_are_metered(db_path, mo
         if params.get("place_id") == "ChIJself":
             return _Resp({"status": "OK", "result": {"name": "Places Co", "types": ["restaurant"],
                                                       "geometry": {"location": {"lat": 1.0, "lng": 2.0}}}})
-        if params.get("place_id") == "ChIJcustom" and "reviews" not in params.get("fields", ""):
-            return _Resp({"status": "OK", "result": {"name": "Custom Rival", "business_status": "OPERATIONAL"}})
+        if params.get("place_id") == "ChIJcustom":
+            # One lookup, its reviews included (AI cost audit 10/7/26 #40).
+            assert "reviews" in params.get("fields", "")
+            return _Resp({"status": "OK", "result": {"name": "Custom Rival", "business_status": "OPERATIONAL",
+                                                      "reviews": []}})
         return _Resp({"status": "OK", "result": {"reviews": []}})
     _stub_get(monkeypatch, answer)
-    assert competitor.run_competitor_analysis(rid)["ok"] is True
+    out = competitor.run_competitor_analysis(rid)
+    assert out["ok"] is True and "Custom Rival" in [c["name"] for c in out["competitors"]]
     rows = _places_rows(db_path)
     assert {r["restaurant_id"] for r in rows} == {rid}
     corr = {r["correlation_id"] for r in rows}
     assert len(corr) == 1 and next(iter(corr)).startswith("intel:"), "one run, one correlation id"
     details = [r for r in rows if r["model"] == "google-places-details"]
-    # own details + the custom competitor's details + a reviews lookup per
-    # competitor (three discovered, one added by the owner).
-    assert len(details) == 1 + 1 + 4
+    # own details + the custom competitor's one details (reviews included,
+    # #40 — it was two) + a reviews lookup per discovered competitor.
+    assert len(details) == 1 + 1 + 3
 
 
 def test_a_refused_lookup_is_never_reported_as_an_empty_market(db_path, monkeypatch):

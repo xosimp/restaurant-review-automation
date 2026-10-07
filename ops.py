@@ -2526,6 +2526,10 @@ _RETENTION_DAYS = {
     # ai_calls by then — a month is enough to read what a batch did.
     "ai_batch_jobs":      int(os.getenv("RETAIN_AI_BATCHES_DAYS", "30")),
     "ai_batch_items":     int(os.getenv("RETAIN_AI_BATCHES_DAYS", "30")),
+    # The Places Details cache (ai_utils.places_request, AI cost audit
+    # 10/7/26 #13): only today's rows are ever read; Google allows Places
+    # content to be cached for 30 days at most.
+    "places_details_cache": int(os.getenv("RETAIN_PLACES_CACHE_DAYS", "3")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2544,6 +2548,7 @@ _RETENTION_COLUMN = {
     "missed_windows": "created_at",
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
+    "places_details_cache": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
@@ -2633,6 +2638,8 @@ _RETENTION_FLOOR_DAYS = {
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
+    # The Places Details cache is read for its own day only (#13).
+    "places_details_cache": 1,
     "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
     "morning_brief_deliveries": 30, "alert_storm_caps": 60, "login_history": 60,
     # Account -> Memory offers a year to restore a forgotten fact (M2's archive).
