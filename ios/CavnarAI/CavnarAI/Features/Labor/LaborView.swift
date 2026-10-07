@@ -574,6 +574,18 @@ struct LaborView: View {
                     // What it is actually doing, rather than sixty seconds
                     // of a spinner. Every line is a real stage of the run.
                     ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true)
+                    // The one real measure of how far it has got: the days
+                    // its answer has finished (schedule-status `progress`,
+                    // AI cost audit 10/7/26 #36) — the web says the same.
+                    if let p = viewModel.generationProgress, let line = p.line {
+                        (Text("\(min(p.daysDrafted, p.daysTotal))").font(.cavnarNumber(13.5, weight: 600))
+                         + Text(" of ").font(.cavnarBody(13.5))
+                         + Text("\(p.daysTotal)").font(.cavnarNumber(13.5, weight: 600))
+                         + Text(p.daysTotal == 1 ? " day drafted" : " days drafted").font(.cavnarBody(13.5)))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .accessibilityLabel(line)
+                            .transition(.opacity)
+                    }
                 }
                 .padding(.top, 10)
                 .transition(.opacity)

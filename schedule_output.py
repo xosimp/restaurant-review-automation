@@ -13,7 +13,13 @@ weekday, the hours), which roughly halves what a row costs in output tokens.
 A row's note is one of NOTE_VALUES, because the note is printed on the
 employee's own schedule. parse_answer turns the answer into the CSV-shaped
 rows the rest of the pipeline reads; an answer cut short keeps every complete
-row (salvage_json), and a structured answer is never read as CSV.
+row (salvage_json), and a structured answer is never read as CSV. Two more
+contracts sit beside it behind SCHEDULE_CONTRACT (AI cost audit 10/7/26 #69,
+#70; see CONTRACTS): "compact", the same rows with one-letter keys, and
+"shape", slots without names whose people the solver chooses. An answer
+whose JSON broke partway keeps the days before the break (#71), and a
+streamed answer's finished days are counted as it is written (DayWatch,
+#36).
 
 What the finished week does not meet (unmet_items): every floor, manager
 minute, closer, target, leader rule, staffing ask, minimum and limit the
@@ -64,6 +70,89 @@ TIME_STEP_MINUTES = 15
 # the real figure from schedule_model_calls once calls have run.
 OLD_TOKENS_PER_ROW = 60
 ANSWER_TOKENS_PER_ROW_ESTIMATE = 30
+
+# ── the output contracts (AI cost audit 10/7/26 #69, #70) ──────────────────
+#
+# "schema" is the contract above: a row is {"employee", "role", "start",
+# "end", "note"} — about 30 output tokens, a fifth of them the five key names
+# repeated on every row. Two more, chosen per generation by
+# SCHEDULE_CONTRACT (read once a generation, schedule_contract):
+#
+# "compact" — the same rows, the same enums, the same grouping under each
+#   date, with one-letter keys: {"e", "r", "s", "t", "n"} (employee, role,
+#   start, end — "t" for "till" — and note). Nothing the model chooses
+#   changes, only the key names it spells; parse_answer reads it back to
+#   the same rows.
+# "shape" — the model writes the week's SHAPE only: under each date, slots
+#   {"r", "s", "t", "c", "n"} — a role, its times, how many people (c) and a
+#   note — and no names. Who works each slot is solved in code by
+#   schedule_solver over the same rules and objective the repair loop uses
+#   (schedule_engine.assign_shape_slots), and every repair and gate step
+#   runs after as before. Behind the flag: the week's quality has not been
+#   measured on it (scripts/schedule_model_eval.py --prompts rerender:shape).
+#
+# Each "plain_" form is its contract's shape without the enums (the API
+# refusing a roster too large to compile — labor's schema_enums=False).
+# "csv" is the text fallback, whatever the contract asked for.
+CONTRACTS = ("schema", "compact", "shape")
+DEFAULT_CONTRACT = "schema"
+# The keys a row (or a slot) is written with, by contract.
+ROW_KEYS = {
+    "schema": {"employee": "employee", "role": "role", "start": "start", "end": "end", "note": "note"},
+    "compact": {"employee": "e", "role": "r", "start": "s", "end": "t", "note": "n"},
+    "shape": {"role": "r", "start": "s", "end": "t", "count": "c", "note": "n"},
+}
+# The array each date's rows sit in.
+DAY_ROWS_KEY = {"schema": "shifts", "compact": "shifts", "shape": "slots"}
+# A slot asks for at most this many people; a larger count is read as this.
+SHAPE_MAX_COUNT = 30
+# What one row costs in answer tokens under each contract, for sizing a
+# call's seconds before any call on it is measured. Measured with a
+# synthetic answer (tests/test_schedule_contracts.py: characters one more row
+# adds, ~3.2 characters a token for dense JSON — the same yardstick the
+# schema's 30 was checked with): a compact row is ~63 characters against the
+# schema's ~79, a one-person shape slot ~51 (a slot of two or more people is
+# cheaper still per row). The real figure replaces these once calls on a
+# contract are recorded (call_costs reads them by contract). The rows a call
+# carries are still sized by the schema's 30 (schedule_engine.
+# CHUNK_ROWS_PER_CALL): a cheaper row never grows a call toward the ceiling.
+ANSWER_TOKENS_PER_ROW = {"schema": ANSWER_TOKENS_PER_ROW_ESTIMATE, "plain_schema": ANSWER_TOKENS_PER_ROW_ESTIMATE,
+                         "compact": 24, "plain_compact": 24, "shape": 20, "plain_shape": 20,
+                         "csv": ANSWER_TOKENS_PER_ROW_ESTIMATE}
+
+
+def schedule_contract(value=None) -> str:
+    """The output contract a generation answers on: `value`, else the
+    SCHEDULE_CONTRACT environment variable, read at call time — one of
+    CONTRACTS, DEFAULT_CONTRACT ("schema") for anything else. The engine
+    reads it once per generation (every call of one generation answers on
+    the same contract, so its schema and prompt cache are shared)."""
+    import os
+    v = str(value if value is not None else os.getenv("SCHEDULE_CONTRACT", "") or "").strip().lower()
+    return v if v in CONTRACTS else DEFAULT_CONTRACT
+
+
+def contract_base(contract) -> str:
+    """"compact" for "compact" or "plain_compact"; "schema" for "schema",
+    "plain_schema", "csv" or anything unknown."""
+    c = str(contract or "").strip().lower()
+    if c.startswith("plain_"):
+        c = c[len("plain_"):]
+    return c if c in CONTRACTS else DEFAULT_CONTRACT
+
+
+def contract_family(contract) -> tuple:
+    """The recorded contract values one contract's calls are stored under
+    (with enums, and the plain fallback): what call_costs reads a
+    contract's measured cost from."""
+    base = contract_base(contract)
+    return (base, "plain_" + base)
+
+
+def answer_tokens_per_row(contract=None) -> float:
+    """ANSWER_TOKENS_PER_ROW for `contract` (the schema's for one it does
+    not know)."""
+    return float(ANSWER_TOKENS_PER_ROW.get(str(contract or DEFAULT_CONTRACT), ANSWER_TOKENS_PER_ROW_ESTIMATE))
 
 _CSV_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 CSV_HEADER = ",".join(_CSV_COLS)
@@ -215,6 +304,48 @@ def schedule_schema(employees=None, roles=None, dates=None, times=None) -> dict:
     }
 
 
+def contract_schema(contract="schema", employees=None, roles=None, dates=None, times=None) -> dict:
+    """The JSON schema for `contract` (CONTRACTS): "schema" is
+    schedule_schema; "compact" the same rows with one-letter keys (ROW_KEYS);
+    "shape" a role, its times, a count and a note per slot, and no names —
+    `employees` is not used. The enums and the grouping under each date are
+    the same in all three, so a call's schema stays the same for every call
+    of one generation."""
+    base = contract_base(contract)
+    if base == "schema":
+        return schedule_schema(employees=employees, roles=roles, dates=dates, times=times)
+    keys = ROW_KEYS[base]
+    if base == "compact":
+        props = {keys["employee"]: _enum(employees), keys["role"]: _enum(roles), keys["start"]: _enum(times),
+                 keys["end"]: _enum(times), keys["note"]: {"type": "string", "enum": list(NOTE_VALUES)}}
+        required = [keys["employee"], keys["role"], keys["start"], keys["end"]]
+    else:
+        # The count is an integer with no bounds in the schema (structured
+        # outputs compile a narrow keyword set); parse_answer holds it to
+        # 1..SHAPE_MAX_COUNT.
+        props = {keys["role"]: _enum(roles), keys["start"]: _enum(times), keys["end"]: _enum(times),
+                 keys["count"]: {"type": "integer"},
+                 keys["note"]: {"type": "string", "enum": list(NOTE_VALUES)}}
+        required = [keys["role"], keys["start"], keys["end"], keys["count"]]
+    row = {"type": "object", "properties": props, "required": required, "additionalProperties": False}
+    rows_key = DAY_ROWS_KEY[base]
+    day = {
+        "type": "object",
+        "properties": {"date": _enum(dates), rows_key: {"type": "array", "items": row}},
+        "required": ["date", rows_key],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "days": {"type": "array", "items": day},
+            "summary": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["days", "summary"],
+        "additionalProperties": False,
+    }
+
+
 def vocabulary_note(note) -> str:
     """A free-text note (the CSV contract's) as one of NOTE_VALUES, or ""
     when it is not one: the CSV fallback must not put the model's own words
@@ -282,29 +413,80 @@ def _row_hours(start_m, end_m) -> float:
     return round(span / 60.0, 2)
 
 
-def parse_answer(raw, dates=None) -> dict:
+def _recover_broken(text):
+    """(obj, open_stack) for an answer that was NOT cut short but is still
+    not whole JSON — a malformed value partway (AI cost audit 10/7/26 #71):
+    the text is read up to the point the JSON broke and salvaged there
+    (salvage_json), so every day written whole before the break is kept and
+    only the rest is asked for again. (None, ()) when nothing before the
+    break is readable."""
+    s = text or ""
+    start = s.find("{")
+    if start < 0:
+        return None, ()
+    try:
+        json.JSONDecoder().raw_decode(s, start)
+        return None, ()          # whole JSON from the brace: salvage_json reads it
+    except ValueError as e:
+        pos = getattr(e, "pos", None)
+    if not isinstance(pos, int) or pos <= start:
+        return None, ()
+    obj, open_ = salvage_json(s[:pos])
+    if obj is None:
+        return None, ()
+    return obj, open_
+
+
+def _row_field(sh, base, field):
+    """A row's `field` under the contract it was written in, read leniently:
+    a compact answer that wrote a full key name still reads."""
+    keys = ROW_KEYS.get(base) or ROW_KEYS["schema"]
+    if keys.get(field) in sh:
+        return sh.get(keys[field])
+    return sh.get(field)
+
+
+def parse_answer(raw, dates=None, contract=None) -> dict:
     """The model's JSON answer as the pipeline's rows.
 
     {"rows": [{date, day, employee, role, shift_start, shift_end,
     scheduled_hours, notes}], "summary": [str], "complete_dates": [...],
-    "partial_dates": [...], "salvaged": bool, "parsed": bool,
-    "problems": [str], "dropped": [str], "answer_chars": int}.
+    "partial_dates": [...], "salvaged": bool, "recovered": bool,
+    "parsed": bool, "problems": [str], "dropped": [str], "answer_chars":
+    int, "contract": str}.
 
-    `dates` (the dates this call was asked for) keeps rows to them. A day
-    the answer was cut off inside is in partial_dates and contributes no
-    rows — half a day staffed is not a day written; the caller regenerates
-    it. A row that starts and ends at the same time is dropped and named in
-    `dropped`. Anything that is not JSON yields no rows: a structured answer
-    is never read as CSV (PR-28) — garbage lines used to become rows."""
+    `contract` is the one the call asked for (CONTRACTS; a "plain_" form
+    reads the same): "schema" and "compact" rows carry their employee;
+    "shape" slots become `count` rows with employee "" each, carrying
+    "_slot": True — code assigns the names (schedule_engine.
+    assign_shape_slots). `dates` (the dates this call was asked for) keeps
+    rows to them. A day the answer was cut off inside is in partial_dates
+    and contributes no rows — half a day staffed is not a day written; the
+    caller regenerates it. A row that starts and ends at the same time is
+    dropped and named in `dropped`. Anything that is not JSON yields no
+    rows: a structured answer is never read as CSV (PR-28) — garbage lines
+    used to become rows.
+
+    An answer that was not cut short but whose JSON broke partway is read
+    up to the break (`recovered`, AI cost audit 10/7/26 #71): the days
+    written whole before it are kept, the day it broke inside is partial,
+    and only the days still missing are written again — it used to read as
+    no days at all, and the whole call was paid for twice."""
+    base = contract_base(contract)
+    rows_key = DAY_ROWS_KEY[base]
     text = (raw or "").strip()
     out = {"rows": [], "summary": [], "complete_dates": [], "partial_dates": [], "salvaged": False,
-           "parsed": False, "problems": [], "dropped": [], "answer_chars": len(text)}
+           "recovered": False, "parsed": False, "problems": [], "dropped": [], "answer_chars": len(text),
+           "contract": base}
     obj, open_ = None, ()
     if text:
         try:
             obj = json.loads(text)
         except ValueError:
             obj, open_ = salvage_json(text)
+            if obj is None:
+                obj, open_ = _recover_broken(text)
+                out["recovered"] = obj is not None
             out["salvaged"] = obj is not None
     if not isinstance(obj, dict):
         out["problems"].append("the answer was not the JSON the schema describes")
@@ -318,18 +500,19 @@ def parse_answer(raw, dates=None) -> dict:
     partial_index = None
     if out["salvaged"] and len(open_) >= 3 and open_[:2] == ("{", "[") and days:
         last = days[-1] if isinstance(days[-1], dict) else {}
-        if len(open_) >= 4 or "shifts" not in last:
+        if len(open_) >= 4 or rows_key not in last:
             partial_index = len(days) - 1
     wanted = set(dates or ())
     for idx, day in enumerate(days):
         if not isinstance(day, dict):
             continue
         d = iso_date_of(day.get("date")) or str(day.get("date") or "").strip()[:10]
+        day_rows = day.get(rows_key)
         try:
             weekday = _datetime.strptime(d, "%Y-%m-%d").strftime("%A")
         except ValueError:
-            if day.get("shifts"):
-                out["problems"].append(f"a day with no readable date ({len(day.get('shifts') or [])} shifts)")
+            if day_rows:
+                out["problems"].append(f"a day with no readable date ({len(day_rows or [])} shifts)")
             continue
         if wanted and d not in wanted:
             continue
@@ -339,29 +522,175 @@ def parse_answer(raw, dates=None) -> dict:
             continue
         if d not in out["complete_dates"]:
             out["complete_dates"].append(d)
-        for sh in day.get("shifts") or []:
+        for sh in day_rows or []:
             if not isinstance(sh, dict):
                 continue
-            emp = " ".join(str(sh.get("employee") or "").split())
-            if not emp:
-                continue
-            s_m, e_m = _minutes(sh.get("start")), _minutes(sh.get("end"))
-            start = _fmt_minutes(s_m) if s_m is not None else str(sh.get("start") or "").strip()
-            end = _fmt_minutes(e_m) if e_m is not None else str(sh.get("end") or "").strip()
+            if base == "shape":
+                emp, count = "", _slot_count(_row_field(sh, base, "count"))
+            else:
+                emp, count = " ".join(str(_row_field(sh, base, "employee") or "").split()), 1
+                if not emp:
+                    continue
+            raw_s, raw_e = _row_field(sh, base, "start"), _row_field(sh, base, "end")
+            s_m, e_m = _minutes(raw_s), _minutes(raw_e)
+            start = _fmt_minutes(s_m) if s_m is not None else str(raw_s or "").strip()
+            end = _fmt_minutes(e_m) if e_m is not None else str(raw_e or "").strip()
+            role = " ".join(str(_row_field(sh, base, "role") or "").split())
             if s_m is not None and e_m is not None and s_m == e_m:
-                out["dropped"].append(f"{d} {emp}: starts and ends at {start}")
+                out["dropped"].append(f"{d} {emp or role}: starts and ends at {start}")
                 continue
             hours = _row_hours(s_m, e_m) if (s_m is not None and e_m is not None) else ""
-            out["rows"].append({
-                "date": d, "day": weekday, "employee": emp,
-                "role": " ".join(str(sh.get("role") or "").split()),
-                "shift_start": start, "shift_end": end,
-                "scheduled_hours": (f"{hours:g}" if hours != "" else ""),
-                "notes": vocabulary_note(sh.get("note")),
-            })
+            for _k in range(count):
+                row = {"date": d, "day": weekday, "employee": emp, "role": role,
+                       "shift_start": start, "shift_end": end,
+                       "scheduled_hours": (f"{hours:g}" if hours != "" else ""),
+                       "notes": vocabulary_note(_row_field(sh, base, "note"))}
+                if base == "shape":
+                    row["_slot"] = True
+                out["rows"].append(row)
     out["summary"] = [" ".join(str(b).split()) for b in (obj.get("summary") or [])
                       if isinstance(b, str) and str(b).strip()]
     return out
+
+
+def _slot_count(v) -> int:
+    """A shape slot's people: an integer 1..SHAPE_MAX_COUNT (a missing or
+    unreadable count is one person; a count over the cap is the cap)."""
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(SHAPE_MAX_COUNT, n))
+
+
+def complete_dates_so_far(text, contract=None, dates=None) -> list:
+    """The dates an answer still being written has finished — what the
+    Building screen shows as "N of 7 days drafted" while the call streams
+    (AI cost audit 10/7/26 #36): parse_answer on the partial text, where the
+    day being written is partial and every one before it complete. Never
+    raises."""
+    try:
+        return list(parse_answer(text, dates=dates, contract=contract)["complete_dates"])
+    except Exception:
+        return []
+
+
+# ── the days a streamed answer has finished (AI cost audit 10/7/26 #36) ────
+
+class _WatchedStream:
+    """A streamed answer read through exactly as the SDK reads it, each text
+    delta handed to the watcher on the way. Everything else is the SDK's own
+    stream (current_message_snapshot, close)."""
+
+    def __init__(self, inner, on_text):
+        self._inner = inner
+        self._on_text = on_text
+        self._consumed = False
+
+    def __iter__(self):
+        for event in self._inner:
+            try:
+                if getattr(event, "type", None) == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    if getattr(delta, "type", None) == "text_delta":
+                        self._on_text(getattr(delta, "text", "") or "")
+            except Exception:
+                pass
+            yield event
+        self._consumed = True
+
+    def get_final_message(self):
+        if not self._consumed:
+            for _event in self:
+                pass
+        return self._inner.get_final_message()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _WatchedManager:
+    def __init__(self, inner, on_text, on_begin):
+        self._inner = inner
+        self._on_text = on_text
+        self._on_begin = on_begin
+
+    def __enter__(self):
+        # Each attempt is a new answer (create_with_retry sends the call
+        # again after a failure): its text starts from nothing.
+        self._on_begin()
+        return _WatchedStream(self._inner.__enter__(), self._on_text)
+
+    def __exit__(self, *exc):
+        return self._inner.__exit__(*exc)
+
+
+class _WatchedMessages:
+    def __init__(self, inner, on_text, on_begin):
+        self._inner = inner
+        self._on_text = on_text
+        self._on_begin = on_begin
+
+    def stream(self, **kwargs):
+        return _WatchedManager(self._inner.stream(**kwargs), self._on_text, self._on_begin)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class DayWatch:
+    """A client whose streamed schedule answer is watched as it is written:
+    each time the answer starts a new date, the dates finished so far
+    (complete_dates_so_far) go to `on_days(dates)` — once per newly finished
+    day, so a seven-day answer is parsed about seven times, never once a
+    token (AI cost audit 10/7/26 #36). Everything else is the wrapped
+    client's — the call, its timeouts, its retries (ai_utils.
+    create_with_retry is unchanged). A watcher that fails never fails the
+    call: it is only the Building screen's count."""
+
+    _DAY_KEY = '"date"'
+
+    def __init__(self, client, on_days, contract=None, dates=None):
+        self._client = client
+        self._on_days = on_days
+        self._contract = contract
+        self._dates = list(dates or [])
+        self._reported = set()
+        self._begin()
+        self.messages = _WatchedMessages(client.messages, self._take, self._begin)
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    def _begin(self):
+        self._text, self._tail, self._starts = [], "", 0
+
+    def _take(self, piece):
+        if not piece:
+            return
+        self._text.append(piece)
+        # A day starts with its "date" key; the key can arrive split across
+        # two deltas, so the last few characters are carried over.
+        window = self._tail + piece
+        n = window.count(self._DAY_KEY)
+        self._tail = window[-(len(self._DAY_KEY) - 1):]
+        if not n:
+            return
+        self._starts += n
+        if self._starts < 2:
+            return                  # the first day has only just begun
+        done = complete_dates_so_far("".join(self._text), contract=self._contract, dates=self._dates)
+        fresh = [d for d in done if d not in self._reported]
+        if fresh:
+            self._reported.update(fresh)
+            try:
+                self._on_days(sorted(self._reported))
+            except Exception:
+                pass
+
+    @property
+    def reported(self) -> list:
+        return sorted(self._reported)
 
 
 def csv_lines(rows) -> list:
@@ -929,10 +1258,15 @@ def _effort_where(where, args, effort):
         args.append(effort)
 
 
-def call_costs(restaurant_id=None, model=None, days=60, db_path=None, effort=None) -> dict:
+def call_costs(restaurant_id=None, model=None, days=60, db_path=None, effort=None, contract=None) -> dict:
     """What a schedule call really costs, from the stored calls of the last
     `days` that finished (end_turn) on the structured contract (schedule
-    re-audit 10/4/26 PROMPT-3, PROMPT-4).
+    re-audit 10/4/26 PROMPT-3, PROMPT-4) — `contract`'s own calls, with and
+    without enums (contract_family; the schema's when None): a compact row
+    costs less than a schema row, so one contract is never sized from
+    another's calls (AI cost audit 10/7/26 #70). A call whose broken JSON
+    was read up to the break (outcome 'salvaged', #71) is left out: its
+    tokens bought days it did not keep.
 
     Adaptive thinking is mostly a cost per CALL — every call reads the same
     roster, rules and week — so one median of output tokens per row over
@@ -951,8 +1285,9 @@ def call_costs(restaurant_id=None, model=None, days=60, db_path=None, effort=Non
     {kind: {"calls", "rows", "tokens_per_row", "tokens_per_call",
     "seconds", "tokens_per_second", "cache_read_tokens"}}} — by_kind keys
     are CALL_KINDS, and "unknown" for calls recorded before kinds were."""
-    where, args = ["stop_reason='end_turn'", "rows > 0", "contract IN ('schema', 'plain_schema')",
-                   "created_at >= datetime('now', ?)"], [f"-{int(days)} days"]
+    where, args = ["stop_reason='end_turn'", "rows > 0", "contract IN (?, ?)",
+                   "COALESCE(outcome, '') <> 'salvaged'",
+                   "created_at >= datetime('now', ?)"], list(contract_family(contract)) + [f"-{int(days)} days"]
     if restaurant_id:
         where.append("restaurant_id=?")
         args.append(restaurant_id)
@@ -1011,15 +1346,18 @@ def call_costs(restaurant_id=None, model=None, days=60, db_path=None, effort=Non
     return out
 
 
-def measured_tokens_per_row(restaurant_id=None, model=None, days=60, db_path=None, effort=None) -> dict:
+def measured_tokens_per_row(restaurant_id=None, model=None, days=60, db_path=None, effort=None,
+                            contract=None) -> dict:
     """What a row has really cost, from the stored calls of the last `days`
-    that finished (end_turn) on the structured contract: {"output_tokens_per_row"
+    that finished (end_turn) on the structured contract (`contract`'s
+    family, as call_costs reads it): {"output_tokens_per_row"
     — every output token, thinking included, per row written (what a call's
     max_tokens must hold), "answer_chars_per_row", "calls", "source"
     ("measured" | "estimate")}. Medians; the estimate stands until a call
     has run."""
-    where, args = ["stop_reason='end_turn'", "rows > 0", "contract IN ('schema', 'plain_schema')",
-                   "created_at >= datetime('now', ?)"], [f"-{int(days)} days"]
+    where, args = ["stop_reason='end_turn'", "rows > 0", "contract IN (?, ?)",
+                   "COALESCE(outcome, '') <> 'salvaged'",
+                   "created_at >= datetime('now', ?)"], list(contract_family(contract)) + [f"-{int(days)} days"]
     if restaurant_id:
         where.append("restaurant_id=?")
         args.append(restaurant_id)
@@ -1044,7 +1382,7 @@ def measured_tokens_per_row(restaurant_id=None, model=None, days=60, db_path=Non
         if r["answer_chars"]:
             chars.append(r["answer_chars"] / r["rows"])
     if not per_row:
-        return {"output_tokens_per_row": float(ANSWER_TOKENS_PER_ROW_ESTIMATE), "answer_chars_per_row": None,
+        return {"output_tokens_per_row": answer_tokens_per_row(contract), "answer_chars_per_row": None,
                 "calls": 0, "source": "estimate"}
 
     def _median(xs):

@@ -5411,8 +5411,11 @@ def schedule_status(current_user, job_id):
         return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
     if job["status"] == "pending":
         # How long the job can still run, when it set its deadline (schedule
-        # audit 10/3/26 P-22) — the mobile twin says the same.
-        return jsonify({"ok": True, "status": "pending", "seconds_left": job.get("seconds_left")})
+        # audit 10/3/26 P-22), and the days drafted so far (AI cost audit
+        # 10/7/26 #36: {days_total, days_drafted, dates_drafted}) — the
+        # mobile twin says the same.
+        return jsonify({"ok": True, "status": "pending", "seconds_left": job.get("seconds_left"),
+                        "progress": job.get("progress")})
     try:
         result = dict(job["result"])
         result["status"] = job["status"]

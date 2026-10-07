@@ -623,7 +623,10 @@ class Problem:
         # Which bucket closes each date, exactly as build_contexts reads it.
         primary, latest_end = {}, {}
         for r in self.rows:
-            if not ((r.get("employee") or "").strip() and r.get("date")):
+            # A shape slot still to be staffed ("_open", schedule_engine.
+            # assign_shape_slots — AI cost audit 10/7/26 #69) counts as the
+            # shift it will be: the day's last slot of a role is its close.
+            if not (((r.get("employee") or "").strip() or r.get("_open")) and r.get("date")):
                 continue
             part = sq.present_dayparts(r)[0]
             primary.setdefault((r["date"], part), []).append(r)

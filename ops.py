@@ -958,7 +958,8 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     deadline_at   TEXT,
     started_at    TEXT,
-    request_json  TEXT
+    request_json  TEXT,
+    progress_json TEXT
 )"""
 # Added after the table shipped; init_ops adds them to an older database.
 # deadline_at is the job's own wall-clock limit (UTC, SQLite datetime text),
@@ -967,7 +968,11 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
 # first, and its age is counted from here (re-audit 10/4/26 PIPE-9).
 # request_json is what was asked (a schedule's week, days, draft and
 # instruction): a press joins only the same request (UI-8).
-_ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"), ("started_at", "TEXT"), ("request_json", "TEXT"))
+# progress_json is how far a pending job has got, in its own terms — a
+# schedule generation's days drafted so far (AI cost audit 10/7/26 #36,
+# set_async_job_progress) — read back on a pending poll.
+_ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"), ("started_at", "TEXT"), ("request_json", "TEXT"),
+                      ("progress_json", "TEXT"))
 
 # Long enough for the slowest generation plus a client that backgrounds the
 # app mid-poll; short enough that abandoned results don't accumulate.
@@ -1224,6 +1229,25 @@ def set_async_job_deadline(job_id, deadline_ts, started_ts=None) -> None:
         log.error(f"set_async_job_deadline({job_id}) failed: {e}")
 
 
+def set_async_job_progress(job_id, progress) -> None:
+    """Record how far a pending job has got (`progress`, JSON-able) — a
+    schedule generation's days drafted so far (AI cost audit 10/7/26 #36):
+    a pending poll returns it. Written only while the job is pending, and
+    only as often as the caller has news (the generation writes once per
+    newly finished day). Raises nothing: a progress line is never a reason
+    for a job to fail."""
+    import json
+    try:
+        payload = json.dumps(progress)
+        conn = _async_conn()
+        conn.execute("UPDATE async_jobs SET progress_json=? WHERE job_id=? AND status='pending'",
+                     (payload, str(job_id)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.error(f"set_async_job_progress({job_id}) failed: {e}")
+
+
 def job_still_pending(job_id) -> bool:
     """Whether the job's row still reads pending — False once a poll has
     called it dead (read_async_job) or the boot sweep failed it. A job that
@@ -1256,7 +1280,7 @@ def read_async_job(job_id, restaurant_id=None):
     try:
         conn = _async_conn()
         row = conn.execute(
-            "SELECT job_id, restaurant_id, status, result_json, "
+            "SELECT job_id, restaurant_id, status, result_json, progress_json, "
             "(deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) AS overdue, "
             "(deadline_at IS NOT NULL AND deadline_at < datetime('now', ?)) AS past_deadline, "
             "CAST(strftime('%s', deadline_at) AS INTEGER) - CAST(strftime('%s', 'now') AS INTEGER) AS seconds_left "
@@ -1297,6 +1321,12 @@ def read_async_job(job_id, restaurant_id=None):
                 # How long the job can still run, when it set its deadline:
                 # a client waits that long rather than a guessed 15 minutes.
                 out["seconds_left"] = max(0, int(row["seconds_left"]))
+            if row["progress_json"]:
+                # How far it has got (set_async_job_progress, #36).
+                try:
+                    out["progress"] = json.loads(row["progress_json"])
+                except (TypeError, ValueError):
+                    pass
             return out
         conn.close()
         try:
