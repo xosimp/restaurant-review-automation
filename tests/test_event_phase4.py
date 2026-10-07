@@ -207,7 +207,10 @@ def test_praise_alone_is_never_strain(db):
 def test_the_game_line_is_evidence_only_for_service_clusters():
     import inspect
     import review_intelligence as ri
-    src = inspect.getsource(ri.diagnose)
+    # The per-cluster inputs are planned in diagnosis_plan since the morning
+    # diagnoses can go as a batch (AI cost audit 10/7/26 #58); diagnose runs it.
+    assert "diagnosis_plan(" in inspect.getsource(ri.diagnose)
+    src = inspect.getsource(ri.diagnosis_plan)
     assert "_games_ok = cluster[\"category\"] in _GAME_CATS" in src
     lines = ri._operational_lines({"games": {"lean": "fewer", "game_pct": 5, "other_pct": 20, "window_days": 2,
                                             "game_reviews": 30, "other_reviews": 40}})

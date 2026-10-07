@@ -111,7 +111,7 @@ def _tick():
     # later; here it is immediate, and under a loaded machine the lane was
     # still busy, so the next tick gave its hour back.
     for _lane in scheduler._LANES.values():
-        _lane.join(10)
+        _lane.join(60)
 
 
 def _only(*prefixes):

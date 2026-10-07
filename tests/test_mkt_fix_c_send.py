@@ -52,6 +52,10 @@ from models import Restaurant, create_restaurant, get_conn, update_restaurant
 
 SRC = open("templates/dashboard.html", encoding="utf-8").read()
 STUDIO = SRC[SRC.index("// ── Campaign Studio (owner, 9/28/26)"):SRC.index("window.copyGuestJoinLink = function")]
+# The Studio's drafts go through the page's owner-AI-job helper (AI cost audit
+# 10/7/26 #57: a draft route asked with async answers a job to poll); it is a
+# page-wide global defined above the Studio, so the harness carries it too.
+STUDIO = SRC[SRC.index("function aiJobAwait("):SRC.index("window.aiJobAwait = aiJobAwait;")] + "\n" + STUDIO
 
 
 def _between(a, b, src=SRC):

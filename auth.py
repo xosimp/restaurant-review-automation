@@ -5295,6 +5295,10 @@ _UNGATED_PREFIXES = (
     # and site URL, principal_only to change; its figures are under
     # /api/marketing/website, gated by Marketing.
     "/api/web-analytics", "/mobile/api/web-analytics",
+    # An owner AI job's poll (ai_async, AI cost audit 10/7/26 #57): the route
+    # that started it was gated by its module; the poll answers only the
+    # login that started the job (or an admin) and 404s anyone else.
+    "/api/ai-jobs/", "/mobile/api/ai-jobs/",
     # Cross-module surfaces: they read several modules and belong to none
     # (Home, Ask Cavnar, the action/issue/goal/outcome loop, notifications,
     # the morning brief), so a single module gate would be wrong for them.

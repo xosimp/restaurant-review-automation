@@ -54,6 +54,10 @@ VALIDATED_IN = {
     # the call moved out of _write into its attempt) → _judge → _assemble →
     # verify → check_item → Facts.rv_check (validate_lines per item).
     ("dsr/narrative.py", "run"): "rv_check",
+    # The diagnoses (AI cost audit 10/7/26 #58): diagnose → finish_diagnosis
+    # (shared with the batch callback) → _validate_diagnosis (rv.apply).
+    ("review_intelligence.py", "diagnose"): "_validate_diagnosis",
+    ("food_cost_intelligence.py", "diagnose"): "_validate_diagnosis",
 }
 
 # Callers of ask_cavnar.ask_with_tools that only relay its answer: the answer
