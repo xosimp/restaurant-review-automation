@@ -126,7 +126,33 @@ def draft_signals(text, typical_words=None) -> list:
 
 # ── capture ─────────────────────────────────────────────────────────────────
 
-def record_draft(restaurant_id, channel, body, source, user_id=None, content_log_id=None, db_path=None):
+# The orchestrator workflow that writes each channel's drafts (ai_workflows):
+# what the owner does with a draft is filed against the run that wrote it.
+CHANNEL_WORKFLOW = {"social": "marketing_content", "text": "guest_campaign_draft", "email": "guest_newsletter_draft"}
+
+
+def draft_subject(draft_id) -> str:
+    """The ai_runs subject of the run that wrote marketing draft `draft_id`."""
+    return f"mkt_draft:{int(draft_id)}"
+
+
+def _run_outcome(restaurant_id, channel, draft_id, outcome, quality=None, detail=None, db_path=None):
+    """File what the owner did with a model draft on the run that wrote it
+    (ai_orchestrator.record_outcome; AI cost audit 10/7/26, orchestration
+    Phase 5). Never raises."""
+    wf = CHANNEL_WORKFLOW.get(channel)
+    if not (wf and draft_id):
+        return False
+    try:
+        import ai_orchestrator
+        return ai_orchestrator.record_outcome(wf, restaurant_id, draft_subject(draft_id), outcome,
+                                              quality=quality, detail=detail, db_path=db_path)
+    except Exception:
+        return False
+
+
+def record_draft(restaurant_id, channel, body, source, user_id=None, content_log_id=None, db_path=None,
+                 run_id=None):
     """One piece of copy a model drafted. Returns its id (the `draft_ref`
     the clients send back with the piece that goes out) or None; never
     raises into the draft.
@@ -135,7 +161,12 @@ def record_draft(restaurant_id, channel, body, source, user_id=None, content_log
     "view_as"): the session answers as the owner's own login, and an
     admin's drafts thrown away for another (regenerated) or matched to a
     send by person (_match_draft) are support at work, not the owner's
-    "no". It is still kept, and still matched by its draft_ref."""
+    "no". It is still kept, and still matched by its draft_ref.
+
+    `run_id` is the orchestrator run that wrote it (the text's `.run_id`):
+    the run is named after this draft, and a person's earlier draft on the
+    channel that this one replaces within REGENERATED_WITHIN_MINUTES, never
+    used, is filed on its run as rejected (regenerated)."""
     body = str(body or "").strip()
     if not restaurant_id or channel not in CHANNELS or not body:
         return None
@@ -148,16 +179,31 @@ def record_draft(restaurant_id, channel, body, source, user_id=None, content_log
     try:
         conn = get_conn(db_path)
         try:
+            prev = None
+            if user_id:
+                prev = conn.execute(
+                    "SELECT id FROM marketing_model_drafts WHERE restaurant_id=? AND channel=? AND user_id=? "
+                    "AND used_at IS NULL AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+                    (restaurant_id, channel, user_id, f"-{int(REGENERATED_WITHIN_MINUTES)} minutes")).fetchone()
             cur = conn.execute("INSERT INTO marketing_model_drafts (restaurant_id, channel, source, body, "
                                "content_log_id, user_id) VALUES (?,?,?,?,?,?)",
                                (restaurant_id, channel, source, body[:6000], content_log_id, user_id))
             conn.commit()
-            return cur.lastrowid
+            new_id = cur.lastrowid
         finally:
             conn.close()
     except Exception as e:
         print(f"[marketing_voice] draft not recorded for {restaurant_id}: {e}")
         return None
+    if prev is not None:
+        _run_outcome(restaurant_id, channel, prev["id"], "rejected", detail="regenerated", db_path=db_path)
+    if run_id and new_id:
+        try:
+            import ai_orchestrator
+            ai_orchestrator.attach(run_id, subject=draft_subject(new_id), db_path=db_path)
+        except Exception:
+            pass
+    return new_id
 
 
 def _match_draft(conn, restaurant_id, channel, final, draft_id=None, content_log_id=None, user_id=None):
@@ -235,9 +281,19 @@ def record_final(restaurant_id, channel, final_body, source, ref_id=None, user=N
                 conn.execute("UPDATE marketing_model_drafts SET used_at=datetime('now') WHERE id=?",
                              (matched["id"],))
             conn.commit()
-            return summary
         finally:
             conn.close()
+        # What the owner did with the model's draft, on the run that wrote
+        # it: sent as written (accepted) or after an edit, its quality the
+        # share that survived — a rewrite scores near 0. Support's sends
+        # through view-as are not the owner's verdict.
+        if matched and not view_as and (original_body or "").strip():
+            import ai_orchestrator
+            same = " ".join(str(original_body).split()) == " ".join(final_body.split())
+            _run_outcome(restaurant_id, channel, matched["id"], "accepted" if same else "edited",
+                         quality=None if same else ai_orchestrator.edit_quality(original_body, final_body),
+                         detail=source, db_path=db_path)
+        return summary
     except Exception as e:
         print(f"[marketing_voice] {source} not recorded for {restaurant_id}: {e}")
         return None

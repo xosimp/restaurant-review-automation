@@ -330,19 +330,21 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         except Exception as e:
             print(f"    [{review_id}] restaurant corrections unavailable: {e}")
     import data_health
-    message = create_with_retry(
+    import ai_orchestrator
+    # On the orchestrator's rung (review_analysis: T1, one call — AI cost
+    # audit 10/7/26, orchestration Phase 3); the structural checks below stand.
+    message = ai_orchestrator.generate("review_analysis", restaurant_id, lambda route, notes: create_with_retry(
         get_client(),
-        model=model_for("review_analysis"),
-        # The schema grew an entities object and two more fields; 256 tokens
-        # was already close enough to the old ceiling that a review naming
-        # three dishes would have tripped the truncation guard below.
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="review_analysis",
         # Rests on no data source: classifies one review's own text.
         readiness=data_health.NOT_APPLICABLE,
-    )
+        # The schema grew an entities object and two more fields; 256 tokens
+        # was already close enough to the old ceiling that a review naming
+        # three dishes would have tripped the truncation guard below.
+        **route.apply(dict(model=model_for("review_analysis"), max_tokens=512,
+                           messages=[{"role": "user", "content": prompt}])),
+    ), subject=f"review:{review_id}").result
     # Truncation and refusal are filed in the ledger by their stop_reason
     # (create_with_retry, #52); an unusable reply is re-filed below.
     if getattr(message, "stop_reason", None) == "max_tokens":

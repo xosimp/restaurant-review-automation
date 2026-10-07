@@ -348,14 +348,20 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
                                       items=menu_now)
         try:
             import data_health
-            msg = create_with_retry(
+            import ai_orchestrator
+            # On the orchestrator's rung (recipe_draft: T2, one call; the
+            # owner confirms every line — AI cost audit 10/7/26, orchestration
+            # Phase 3).
+            msg = ai_orchestrator.generate("recipe_draft", restaurant_id, lambda route, notes: create_with_retry(
                 client, restaurant_id=restaurant_id, action="recipe_draft",
                 # Rests on no data source: recipe drafts the owner confirms line by line.
                 readiness=data_health.NOT_APPLICABLE,
-                model=MODEL, max_tokens=1200,
-                output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
-                messages=[{"role": "user", "content": _prompt(item["name"], ingredients, context,
-                                                              examples=examples)}])
+                **route.apply(dict(
+                    model=MODEL, max_tokens=1200,
+                    output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
+                    messages=[{"role": "user", "content": _prompt(item["name"], ingredients, context,
+                                                                  examples=examples)}]))),
+                subject=f"recipe:{item.get('id')}").result
             text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
             try:
                 out = json.loads(text)
@@ -595,14 +601,19 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     from ai_utils import create_with_retry, get_client
     client = client or get_client()
     import data_health
-    msg = create_with_retry(
+    import ai_orchestrator
+    # On the orchestrator's rung (recipe_photo: T2, one call; the owner
+    # confirms every line — AI cost audit 10/7/26, orchestration Phase 3).
+    msg = ai_orchestrator.generate("recipe_photo", restaurant_id, lambda route, notes: create_with_retry(
         client, restaurant_id=restaurant_id, action="recipe_photo",
         # Rests on no data source: OCR of a recipe photo the owner confirms.
         readiness=data_health.NOT_APPLICABLE,
-        model=MODEL, max_tokens=2000,
-        output_config={"format": {"type": "json_schema", "schema": _PHOTO_SCHEMA}},
-        messages=[{"role": "user", "content": [invoices._content_block(data, media_type),
-                                               {"type": "text", "text": _PHOTO_PROMPT.format(names=names)}]}])
+        **route.apply(dict(
+            model=MODEL, max_tokens=2000,
+            output_config={"format": {"type": "json_schema", "schema": _PHOTO_SCHEMA}},
+            messages=[{"role": "user", "content": [invoices._content_block(data, media_type),
+                                                   {"type": "text", "text": _PHOTO_PROMPT.format(names=names)}]}]))),
+        subject="recipe_photo").result
     if getattr(msg, "stop_reason", None) == "refusal":
         raise RecipePhotoError("The card couldn't be read. Try a clearer photo.")
     if getattr(msg, "stop_reason", None) == "max_tokens":

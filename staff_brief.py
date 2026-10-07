@@ -256,10 +256,16 @@ def draft(restaurant_id, day=None, db_path=DB_PATH, items=None) -> dict:
         return _row(restaurant_id, day, db_path) or {}
     if not _claim_model_call(restaurant_id, day, db_path):
         return _row(restaurant_id, day, db_path) or {}
+    import ai_orchestrator as _orch
     try:
-        msg = create_with_retry(get_client(), model=model_for("staff_brief"), max_tokens=DRAFT_MAX_TOKENS,
-                                messages=[{"role": "user", "content": _prompt(items_text, rd.get("prompt_block"))}],
-                                restaurant_id=restaurant_id, action="staff_brief", readiness=rd)
+        # On the orchestrator's rung (staff_brief: T1, one call; the manager
+        # approves it before staff see it — AI cost audit 10/7/26,
+        # orchestration Phase 3).
+        msg = _orch.generate("staff_brief", restaurant_id, lambda route, notes: create_with_retry(
+            get_client(), restaurant_id=restaurant_id, action="staff_brief", readiness=rd,
+            **route.apply(dict(model=model_for("staff_brief"), max_tokens=DRAFT_MAX_TOKENS,
+                               messages=[{"role": "user", "content": _prompt(items_text, rd.get("prompt_block"))}]))),
+            subject=f"staff_brief:{day}").result
     except (AIBudgetExceeded, AIProviderDown, AIRefused) as e:
         _store_draft(restaurant_id, day, items, "held", reason=str(e)[:200], db_path=db_path)
         return _row(restaurant_id, day, db_path) or {}

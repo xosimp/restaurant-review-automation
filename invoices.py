@@ -136,14 +136,20 @@ def extract(restaurant_id, data, media_type, client=None):
     check_upload(data, media_type)
     client = client or get_client()
     import data_health
-    msg = create_with_retry(
+    import ai_orchestrator
+    # On the orchestrator's route (invoice_extract: "default" — the call
+    # site's own model, unchanged until an eval on stored invoices clears a
+    # cheaper tier; AI cost audit 10/7/26, orchestration Phase 3).
+    msg = ai_orchestrator.generate("invoice_extract", restaurant_id, lambda route, notes: create_with_retry(
         client, restaurant_id=restaurant_id, action="invoice_extract",
         # Rests on no data source: invoice OCR the owner confirms line by line.
         readiness=data_health.NOT_APPLICABLE,
-        model=MODEL, max_tokens=8000,
-        output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
-        messages=[{"role": "user", "content": [_content_block(data, media_type),
-                                               {"type": "text", "text": _PROMPT}]}])
+        **route.apply(dict(
+            model=MODEL, max_tokens=8000,
+            output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
+            messages=[{"role": "user", "content": [_content_block(data, media_type),
+                                                   {"type": "text", "text": _PROMPT}]}]))),
+        subject="invoice").result
     if getattr(msg, "stop_reason", None) == "refusal":
         raise InvoiceError("The invoice couldn't be read. Try a clearer photo.")
     if getattr(msg, "stop_reason", None) == "max_tokens":

@@ -1769,18 +1769,30 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     )
     client = get_client()
     import data_health
+    import ai_orchestrator as _orch
     # A draft the guards refuse is written once more, told why (owner,
-    # 10/6/26: one slip by the model showed the owner an error) - the social
-    # post's pattern (marketing.generate_social_post). A second refusal is
+    # 10/6/26: one slip by the model showed the owner an error) - one tier
+    # up since the orchestrator (guest_campaign_draft: T2, then T3; AI cost
+    # audit 10/7/26, orchestration Phase 3). A text the guards pass is read
+    # by the Haiku rubric before the owner sees it — it reaches many guests
+    # and cannot be recalled (owner, 10/7/26): a flag is written once more on
+    # the next rung with the flags as its notes. A second refusal or flag is
     # the owner's to see. Truncated or empty answers are not retried.
-    retry_note = ""
-    for attempt in range(2):
+    rejected = "campaign copy rejected: "
+
+    class _Refused(str):
+        """A draft the guards refused: why, in the owner's words."""
+
+    def _attempt(route, notes):
+        note = ("\n\nYour previous draft was not used: " + "; ".join(notes) + ". Write it again without that."
+                if notes else "")
         try:
-            return _draft_campaign_text_once(client, prompt + retry_note, restaurant, topic, goal, p, budget,
-                                             data_health)
+            # The route rides last and positional (a test's stand-in takes *args).
+            return _draft_campaign_text_once(client, prompt + note, restaurant, topic, goal, p, budget,
+                                             data_health, route)
         except ValueError as e:
             why = str(e)
-            if attempt or not why.startswith("campaign copy rejected"):
+            if not why.startswith(rejected):
                 raise
             try:
                 from ai_utils import record_quality_event
@@ -1788,24 +1800,52 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
                                      detail=why[:200], action="guest_campaign_draft")
             except Exception:
                 pass
-            retry_note = ("\n\nYour previous draft was not used: " + why[len("campaign copy rejected: "):]
-                          + ". Write it again without that.")
+            return _Refused(why[len(rejected):])
+
+    def _check(text):
+        if isinstance(text, _Refused):
+            return _orch.Verdict.failed("validation_refuse", str(text), label="refuse")
+        return _orch.Verdict.passed()
+    from ai_reviewer import reviewer_for
+    brief = "; ".join(x for x in (f"Goal: {goal}" if goal else "", f"Topic: {topic}" if topic else "",
+                                  f"Menu: {p.get('menu_notes')}" if p.get("menu_notes") else "") if x)
+    run = _orch.generate("guest_campaign_draft", restaurant.id, _attempt, _check,
+                         review=reviewer_for("guest_text", restaurant.id, context=brief),
+                         subject=f"campaign:{campaign_type}")
+    if not run.verdict.ok:
+        if run.verdict.trigger == "reviewer_flag":
+            try:
+                from ai_utils import record_quality_event
+                record_quality_event("guest_campaign_draft", "output_rejected", restaurant_id=restaurant.id,
+                                     detail=("reviewer flagged: " + "; ".join(run.verdict.reasons))[:200],
+                                     action="guest_campaign_draft")
+            except Exception:
+                pass
+        raise ValueError(rejected + ("; ".join(run.verdict.reasons) or "it didn't pass the checks"))
+    text = run.result
+    try:
+        # The caller keeps the draft (marketing_voice.record_draft): the run
+        # is named after it, so the send or the rewrite lands on this run.
+        text.run_id = run.run_id
+    except AttributeError:
+        pass
+    return text
 
 
-def _draft_campaign_text_once(client, prompt, restaurant, topic, goal, p, budget, data_health):
+def _draft_campaign_text_once(client, prompt, restaurant, topic, goal, p, budget, data_health, route=None):
     """One model draft of the guest text, through every guard, or
-    ValueError (draft_campaign_text retries a refusal once)."""
+    ValueError (draft_campaign_message escalates a refusal once). `route`
+    is the orchestrator's rung; without one, the call site's own model."""
     client = get_client()
     import data_health
+    kw = dict(model=model_for("guest_marketing"), max_tokens=150, messages=[{"role": "user", "content": prompt}])
     message = create_with_retry(
         client,
-        model=model_for("guest_marketing"),
-        max_tokens=150,
-        messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant.id,
         action="guest_campaign_draft",
         # Rests on no data source: guest SMS copy from the owner's offer.
         readiness=data_health.NOT_APPLICABLE,
+        **(route.apply(kw) if route is not None else kw),
     )
     text = extract_text(message).strip()
     if getattr(message, "stop_reason", None) == "max_tokens":

@@ -330,6 +330,11 @@ def policy(workflow: str, db_path=None) -> Policy:
         return base
 
 
+# The least max_tokens a call on a thinking tier (T3, T4) is given: room for
+# medium-effort thinking before a short answer (Route.apply).
+THINKING_MIN_MAX_TOKENS = 8000
+
+
 @dataclass(frozen=True)
 class Route:
     tier: str
@@ -348,6 +353,13 @@ class Route:
             out.pop("thinking", None)
             out["thinking"] = {"type": "adaptive"}
             out["output_config"] = dict(out.get("output_config") or {}, effort=self.effort)
+            # Thinking shares max_tokens with the answer. A call site sized
+            # for a plain model (a 150-token guest text, a 600-token reply)
+            # would spend it all thinking on an escalated rung and come back
+            # truncated — the one rung meant to rescue it. Only what is used
+            # is billed (AI cost audit 10/7/26, orchestration Phase 3).
+            if out.get("max_tokens"):
+                out["max_tokens"] = max(int(out["max_tokens"]), THINKING_MIN_MAX_TOKENS)
         else:
             # A plain tier: the gateway's own default (thinking off where the
             # model allows it) — never a thinking setting written for another model.

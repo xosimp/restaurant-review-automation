@@ -732,7 +732,11 @@ def test_an_answer_cites_lines_from_the_store_not_the_model(client, monkeypatch)
     assert d["answered"] is True and d["answer"] == "Phones stay in the locker during service."
     assert d["sources"] == [{"id": "S1", "source": "House rules", "kind": "house_rules",
                              "line": "Phones stay in the locker during service."}]
-    assert model.calls[0]["action"] == "staff_answer" and model.calls[0]["model"] == ai_utils.model_for("staff_answer")
+    # The first rung of the staff_answer policy (T1 since the AI orchestration,
+    # 10/7/26 — it was the call site's own Sonnet); T2 only on escalation.
+    import ai_workflows
+    assert model.calls[0]["action"] == "staff_answer" and \
+        model.calls[0]["model"] == ai_workflows.route_for(ai_workflows.POLICIES["staff_answer"], 0).model
 
 
 @pytest.mark.parametrize("reply,reason", [
@@ -747,7 +751,9 @@ def test_an_uncited_or_unchecked_answer_says_ask_your_manager(client, monkeypatc
     rid = _restaurant()
     _roster(monkeypatch)
     _rules(rid)
-    monkeypatch.setattr(ai_utils, "create_with_retry", _Model(json.dumps(reply)))
+    # The same reply on both rungs: a first reading that fails escalates once
+    # (AI orchestration, 10/7/26), and the reason is the last rung's.
+    monkeypatch.setattr(ai_utils, "create_with_retry", _Model(json.dumps(reply), json.dumps(reply)))
     uid, _mid = _staff(rid)
     _as_staff(client, rid, uid)
     d = client.post("/staff/api/ask", json={"question": "Phone rules?"}).get_json()

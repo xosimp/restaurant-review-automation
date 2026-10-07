@@ -304,6 +304,11 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             if _action not in ("auto_approved", "bulk_approved", "support_approved"):
                 from models import record_reply_edit
                 record_reply_edit(rid, restaurant_id)
+            # ...and on the run that wrote it (AI cost audit 10/7/26,
+            # orchestration Phase 5): every approve path — web, its mobile
+            # twin, bulk, the rule, Ask — goes through this body.
+            from drafter import record_approval_outcome
+            record_approval_outcome(restaurant_id, rid, _action)
     except Exception as _ae:
         print(f"[approve] response_action error: {_ae}")
     try:
@@ -669,6 +674,11 @@ def _do_skip(rid, restaurant_id):
                            (1 if _via_skip() else 0, rid, restaurant_id))
         conn.commit()
         if cur.rowcount:
+            if not _via_skip():
+                # The owner turned the draft down: on the run that wrote it
+                # (orchestration Phase 5). Support's skip is not the owner's "no".
+                from drafter import record_reply_outcome
+                record_reply_outcome(restaurant_id, rid, "rejected", detail="skipped")
             return {"ok": True}, 200
         row = conn.execute("SELECT response_status FROM reviews WHERE id=? AND restaurant_id=?",
                            (rid, restaurant_id)).fetchone()
@@ -4997,6 +5007,14 @@ def _do_regenerate_draft(review_id, restaurant_id, user=None):
         from models import record_reply_rejection
         record_reply_rejection(restaurant_id, review_id, r["draft_response"], rating=r.get("rating"),
                                how="regenerate", user=user)
+    if (r.get("draft_response") or "").strip():
+        # The draft being replaced was turned down — on the run that wrote it,
+        # before the new run becomes the subject's newest (orchestration
+        # Phase 5). Support regenerating through view-as is not the owner's "no".
+        from permissions import acting_via as _via_regen
+        if not _via_regen(user):
+            from drafter import record_reply_outcome
+            record_reply_outcome(restaurant_id, review_id, "rejected", detail="regenerated")
     restaurant = get_restaurant(restaurant_id)
     try:
         # Style examples are the drafter's own pick for this review's star
@@ -5112,6 +5130,9 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False, user=No
             from models import record_reply_rejection
             record_reply_rejection(restaurant_id, review_id, cur_row["draft_response"], rating=cur_row["rating"],
                                    how="rewrite", user=user)
+            # ...and on the run that wrote it (orchestration Phase 5).
+            from drafter import record_reply_outcome
+            record_reply_outcome(restaurant_id, review_id, "rejected", detail="rewritten")
         if by_model:
             cur = conn.execute(
                 "UPDATE reviews SET original_draft=NULL, draft_edited=0, draft_edited_via=NULL, "

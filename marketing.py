@@ -600,18 +600,19 @@ class MarketingCopyRejected(ValueError):
     route says so in words, as a 422."""
 
 
-def _draft_social_post(prompt, restaurant_id, p, owner_topic, signal_context, given, data_health):
+def _draft_social_post(prompt, restaurant_id, p, owner_topic, signal_context, given, data_health, route=None):
     """One model draft of a social post, cleaned and run through the
-    Response Validation Layer. The caller reads result.verdict."""
+    Response Validation Layer. The caller reads result.verdict. `route` is
+    the orchestrator's rung (ai_workflows policy marketing_content: T2, then
+    T3 on a refusal); without one, the call site's own model."""
+    kw = dict(model=model_for("marketing"), max_tokens=500, messages=[{"role": "user", "content": prompt}])
     msg = create_with_retry(
         get_client(),
-        model=model_for("marketing"),
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="marketing_content",
         # Rests on no data source: a social post drafted from the owner's topic.
         readiness=data_health.NOT_APPLICABLE,
+        **(route.apply(kw) if route is not None else kw),
     )
     result = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
@@ -765,28 +766,46 @@ def generate_content(content_type: str, topic: str,
     prompt += PUBLIC_COPY_RULES + ("" if topic_is_owner else SUGGESTED_TOPIC_RULE)
 
     import data_health
+    import ai_orchestrator as _orch
     given = f"Today's date: {today_date}. Upcoming holidays: {upcoming or 'none'}."
     # A draft the public-copy check refuses is written once more, told why:
     # one slip by the model ("your usual" in a brunch post) is not an error
-    # the owner should see. A second refusal is MarketingCopyRejected.
-    retry_note = ""
-    for attempt in range(2):
-        result = _draft_social_post(prompt + retry_note, restaurant_id, p, owner_topic, signal_context,
-                                    given, data_health)
-        refused = result.verdict is not None and result.verdict.verdict == "refuse"
-        if not refused:
-            break
-        why = refusal_detail(result.verdict)
+    # the owner should see. The second draft runs one tier up — the
+    # orchestrator's marketing_content ladder, T2 then T3, with the refusal
+    # as its notes (AI cost audit 10/7/26, orchestration Phase 3: it replaced
+    # a same-model retry). A second refusal is still MarketingCopyRejected.
+
+    def _attempt(route, notes):
+        note = (f"\n\nA draft you wrote for this was rejected before anyone saw it: {'; '.join(notes)}. "
+                "Write a new one that avoids that entirely.") if notes else ""
+        return _draft_social_post(prompt + note, restaurant_id, p, owner_topic, signal_context, given,
+                                  data_health, route=route)
+
+    def _check(draft):
+        if draft.verdict is None or draft.verdict.verdict != "refuse":
+            return _orch.Verdict.passed(label=getattr(draft.verdict, "verdict", None) or "pass")
+        why = refusal_detail(draft.verdict)
         try:
             from ai_utils import record_quality_event
             record_quality_event("marketing_content", "public_copy_refused", restaurant_id=restaurant_id,
                                  detail=why, action="marketing_content")
         except Exception:
             pass
-        if attempt == 1:
-            raise MarketingCopyRejected(f"marketing copy rejected: {why}")
-        retry_note = (f"\n\nA draft you wrote for this was rejected before anyone saw it: {why}. "
-                      "Write a new one that avoids that entirely.")
+        return _orch.Verdict.failed("validation_refuse", why, label="refuse")
+
+    # The owner reads every post before it goes out (reviewer "owner"); the
+    # rubric only scores a sample in the background (shadow).
+    try:
+        from ai_reviewer import reviewer_for
+        review = reviewer_for("marketing_post", restaurant_id, context=f"Topic: {topic}")
+    except Exception:
+        review = None
+    run = _orch.generate("marketing_content", restaurant_id, _attempt, _check, review=review,
+                         subject=f"post:{content_type}")
+    result = run.result
+    if not run.verdict.ok:
+        raise MarketingCopyRejected("marketing copy rejected: "
+                                    + ("; ".join(run.verdict.reasons) or refusal_detail(result.verdict)))
 
     # Log this content for future memory — the owner's own topic, not the
     # public one (AUX-15). Its row id travels with the text, so a publish
@@ -800,9 +819,12 @@ def generate_content(content_type: str, topic: str,
     # it (marketing_voice; mkt_edits). A scheduled job's draft has no person.
     try:
         import marketing_voice
+        # The run is named after the draft it wrote (run_id), so what the
+        # owner does with it — published as written, rewritten, regenerated —
+        # lands on the run (marketing_voice.record_final / record_draft).
         draft_ref = marketing_voice.record_draft(restaurant_id, content_channel(content_type), str(result),
                                                  "post" if user_id else "job", user_id=user_id,
-                                                 content_log_id=row_id)
+                                                 content_log_id=row_id, run_id=run.run_id)
         result.draft_ref = draft_ref
     except Exception:
         pass
@@ -1066,27 +1088,49 @@ def _one_per_day(ideas):
     return out
 
 
-def _fill_missing_days(restaurant_id, prompt, ideas, days_map, iso_map, profile, untrusted=()):
+CALENDAR_IDEA_TYPES = ("instagram_post", "weekly_email", "google_promo", "happy_hour", "loyalty_nudge")
+
+
+def _calendar_schema(days):
+    """The calendar's output schema (AI cost audit 10/7/26 #49): one idea
+    per weekday, keyed by the day, every day required — a week that skips a
+    day cannot come back, so the fill call only ever runs for ideas the
+    validation refused."""
+    idea = {"type": "object", "additionalProperties": False, "required": ["platform", "angle", "type"],
+            "properties": {"platform": {"type": "string"}, "angle": {"type": "string"},
+                           "type": {"type": "string", "enum": list(CALENDAR_IDEA_TYPES)}}}
+    return {"type": "object", "additionalProperties": False, "required": list(days),
+            "properties": {d: idea for d in days}}
+
+
+def _fill_missing_days(restaurant_id, prompt, ideas, days_map, iso_map, profile, untrusted=(), route=None,
+                       notes=(), refusals=None):
     """Ask once more for the days the week is missing (owner, 9/28/26:
-    Monday had no card). A day goes missing when the model skips it or the
-    validation refuses its idea - dropped alone, and nothing refilled it. One
-    short call for just those days, through the same validation; a day that
-    is still empty stays empty (the page says so) rather than be invented."""
+    Monday had no card). A day goes missing when the validation refuses its
+    idea - dropped alone, and nothing refilled it (since the schema, #49, a
+    model can no longer skip one). One short call for just those days,
+    through the same validation; a day that is still empty stays empty (the
+    page says so) rather than be invented. `route` is the orchestrator's
+    escalated rung (content_calendar: T3) and `notes` why the refused ideas
+    were refused; `refusals` collects this call's own."""
     missing = [d for d in CALENDAR_DAYS if d not in {i.get("day") for i in ideas}]
     if not missing:
         return ideas
     import data_health
+    why = (f" Ideas for those days were refused before anyone saw them: {'; '.join(notes)}. "
+           "Write new ones that avoid that entirely.") if notes else ""
+    kw = dict(model=model_for("marketing"), max_tokens=600,
+              messages=[{"role": "user", "content": prompt + "\n\nThe rest of the week is planned. Only these days "
+                         f"are still open: {', '.join(missing)}.{why} Return ONLY a JSON object with one idea for "
+                         "each of them, keyed by the day, in the same shape."}],
+              output_config={"format": {"type": "json_schema", "schema": _calendar_schema(missing)}})
     try:
         msg = create_with_retry(
             get_client(),
-            model=model_for("marketing"),
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt + "\n\nThe rest of the week is planned. Only these days are "
-                       f"still open: {', '.join(missing)}. Return ONLY a JSON array with one object for each of "
-                       "them, in the same shape."}],
             restaurant_id=restaurant_id,
             action="content_calendar",
             readiness=data_health.NOT_APPLICABLE,
+            **(route.apply(kw) if route is not None else kw),
         )
         if getattr(msg, "stop_reason", None) == "max_tokens":
             return ideas
@@ -1107,7 +1151,7 @@ def _fill_missing_days(restaurant_id, prompt, ideas, days_map, iso_map, profile,
             taken.add(day)
             idea["day"], idea["date"], idea["iso_date"] = day, days_map.get(day, ""), iso_map.get(day, "")
             fill.append(idea)
-    return ideas + _validated_ideas(restaurant_id, fill, profile, untrusted=untrusted)
+    return ideas + _validated_ideas(restaurant_id, fill, profile, untrusted=untrusted, refusals=refusals)
 
 
 # The fields of a calendar idea that are structure, not words an owner reads
@@ -1116,13 +1160,14 @@ _IDEA_STRUCTURAL = frozenset({"day", "date", "iso_date", "week_range", "platform
                               "rec_key", "written", "shown"})
 
 
-def _validated_ideas(restaurant_id, ideas, profile=None, untrusted=()):
+def _validated_ideas(restaurant_id, ideas, profile=None, untrusted=(), refusals=None):
     """Each model-written idea's text fields through response_validation
     (calendar_idea). A refused idea is dropped — alone: one bad angle does not
     cost the owner the week. A kept idea carries `validation` (the verdict
     payload, whose version lets a cached week be re-checked when the engine
     changes). Deterministic ideas (source menu_margins) are not model text
-    and pass through untouched."""
+    and pass through untouched. `refusals`, a list, gets "Day: why" for each
+    refused idea — the notes the escalated fill is given."""
     import response_validation as rv
     ctx = marketing_context(restaurant_id, "calendar_idea", profile, untrusted=untrusted, action="content_calendar")
     kept, dropped = [], 0
@@ -1139,6 +1184,8 @@ def _validated_ideas(restaurant_id, ideas, profile=None, untrusted=()):
             out = rv.enforce(v, ctx, marker=False)
             if out.verdict is not None and out.verdict.verdict == "refuse":
                 refused = True
+                if refusals is not None:
+                    refusals.append(f"{idea.get('day') or 'an idea'}: {refusal_detail(out.verdict)}")
                 break
             new[k] = str(out)
             verdicts.append(out.validation)
@@ -1190,6 +1237,11 @@ def _calendar_ideas(text, message=None):
     def _week(v):
         if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
             return v
+        if isinstance(v, dict) and v and any(k in CALENDAR_DAYS for k in v):
+            # The schema's shape (_calendar_schema, #49): one object per
+            # weekday, keyed by the day — the day comes from the key.
+            return [dict(idea, day=day) for day, idea in v.items()
+                    if day in CALENDAR_DAYS and isinstance(idea, dict)] or None
         if isinstance(v, dict):
             for inner in v.values():
                 if isinstance(inner, list) and inner and all(isinstance(x, dict) for x in inner):
@@ -1415,9 +1467,9 @@ Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_hol
 Recently generated content (avoid repeating these): {recent_topics}{past_block}{chosen_block}
 {signal_block}{week_block}{voice_block}{memory_block}
 
-Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
-{{"day": "Monday", "platform": "Instagram & FB|Email|Google|SMS", "angle": "one short sentence, max 20 words", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}
-"day" must be just the weekday name (e.g. "Monday") — never include a date.
+Return ONLY valid JSON — no markdown fences. One object keyed by each weekday, Sunday to Saturday, every day:
+{{"Monday": {{"platform": "Instagram & FB|Email|Google|SMS", "angle": "one short sentence, max 20 words", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}, ...}}
+The key is just the weekday name (e.g. "Monday") — never a date.
 
 Rules:
 - {sms_rule}
@@ -1429,22 +1481,51 @@ Rules:
 - NEVER invent geographic or setting details — only reference location specifics (waterfront, patio, views) if they are explicitly mentioned in the restaurant profile above"""
 
     import data_health
-    msg = create_with_retry(
+    import ai_orchestrator as _orch
+    untrusted = [signal_block] if signal_block else ()
+    # The week's one call, on the orchestrator's rung (content_calendar: T2),
+    # with the 7-day schema (#49).
+    _send = lambda route: create_with_retry(  # noqa: E731 — keeps the call in this function (readiness scan)
         get_client(),
-        model=model_for("marketing"),
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="content_calendar",
         # Rests on no data source: calendar ideas from the profile and holidays.
         readiness=data_health.NOT_APPLICABLE,
+        **route.apply(dict(model=model_for("marketing"), max_tokens=1500,
+                           messages=[{"role": "user", "content": prompt}],
+                           output_config={"format": {"type": "json_schema",
+                                                     "schema": _calendar_schema(CALENDAR_DAYS)}})),
     )
-    # A week cut off at max_tokens is not a parse error to swallow into an
-    # empty list — it is a failure the caller has to be able to name (AI-26).
-    if getattr(msg, "stop_reason", None) == "max_tokens":
-        raise ValueError("the content calendar was cut off before the week was finished")
-    try:
-        ideas = _calendar_ideas(extract_text(msg), message=msg)
+    cut = ValueError("the content calendar was cut off before the week was finished")
+    state = {"week": None, "refusals": []}
+
+    def _attempt(route, notes):
+        if state["week"] is not None:
+            # The escalated rung (AI cost audit 10/7/26, orchestration Phase
+            # 3): only the refused days, one tier up, told why they were
+            # refused — the fill call, on that route.
+            refusals = []
+            week = _fill_missing_days(restaurant_id, prompt, state["week"], days_map, iso_map, p,
+                                      untrusted=untrusted, route=route, notes=notes, refusals=refusals)
+            state["week"], state["refusals"] = _one_per_day(week), refusals
+            return state["week"]
+        try:
+            msg = _send(route)
+        except Exception as e:
+            # The call itself failing (budget, breaker, provider) reaches the
+            # caller as it always did; only what the reply held is caught below.
+            state["call_error"] = e
+            raise
+        # A week cut off at max_tokens is not a parse error to swallow into an
+        # empty list — it is a failure the caller has to be able to name (AI-26).
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            raise cut
+        try:
+            ideas = _calendar_ideas(extract_text(msg), message=msg)
+        except ValueError:
+            return None
+        if not ideas:
+            return None
         # Inject real dates into each idea based on day name, without any
         # date the model added to it ("Thursday, June 5" -> "Thursday").
         for idea in ideas:
@@ -1455,19 +1536,38 @@ Rules:
         # Each idea's owner-visible text through the Response Validation
         # Layer (calendar_idea): this had no guard at all (NS6 A2). A
         # refused idea is dropped on its own; the rest of the week stands.
-        untrusted = [signal_block] if signal_block else ()
-        ideas = _validated_ideas(restaurant_id, ideas, p, untrusted=untrusted)
+        refusals = []
+        ideas = _validated_ideas(restaurant_id, ideas, p, untrusted=untrusted, refusals=refusals)
         ideas = _with_margin_idea(restaurant_id, ideas, days_map, iso_map)
-        # Every day of the week has an idea: the missing ones are asked for
-        # once, then one a day, Sunday to Saturday.
-        ideas = _one_per_day(_fill_missing_days(restaurant_id, prompt, _one_per_day(ideas), days_map, iso_map, p,
-                                                untrusted=untrusted))
+        state["week"], state["refusals"] = _one_per_day(ideas), refusals
+        return state["week"]
+
+    def _check(week):
+        if not week:
+            return _orch.Verdict.failed("schema_fail", "the reply was not a week of ideas")
+        missing = [d for d in CALENDAR_DAYS if d not in {i.get("day") for i in week}]
+        if not missing:
+            return _orch.Verdict.passed()
+        return _orch.Verdict.failed("validation_refuse",
+                                    *(state["refusals"] or [f"{d}: no usable idea" for d in missing]),
+                                    label="refuse")
+    try:
+        # Every day of the week has an idea: a refused one is asked for once
+        # more on the next rung, then one a day, Sunday to Saturday.
+        run = _orch.generate("content_calendar", restaurant_id, _attempt, _check,
+                             subject=f"calendar:{iso_map.get('Sunday', '')}")
+        ideas = run.result
+        if ideas is None:
+            raise ValueError("the content calendar reply was not a week of ideas")
+        ideas = _one_per_day(ideas)
         # Attach week_range to first idea for the UI to read
         if ideas:
             ideas[0]["week_range"] = week_range
         _cache_calendar(restaurant_id, ideas)
         return ideas
     except Exception as e:
+        if e is cut or e is state.get("call_error"):
+            raise
         # An empty calendar and a failed generation looked identical to every
         # caller and to us. The list stays empty (the UI handles that), but
         # the failure reaches the daily digest instead of vanishing.
