@@ -21,7 +21,7 @@ import notify
 # ── The visibility score is a range over a real sample ─────────────────────
 
 def _payload(monkeypatch, db_path, *, answers, place_id="ChIJx", neighborhood="Geneva",
-             name="Gia Mia", city="Geneva", state="", sent=None):
+             name="Gia Mia", city="Geneva", state="", sent=None, concept=None):
     """Run the real visibility path with Perplexity and Places stubbed."""
     import client_api
     real = models.get_conn
@@ -32,6 +32,8 @@ def _payload(monkeypatch, db_path, *, answers, place_id="ChIJx", neighborhood="G
     conn.execute("INSERT INTO restaurants (id,name,owner_email,google_place_id,neighborhood,"
                  "vibe,known_for) VALUES (1,?,?,?,?,'lively pizza bar','wood-fired pizza')",
                  (name, "o@x.test", place_id, neighborhood))
+    if concept:
+        conn.execute("UPDATE restaurants SET concept=? WHERE id=1", (concept,))
     conn.commit()
     conn.close()
     monkeypatch.setattr(client_api, "get_restaurant",
@@ -1173,3 +1175,14 @@ def test_a_query_that_gained_the_state_is_still_the_same_question(db_path):
     h = models.ai_visibility_query_history(9, db_path=db_path)
     assert len(h["queries"]) == 1 and h["queries"][0]["query"] == "Top restaurants in St. Charles, IL"
     assert h["queries"][0]["appeared"] == [True, True]
+
+
+def test_the_cuisine_questions_ask_for_the_concept_not_a_signature_dish(db_path, monkeypatch):
+    """Simple EJ's (10/7/26): two of eight questions asked for "chimichurri
+    wings", the first item of known_for. With a concept set, they ask for
+    what a guest searches: sports bars."""
+    sent = []
+    _payload(monkeypatch, db_path, answers=["Gia Mia in Geneva."] * 12, sent=sent, concept="sports_bar")
+    text = " | ".join(sent)
+    assert "sports bars" in text and "wood-fired pizza" not in text, sent
+    assert "Best sports bars near Geneva" in text

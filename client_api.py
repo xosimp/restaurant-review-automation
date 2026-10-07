@@ -7497,8 +7497,20 @@ def _do_ai_visibility_inner(rid, force=False):
     else:
         city = neighborhood.split("—")[0].split(",")[0].strip() if neighborhood else ""
         city_full = neighborhood.split("—")[0].strip() if neighborhood else ""
-    # Short cuisine descriptor from known_for first word(s), fallback to "restaurant"
-    cuisine = (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
+    # What a guest would search for. The restaurant's concept when one is set
+    # ("sports bars"): known_for's first item is a signature dish, and Simple
+    # EJ's asked about "chimichurri wings" in two of its eight questions, which
+    # nobody searches for (10/7/26). known_for stays the fallback.
+    _concept_phrase = ""
+    try:
+        from intelligence import categories as _cats
+        for _c in (getattr(r, "concept", None), getattr(r, "category", None)):
+            if _c and _cats.valid(_c) and _c != "other":
+                _concept_phrase = _cats.LABELS.get(_c, "").lower()
+                break
+    except Exception:
+        _concept_phrase = ""
+    cuisine = _concept_phrase or (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
 
     # Was "Where can I find " + the full vibe sentence + " in [city]?" —
     # vibe is a paragraph-length internal profile description (e.g.
@@ -7551,7 +7563,8 @@ def _do_ai_visibility_inner(rid, force=False):
             {"q": "Top restaurants in " + city_full, "kind": "discovery"},
             {"q": q3, "kind": "occasion"},
             {"q": "Where should I eat in " + city_full + " tonight?", "kind": "discovery"},
-            {"q": "Best " + cuisine.lower() + " restaurants near " + city_full, "kind": "cuisine"},
+            {"q": ("Best " + cuisine + " near " + city_full) if _concept_phrase
+                  else ("Best " + cuisine.lower() + " restaurants near " + city_full), "kind": "cuisine"},
             {"q": "Highly rated local restaurants in " + city_full, "kind": "discovery"},
             # Practical intent — a guest who already has a shortlist.
             {"q": "Which restaurants in " + city_full + " are good for a group?", "kind": "practical"},
