@@ -188,6 +188,17 @@ SURFACE_SECTIONS = {
     # last time and how that turned out, and what the owner decided.
     "marketing_read": ("owner_rules", "constraints", "goals", "last_claim", "decisions", "what_worked"),
     "weekly_plan": ("owner_rules", "constraints", "goals", "last_claim", "what_worked", "events", "market"),
+    # The Restaurant Context Manager's two memory sections (restaurant_context,
+    # AI orchestration design Phase 2, 10/7/26): the owner's rules on their
+    # own, and the rest of the memory without them (and without a chat's own
+    # conversation). Per login or owner-level — the packet's viewer is
+    # passed through as given; a shared read passes TEAM itself. Not
+    # "last_claim" or "links": each is what ONE surface said or acts on
+    # (ai_reads.claim_lines, link_memory.SURFACE_KINDS), and the packet's
+    # memory is no surface's — a caller that wants them names its surface
+    # (restaurant_context's memory params).
+    "context_owner_rules": ("owner_rules",),
+    "context_memory": ("constraints", "goals", "decisions", "what_worked", "events", "market", "people"),
 }
 
 DEFAULT_BUDGET_CHARS = 2400

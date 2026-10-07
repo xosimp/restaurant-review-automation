@@ -135,7 +135,10 @@ def test_an_owner_only_line_never_reaches_a_shared_output_whoever_asks():
 def test_every_surface_is_classified_shared_or_per_login():
     """A new surface must be placed: shared outputs read as the team, the
     rest are per login (their callers pass the login) or the owner's own."""
-    per_login_or_owner = {"ask", "ask_conversation", "brief", "digest"}
+    # restaurant_context's two memory sections (Phase 2, 10/7/26) pass the
+    # packet's viewer through as given — per login or owner-level; a shared
+    # read passes TEAM itself.
+    per_login_or_owner = {"ask", "ask_conversation", "brief", "digest", "context_owner_rules", "context_memory"}
     for surface in memory_context.SURFACE_SECTIONS:
         assert (surface in memory_context.SHARED_SURFACES) != (surface in per_login_or_owner), surface
     # The owner-level reads ai_reads marks OWNER_ONLY are not shared, except

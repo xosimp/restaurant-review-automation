@@ -2019,6 +2019,55 @@ def _review_sees_locations(rid, viewer):
         return False
 
 
+# The restaurant_context sections each module read renders (AI orchestration
+# design, Phase 2, 10/7/26 — a subset of its policy's context: the owner's
+# rules and the memory come through the read's own memory_context block,
+# ranked for its subjects; the DATA STATE through the readiness gate's own
+# block), and the subject each read's run is filed under.
+REVIEW_READ_SECTIONS = ("profile",)
+MARKETING_READ_SECTIONS = ("profile",)
+REVIEW_READ_SUBJECT = "review_read"
+MARKETING_READ_SUBJECT = "marketing_read"
+
+
+def _read_packet(rid, sections, surface):
+    """The context packet a stored module read is built on, assembled as
+    that read's team viewer (memory_context.team_viewer — one stored read
+    serves every login with the module's view); None when the context
+    manager cannot be read (the read then reads the row itself)."""
+    try:
+        import restaurant_context
+        import memory_context
+        return restaurant_context.packet(rid, sections, viewer=memory_context.team_viewer(surface))
+    except Exception as e:
+        print(f"[read context] packet unavailable for {rid} ({surface}): {e}")
+        return None
+
+
+def _read_check(res):
+    """The orchestrator's check on one review or marketing read attempt
+    ({msg, raw, why, payload, verdict}): a payload the validation layer
+    passed is ok (a withheld one is the trigger the marketing read
+    escalates on); none is the validation layer's refusal — or a model
+    refusal, a cut-off or an empty reply, which never escalates."""
+    import ai_orchestrator as _orch
+    why = res.get("why")
+    if why:
+        trig = "truncated" if "cut off" in why else None
+        return _orch.Verdict.failed(trig, why, label="model_refused" if "declined" in why else "unparseable")
+    v = res.get("verdict")
+    if v is None and isinstance(res.get("payload"), dict):
+        v = (res["payload"].get("validation") or {}).get("verdict")
+    if res.get("payload") is None:
+        out = _orch.verdict_from_validation(v)
+        if out.ok:
+            # Refused whole with no verdict word behind it (the metrics-sync
+            # rule dropped every line): the engine's refusal all the same.
+            return _orch.Verdict.failed("validation_refuse", *out.reasons, label="refuse")
+        return out
+    return _orch.verdict_from_validation(v)
+
+
 def _do_review_insight(rid, viewer=None):
     """The Reviews module's AI read — shared by the web route above and
     mobile_api.py's own /reviews/insight. `viewer` is the login (the
@@ -2221,7 +2270,12 @@ def _do_review_insight(rid, viewer=None):
                                  + _wrap_ri(f'{who}\n{(r["text"] or "")[:110]}'))
         urgent_texts = ("\n" + "\n".join(_urgent_lines)) if _urgent_lines else "none"
         issues_str = ", ".join(f"{i['label']} ({i['count']})" for i in top_issues) if top_issues else "no data"
-        rest_name  = restaurant.name if restaurant else "this restaurant"
+        # The restaurant as every prompt names it — the restaurant_context
+        # "profile" section (AI orchestration design, Phase 2, 10/7/26),
+        # whose fingerprint keys the stored read below.
+        _packet_ri = _read_packet(rid, REVIEW_READ_SECTIONS, "review_read")
+        _prof_ri = _packet_ri.section("profile").data if _packet_ri is not None else {}
+        rest_name  = (_prof_ri.get("name") or (restaurant.name if restaurant else None)) or "this restaurant"
 
         # ── The consultant's evidence pack ──────────────────────────────────
         #
@@ -2551,7 +2605,8 @@ def _do_review_insight(rid, viewer=None):
         import insight_store as _ist_ri
         _iso_ri = now_chi.isocalendar()
         _fp_ri = _ist_ri.read_fingerprint(prompt, readiness=_ready_ri, today=today_str,
-                                          week=f"{_iso_ri[0]}-W{_iso_ri[1]:02d}")
+                                          week=f"{_iso_ri[0]}-W{_iso_ri[1]:02d}",
+                                          extra=((_packet_ri.fingerprint,) if _packet_ri is not None else ()))
         _stored_ri = _ist_ri.get(rid, "reviews", _fp_ri, revalidate=_ri_payload)
         if isinstance(_stored_ri, dict) and _stored_ri.get("insight"):
             # The diagnoses' age, stale flag and "as of" are the current
@@ -2564,27 +2619,39 @@ def _do_review_insight(rid, viewer=None):
             return _review_insight_recs(rid, dict(_stored_ri)), 200
 
         from ai_utils import create_with_retry, extract_text, model_for
-        msg = create_with_retry(
-            _client_ri,
-            # A consultant's read is worth a bigger model than a rephrase was.
-            # Haiku was adequate when the job was restating four pre-written
-            # sentences; connecting a complaint cluster to a labor figure and
-            # saying how sure it is, is not that job.
-            model=model_for("review_insight"),
-            max_tokens=520,
-            messages=[{"role":"user","content":prompt}],
-            restaurant_id=rid,
-            action="review_insight",
-            readiness=_ready_ri,
-        )
-        _raw_ri = extract_text(msg).strip()
-        # A model refusal or a cut-off reply is its own outcome (#52): it
-        # used to reach the validation layer as text and be filed as "refused
-        # by the response validation layer".
-        _why_ri = ("the model declined" if getattr(msg, "stop_reason", None) == "refusal" else
-                   "the reply was cut off at max_tokens" if getattr(msg, "stop_reason", None) == "max_tokens" else
-                   "the reply was empty" if not _raw_ri else None)
-        payload = _ri_payload(_raw_ri) if _why_ri is None else None
+        # The read runs as the "review_insight" workflow (AI orchestration
+        # design, owner-approved 10/7/26): Sonnet (T2), one attempt, the run
+        # recorded and its owner outcome filed when the line is answered.
+        import ai_orchestrator as _orch_ri
+
+        def _ri_attempt(route, notes):
+            _msg = create_with_retry(
+                _client_ri,
+                restaurant_id=rid,
+                action="review_insight",
+                readiness=_ready_ri,
+                # A consultant's read is worth a bigger model than a rephrase was.
+                # Haiku was adequate when the job was restating four pre-written
+                # sentences; connecting a complaint cluster to a labor figure and
+                # saying how sure it is, is not that job.
+                **route.apply(dict(model=model_for("review_insight"), max_tokens=520,
+                                   messages=[{"role": "user", "content": prompt + _orch_ri.notes_block(notes)}])),
+            )
+            _raw = extract_text(_msg).strip()
+            # A model refusal or a cut-off reply is its own outcome (#52): it
+            # used to reach the validation layer as text and be filed as "refused
+            # by the response validation layer".
+            _why = ("the model declined" if getattr(_msg, "stop_reason", None) == "refusal" else
+                    "the reply was cut off at max_tokens" if getattr(_msg, "stop_reason", None) == "max_tokens" else
+                    "the reply was empty" if not _raw else None)
+            return {"msg": _msg, "raw": _raw, "why": _why, "payload": _ri_payload(_raw) if _why is None else None}
+
+        _run_ri = _orch_ri.generate("review_insight", rid, _ri_attempt, check=_read_check,
+                                    subject=f"{REVIEW_READ_SUBJECT}:{now_chi.date().isoformat()}",
+                                    deadline=_orch_ri.escalation_deadline(),
+                                    context={"packet": _packet_ri.fingerprint if _packet_ri is not None else None})
+        msg, _raw_ri, _why_ri, payload = (_run_ri.result["msg"], _run_ri.result["raw"], _run_ri.result["why"],
+                                          _run_ri.result["payload"])
         if payload is None:
             # Refused whole: the last read Cavnar stood behind, marked stale,
             # else fixed copy — never the refused text. Held in memory for the
@@ -3663,7 +3730,13 @@ def _do_mkt_insight(rid, raw=False):
         import data_health as _dh_m
         _ready_m = _dh_m.readiness(rid, "marketing", restaurant=restaurant)
         _mkt_unreliable = bool((_ready_m.get("data_state") or {}).get("stale_sources"))
-        p = get_profile_for_restaurant(rid)
+        # The brand profile from the restaurant_context "profile" section
+        # (Phase 2, 10/7/26) — marketing.get_profile_for_restaurant's own
+        # reading, built once per change of the restaurants row; its
+        # fingerprint keys the stored read below.
+        _packet_m = _read_packet(rid, MARKETING_READ_SECTIONS, "marketing_read")
+        p = ((_packet_m.section("profile").data.get("brand") if _packet_m is not None else None)
+             or get_profile_for_restaurant(rid))
         recent = get_recent_content(rid, limit=5)
         from time_utils import restaurant_now, mdy as _mdy_m
         now = restaurant_now(restaurant)
@@ -3942,7 +4015,8 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
                     "validation": checked.validation, "insight": text}, checked
 
         import insight_store as _ist_m
-        _fp_m = _ist_m.fingerprint(prompt)
+        _fp_m = (_ist_m.fingerprint(prompt, _packet_m.fingerprint) if _packet_m is not None
+                 else _ist_m.fingerprint(prompt))
         _stored_m = _ist_m.get(rid, "marketing", _fp_m, revalidate=lambda raw_m: _mkt_read(raw_m)[0])
         if isinstance(_stored_m, dict) and _stored_m.get("insight"):
             _cache_set(cache_key, dict(_mkt_checks(_stored_m), insight=_stored_m["insight"]))
@@ -3956,21 +4030,42 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             return _mkt_insight_out(rid, _held_prev["insight"], raw, _mkt_checks(_held_prev)), 200
         from ai_utils import create_with_retry, extract_text, model_for, get_client
         _client = get_client()
-        msg = create_with_retry(
-            _client,
-            model=model_for("marketing_insight"),
-            max_tokens=350,
-            messages=[{"role": "user", "content": prompt}],
-            restaurant_id=rid,
-            action="marketing_insight",
-            readiness=_ready_m,
-        )
-        _raw_m = extract_text(msg).strip()
-        _read_m, _checked_m = _mkt_read(_raw_m)
-        if getattr(msg, "stop_reason", None) in ("refusal", "max_tokens"):
-            # A declined or cut-off brief is not a brief (#52), whatever the
-            # validation layer made of the partial text.
-            _read_m = None
+        # The brief runs as the "marketing_insight" workflow (AI
+        # orchestration design, owner-approved 10/7/26): Haiku first (T1),
+        # Sonnet (T2) only when the Response Validation Layer refused or
+        # withheld the T1 brief — told the engine's reasons — and only while
+        # the owner is inside one read's wait; past it, the held-back copy
+        # below is served as before. A declined or cut-off brief never
+        # escalates.
+        import ai_orchestrator as _orch_m
+
+        def _mkt_attempt(route, notes):
+            _msg = create_with_retry(
+                _client,
+                restaurant_id=rid,
+                action="marketing_insight",
+                readiness=_ready_m,
+                **route.apply(dict(model=model_for("marketing_insight"), max_tokens=350,
+                                   messages=[{"role": "user", "content": prompt + _orch_m.notes_block(notes)}])),
+            )
+            _raw = extract_text(_msg).strip()
+            _read, _checked = _mkt_read(_raw)
+            _why = None
+            if getattr(_msg, "stop_reason", None) in ("refusal", "max_tokens"):
+                # A declined or cut-off brief is not a brief (#52), whatever the
+                # validation layer made of the partial text.
+                _read = None
+                _why = ("the model declined" if getattr(_msg, "stop_reason", None) == "refusal"
+                        else "the reply was cut off at max_tokens")
+            return {"msg": _msg, "raw": _raw, "why": _why, "payload": _read,
+                    "verdict": getattr(_checked, "verdict", None), "checked": _checked}
+
+        _run_m = _orch_m.generate("marketing_insight", rid, _mkt_attempt, check=_read_check,
+                                  subject=f"{MARKETING_READ_SUBJECT}:{now.date().isoformat()}",
+                                  deadline=_orch_m.escalation_deadline(),
+                                  context={"packet": _packet_m.fingerprint if _packet_m is not None else None})
+        msg, _raw_m, _read_m, _checked_m = (_run_m.result["msg"], _run_m.result["raw"], _run_m.result["payload"],
+                                            _run_m.result["checked"])
         if _read_m is None:
             # Refused whole: fixed copy, never the refused text, held against
             # this prompt's fingerprint for REFUSAL_HOLD_HOURS (#48) — it was

@@ -354,6 +354,23 @@ Every surface that reads `constraints` reads `owner_rules` first.
 - *Reviews.* A fetch that brings new reviews matches them to the review requests that asked for them (`review_fetch` above).
 - *Claims.* A read that carries claims is scored at its horizon by `learning_memory` (above).
 
+## The Restaurant Context Manager and the orchestrated reads (AI orchestration design Phase 2, 10/7/26)
+
+**One packet of shared facts per model call** (`restaurant_context.packet(rid, sections, viewer=)`). The sections a workflow's policy names (`ai_workflows.Policy.context`) are built by the code that owns each fact and cached twice — in process for 60 seconds and in `context_sections` — each keyed on a *version*: a hash of the change markers its data moves with (source_health's last-success day and data-through, the newest rows of the tables it reads, the restaurants row's fields), never the hour. A section is rebuilt only when its version changes; a packet's `fingerprint` (a hash of its sections' versions) is the cache key for anything built on it. Sections render in one fixed order, stable first, so a provider can cache the shared prefix; a token budget leaves out the lowest-priority ones and says so in DATA STATE. Each viewer is its own scope: memory through `memory_context`'s rules (owner-only lines never in TEAM's packet), a module section only for a viewer with the module's view, the labor trend all-in only where salaries may be seen, the cross-module findings only for the account holders.
+
+**The four page-load reads** run as workflows through `ai_orchestrator.generate`:
+
+| Read | Workflow | Ladder | Escalates on | Sections it renders |
+|---|---|---|---|---|
+| Labor (`labor.get_claude_insights` / `labor_note`) | `labor_insight` | T1 Haiku → T2 Sonnet | validation refuse / withhold, once, only before `escalation_deadline` | `labor_trend` |
+| Food Cost (`inventory.get_claude_insights`) | `inventory_insight` | T2 Sonnet | — | `profile` (menu and kitchen notes) |
+| Reviews (`client_api._do_review_insight`, web and mobile) | `review_insight` | T2 Sonnet | — | `profile` (the name) |
+| Marketing (`client_api._do_mkt_insight`, web and mobile) | `marketing_insight` | T1 Haiku → T2 Sonnet | validation refuse / withhold, once, only before `escalation_deadline` | `profile` (the brand profile) |
+
+Each read keeps its prompt, its readiness gate, its validation and its fixed fallback copy; the orchestrator adds the ladder, the run record (`ai_runs`, subject `<read>:<local date>`) and the deadline: an interactive read climbs only while `AI_INTERACTIVE_ESCALATION_SECONDS` (20) since it started have not passed — past it the first attempt's outcome stands and the fallback is served, never a second wait. The T2 attempt is told the validation layer's reasons (`ai_orchestrator.notes_block`; a name or an echo of guest text is never quoted back). The stored read (`insight_cache`) is keyed on the read's own data key (`insight_store.read_fingerprint`, the answered lines, the memory less the last claim) plus the packet's fingerprint. The owner's rules, the memory and the DATA STATE stay the read's own blocks — ranked for its subjects by `memory_context`, and the readiness gate's module-specific block — not the packet's generic sections.
+
+**What the owner did with a read.** An answer to a read's line on the shared answer handler (`strategy_routes._do_rec_event`, web and phone) is filed on the newest run of that read (`insight_store.file_read_answer` → `ai_orchestrator.record_latest_outcome`): Done or Track is the read accepted, Not for us rejected; support's answer through view-as and a snooze file nothing.
+
 ## Notification system
 
 Three delivery channels, one firing decision layer:

@@ -20,9 +20,20 @@ time-of-day column in this schema.
 import logging
 from datetime import datetime, timedelta
 
-from models import get_conn, get_restaurant, DB_PATH
+import models as _models_mod
+from models import get_restaurant, DB_PATH
 
 log = logging.getLogger(__name__)
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. `from models import get_conn` bound whatever models.get_conn was
+    when this module was first imported: imported lazily inside a test that
+    had patched it (the marketing read reaches it through
+    marketing_opportunities), it kept that test's database for every later
+    caller in the process."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 PLATFORMS = ("instagram", "facebook", "google")
 

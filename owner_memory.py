@@ -52,6 +52,9 @@ SURFACE_MODULES = {
     "competitor_read": {"intel", "marketing"},
     "marketing_read": {"marketing", "guests"},
     "dsr_narrative": None, "brief": None, "digest": None, "weekly_plan": None,
+    # restaurant_context's memory sections read every module's facts; the
+    # viewer's own module views gate them (memory_context.visible).
+    "context_owner_rules": None, "context_memory": None,
 }
 # Follow-ups are for the surfaces an owner reads a to-do on.
 FOLLOWUP_SURFACES = ("ask", "brief", "weekly_plan")
@@ -69,6 +72,8 @@ SURFACE_METRICS = {
     # owner's rating or response-time goal is what it judges against; it
     # read none (INT wiring audit, 9/29/26).
     "review_read": ("avg_rating", "complaints", "response_hours"),
+    # restaurant_context's memory section: every goal, gated by the viewer.
+    "context_memory": None,
 }
 # The module whose view permission a goal's metric needs (memory_context
 # viewer scoping reads it off the line). Comps and voids are "loss"
@@ -331,6 +336,14 @@ def invalidate(restaurant_id):
         log.debug("owner_memory: ask context not invalidated for %s: %s", restaurant_id, e)
     # Only where the web app is loaded (never imported for it: a scheduler
     # or a test has no route cache to drop).
+    # The context manager's in-process copy of the memory sections (its
+    # stored rows are keyed on the memory's own markers and need no drop).
+    rc = sys.modules.get("restaurant_context")
+    if rc is not None:
+        try:
+            rc.invalidate(restaurant_id, ("owner_rules", "memory"))
+        except Exception as e:
+            log.debug("owner_memory: context sections not dropped for %s: %s", restaurant_id, e)
     capi = sys.modules.get("client_api")
     if capi is not None:
         try:

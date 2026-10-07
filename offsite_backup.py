@@ -432,6 +432,7 @@ KEEP_COLUMNS = {
     ("ai_validation_log", "tokens"): "words from the model's own output, not credentials",
     ("ai_runs", "input_tokens"): "a count of model input tokens",
     ("ai_runs", "output_tokens"): "a count of model output tokens",
+    ("context_sections", "tokens"): "an estimate of a context section's model tokens",
     ("push_deliveries", "device_token_id"): "an id",
     ("user_passkeys", "credential_id"): "a passkey's public id (passkeys.py); its key is a public key, and "
                                         "dropping it unlinks every passkey in a restored copy",

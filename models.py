@@ -4439,6 +4439,11 @@ def init_db(db_path: str = DB_PATH):
     # 10/7/26 #19) — at boot, never on a submit or a collect.
     import ai_batches as _ai_batches
     _ai_batches.init_ai_batches(db_path)
+    # The Restaurant Context Manager's stored sections (context_sections,
+    # AI orchestration design Phase 2, 10/7/26) — at boot, never on a
+    # packet's path.
+    import restaurant_context as _restaurant_context
+    _restaurant_context.init_restaurant_context(db_path)
     # The lasting, attributed change history (change_log, kept forever) and
     # the one-time carry-over of the target and profile changes activity_log
     # holds — memory audit 9/29/26. At boot, never on a write path.
