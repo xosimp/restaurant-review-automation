@@ -1616,6 +1616,31 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - Dates read M/D/YY here too (`mdy`). No `?.` or `??` (older iPad Safari at an
   on-site audit, `tests/test_edge_client_web_admin.py`).
 
+## 12d. The marketing site (cavnar.ai, `public/`)
+
+Redesigned 10/6/26 as "the AI operating system for restaurants". Dark like the
+product; one stylesheet (`public/static/site.css`) and one script
+(`public/static/site.js`) shared by index, pricing and about; privacy and terms
+keep their own pages. The homepage tells one story in order: hero (the ember
+core), the problem (systems that never talk), the Schedule Generator building a
+week, Everything connected (modules on an orbit, real chains lighting up), it
+learns (draft quality rising, edits falling), results from a real account,
+connections, then the demo form. Rules:
+- **One ask.** "Book a demo" is the only primary button, everywhere.
+- **Figures.** Product views are labelled illustrations with made-up names;
+  results are counts from a real account with its date, never modelled
+  savings; the value kinds are never added together (tests hold the phrase).
+- **Prices** come from `pricing.TIERS` (`tests/test_public_site.py`).
+- **Motion** is transform/opacity or a paused-off-screen canvas: staggered
+  reveals once, the schedule build, the connection pulse, the drawing curve,
+  count-ups, a slow shimmer on the hero's ember words, ember motes drifting
+  into the core (and into the learning curve), shallow parallax on the hero's
+  rings and the closing glow, and cross-page View Transitions with the nav held
+  still. Reduced motion shows every section finished.
+- **The SMS consent line** on the form is the registered opt-in wording; it
+  stays verbatim (`tests/test_a2p_staff_verification_optin.py`).
+- **Integrations** list only what is live; anything else is "on request".
+
 ## 13. Checklist before shipping a screen
 
 1. Tokens only — no literal colours (`scripts/check_colors.py`).

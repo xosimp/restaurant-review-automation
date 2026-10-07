@@ -58,6 +58,8 @@ def test_the_two_font_copies_have_not_drifted():
     site_fonts = os.path.join(PUBLIC, "static", "fonts")
     for name in sorted(os.listdir(app_fonts)):
         a, b = os.path.join(app_fonts, name), os.path.join(site_fonts, name)
+        if os.path.isdir(a):
+            continue        # static/fonts/pdf: print_forms' TrueType copies, server-side only
         assert os.path.exists(b), f"static/fonts/{name} was never copied into public/"
         assert open(a, "rb").read() == open(b, "rb").read(), (
             f"{name} differs between static/fonts and public/static/fonts"
@@ -71,3 +73,25 @@ def test_the_marketing_pages_all_load_the_shared_font_stylesheet():
         assert "/static/fonts/cavnar-fonts.css" in html, f"{page} is off the shared font stylesheet"
         for retired in ("Cormorant Garamond", "'Syne'", "DM Serif Display", "DM Sans"):
             assert retired not in html, f"{page} still references {retired}"
+
+
+def test_the_pricing_page_says_what_pricing_py_charges():
+    """The redesigned /pricing (10/6/26) states every tier's setup, monthly
+    and annual price; pricing.TIERS is the one source, so the page and
+    Stripe can never disagree."""
+    import pricing
+    html = open(os.path.join(PUBLIC, "pricing.html"), encoding="utf-8").read()
+    for n, t in pricing.TIERS.items():
+        assert f"${t['setup']:,} one-time setup" in html, n
+        assert f'data-annual="{t["annual"]:,}" data-monthly="{t["monthly"]:,}"' in html, n
+
+
+def test_the_site_shares_one_stylesheet_and_script_and_lists_its_pages():
+    for page in ("index.html", "pricing.html", "about.html"):
+        html = open(os.path.join(PUBLIC, page), encoding="utf-8").read()
+        assert '<link rel="stylesheet" href="/static/site.css">' in html, page
+        assert '<script src="/static/site.js" defer></script>' in html, page
+        assert 'href="/#demo"' in html or 'href="#demo"' in html, page
+    sitemap = open(os.path.join(PUBLIC, "sitemap.xml"), encoding="utf-8").read()
+    for loc in ("https://cavnar.ai/", "https://cavnar.ai/pricing", "https://cavnar.ai/about"):
+        assert f"<loc>{loc}</loc>" in sitemap
