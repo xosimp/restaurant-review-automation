@@ -32,14 +32,6 @@ struct AddCompetitorSheet: View {
                     focus: $focusedField, field: .search
                 )
                 .padding(20)
-                if let addError {
-                    Text(addError)
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarRed)
-                        .lineSpacing(3)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 8)
-                }
                 // Debounced, not fired on every keystroke — this is a real
                 // Google Places call with real cost, so waiting for a brief
                 // pause in typing (matching the debounce-and-cancel pattern
@@ -65,6 +57,16 @@ struct AddCompetitorSheet: View {
                         hasSearchedOnce = true
                         isSearching = false
                     }
+                }
+                // Why an add was refused (the ten owner-added cap), under the
+                // search field; after its .onChange, which belongs to the field.
+                if let addError {
+                    Text(addError)
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarRed)
+                        .lineSpacing(3)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
                 }
 
                 if let addingPlaceId, let addingResult = results.first(where: { $0.placeId == addingPlaceId }) {
