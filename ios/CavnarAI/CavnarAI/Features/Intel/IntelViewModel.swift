@@ -496,16 +496,23 @@ final class IntelViewModel {
     /// competitor's reviews get pulled in and the AI insight regenerates
     /// to reflect them without the owner needing to separately remember to
     /// hit "Refresh" right after adding one.
+    ///
+    /// Returns nil when it was added, else the sentence to show: the
+    /// server's own when it refused (ten owner-added competitors is the cap,
+    /// AI cost audit 10/7/26 #40 — swallowed before, so the sheet just did
+    /// nothing), a generic one when the request never got an answer.
     @discardableResult
-    func addCompetitor(placeId: String) async -> Bool {
+    func addCompetitor(placeId: String) async -> String? {
         do {
             let _: APIClient.EmptyResponse = try await client.send(
                 "/mobile/api/intel/add-competitor", method: .post, body: PlaceIdBody(placeId: placeId)
             )
             await refreshCompetitors()
-            return true
+            return nil
+        } catch let error as APIClient.APIError where !error.message.isEmpty {
+            return error.message
         } catch {
-            return false
+            return "Couldn't add that competitor — try again."
         }
     }
 

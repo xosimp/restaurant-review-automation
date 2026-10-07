@@ -20,6 +20,7 @@ struct AddCompetitorSheet: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var addingPlaceId: String?
     @State private var postedLabel: String?
+    @State private var addError: String?
     @FocusState private var focusedField: AddCompetitorField?
 
     var body: some View {
@@ -31,6 +32,14 @@ struct AddCompetitorSheet: View {
                     focus: $focusedField, field: .search
                 )
                 .padding(20)
+                if let addError {
+                    Text(addError)
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarRed)
+                        .lineSpacing(3)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
                 // Debounced, not fired on every keystroke — this is a real
                 // Google Places call with real cost, so waiting for a brief
                 // pause in typing (matching the debounce-and-cancel pattern
@@ -109,9 +118,13 @@ struct AddCompetitorSheet: View {
             Haptic.light()
             Task {
                 addingPlaceId = result.placeId
-                let success = await viewModel.addCompetitor(placeId: result.placeId)
+                addError = nil
+                let failure = await viewModel.addCompetitor(placeId: result.placeId)
                 addingPlaceId = nil
-                if success {
+                if let failure {
+                    Haptic.error()
+                    addError = failure
+                } else {
                     Haptic.success()
                     postedLabel = "\(result.name) added"
                 }
