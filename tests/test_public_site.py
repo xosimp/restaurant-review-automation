@@ -140,3 +140,25 @@ def test_the_app_and_the_site_run_the_same_ember_core():
     a = open(os.path.join(ROOT, "static", "ember-core.js"), encoding="utf-8").read()
     b = open(os.path.join(PUBLIC, "static", "ember-core.js"), encoding="utf-8").read()
     assert a == b, "static/ember-core.js and public/static/ember-core.js have drifted"
+
+
+def test_the_scroll_story_runs_natively_and_rests_for_reduced_motion():
+    """The scroll story (10/8/26): the Ember Thread is drawn in page
+    coordinates behind the content (main is lifted above it), so it scrolls
+    with the page; the Schedule Generator section is scrubbed by the scroll
+    and pins only when it fits; the key words of each headline catch from
+    cream to ember. Reduced motion: finished week, drawn thread, warm words."""
+    html = open(os.path.join(PUBLIC, "index.html"), encoding="utf-8").read()
+    assert 'class="sec scrub" id="schedule"' in html and '<div class="pin">' in html
+    assert html.count('class="ig"') >= 6
+    assert html.count("data-thread=") == 5
+    css = open(os.path.join(PUBLIC, "static", "site.css"), encoding="utf-8").read()
+    assert "main{position:relative;z-index:1}" in css
+    assert "#thread{position:absolute;" in css and "pointer-events:none;z-index:0" in css
+    assert ".sec.scrub.pinned{height:250vh" in css and "prefers-reduced-motion:no-preference" in css
+    assert "animation-timeline:view()" in css and ".ig.lit{" in css
+    js = open(os.path.join(PUBLIC, "static", "site.js"), encoding="utf-8").read()
+    assert "if (reduce) apply(1);" in js, "reduced motion shows the finished week"
+    assert "var readY = reduce ? 1e9" in js, "reduced motion shows the thread drawn"
+    assert "inner.offsetHeight <= window.innerHeight - 96" in js, "pins only when it fits"
+    assert "=>" not in js

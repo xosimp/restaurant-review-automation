@@ -424,3 +424,39 @@ p{margin:0}
 .stage .spoke.feed{stroke:rgba(232,149,106,.55);stroke-width:1.6;filter:drop-shadow(0 0 5px rgba(232,149,106,.6))}
 .stage .feeddot{fill:#fff1e4;filter:drop-shadow(0 0 6px #e8956a)}
 @media (prefers-reduced-motion:reduce){#core-streams{display:none}}
+
+/* ── The scroll story (10/8/26) ──
+   The Ember Thread: one ember line leaves the hero and runs down a rail in
+   the gutter, drawn to a reading line 60% down the screen, branching into
+   each core as it is reached (site.js). It is in page coordinates and sits
+   behind the content (main is lifted above it), so it scrolls natively and
+   passes under cards and words, never over them. */
+main{position:relative;z-index:1}
+#thread{position:absolute;left:0;top:0;pointer-events:none;z-index:0;overflow:visible}
+#thread .track{fill:none;stroke:rgba(240,235,224,.08);stroke-width:1.2;stroke-dasharray:2 7}
+#thread .lit{fill:none;stroke:var(--ember2);stroke-width:1.6;stroke-linecap:round;opacity:.9}
+#thread .br{fill:none;stroke:var(--ember2);stroke-width:1.4;stroke-linecap:round;opacity:.85;transition:stroke-dashoffset 1s var(--ease)}
+#thread .head{transition:opacity .3s ease}
+/* The Schedule Generator builds as you scroll: on a desktop tall enough to
+   hold it, the section pins and the scroll scrubs the build (and unbuilds it
+   on the way back); on a phone it scrubs as the board crosses the screen. */
+/* a touch tighter here so a 900px-tall laptop can hold the pinned build */
+@media (min-width:961px){.sec.scrub .sched h2{font-size:clamp(40px,3.8vw,54px)}}
+/* .pinned is set by site.js only when the section's content fits the
+   screen under the nav; otherwise it scrubs in place. */
+@media (min-width:961px) and (prefers-reduced-motion:no-preference){
+  .sec.scrub.pinned{height:250vh;padding-block:0}
+  .sec.scrub.pinned .pin{position:sticky;top:0;height:100vh;display:flex;align-items:center;padding-top:68px;box-sizing:border-box}
+  .sec.scrub.pinned .pin > .wrap{width:100%}
+}
+.sec.scrub .meter .t i,.sec.scrub .ring .fg{transition-duration:.3s}
+/* Headlines that catch: the key words heat from cream to ember, left to right,
+   as the heading crosses the screen (scroll-driven where supported, else once
+   on view). */
+.ig{background:linear-gradient(90deg,var(--ember3) 0%,var(--ember2) 20%,var(--ember) 40%,#fff2e4 46.5%,var(--ink) 52%,var(--ink) 100%);background-size:240% 100%;background-position:100% 0;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;transition:background-position 1.6s var(--ease)}
+.ig.lit{background-position:0 0}
+@supports (animation-timeline: view()){
+  .ig{transition:none;animation:igcatch linear both;animation-timeline:view();animation-range:entry 35% cover 45%}
+}
+@keyframes igcatch{from{background-position:100% 0}to{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){.ig{animation:none;transition:none;background-position:0 0}}

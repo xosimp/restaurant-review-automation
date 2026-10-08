@@ -39,7 +39,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
-<link rel="stylesheet" href="/static/site.css?v=20261007d">
+<link rel="stylesheet" href="/static/site.css?v=20261008a">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Cavnar AI","applicationCategory":"BusinessApplication","operatingSystem":"Web, iOS","description":"The AI operating system for restaurants: scheduling, labor, food cost, marketing, reviews and daily sales reporting in one system.","url":"https://cavnar.ai","publisher":{"@type":"Organization","name":"Cavnar AI","email":"will@cavnar.ai"}}</script>
 </head>
 <body>
@@ -100,17 +100,18 @@
         <div class="silo rv" style="--d:.19s"><b>Reviews</b><span>know what went wrong</span></div>
         <div class="silo rv" style="--d:.26s"><b>Invoices</b><span>know what it cost</span></div>
       </div>
-      <div class="pcore" data-core="prob" aria-hidden="true"><div class="ember"></div></div>
+      <div class="pcore" data-core="prob" data-thread="left|left" aria-hidden="true"><div class="ember"></div></div>
       <p class="then rv" style="--d:.3s">Cavnar AI connects them, and <b>acts on what it finds.</b></p>
     </div>
   </section>
 
   <!-- 3 · The flagship: the Schedule Generator, shown working -->
-  <section class="sec" id="schedule" aria-labelledby="h-sched">
+  <section class="sec scrub" id="schedule" aria-labelledby="h-sched">
+    <div class="pin">
     <div class="wrap sched">
       <div>
         <div class="kick rv">The flagship · Schedule Generator</div>
-        <h2 id="h-sched" class="rv" style="--d:.05s">Next week's schedule. Built, balanced and scored before you ask.</h2>
+        <h2 id="h-sched" class="rv" style="--d:.05s">Next week's schedule. <span class="ig">Built, balanced and scored</span> before you ask.</h2>
         <p class="lede rv" style="--d:.1s">It reads your sales, your people and your rules, then writes the week to your labor target.</p>
         <div class="steps" id="steps">
           <div><i></i>Forecasts every daypart from your own sales</div>
@@ -123,7 +124,7 @@
       </div>
       <div class="board-wrap rv" style="--d:.1s">
         <div class="board" id="board" role="img" aria-label="Illustration: a week's schedule filling in, two overtime shifts moved, labor at 31.4 percent against a 35 percent target, shift quality 86 out of 100">
-          <div class="bt"><b>Week of 10/12/26</b><span class="live has-core"><i class="lcore" data-core="sched" data-core-scale="2.4" aria-hidden="true"><i class="ember"></i></i>Drafted by Cavnar AI</span></div>
+          <div class="bt"><b>Week of 10/12/26</b><span class="live has-core"><i class="lcore" data-core="sched" data-thread="none|none" data-core-scale="2.4" aria-hidden="true"><i class="ember"></i></i>Drafted by Cavnar AI</span></div>
           <div class="grid7" id="grid7"></div>
           <div class="meters">
             <div class="meter"><div class="k">Labor</div><div class="v"><span id="labv">0.0</span><small>%</small></div><div class="t"><i id="labbar"></i><b style="left:70%"></b></div><div class="s">target 35%</div></div>
@@ -134,6 +135,7 @@
         <p class="illus">Illustration: the shape of a real draft, with made-up names and figures.</p>
       </div>
     </div>
+    </div>
   </section>
 
   <!-- 4 · Everything connected: the signature -->
@@ -141,12 +143,12 @@
     <div class="wrap conn">
       <div class="stage rv" id="stage" aria-hidden="true">
         <svg viewBox="0 0 600 600"><g id="links"></g><circle class="pulse" id="pulse" r="4"/></svg>
-        <div class="core ember" data-core="platform"></div><div class="corel">Cavnar AI</div>
+        <div class="core ember" data-core="platform" data-thread="top|none"></div><div class="corel">Cavnar AI</div>
         <div id="nodes"></div>
       </div>
       <div>
         <div class="kick rv">The platform · one system</div>
-        <h2 id="h-conn" class="rv" style="--d:.05s">Every module makes the others smarter.</h2>
+        <h2 id="h-conn" class="rv" style="--d:.05s">Every module <span class="ig">makes the others smarter.</span></h2>
         <p class="lede rv" style="--d:.1s">Nothing lives in its own tab. What one part learns, the rest act on.</p>
         <div class="chains" id="chains" aria-label="How the modules work together"></div>
       </div>
@@ -158,14 +160,14 @@
     <div class="wrap ask">
       <div>
         <div class="kick rv">Ask Cavnar AI · your CFO</div>
-        <h2 id="h-ask" class="rv" style="--d:.05s">Your CFO.<br>Always on, always&nbsp;learning.</h2>
+        <h2 id="h-ask" class="rv" style="--d:.05s">Your CFO.<br>Always on, <span class="ig">always&nbsp;learning.</span></h2>
         <p class="lede rv" style="--d:.1s">Ask anything about your restaurant. It answers from your own numbers and shows where every figure came from.</p>
         <div class="qs rv" style="--d:.15s" id="asks" role="group" aria-label="Try a question"></div>
         <p class="mem rv" style="--d:.2s">It remembers what you told it last week.</p>
       </div>
       <div class="rv" style="--d:.1s">
         <div class="chat" aria-live="polite">
-          <div class="top"><div class="mini" aria-hidden="true" data-core="ask" data-core-scale="2.3"><div class="ember"></div></div><b>Ask Cavnar AI</b><span>Illustration · made-up figures</span></div>
+          <div class="top"><div class="mini" aria-hidden="true" data-core="ask" data-thread="top|left" data-core-scale="2.3"><div class="ember"></div></div><b>Ask Cavnar AI</b><span>Illustration · made-up figures</span></div>
           <div class="body" id="chatbody"></div>
           <div class="foot2" aria-hidden="true"><span class="caret"></span>Ask about labor, sales, food cost, reviews…</div>
         </div>
@@ -178,7 +180,7 @@
     <div class="wrap learn">
       <div>
         <div class="kick rv">AI that learns · every day</div>
-        <h2 id="h-learn" class="rv" style="--d:.05s">It learns your restaurant the way a great GM would.</h2>
+        <h2 id="h-learn" class="rv" style="--d:.05s">It learns your restaurant <span class="ig">the way a great GM would.</span></h2>
         <div class="learns" id="learns">
           <span>Staffing preferences</span><span>Your schedule edits</span><span>Guest behaviour</span><span>Campaigns that worked</span><span>Food cost trends</span><span>Review sentiment</span><span>Busy-night patterns</span><span>What you said no to</span>
         </div>
@@ -204,7 +206,7 @@
   <section class="sec res" aria-labelledby="h-res">
     <div class="wrap center">
       <div class="kick rv">Live in a real restaurant</div>
-      <h2 id="h-res" class="rv" style="--d:.05s;font-size:clamp(36px,5vw,64px);line-height:1.04;margin-top:14px">Running every night at Simple EJ's.</h2>
+      <h2 id="h-res" class="rv" style="--d:.05s;font-size:clamp(36px,5vw,64px);line-height:1.04;margin-top:14px">Running <span class="ig">every night</span> at Simple EJ's.</h2>
       <p class="who rv" style="--d:.1s">St. Charles, IL · on Cavnar AI since 9/28/26</p>
       <div class="kpis" id="kpis">
         <div class="kpi rv" style="--d:.1s"><b class="num" data-to="35">35</b><span>alerts sent the moment they mattered</span></div>
@@ -221,7 +223,7 @@
     <div class="wrap">
       <div class="sh">
         <div class="kick rv">Connections</div>
-        <h2 id="h-plug" class="rv" style="--d:.05s">It plugs into what you already run.</h2>
+        <h2 id="h-plug" class="rv" style="--d:.05s">It plugs into <span class="ig">what you already run.</span></h2>
         <p class="rv" style="--d:.1s">No new POS, no migration. Connected once during setup.</p>
       </div>
       <div class="plug">
@@ -241,9 +243,9 @@
     <div class="bg" data-par="-0.12" aria-hidden="true"></div>
     <div class="wrap grid">
       <div>
-        <div class="dcore" data-core="demo" aria-hidden="true"><div class="ember"></div></div>
+        <div class="dcore" data-core="demo" data-thread="left|left" aria-hidden="true"><div class="ember"></div></div>
         <div class="kick rv">Book a demo</div>
-        <h2 id="h-demo" class="rv" style="--d:.05s">See your restaurant on Cavnar AI.</h2>
+        <h2 id="h-demo" class="rv" style="--d:.05s">See your restaurant on <span class="ig">Cavnar AI.</span></h2>
         <p class="lede rv" style="--d:.1s">Thirty minutes, on your own numbers.</p>
         <ul class="rv" style="--d:.15s">
           <li>Next week's schedule, drafted from your sales</li>
@@ -279,7 +281,7 @@
     <nav aria-label="Footer"><a href="/pricing">Pricing</a><a href="/about">About</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://dashboard.cavnar.ai/status">Status</a><a href="https://dashboard.cavnar.ai/login">Sign in</a></nav>
   </div>
 </footer>
-<script src="/static/ember-core.js?v=20261008a" defer></script>
-<script src="/static/site.js?v=20261007a" defer></script>
+<script src="/static/ember-core.js?v=20261008b" defer></script>
+<script src="/static/site.js?v=20261008a" defer></script>
 </body>
 </html>
