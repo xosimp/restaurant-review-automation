@@ -15780,6 +15780,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <div class="ac-status" id="acct-close-status" role="status" hidden></div>
           <div class="ac-note">Or write to Will: <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name|urlencode}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice.">will@cavnar.ai</a></div>
         </div>
+        {% else %}
+        {# A teammate's own login, deleted by its holder (POST
+           /api/account/delete-login, the app's shared body; iOS parity #13). #}
+        <div class="ac-card span" id="acct-delete-login-card">
+          <div class="ac-card-h"><div><h3>Delete my login</h3><p>Removes your own sign-in to {{ restaurant.name }}: you&rsquo;re signed out everywhere, and your email, phone and passkeys come off it. The restaurant&rsquo;s records stay theirs. The owner can invite you again any time.</p></div>
+            <div class="r"><button type="button" class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="acctDeleteLogin(this)">Delete my login</button></div></div>
+        </div>
         {% endif %}
       </div>
     </section>
@@ -15800,14 +15807,16 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <a href="https://status.cavnar.ai" target="_blank" rel="noopener" class="cbtn cbtn-text cbtn-sm"><span id="acct-status-dot" class="ac-statusdot" style="margin-right:4px"></span>System status</a>
           <button type="button" class="cbtn cbtn-text cbtn-sm" aria-expanded="false" aria-controls="ac-faq-fold" onclick="acctFold(this,'ac-faq-fold')"><span class="lbl">Help &amp; FAQ</span></button>
           <button type="button" class="cbtn cbtn-text cbtn-sm" aria-expanded="false" aria-controls="ac-bug-fold" onclick="acctFold(this,'ac-bug-fold')"><span class="lbl">Report a problem</span></button>
-          <button type="button" class="cbtn cbtn-text cbtn-sm" aria-expanded="false" aria-controls="ac-ref-fold" onclick="acctFold(this,'ac-ref-fold')"><span class="lbl">Refer an owner &middot; a free month</span></button>
+          {# Referrals are the account holder's (/api/send-referral answers 403
+             to anyone else) — not drawn for a teammate (iOS parity matrix). #}
+          {% if _principal %}<button type="button" class="cbtn cbtn-text cbtn-sm" aria-expanded="false" aria-controls="ac-ref-fold" onclick="acctFold(this,'ac-ref-fold')"><span class="lbl">Refer an owner &middot; a free month</span></button>{% endif %}
         </div>
         <div class="ac-fold" id="ac-bug-fold" hidden style="margin-top:14px">
           <label class="ac-lbl" for="bug-msg" style="position:absolute;left:-9999px">Describe the problem</label>
           <textarea class="ac-textarea" id="bug-msg" rows="3" placeholder="What happened, and where? Screenshots welcome by email."></textarea>
           <button onclick="reportBug(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:10px">Send report</button>
         </div>
-        <div class="ac-fold" id="ac-ref-fold" hidden style="margin-top:14px">
+        {% if _principal %}<div class="ac-fold" id="ac-ref-fold" hidden style="margin-top:14px">
           <div class="ac-note" style="margin-top:0">Send another owner an intro &mdash; a free month (<span class="ac-num">$349</span>) if they sign up.</div>
           <div class="ac-form" style="grid-template-columns:1fr 1fr;margin-top:10px">
             <div class="ac-field"><label for="referral-name">Restaurant name</label><input class="ac-input" type="text" id="referral-name" placeholder="Restaurant name"></div>
@@ -15815,7 +15824,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="ac-field wide"><label for="referral-note">Personal note (optional)</label><textarea class="ac-textarea" id="referral-note" rows="2" placeholder="Optional personal note&hellip;"></textarea></div>
           </div>
           <div class="ac-inline" style="margin-top:12px"><button onclick="sendReferral()" class="cbtn cbtn-secondary cbtn-sm">Send referral</button><span id="referral-status" class="ac-status" style="display:none"></span></div>
-        </div>
+        </div>{% endif %}
         <div class="ac-fold" id="ac-faq-fold" hidden style="margin-top:14px">
           <div id="faq-list">
             <div class="faq-group"><div class="faq-group-title">Getting started</div>
@@ -28102,6 +28111,16 @@ function openAlertsModal() {
     document.getElementById('al-via-email').checked = !!s.urgent_via_email;
     document.getElementById('al-any-review').checked    = !!s.alert_any_review;
     document.getElementById('al-resp-approved').checked = !!s.alert_resp_approved;
+    // The app's four (iOS parity #86); each saved only when this page has it.
+    var appOnly = {'al-food-waste': 'alert_food_waste', 'al-ai-visibility': 'alert_ai_visibility_drop',
+                   'al-health-bypass': 'alert_health_bypass_quiet'};
+    for (var ak in appOnly) {
+      if (!appOnly.hasOwnProperty(ak)) continue;
+      var ael = document.getElementById(ak);
+      if (ael) ael.checked = !!s[appOnly[ak]];
+    }
+    var exEl = document.getElementById('al-extra-emails');
+    if (exEl) exEl.value = s.alert_extra_emails || '';
     var digestEl = document.getElementById('al-digest-enabled');
     var digestDayEl = document.getElementById('al-digest-day');
     if (digestEl) digestEl.checked = !!s.digest_enabled;
@@ -28282,7 +28301,9 @@ function loadOpsSettings() {
     var card = document.getElementById('as-ops-card');
     if (card) card.hidden = false;
     var sel = document.getElementById('as-mb-hour'), h = '';
-    for (var i = 5; i <= 13; i++) {
+    // 4am to 1pm: every hour the server takes (4 <= hour < LATEST_SEND_HOUR),
+    // as the app offers them (iOS parity matrix).
+    for (var i = 4; i <= 13; i++) {
       var lbl = (i < 12 ? i + ' am' : (i === 12 ? '12 pm' : (i - 12) + ' pm'));
       h += '<option value="' + i + '"' + (d.settings.hour === i ? ' selected' : '') + '>' + lbl + '</option>';
     }
@@ -29299,6 +29320,17 @@ function saveAlertSettings() {
     var sel = document.getElementById(sk);
     if (sel) payload[pushSave[sk]] = sel.checked;
   }
+  // The app's four: sent only when drawn here (a module this login lacks
+  // leaves its switch off the page, and its stored value alone).
+  var appSave = {'al-food-waste': 'alert_food_waste', 'al-ai-visibility': 'alert_ai_visibility_drop',
+                 'al-health-bypass': 'alert_health_bypass_quiet'};
+  for (var ask in appSave) {
+    if (!appSave.hasOwnProperty(ask)) continue;
+    var asel = document.getElementById(ask);
+    if (asel) payload[appSave[ask]] = asel.checked ? 1 : 0;
+  }
+  var exSave = document.getElementById('al-extra-emails');
+  if (exSave) payload.alert_extra_emails = exSave.value || '';
   var msg = document.getElementById('alerts-save-msg');
   msg.style.display = 'inline';
   msg.style.color = 'var(--ink3)';
@@ -29392,6 +29424,16 @@ function acctRequestClose(btn){
     .then(apiJson).then(function(d){done();
       if(d&&d.ok){_acctShowClosed(d.requested_at,d.requested_on);if(typeof toast==='function')toast('Request sent to Will','success');}
       else if(typeof toast==='function')toast((d&&d.error)||'Couldn’t send that','error');})
+    .catch(function(){done();if(typeof toast==='function')toast('Network error','error');});
+}
+// Delete my login (a teammate's own): confirmed, then the sign-in page.
+function acctDeleteLogin(btn){
+  if(!confirm('Delete your login? You’ll be signed out everywhere and can’t sign in again unless the owner invites you.'))return;
+  var done=cbtnBusy(btn,'Deleting…');
+  fetch('/api/account/delete-login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(apiJson).then(function(d){done();
+      if(d&&d.ok){window.location.href='/login';}
+      else if(typeof toast==='function')toast((d&&d.error)||'Couldn’t delete your login','error');})
     .catch(function(){done();if(typeof toast==='function')toast('Network error','error');});
 }
 function loadBillingInfo() {
@@ -33575,7 +33617,15 @@ document.addEventListener('click', function(e) {
       <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Competitors</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-competitor-move" style="accent-color:var(--ember)"> A competitor&rsquo;s rating moves, or a new one opens (weekly)</label>
+        {# The app's two (iOS parity #86): saved only when this page sends them. #}
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-ai-visibility" style="accent-color:var(--ember)"> Your AI visibility drops</label>
       </div>
+      {% if mod_inventory %}
+      <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Food cost</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-food-waste" style="accent-color:var(--ember)"> Food waste flagged</label>
+      </div>
+      {% endif %}
 
       <div style="font-size:14px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">On your phone</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:6px">
@@ -33616,6 +33666,11 @@ document.addEventListener('click', function(e) {
         <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-via-sms" onchange="updateSmsConsentVisibility()" style="accent-color:var(--ember)"> SMS text message</label>
         <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:15px;color:var(--ink)"><input type="checkbox" id="al-via-email" style="accent-color:var(--ember)"> Email</label>
       </div>
+      <div style="margin-bottom:10px">
+        <div style="font-size:14px;color:var(--ink3);margin-bottom:4px"><label for="al-extra-emails">Also email</label></div>
+        <input id="al-extra-emails" type="text" class="ac-input" autocomplete="off" placeholder="chef@…, gm@… (up to 3)" style="width:100%;box-sizing:border-box">
+        <div style="font-size:13px;color:var(--ink3);margin-top:4px">Alert and digest emails also go to these addresses.</div>
+      </div>
       <!-- SMS consent always visible, dims when SMS off -->
       <div id="al-sms-consent-row" style="background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.2);border-radius:8px;padding:10px 12px;margin-top:10px;opacity:.35;pointer-events:none">
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:14px;color:var(--ink);line-height:1.5">
@@ -33642,6 +33697,7 @@ document.addEventListener('click', function(e) {
         </div>
       </div>
       <div style="font-size:12px;color:var(--ink3);margin-top:8px">Times use Chicago timezone. Leave start/end blank to disable quiet hours.</div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:15px;color:var(--ink);margin-top:10px"><input type="checkbox" id="al-health-bypass" style="accent-color:var(--ember)"> Health alerts break through &mdash; a health or safety mention still reaches you during quiet hours</label>
     </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between">
@@ -33725,16 +33781,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 
   // ── Security ──
   function renderCheckup(d){
-    var items=[
-      ['Two-factor authentication',d.two_fa_enabled,30,d.two_fa_enabled?('On · '+(d.two_fa_method==='sms'?'text':'email')):'Off — turn it on under Sign-in protection'],
-      ['Password strength',d.password_strength==='strong',15,d.password_strength||'unknown'],
-      ['Backup codes on hand',d.two_fa_enabled&&d.backup_codes_remaining>0,15,d.two_fa_enabled?(d.backup_codes_remaining+' unused'):'Needs 2FA'],
-      ['Sign-in notifications',d.login_notify,10,d.login_notify?'On':'Off'],
-      ['Recovery email',!!d.recovery_email,15,d.recovery_email||'Not set'],
-      ['No stale devices',(d.trusted_devices||0)<=3,15,(d.trusted_devices||0)+' trusted, '+(d.active_sessions||1)+' signed in']
-    ];
-    var score=0,html='';
-    items.forEach(function(it){if(it[1])score+=it[2];html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="color:var(--ember);font-weight:700;align-self:center;display:flex;width:18px;justify-content:center">'+(it[1]?'<i class="cv-ok" aria-hidden="true"></i>':'•')+'</span><span style="color:var(--ink)">'+esc(it[0])+'</span><span>· '+esc(it[3])+'</span></div>';});
+    // Scored on the server (account_health.security_checkup), the one rule
+    // the app's checkup draws too (iOS parity matrix: two scorers drifted).
+    var ck=d.checkup||{items:[]},items=[];
+    for(var ci=0;ci<(ck.items||[]).length;ci++){var c=ck.items[ci];items.push([c.title,c.earned,c.points,c.detail]);}
+    var score=+ck.score||0,html='';
+    items.forEach(function(it){html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="color:var(--ember);font-weight:700;align-self:center;display:flex;width:18px;justify-content:center">'+(it[1]?'<i class="cv-ok" aria-hidden="true"></i>':'•')+'</span><span style="color:var(--ink)">'+esc(it[0])+'</span><span>· '+esc(it[3])+'</span></div>';});
     window._acctData=window._acctData||{};window._acctData.securityScore=score;if(window.acctHealthRefresh)acctHealthRefresh();
     var sc=document.getElementById('sec-score');if(sc)sc.textContent=score;
     var bar=document.getElementById('sec-bar');if(bar)bar.style.width=score+'%';
@@ -35987,11 +36039,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   };
 
   // ── Account health ───────────────────────────────────────────────────────
-  // Six checks from what the page already knows: facts stamped on
-  // #panel-account by the template, plus the responses the existing loaders
-  // already fetch (they stash into window._acctData). Zero extra requests.
-  // Each item also keeps a short phrase for the overview's one sentence
-  // (density audit #36) - "Toast stopped syncing", "nobody receives alerts".
+  // Scored on the server (account_health.payload, GET /api/account/health),
+  // the same six items, score, sentence and fix the app's Account hero
+  // reads (iOS parity #89) - the rules used to live here, and the phone had
+  // none. Each loader that changes an input calls acctHealthRefresh(); the
+  // refetches settle into one request. The fix's ACTION stays here (where
+  // the button goes on this page); its label is the server's.
   var _say={};
   function setItem(key,state,sub,say){
     var el=document.querySelector('.ac-hitem[data-health="'+key+'"]');if(!el)return;
@@ -35999,98 +36052,41 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var s=el.querySelector('span');if(s)s.textContent=sub;
     _say[key]={state:state,say:say||sub};
   }
-  // The one fix per item: the button label and where it goes. The worst
-  // item gets the overview's one primary button.
   var FIX={
-    integrations:['Fix your data connection',function(){acctGo('integrations');}],
-    notifications:['Set up alerts',function(){acctGo('notifications');if(window.openAlertsModal&&flag('principal')!=='0')openAlertsModal();}],
-    subscription:['Update your payment method',function(){var a=$('ac-qa-billing');if(a&&a.getAttribute('data-portal'))window.open(a.href,'_blank','noopener');else acctGo('billing');}],
+    integrations:function(){acctGo('integrations');},
+    notifications:function(){acctGo('notifications');if(window.openAlertsModal&&flag('principal')!=='0')openAlertsModal();},
+    subscription:function(){var a=$('ac-qa-billing');if(a&&a.getAttribute('data-portal'))window.open(a.href,'_blank','noopener');else acctGo('billing');},
     // Straight to the setup itself (owner, 9/27/26), on the Security section.
-    security:['Turn on two-factor',function(){acctGo('security');var en=document.querySelector('#acct-security [data-twofa-enable]');
-      if(en){if(window.cModal)cModal.open('twofa-modal');else $('twofa-modal').style.display='flex';}}],
-    profile:['Finish your profile',function(){acctGo('restaurant');var pe=$('profile-edit');if(pe&&pe.style.display==='none'&&window.toggleProfileEdit)toggleProfileEdit();}],
-    people:['Invite a teammate',function(){acctGo('people','team-name');}]
+    security:function(){acctGo('security');var en=document.querySelector('#acct-security [data-twofa-enable]');
+      if(en){if(window.cModal)cModal.open('twofa-modal');else $('twofa-modal').style.display='flex';}},
+    profile:function(){acctGo('restaurant');var pe=$('profile-edit');if(pe&&pe.style.display==='none'&&window.toggleProfileEdit)toggleProfileEdit();},
+    people:function(){acctGo('people','team-name');}
   };
-  var FIX_ORDER=['integrations','notifications','subscription','security','profile','people'];
+  var _health=null;
   function sayAndFix(score){
-    var bad=[],warn=[],k,i;
-    for(i=0;i<FIX_ORDER.length;i++){k=FIX_ORDER[i];var it=_say[k];if(!it)continue;if(it.state==='bad')bad.push(k);else if(it.state==='warn'&&it.say!=='Checking…')warn.push(k);}
-    var say=$('ac-health-say'),btn=$('ac-fix-btn'),lead=bad.length?bad:warn,txt;
-    function list(keys){var out=[];for(var j=0;j<keys.length&&j<3;j++)out.push(_say[keys[j]].say);return out.join('; ');}
-    if(bad.length)txt='<b>'+bad.length+' thing'+(bad.length===1?' needs':'s need')+' you:</b> '+esc(list(bad))+'.';
-    else if(warn.length)txt='<b>Nearly set up.</b> Worth doing: '+esc(list(warn))+'.';
-    else txt='<b>Everything that matters is set up.</b>';
-    if(say)say.innerHTML=txt;
+    var h=_health||{},sy=h.say||{},say=$('ac-health-say'),btn=$('ac-fix-btn');
+    if(say)say.innerHTML='<b>'+esc(sy.lead||'')+'</b>'+(sy.text?' '+esc(sy.text):'');
     if(btn){
-      var f=lead.length?FIX[lead[0]]:null;
+      var f=h.fix&&FIX[h.fix.key]?h.fix:null;
       btn.hidden=!f;
-      if(f){btn.textContent=f[0];btn.onclick=f[1];}
+      if(f){btn.textContent=f.label;btn.onclick=FIX[f.key];}
     }
   }
   function esc(v){return String(v==null?'':v).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  var _healthTimer=null;
   window.acctHealthRefresh=function(){
     if(!$('ac-health-grid'))return;
-    var d=window._acctData,pts=0,max=6;
-
-    // The four profile details, read live from the profile form when it is
-    // on the page (it holds what was just saved), else from the flags the
-    // template stamped - so a save updates this without a reload, and the
-    // line names what is missing (owner, 9/29/26: "1 of 4 details missing"
-    // with no way to tell it was the brand voice, which is set elsewhere).
-    var PD=[['pe-owner-name','owner-name','your name'],['pe-phone','owner-phone','a phone number'],
-            ['pe-tz','timezone','your timezone'],['pe-voice','voice','your brand voice (how you sound)']];
-    var miss=[];
-    for(var pi=0;pi<PD.length;pi++){var inp=$(PD[pi][0]),val=inp?String(inp.value||'').trim():flag('profile-has-'+PD[pi][1]);
-      if(!val||val==='0')miss.push(PD[pi][2]);}
-    var pd=4-miss.length;
-    if(pd>=4){pts+=1;setItem('profile','ok','Complete — contact, timezone and brand voice all set');}
-    else if(pd>=2){pts+=.5;setItem('profile','warn','Missing '+miss.join(' and ')+' — the AI writes better with '+(miss.length===1?'it':'them'),'profile: '+miss.join(', ')+' missing');}
-    else setItem('profile','bad','Missing '+miss.join(', ')+' — add your contact details and how you sound','your profile is mostly empty');
-
-    if(d.team===undefined&&d.staff===undefined)setItem('people','warn','Checking…');
-    else{
-      var tm=(d.team||0)>1,st=(d.staff||0)>0;
-      if(tm&&st){pts+=1;setItem('people','ok',d.team+' logins · '+d.staff+' staff signed up');}
-      else if(tm||st){pts+=.6;setItem('people','warn',tm?'Teammates in — no staff have signed up yet':d.staff+' staff signed up · only you use the dashboard',tm?'no staff have signed up':'only you use the dashboard');}
-      else setItem('people','bad','Just you — invite a teammate or post the staff join code','only you are on the account');
-    }
-
-    // Driven by Data health when it has a figure (density audit #36): "3
-    // connected" read green while the data under them could be days old.
-    var conn=parseInt(flag('conn'),10)||0,cerr=flag('conn-err')==='1',dh=d.dataHealth;
-    if(cerr)setItem('integrations','bad','A POS connection needs attention','your POS stopped syncing');
-    else if(dh&&dh.pct!=null){
-      var dp=Math.round(+dh.pct);
-      if(dp>=80){pts+=1;setItem('integrations','ok','Data '+dp+'% current · '+conn+' connected');}
-      else if(dp>=50){pts+=.5;setItem('integrations','warn','Data '+dp+'% current — a source is aging','data is '+dp+'% current');}
-      else setItem('integrations','bad','Data '+dp+'% current'+(dh.reason?' — '+dh.reason:''),'data is only '+dp+'% current');
-    }
-    else if(conn>=2){pts+=1;setItem('integrations','ok',conn+' connected — replies post, data flows');}
-    else if(conn===1){pts+=.5;setItem('integrations','warn','1 connected — add your POS for live labor and sales','connect your POS');}
-    else setItem('integrations','bad','Nothing connected — start with Google Business','nothing is connected');
-
-    var al=flag('alerts')==='1',dg=flag('digest')==='1',contacts=d.alertContacts;
-    if(al&&(contacts===undefined||contacts>0)){pts+=1;setItem('notifications','ok','Alerts on'+(dg?' · weekly digest on':''));}
-    else if(al||dg){pts+=.5;setItem('notifications','warn',al?'Alerts on, but no contact to send them to':'Digest on · no real-time alerts',al?'nobody receives alerts':'no real-time alerts');}
-    else setItem('notifications','bad','No alerts — you’d only find problems by logging in','no alerts are on');
-
-    var sec=d.securityScore;
-    if(sec===undefined)setItem('security','warn','Checking…');
-    else if(sec>=70){pts+=1;setItem('security','ok','Checkup '+sec+' / 100');}
-    else if(sec>=40){pts+=.5;setItem('security','warn','Checkup '+sec+' / 100 — turn on two-factor','two-factor is off');}
-    else setItem('security','bad','Checkup '+sec+' / 100 — start with two-factor','the security checkup is '+sec+' / 100');
-
-    var b=d.billing;
-    // A login that isn't the account holder has no Subscription item (billing
-    // is owner-only): it is left out of the score rather than counted as unset.
-    if(!document.querySelector('.ac-hitem[data-health="subscription"]'))max-=1;
-    else if(b===undefined)setItem('subscription','warn','Checking…');
-    else if(b&&b.ok&&b.status==='active'){pts+=1;setItem('subscription','ok','Active · next charge '+(b.next_date||'—'));}
-    else if(b&&b.ok&&b.status==='trialing'){pts+=1;setItem('subscription','ok','Trial — first charge on day 31');}
-    else if(b&&b.ok&&b.status==='past_due')setItem('subscription','bad','Payment past due — update your card','the payment is past due');
-    else if(b&&b.error)setItem('subscription','warn','Couldn’t reach billing just now — try again in a minute');
-    else setItem('subscription','warn','No subscription on file — Will can set one up');
-
+    if(_healthTimer)clearTimeout(_healthTimer);
+    _healthTimer=setTimeout(function(){
+      _healthTimer=null;
+      fetch('/api/account/health',{credentials:'same-origin'}).then(apiJson).then(acctPaintHealth).catch(function(){});
+    },250);
+  };
+  window.acctPaintHealth=function(d){
+    if(!d||!d.ok||!$('ac-health-grid'))return;
+    _health=d;
+    var items=d.items||[],i;
+    for(i=0;i<items.length;i++)setItem(items[i].key,items[i].state,items[i].sub,items[i].say);
     // Grouped by status, worst first: what needs you, what's worth setting
     // up, then what's done. The items keep their own click-through.
     var grid=$('ac-health-grid'),all=[].slice.call(grid.querySelectorAll('.ac-hitem')),G=[['bad','Needs attention'],['warn','Worth setting up'],['ok','All set']],gi,j,frag=document.createDocumentFragment();
@@ -36103,16 +36099,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       frag.appendChild(grp);
     }
     grid.innerHTML='';grid.appendChild(frag);
-
-    var score=Math.round(pts/max*100);
+    var score=+d.score||0;
     var n=$('ac-health-score');if(n)n.textContent=score;
     var ring=$('ac-health-ring');if(ring)ring.style.strokeDashoffset=String(314-314*score/100);
     // Toned by the score (density audit #36): good 90+, amber 60-89, red
-    // under 60 - a 40% setup no longer reads like a 95% one.
-    var rb=$('ac-health-ringbox');if(rb){rb.classList.remove('good','warn','bad');rb.classList.add(score>=90?'good':(score>=60?'warn':'bad'));rb.setAttribute('aria-label','Account setup score '+score+' of 100');}
+    // under 60 - the server's tone, the same the app's ring reads.
+    var rb=$('ac-health-ringbox');if(rb){rb.classList.remove('good','warn','bad');rb.classList.add(d.tone||'bad');rb.setAttribute('aria-label','Account setup score '+score+' of 100');}
     sayAndFix(score);
     var sub=$('ac-health-sub');
-    if(sub)sub.textContent=score>=90?'Everything that matters is set up.':(score>=60?'Nearly there — the items below would make Cavnar AI work harder for you.':'A few things to set up before Cavnar AI can do its best work.');
+    if(sub)sub.textContent=d.sub||'';
   };
 
   // Subscription chip in the overview header, plus the quick-action link.
