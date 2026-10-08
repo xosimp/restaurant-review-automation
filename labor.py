@@ -2302,9 +2302,10 @@ def labor_trend_section(restaurant_id) -> dict:
     """The restaurant_context "labor_trend" section (AI orchestration
     design, Phase 2, 10/7/26): labor by payroll week and the one
     week-on-week comparison, in the words the labor read has always given
-    the model — moved here from get_claude_insights so the labor read, Home,
-    the DSR and Ask state the same weeks the same way, built once per
-    change of labor_history (restaurant_context.version_labor_trend).
+    the model — moved here from get_claude_insights, built once per change
+    of labor_history (restaurant_context.version_labor_trend). The labor
+    read is its one production reader today (context re-audit 10/7/26
+    #10); Home, the DSR and Ask still state the weeks their own way.
 
     Memory audit 9/29/26, labor_periods: the history used to be a rolling
     window appended on every sync and every note build, so the same 14 days

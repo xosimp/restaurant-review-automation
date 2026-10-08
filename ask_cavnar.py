@@ -989,10 +989,30 @@ def _context_cache_put(key, context):
     _CONTEXT_CACHE[key] = (now, context)
 
 
-def invalidate_context(restaurant_id=None):
+def _drop_snapshots(restaurant_id=None):
+    """Drop the cached snapshots (and their benchmark facts) only — nothing
+    the sections or the replayed reads hold."""
+    if restaurant_id is None:
+        _CONTEXT_CACHE.clear()
+        _INTEL_FACTS.clear()
+        return
+    for key in [k for k in _CONTEXT_CACHE if k[0] == int(restaurant_id)]:
+        _CONTEXT_CACHE.pop(key, None)
+    for key in [k for k in _INTEL_FACTS if k[0] == int(restaurant_id)]:
+        _INTEL_FACTS.pop(key, None)
+
+
+def invalidate_context(restaurant_id=None, durable=True):
     """Drop a cached snapshot. Called after anything that changes the numbers
     underneath it — a confirmed action, a sync, an upload, a settings save
-    (models.on_restaurant_change)."""
+    (models.on_restaurant_change, through _on_restaurant_row_change).
+
+    `durable` False (a restaurants-row change): the context manager's
+    sections are dropped from L1 only — their versions read the row (the
+    findings' the whole row, the memory's the name, owner and timezone), so an L2 row a change
+    did not touch is still good for every other viewer (context re-audit
+    10/7/26 #7). True: a write their markers cannot see (an upload, an
+    action Ask ran), so their L2 rows go too."""
     # The open question's memo too (AI cost audit 10/7/26 #33): a direct
     # action inside a turn must not leave the next read on the old figures.
     try:
@@ -1006,22 +1026,25 @@ def invalidate_context(restaurant_id=None):
     # them older than its own last invalidation.
     try:
         import restaurant_context as _rc_inv
-        _rc_inv.forget(int(restaurant_id) if restaurant_id is not None else None, ("findings", "memory"))
+        _rid_inv = int(restaurant_id) if restaurant_id is not None else None
+        if durable:
+            _rc_inv.forget(_rid_inv, ("findings", "memory"))
+        else:
+            _rc_inv.invalidate(_rid_inv, ("findings", "memory"))
     except Exception:
         pass
     _forget_replays(restaurant_id)
-    if restaurant_id is None:
-        _CONTEXT_CACHE.clear()
-        _INTEL_FACTS.clear()
-    else:
-        for key in [k for k in _CONTEXT_CACHE if k[0] == int(restaurant_id)]:
-            _CONTEXT_CACHE.pop(key, None)
-        for key in [k for k in _INTEL_FACTS if k[0] == int(restaurant_id)]:
-            _INTEL_FACTS.pop(key, None)
+    _drop_snapshots(restaurant_id)
+
+
+def _on_restaurant_row_change(restaurant_id):
+    """models.on_restaurant_change: every update_restaurant. The row is in
+    the sections' versions, so their L2 rows stay (#7)."""
+    invalidate_context(restaurant_id, durable=False)
 
 
 import models as _models_listen
-_models_listen.on_restaurant_change(invalidate_context)
+_models_listen.on_restaurant_change(_on_restaurant_row_change)
 
 
 # ── proposals: one identity each (#23) ───────────────────────────────────────
@@ -1069,7 +1092,11 @@ def record_proposals(restaurant_id, proposals, user_id=None):
         # The snapshot's WHAT YOU HAVE ALREADY PROPOSED section reads these
         # rows, and the snapshot is held five minutes now (AI cost audit
         # 10/7/26 #30): a question in another chat must see this proposal.
-        invalidate_context(restaurant_id)
+        # Only the snapshot: a proposal changes no figure, so the reads this
+        # turn just kept for the chat's follow-up (_keep_reads) and the
+        # context sections stand — invalidate_context here wiped the replay
+        # on every turn that raised a card (context re-audit 10/7/26 #7).
+        _drop_snapshots(restaurant_id)
     return proposals
 
 
@@ -1095,7 +1122,17 @@ def build_context(restaurant):
     # viewer (a note only its author reads, a note private to the account
     # holders — memory audit 9/29/26), so two co-owners no longer share one
     # cached copy either.
+    # A view-as session carries the owner's id with acting_admin_id beside
+    # it, and support must not read (or leave behind) the owner's copy with
+    # its author-only lines (context re-audit 10/7/26 #1): the key holds the
+    # login the session's history belongs to as well (acting_login_id).
     _own = (_who or {}).get("id")
+    if isinstance(_who, dict):
+        try:
+            from permissions import acting_login_id as _acting
+            _own = (_own, _acting(_who))
+        except Exception:
+            _own = (_own, _who.get("acting_admin_id"), _who.get("acting_admin_role"))
     # And by the restaurant's local date: TODAY carries it, and a five-minute
     # copy built at 11:58pm must not open the next day (#30).
     try:
@@ -1572,8 +1609,8 @@ _MAX_HISTORY_TURN_LENGTH = 2400
 # The LAST assistant turn replays in full (memory audit 9/29/26,
 # conversations): it is the one a follow-up resolves against, and an
 # executive answer runs past 2,400 characters. Bounded all the same. The
-# figure check's hash reads the first _ANSWER_HASH_CHARS characters
-# (_answer_hash), so an uncut replay finds its record.
+# figure check's record is keyed on the whole answer and on its replayed
+# prefix (_answer_keys), so an uncut replay and a cut one both find it.
 _MAX_LAST_ANSWER_LENGTH = 16000
 # Every OLDER assistant turn replays at most this much (AI cost audit
 # 10/7/26 #66): each was resent on every call of every later question at
@@ -1581,10 +1618,17 @@ _MAX_LAST_ANSWER_LENGTH = 16000
 # newest answer, which keeps its full allowance above. The owner's own
 # turns keep _MAX_HISTORY_TURN_LENGTH.
 _MAX_OLDER_ANSWER_LENGTH = 800
-# What an answer's figure-check record is keyed on: the part of it every
-# replay carries — an older turn's 800 characters, and the start of the
-# newest one's full text.
+# What an answer's figure-check record is keyed on besides its whole text:
+# the prefix an older turn is replayed cut to (context re-audit 10/7/26 #9).
+# Keyed on that prefix alone, a client-sent turn could carry the real first
+# 800 characters and figures of its own after them, and the whole turn was
+# read as checked. Now a turn counts only as far as server text matches it:
+# the whole turn when the whole answer was recorded, else its first 800 (or,
+# for a record written before 10/7/26, its first 2,400) characters.
 _ANSWER_HASH_CHARS = _MAX_OLDER_ANSWER_LENGTH
+# Prefixes a record written before this may have been keyed on: the first
+# 2,400 characters (before #66) and the first 800 (#66, 10/7/26).
+_ANSWER_HASH_LEGACY = (_MAX_HISTORY_TURN_LENGTH, _MAX_OLDER_ANSWER_LENGTH)
 
 
 def _sanitize_history(history):
@@ -1639,14 +1683,21 @@ def _sanitize_history(history):
 ANSWER_CHECK_KEEP_DAYS = 30
 
 
-def _answer_hash(text) -> str:
-    """The key an answer is recorded under — the answer as every replay
-    carries it (stripped and cut to _ANSWER_HASH_CHARS: an older turn is
-    replayed cut to that, the newest one in full), so the turn the client
-    sends back finds its record however much of it was replayed."""
+def _answer_hash(text, limit=None) -> str:
+    """The key of `text` (stripped; cut to `limit` characters when given)."""
     import hashlib
-    body = str(text or "").strip()[:_ANSWER_HASH_CHARS]
+    body = str(text or "").strip()
+    if limit:
+        body = body[:limit]
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+
+
+def _answer_keys(answer) -> list:
+    """The keys one answer is recorded under: its whole text and the prefix
+    an older turn is replayed cut to (_ANSWER_HASH_CHARS) — both server text
+    only, so whichever a replay matches, it carries nothing the server did
+    not write."""
+    return list(dict.fromkeys((_answer_hash(answer), _answer_hash(answer, _ANSWER_HASH_CHARS))))
 
 
 def record_answer_check(restaurant_id, answer, unverified, db_path=None) -> None:
@@ -1659,9 +1710,10 @@ def record_answer_check(restaurant_id, answer, unverified, db_path=None) -> None
     try:
         conn = _m.get_conn(db_path) if db_path else _m.get_conn()
         try:
-            conn.execute("INSERT OR REPLACE INTO ask_answer_checks (restaurant_id, answer_hash, unverified, created_at) "
-                         "VALUES (?,?,?,datetime('now'))",
-                         (restaurant_id, _answer_hash(answer), json.dumps(list(unverified or []))))
+            for key in _answer_keys(answer):
+                conn.execute("INSERT OR REPLACE INTO ask_answer_checks (restaurant_id, answer_hash, unverified, "
+                             "created_at) VALUES (?,?,?,datetime('now'))",
+                             (restaurant_id, key, json.dumps(list(unverified or []))))
             conn.execute("DELETE FROM ask_answer_checks WHERE restaurant_id=? AND created_at < datetime('now', ?)",
                          (restaurant_id, f"-{ANSWER_CHECK_KEEP_DAYS} days"))
             conn.commit()
@@ -2085,19 +2137,31 @@ class _SentencePreview:
 
 def _verified_history(restaurant_id, messages, db_path=None) -> list:
     """The history turns the figure check may read: an assistant turn this
-    server recorded with nothing unverified in it. Never a user turn — the
-    owner's own figure is not their data — and never an answer with no
-    record (sent by a client, written before the record existed, or edited
-    on the way back)."""
-    turns = [m["content"] for m in (messages or [])
+    server recorded with nothing unverified in it — and only as much of it as
+    the server wrote: the whole turn when its whole text was recorded, else
+    the recorded prefix it starts with (an older turn replayed cut to 800
+    characters, or a record from before 10/7/26), never what a client added
+    after it (context re-audit 10/7/26 #9). Never a user turn — the owner's
+    own figure is not their data — and never an answer with no record (sent
+    by a client, written before the record existed, or edited on the way
+    back)."""
+    turns = [m["content"].strip() for m in (messages or [])
              if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()]
     if not turns or not restaurant_id:
         return []
+    # Per turn, longest first: the whole turn, then each recorded prefix.
+    candidates = []
+    for t in turns:
+        cands = [(t, _answer_hash(t))]
+        for n in _ANSWER_HASH_LEGACY:
+            if len(t) > n:
+                cands.append((t[:n], _answer_hash(t, n)))
+        candidates.append(cands)
     import models as _m
     try:
         conn = _m.get_conn(db_path) if db_path else _m.get_conn()
         try:
-            hashes = [_answer_hash(t) for t in turns]
+            hashes = list(dict.fromkeys(h for cands in candidates for _t, h in cands))
             rows = conn.execute(
                 f"SELECT answer_hash, unverified FROM ask_answer_checks WHERE restaurant_id=? "
                 f"AND answer_hash IN ({','.join('?' * len(hashes))})", (restaurant_id, *hashes)).fetchall()
@@ -2113,7 +2177,12 @@ def _verified_history(restaurant_id, messages, db_path=None) -> list:
                 clean.add(r["answer_hash"])
         except Exception:
             continue
-    return [t for t in turns if _answer_hash(t) in clean]
+    out = []
+    for cands in candidates:
+        hit = next((text for text, h in cands if h in clean), None)
+        if hit:
+            out.append(hit)
+    return out
 
 
 # ask() lived here: a no-tools, 320-token twin of ask_with_tools that nothing
@@ -2717,6 +2786,11 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # policy's rung — T2, the call site's own Sonnet 5, unless the console
     # overrides it). Every call of the turn goes out on it; with no run
     # behind the turn (the weekly plan), the call site's own model.
+    # max_tokens goes through the route with the model (context re-audit
+    # 10/7/26 #4): Route.apply raises it to THINKING_MIN_MAX_TOKENS on a
+    # thinking tier only when it is in the dict it is given, and a console
+    # override of the ladder to T3/T4 otherwise spent the turn's whole budget
+    # thinking and came back cut off.
     if _route is not None and getattr(_route, "tier", "default") != "default":
         _on_route = _route.apply
         model = _route.model
@@ -2784,8 +2858,12 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         if _prerun_payload is not None and '"error"' in str(_prerun_payload)[:400]:
             _prerun_payload = None           # the model calls it itself, as before
     # The snapshot's ACROSS THE BUSINESS section is the short form of that
-    # result; with the result in the turn it is left out rather than sent twice.
-    snapshot = _without_across(context) if _prerun_payload is not None else context
+    # result. It stays in: the snapshot is a cached system block, and cutting
+    # it on an executive turn made a different block — a cache write on every
+    # switch between a standard and an executive question, for a few hundred
+    # tokens saved (context re-audit 10/7/26 #5). The per-turn _PRERUN_NOTE
+    # says the result supersedes the section.
+    snapshot = context
 
     # The chat's own memory (memory audit 9/29/26, conversations): per chat
     # and per turn, so never inside the snapshot a viewer's other chats
@@ -2832,6 +2910,14 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # Where this turn starts: its messages carry the message cache
     # breakpoints (#16, _cached_messages); history never does.
     turn_start = len(messages) - 1
+    # Round one marks its messages only when the turn will likely go on to a
+    # second round that reads them (context re-audit 10/7/26 #6): a pre-read
+    # or replayed reads in the turn, or an executive question. A one-round
+    # answer — most standard and brief questions — paid the cache-write
+    # premium on the per-turn blocks, the history and the question for a
+    # prefix nothing read. Otherwise the first message breakpoints go on in
+    # round two, where the round after it reads them.
+    _mark_round_one = depth == "executive" or _prerun_payload is not None or bool(_replay)
 
     proposals = []
     truncated = False
@@ -3023,10 +3109,9 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             break
         message = create_with_retry(
             get_client(),
-            **_on_route({"model": model}),
-            max_tokens=max_tokens,
+            **_on_route({"model": model, "max_tokens": max_tokens}),
             system=system_blocks,
-            messages=_cached_messages(messages, turn_start),
+            messages=_cached_messages(messages, turn_start, enabled=bool(_round) or _mark_round_one),
             tools=tool_specs,
             restaurant_id=restaurant.id,
             action=action,
@@ -3191,7 +3276,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             # tool_choice changes: the message cache cannot be read here, so
             # the turn goes as it is, with no breakpoint nothing would read (#16).
             final = create_with_retry(
-                get_client(), **_on_route({"model": model}), max_tokens=max_tokens,
+                get_client(), **_on_route({"model": model, "max_tokens": max_tokens}),
                 system=system_blocks, messages=messages,
                 tools=tool_specs, tool_choice={"type": "none"},
                 restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
@@ -3207,7 +3292,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # Ran out of rounds (or of time) — answer with what it has rather than
     # looping.
     final = create_with_retry(
-        get_client(), **_on_route({"model": model}), max_tokens=max_tokens,
+        get_client(), **_on_route({"model": model, "max_tokens": max_tokens}),
         system=system_blocks, messages=messages,
         tools=tool_specs, tool_choice={"type": "none"},
         restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
@@ -3226,8 +3311,9 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
 # Told to the model on a turn that carries the pre-read, so the static rule
 # ("call read_business_snapshot first") is not followed a second time.
 _PRERUN_NOTE = ("read_business_snapshot has already run for this question: its result is the first tool result "
-                "in this turn, and the snapshot's ACROSS THE BUSINESS section is left out because that result "
-                "carries it in full. Do not call it again; call another tool only for detail it does not carry.")
+                "in this turn and supersedes the snapshot's ACROSS THE BUSINESS section, which is its short form — "
+                "where they differ, use the result. Do not call it again; call another tool only for detail it "
+                "does not carry.")
 # The synthetic call's id ("toolu_" is the API's own prefix; any [A-Za-z0-9_-] id is accepted).
 _PRERUN_TOOL_ID_PREFIX = "toolu_cavnar_pre_"
 
@@ -3301,7 +3387,9 @@ def _prerun_allowed(model) -> bool:
 
 def _without_across(context) -> str:
     """The snapshot without its ACROSS THE BUSINESS section (the short form
-    of read_business_snapshot), for a turn that carries the full result."""
+    of read_business_snapshot). No turn cuts it any more (context re-audit
+    10/7/26 #5: the snapshot block stays byte-identical so it stays cached);
+    candidate for future cleanup after additional verification."""
     import business_intelligence as _bi_sec
     head = _bi_sec.SNAPSHOT_HEADER
     i = (context or "").find(head)

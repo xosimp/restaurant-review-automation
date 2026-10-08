@@ -87,6 +87,15 @@ def fingerprint(*parts) -> str:
 # something, which moves every morning with nothing in the data moving.
 _DAYS_SINCE = re.compile(r",?\s*\(?\b\d+\s+days?\s+(?:ago|old)\)?", re.I)
 
+# Told to a read whose stored text is served again on later days of the
+# week (keyed on the ISO week — Reviews, Food): a key that leaves the ages
+# out is right only if the text carries none either, or "the oldest count
+# is 6 days old" is shown on the Friday a Monday read wrote it (context
+# re-audit 10/7/26 #8). The prompt's own data lines give dates, not ages.
+DATED_NOT_AGED = ("THIS READ IS KEPT AND SHOWN AGAIN ON LATER DAYS OF THIS WEEK: when you say how old something "
+                  "is, give its date (M/D/YY) — never \"N days ago\", \"N days old\", \"yesterday\" or "
+                  "\"this morning\" — so nothing in it goes out of date while it is shown.")
+
 
 def read_fingerprint(prompt, readiness=None, today=None, week=None, extra=()) -> str:
     """The stored read's key from the DATA its prompt carries, not the

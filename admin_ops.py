@@ -7001,7 +7001,7 @@ def _policy_dict(p):
     return {"ladder": list(p.ladder), "escalate_on": list(p.escalate_on), "max_escalations": p.max_escalations,
             "reviewer": p.reviewer, "reviewer_unattended": p.reviewer_unattended, "shadow_rate": p.shadow_rate,
             "batch": bool(p.batch), "caps": {"calls": p.caps.calls, "usd": p.caps.usd, "seconds": p.caps.seconds},
-            "delivery": p.delivery, "context": list(p.context), "note": p.note}
+            "canary": bool(p.canary), "delivery": p.delivery, "context": list(p.context), "note": p.note}
 
 
 def _json_or(raw, default=None):

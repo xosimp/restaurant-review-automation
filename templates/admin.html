@@ -3969,12 +3969,14 @@ function aiField(name, p){
   if(name === 'escalate_on') return v && v.length ? v.map(esc).join(', ') : 'never';
   if(name === 'caps') return esc(aiCaps(v));
   if(name === 'batch') return v ? 'yes' : 'no';
+  if(name === 'canary') return v ? 'canary restaurants first' : 'every restaurant';
   if(name === 'reviewer_unattended') return v ? esc(v) : 'same as reviewer';
   if(name === 'shadow_rate') return aiPct(v);
   return esc(v == null ? '—' : String(v));
 }
 var AI_FIELD_LABEL = {ladder: 'Ladder', escalate_on: 'Escalates on', max_escalations: 'Escalations', reviewer: 'Reviewer',
-  reviewer_unattended: 'Reviewer, unattended', shadow_rate: 'Shadow-scored', batch: 'May batch', caps: 'Caps per run'};
+  reviewer_unattended: 'Reviewer, unattended', shadow_rate: 'Shadow-scored', batch: 'May batch', caps: 'Caps per run',
+  canary: 'Cheap first rung for'};
 var AI_REC_KIND = {start_higher: 'Start higher', start_lower: 'Start lower', quality_low: 'Owners use little of it', reverted: 'Reverted'};
 function aiPolicyTable(w){
   var rows = w['default'] ? Object.keys(AI_FIELD_LABEL).map(function(f){
@@ -4066,6 +4068,7 @@ function aiOverrideOpen(name){
       {id: 'reviewer_unattended', label: 'Reviewer when nobody approves first', type: 'select', value: e.reviewer_unattended || '', options: [['', 'same as reviewer']].concat(revs), hint: 'Default: ' + (df.reviewer_unattended || 'same as reviewer')},
       {id: 'shadow_rate', label: 'Shadow-scored share (0–1)', value: String(e.shadow_rate), hint: 'Default: ' + df.shadow_rate},
       {id: 'batch', label: 'May go through Message Batches', type: 'checkbox', value: !!e.batch},
+      {id: 'canary', label: 'Cheap first rung only for the canary restaurants (AI_CANARY_RESTAURANTS); every other restaurant starts one rung up', type: 'checkbox', value: !!e.canary},
       {id: 'calls', label: 'Cap: model calls per run', value: String(e.caps.calls), hint: 'Default: ' + df.caps.calls},
       {id: 'usd', label: 'Cap: dollars per run', value: String(e.caps.usd), hint: 'Default: ' + df.caps.usd},
       {id: 'seconds', label: 'Cap: seconds per run', value: String(e.caps.seconds), hint: 'Default: ' + df.caps.seconds},
@@ -4075,7 +4078,7 @@ function aiOverrideOpen(name){
       return post('/admin/api/ai-routes/' + encodeURIComponent(name) + '/override', {reason: v.reason, override: {
         ladder: ladder, escalate_on: v.escalate_on || [], max_escalations: v.max_escalations, reviewer: v.reviewer,
         reviewer_unattended: v.reviewer_unattended, shadow_rate: v.shadow_rate, batch: !!v.batch,
-        caps: {calls: v.calls, usd: v.usd, seconds: v.seconds}}});
+        canary: !!v.canary, caps: {calls: v.calls, usd: v.usd, seconds: v.seconds}}});
     }});
 }
 function aiRevert(name){

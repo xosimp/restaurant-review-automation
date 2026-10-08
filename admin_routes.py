@@ -3844,7 +3844,7 @@ def admin_api_ai_routes(current_user):
 def admin_api_ai_route_override(workflow, current_user):
     """Set one workflow's override: {override: {ladder, escalate_on,
     max_escalations, reviewer, reviewer_unattended, shadow_rate, batch,
-    caps}, reason?}. Fields equal to the default are dropped; none left
+    caps, canary}, reason?}. Fields equal to the default are dropped; none left
     returns the workflow to its defaults. 400 with the registry's own
     sentence on a value it refuses."""
     import admin_ops

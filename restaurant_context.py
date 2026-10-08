@@ -267,7 +267,22 @@ def viewer_scope(viewer, section=None) -> str:
     if not isinstance(user, dict):
         return "principals"
     ident = {k: user.get(k) for k in ("role", "is_admin", "permissions", "grants", "perms", "module_permissions")}
-    return f"login:{user.get('id')}:{_hash(ident)[:10]}"
+    # A view-as session is the owner's login dict plus acting_admin_id: keyed
+    # on the owner's id alone, support and the owner shared one cached memory
+    # section — support read the owner's author-only lines and the owner was
+    # then served support's copy (context re-audit 10/7/26 #1). The login the
+    # history belongs to (permissions.acting_login_id — the admin behind a
+    # view-as) leads the key, and the owner it views as stays in the hash.
+    try:
+        from permissions import acting_login_id
+        acting = acting_login_id(user)
+    except Exception:
+        acting = -1 if (user.get("acting_admin_id") is not None or user.get("acting_admin_role")) else user.get("id")
+    ident["as"] = user.get("id")
+    ident["acting"] = acting
+    ident["view_as"] = bool(user.get("acting_admin_id") is not None or user.get("acting_admin_role")
+                            or str(user.get("device_type") or "") == "admin-view-as")
+    return f"login:{acting}:{_hash(ident)[:10]}"
 
 
 def _memory_viewer(viewer):
@@ -318,8 +333,10 @@ def invalidate(restaurant_id=None, sections=None):
 def forget(restaurant_id, sections=None, db_path=None):
     """Drop a restaurant's cached sections — L1 and the L2 rows — so the
     next read rebuilds them. For a caller whose own invalidation must reach
-    a section its markers cannot see move (Ask's invalidate_context: a
-    setting saved, an upload, a direct action Ask ran). Never raises."""
+    a section its markers cannot see move (Ask's invalidate_context: an
+    upload, a direct action Ask ran). A change the markers do see (a
+    restaurants-row update) needs only invalidate() — the L2 rows of every
+    other viewer stay good (context re-audit 10/7/26 #7). Never raises."""
     invalidate(restaurant_id, sections)
     try:
         conn = _conn(db_path)
@@ -454,6 +471,20 @@ def _params_key(params) -> str:
     return (";p" + _hash(params)[:10]) if params else ""
 
 
+# Params that move with the day rather than name a different reading: they
+# stay in the section's version (version_memory hashes every param) but out
+# of its cache scope, so the DSR narrative's memory - read with that night's
+# subjects and morning-after clock - replaces its one row each night instead
+# of adding a scope a night that nothing reads again (context re-audit
+# 10/7/26 #10). Only for a section whose version reads req.params.
+VERSIONED_PARAMS = {"memory": ("now", "subjects")}
+
+
+def _scope_params(name, params) -> dict:
+    drop = VERSIONED_PARAMS.get(name) or ()
+    return {k: v for k, v in (params or {}).items() if k not in drop}
+
+
 def section(restaurant_id, name, viewer=None, params=None, db_path=None) -> Built:
     """One section for one viewer: from L1, else L2, else built — each only
     while its version stands. Never raises: a builder that fails gives a
@@ -462,7 +493,7 @@ def section(restaurant_id, name, viewer=None, params=None, db_path=None) -> Buil
     if sec is None:
         raise KeyError(f"unknown context section {name!r}")
     params = dict(params or {})
-    scope = viewer_scope(viewer, name) + _params_key(params)
+    scope = viewer_scope(viewer, name) + _params_key(_scope_params(name, params))
     if sec.salaries:
         scope += ";" + viewer_scope(None, "labor_trend")
     req = SectionRequest(restaurant_id=restaurant_id, section=name, viewer=viewer, scope=scope, params=params,
@@ -675,7 +706,11 @@ def version_memory(req):
             _marker(req, "SELECT COUNT(*), MAX(id) FROM ai_claims WHERE restaurant_id=?", (rid,)),
             _marker(req, "SELECT COUNT(*), MAX(last_seen), MAX(resolved_at) FROM bi_links WHERE restaurant_id=?",
                     (rid,)),
-            req.today().isoformat(), req.params] + _surface_markers(req)
+            req.today().isoformat(), req.params,
+            # The few row fields a memory line can carry (its dates are the
+            # restaurant's clock, its labels the owner's name): a row change
+            # drops the section from L1 only (context re-audit 10/7/26 #7).
+            _restaurant_fields(req, ("name", "owner_name", "timezone"))] + _surface_markers(req)
 
 
 # The memory sections a caller-named surface may read beyond the owner
@@ -920,16 +955,19 @@ def build_kpis(req):
 # name from the Restaurant dataclass (a cache key — it judges nothing, so
 # it names no target column: tests/test_targets_published_figures.py).
 def _findings_fields():
+    """Every restaurants field: the brief reads the row through the modules'
+    own analyses (hours, targets, settings), and a row change drops the
+    section from L1 only (ask_cavnar._on_restaurant_row_change, context
+    re-audit 10/7/26 #7) — so the version must move with any field it could
+    read, or a stale L2 row would be served."""
     import dataclasses
     import models
-    names = [f.name for f in dataclasses.fields(models.Restaurant)
-             if f.name.startswith("module_") or "target" in f.name]
-    return tuple(names) + ("inventory_updated_at", "competitor_updated_at")
+    return tuple(f.name for f in dataclasses.fields(models.Restaurant))
 
 
 def version_findings(req):
-    """The sources' markers, the links and answers, the restaurants row's
-    targets and modules, and the day. The brief reads a dozen more tables
+    """The sources' markers, the links and answers, the restaurants row, and
+    the day. The brief reads a dozen more tables
     than these markers cover (reviews, diagnoses, stock, campaigns...), so a
     caller that must never read it older than its own cache asks for
     `fresh_seconds` (params): the version then also moves on that clock —

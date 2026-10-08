@@ -2100,8 +2100,9 @@ def _trim_labor(a):
 
 # ── the text the assistant reads ───────────────────────────────────────────
 
-# The section's first line — what Ask strips when a turn already carries
-# read_business_snapshot's full result (ask_cavnar._without_across).
+# The section's first line. An Ask turn that carries read_business_snapshot's
+# full result keeps the section (its snapshot block stays cached) and is told
+# the result supersedes it (ask_cavnar._PRERUN_NOTE, context re-audit 10/7/26 #5).
 SNAPSHOT_HEADER = "ACROSS THE BUSINESS (computed, not written by a model)"
 
 

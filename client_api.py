@@ -2131,6 +2131,7 @@ def _do_review_insight(rid, viewer=None):
         # stale sources reach the validation layer (DH1-2: the last fetch
         # was never checked here).
         import data_health as _dh_ri
+        import insight_store as _ist_dates_ri
         _ready_ri = _dh_ri.readiness(rid, "reviews", restaurant=restaurant)
         rstats = get_review_stats(rid)
         # sentiment=None: this line is labelled "Top topics" in the prompt,
@@ -2489,6 +2490,8 @@ def _do_review_insight(rid, viewer=None):
             f"{diag_block}\n\n"
             + _memory_ri
             + (f"{_ready_ri['prompt_block']}\n\n" if _ready_ri.get("prompt_block") else "")
+            # Stored for the ISO week (context re-audit 10/7/26 #8).
+            + _ist_dates_ri.DATED_NOT_AGED + "\n\n"
             + "EVIDENCE RULES - these bound what you may claim:\n"
             "- State no figure that does not appear above. Not a dollar amount, not a percentage, "
             "not a count, not a rating.\n"

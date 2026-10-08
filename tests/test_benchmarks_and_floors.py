@@ -273,7 +273,9 @@ def test_an_old_stock_count_is_said_before_any_order_advice():
     a, _ = _one_item_analysis("2")
     a["count_freshness"] = {"last_count_at": "2026-08-01", "age_days": 54, "stale": True, "fresh_days": 7}
     waste, window = inventory.food_prompt_data_lines(a)
-    assert "54 days ago" in window and "THE STOCK COUNT IS OLD" in window and "8/1/26" in window
+    # The count's date, never its age (context re-audit 10/7/26 #8: the read
+    # is stored for the week, so "54 days ago" outlived the day it was true).
+    assert "days ago" not in window and "THE STOCK COUNT IS OLD" in window and "8/1/26" in window
     assert "starting target" in waste and "industry target" not in waste.split("never call it")[0]
 
 
