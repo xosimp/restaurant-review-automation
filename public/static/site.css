@@ -443,8 +443,13 @@ main{position:relative;z-index:1}
 /* the veil: fixed from the reading line down, in the page's own colour, over
    the lit rail and under the dashed track — the lit line ends at the head
    whatever the scroll speed, because the browser places both */
-.thread-veil{position:fixed;left:0;top:0;width:8px;height:100vh;background:var(--bg);pointer-events:none;z-index:0}
-@media (prefers-reduced-motion:reduce){.thread-veil,.thread-head{display:none}}
+/* The veil rides in the page, sticky on the reading line, not fixed: iOS 26
+   Safari ends fixed layers at its floating toolbar while the page draws on
+   behind it, so a fixed veil let the lit rail show under the toolbar after
+   a scroll back up (10/8/26). The track spans the page; the veil sticks. */
+.thread-veil-track{position:absolute;left:0;top:0;width:8px;pointer-events:none;z-index:0}
+.thread-veil{position:-webkit-sticky;position:sticky;top:60vh;width:8px;height:100vh;background:var(--bg)}
+@media (prefers-reduced-motion:reduce){.thread-veil-track,.thread-head{display:none}}
 /* The Schedule Generator builds as you scroll: on a desktop tall enough to
    hold it, the section pins and the scroll scrubs the build (and unbuilds it
    on the way back); on a phone it scrubs as the board crosses the screen. */

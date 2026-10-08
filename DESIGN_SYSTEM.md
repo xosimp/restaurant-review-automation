@@ -1750,8 +1750,9 @@ connections, then the demo form. Rules:
   hero's scroll hint and runs down a rail in the gutter (10px from the edge on
   a phone), lit down to a reading line 60% down the screen with a glowing
   head — the lit rail is drawn whole in the page, the head is fixed on the
-  reading line and a fixed veil in the page colour hides the lit rail below
-  it, so line and head are both placed by the browser and a fast scroll
+  reading line and a veil in the page colour, sticky on that line (never
+  fixed: iOS 26 Safari ends fixed layers at its floating toolbar), hides the
+  lit rail below it, so line and head are both placed by the browser and a fast scroll
   can't separate them;
   at each core it branches in (`data-thread="desktop|phone"`: `left` straight
   in, `top` down through the section's empty top padding, `none` no branch)

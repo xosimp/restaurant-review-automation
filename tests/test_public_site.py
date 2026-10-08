@@ -167,7 +167,9 @@ def test_the_scroll_story_runs_natively_and_rests_for_reduced_motion():
     assert ".thread-head{position:fixed;" in css and "head.className = 'thread-head'" in js
     # the lit rail is drawn whole in the page and a fixed veil hides it below
     # the head, so a fast scroll can't outrun it; branches start at their bend
-    assert ".thread-veil{position:fixed;" in css and "mk('path', { d: rail, 'class': 'lit' }, litSvg)" in js
+    assert ".thread-veil{position:-webkit-sticky;position:sticky;" in css and "mk('path', { d: rail, 'class': 'lit' }, litSvg)" in js
+    # never fixed: iOS 26 ends fixed layers at its floating toolbar (10/8/26)
+    assert ".thread-veil{position:fixed" not in css and "vtrack.style.height = H + 'px'" in js
     assert "return { y: d ? y - 16 : y" in js
     # a core within a bend's reach of the rail gets the bend alone, never a
     # straight run that doubles back (the phone's demo core, 10/8/26)

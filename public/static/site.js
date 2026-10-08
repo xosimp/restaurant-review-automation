@@ -377,8 +377,8 @@
   //    Nothing on the rail is redrawn per frame, so a fast scroll can't
   //    outrun it: the lit rail is drawn whole in the page (it scrolls
   //    natively), the head is fixed on the reading line 60% down the screen,
-  //    and a fixed veil in the page's own colour hides the lit rail below the
-  //    head, with the dashed track drawn over it. Line and head are both
+  //    and a veil in the page's own colour, sticky on that line, hides the
+  //    lit rail below the head, with the dashed track drawn over it. Line and head are both
   //    placed by the browser, so they always meet. A branch draws in as the
   //    head reaches its bend, and its core answers with one pulse. Branches
   //    come in from the side or down through the section's empty top
@@ -392,7 +392,10 @@
     // paint order: the lit rail, the veil over it, then the track, the
     // lead-in and the branches, then the head
     var litSvg = layer('thread-lit');
-    var veil = document.createElement('div'); veil.className = 'thread-veil'; veil.setAttribute('aria-hidden', 'true'); document.body.appendChild(veil);
+    // the veil sticks on the reading line inside a track as tall as the page
+    // (sticky, not fixed: see .thread-veil in site.css)
+    var vtrack = document.createElement('div'); vtrack.className = 'thread-veil-track'; vtrack.setAttribute('aria-hidden', 'true');
+    var veil = document.createElement('div'); veil.className = 'thread-veil'; vtrack.appendChild(veil); document.body.appendChild(vtrack);
     var svg = layer('thread');
     var gT = mk('g', {}, svg), gL = mk('g', {}, svg), gB = mk('g', {}, svg);
     var head = document.createElement('div'); head.className = 'thread-head'; head.setAttribute('aria-hidden', 'true'); document.body.appendChild(head);
@@ -450,7 +453,8 @@
       lead = { el: le, L: LL, y1: sy, y2: y0, f: -1 };
       var rl = (window.innerHeight * 0.6).toFixed(1);
       head.style.transform = 'translate3d(' + rx.toFixed(1) + 'px,' + rl + 'px,0)';
-      veil.style.transform = 'translate3d(' + (rx - 4).toFixed(1) + 'px,' + rl + 'px,0)';
+      vtrack.style.left = (rx - 4).toFixed(1) + 'px'; vtrack.style.height = H + 'px';
+      veil.style.top = rl + 'px'; veil.style.height = Math.ceil(window.innerHeight * 0.75) + 'px';
       var was = {};
       brs.forEach(function (b) { was[b.name] = b.on; });
       brs = taps.map(function (t) {
