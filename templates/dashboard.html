@@ -2080,22 +2080,43 @@ var AI_POLL_STEPS = [1500, 3000, 5000];
    with its age (refreshing: shown, then replaced). Either carries
    refresh_job, polled on AI_POLL_STEPS until the new read lands.
    onAnswer(d, interim): interim is true for the older read shown while the
-   new one is written - not to be cached as the answer. */
+   new one is written - not to be cached as the answer.
+   onFail(d, kept): the read could not be had; kept is true when an older
+   read is already on screen and stays there (never blanked).
+   Re-audit 10/8/26 #6: a poll lost in transit (a deploy, a weak signal) is
+   waited out like aiJobAwait's - one dropped poll used to blank the older
+   read on screen - and a read still being written after the three minutes
+   is left up as the interim it is, never handed over (and cached) as the
+   final answer. */
+var INSIGHT_SWR_LIMIT_MS = 180000, INSIGHT_SWR_MISSES = 5;
 function insightSwr(url, onAnswer, onFail){
-  var polls = 0, started = Date.now();
+  var polls = 0, misses = 0, shown = false, started = Date.now();
+  function fail(d){ if (onFail) onFail(d, shown); }
+  function next(job){
+    setTimeout(function(){ ask(job); }, AI_POLL_STEPS[Math.min(polls, AI_POLL_STEPS.length - 1)]);
+    polls++;
+  }
   function ask(job){
     var u = url + (url.indexOf('?') < 0 ? '?' : '&') + 'async=1' + (job ? '&refresh_job=' + encodeURIComponent(job) : '');
     fetch(u, {credentials: 'same-origin'}).then(apiJson).then(function(d){
+      misses = 0;
       var waiting = d && d.refresh_job && (d.pending || d.refreshing);
-      if (waiting && (Date.now() - started) < 180000) {
-        if (!d.pending) onAnswer(d, true);
-        setTimeout(function(){ ask(d.refresh_job); }, AI_POLL_STEPS[Math.min(polls, AI_POLL_STEPS.length - 1)]);
-        polls++;
+      if (waiting) {
+        if (!d.pending) { onAnswer(d, true); shown = true; }
+        if ((Date.now() - started) < INSIGHT_SWR_LIMIT_MS) { next(d.refresh_job); return; }
+        /* Still being written: what is on screen stays, as the interim it is. */
+        fail(shown ? d : {ok: false, error: 'Cavnar AI is still writing this read — check back in a minute.'});
         return;
       }
-      if (d && d.pending) { if (onFail) onFail(d); return; }
       onAnswer(d, false);
-    }).catch(function(e){ if (onFail) onFail(e); });
+    }).catch(function(e){
+      if (job && misses < INSIGHT_SWR_MISSES && (Date.now() - started) < INSIGHT_SWR_LIMIT_MS) {
+        misses++;
+        next(job);
+        return;
+      }
+      fail(e);
+    });
   }
   ask(null);
 }
@@ -18179,9 +18200,11 @@ function loadReviewInsight(){
     renderSeverityStrip(d);
     renderReviewDiagnosis(d);
     renderInsightRecs(el,d.recs,'reviews');
-  }, function(){
+  }, function(f, kept){
+    // An older read already on screen stays there (re-audit 10/8/26 #6).
+    if(kept)return;
     el.classList.remove('insight-loading');
-    el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
+    el.innerHTML=emptyStateHtml('Analysis unavailable',_escHtml((f&&f.error)||'Check back shortly — the AI retries automatically'),true);
   });
 }
 /* What each line of the read is (J5) and how steady the rating trend under
@@ -21212,8 +21235,10 @@ function loadMktInsight(){
     applyFigureCaveat(el,d);
     mktStaleCaveat(el,d);
     mktLoaded=true;
-  }, function(){
+  }, function(f, kept){
     window._mktInsightPolling=false;
+    // An older brief already on screen stays there (re-audit 10/8/26 #6).
+    if(kept)return;
     el.classList.remove('insight-loading');
     el.textContent='Marketing brief unavailable — check back shortly.';
     mktLoaded=false;
@@ -21472,7 +21497,9 @@ function loadLaborInsight(){
       typewriterEffect(elLaborInsight,ls.html);
       laborApplyCaveats(elLaborInsight,ls.figs,d,ls.note);
     }
-  }, function(){
+  }, function(f, kept){
+    // An older read already on screen stays there (re-audit 10/8/26 #6).
+    if(kept)return;
     var elLaborErr=document.getElementById('labor-insight');
     if(elLaborErr){elLaborErr.classList.remove('insight-loading');elLaborErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });
