@@ -46,6 +46,24 @@ echo 'http://192.168.1.211:5050' > ios/CavnarAI/.dev-url   # same wifi
 - `CavnarWidgets` — the Home and Lock Screen widgets (waiting · last night, labor and food cost, the staff "Next shift"), the Live Activities (the queued-send countdown, "Building next week", "Tonight's service") and, on iOS 18, the Control Center buttons. Reads only what the app writes into the `group.ai.cavnar.CavnarAI` app group; never signs in.
 - `CavnarShare` — "Send to Cavnar AI" from Mail, Files or Photos: a PDF or photo of a supplier invoice goes to Food Cost → Invoices. It reads the owner session from the `$(AppIdentifierPrefix)ai.cavnar.CavnarAI.shared` keychain group, which the app writes (`Keychain.mirrorSessionForExtensions`); the widgets are not in that group. Automatic signing adds the Keychain Sharing capability to both App IDs on the next device build.
 
+## iPad
+
+The app is universal (`TARGETED_DEVICE_FAMILY "1,2"` on every target): the
+iPad runs in every orientation, in Split View and Slide Over
+(`UIRequiresFullScreen` false); the iPhone stays portrait-only. On a regular
+horizontal size class `RootView` (and `StaffPortalView`) swaps the tab bar
+for a `NavigationSplitView` sidebar (`Core/AppSidebar.swift`) over the same
+state, so deep links and pushes land the same way; a compact width — every
+iPhone, and a narrowed iPad — keeps the tab bar exactly. Readable widths,
+two-up layouts, form sheets, hover and the keyboard shortcuts (⌘1–⌘4, ⌘K,
+⌘N, ⌘R) live in `DesignSystem/CavnarAdaptiveLayout.swift`; the rules are in
+`DESIGN_SYSTEM.md` → iPad. Build for both from the generic destination:
+
+```bash
+xcodebuild -project CavnarAI.xcodeproj -scheme CavnarAI \
+  -destination 'generic/platform=iOS Simulator' build
+```
+
 The app refreshes the widgets in the background (`BackgroundRefresh.swift`: a `BGAppRefreshTask`, `ai.cavnar.CavnarAI.refresh`, and the server's silent pushes) — `fetch` and `remote-notification` are both in `UIBackgroundModes`.
 
 ## Tests

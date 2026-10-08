@@ -463,6 +463,7 @@ struct LaborView: View {
         }
         .sheet(item: $editingShift) { mode in
             ShiftEditSheet(mode: mode, viewModel: viewModel, roster: setupViewModel.activeRoster)
+                .cavnarFormSheet()
         }
         .sheet(isPresented: $showingNotesSheet) { ScheduleNotesSheet(settings: buildSettings) }
         .sheet(isPresented: $viewModel.showingDraftSummary) {
@@ -1507,7 +1508,10 @@ struct LaborView: View {
                                     notWritten: (grouped[day] ?? []).isEmpty && unwritten[day] != nil)
                 },
                 rows: recognized,
-                selectedDay: $pagerDay
+                selectedDay: $pagerDay,
+                // The iPad week grid (#99): a tapped shift opens the same
+                // editor as "Change the times"; a replaced copy only reads.
+                onEditShift: viewModel.weekReadOnlyReason == nil ? { editingShift = .edit($0) } : nil
             ) { page in
                 scheduleDayGroup(day: page.day, rows: grouped[page.day] ?? [], emptyDate: unwritten[page.day])
             }

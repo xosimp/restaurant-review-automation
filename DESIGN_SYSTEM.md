@@ -268,6 +268,30 @@ its order is §11b, and a second column would reorder it. A new wide rule
 goes in the "Wide screens" block at the end of `dashboard.html`, never on
 Home.
 
+### iPad (iOS, parity audit #99, 10/7/26)
+
+The app is universal: the iPad turns every way and runs in Split View and
+Slide Over; the iPhone stays portrait-only. **The horizontal size class is
+the one switch** (`DesignSystem/CavnarAdaptiveLayout.swift`,
+`CavnarLayout`): regular is wide, compact is the phone — an iPad narrowed in
+Split View is a phone. Dark only, the same tokens and components.
+
+| Rule | Regular width (iPad) | Compact (iPhone, narrow iPad) |
+|---|---|---|
+| Shell | `NavigationSplitView`: `AppSidebar` (Home, Modules, MODULES — each switched-on module —, Ask, Account; a LOCATION row for a multi-location owner) on `cavnarChrome`, ember glyphs, Apfel 15/600 labels, ember kickers; the selected screen in the detail column with its own stack. Staff: Today · Tasks · Requests · Me in the sidebar | The tab bar, unchanged |
+| One state | The sidebar sets `selectedTab` / `modulesPath`; the router, pushes, links and the location switcher land the same way in both shapes. A module row opens on a fresh Modules stack (Back is the grid); "Modules" is always the grid | — |
+| Reading column | `.cavnarReadableWidth()`: centred at 720pt — Home, a review, the nightly report, Account and every `accountSheetChrome` screen, Ask (and its composer), the staff tabs | No-op |
+| Two up | `CavnarTwoUp` for equal pairs (Food Cost's waste ledger beside tied-up capital, only when both have rows); Intel's competitors in two columns; module tiles at `adaptive(minimum: 200)` | Stacked; tiles at 150 |
+| Labor week | The pager's segments gain **Week** (the default): `ScheduleWeekGrid`, person × day in a `Grid` that scrolls sideways — a 150pt name column (hours, past 40h in red), 112pt day columns (weekday kicker, M/D, count or ⚠), each shift an ember-tinted chip (amber when flagged); a tap opens `ShiftEditSheet` (History: opens the day) | By day / By person |
+| Sheets | `.cavnarFormSheet()` — `presentationSizing(.form)` on iOS 18, iPad idiom only | Detents unchanged |
+| Pointer | `.cavnarHoverCard()` (lift) on primary tappable cards — module tiles, week-grid chips; `.hoverEffect(.highlight)` on list rows (reviews). Never on a card that is only read | — |
+| Keyboard | ⌘1–⌘4 the tabs (staff: its four), ⌘K Find or ask, ⌘N a new Ask, ⌘R refreshes the screen on top through its own pull-to-refresh (`CavnarEmberRefreshable`) — invisible `CavnarShortcutButton`s, listed in the ⌘ overlay | Same, with a hardware keyboard |
+| Widgets | The waiting widget adds `systemLarge`: the medium's halves stacked, then last night's labor and food cost (est.) against target, "—" when unmeasured | — |
+
+Kept phone-shaped on purpose: the sign-in, lock and PIN screens (centred
+as they are), the camera covers, and module screens other than those above
+(their sections are long, ordered reads).
+
 ---
 
 ## 4. Cards & rows
@@ -1522,7 +1546,7 @@ drag-and-drop grid and bulk edits.
 
 | Piece | iOS | Web twin |
 |---|---|---|
-| Week | `ScheduleWeekPager`: a `CavnarSegmentedControl` (By day / By person), a strip of 54×62 day chips (weekday kicker, M/D in the number face, the shift count or an amber ⚠ for a day not written; the picked one ember-tinted with an ember edge), then that day's page; a sideways swipe or the VoiceOver actions move a day. By person: rows by hours (past 40h in red), a tap opens `PersonWeekSheet` (hours, days on, shifts by day; a shift opens its day). Labor's editor and History share it | The week grid and list |
+| Week | `ScheduleWeekPager`: a `CavnarSegmentedControl` (By day / By person), a strip of 54×62 day chips (weekday kicker, M/D in the number face, the shift count or an amber ⚠ for a day not written; the picked one ember-tinted with an ember edge), then that day's page; a sideways swipe or the VoiceOver actions move a day. By person: rows by hours (past 40h in red), a tap opens `PersonWeekSheet` (hours, days on, shifts by day; a shift opens its day). Labor's editor and History share it. On an iPad's regular width a third segment, Week, is the default: the person × day `ScheduleWeekGrid` (see §3 iPad) | The week grid and list |
 | Scorecard | `ScheduleSummarySheet` + `ScheduleTileCard`: kicker "SCHEDULE COMPLETE", Clash "The week is built", six tiles in two columns (quality, labor %, coverage, overtime, warnings — a tap opens them — and "Under your recent labor", tagged "Projection · not yet earned", never "savings"); "—" with why when unmeasured. View the schedule (primary), Optimize again, Publish. Opens when a draft lands; History shows the same tiles | `ssRenderSummary` |
 | Generate card rows | `GenerateBuildRows`: the labor target with −/+ round steppers (saves 800ms after the last step), "How you like the week built" (opens `ScheduleNotesSheet`: the notes, each sentence as Cavnar AI reads it, Make it a rule → `NoteRuleForm`), the draft day in the switch's sentence with `AccountStateSwitch`, auto-publish (turning it on asks first) | The Studio's Setup and AI tabs |
 | Generation copy | `ScheduleProgressSteps` on the job's own clock stretched to `typical`, the days drafted, and `GenerationCopy.etaLine` ("usually about N min", "taking longer than usual … stops by h:mm", "you can leave"); a 409 is `GenerationBusyCard` with Watch it | `renderScheduleEta` |

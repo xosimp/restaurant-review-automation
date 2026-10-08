@@ -68,6 +68,8 @@ struct DailyReportView: View {
             .padding(.horizontal, 20)
             .padding(.top, 8)
             .padding(.bottom, 80)
+            // The night reads as one column on an iPad (#99).
+            .cavnarReadableWidth()
         }
         .cavnarEmberRefreshable { await viewModel.load() }
         .cavnarModuleBackground()

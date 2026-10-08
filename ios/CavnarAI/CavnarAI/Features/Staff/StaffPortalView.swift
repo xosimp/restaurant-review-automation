@@ -17,10 +17,27 @@ struct StaffPortalView: View {
     /// I1's hand-off (Push/StaffDeepLink.swift): a staff push tapped while
     /// the app was anywhere waits there until the portal takes it.
     @State private var deepLinks = StaffDeepLinkCenter.shared
+    /// An iPad on the host stand (parity audit #99): a regular width puts
+    /// the four tabs in a sidebar; a compact one keeps the tab bar.
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
+        Group {
+            if CavnarLayout.usesSidebar(sizeClass) {
+                splitShell
+            } else {
+                tabShell
+            }
+        }
+        .background { keyboardShortcuts }
+        .modifier(StaffPortalLifecycle(store: store, staff: staff, deepLinks: deepLinks,
+                                       consumeDeepLink: consumeDeepLink))
+    }
+
+    /// The phone's bar: Today · Tasks · Requests · Me.
+    private var tabShell: some View {
         @Bindable var store = store
-        TabView(selection: $store.selectedTab) {
+        return TabView(selection: $store.selectedTab) {
             StaffTodayView(store: store)
                 .tabItem { Label(StaffTab.today.portalTitle, systemImage: StaffTab.today.portalSymbol) }
                 .tag(StaffTab.today)
@@ -40,11 +57,85 @@ struct StaffPortalView: View {
                 .tabItem { Label(StaffTab.me.portalTitle, systemImage: StaffTab.me.portalSymbol) }
                 .tag(StaffTab.me)
         }
-        .sensoryFeedback(.selection, trigger: store.selectedTab) { _, _ in AppPreferences.hapticsEnabledSnapshot }
         // The owner app's chrome (RootView.mainTabs): true black under the
         // tab bar, the warm near-black page above it.
         .toolbarBackground(Color.cavnarChrome, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+    }
+
+    /// The same four tabs in a sidebar, the selected one beside it. The
+    /// store is the one state, so a push or the inbox lands the same way.
+    private var splitShell: some View {
+        NavigationSplitView {
+            List(selection: Binding<StaffTab?>(get: { store.selectedTab },
+                                               set: { if let tab = $0 { store.selectedTab = tab } })) {
+                ForEach(StaffTab.bar, id: \.self) { tab in
+                    Label {
+                        Text(tab.portalTitle)
+                            .font(.cavnarBody(15, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                    } icon: {
+                        Image(systemName: tab.portalSymbol)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .badge(tab == .requests ? store.requestsBadge : 0)
+                    .tag(tab)
+                }
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(Color.cavnarChrome.ignoresSafeArea())
+            .navigationTitle("Cavnar AI")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Cavnar AI") }
+            .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+        } detail: {
+            // Each tab draws its own title (StaffScreenTitle); the column's
+            // bar only carries the sidebar button, on the page colour.
+            Group {
+                switch store.selectedTab {
+                case .tasks: StaffTasksTab(store: store)
+                case .requests: StaffRequestsTab(store: store)
+                case .me: StaffMeView(store: store)
+                default: StaffTodayView(store: store)
+                }
+            }
+            .cavnarReadableWidth()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.cavnarPaper.ignoresSafeArea())
+            .toolbarBackground(Color.cavnarPaper, for: .navigationBar)
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    /// ⌘1…⌘4 for the four tabs, ⌘R for the one on screen.
+    private var keyboardShortcuts: some View {
+        ZStack {
+            ForEach(Array(StaffTab.bar.enumerated()), id: \.offset) { index, tab in
+                CavnarShortcutButton(title: tab.portalTitle,
+                                     key: KeyEquivalent(Character(String(index + 1)))) {
+                    store.selectedTab = tab
+                }
+            }
+            CavnarShortcutButton(title: "Refresh", key: "r") {
+                NotificationCenter.default.post(name: CavnarKeyCommand.refresh, object: nil)
+            }
+        }
+    }
+}
+
+/// The portal's loads, deep links, foreground rule and sheets — one chain
+/// for both shapes (the tab bar and the iPad sidebar).
+private struct StaffPortalLifecycle: ViewModifier {
+    @Bindable var store: StaffPortalStore
+    let staff: StaffSessionStore
+    let deepLinks: StaffDeepLinkCenter
+    let consumeDeepLink: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+        .sensoryFeedback(.selection, trigger: store.selectedTab) { _, _ in AppPreferences.hapticsEnabledSnapshot }
         .task {
             store.attach(staff)
             consumeDeepLink()
@@ -73,16 +164,20 @@ struct StaffPortalView: View {
             Task { await store.reloadBadges() }
         }) {
             StaffInboxView(store: store)
+                .cavnarFormSheet()
         }
         .sheet(isPresented: $store.showingMessages, onDismiss: {
             store.messageShiftDate = nil
             Task { await store.reloadBadges() }
         }) {
             StaffMessageThreadView(store: store, shiftDate: store.messageShiftDate)
+                .cavnarFormSheet()
         }
     }
+}
 
-    private func consumeDeepLink() {
+extension StaffPortalView {
+    fileprivate func consumeDeepLink() {
         guard let link = deepLinks.consume() else { return }
         store.apply(link)
     }

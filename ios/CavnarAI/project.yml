@@ -102,8 +102,17 @@ targets:
           - UIApplicationShortcutItemType: ai.cavnar.quick.scan-invoice
             UIApplicationShortcutItemTitle: Scan an invoice
             UIApplicationShortcutItemIconSymbolName: doc.text.viewfinder
+        # The iPhone stays portrait-only; the iPad turns every way and runs
+        # in Split View and Slide Over (parity audit #99) — RootView's
+        # sidebar on a regular width, the phone's tab bar on a compact one.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIRequiresFullScreen: false
         ITSAppUsesNonExemptEncryption: false
         # Kept deliberately. It exists for generate.sh --lan, which points a
         # Debug build at a raw LAN IP over http so the app can be tested from
@@ -123,6 +132,14 @@ targets:
             CFBundleURLSchemes:
               - cavnarai
         CFBundleIcons:
+          CFBundleAlternateIcons:
+            AppIconLight:
+              CFBundleIconFiles:
+                - AppIconLight
+              UIPrerenderedIcon: false
+        # The iPad reads its own key; without it the light icon could not be
+        # chosen there (Account > More).
+        CFBundleIcons~ipad:
           CFBundleAlternateIcons:
             AppIconLight:
               CFBundleIconFiles:
@@ -182,7 +199,9 @@ targets:
         CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
         CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
         SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1"
+        # iPhone and iPad (parity audit #99); the extensions match, so the
+        # widgets, the notification view and the share sheet run on both.
+        TARGETED_DEVICE_FAMILY: "1,2"
         APS_ENVIRONMENT: development
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
@@ -235,7 +254,7 @@ targets:
         CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
         CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
         SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -291,7 +310,7 @@ targets:
         CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
         CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
         SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_STRICT_CONCURRENCY: complete
@@ -355,7 +374,7 @@ targets:
         CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
         CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
         SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_STRICT_CONCURRENCY: complete

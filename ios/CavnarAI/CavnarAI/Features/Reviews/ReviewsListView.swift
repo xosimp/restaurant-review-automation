@@ -370,6 +370,8 @@ struct ReviewsListView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    // The pointer highlights the row on an iPad (#99).
+                    .hoverEffect(.highlight)
                     // Swipe to approve a reply that may be published unread
                     // (friction audit #21). A flagged, urgent or old draft
                     // has no swipe: it keeps the read-first rule. Not a FULL

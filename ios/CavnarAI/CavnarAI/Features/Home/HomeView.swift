@@ -417,6 +417,9 @@ struct HomeView: View {
                             .frame(maxWidth: .infinity)
                         }
                     }
+                    // One readable column on an iPad, centred (#99) — §11b's
+                    // order holds at every width.
+                    .cavnarReadableWidth()
                 }
                 // A pull rebuilds the brief (fresh=1) instead of the
                 // server's 60-second copy — the web's hbLoad(true) (#90).

@@ -51,8 +51,8 @@ struct CavnarWaitingWidget: Widget {
         }
         .configurationDisplayName("Cavnar AI")
         .description("What's waiting on you, and last night's sales.")
-        .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular, .accessoryInline,
-                            .accessoryCircular])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryRectangular,
+                            .accessoryInline, .accessoryCircular])
     }
 }
 
@@ -96,6 +96,8 @@ struct WaitingWidgetView: View {
             rectangular
         case .systemMedium:
             medium
+        case .systemLarge:
+            large
         default:
             small
         }
@@ -191,6 +193,101 @@ struct WaitingWidgetView: View {
         } else {
             small
         }
+    }
+
+    // MARK: Home Screen, large (an iPad's Home Screen, parity audit #99)
+
+    /// The medium widget's two halves stacked, with last night's labor and
+    /// food cost against their targets under them — "—" for a figure the
+    /// night didn't measure, never 0%.
+    @ViewBuilder
+    private var large: some View {
+        if let snap {
+            VStack(alignment: .leading, spacing: 10) {
+                Text((entry.locationName ?? snap.restaurantName ?? "Cavnar AI").uppercased())
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .lineLimit(1)
+                Text(waiting(snap) ?? "Open Cavnar AI to refresh")
+                    .font(.cavnarHeadline(24))
+                    .foregroundStyle(waiting(snap) != nil && snap.waitingCount > 0 ? Color.cavnarInk : Color.cavnarInk2)
+                    .lineLimit(2)
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
+                if snap.nightIsCurrent(now: entry.date) {
+                    lastNightKicker(snap, date: snap.nightLabel)
+                    if let verdict = snap.verdictLine {
+                        Text(verdict)
+                            .font(.cavnarBody(15, weight: 700))
+                            .foregroundStyle(Color.cavnarInk)
+                            .lineLimit(2)
+                    }
+                    if let n = night(snap) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(n.net)
+                                .font(.cavnarNumber(30, weight: 600))
+                                .foregroundStyle(Color.cavnarInk)
+                            if let change = snap.changeLabel {
+                                Text(change)
+                                    .font(.cavnarNumber(13, weight: 700))
+                                    .foregroundStyle(snap.changeIsUp == false ? Color.cavnarRed : Color.cavnarGreen)
+                            }
+                            if let basis = snap.changeBasis {
+                                Text(basis)
+                                    .font(.cavnarBody(12))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .privacySensitive()
+                        if let budget = snap.budgetLabel {
+                            Text(budget)
+                                .font(.cavnarNumber(12.5, weight: 700))
+                                .foregroundStyle(snap.budgetIsUp == false ? Color.cavnarRed : Color.cavnarGreen)
+                                .privacySensitive()
+                        }
+                    }
+                    HStack(spacing: 0) {
+                        costFigure("LABOR", snap.laborLabel, value: snap.laborPct, target: snap.laborTarget)
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(width: 1, height: 34)
+                        // An estimate, as the costs widget labels it.
+                        costFigure("FOOD COST \u{00B7} EST.", snap.foodLabel, value: snap.foodPct,
+                                   target: snap.foodTarget)
+                    }
+                    .padding(.top, 4)
+                } else {
+                    Text("No report for last night yet")
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            small
+        }
+    }
+
+    /// One of last night's cost figures, toned and worded as the costs
+    /// widget does (CostsWidgetView.tone): "—" when unmeasured.
+    private func costFigure(_ title: String, _ label: String?, value: Double?, target: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.cavnarBody(9.5, weight: 700))
+                .tracking(0.8)
+                .foregroundStyle(Color.cavnarInk3)
+            Text(label ?? "—")
+                .font(.cavnarNumber(20, weight: 600))
+                .foregroundStyle(CostsWidgetView.tone(value: value, target: target))
+                .privacySensitive()
+            if let target, value != nil {
+                Text("target \(String(format: "%g", target))%")
+                    .font(.cavnarNumber(11))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 6)
     }
 
     // MARK: Lock Screen

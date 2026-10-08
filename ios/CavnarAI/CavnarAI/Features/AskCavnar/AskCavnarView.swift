@@ -91,6 +91,8 @@ struct AskCavnarView: View {
                                 .id(chatScrollBottomID)
                         }
                         .padding(16)
+                        // The conversation reads as one column on an iPad (#99).
+                        .cavnarReadableWidth()
                     }
                     // .immediately, not .interactively — interactive mode
                     // installs its own pan gesture recognizer on the scroll
@@ -141,7 +143,10 @@ struct AskCavnarView: View {
                     // the ScrollView owns the full height (content just
                     // gets padded out from under the bar), exactly like
                     // every other tab.
-                    .safeAreaInset(edge: .bottom, spacing: 0) { inputBar }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        // The composer lines up with the column above it.
+                        inputBar.cavnarReadableWidth().background(Color.cavnarPaper)
+                    }
                 }
             }
             .cavnarModuleBackground()
