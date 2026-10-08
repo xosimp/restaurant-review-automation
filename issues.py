@@ -436,7 +436,10 @@ def _push_instead(issue_id, db_path=DB_PATH, now=None):
             who = r["assignee_name"] if "assignee_name" in r.keys() else None
             push.fire_push(rid, "coverage" if kind == "coverage" else "issue", str(r["title"])[:120],
                            (f"{_restaurant_name(rid)} · assigned to {who}" if who else _restaurant_name(rid))[:220],
-                           data={"issue_id": r["id"], "surface": "issue"}, db_path=db_path, user_ids=audience)
+                           # The kind picks the lock-screen buttons: Ask someone
+                           # to cover only on a shift to cover (push._category).
+                           data={"issue_id": r["id"], "surface": "issue", "issue_kind": kind},
+                           db_path=db_path, user_ids=audience)
     except Exception as e:
         print(f"[issues] push for issue {issue_id} failed: {e}")
     return False
@@ -482,7 +485,8 @@ def _fall_back(r, who, reason, db_path=DB_PATH):
         audience = notify.alert_audience(rid, ["issue"], db_path)
         if audience is None or audience:
             push.fire_push(rid, "issue", title, body[:220],
-                           data={"issue_id": r["id"], "surface": "issue_fallback"},
+                           data={"issue_id": r["id"], "surface": "issue_fallback",
+                                 "issue_kind": r["kind"] if "kind" in r.keys() else None},
                            db_path=db_path, user_ids=audience)
     except Exception as e:
         print(f"[issues] fallback push failed for issue {r['id']}: {e}")

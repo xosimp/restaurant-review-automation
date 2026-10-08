@@ -2131,16 +2131,41 @@ def alert_will(subject, lines):
         by_rid = {}
         for a in admins:
             by_rid.setdefault(a["restaurant_id"], set()).add(a["id"])
+        # The app opens its "Platform needs you" sheet on it (nav
+        # admin/platform, iOS parity follow-up 10/7/26): the alert's own
+        # lines and when it went out ride the payload, so the sheet says
+        # what the page said. It landed on the owner Home ({"tab": "home"}).
+        data = platform_alert_payload(subject, lines)
         queued = 0
         for rid, ids in by_rid.items():
             queued += int(_push.fire_push(rid, "platform_alert", subject, lines[0][:180] if lines else subject,
-                                          data={"tab": "home"}, user_ids=ids) or 0)
+                                          data=dict(data), user_ids=ids) or 0)
         channels["push"] = queued > 0
     except Exception as e:
         channels["push"] = False
         log.error(f"alert_will push failed: {e}")
     return AlertResult(bool(channels.get("sms") or channels.get("email")), channels,
                        "; ".join(errors)[:300] or None)
+
+
+# What the "Platform needs you" sheet shows: a few lines, each clipped, so
+# the payload stays far under APNs' 4 KB whatever a page's lines say.
+PLATFORM_ALERT_PUSH_LINES = 6
+PLATFORM_ALERT_PUSH_LINE_CHARS = 200
+
+
+def platform_alert_payload(subject, lines, now=None) -> dict:
+    """The push data of an operator page (alert_will): where it opens
+    (`nav` admin/platform — the app's admin sheet), the subject, the first
+    PLATFORM_ALERT_PUSH_LINES lines clipped, and when it went out
+    (`alert_at`, UTC ISO with Z)."""
+    import nav as _nav
+    from datetime import datetime, timezone
+    when = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    clipped = [str(x)[:PLATFORM_ALERT_PUSH_LINE_CHARS] for x in (lines or []) if str(x).strip()]
+    return {"nav": _nav.path("admin", "platform"), "subject": str(subject or "")[:160],
+            "lines": clipped[:PLATFORM_ALERT_PUSH_LINES],
+            "alert_at": when.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def last_operator_alert():

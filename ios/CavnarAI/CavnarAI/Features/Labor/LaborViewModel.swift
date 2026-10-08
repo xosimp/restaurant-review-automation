@@ -4479,6 +4479,10 @@ final class LaborViewModel {
     /// cancellation ends polling quietly, with the job remembered for the
     /// next visit (CLIENT-27).
     private func pollSchedule(jobId: String, firstCheckWithoutWaiting: Bool = true, waitSeconds: Int? = nil) async {
+        // The generation this screen is watching land: its drafted push is
+        // not bannered while the owner is here (ScheduleDraftWatch).
+        ScheduleDraftWatch.shared.pollingJobId = jobId
+        defer { ScheduleDraftWatch.shared.pollEnded(jobId) }
         var transientFailures = 0
         var deadline = Date().addingTimeInterval(waitSeconds.map { TimeInterval($0) + 30 } ?? Self.defaultPollSeconds)
         func finish(error: String?) {

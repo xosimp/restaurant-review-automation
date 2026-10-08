@@ -6506,6 +6506,15 @@ def reply_approver(user=None, auto=False) -> dict:
             "via": "view_as" if (view_as and not counts_as_owner(user)) else "normal"}
 
 
+def draft_hash(text) -> str:
+    """The fingerprint of a drafted reply, as stored, that a client which
+    showed it clipped sends back as `expected_draft_hash` with an approve
+    (the bell's rows carry the first 600 characters): sha256 of the text
+    stripped — a save stores it stripped, a model draft as written — hex."""
+    import hashlib
+    return hashlib.sha256(str(text or "").strip().encode("utf-8")).hexdigest()
+
+
 def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
                    publishable_only: bool = False, allow_flagged: bool = True,
                    expected_draft: str = None, approver: dict = None) -> bool:

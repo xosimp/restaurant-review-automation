@@ -564,7 +564,11 @@ def notify_generation_watchers(job_id, restaurant_id, exclude=None) -> int:
         for uid in sorted(watchers):
             safe = (not gaps) and _sr.draft_one_tap_safe(restaurant_id, sid, can_publish=watchers[uid])
             push.fire_push(restaurant_id, "schedule_drafted", title, body,
-                           data={"schedule_id": sid, "one_tap_safe": bool(safe)}, user_ids={uid})
+                           # job_id: the app keeps the banner down while the
+                           # owner is watching this very generation land on
+                           # screen (PushManager willPresent).
+                           data={"schedule_id": sid, "one_tap_safe": bool(safe), "job_id": str(job_id)},
+                           user_ids={uid})
             sent += 1
         return sent
     except Exception as e:

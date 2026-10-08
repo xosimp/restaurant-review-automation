@@ -196,7 +196,7 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # without duplicating it.
 
 def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False,
-                expected_draft=None, user=None):
+                expected_draft=None, user=None, expected_draft_hash=None):
     """Approve (and post) one drafted reply.
 
     `confirm_flagged`: the person was shown the reply guard's flag on this
@@ -222,6 +222,12 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
     it). When the stored reply is different, nothing is posted and the 409
     says so (`draft_changed`) — see models.claim_approval.
 
+    `expected_draft_hash`: the same promise from a client that showed the
+    reply clipped (the bell's rows): models.draft_hash of the reply it read.
+    The stored reply must hash to it, and the approve is then held to that
+    exact text — so a draft that changed after the row was read is never
+    posted (409 `draft_changed`).
+
     `user`: the login approving (the route's current_user). Who approved is
     recorded with the approval (models.reply_approver: the login, its
     answer_authority, normal or view-as — memory audit 9/29/26,
@@ -240,6 +246,23 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
     from models import claim_approval, reply_approver
     if not isinstance(expected_draft, str):
         expected_draft = None
+    if isinstance(expected_draft_hash, str) and expected_draft_hash.strip():
+        from models import draft_hash as _draft_hash
+        _hc = get_conn()
+        try:
+            _hrow = _hc.execute("SELECT draft_response FROM reviews WHERE id=? AND restaurant_id=?",
+                                (rid, restaurant_id)).fetchone()
+        finally:
+            _hc.close()
+        _stored = (_hrow["draft_response"] if _hrow else None) or ""
+        if _hrow and _draft_hash(_stored) != expected_draft_hash.strip().lower():
+            return {"ok": False, "draft_changed": True,
+                    "error": "This reply changed after you read it, so it wasn't posted. "
+                             "Open the review to read the current reply."}, 409
+        if _hrow and expected_draft is None and _stored.strip():
+            # The compare-and-set below holds the approve to the text that
+            # hashed, so an edit between this read and the claim still loses.
+            expected_draft = _stored
     if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk),
                           allow_flagged=bool(confirm_flagged), expected_draft=expected_draft,
                           approver=reply_approver(user, auto=bool(auto))):
@@ -791,7 +814,9 @@ def _do_retract(rid, restaurant_id):
 def approve(rid, current_user):
     _body = request.get_json(silent=True) or {}
     payload, status = _do_approve(rid, current_user["restaurant_id"],
-                                  confirm_flagged=_body.get("confirm_flagged") is True, user=current_user)
+                                  confirm_flagged=_body.get("confirm_flagged") is True, user=current_user,
+                                  expected_draft=_body.get("expected_draft"),
+                                  expected_draft_hash=_body.get("expected_draft_hash"))
     return jsonify(**payload), status
 
 
@@ -9689,6 +9714,13 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
                                     and int(r["restaurant_id"]) == int(restaurant_id)),
                 "draft": ((r["review_draft"] or "")[:600] or None)
                          if (r["review_id"] and r["review_status"] == "drafted" and not r["review_flagged"]) else None,
+                # Whether `draft` is the whole reply, and its fingerprint
+                # (models.draft_hash): an approve from the row sends it back
+                # (`expected_draft_hash`), so a reply edited or regenerated
+                # after the row was read is never posted unread. A clipped
+                # one is approved from its review, not the row.
+                **(_bell_draft_fields(r["review_draft"])
+                   if (r["review_id"] and r["review_status"] == "drafted" and not r["review_flagged"]) else {}),
                 "resolved": resolved,
                 "resolves_on_open": on_open,
                 **_notification_ref_fields(r, refs, viewer, int(restaurant_id)),
@@ -9701,6 +9733,18 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
     except Exception as e:
         print(f"[notifications] load failed for rid={restaurant_id}: {e}")
         return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
+
+
+BELL_DRAFT_CHARS = 600
+
+
+def _bell_draft_fields(draft) -> dict:
+    """`draft_complete` and `draft_hash` for a bell row's drafted reply."""
+    text = str(draft or "")
+    if not text.strip():
+        return {}
+    from models import draft_hash
+    return {"draft_complete": len(text) <= BELL_DRAFT_CHARS, "draft_hash": draft_hash(text)}
 
 
 # Where an issue came from, in a few words for the bell (owner, 10/1/26: "An

@@ -57,6 +57,16 @@ final class DeepLinkRouter {
     /// its notification row, a Still-open row (parity audit #11). HomeView
     /// consumes it: Home scrolls to the issue and pulses it once.
     var pendingIssueId: Int?
+    /// An operator page to show in "Platform needs you" — `admin/platform`
+    /// from a `platform_alert` push (admins only). RootView presents
+    /// PlatformAlertSheet for it, and only to an admin session.
+    var pendingPlatformAlert: PlatformAlert?
+    /// Whether the session is an admin login: true / false, or nil while
+    /// /me has not answered (a cold launch from the push). Set by RootView.
+    /// A non-admin never opens the platform sheet — it lands on Home.
+    var isAdminSession: () -> Bool? = { nil }
+    /// The page a platform_alert tap carried, handed to `apply`.
+    private var incomingPlatformAlert: PlatformAlert?
     /// Bumped each time the active location changed — by RootView, from
     /// SessionStore.onLocationSwitched, whichever screen switched — so Home
     /// reloads for the location it now shows.
@@ -88,7 +98,9 @@ final class DeepLinkRouter {
                                alertId: Int? = nil, recKey: String? = nil,
                                module: String? = nil, restaurantId: Int? = nil,
                                businessDate: String? = nil, surface: String? = nil,
-                               nav: String? = nil, askAutoSend: Bool = false) {
+                               nav: String? = nil, askAutoSend: Bool = false,
+                               platformAlert: PlatformAlert? = nil) {
+        incomingPlatformAlert = platformAlert
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
@@ -260,6 +272,20 @@ final class DeepLinkRouter {
             // the Messages sheet over whatever is on screen, on the
             // sender's thread (parity audit 10/7/26 #71).
             TeamMessagesCenter.shared.open(with: nav.target.flatMap { Int($0) })
+        case "admin":
+            // An operator page (`admin/platform`): its own sheet, admins
+            // only — it used to open the owner Home. A login known not to
+            // be an admin lands on Home; RootView holds the sheet until /me
+            // says who this is.
+            let alert = incomingPlatformAlert ?? PlatformAlert(subject: nil, lines: [], alertAt: nil)
+            incomingPlatformAlert = nil
+            pendingModuleKey = nil
+            pendingModuleRoute = nil
+            if nav.target?.lowercased() == "platform", isAdminSession() != false {
+                pendingPlatformAlert = alert
+            } else {
+                pendingTab = .home
+            }
         case "account", "recs":
             pendingTab = .account
             pendingModuleKey = nil
@@ -328,6 +354,12 @@ final class DeepLinkRouter {
         // module's top. The mirror below is only for an older server.
         if let path = NavPath(nav) {
             apply(path, askAutoSend: askAutoSend, askPrompt: askPrompt)
+            return
+        }
+        // An operator page from a server that sent no nav: its sheet, never
+        // Reviews (the module map's default).
+        if alertType == "platform_alert", let path = NavPath("admin/platform") {
+            apply(path, askAutoSend: false, askPrompt: nil)
             return
         }
         // A direct message with no nav: the Messages inbox, never a module.
@@ -426,6 +458,14 @@ final class DeepLinkRouter {
     func consumePendingTab() -> AppTab? {
         defer { pendingTab = nil }
         return pendingTab
+    }
+
+    /// Called by RootView once /me says this login is not an admin: a held
+    /// platform sheet is dropped and Home shown instead.
+    func dropPlatformAlertForNonAdmin() {
+        guard pendingPlatformAlert != nil else { return }
+        pendingPlatformAlert = nil
+        pendingTab = .home
     }
 
     func consumePendingAccountSection() -> String? {

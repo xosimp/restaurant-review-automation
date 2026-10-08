@@ -335,6 +335,25 @@ def console_user_ids(restaurant_id, db_path=DB_PATH) -> list:
         return []
 
 
+# Pushes only an admin login (users.is_admin) may receive, whoever names the
+# logins: an operator page (ops.alert_will) is about the platform, never a
+# restaurant, and its sheet opens the admin console.
+ADMIN_ONLY_TYPES = frozenset({"platform_alert"})
+
+
+def _admin_user_ids(db_path=DB_PATH) -> set:
+    """Active admin logins' ids. Never raises (an empty set: nobody)."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            return {int(r["id"]) for r in conn.execute(
+                "SELECT id FROM users WHERE is_admin=1 AND is_active=1").fetchall()}
+        finally:
+            conn.close()
+    except Exception:
+        return set()
+
+
 def token_may_receive(token_row, alert_type) -> bool:
     """A staff-app device receives staff notices only (and a test push) —
     the last gate before delivery, whoever asked: a caller that names an
@@ -595,7 +614,12 @@ _EXPIRY_SECONDS = {
 # unlocking, finding the module and starting again.
 CATEGORY_REVIEW = "CAVNAR_REVIEW"     # Reply (opens the review)
 CATEGORY_BRIEF  = "CAVNAR_BRIEF"      # Ask about this
-CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # Ask someone to cover · Resolved (the app, in the background)
+CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # Resolved (the app, in the background)
+# A shift to cover (a coverage gap or a no-show): Ask someone to cover ·
+# Resolved. "Ask someone to cover" sat on every issue and on critical_low,
+# where it could only answer "This issue isn't a shift to cover" (parity
+# follow-up 10/7/26).
+CATEGORY_COVERAGE = "CAVNAR_COVERAGE"
 # The actionable kinds (friction audit #22, 9/25/26): the button does the
 # work in the background, behind the phone's own unlock, and nothing opens.
 CATEGORY_REVIEW_DRAFTED = "CAVNAR_REVIEW_DRAFTED"   # Approve & post · Edit
@@ -628,6 +652,21 @@ CATEGORY_DSR = "CAVNAR_DSR"                   # Ask about last night
 _BRIEF_TYPES = {"morning_brief", "intraday_pulse", "closing_summary",
                 "weekly_review", "monthly_review", "daily_briefing"}
 _ISSUE_TYPES = {"issue", "issue_escalated", "coverage", "critical_low"}
+# The issue kinds that are a shift somebody can be asked to cover — the
+# kinds issues.next_cover suggests people for (ask-cover's own rule).
+COVER_ISSUE_KINDS = frozenset({"coverage", "no_show"})
+
+
+def _is_cover_issue(alert_type, data) -> bool:
+    """A push about a shift to cover: a `coverage` push, or an issue push
+    whose `issue_kind` is one (issues._push_instead / _fall_back send it).
+    Needs the issue it is about — ask-cover is posted against it."""
+    if not data.get("issue_id"):
+        return False
+    if alert_type == "coverage":
+        return True
+    return alert_type in ("issue", "issue_escalated") and \
+        str(data.get("issue_kind") or "").strip().lower() in COVER_ISSUE_KINDS
 # A queued automatic send (delayed.py) the owner can still stop.
 _UNDOABLE_TYPES = {"schedule_publish_pending", "order_send_pending"}
 
@@ -665,12 +704,16 @@ def _category(alert_type, data) -> str:
     # A recommendation the app may answer (rec_delivery.answerable): Done and
     # Not for us from the lock screen. A review alert keeps its own buttons —
     # the reply is the thing to do about it — and an issue or a coverage gap
-    # keeps the issue's (CATEGORY_ISSUE).
+    # keeps the issue's (CATEGORY_ISSUE / CATEGORY_COVERAGE).
     if data.get("answerable") and data.get("rec_key") and not data.get("review_id") \
             and alert_type not in _ISSUE_TYPES:
         return CATEGORY_REC_ASK if (alert_type in _BRIEF_TYPES or data.get("ask_prompt")) else CATEGORY_REC
     if alert_type in _BRIEF_TYPES or data.get("ask_prompt"):
         return CATEGORY_BRIEF
+    # critical_low returned CATEGORY_STOCK above; what is left of the issue
+    # types is an issue: the cover button only on a shift to cover.
+    if _is_cover_issue(alert_type, data):
+        return CATEGORY_COVERAGE
     if alert_type in _ISSUE_TYPES:
         return CATEGORY_ISSUE
     if data.get("review_id"):
@@ -1560,6 +1603,9 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
             allowed = {int(u) for u in user_ids}
             tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
         tokens = [t for t in tokens if token_may_receive(t, alert_type)]
+        if alert_type in ADMIN_ONLY_TYPES:
+            admins = _admin_user_ids(db_path)
+            tokens = [t for t in tokens if int(t.get("user_id") or 0) in admins]
         # Each login's OWN choices at this location (preferences, memory
         # audit 9/29/26 owner_layers): push off, a type they muted, their own
         # quiet hours. They only ever take a push away from that login's own

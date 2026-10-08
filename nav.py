@@ -79,7 +79,10 @@ _ALERT_NAV = {
     "issue": "issue", "issue_escalated": "issue",
     "login": "account/security", "staff_signin": "account/people",
     "connection_lost": "account/integrations", "data_source_down": "account/integrations",
-    "data_source_restored": "account/integrations", "platform_alert": "home",
+    "data_source_restored": "account/integrations",
+    # An operator page, to admin logins only: the app's "Platform needs you"
+    # sheet (iOS), which opens the console's Operations.
+    "platform_alert": "admin/platform",
 }
 _ALERT_ASK = {
     "morning_brief": "Walk me through this morning's brief.",

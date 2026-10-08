@@ -104,7 +104,8 @@ def test_only_the_login_that_pressed_is_pushed_with_the_week(db, pushed, monkeyp
     assert len(pushed) == 1
     p = pushed[0]
     assert p["type"] == "schedule_drafted" and p["user_ids"] == {7}
-    assert p["data"] == {"schedule_id": hid, "one_tap_safe": True}
+    # job_id: the phone watching this generation keeps the banner down.
+    assert p["data"] == {"schedule_id": hid, "one_tap_safe": True, "job_id": "job-a"}
     assert p["title"] == "The week of 10/12/26 is drafted"
     # Told once: the watcher is spent.
     assert se.notify_generation_watchers("job-a", rid) == 0 and len(pushed) == 1
@@ -157,7 +158,7 @@ def test_the_pool_tells_the_watchers_when_its_job_ends(db, pushed, monkeypatch):
     se.watch_generation("job-e", {"id": 5, "is_admin": True})
     se.submit_generation("job-e", rid).result(10)
     assert [p["user_ids"] for p in pushed] == [{5}]
-    assert pushed[0]["data"] == {"schedule_id": hid, "one_tap_safe": False}
+    assert pushed[0]["data"] == {"schedule_id": hid, "one_tap_safe": False, "job_id": "job-e"}
 
 
 # ── the rule itself ──────────────────────────────────────────────────────
