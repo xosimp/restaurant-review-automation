@@ -2766,12 +2766,18 @@ final class LaborViewModel {
     var baselineRows: [ScheduleRow]?
     var editCost: EditCostDelta?
 
-    private struct ViolationsBody: Encodable {
+    /// POST labor/schedule/violations, as the web posts it: `history_id`
+    /// names the week, so the review's extras (schedule_output.
+    /// week_review_extras) read that week's saved draft. The phone never sent
+    /// it (parity audit #24, the request-body parity test).
+    struct ViolationsBody: Encodable {
         let rows: [ScheduleRow]
         let baselineRows: [ScheduleRow]?
+        let historyId: Int?
         enum CodingKeys: String, CodingKey {
             case rows
             case baselineRows = "baseline_rows"
+            case historyId = "history_id"
         }
     }
 
@@ -2854,7 +2860,8 @@ final class LaborViewModel {
         do {
             let r: ViolationsResponse = try await client.send(
                 "/mobile/api/labor/schedule/violations", method: .post,
-                body: ViolationsBody(rows: rows, baselineRows: nil), hapticOnError: false)
+                body: ViolationsBody(rows: rows, baselineRows: nil, historyId: scheduleResult?.historyId),
+                hapticOnError: false)
             if r.ok {
                 overtimeMoves = r.overtimeMoves ?? []
                 if reflag { applyFlags(checked: rows, violations: r.violations, review: r.review, replace: true) }
@@ -2969,7 +2976,8 @@ final class LaborViewModel {
         do {
             let r: ViolationsResponse = try await client.send(
                 "/mobile/api/labor/schedule/violations", method: .post,
-                body: ViolationsBody(rows: rows, baselineRows: base), hapticOnError: false)
+                body: ViolationsBody(rows: rows, baselineRows: base, historyId: scheduleResult?.historyId),
+                hapticOnError: false)
             if r.ok {
                 editCost = r.cost
                 overtimeMoves = r.overtimeMoves ?? []
@@ -3299,12 +3307,19 @@ final class LaborViewModel {
 
     /// history_id lets the server hold the search under that week's own
     /// hours budget; without it "Improve" could add hours past the ceiling.
-    private struct OptimizeBody: Encodable {
+    /// POST labor/schedule/optimize, as the web posts it: the day targets
+    /// the week on screen was built against ride along (`daily_target_hours`).
+    /// Without them the optimizer fell back to the stored targets — none at
+    /// all for a draft not yet saved (parity audit #24, the request-body
+    /// parity test).
+    struct OptimizeBody: Encodable {
         let rows: [ScheduleRow]
         let historyId: Int?
+        let dailyTargetHours: [String: Double]
         enum CodingKeys: String, CodingKey {
             case rows
             case historyId = "history_id"
+            case dailyTargetHours = "daily_target_hours"
         }
     }
 
@@ -3345,7 +3360,9 @@ final class LaborViewModel {
         do {
             let response: OptimizeResponse = try await client.send(
                 "/mobile/api/labor/schedule/optimize", method: .post,
-                body: OptimizeBody(rows: rows, historyId: result.historyId), hapticOnError: false, timeout: 45, retryTransient: false)
+                body: OptimizeBody(rows: rows, historyId: result.historyId,
+                                   dailyTargetHours: result.dailyTargetHours?.hours ?? [:]),
+                hapticOnError: false, timeout: 45, retryTransient: false)
             guard response.ok else {
                 optimizeError = response.error ?? "Couldn't improve the draft."
                 return

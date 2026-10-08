@@ -1574,23 +1574,36 @@ final class AccountViewModel {
         return false
     }
 
-    private struct BugReportBody: Encodable {
+    /// Every key /account/report-bug files (mobile_api.mobile_report_bug's
+    /// `meta`): `ios_version` and `screen` were never sent, so a phone's
+    /// report reached the admin console without the iOS version or where it
+    /// was filed from (parity audit #24, the request-body parity test).
+    struct BugReportBody: Encodable, Equatable {
         let message: String
         let build: String
         let device: String
         let appVersion: String
-        enum CodingKeys: String, CodingKey { case message, build, device; case appVersion = "app_version" }
+        let iosVersion: String
+        let screen: String
+        enum CodingKeys: String, CodingKey {
+            case message, build, device, screen
+            case appVersion = "app_version"
+            case iosVersion = "ios_version"
+        }
     }
     var isReportingBug = false
     var reportBugError: String?
 
-    func reportBug(message: String, build: String, device: String) async -> Bool {
+    func reportBug(message: String, build: String, device: String, iosVersion: String,
+                   screen: String = "ios:account") async -> Bool {
         isReportingBug = true; reportBugError = nil
         defer { isReportingBug = false }
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         do {
             let response: OKErrorResponse = try await client.send("/mobile/api/account/report-bug", method: .post,
-                                                                   body: BugReportBody(message: message, build: build, device: device, appVersion: version))
+                                                                   body: BugReportBody(message: message, build: build, device: device,
+                                                                                       appVersion: version, iosVersion: iosVersion,
+                                                                                       screen: screen))
             if response.ok { return true }
             reportBugError = response.error ?? "Couldn't send that."
         } catch let error as APIClient.APIError {
