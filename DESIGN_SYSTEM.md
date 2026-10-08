@@ -107,6 +107,17 @@ canvas: see the long comment above `:root` in `dashboard.html` for why.
   non-ember fills allowed, and only on their own buttons.
 - iOS: honour Increase Contrast for informational secondary text with
   `Color.cavnarInk3(contrast)`; plain `.cavnarInk3` is for decorative chrome.
+  Text a step below Ink3 (an upcoming step, a placeholder, a build stamp) is
+  `Color.cavnarInk3Muted(contrast)` — 70% of Ink3, the floor that still
+  clears AA on Paper, full Ink3 under Increase Contrast. Never 40–60% Ink3
+  on text (parity audit #82).
+- A tint of the ember is `color-mix(in srgb,var(--ember) N%,transparent)`,
+  never the light-mode `rgba(200,75,47,…)` literal (83 lines of it until
+  10/7/26, parity #85) — it follows the theme and a client's brand colour.
+- iOS chart series with no good/bad meaning (labor by role) take
+  `Color.cavnarSeries[i % count]`: twelve hue-separated colours, the dark
+  ember token first. A chart's labels are tokens and `.cavnarNumber`, never
+  `Color.black` / `Color(red:…)` / `.system(size:)`.
 - `.cavnarChrome` (true black) is nav/tab-bar chrome only, never a content surface.
 
 ---
@@ -116,13 +127,12 @@ canvas: see the long comment above `:root` in `dashboard.html` for why.
 Three faces, one job each. Clash Display and Apfel Grotezk are self-hosted on
 web (`static/fonts/cavnar-fonts.css`; Apfel ships only 400 and 700, and iOS
 snaps weights ≥550 to Fett); Space Grotesk is loaded from Google Fonts
-(`dashboard.html` `<link>`), together with **Bricolage Grotesque**, a fourth
-face used only for the tab badges (`.tab .badge`) and the `.stat-n` figures
-— a legacy of the pre-rebuild stat cards that the "every number is Space
-Grotesk" rule has not yet reached (a `.stat-n` inside `.hb-num` is already
-Space Grotesk). Nothing else: it used to be forced onto every inline
-`font-weight:800` (the wordmark's "AI" tag among them) and every `strong`
-in Labor; those now keep their own face — inline 800s snap to 700, the
+(`dashboard.html` `<link>`). There is no fourth face: Bricolage Grotesque,
+the pre-rebuild stat cards' face, held on in the tab badges (`.tab .badge`)
+and the `.stat-n` figures until 10/7/26 (parity audit #85), when both moved
+to Space Grotesk and the font left the `<link>`. It used to be forced onto
+every inline `font-weight:800` (the wordmark's "AI" tag among them) and
+every `strong` in Labor; those keep their own face — inline 800s snap to 700, the
 heaviest weight Apfel and Space Grotesk ship — and Labor's PAR figures
 carry `.hb-num`. Pinned by `tests/test_design_parity.py`. iOS bundles all
 three (`Font+Cavnar.swift`).
@@ -195,7 +205,8 @@ body sizes, 4 kicker sizes and hero figures from 27 to 56pt.
 
 | Token | pt | Use |
 |---|---|---|
-| `kicker` | 11.5 | uppercase tracked label above a section or figure |
+| `kicker` | 11.5 | uppercase tracked label above a section or figure — and over a tile's figure; the only kicker size (parity #85 found 14) |
+| `tag` | 10 | uppercase label inside a capsule: a claim tag, a request kind, a severity pill |
 | `caption` | 12.5 | meta, timestamps, basis lines |
 | `secondary` | 13.5 | a line under a figure or title; helper copy |
 | `body` | 15 | body copy, row titles |
@@ -312,7 +323,7 @@ each chosen so no two adjacent sections share a silhouette:
 | Obsidian tile | `.ob-tile` (+ `.sm`) — the web twin of iOS `GlowBadge`: obsidian gradient, lit edge ember→dark from the top-left, hairline lip, cream glyph, one ember seated on the right edge. A solid object, not a light source | Every mark that names a block or a module; the glyph inside is a 22px stroke SVG |
 | Goal bar | `.hb-goal .bar i` (width from `data-w`) | Progress from baseline to target; no bar when the baseline is unreadable |
 | Checklist | `.hb-chk` | Still open |
-| Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm |
+| Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm. iOS `HomeSectionHeader` is its twin: the kicker in `.cavnarEmber` (not ember2), the 14×3 ember bar before a Clash **Medium** title (parity #85). `AccountKicker` and Account's group titles are the same ember kicker (the web's `.ac-kicker`) |
 
 Entrances are `.hb-rise` with `--i` for a 70ms stagger, 420ms, no overshoot.
 The list row `.hb-row` stays for what is genuinely a list. A Needs-attention
@@ -899,7 +910,25 @@ Rules:
 - Durations: micro-feedback 120–220ms, entrance 350–500ms, ambient loops
   1.8–6s. Easing `ease-in-out` or `cubic-bezier(.2,.9,.3,1)`.
 - Respect `prefers-reduced-motion` / `accessibilityReduceMotion` — every
-  looping animation must have a still fallback.
+  looping animation must have a still fallback. iOS (parity #82): the
+  Composing, Radar, Week Builder and Ledger waits pause their timeline on a
+  finished frame (lines written, blips landed, week filled, ledger full);
+  the shimmer text is plain text and the shimmer line a still segment; the
+  caret stops blinking; the Labor hero's glow and the value sparkline's
+  endpoint hold still; the pull-to-refresh dot shows without breathing.
+- iOS Dynamic Type is capped at `.xxxLarge` (RootView). Three reading
+  surfaces follow the phone into the accessibility sizes with
+  `.cavnarReadingSize(upTo:)`: Home's brief headline (to accessibility2),
+  the Daily Report's written summary and the review reply being edited (to
+  accessibility3). Each is one wrapping paragraph with nothing beside it;
+  KPI tiles, charts and kickers stay capped.
+- A Canvas chart is invisible to VoiceOver: it carries
+  `accessibilityElement(children: .ignore)`, a label, a value stating its
+  real figures (a missing one is "no data", never 0) and, for a series,
+  `accessibilityChartDescriptor`.
+- iOS haptics: every `.sensoryFeedback` reads
+  `AppPreferences.hapticsEnabledSnapshot` in its condition, button styles
+  included, so Account → Haptics off silences all of them.
 - **Ambient loops rest when nobody gains from them** (iOS parity #83): a
   loop that decorates rather than reports — Home's obsidian field, the
   swipe-hint chevron (`PulsingSwipeArrow`), the Cold Hearth's breath —

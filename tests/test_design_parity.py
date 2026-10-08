@@ -78,17 +78,64 @@ def test_no_overshoot_in_the_badge_pop_toast_or_tab_indicator():
     assert "scale(1.0" not in toast and "-10px" not in toast
 
 
-def test_ios_has_no_spring_or_system_spinner_in_features():
-    base = os.path.join(ROOT, "ios", "CavnarAI", "CavnarAI")
-    bad = []
+def _ios_swift_files():
+    """Every Swift file an owner or a staff member sees: the app and its
+    extensions (widgets, share, notification content, shared), not tests."""
+    base = os.path.join(ROOT, "ios", "CavnarAI")
     for d, _dirs, files in os.walk(base):
+        if "CavnarAITests" in d:
+            continue
         for f in files:
-            if not f.endswith(".swift"):
+            if f.endswith(".swift"):
+                yield os.path.join(d, f)
+
+
+def test_ios_has_no_spring_or_system_spinner_in_features():
+    # ProgressView in any form — the bare spinner, ProgressView(value:) and
+    # ProgressView("…") — and the system .bordered / .borderedProminent
+    # button styles: loading is the ember pulse or CavnarSkeletonBar, and
+    # a button is a Cavnar style (parity audit #84; TaskSheetsScreen had
+    # a ProgressView(value:) and a .bordered the old `ProgressView()`
+    # pattern missed).
+    pattern = re.compile(
+        r"\.spring\(|\.bouncy\b|interpolatingSpring|\bProgressView\s*[({]"
+        r"|\.borderedProminent\b|\.bordered\b|\bBordered(Prominent)?ButtonStyle\b"
+    )
+    bad = []
+    for path in _ios_swift_files():
+        for n, line in enumerate(open(path, encoding="utf-8"), 1):
+            code = line.split("//", 1)[0]
+            if pattern.search(code):
+                bad.append("%s:%d %s" % (os.path.basename(path), n, line.strip()))
+    assert not bad, bad
+
+
+def test_ios_pull_to_refresh_is_always_the_ember_drop():
+    # A bare .refreshable draws nothing (the app clears the system tint), so
+    # it is only legal inside the one modifier that draws the ember drop.
+    bad = []
+    for path in _ios_swift_files():
+        if os.path.basename(path) == "CavnarMotion.swift":
+            continue
+        for n, line in enumerate(open(path, encoding="utf-8"), 1):
+            if re.search(r"\.refreshable\s*\{", line.split("//", 1)[0]):
+                bad.append("%s:%d" % (os.path.basename(path), n))
+    assert not bad, bad
+
+
+def test_ios_every_sensory_feedback_honours_the_haptics_toggle():
+    # Account → Haptics off must silence every buzz, including the ones
+    # SwiftUI fires for a button style (parity audit #84). Each
+    # .sensoryFeedback carries a condition that reads the toggle.
+    bad = []
+    for path in _ios_swift_files():
+        lines = open(path, encoding="utf-8").read().split("\n")
+        for i, line in enumerate(lines):
+            if ".sensoryFeedback(" not in line.split("//", 1)[0]:
                 continue
-            for n, line in enumerate(open(os.path.join(d, f), encoding="utf-8"), 1):
-                code = line.split("//", 1)[0]
-                if re.search(r"\.spring\(|\.bouncy\b|interpolatingSpring|\bProgressView\(\)", code):
-                    bad.append("%s:%d %s" % (f, n, line.strip()))
+            window = "\n".join(lines[i:i + 3])
+            if "hapticsEnabledSnapshot" not in window:
+                bad.append("%s:%d" % (os.path.basename(path), i + 1))
     assert not bad, bad
 
 
@@ -100,10 +147,12 @@ def test_one_confidence_meter_size_on_both_platforms():
     assert "38×6" in _read("DESIGN_SYSTEM.md")
 
 
-def test_bricolage_is_only_the_tab_badges_and_stat_n():
+def test_bricolage_is_gone_every_number_is_space_grotesk():
+    # The tab badges and .stat-n were the last Bricolage (parity audit #85).
     dash = _read("templates", "dashboard.html")
-    rules = re.findall(r"^([^{\n]*)\{[^}\n]*Bricolage Grotesque", dash, re.M)
-    assert sorted(r.strip() for r in rules) == [".stat-n", ".tab .badge"], rules
+    assert "Bricolage" not in dash
+    assert re.search(r"^\.stat-n\{[^}\n]*font-family:'Space Grotesk'", dash, re.M)
+    assert re.search(r"^\.tab \.badge\{[^}\n]*font-family:'Space Grotesk'", dash, re.M)
 
 
 def test_ios_neutral_tone_is_not_ember_and_secondary_button_is_quiet():
