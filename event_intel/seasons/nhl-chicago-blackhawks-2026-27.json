@@ -4,7 +4,7 @@
   "https://www.nhl.com/blackhawks/schedule",
   "https://api-web.nhle.com/v1/club-schedule-season/CHI/20262027"
  ],
- "fetched": "2026-10-02",
+ "fetched": "2026-10-08",
  "series": {
   "slug": "nhl-chicago-blackhawks",
   "name": "Chicago Blackhawks",
@@ -112,7 +112,8 @@
    "opponent": "Buffalo Sabres",
    "venue": "KeyBank Center",
    "broadcast": "CHSN, MSG-B",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 3-4"
   },
   {
    "external_id": "2026020050",
@@ -124,7 +125,8 @@
    "opponent": "St. Louis Blues",
    "venue": "United Center",
    "broadcast": "CHSN, STLNHL, BN+",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 4-2"
   },
   {
    "external_id": "2026020062",

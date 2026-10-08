@@ -7,7 +7,7 @@
   "https://sports.yahoo.com/articles/chicago-bulls-receive-three-national-221504308.html",
   "https://www.sportsmediawatch.com/tv-schedules/nba-tv-schedule/chicago-bulls/"
  ],
- "fetched": "2026-10-01",
+ "fetched": "2026-10-08",
  "series": {
   "slug": "nba-chicago-bulls",
   "name": "Chicago Bulls",
@@ -37,7 +37,8 @@
    "opponent": "Phoenix Suns",
    "venue": "United Center",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 124-117"
   },
   {
    "external_id": "401908940",

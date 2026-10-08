@@ -88,7 +88,7 @@ def test_the_2026_bears_season_is_in_the_catalog(db):
     prime = sorted(r["event_date"] for r in rows if r["is_primetime"])
     assert prime == ["2026-09-28", "2026-10-22", "2026-11-02", "2026-11-08", "2026-12-19"]
     done = {r["event_date"]: r["result"] for r in rows if r["status"] == "completed"}
-    assert done["2026-09-28"] == "W 27-7" and len(done) == 6
+    assert done["2026-09-28"] == "W 27-7" and done["2026-10-04"] == "W 23-12" and len(done) == 7
     jets = [r for r in rows if r["event_date"] == "2026-10-04"][0]
     assert (jets["home_away"], jets["kickoff_local"], jets["broadcast"], jets["venue"]) == \
         ("home", "12:00", "FOX", "Soldier Field")

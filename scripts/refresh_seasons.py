@@ -174,6 +174,10 @@ def from_mlb(src, data, file_season):
                 ev["week"] = g["seriesDescription"]
             if g.get("ifNecessary") == "Y":
                 ev["attributes"] = {"if_necessary": True}
+            elif g.get("ifNecessary") == "N":
+                # MLB says outright when a game is happening (a series that
+                # reached its Game 4): the merge clears a stale flag on it
+                ev["attributes"] = {"if_necessary": False}
             out.append(ev)
     # MLB lists a postponed game twice under one gamePk (the postponement and
     # the game played later): the one that happened wins.
@@ -222,6 +226,10 @@ def merge(existing, fetched, today=None):
         if e is None:
             new = {k: v for k, v in f.items() if v is not None or k in ("kickoff", "broadcast")}
             new.setdefault("week", None)
+            if (new.get("attributes") or {}).get("if_necessary") is False:
+                new["attributes"] = {k: v for k, v in new["attributes"].items() if k != "if_necessary"}
+                if not new["attributes"]:
+                    del new["attributes"]
             if new.get("status") != "completed":
                 new.pop("result", None)
             events.append(new)
@@ -253,6 +261,13 @@ def merge(existing, fetched, today=None):
             e["home_away"] = f["home_away"]
         if (f.get("attributes") or {}).get("if_necessary") and not (e.get("attributes") or {}).get("if_necessary"):
             e.setdefault("attributes", {})["if_necessary"] = True
+        elif ((f.get("attributes") or {}).get("if_necessary") is False and (e.get("attributes") or {}).get("if_necessary")
+              and e.get("status") != "completed"):
+            # the source says this game is happening: no longer "if necessary"
+            changes.append(f"~ {e.get('date')} {e.get('opponent')}: no longer if necessary")
+            del e["attributes"]["if_necessary"]
+            if not e["attributes"]:
+                del e["attributes"]
         if e.get("status") == "completed" and e.get("result") and (e.get("attributes") or {}).get("if_necessary"):
             changes.append(f"~ {e.get('date')} {e.get('opponent')}: played (if necessary)")
     for e in events:

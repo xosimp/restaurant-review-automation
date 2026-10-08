@@ -216,6 +216,7 @@ def test_ask_lists_played_games_only_and_says_each_upcoming_games_status(db, mon
     _set(db, _event(db, "2026-09-20")["id"], status="postponed")   # Vikings
     store.dismiss(r.id, _event(db, "2026-09-13")["id"], db_path=db)   # Panthers: removed
     _set(db, _event(db, "2026-10-11")["id"], status="cancelled")   # Packers: off the list ahead
+    _set(db, _event(db, "2026-10-04")["id"], status="scheduled", result=None)   # Jets: not yet played on 10/1
     out = tools._read_events(r.id, days=14, past=4)
     said = " ".join(x["what"] for x in out["recent"])
     assert out["recent"] and not any(w in said for w in ("Eagles", "Vikings", "Panthers"))

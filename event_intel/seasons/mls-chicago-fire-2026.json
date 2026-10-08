@@ -7,7 +7,7 @@
   "https://site.api.espn.com/apis/site/v2/sports/soccer/usa.open/teams/182/schedule?season=2026",
   "https://en.wikipedia.org/wiki/2026_Chicago_Fire_FC_season"
  ],
- "fetched": "2026-10-01",
+ "fetched": "2026-10-08",
  "series": {
   "slug": "mls-chicago-fire",
   "name": "Chicago Fire FC",
@@ -47,7 +47,7 @@
    "date": "2026-02-28",
    "kickoff": "13:30",
    "home_away": "home",
-   "opponent": "CF Montr\u00e9al",
+   "opponent": "CF Montréal",
    "venue": "Soldier Field",
    "broadcast": "Apple TV",
    "status": "completed",
@@ -223,7 +223,7 @@
    "date": "2026-05-16",
    "kickoff": "15:30",
    "home_away": "away",
-   "opponent": "CF Montr\u00e9al",
+   "opponent": "CF Montréal",
    "venue": "Stade Saputo",
    "broadcast": "Apple TV",
    "status": "completed",
@@ -478,7 +478,8 @@
    "opponent": "Vancouver Whitecaps",
    "venue": "Soldier Field",
    "broadcast": "Apple TV",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 3-1"
   },
   {
    "external_id": "761846",

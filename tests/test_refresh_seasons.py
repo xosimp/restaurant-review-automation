@@ -55,6 +55,40 @@ def test_a_refresh_keeps_ids_fills_gaps_and_never_shrinks_or_deletes():
     assert [e["date"] or "9999" for e in events] == sorted(e["date"] or "9999" for e in events)
 
 
+def test_a_game_the_source_says_is_happening_is_no_longer_if_necessary():
+    """ALDS Game 4 (10/8/26): MLB flips ifNecessary to N once a series
+    reaches it, and its start replaces the file's placeholder. A played
+    if-necessary game keeps its flag; a game added with N carries none."""
+    file = [
+        {"external_id": "g4", "date": "2026-10-08", "kickoff": "16:00", "home_away": "home",
+         "opponent": "Cleveland Guardians", "status": "scheduled", "attributes": {"if_necessary": True}},
+        {"external_id": "g5", "date": "2026-10-10", "kickoff": "16:00", "home_away": "away",
+         "opponent": "Cleveland Guardians", "status": "scheduled", "attributes": {"if_necessary": True}},
+        {"external_id": "old", "date": "2025-10-08", "home_away": "home", "opponent": "Cleveland Guardians",
+         "status": "completed", "result": "W 2-1", "attributes": {"if_necessary": True}},
+    ]
+    fetched = [
+        {"external_id": "g4", "date": "2026-10-08", "kickoff": "19:00", "home_away": "home",
+         "opponent": "Cleveland Guardians", "status": "scheduled", "season_type": "postseason",
+         "attributes": {"if_necessary": False}},
+        {"external_id": "g5", "date": "2026-10-10", "kickoff": "19:00", "home_away": "away",
+         "opponent": "Cleveland Guardians", "status": "scheduled", "season_type": "postseason",
+         "attributes": {"if_necessary": True}},
+        {"external_id": "old", "date": "2025-10-08", "home_away": "home", "opponent": "Cleveland Guardians",
+         "status": "completed", "result": "W 2-1", "season_type": "postseason", "attributes": {"if_necessary": False}},
+        {"external_id": "new", "date": "2026-10-12", "kickoff": "19:00", "home_away": "home",
+         "opponent": "Cleveland Guardians", "status": "scheduled", "season_type": "postseason",
+         "attributes": {"if_necessary": False}},
+    ]
+    events, changes = rs.merge(file, fetched, today=date(2026, 10, 8))
+    by = {e["external_id"]: e for e in events}
+    assert by["g4"]["kickoff"] == "19:00" and "attributes" not in by["g4"]
+    assert by["g5"]["kickoff"] == "19:00" and by["g5"]["attributes"]["if_necessary"] is True
+    assert by["old"]["attributes"]["if_necessary"] is True
+    assert "attributes" not in by["new"]
+    assert any("no longer if necessary" in c for c in changes)
+
+
 def test_the_script_never_runs_from_the_app():
     for path in ("scheduler.py", "jobs_registry.py", "event_intel/store.py", "event_intel/engine.py"):
         with open(os.path.join(ROOT, path), encoding="utf-8") as fh:

@@ -4,7 +4,7 @@
   "https://www.chicagobears.com/schedule/",
   "https://www.nbcchicago.com/chicago-sports-bears-sox-cubs-bulls-blackhawks/heres-the-bears-preseason-schedule-and-when-they-open-the-2026-season/3970992/"
  ],
- "fetched": "2026-10-02",
+ "fetched": "2026-10-08",
  "series": {
   "slug": "nfl-chicago-bears",
   "name": "Chicago Bears",
@@ -114,7 +114,8 @@
    "opponent": "New York Jets",
    "venue": "Soldier Field",
    "broadcast": "FOX",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 23-12"
   },
   {
    "external_id": "2026-reg-05",

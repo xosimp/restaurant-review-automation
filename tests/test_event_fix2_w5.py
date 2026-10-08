@@ -15,7 +15,7 @@ import pytest
 import models
 from event_intel import store
 
-TODAY = "2026-10-02"   # the files as refreshed 10/2/26 (scripts/refresh_seasons.py)
+TODAY = "2026-10-08"   # the files as refreshed 10/8/26 (scripts/refresh_seasons.py)
 FILES = sorted(fn for fn in os.listdir(store.SEASONS_DIR) if fn.endswith(".json"))
 
 

@@ -159,7 +159,7 @@ def test_the_rush_and_the_send_time_name_each_sports_start():
 
 
 def test_an_if_necessary_game_says_so(db):
-    sox = _event(db, "mlb-chicago-white-sox", "2026-10-08")
+    sox = _event(db, "mlb-chicago-white-sox", "2026-10-10")   # ALDS Game 5
     assert "if necessary" in engine.describe(sox)
 
 
@@ -265,7 +265,7 @@ def test_peer_game_effect_needs_eight_restaurants_from_five_owners(db, monkeypat
 def test_an_unplayed_if_necessary_game_is_never_completed_or_measured(db):
     r = _restaurant(db)
     store.mark_past_completed("2026-10-12", db_path=db)
-    sox = _event(db, "mlb-chicago-white-sox", "2026-10-08")
+    sox = _event(db, "mlb-chicago-white-sox", "2026-10-10")   # ALDS Game 5
     assert sox["status"] == "scheduled" and not sox.get("result")
     engine.sync_restaurant(r, today=date(2026, 10, 12), db_path=db)
     c = models.get_conn(db)

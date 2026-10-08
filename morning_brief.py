@@ -382,7 +382,12 @@ def _holiday_today(day):
         return None
 
 
-def _carry_today_line(carry, today, show_forecast=True):
+# The report's Tomorrow items about one game: the game's own line says them
+# when it speaks for that game (_GAME_ITEMS, owner 10/8/26).
+_GAME_ITEMS = ("event", "game_staffing", "game_prep")
+
+
+def _carry_today_line(carry, today, show_forecast=True, skip_event=None):
     """The "today" line from last night's report (dsr.memory.morning_carry):
     the report's own forecast for today — with the measured effects it
     applied and its confidence % — its Tomorrow items (time off, rain or
@@ -396,12 +401,19 @@ def _carry_today_line(carry, today, show_forecast=True):
     applied is named without a figure when the game's item here says it
     (effect_for's, the one figure — R2-02). `_items` (the items shown) and
     `_said` (the effect labels stated with a figure) are for the game line
-    (_game_line) and are taken off the line after it."""
+    (_game_line) and are taken off the line after it.
+
+    `skip_event` leaves out the items about that game: its own line, read
+    from the live catalog, says it once (owner, 10/8/26 - the report's item
+    repeated the game a bullet above the game's line, with the start time
+    the report was written with)."""
     from dsr.tomorrow import effect_words
     fc = carry.get("forecast") if show_forecast else None
     conf = carry.get("confidence") if show_forecast else None
     shown = []
     for i in (carry.get("items") or [])[:4]:
+        if skip_event is not None and i.get("kind") in _GAME_ITEMS and i.get("event_id") == skip_event:
+            continue
         if not show_forecast and i.get("kind") == "event":
             i = dict(i, text=i.get("plain"), has_effect=False)
         if i.get("text"):
@@ -417,6 +429,8 @@ def _carry_today_line(carry, today, show_forecast=True):
             text += f" ({_money(fc['low'])}–{_money(fc['high'])})"
         effects = [e for e in fc.get("effects") or [] if isinstance(e, dict) and e.get("lift_pct") is not None]
         by_item = {i.get("event_id") for i in shown if i.get("kind") == "event" and i.get("has_effect")}
+        if skip_event is not None:
+            by_item.add(skip_event)      # the game's own line says its figure
         figure = lambda e: e.get("game_event_id") is None or e["game_event_id"] not in by_item
         said = [e.get("label") for e in effects if figure(e)]
         if effects:
@@ -835,6 +849,20 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # view); the game itself and the campaign do not. Read before the memory
     # lines, shown after them: a game it speaks for is said once (P2-06).
     game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path)
+    # The game is said once, on its own line: the report's items about it
+    # leave the today line, and the game line is read again so it says
+    # what those items had (owner, 10/8/26).
+    if game and game.get("event_id") is not None and carried and any(
+            i.get("kind") in _GAME_ITEMS and i.get("event_id") == game["event_id"]
+            for i in carried.get("_items") or []):
+        redo = _carry_today_line(carry, today, show_forecast="labor" not in denied, skip_event=game["event_id"])
+        at = next(k for k, l in enumerate(lines) if l is carried)
+        if redo:
+            lines[at] = redo
+        else:
+            lines.pop(at)
+        carried = redo
+        game = _safe(_game_line, restaurant, restaurant_id, today, denied, lines, db_path) or game
     for l in lines:
         l.pop("_items", None)       # what the today line told the game line; never sent
         l.pop("_said", None)

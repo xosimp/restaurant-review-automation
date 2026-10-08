@@ -134,8 +134,12 @@ def test_the_carried_today_line_says_the_game_with_one_figure(db, monkeypatch):
     _store_report(db, r.id, date(2026, 11, 21), snap)
     brief = morning_brief.build(r.id, today=date(2026, 11, 22), db_path=db)
     (today,) = [l for l in brief["lines"] if l["key"] == "today"]
-    assert today["source"] == "dsr" and "Field +30%" not in today["text"] and "have run +25%" in today["text"]
+    assert today["source"] == "dsr" and "Field +30%" not in today["text"]
     assert "Bears home game · Soldier Field's measured effect" in today["text"]
+    # the game is said once, on its own line (owner, 10/8/26): the report's
+    # item about it leaves the today line and the game line says it
+    (game,) = [l for l in brief["lines"] if str(l["key"]).startswith("event_ahead:")]
+    assert "have run +25%" not in today["text"] and "+25%" in game["text"]
     assert _figures_about_the_game(brief["lines"]) == ["+25%"]
     assert ".." not in today["text"]                    # a carried sentence's own stop is not doubled
     assert not [k for l in brief["lines"] for k in l if k in ("_items", "_said")]     # never sent

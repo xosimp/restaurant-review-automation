@@ -302,7 +302,7 @@ def test_removal_remeasures_past_event_nights_only(db, monkeypatch):
 def test_clearing_a_status_leaves_an_if_necessary_game_with_no_result_unresolved(db):
     sox = store.series_by_slug("mlb-chicago-white-sox", db_path=db)
     g5 = [e for e in store.events_for([sox["id"]], None, None, db_path=db)
-          if store.attributes_of(e).get("if_necessary") and e["home_away"] == "home"][0]
+          if store.attributes_of(e).get("if_necessary")][0]      # ALDS Game 5 (10/10/26)
     assert g5["event_date"] < TODAY.isoformat() and not g5.get("result")
     store.edit_event(g5["id"], {"status": "postponed"}, db_path=db)
     store.edit_event(g5["id"], {}, clear=["status"], db_path=db)
