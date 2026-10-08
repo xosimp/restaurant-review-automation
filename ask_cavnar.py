@@ -1095,7 +1095,17 @@ def build_context(restaurant):
     # viewer (a note only its author reads, a note private to the account
     # holders — memory audit 9/29/26), so two co-owners no longer share one
     # cached copy either.
+    # A view-as session carries the owner's id with acting_admin_id beside
+    # it, and support must not read (or leave behind) the owner's copy with
+    # its author-only lines (context re-audit 10/7/26 #1): the key holds the
+    # login the session's history belongs to as well (acting_login_id).
     _own = (_who or {}).get("id")
+    if isinstance(_who, dict):
+        try:
+            from permissions import acting_login_id as _acting
+            _own = (_own, _acting(_who))
+        except Exception:
+            _own = (_own, _who.get("acting_admin_id"), _who.get("acting_admin_role"))
     # And by the restaurant's local date: TODAY carries it, and a five-minute
     # copy built at 11:58pm must not open the next day (#30).
     try:

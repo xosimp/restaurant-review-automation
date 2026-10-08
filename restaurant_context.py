@@ -267,7 +267,22 @@ def viewer_scope(viewer, section=None) -> str:
     if not isinstance(user, dict):
         return "principals"
     ident = {k: user.get(k) for k in ("role", "is_admin", "permissions", "grants", "perms", "module_permissions")}
-    return f"login:{user.get('id')}:{_hash(ident)[:10]}"
+    # A view-as session is the owner's login dict plus acting_admin_id: keyed
+    # on the owner's id alone, support and the owner shared one cached memory
+    # section — support read the owner's author-only lines and the owner was
+    # then served support's copy (context re-audit 10/7/26 #1). The login the
+    # history belongs to (permissions.acting_login_id — the admin behind a
+    # view-as) leads the key, and the owner it views as stays in the hash.
+    try:
+        from permissions import acting_login_id
+        acting = acting_login_id(user)
+    except Exception:
+        acting = -1 if (user.get("acting_admin_id") is not None or user.get("acting_admin_role")) else user.get("id")
+    ident["as"] = user.get("id")
+    ident["acting"] = acting
+    ident["view_as"] = bool(user.get("acting_admin_id") is not None or user.get("acting_admin_role")
+                            or str(user.get("device_type") or "") == "admin-view-as")
+    return f"login:{acting}:{_hash(ident)[:10]}"
 
 
 def _memory_viewer(viewer):
