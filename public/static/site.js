@@ -416,8 +416,12 @@
         var mode = (el.getAttribute('data-thread') || 'left|left').split('|')[phone() ? 1 : 0];
         var a = abs(el), ax = a.x + a.w / 2, ay = a.y + a.h / 2, r = Math.min(a.w, a.h) / 2 + 6;
         var sc = el.closest('section'), st = sc ? abs(sc).y : ay - 120, d = null, y = ay;
-        if (mode === 'top') { y = st + 46; d = 'M' + rx + ' ' + (y - 16) + ' Q' + rx + ' ' + y + ' ' + (rx + 16) + ' ' + y + ' H' + (ax - 16) + ' Q' + ax + ' ' + y + ' ' + ax + ' ' + (y + 16) + ' V' + (ay - r); }
-        else if (mode === 'left') { d = 'M' + rx + ' ' + (ay - 16) + ' Q' + rx + ' ' + ay + ' ' + (rx + 16) + ' ' + ay + ' H' + (ax - r); }
+        // a core within a bend's reach of the rail (a phone's demo core sits
+        // ~4px off it) gets the bend alone: a straight run after it would
+        // double back and leave a stub (10/8/26)
+        var ex = Math.max(rx + 4, ax - r);
+        if (mode === 'top') { y = st + 46; d = ax - rx < 40 ? 'M' + rx + ' ' + (y - 16) + ' V' + (ay - r) : 'M' + rx + ' ' + (y - 16) + ' Q' + rx + ' ' + y + ' ' + (rx + 16) + ' ' + y + ' H' + (ax - 16) + ' Q' + ax + ' ' + y + ' ' + ax + ' ' + (y + 16) + ' V' + (ay - r); }
+        else if (mode === 'left') { d = 'M' + rx + ' ' + (ay - 16) + ' Q' + rx + ' ' + ay + ' ' + (ex < rx + 16 ? ex + ' ' + ay : (rx + 16) + ' ' + ay + ' H' + ex); }
         else y = st + 46;            // no branch (a pinned or crowded core): it still answers
         // a branch starts at its bend, 16px above the tap: that's where the
         // head leaves the rail for it

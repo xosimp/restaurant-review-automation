@@ -169,4 +169,7 @@ def test_the_scroll_story_runs_natively_and_rests_for_reduced_motion():
     # the head, so a fast scroll can't outrun it; branches start at their bend
     assert ".thread-veil{position:fixed;" in css and "mk('path', { d: rail, 'class': 'lit' }, litSvg)" in js
     assert "return { y: d ? y - 16 : y" in js
+    # a core within a bend's reach of the rail gets the bend alone, never a
+    # straight run that doubles back (the phone's demo core, 10/8/26)
+    assert "ex < rx + 16 ? ex + ' ' + ay" in js
     assert "=>" not in js
