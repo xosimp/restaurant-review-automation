@@ -225,6 +225,11 @@ final class PersonSheetViewModel {
     var merges: [PeopleMerge] = []
     var canUndoMerges = false
     var people: [PeopleListRow] = []
+    /// Whether the merge picker's list has come back, and why it didn't —
+    /// the picker shows Try again rather than an endless skeleton
+    /// (re-audit 10/8/26).
+    var peopleLoaded = false
+    var peopleError: String?
     var recordsBusy = false
     var recordsMessage: String?
     var recordsError: String?
@@ -461,10 +466,15 @@ extension PersonSheetViewModel {
 
     /// Everyone else on the list, for "the same person as…".
     func loadPeople(excluding key: String) async {
-        guard let r: PeopleListResponse = try? await client.send("/mobile/api/people", hapticOnError: false), r.ok else {
-            return
+        peopleError = nil
+        do {
+            let r: PeopleListResponse = try await client.send("/mobile/api/people", hapticOnError: false)
+            guard r.ok else { peopleError = "The list didn\u{2019}t load."; return }
+            people = r.people.filter { $0.key != key && !$0.key.isEmpty }
+            peopleLoaded = true
+        } catch {
+            peopleError = PeopleRulesViewModel.loadFailure(error)
         }
-        people = r.people.filter { $0.key != key && !$0.key.isEmpty }
     }
 
     /// Returns the new key on success.
@@ -609,7 +619,9 @@ struct PersonSheet: View {
         }
         .sheet(isPresented: $mergePicking) {
             if case .loaded(let person) = viewModel.state {
-                PersonMergePicker(people: viewModel.people, name: person.name) { picked in
+                PersonMergePicker(people: viewModel.people, name: person.name,
+                                  loaded: viewModel.peopleLoaded, error: viewModel.peopleError,
+                                  retry: { await viewModel.loadPeople(excluding: person.key) }) { picked in
                     mergePicking = false
                     mergeInto = picked
                 }

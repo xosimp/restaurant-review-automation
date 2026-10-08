@@ -114,14 +114,59 @@ final class TeamOpsParityTests: XCTestCase {
         XCTAssertTrue(PushManager.needsAppUnlock(mate, passcodeSet: true), "a reply is outward: the app passcode guards it")
     }
 
-    func testApproveOnTheLineupPushApprovesTheDraftAsWritten() throws {
-        let a = try XCTUnwrap(PushManager.backgroundAction(for: PushManager.approveLineupAction,
-                                                           cavnar: ["alert_type": "lineup_brief_waiting", "day": "2026-10-02"]))
+    /// Re-audit 10/8/26: Approve sends the words the notification showed —
+    /// the whole draft and its revision — never a blind `text: null` (the
+    /// server refuses that, and it overwrote an edited, approved brief).
+    func testApproveOnTheLineupPushApprovesTheWordsItShowed() throws {
+        let cavnar: [String: Any] = ["alert_type": "lineup_brief_waiting", "day": "2026-10-02",
+                                     "draft": "Busy Friday tonight.", "draft_complete": true, "brief_rev": "ab12cd34ef56ab78"]
+        let a = try XCTUnwrap(PushManager.backgroundAction(for: PushManager.approveLineupAction, cavnar: cavnar))
         XCTAssertEqual(a.path, "/mobile/api/staff-brief/approve")
         let body = try object(XCTUnwrap(a.payload))
-        XCTAssertEqual(body["day"] as? String, "2026-10-02")
-        XCTAssertTrue(body["text"] is NSNull, "null text approves the stored draft")
+        XCTAssertEqual(body as NSDictionary, ["day": "2026-10-02", "text": "Busy Friday tonight.",
+                                              "expected_rev": "ab12cd34ef56ab78"])
         XCTAssertNil(PushManager.backgroundAction(for: PushManager.approveLineupAction, cavnar: ["day": "tonight"]))
+        // No draft, a clipped one, or no revision: nothing to approve — it opens.
+        XCTAssertNil(PushManager.backgroundAction(for: PushManager.approveLineupAction,
+                                                  cavnar: ["day": "2026-10-02", "brief_rev": "ab"]))
+        var clipped = cavnar
+        clipped["draft_complete"] = false
+        XCTAssertNil(PushManager.backgroundAction(for: PushManager.approveLineupAction, cavnar: clipped))
+        var noRev = cavnar
+        noRev.removeValue(forKey: "brief_rev")
+        XCTAssertNil(PushManager.backgroundAction(for: PushManager.approveLineupAction, cavnar: noRev))
+    }
+
+    func testTheLineupPushShowsTheBriefApproveSends() {
+        let whole = NotificationPreview(title: "Tonight's lineup brief is waiting", body: "Approve it or edit it first.",
+                                        category: "CAVNAR_LINEUP",
+                                        userInfo: ["cavnar": ["day": "2026-10-02", "draft": "Busy Friday tonight.",
+                                                              "draft_complete": true]])
+        XCTAssertEqual(whole.kind, .lineup)
+        XCTAssertEqual(whole.night, "10/2/26")
+        XCTAssertEqual(whole.draft, "Busy Friday tonight.")
+        XCTAssertEqual(whole.draftKicker, "What staff read")
+        XCTAssertEqual(whole.draftNote, "This is the brief Approve sends to your team.")
+        let openOnly = NotificationPreview(title: "t", body: "b", category: "CAVNAR_LINEUP_REVIEW",
+                                           userInfo: ["cavnar": ["day": "2026-10-02", "draft": "Busy Fri…",
+                                                                 "draft_complete": false]])
+        XCTAssertEqual(openOnly.kind, .lineup)
+        XCTAssertFalse(openOnly.draftComplete)
+        XCTAssertEqual(openOnly.draftNote, "Open it to read the whole brief before it goes to staff.")
+        let none = NotificationPreview(title: "t", body: "b", category: "CAVNAR_LINEUP_REVIEW",
+                                       userInfo: ["cavnar": ["day": "2026-10-02"]])
+        XCTAssertNil(none.draft)
+        XCTAssertEqual(none.draftNote, "Open it to read the brief before it goes to staff.")
+    }
+
+    /// Re-audit 10/8/26: a People read that fails says so, in the server's
+    /// words when it sent some — never an endless skeleton.
+    func testAPeopleReadThatFailsHasASentence() {
+        XCTAssertEqual(PeopleRulesViewModel.loadFailure(nil, refused: "Only the owner can see this."),
+                       "Only the owner can see this.")
+        XCTAssertEqual(PeopleRulesViewModel.loadFailure(URLError(.notConnectedToInternet)),
+                       "Couldn\u{2019}t reach Cavnar AI.")
+        XCTAssertEqual(PeopleRulesViewModel.loadFailure(nil, refused: ""), "Couldn\u{2019}t reach Cavnar AI.")
     }
 
 

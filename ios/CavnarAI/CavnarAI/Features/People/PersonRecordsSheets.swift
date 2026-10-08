@@ -58,6 +58,12 @@ struct PersonRenameSheet: View {
 struct PersonMergePicker: View {
     let people: [PeopleListRow]
     let name: String
+    /// The list came back; `error` says why it didn't (re-audit 10/8/26):
+    /// a failure shows Try again, an empty list says so — the skeleton is
+    /// only for the read in flight.
+    var loaded = true
+    var error: String?
+    var retry: () async -> Void = {}
     let pick: (PeopleListRow) -> Void
 
     @State private var query = ""
@@ -66,8 +72,16 @@ struct PersonMergePicker: View {
         NavigationStack {
             List {
                 Section {
-                    if people.isEmpty {
+                    if let error {
+                        StaffLoadFailed(what: "the list", message: error, retry: retry)
+                            .listRowBackground(Color.clear)
+                    } else if !loaded {
                         CavnarSkeletonLines(widths: [0.6, 0.8, 0.5])
+                            .listRowBackground(Color.clear)
+                    } else if people.isEmpty {
+                        Text("Nobody else is on the list yet.")
+                            .font(.cavnarBody(CavnarType.body))
+                            .foregroundStyle(Color.cavnarInk3)
                             .listRowBackground(Color.clear)
                     }
                     ForEach(filtered) { p in
