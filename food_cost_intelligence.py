@@ -2370,13 +2370,44 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path, evidence_hash
     record_diagnosis_read(restaurant_id, drv, result, at_stake, db_path=db_path)
 
 
+# How far a driver's monthly dollars move before the food diagnosis is
+# written again (re-audit P4): one band is a factor of 1.3 — about ±15%
+# around its middle. The figures are rolling 28-day ones, so for a
+# restaurant on a POS they moved by cents every night, and the hash below
+# (which took them to the cent, and the evidence sentence with its figures
+# and dates) changed every day: the 7-day reuse rule never held and the
+# fleet paid a Sonnet read per restaurant per day for the same cause.
+DRIVER_DOLLAR_BAND = 1.3
+
+
+def _dollar_band(value) -> int:
+    """A driver's monthly dollars as a log band (DRIVER_DOLLAR_BAND wide);
+    0 for nothing."""
+    import math
+    v = _f(value)
+    return int(math.floor(math.log(v) / math.log(DRIVER_DOLLAR_BAND))) if v >= 1 else 0
+
+
+def _driver_identity(d) -> str:
+    """What a driver is about — its item, dish or ingredient, else its label
+    with the figures taken out ("Salmon price up #%")."""
+    import re
+    who = d.get("item") or d.get("dish") or d.get("ingredient")
+    if who:
+        return str(who).strip().lower()
+    return re.sub(r"[$]?\d[\d,.]*%?", "#", str(d.get("label") or "")).strip().lower()
+
+
 def driver_evidence_hash(drv) -> str:
-    """A hash of the ranked drivers a food diagnosis is written from — each
-    one's kind, label, item, monthly dollars and evidence line, in rank
-    order (AI cost audit 10/7/26 #28). The same drivers are the same
-    evidence; a new count, waste entry or price moves a figure in them."""
+    """A hash of the ranked drivers a food diagnosis is written from (AI
+    cost audit 10/7/26 #28): each one's kind and what it is about, in rank
+    order, with its monthly dollars as a band (re-audit P4) — never the
+    cents, never the evidence sentence. The same drivers in the same order
+    at about the same size are the same evidence; a new driver, a change in
+    rank or a move past the band is new evidence, and DIAGNOSIS_REFRESH_DAYS
+    rewrites the read whatever the hash says."""
     import hashlib
-    rows = [[d.get("kind"), d.get("label"), d.get("item"), round(_f(d.get("dollars_monthly")), 2), d.get("evidence")]
+    rows = [[d.get("kind"), _driver_identity(d), _dollar_band(d.get("dollars_monthly"))]
             for d in ((drv or {}).get("drivers") or [])[:6] if isinstance(d, dict)]
     return hashlib.sha256(json.dumps(rows, default=str).encode("utf-8")).hexdigest()[:20]
 

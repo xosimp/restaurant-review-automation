@@ -3379,7 +3379,14 @@ def start_competitor_job(restaurant_id, force=False):
         if stored is not None:
             _ops.finish_async_job(job_id, "done", stored)
         else:
-            threading.Thread(target=_run_competitor_job, args=(job_id, restaurant_id), daemon=True).start()
+            # Under the attribution of the request that pressed it (re-audit
+            # P9): a bare thread has no request, so its calls were labelled
+            # by the stack — admin_routes reads as "admin" — and an owner's
+            # Refresh was neither the owner's nor held to the restaurant's
+            # ceiling as theirs.
+            import ai_utils as _ai_attr
+            threading.Thread(target=_ai_attr.attributed(_run_competitor_job), args=(job_id, restaurant_id),
+                             daemon=True).start()
     return job_id
 
 @admin_bp.route("/api/competitor-intel-status/<job_id>", methods=["GET"])

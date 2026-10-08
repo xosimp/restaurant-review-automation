@@ -75,7 +75,10 @@ def test_a_total_outage_reports_no_score_not_zero(db_path, monkeypatch):
     p = _payload(monkeypatch, db_path, answers=[None] * 12)
     assert p["ai_score"] is None
     assert p["answered_queries"] == 0
-    assert p["partial"] is True
+    # Not a partial run either (re-audit P8, 10/7/26): with nothing back it
+    # is not a run at all — ok False with the reason, never measured.
+    assert p["partial"] is False and p["state"] == "not_measured" and p["measured"] is False
+    assert p["ok"] is False and "not a reading" in p["error"]
 
 
 def test_a_complete_run_reports_a_range_not_a_point(db_path, monkeypatch):

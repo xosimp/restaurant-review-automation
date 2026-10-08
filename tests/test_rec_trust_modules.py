@@ -487,7 +487,10 @@ def test_a_recommendation_must_cite_reviews_that_exist(monkeypatch):
     assert [i["text"] for i in items] == ["Greet every table inside a minute"] and items[0]["cites"] == ["R1"]
     assert comps[0]["reviews"][0]["ref"] == "R1" and comps[1]["reviews"][0]["ref"] == "R3"
     assert "[R1 · 2★" in seen["p"]
-    assert "between ZERO and THREE" in seen["p"] and "exactly three" not in seen["p"].lower()
+    # The rule is in the cached system block since re-audit P9 (AI cost
+    # audit 10/7/26 #63); the message carries the reviews.
+    assert "between ZERO and THREE" in competitor.INSIGHT_SYSTEM
+    assert "exactly three" not in competitor.INSIGHT_SYSTEM.lower() and "exactly three" not in seen["p"].lower()
 
 
 def test_no_cited_recommendation_left_says_so(monkeypatch):

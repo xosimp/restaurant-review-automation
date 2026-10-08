@@ -334,3 +334,46 @@ def test_the_state_rides_with_the_stored_city_after_a_deploy(monkeypatch):
     monkeypatch.setattr(client_api._models_mod, "update_restaurant", lambda *a, **k: None)
     client_api._aivis_city(r)
     assert looked == ["ChIJ-x"]
+
+
+# ── re-audit P1 / P6 / P8 ───────────────────────────────────────────────────
+
+def test_a_read_after_the_weekly_run_serves_it_with_the_fields_the_clients_read(aivis):
+    """P1: both clients now GET on open and render this — state, measured,
+    partial and measured_at are the names they decode."""
+    client_api._do_ai_visibility_inner(1, force=True)
+    client_api._aivis_cache.clear()
+    aivis["asked"].clear()
+    p, _ = client_api._do_ai_visibility(1)
+    assert p["ok"] is True and p["state"] == "complete" and p["measured"] is True
+    assert p["partial"] is False and p["measured_at"] and p["ai_score"] is not None
+    assert aivis["asked"] == [], "a read never runs live"
+
+
+def test_nothing_answered_is_not_a_run_and_the_weekly_job_counts_it_failed(aivis, monkeypatch):
+    """P8: an outage came back ok, partial and measured — recorded as a
+    partial run, never captured."""
+    aivis["fail"] = ["?", " "]
+    out, _ = client_api._do_ai_visibility_inner(1, force=True)
+    assert out["ok"] is False and out["state"] == "not_measured" and out["measured"] is False
+    assert out["partial"] is False and out["answered_queries"] == 0 and out["error"]
+    assert _rows(aivis["db"]) == []
+    import ai_utils
+    import scheduler
+    ai_utils.reset_breaker()      # the outage above opened it; the job must meet the outage itself
+    recorded, captured = [], []
+    monkeypatch.setattr(scheduler, "_record", lambda rid, src, ok, **k: recorded.append(ok))
+    monkeypatch.setattr(scheduler._ops, "capture", lambda e, **k: captured.append(str(e)))
+    monkeypatch.setattr(scheduler, "_ok_this_week", lambda *a, **k: False)
+    monkeypatch.setattr(models, "is_full_tier", lambda r: True)
+    monkeypatch.setattr(models, "in_service", lambda r: True)
+    monkeypatch.setattr(scheduler, "_weekly_sweep",
+                        lambda job, key, rows, fn, **k: ([fn(r) for r in rows], False))
+    counts = scheduler.run_weekly_ai_visibility()
+    assert counts["failed"] == 1 and counts.get("partial", 0) == 0 and recorded == [False]
+    assert captured and "not a reading" in captured[0]
+
+
+def test_the_city_is_read_again_inside_googles_30_days():
+    """P6: city and state are Places content (address_components)."""
+    assert client_api.AIVIS_CITY_REFRESH_DAYS <= 28
