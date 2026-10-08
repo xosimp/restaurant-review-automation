@@ -170,6 +170,10 @@ def test_the_scroll_story_runs_natively_and_rests_for_reduced_motion():
     assert ".thread-veil{position:-webkit-sticky;position:sticky;" in css and "mk('path', { d: rail, 'class': 'lit' }, litSvg)" in js
     # never fixed: iOS 26 ends fixed layers at its floating toolbar (10/8/26)
     assert ".thread-veil{position:fixed" not in css and "vtrack.style.height = H + 'px'" in js
+    # and where scroll-driven animations run, the lit rail itself ends a
+    # little below the head (iOS 26 draws no overlay by its toolbar)
+    assert "view-timeline-name:--rail" in css and "animation-timeline:--rail" in css
+    assert "lline.style.animationRange = 'cover 22vh cover calc(22vh + '" in js
     assert "return { y: d ? y - 16 : y" in js
     # a core within a bend's reach of the rail gets the bend alone, never a
     # straight run that doubles back (the phone's demo core, 10/8/26)

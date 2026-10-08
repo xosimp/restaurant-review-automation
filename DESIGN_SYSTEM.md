@@ -1750,9 +1750,13 @@ connections, then the demo form. Rules:
   hero's scroll hint and runs down a rail in the gutter (10px from the edge on
   a phone), lit down to a reading line 60% down the screen with a glowing
   head — the lit rail is drawn whole in the page, the head is fixed on the
-  reading line and a veil in the page colour, sticky on that line (never
-  fixed: iOS 26 Safari ends fixed layers at its floating toolbar), hides the
-  lit rail below it, so line and head are both placed by the browser and a fast scroll
+  reading line and a veil in the page colour, sticky on that line, hides the
+  lit rail below it. iOS 26 Safari draws no fixed or sticky layer in the
+  band around its floating toolbar, so where scroll-driven animations run
+  (Safari 26, Chrome) the lit rail is a line in a clip whose end the
+  browser holds at 78% of the screen (`.thread-litline`, a view timeline),
+  under the veil and clear of the toolbar; elsewhere the SVG rail and the
+  veil alone, so line and head are both placed by the browser and a fast scroll
   can't separate them;
   at each core it branches in (`data-thread="desktop|phone"`: `left` straight
   in, `top` down through the section's empty top padding, `none` no branch)

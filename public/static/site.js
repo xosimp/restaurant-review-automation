@@ -396,6 +396,18 @@
     // (sticky, not fixed: see .thread-veil in site.css)
     var vtrack = document.createElement('div'); vtrack.className = 'thread-veil-track'; vtrack.setAttribute('aria-hidden', 'true');
     var veil = document.createElement('div'); veil.className = 'thread-veil'; vtrack.appendChild(veil); document.body.appendChild(vtrack);
+    // Where the browser runs scroll-driven animations (Safari 26, Chrome),
+    // the lit rail is a line in a clip that the browser itself keeps ending
+    // a little below the head (.thread-litline in site.css): iOS 26 Safari
+    // draws no fixed or sticky layer in the band around its floating
+    // toolbar, so the veil alone let the lit rail show there (10/8/26).
+    var timeline = !!(window.CSS && CSS.supports && CSS.supports('view-timeline-name', '--rail') && CSS.supports('animation-timeline', '--rail'));
+    var lclip = null, lline = null;
+    if (timeline) {
+      lclip = document.createElement('div'); lclip.className = 'thread-litclip'; lclip.setAttribute('aria-hidden', 'true');
+      lline = document.createElement('i'); lline.className = 'thread-litline'; lclip.appendChild(lline);
+      document.body.insertBefore(lclip, vtrack);
+    }
     var svg = layer('thread');
     var gT = mk('g', {}, svg), gL = mk('g', {}, svg), gB = mk('g', {}, svg);
     var head = document.createElement('div'); head.className = 'thread-head'; head.setAttribute('aria-hidden', 'true'); document.body.appendChild(head);
@@ -446,7 +458,14 @@
       railTop = y0; railEnd = last ? Math.max(y0, last.y) : y0 + 400;
       var rail = 'M' + rx + ' ' + y0 + ' V' + railEnd, leadD = 'M' + sx + ' ' + sy + ' C' + sx + ' ' + (sy + 90) + ' ' + rx + ' ' + (y0 - 90) + ' ' + rx + ' ' + y0;
       litSvg.innerHTML = ''; gT.innerHTML = ''; gL.innerHTML = ''; gB.innerHTML = '';
-      mk('path', { d: rail, 'class': 'lit' }, litSvg);
+      if (lclip) {
+        lclip.style.left = (rx - 1).toFixed(1) + 'px'; lclip.style.top = y0 + 'px'; lclip.style.height = Math.max(0, railEnd - y0) + 'px';
+        // lit from when the clip's top reaches 78% down the screen; its end
+        // stays there as the page scrolls, under the veil, above the toolbar
+        lline.style.animationRange = 'cover 22vh cover calc(22vh + ' + Math.max(1, railEnd - y0).toFixed(0) + 'px)';
+      } else {
+        mk('path', { d: rail, 'class': 'lit' }, litSvg);
+      }
       mk('path', { d: leadD + ' V' + railEnd, 'class': 'track' }, gT);
       var le = mk('path', { d: leadD, 'class': 'lit' }, gL), LL = le.getTotalLength();
       le.setAttribute('stroke-dasharray', LL + ' ' + LL); le.setAttribute('stroke-dashoffset', LL);
