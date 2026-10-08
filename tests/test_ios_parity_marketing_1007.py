@@ -219,6 +219,7 @@ def test_a_phone_instagram_post_by_media_id_sends_meta_an_absolute_url(app, db_p
 
 def test_a_phone_instagram_post_with_a_relative_library_url_is_made_absolute(app, db_path, monkeypatch):
     rid = _restaurant(db_path)
+    _media(db_path, rid, "rel")
     fake = _graph(monkeypatch, _ig_routes())
     resp = Phone(app, db_path, rid).post("/mobile/api/marketing/post-to-instagram",
                                          json={"caption": "Fall menu", "image_url": "/m/rel.jpg"})
@@ -462,3 +463,105 @@ def test_a_login_that_cannot_publish_cannot_retry_or_send_a_newsletter_to_new_su
     assert owner.post("/mobile/api/guest-newsletter/1/retry", json={}).status_code == 200
     assert owner.post("/mobile/api/guest-newsletter/1/send-new", json={}).status_code == 200
     assert called == ["retry", "new"]
+
+
+# ── re-audit 10/8/26: the rest of the Marketing findings ────────────────────
+
+def _newsletter(db_path, rid, hours_ago=1, image_media_id=None, completed=True):
+    import json
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO guest_newsletters (restaurant_id, subject, body, content_hash, total, design, segment, "
+            "segment_label, created_at, completed_at) VALUES (?,?,?,?,?,?,?,?,datetime('now', ?),"
+            + ("datetime('now')" if completed else "NULL") + ")",
+            (rid, "Fall", "Hello", f"h{time.time_ns()}", 0,
+             json.dumps({"image_media_id": image_media_id}) if image_media_id else None, "all", "Everyone",
+             f"-{hours_ago} hours"))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def test_send_to_new_subscribers_refuses_an_old_newsletter(db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(guest_email, "_sending_configured", lambda: True)
+    old = _newsletter(db_path, rid, hours_ago=guest_email.NEWSLETTER_SEND_NEW_HOURS + 1)
+    out = guest_email.send_to_new_subscribers(rid, old, db_path=db_path)
+    assert out["ok"] is False and out["too_old"] is True and out["status"] == 409
+    # Inside the window the bound lets it through (here to the next rule).
+    fresh = _newsletter(db_path, rid, hours_ago=2)
+    out = guest_email.send_to_new_subscribers(rid, fresh, db_path=db_path)
+    assert not out.get("too_old") and out.get("needs_mailing_address") is True
+
+
+def test_send_to_new_is_offered_only_on_the_same_day_refusal_on_the_phone():
+    tab = _swift("CampaignsTab.swift")
+    assert "Send to new subscribers" not in tab
+    assert "following = (n, false)" not in tab
+    studio = _swift("CampaignStudioView.swift")
+    assert 'Send it to the \\(mktPlural($0.count, "new subscriber"))?' in studio
+
+
+def test_the_overview_says_whether_this_login_may_publish(app, db_path):
+    rid = _restaurant(db_path)
+    assert Phone(app, db_path, rid).get("/mobile/api/guest-overview").get_json()["can_publish"] is True
+    member = Phone(app, db_path, rid, role="member", username="teammate")
+    assert member.get("/mobile/api/guest-overview").get_json()["can_publish"] is False
+    tab = _swift("CampaignsTab.swift")
+    assert "if canPublish, n.retryable > 0" in tab and "if canPublish, c.isOpen" in tab
+
+
+def test_the_invite_switch_says_who_may_change_it_admin_included(app, db_path):
+    rid = _restaurant(db_path)
+    assert Phone(app, db_path, rid).get("/mobile/api/guest-optin-invites").get_json()["can_change"] is True
+    manager = Phone(app, db_path, rid, role="manager", username="mgr")
+    assert manager.get("/mobile/api/guest-optin-invites").get_json()["can_change"] is False
+    tab = _swift("CampaignsTab.swift")
+    assert "inv.canChange" in tab
+
+
+def test_a_photo_a_sent_newsletter_shows_is_never_deleted(db_path):
+    rid = _restaurant(db_path)
+    mid = _media(db_path, rid, "senttok")
+    _newsletter(db_path, rid, hours_ago=24 * 30, image_media_id=mid, completed=True)
+    out = marketing_media.remove_media(mid, rid)
+    assert out["ok"] is False and out["status"] == 409 and out["in_sent_email"] is True
+    assert marketing_media.get_media_token(mid, rid) == "senttok"
+    # A photo no email used still goes.
+    spare = _media(db_path, rid, "sparetok")
+    assert marketing_media.remove_media(spare, rid)["ok"] is True
+
+
+def test_a_library_url_naming_another_restaurants_token_is_refused(app, db_path):
+    rid = _restaurant(db_path)
+    other = _restaurant(db_path, name="Other Co")
+    _media(db_path, rid, "minetok")
+    _media(db_path, other, "theirtok")
+    with app.test_request_context("/", base_url="https://dashboard.cavnar.ai"):
+        url, bad = social_routes.photo_url_from(rid, {"image_url": "/m/minetok.jpg"})
+        assert bad is None and url == "https://dashboard.cavnar.ai/m/minetok.jpg"
+        for theirs in ("/m/theirtok.jpg", "https://dashboard.cavnar.ai/m/theirtok.jpg", "/m/nope.jpg",
+                       "/m/../x.jpg"):
+            url, bad = social_routes.photo_url_from(rid, {"image_url": theirs})
+            assert url == "" and bad == "That photo isn't in your library.", theirs
+        # Any other URL is the owner's own link, as before.
+        url, bad = social_routes.photo_url_from(rid, {"image_url": "https://example.com/p.jpg"})
+        assert bad is None and url == "https://example.com/p.jpg"
+
+
+def test_the_camera_purpose_string_names_marketing_photos():
+    with open(os.path.join(ROOT, "ios", "CavnarAI", "project.yml"), encoding="utf-8") as f:
+        yml = f.read()
+    line = next(l for l in yml.splitlines() if "NSCameraUsageDescription" in l)
+    assert "invoice" in line and "post" in line and "guests" in line
+
+
+def test_the_owners_audience_pick_stands_on_both_platforms():
+    vm = _swift("CampaignStudioViewModel.swift")
+    assert "guard !ownerPickedSegment else { return }" in vm
+    with open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8") as f:
+        web = f.read()
+    assert "_cp.seg = key; _cp.segPicked = true;" in web
+    assert "if (!_cp.segPicked) {" in web

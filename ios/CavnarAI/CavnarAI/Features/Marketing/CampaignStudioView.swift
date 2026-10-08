@@ -698,7 +698,9 @@ struct CampaignReviewSheet: View {
                         Button {
                             Haptic.light()
                             Task {
-                                await vm.send(vm.snapshot())
+                                // A second press while the first is in
+                                // flight sends nothing and reports nothing.
+                                guard await vm.send(vm.snapshot()) else { return }
                                 didSend = true
                                 onSent()
                             }
@@ -738,7 +740,10 @@ struct CampaignReviewSheet: View {
             .interactiveDismissDisabled(vm.sending)
             .sheet(item: $vm.gateFlag) { flag in
                 SendGateSheet(flag: flag, onEdit: {
+                    // Back to the Studio at that channel: any other flagged
+                    // channel's result line still says so there.
                     let k: StudioChannel = flag.channel == "email" ? .email : .text
+                    vm.clearGateFlags()
                     onEdit(k)
                 }, onDiscard: {
                     vm.discard(flag.channel == "email" ? .email : .text)

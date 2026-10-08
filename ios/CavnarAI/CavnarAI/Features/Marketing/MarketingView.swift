@@ -1,6 +1,6 @@
 import SwiftUI
 
-private enum MarketingSubTab: String, CaseIterable, Identifiable {
+enum MarketingSubTab: String, CaseIterable, Identifiable {
     case content = "Content"
     case campaigns = "Campaigns"
     case analytics = "Analytics"
@@ -15,7 +15,7 @@ private enum MarketingContentField: Hashable, CaseIterable {
 /// Scheduled, Drafts) — one Identifiable enum driving a single
 /// navigationDestination(item:) rather than three separate NavigationLinks,
 /// so the row's tap can fire a deterministic haptic (see shelfRow).
-private enum MarketingShelfDestination: String, Identifiable {
+enum MarketingShelfDestination: String, Identifiable {
     case guestTextClub, scheduled, drafts
     var id: String { rawValue }
 }
@@ -23,14 +23,12 @@ private enum MarketingShelfDestination: String, Identifiable {
 struct MarketingView: View {
     /// Where a route asked to land (nav.py: marketing, marketing/
     /// opportunities, marketing/campaigns, marketing/text-club,
-    /// marketing/drafts, …) and the item in it — an opportunity card's key,
-    /// or a drafted post's id (the quiet-night push's post_draft_id).
-    var focusSection: String? = nil
-    var focusItem: String? = nil
+    /// marketing/drafts, …): the section, an opportunity card's key and a
+    /// drafted post's id — the quiet-night push carries both of the last two.
+    var focus: MarketingFocus
 
-    init(focusSection: String? = nil, focusItem: String? = nil) {
-        self.focusSection = focusSection
-        self.focusItem = focusItem
+    init(focus: MarketingFocus = MarketingFocus()) {
+        self.focus = focus
     }
 
     @Environment(SessionStore.self) private var sessionStore
@@ -77,7 +75,10 @@ struct MarketingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if subTab == .campaigns {
-                        CampaignsTabSection(viewModel: campaigns, isOwner: isOwner,
+                        CampaignsTabSection(viewModel: campaigns,
+                                            canPublish: campaigns.overview?.canPublish
+                                                ?? (sessionStore.currentUser?.mayPublishMarketing ?? false),
+                                            canChangeInvites: sessionStore.currentUser?.isAccountOwnerLogin ?? false,
                                             onOpenStudio: { studioSeed = $0 },
                                             onOpenTextClub: { shelfDestination = .guestTextClub })
                     } else if subTab == .content {
@@ -1055,7 +1056,7 @@ struct MarketingView: View {
 
 // MARK: - Routing and the Studio
 
-extension MarketingView {
+extension MarketingView: MarketingFocusTarget {
     static let opportunitiesAnchor = "marketing-opportunities"
 
     var isOwner: Bool { sessionStore.currentUser?.isOwner ?? false }
@@ -1088,14 +1089,16 @@ extension MarketingView {
 
     /// A saved draft opened from the shelf: a post goes to the composer; a
     /// text or an email draft (the old quiet-night guest text, a saved
-    /// Re-engagement text or Weekly email) goes to the Studio on its channel.
+    /// Re-engagement text or Weekly email) goes to the Studio on its
+    /// channel with its words (StudioSeed.savedDraft — the web's
+    /// _mktDraftToStudio).
     func openDraft(_ draft: MarketingDraft) {
         // An expired draft can't be posted or sent; the row doesn't offer
         // Open, and this holds regardless.
         guard draft.canOpenInComposer else { return }
-        if let channel = MarketingContentType.guestChannel(of: draft.contentType ?? "") {
+        if let seed = StudioSeed.savedDraft(draft) {
             shelfDestination = nil
-            studioSeed = StudioSeed(prompt: draft.topic ?? "", channels: [channel == "email" ? .email : .text])
+            studioSeed = seed
             return
         }
         viewModel.draft = draft.body
@@ -1108,40 +1111,26 @@ extension MarketingView {
         shelfDestination = nil
     }
 
-    /// Lands where the route asked: the sub-tab, the feed card, the Text
-    /// Club, the queue, the drafts — or a drafted post by id.
+    /// Lands where the route asked (MarketingFocus.plan): the sub-tab, the
+    /// feed card, the Text Club, the queue, the drafts — and a drafted post
+    /// by id. The quiet-night push names a card AND its drafted post: both
+    /// happen, the card lit in the feed and the post in the composer.
     func applyFocus() async {
-        let section = (focusSection ?? "").lowercased()
-        let item = focusItem?.trimmingCharacters(in: .whitespaces)
-        switch section {
-        case "campaigns", "campaign", "guests", "newsletter":
-            subTab = .campaigns
-        case "analytics":
-            subTab = .analytics
-        case "text-club", "textclub", "guest-text-club", "contacts":
-            shelfDestination = .guestTextClub
-        case "scheduled", "queue", "schedule":
-            shelfDestination = .scheduled
-        case "opportunities", "opportunity":
-            subTab = .content
-            if !opportunities.loaded { await opportunities.load() }
-            await opportunities.focus(item)
-            scrollToOpportunities = UUID()
-            return
-        case "drafts", "draft":
-            if let id = item.flatMap({ Int($0) }) { await openDraft(id: id) } else { shelfDestination = .drafts }
-            return
-        default:
-            break
-        }
-        // marketing with a post_draft_id: the drafted post, in the composer.
-        if section.isEmpty || section == "marketing" || section == "content",
-           let id = item.flatMap({ Int($0) }) {
-            await openDraft(id: id)
-        }
+        await focus.plan.apply(to: self)
     }
 
-    private func openDraft(id: Int) async {
+    func land(on tab: MarketingSubTab) { subTab = tab }
+
+    func open(shelf: MarketingShelfDestination) { shelfDestination = shelf }
+
+    func focusCard(_ key: String) async {
+        if !opportunities.loaded { await opportunities.load() }
+        await opportunities.focus(key)
+    }
+
+    func scrollToFeed() { scrollToOpportunities = UUID() }
+
+    func openDraft(id: Int) async {
         if !compose.drafts.contains(where: { $0.id == id }) { await compose.loadDrafts() }
         if let draft = compose.drafts.first(where: { $0.id == id }), draft.canOpenInComposer {
             subTab = .content
@@ -1204,4 +1193,106 @@ struct MarketingHeader: Decodable, Equatable {
         default: return .cavnarInk
         }
     }
+}
+
+/// Where a route asked Marketing to land, read once from the route: the
+/// section, the Opportunity Feed card and the drafted post. The
+/// quiet-night push (push.nav_for) is
+/// "marketing/opportunities?card=slow_day:Tue&post_draft_id=41" — a card
+/// and a post, kept apart so neither is lost (re-audit 10/8/26: the post's
+/// id used to stand in for the card, and the post never opened).
+struct MarketingFocus: Equatable {
+    var section = ""
+    /// An Opportunity Feed card's key.
+    var card: String?
+    /// A drafted post's id.
+    var draftId: Int?
+    /// Anything else the route named after the section.
+    var item: String?
+
+    init(section: String? = nil, card: String? = nil, draftId: Int? = nil, item: String? = nil) {
+        self.section = (section ?? "").lowercased()
+        self.card = card.flatMap { $0.isEmpty ? nil : $0 }
+        self.draftId = draftId
+        self.item = item.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    init(route: ModuleRoute?) {
+        let query = route?.navPath?.query ?? [:]
+        let draftParam = query["post_draft_id"].flatMap { $0.isEmpty ? nil : $0 }
+        // ModuleRoute puts the post_draft_id in itemId; the item proper is
+        // what the path itself names ("marketing/opportunities/<key>").
+        let pathItem = route?.navPath?.rest.dropFirst().first
+        let rawItem = draftParam != nil ? pathItem : (route?.itemId ?? pathItem)
+        self.init(section: route?.section, card: query["card"], draftId: draftParam.flatMap { Int($0) },
+                  item: rawItem)
+    }
+
+    /// What landing there does, in order: the tab or shelf, the card lit
+    /// in the feed, then the drafted post opened in the composer.
+    struct Plan: Equatable {
+        var subTab: MarketingSubTab?
+        var shelf: MarketingShelfDestination?
+        var card: String?
+        var draftId: Int?
+        /// Bring the feed into view (a card with no post to open).
+        var scrollToFeed = false
+    }
+
+    /// MarketingView.applyFocus: the plan, carried out on the screen.
+    @MainActor
+    static func apply(_ p: Plan, to target: some MarketingFocusTarget) async {
+        if let tab = p.subTab { target.land(on: tab) }
+        if let shelf = p.shelf { target.open(shelf: shelf) }
+        if let card = p.card { await target.focusCard(card) }
+        if let id = p.draftId {
+            await target.openDraft(id: id)
+        } else if p.scrollToFeed {
+            target.scrollToFeed()
+        }
+    }
+
+    var plan: Plan {
+        var p = Plan()
+        switch section {
+        case "campaigns", "campaign", "guests", "newsletter":
+            p.subTab = .campaigns
+        case "analytics":
+            p.subTab = .analytics
+        case "text-club", "textclub", "guest-text-club", "contacts":
+            p.shelf = .guestTextClub
+        case "scheduled", "queue", "schedule":
+            p.shelf = .scheduled
+        case "opportunities", "opportunity":
+            p.subTab = .content
+            p.card = card ?? item
+            p.draftId = draftId
+            p.scrollToFeed = draftId == nil
+        case "drafts", "draft":
+            p.draftId = draftId ?? item.flatMap { Int($0) }
+            if p.draftId == nil { p.shelf = .drafts }
+        case "", "marketing", "content":
+            p.draftId = draftId ?? item.flatMap { Int($0) }
+            if let card { p.subTab = .content; p.card = card; p.scrollToFeed = p.draftId == nil }
+        default:
+            p.draftId = draftId
+        }
+        return p
+    }
+}
+
+extension MarketingFocus.Plan {
+    @MainActor
+    func apply(to target: some MarketingFocusTarget) async { await MarketingFocus.apply(self, to: target) }
+}
+
+/// What landing on a Marketing focus needs of the screen — MarketingView,
+/// or a recorder in a test.
+@MainActor
+protocol MarketingFocusTarget {
+    func land(on tab: MarketingSubTab)
+    func open(shelf: MarketingShelfDestination)
+    func focusCard(_ key: String) async
+    func openDraft(id: Int) async
+    func scrollToFeed()
 }

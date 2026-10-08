@@ -181,6 +181,9 @@ struct GuestOverview: Decodable {
     var insights: [Insight] = []
     var joinURL: String?
     var receiptHint: String?
+    /// Whether this login may send, stop or retry (marketing_drafts.
+    /// may_publish) — nil from an older server.
+    var canPublish: Bool?
 
     init() {}
 
@@ -208,6 +211,7 @@ struct GuestOverview: Decodable {
         insights = ((try? c.decodeIfPresent([Insight].self, forKey: .insights)) ?? nil) ?? []
         joinURL = c.mktText(.joinURL)
         receiptHint = c.mktText(.receiptHint)
+        canPublish = c.mktBool(.canPublish)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -227,7 +231,21 @@ struct GuestOverview: Decodable {
         case mailingAddressSet = "mailing_address_set"
         case joinURL = "join_url"
         case receiptHint = "receipt_hint"
+        case canPublish = "can_publish"
     }
+}
+
+extension User {
+    /// The roles that hold marketing.approve (permissions.ROLE_PERMISSIONS:
+    /// owner, client, manager; an admin always) — the fallback while the
+    /// server's `can_publish` is unknown.
+    var mayPublishMarketing: Bool {
+        isAdmin || ["", "client", "owner", "manager"].contains(role.lowercased())
+    }
+
+    /// The account owner's own login (owner or client role) — not an admin:
+    /// the invite switch's rule server-side, until `can_change` is known.
+    var isAccountOwnerLogin: Bool { ["", "client", "owner"].contains(role.lowercased()) }
 }
 
 /// The sending window as the server words it ("8:00 AM and 9:00 PM").
@@ -1001,6 +1019,9 @@ struct OptinInvitesState: Decodable, Equatable {
     var acknowledgedAt: String?
     var disclosure: String?
     var error: String?
+    /// Whether this login may turn it on or off (owner and client only) —
+    /// nil from an older server.
+    var canChange: Bool?
 
     init() {}
 
@@ -1011,11 +1032,13 @@ struct OptinInvitesState: Decodable, Equatable {
         acknowledgedAt = c.mktText(.acknowledgedAt)
         disclosure = c.mktText(.disclosure)
         error = c.mktText(.error)
+        canChange = c.mktBool(.canChange)
     }
 
     enum CodingKeys: String, CodingKey {
         case ok, enabled, disclosure, error
         case acknowledgedAt = "acknowledged_at"
+        case canChange = "can_change"
     }
 }
 

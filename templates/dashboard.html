@@ -32002,7 +32002,7 @@ function cpSegRecord(key) {
 function cpPickSeg(key) {
   if (_cp.sending) return;
   if (_cp.winback && key !== _cp.winback.segment) _cp.winback = null;   // their own campaign now
-  _cp.seg = key; cpDisarm();
+  _cp.seg = key; _cp.segPicked = true; cpDisarm();
   var sb = _cpEl('guest-send-btn'); if (sb) sb.classList.remove('sent');
   var k = _cpEl('cp-aud-k'); if (k) k.textContent = 'Your pick';
   cpPaint();
@@ -32084,6 +32084,7 @@ function cpResetDraft() {
   ['text', 'email', 'social'].forEach(function(k) { _cp.seq[k]++; });
   _cp.busy = {}; _cp.err = {};
   _cp.type = 'general'; _cp.goal = ''; _cp.targetDay = null; _cp.planned = false; _cp.winback = null; _cp.seg = 'all';
+  _cp.segPicked = false;
   _cp.ref = {}; _cp.clid = null;   // a new draft names no earlier one
   ['guest-campaign-message', 'guest-campaign-link', 'guest-newsletter-subject', 'cp-em-pre', 'cp-em-headline',
    'guest-newsletter-body', 'cp-em-btn', 'cp-em-url', 'cp-so-caption'].forEach(function(id) { var el = _cpEl(id); if (el) el.value = ''; });
@@ -32149,8 +32150,11 @@ function cpDraft(k, prompt, plan) {
     if (k === 'text' && d.returns_by_segment) _cp.rets = d.returns_by_segment;
     if (plan && !_cp.planned && d.segment) {
       _cp.planned = true; _cp.type = d.type || 'general'; _cp.goal = d.goal || ''; _cp.targetDay = d.target_day || null;
-      _cp.seg = d.segment || window._guestDefaults[_cp.type] || 'all';
-      var tag = _cpEl('cp-aud-k'); if (tag) tag.textContent = 'Picked by Cavnar AI';
+      // The owner's own pick, made while this drafted, stands (re-audit 10/8/26).
+      if (!_cp.segPicked) {
+        _cp.seg = d.segment || window._guestDefaults[_cp.type] || 'all';
+        var tag = _cpEl('cp-aud-k'); if (tag) tag.textContent = 'Picked by Cavnar AI';
+      }
     }
     if (k === 'text') { var m = _cpEl('guest-campaign-message'); if (m) m.value = d.message || ''; }
     else if (k === 'email') {

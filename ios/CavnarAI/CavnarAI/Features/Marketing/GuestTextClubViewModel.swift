@@ -581,30 +581,22 @@ final class GuestTextClubViewModel {
     }
 
     private typealias WinbackBody = WinbackSendBody
-    private struct WinbackSendResponse: Decodable {
-        let ok: Bool
-        let queued: Bool?
-        let total: Int?
-        let error: String?
-    }
 
+    /// Sends the owner's win-back text. The answer is the campaign send's
+    /// own shape (CampaignSendResult): a text the send gate held back
+    /// opens "Cavnar AI flagged this" with its reasons, as every other
+    /// send does (re-audit 10/8/26 — it used to be a bare error line).
     func sendWinback() async {
         guard let draft = winback, canSendWinback else { return }
         isSendingWinback = true
         winbackError = nil
         defer { isSendingWinback = false }
         do {
-            let r: WinbackSendResponse = try await client.send(
+            let r: CampaignSendResult = try await client.send(
                 "/mobile/api/guest-winback/\(draft.id)/send", method: .post,
                 body: WinbackBody(message: winbackMessage, hold: !sendingNow),
                 retryTransient: false)
-            if r.ok {
-                Haptic.success()
-                winbackSentTotal = r.total ?? draft.segmentSize ?? 0
-                await loadHistory()
-            } else {
-                winbackError = r.error ?? "Couldn\u{2019}t send the win-back text."
-            }
+            await handleWinback(r, draft: draft)
         } catch is CancellationError {
             return
         } catch let error as APIClient.APIError where error.status == nil && error.mayHaveReachedServer {
@@ -612,12 +604,37 @@ final class GuestTextClubViewModel {
             winbackError = "Lost the connection mid-send. Check the campaign history before sending again \u{2014} anyone already texted is skipped."
             await loadHistory()
         } catch let error as APIClient.APIError {
-            // The server's own sentence — quiet hours, the frequency cap,
-            // the length limit.
-            winbackError = error.message
+            // A refusal with its body (the send gate, quiet hours, the
+            // frequency cap, the length limit): read as the send's answer.
+            if error.status != nil, let r = error.decodeBody(CampaignSendResult.self) {
+                await handleWinback(r, draft: draft)
+            } else {
+                winbackError = error.message
+            }
         } catch {
             winbackError = "Couldn\u{2019}t send the win-back text."
         }
+    }
+
+    private func handleWinback(_ r: CampaignSendResult, draft: GuestWinback.Draft) async {
+        if r.ok {
+            Haptic.success()
+            winbackSentTotal = r.total ?? draft.segmentSize ?? 0
+            await loadHistory()
+        } else if r.isGateFlag {
+            gateFlag = SendGateFlag(channel: "winback", message: r.error ?? "Cavnar AI held this text back.",
+                                    reasons: r.reasons)
+            winbackError = "Cavnar AI flagged this text \u{2014} nothing was sent."
+        } else {
+            if r.isQuietHours { overview?.sendingNow = false }
+            winbackError = r.error ?? "Couldn\u{2019}t send the win-back text."
+        }
+    }
+
+    /// "Discard" on a flagged win-back text.
+    func discardWinbackText() {
+        winbackMessage = ""
+        winbackError = nil
     }
 
     /// `reason_code` is one of rec_ledger.REASON_CODES (RecReason), omitted

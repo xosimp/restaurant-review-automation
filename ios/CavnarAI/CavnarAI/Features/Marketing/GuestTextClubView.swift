@@ -47,8 +47,12 @@ struct GuestTextClubView: View {
         // "Cavnar AI flagged this": what the send gate held back and why,
         // with Edit or Discard (parity audit #74).
         .sheet(item: $viewModel.gateFlag) { flag in
-            SendGateSheet(flag: flag, onEdit: { focusedField = .draftMessage },
-                          onDiscard: { viewModel.discardDraft() })
+            // A flagged win-back text goes back to its own box.
+            SendGateSheet(flag: flag,
+                          onEdit: { focusedField = flag.channel == "winback" ? .winback : .draftMessage },
+                          onDiscard: {
+                              if flag.channel == "winback" { viewModel.discardWinbackText() } else { viewModel.discardDraft() }
+                          })
         }
         .sheet(item: $studioSeed) { seed in
             CampaignStudioView(seed: seed, connected: nil, isOwner: sessionStore.currentUser?.isOwner ?? false) {

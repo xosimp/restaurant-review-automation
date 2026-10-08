@@ -32,6 +32,37 @@ struct StudioSeed: Identifiable {
     var reuseEmail: GuestNewsletter? = nil
     /// "Improve with Cavnar AI" rather than "Use again".
     var improve = false
+    /// A saved text draft's words (the old quiet-night guest text, a saved
+    /// Re-engagement text): the Studio opens with them in the text box.
+    var savedText: String? = nil
+    /// A saved Weekly email's words: the Studio opens with them as the
+    /// letter (the web's cpUseEmailText).
+    var savedEmail: String? = nil
+
+    /// A saved text or email draft opened from Drafts — with its words,
+    /// as the web's _mktDraftToStudio opens it; nil for a post, which goes
+    /// to the composer. "Tuesday night guest text" reads as the goal
+    /// "Fill Tuesday dinner".
+    static func savedDraft(_ draft: MarketingDraft) -> StudioSeed? {
+        guard let channel = MarketingContentType.guestChannel(of: draft.contentType ?? "") else { return nil }
+        if channel == "email" {
+            var seed = StudioSeed(channels: [.email])
+            seed.savedEmail = draft.body
+            return seed
+        }
+        var seed = StudioSeed(prompt: goal(fromTopic: draft.topic ?? ""), channels: [.text])
+        seed.savedText = draft.body
+        return seed
+    }
+
+    static func goal(fromTopic topic: String) -> String {
+        let suffix = " night guest text"
+        let t = topic.trimmingCharacters(in: .whitespaces)
+        guard t.hasSuffix(suffix) else { return t }
+        let day = String(t.dropLast(suffix.count))
+        guard !day.isEmpty, day.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return t }
+        return "Fill \(day) dinner"
+    }
 }
 
 /// One line of the send's outcome, told straight, with the follow-up a line
@@ -139,7 +170,24 @@ final class CampaignStudioViewModel {
     // MARK: Send
     private(set) var sending = false
     var results: [StudioResultLine] = []
-    var gateFlag: SendGateFlag?
+    /// Every channel the send gate held back, in order: a text AND an
+    /// email can both be flagged by one send, and each gets its sheet.
+    private(set) var gateFlags: [SendGateFlag] = []
+    /// The flag on screen; dismissing it shows the next one.
+    var gateFlag: SendGateFlag? {
+        get { gateFlags.first }
+        set {
+            if let newValue {
+                if !gateFlags.contains(newValue) { gateFlags.insert(newValue, at: 0) }
+            } else if !gateFlags.isEmpty {
+                gateFlags.removeFirst()
+            }
+        }
+    }
+    func clearGateFlags() { gateFlags = [] }
+    /// The audience the owner picked, which a plan answering later never
+    /// replaces.
+    private(set) var ownerPickedSegment = false
     /// The connection dropped mid-send: the outcome is unknown, and the
     /// send stays off rather than inviting a blind second press.
     private(set) var outcomeUnknown = false
@@ -429,6 +477,32 @@ final class CampaignStudioViewModel {
             builderOpen = true
             return
         }
+        if let text = seed.savedEmail {
+            // The web's cpUseEmailText: the letter as it was saved, the
+            // email alone, no subject yet (the preview splits a
+            // "SUBJECT LINE: … BODY: …" draft into the two).
+            resetDraft()
+            type = "general"; targetDay = nil; planned = true
+            on = [.email]; chanSet = true
+            prompt = "Your weekly email"
+            activePrompt = prompt
+            goal = "Send your weekly email"
+            letter = text
+            builderOpen = true
+            schedulePreview(now: true)
+            return
+        }
+        if let text = seed.savedText {
+            // The saved text's words, with its goal ("Fill Tuesday dinner")
+            // for a Rewrite or a fresh Create.
+            resetDraft()
+            on = [.text]; chanSet = true
+            prompt = String(seed.prompt.prefix(280))
+            activePrompt = prompt
+            message = text
+            builderOpen = true
+            return
+        }
         if let n = seed.reuseEmail {
             resetDraft()
             type = "general"; targetDay = nil; planned = true
@@ -593,6 +667,9 @@ final class CampaignStudioViewModel {
         type = t ?? "general"
         goal = g ?? ""
         targetDay = td
+        // The owner's own pick stands: a plan answering after it fills in
+        // the goal and the day, never the audience (re-audit 10/8/26).
+        guard !ownerPickedSegment else { return }
         segment = seg
         pickedByAI = true
     }
@@ -602,7 +679,7 @@ final class CampaignStudioViewModel {
     func resetDraft() {
         for k in StudioChannel.allCases { seq[k] = (seq[k] ?? 0) + 1 }
         busy = []; errors = [:]
-        type = "general"; goal = ""; targetDay = nil; planned = false; pickedByAI = false
+        type = "general"; goal = ""; targetDay = nil; planned = false; pickedByAI = false; ownerPickedSegment = false
         winbackRef = nil; segment = "all"; refs = [:]; contentLogId = nil
         recKey = nil; recFor = nil
         message = ""; linkOn = false; linkURL = ""
@@ -610,7 +687,7 @@ final class CampaignStudioViewModel {
         previewTask?.cancel(); previewHTML = nil
         caption = ""
         photos.clearMedia()
-        results = []; gateFlag = nil; outcomeUnknown = false
+        results = []; gateFlags = []; outcomeUnknown = false
     }
 
     // MARK: - Owner choices
@@ -633,6 +710,7 @@ final class CampaignStudioViewModel {
         if let w = winbackRef, key != w.segment { winbackRef = nil }   // their own campaign now
         segment = key
         pickedByAI = false
+        ownerPickedSegment = true
     }
 
     func togglePlatform(_ key: String) {
@@ -728,12 +806,15 @@ final class CampaignStudioViewModel {
     }
 
     /// Sends the snapshot the owner confirmed, one channel after another,
-    /// each line told straight. Nothing sent can be taken back.
-    func send(_ snap: StudioSnapshot) async {
-        guard !sending, !snap.isEmpty else { return }
+    /// each line told straight. Nothing sent can be taken back. False when
+    /// it did not run — a second press while the first is in flight, or
+    /// nothing to send — so the caller never reports a send that wasn't.
+    @discardableResult
+    func send(_ snap: StudioSnapshot) async -> Bool {
+        guard !sending, !snap.isEmpty else { return false }
         sending = true
         results = []
-        gateFlag = nil
+        gateFlags = []
         var anyOk = false
         defer { sending = false }
 
@@ -758,6 +839,7 @@ final class CampaignStudioViewModel {
             if let o { overview = o }
             if let s { segments = s.segments }
         }
+        return true
     }
 
     private func mark(_ k: StudioChannel, _ snap: StudioSnapshot) {
@@ -796,8 +878,8 @@ final class CampaignStudioViewModel {
             return true
         }
         if r.isGateFlag {
-            gateFlag = SendGateFlag(channel: "text", message: r.error ?? "Cavnar AI held this text back.",
-                                    reasons: r.reasons)
+            gateFlags.append(SendGateFlag(channel: "text", message: r.error ?? "Cavnar AI held this text back.",
+                                          reasons: r.reasons))
             line(false, "Text: Cavnar AI flagged it \u{2014} nothing was sent")
         } else {
             if r.isQuietHours { overview?.sendingNow = false }
@@ -839,8 +921,8 @@ final class CampaignStudioViewModel {
             overview?.mailingAddressSet = false
             line(false, "Email: " + (r.error ?? "add your mailing address first"))
         } else if r.gateFlagged {
-            gateFlag = SendGateFlag(channel: "email", message: r.error ?? "Cavnar AI held this email back.",
-                                    reasons: r.reasons)
+            gateFlags.append(SendGateFlag(channel: "email", message: r.error ?? "Cavnar AI held this email back.",
+                                          reasons: r.reasons))
             line(false, "Email: Cavnar AI flagged it \u{2014} nothing was sent")
         } else {
             line(false, "Email: " + (r.error ?? "couldn\u{2019}t send"))

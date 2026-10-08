@@ -25,7 +25,7 @@ enum CampaignHistoryItem: Identifiable {
 
 /// Marketing → Campaigns on the phone: who's listening (the KPI strip and
 /// twelve weeks of opt-ins), a way into the Studio, what went out (texts
-/// and emails, with Stop sending, Retry and Send to new) and the rules
+/// and emails, with Stop sending and Retry for a login that may send) and the rules
 /// every campaign follows (with the review-link invite switch). The web's
 /// Campaigns tab (dashboard.html `#mkt-tab-campaigns`).
 @Observable
@@ -108,12 +108,14 @@ final class CampaignsTabViewModel {
     }
 
     /// "31 texted this month · 18 emailed · 2 texts failed · 98% accepted by
-    /// carrier" — accepted, never "delivered" (CS-13).
+    /// carrier" — accepted, never "delivered" (CS-13). A month with no
+    /// figure from the server says "—", never 0; an email counts in the
+    /// restaurant's own month, not UTC's (re-audit 10/8/26).
     var monthLine: String? {
         guard let o = overview else { return nil }
-        var bits = ["\(o.textsThisMonth ?? 0) texted this month"]
+        var bits = [(o.textsThisMonth.map { "\($0)" } ?? "\u{2014}") + " texted this month"]
         let month = Self.monthKey(Date())
-        let mailed = newsletters.filter { String(($0.createdAt ?? "").prefix(7)) == month }.reduce(0) { $0 + $1.sent }
+        let mailed = newsletters.filter { Self.localMonth(of: $0.createdAt) == month }.reduce(0) { $0 + $1.sent }
         if mailed > 0 { bits.append("\(mailed) emailed") }
         if let f = o.textsFailedThisMonth, f > 0 { bits.append("\(mktPlural(f, "text")) failed") }
         if let a = o.accepted {
@@ -122,7 +124,15 @@ final class CampaignsTabViewModel {
         return bits.joined(separator: " \u{00B7} ")
     }
 
-    private static func monthKey(_ date: Date) -> String {
+    /// "2026-10" for a server stamp, in the restaurant's zone: a UTC
+    /// "2026-11-01 02:00:00" is still October in Chicago.
+    static func localMonth(of stamp: String?) -> String {
+        guard let stamp, !stamp.isEmpty else { return "" }
+        if let date = CavnarDate.timestamp(stamp) { return monthKey(date) }
+        return String(stamp.prefix(7))
+    }
+
+    static func monthKey(_ date: Date) -> String {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = RestaurantClock.timeZone
         let c = cal.dateComponents([.year, .month], from: date)
@@ -155,14 +165,15 @@ final class CampaignsTabViewModel {
         await load()
     }
 
-    /// Retry the failures a retry can reach, or send to the new
-    /// subscribers. Confirmed by the caller first.
-    func followUp(_ newsletter: GuestNewsletter, retry: Bool) async {
+    /// Retry the failures a retry can reach. Confirmed by the caller first.
+    /// "Send to the new subscribers" is not offered here: like the web, it
+    /// rides only the same-day "Already sent" answer in the Studio.
+    func retry(_ newsletter: GuestNewsletter) async {
         let key = "e\(newsletter.id)"
         busyIDs.insert(key)
         defer { busyIDs.remove(key) }
         actionError = nil
-        let r = await CampaignMail.followUp(client: client, newsletterId: newsletter.id, retry: retry)
+        let r = await CampaignMail.followUp(client: client, newsletterId: newsletter.id, retry: true)
         if r.ok {
             Haptic.success()
             notice = r.summary
@@ -214,13 +225,19 @@ final class CampaignsTabViewModel {
 
 struct CampaignsTabSection: View {
     let viewModel: CampaignsTabViewModel
-    var isOwner: Bool
+    /// Whether this login may send, stop or retry (the server's
+    /// may_publish, `can_publish` on the overview). A login that can't
+    /// isn't shown the buttons the server would refuse it.
+    var canPublish: Bool
+    /// Whether this login may turn the invite texts on or off (the
+    /// server's `can_change` — owner and client roles only, not an admin).
+    var canChangeInvites: Bool
     var onOpenStudio: (StudioSeed) -> Void
     var onOpenTextClub: () -> Void
 
     @State private var rowHeights: [String: CGFloat] = [:]
     @State private var stopping: GuestCampaign?
-    @State private var following: (newsletter: GuestNewsletter, retry: Bool)?
+    @State private var retrying: GuestNewsletter?
     @State private var askingWinbackReason = false
     @State private var showingDisclosure = false
 
@@ -247,25 +264,17 @@ struct CampaignsTabSection: View {
         } message: { _ in
             Text("Texts already handed to the carrier are not recalled.")
         }
-        .confirmationDialog(followTitle,
-                            isPresented: Binding(get: { following != nil }, set: { if !$0 { following = nil } }),
-                            titleVisibility: .visible) {
-            if let f = following {
-                Button(f.retry ? "Retry \(f.newsletter.retryable)" : "Send it") {
-                    Task { await viewModel.followUp(f.newsletter, retry: f.retry) }
-                }
+        .confirmationDialog(retrying.map { "Send \u{201C}\($0.subject)\u{201D} again to the \(mktPlural($0.retryable, "guest")) it failed to reach?" } ?? "",
+                            isPresented: Binding(get: { retrying != nil }, set: { if !$0 { retrying = nil } }),
+                            titleVisibility: .visible, presenting: retrying) { n in
+            Button("Retry \(n.retryable)") {
+                Task { await viewModel.retry(n) }
             }
             Button("Cancel", role: .cancel) {}
-        } message: {
+        } message: { _ in
             Text("Nobody it already reached is emailed twice.")
         }
         .sheet(isPresented: $showingDisclosure) { disclosureSheet }
-    }
-
-    private var followTitle: String {
-        guard let f = following else { return "" }
-        return f.retry ? "Send \u{201C}\(f.newsletter.subject)\u{201D} again to the \(mktPlural(f.newsletter.retryable, "guest")) it failed to reach?"
-            : "Send \u{201C}\(f.newsletter.subject)\u{201D} to the subscribers it hasn\u{2019}t reached?"
     }
 
     // MARK: - Who's listening
@@ -518,12 +527,12 @@ struct CampaignsTabSection: View {
     private func swipeActions(_ item: CampaignHistoryItem) -> some View {
         switch item {
         case .text(let c):
-            if c.isOpen {
+            if canPublish, c.isOpen {
                 Button(role: .destructive) { stopping = c } label: { Label("Stop sending", systemImage: "stop.circle") }
             }
         case .email(let n):
-            if n.retryable > 0 {
-                Button { following = (n, true) } label: { Label("Retry \(n.retryable)", systemImage: "arrow.clockwise") }
+            if canPublish, n.retryable > 0 {
+                Button { retrying = n } label: { Label("Retry \(n.retryable)", systemImage: "arrow.clockwise") }
                     .tint(Color.cavnarEmber)
             }
         }
@@ -537,7 +546,7 @@ struct CampaignsTabSection: View {
             Button { onOpenStudio(StudioSeed(reuseText: c, improve: true)) } label: {
                 Label("Improve with Cavnar AI", systemImage: "sparkles")
             }
-            if c.isOpen {
+            if canPublish, c.isOpen {
                 Button(role: .destructive) { stopping = c } label: { Label("Stop sending", systemImage: "stop.circle") }
             }
         case .email(let n):
@@ -545,10 +554,9 @@ struct CampaignsTabSection: View {
             Button { onOpenStudio(StudioSeed(reuseEmail: n, improve: true)) } label: {
                 Label("Improve with Cavnar AI", systemImage: "sparkles")
             }
-            if n.retryable > 0 {
-                Button { following = (n, true) } label: { Label("Retry \(n.retryable) failed", systemImage: "arrow.clockwise") }
+            if canPublish, n.retryable > 0 {
+                Button { retrying = n } label: { Label("Retry \(n.retryable) failed", systemImage: "arrow.clockwise") }
             }
-            Button { following = (n, false) } label: { Label("Send to new subscribers", systemImage: "person.badge.plus") }
         }
     }
 
@@ -593,7 +601,7 @@ struct CampaignsTabSection: View {
                        ("Tapped", c.linkToken != nil ? "\(c.clicks)" : "no link", Color.cavnarEmber2),
                        ("Came back", c.visitsMatched.map { "\($0)" } ?? (c.attributionThrough != nil ? "0" : "\u{2026}"),
                         Color.cavnarGreen)])
-            if c.isOpen {
+            if canPublish, c.isOpen {
                 Button(role: .destructive) {
                     Haptic.light()
                     stopping = c
@@ -640,30 +648,21 @@ struct CampaignsTabSection: View {
                     .font(.cavnarBody(CavnarType.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
-            HStack(spacing: 16) {
-                if n.retryable > 0 {
+            if canPublish, n.retryable > 0 {
+                HStack(spacing: 16) {
                     Button {
                         Haptic.light()
-                        following = (n, true)
+                        retrying = n
                     } label: {
                         Text("Retry \(n.retryable) failed").font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                     .frame(minHeight: 32)
+                    if busy { CavnarShimmerText(text: "Sending\u{2026}", color: .cavnarEmber2) }
                 }
-                Button {
-                    Haptic.light()
-                    following = (n, false)
-                } label: {
-                    Text("Send to new subscribers").font(.cavnarBody(CavnarType.secondary, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
-                .buttonStyle(.plain)
-                .frame(minHeight: 32)
-                if busy { CavnarShimmerText(text: "Sending\u{2026}", color: .cavnarEmber2) }
+                .disabled(busy)
             }
-            .disabled(busy)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -765,10 +764,10 @@ struct CampaignsTabSection: View {
                         }))
                         .labelsHidden()
                         .tint(Color.cavnarEmber)
-                        .disabled(!isOwner || viewModel.invitesBusy)
+                        .disabled(!(inv.canChange ?? canChangeInvites) || viewModel.invitesBusy)
                         .accessibilityLabel("Text guests from your last service one review-link invite")
                 }
-                if !isOwner {
+                if !(inv.canChange ?? canChangeInvites) {
                     Text("Only the account owner can turn invite texts on or off.")
                         .font(.cavnarBody(CavnarType.caption))
                         .foregroundStyle(Color.cavnarInk3)
