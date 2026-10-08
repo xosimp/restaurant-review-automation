@@ -9675,12 +9675,110 @@ def _do_notifications_unread(current_user, scope=None):
     always clears what the badge counts. The count used to be every unread
     row ever fired (the list shows the newest 40) without the list's rule:
     46 rows, all 40 listed opened, and the badge still read 6 with no "Mark
-    all read" anywhere to clear them."""
-    body, _ = _do_get_notifications(current_user["restaurant_id"], current_user, scope=scope)
-    rows = body.get("notifications") or [] if body.get("ok") else []
-    count = sum(1 for n in rows if n.get("unread"))
-    urgent = sum(1 for n in rows if n.get("urgent") and not n.get("resolved"))
-    return {"ok": True, "count": count, "urgent": urgent}, 200
+    all read" anywhere to clear them.
+
+    Counted in SQL (parity audit #81): the badge is read on every launch,
+    foreground and push, and building the list for it read 40 rows with
+    their reviews, refs and labels to return two numbers. The same window,
+    the same unread rule (models.notification_unread_bound), the same
+    `resolved` (_notification_resolution's cases: the review answered, the
+    referenced send, request or issue settled, a newer critical_low) — one
+    query grouped by type and priority, then the list's role filter
+    (sees_alert) and priority default per group. Held to the list's own
+    counts by tests/test_notification_unread_sql.py."""
+    try:
+        return _count_notifications_unread(current_user, scope), 200
+    except Exception as e:
+        print(f"[notifications] unread count failed for rid={current_user.get('restaurant_id')}: {e}")
+        return {"ok": True, "count": 0, "urgent": 0}, 200
+
+
+# The ref tables a notification row can name, and the SQL for "settled"
+# (1) / "still open" (0) on the row it names at the row's own location —
+# _notification_refs' rules (a queued send or a request is settled once no
+# longer pending; an issue once resolved).
+_UNREAD_REF_SETTLED = (
+    ("delayed_action", "delayed_actions", "CASE WHEN x.status = 'pending' THEN 0 ELSE 1 END"),
+    ("shift", "shift_change_requests", "CASE WHEN x.status = 'pending' THEN 0 ELSE 1 END"),
+    ("time_off", "staff_time_off", "CASE WHEN x.status = 'pending' THEN 0 ELSE 1 END"),
+    ("issue", "ops_issues", "CASE WHEN x.status != 'resolved' THEN 0 ELSE 1 END"),
+)
+
+
+def _count_notifications_unread(current_user, scope=None):
+    import push as _push
+    from models import NOTIFICATION_WINDOW, notification_unread_bound
+    viewer = current_user
+    locs = _notification_locations(current_user["restaurant_id"], viewer, scope)
+    ids = [int(i) for i, _ in locs]
+    uid = int(viewer["id"]) if viewer and viewer.get("id") else None
+    # Past this login's read mark, per location: a row with no login to
+    # read for counts as unread (the list's rule).
+    if uid is not None:
+        parts, bound_args = [], []
+        for i in ids:
+            stamp, strict = notification_unread_bound(uid, i)
+            parts.append(f"(w.restaurant_id = ? AND COALESCE(w.fired_at, '') {'>' if strict else '>='} ?)")
+            bound_args += [i, stamp]
+        past_mark = "(" + " OR ".join(parts) + ")" if parts else "0"
+    else:
+        past_mark, bound_args = "1", []
+    conn = get_conn()
+    try:
+        have = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        # The referenced row counts when it belongs to a location some row
+        # in the window that names it fired at — _notification_refs' own
+        # (restaurant, id) pairs, keyed by (kind, id) as it keys them.
+        ref_cases = " ".join(
+            f"WHEN '{kind}' THEN (SELECT {settled} FROM {table} x "
+            f"WHERE x.id = w.ref_id AND x.restaurant_id IN (SELECT w2.restaurant_id FROM w w2 "
+            f"WHERE w2.ref_kind = w.ref_kind AND w2.ref_id = w.ref_id))"
+            for kind, table, settled in _UNREAD_REF_SETTLED if table in have)
+        ref_settled = f"CASE w.ref_kind {ref_cases} ELSE NULL END" if ref_cases else "NULL"
+        superseded = ",".join("'" + t + "'" for t in sorted(_SUPERSEDED_BY_NEWER))
+        marks = ",".join("?" * len(ids))
+        sql = f"""
+            WITH w AS (
+                SELECT a.id, a.restaurant_id, a.alert_type, a.review_id, a.fired_at, a.priority,
+                       a.ref_kind, a.ref_id,
+                       ROW_NUMBER() OVER (PARTITION BY a.restaurant_id, a.alert_type
+                                          ORDER BY a.fired_at DESC, a.id DESC) AS newer_rank
+                FROM (SELECT * FROM alert_log WHERE restaurant_id IN ({marks})
+                      ORDER BY fired_at DESC, id DESC LIMIT ?) a
+            ), x AS (
+                SELECT w.alert_type, w.priority,
+                       EXISTS (SELECT 1 FROM notification_opens o
+                               WHERE o.alert_log_id = w.id AND o.user_id = ?) AS opened,
+                       {past_mark} AS past_mark,
+                       CASE
+                         WHEN w.review_id THEN COALESCE((
+                             SELECT CASE WHEN COALESCE(rv.deleted_at, '') != ''
+                                              OR rv.response_status IN ('posted', 'approved', 'skipped')
+                                         THEN 1 ELSE 0 END
+                             FROM reviews rv WHERE rv.id = w.review_id AND rv.restaurant_id = w.restaurant_id), 0)
+                         WHEN w.alert_type IN ({superseded}) AND w.newer_rank > 1 THEN 1
+                         WHEN COALESCE(w.ref_kind, '') != '' AND w.ref_id IS NOT NULL THEN {ref_settled}
+                         ELSE NULL
+                       END AS settled
+                FROM w
+            )
+            SELECT alert_type, priority,
+                   SUM(CASE WHEN past_mark AND NOT opened THEN 1 ELSE 0 END) AS unread,
+                   SUM(CASE WHEN settled = 0 OR (settled IS NULL AND NOT opened) THEN 1 ELSE 0 END) AS open_
+            FROM x GROUP BY alert_type, priority"""
+        groups = conn.execute(sql, (*ids, int(NOTIFICATION_WINDOW), uid if uid is not None else -1,
+                                    *bound_args)).fetchall()
+    finally:
+        conn.close()
+    count = urgent = 0
+    for g in groups:
+        if not sees_alert(viewer, g["alert_type"]):
+            continue
+        count += int(g["unread"] or 0)
+        priority = g["priority"] if g["priority"] is not None else _push.priority_of(g["alert_type"])
+        if priority <= _push.P1_ACT_NOW:
+            urgent += int(g["open_"] or 0)
+    return {"ok": True, "count": count, "urgent": urgent}
 
 
 @client_bp.route("/api/account/send-test-push", methods=["POST"])

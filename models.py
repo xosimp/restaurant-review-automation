@@ -14107,6 +14107,16 @@ def notification_unread_rule(user_id: int, restaurant_id: int, db_path: str = DB
     before the login existed counts: a co-owner invited today was badged
     with the restaurant's entire history (MOD-NOT-10) and, until this rule
     reached the list, shown it all as unread there too."""
+    stamp, strict = notification_unread_bound(user_id, restaurant_id, db_path)
+    if strict:
+        return lambda fired_at: (fired_at or "") > stamp
+    return lambda fired_at: (fired_at or "") >= stamp
+
+
+def notification_unread_bound(user_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    """(stamp, strict): notification_unread_rule as data, for a count done in
+    SQL (client_api._do_notifications_unread) — a row is past the read mark
+    when fired_at > stamp (strict) or >= stamp (the login's own birth)."""
     since = notifications_seen_at(user_id, restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
@@ -14119,8 +14129,8 @@ def notification_unread_rule(user_id: int, restaurant_id: int, db_path: str = DB
         conn.close()
     born = (born["created_at"] or "").replace("T", " ")[:19] if born else ""
     if since and since >= born:
-        return lambda fired_at: (fired_at or "") > since
-    return lambda fired_at: (fired_at or "") >= born
+        return since, True
+    return born, False
 
 
 def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH,
