@@ -23,6 +23,9 @@ final class WidgetSnapshotService {
     /// Often enough for a morning glance; rare enough that flicking between
     /// apps doesn't re-read four routes every time.
     static let minInterval: TimeInterval = 5 * 60
+    /// On a constrained link (Low Data Mode, a hotspot — parity #83) the
+    /// widget's background read waits longer between passes.
+    static let constrainedInterval: TimeInterval = 30 * 60
 
     init(client: APIClient = .shared) { self.client = client }
 
@@ -153,7 +156,19 @@ final class WidgetSnapshotService {
             WidgetCenter.shared.reloadTimelines(ofKind: StaffShiftSnapshot.widgetKind)
         }
         if inFlight { return }
-        if !force, let last = lastRefresh, Date().timeIntervalSince(last) < Self.minInterval { return }
+        var force = force
+        if force && CavnarEnvironment.reducedNetwork {
+            // Low Data Mode (parity #83): a forced re-read of four routes is
+            // not something the owner asked for. A widget showing another
+            // location's figures is cleared instead — never left wrong — and
+            // the next ordinary refresh fills it.
+            if let shown = WidgetSnapshot.load()?.restaurantId, shown != SessionScope.activeRestaurantId {
+                Self.clearOwnerSurfaces()
+            }
+            force = false
+        }
+        let interval = CavnarEnvironment.reducedNetwork ? Self.constrainedInterval : Self.minInterval
+        if !force, let last = lastRefresh, Date().timeIntervalSince(last) < interval { return }
         inFlight = true
         defer { inFlight = false }
 

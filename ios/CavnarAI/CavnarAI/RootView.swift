@@ -784,6 +784,10 @@ struct RootView: View {
     /// intro.
     private func warmRemainingTabs() async {
         try? await Task.sleep(for: .seconds(1.6))
+        // Building a tab runs its loads. On a constrained link, in Low Power
+        // Mode or with the phone hot (parity #83) those are reads nobody has
+        // asked for yet: each tab loads when it is first opened instead.
+        if CavnarEnvironment.reducedNetwork || CavnarEnvironment.reducedActivity { return }
         for tab in [AppTab.modules, .ask, .account] {
             guard sessionStore.isAuthenticated, !sessionStore.isLocked else { return }
             await FrameSettle.wait()
