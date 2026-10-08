@@ -25,22 +25,21 @@ private struct AIConsultantStripContent: View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarEmber2)
                     .padding(.top, 3)
                 VStack(alignment: .leading, spacing: 6) {
                     Group {
                         if let insight, !insight.intro.isEmpty {
-                            HomeMixedText.make(insight.intro, size: CavnarType.body, weight: 500,
-                                               color: .cavnarInk2)
+                            HomeMixedText.make(insight.intro, role: .body)
                         } else if isLoading {
                             PulsingAnalyzingText()
-                                .font(.cavnarBody(CavnarType.body, weight: 500))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnar(.body))
+                                .foregroundStyle(Color.cavnarInk2)
                         } else {
                             Text("No analysis yet")
-                                .font(.cavnarBody(CavnarType.body, weight: 500))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnar(.body))
+                                .foregroundStyle(Color.cavnarInk2)
                         }
                     }
                     .lineLimit(3)
@@ -52,7 +51,7 @@ private struct AIConsultantStripContent: View {
                             Text("Read the analysis")
                                 .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.cavnar(.caption))
                         }
                         .foregroundStyle(Color.cavnarEmber2)
                     }
@@ -69,7 +68,7 @@ private struct AIConsultantStripContent: View {
         Button(action: onTap) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.cavnar(.secondary))
                 Group {
                     if let insight, !insight.intro.isEmpty {
                         Text(insight.intro)
@@ -79,7 +78,7 @@ private struct AIConsultantStripContent: View {
                         Text("No analysis yet")
                     }
                 }
-                .font(.cavnarBody(15, weight: 500))
+                .font(.cavnar(.body))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 // The sentence itself is body copy and reads as the app's
@@ -87,14 +86,15 @@ private struct AIConsultantStripContent: View {
                 // the chevron, which is what actually says "this is the AI,
                 // and it opens." A whole line of orange competed with the
                 // hero's own figures right above it for no added meaning.
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
                 Spacer(minLength: 8)
                 if insight != nil {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.cavnar(.caption))
                 }
             }
             .foregroundStyle(Color.cavnarEmber2)
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -185,7 +185,9 @@ struct AIConsultantView: View {
             isPresented = true
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        // The strip itself is 44pt tall now (a tap target); the pill adds
+        // only a hair around it.
+        .padding(.vertical, 2)
         .frame(maxWidth: .infinity)
         .background(Color.cavnarEmber.opacity(0.12))
         .overlay(
@@ -210,7 +212,11 @@ struct AIConsultantView: View {
 /// glowing numbered badge, the forecast in an amber "looking ahead" panel,
 /// a seal-marked footer, and the whole thing staggering in. Every figure
 /// inside the prose renders in Space Grotesk (mixedText below), per the
-/// app-wide numbers rule. Keeps the module's own ember-wash background. No
+/// app-wide numbers rule. Readability round (10/8/26): only the intro's
+/// first sentence is the headline, the rest is Body; the unverified-figures
+/// and unverified-causes caveats sit at the top; recommendation #1 is the
+/// hero and the others wait behind "+N more". Keeps the module's own
+/// ember-wash background. No
 /// explicit close button — swipe-down-to-dismiss, same as every other sheet
 /// in this app (NotificationsListView is the established precedent).
 private struct AIConsultantSheet: View {
@@ -223,11 +229,22 @@ private struct AIConsultantSheet: View {
     // 4 footer. (No header row — the sheet's title already names the
     // consultant, a badge + kicker restating it read as redundant.)
     @State private var stage = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxl) {
+                    if insight.figuresVerified == false || insight.causesVerified == false {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            if insight.figuresVerified == false {
+                                CavnarCaveat.unverifiedFigures(insight.unsupportedFigures ?? [])
+                            }
+                            if insight.causesVerified == false {
+                                CavnarCaveat.unverifiedCauses(insight.unsupportedCauses ?? [])
+                            }
+                        }
+                    }
                     if !insight.intro.isEmpty {
                         openingLine
                             .consultantReveal(stage >= 1)
@@ -242,8 +259,8 @@ private struct AIConsultantSheet: View {
                     footer
                         .consultantReveal(stage >= 4)
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 18)
+                .padding(.horizontal, CavnarSpace.gutter)
+                .padding(.top, CavnarSpace.l)
                 .padding(.bottom, 44)
             }
             .cavnarModuleBackground()
@@ -251,6 +268,8 @@ private struct AIConsultantSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar(title) }
             .task {
+                // Reduce Motion: everything at once, no rise.
+                if reduceMotion { stage = 4; return }
                 for step in 1...4 {
                     withAnimation(.easeOut(duration: 0.45)) { stage = step }
                     try? await Task.sleep(for: .seconds(0.12))
@@ -259,24 +278,48 @@ private struct AIConsultantSheet: View {
         }
     }
 
-    /// The AI's own opening sentence, sized and set like Intel's hero
-    /// insight: the owner's name (the leading "Brian," when there is one)
-    /// in ember, every number in Space Grotesk, the rest in ink.
+    /// The AI's own opening sentence as the headline — the owner's name (the
+    /// leading "Brian," when there is one) in ember, every number in Space
+    /// Grotesk, the rest in ink — and the rest of the intro under it as Body.
+    /// The whole intro used to be one 22pt Clash block.
     private var openingLine: some View {
-        let (name, rest) = Self.splitLeadingName(insight.intro)
-        let numberFont = Font.cavnarNumber(22, weight: 600)
+        let (first, rest) = Self.splitFirstSentence(insight.intro)
+        let (name, headline) = Self.splitLeadingName(first)
+        let numberFont = Font.cavnarNumber(CavnarText.headline.size, weight: 600,
+                                           relativeTo: CavnarText.headline.textStyle)
         var text = Text("")
         if let name {
             text = text + Text(name).foregroundStyle(Color.cavnarEmber)
         }
-        text = text + Self.mixedText(rest, numberFont: numberFont, color: Color.cavnarInk)
-        return VStack(alignment: .leading, spacing: 8) {
+        text = text + Self.mixedText(headline, numberFont: numberFont, color: Color.cavnarInk)
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
             text
-                .font(.cavnarHeadline(22))
-                .lineSpacing(6)
+                .cavnarText(.headline)
                 .fixedSize(horizontal: false, vertical: true)
-            claimKindLabel("READING OF YOUR NUMBERS", icon: "chart.bar.doc.horizontal", color: Color.cavnarInk3)
+                .accessibilityAddTraits(.isHeader)
+            if !rest.isEmpty {
+                CavnarMixedText(rest, role: .body)
+            }
+            claimKindLabel("Reading of your numbers", icon: "chart.bar.doc.horizontal", color: Color.cavnarInk2)
         }
+    }
+
+    /// "Labor ran 31.2% last week. Two closers…" → ("Labor ran 31.2% last
+    /// week.", "Two closers…"). A sentence ends at . ! or ? followed by a
+    /// space and a capital, digit or "$" — so "31.2%" and "Sep. 3" stay put.
+    static func splitFirstSentence(_ s: String) -> (String, String) {
+        let chars = Array(s)
+        var i = 0
+        while i + 2 < chars.count {
+            if ".!?".contains(chars[i]), chars[i + 1] == " ",
+               chars[i + 2].isUppercase || chars[i + 2].isNumber || chars[i + 2] == "$" {
+                let head = String(chars[0...i]).trimmingCharacters(in: .whitespaces)
+                let tail = String(chars[(i + 2)...]).trimmingCharacters(in: .whitespaces)
+                return (head, tail)
+            }
+            i += 1
+        }
+        return (s.trimmingCharacters(in: .whitespaces), "")
     }
 
     /// A measured fact, the model's read of it, a guess about next week and
@@ -285,92 +328,87 @@ private struct AIConsultantSheet: View {
     /// them as inferred / suggestion / forecast for a while; nothing showed
     /// the distinction. These say which is which.
     private func claimKindLabel(_ text: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .bold))
+        // A tag in a Paper3 capsule, like ClaimKindTag: it says what kind of
+        // statement this is, not how good the news is.
+        HStack(spacing: CavnarSpace.xxs) {
+            Image(systemName: icon).accessibilityHidden(true)
             Text(text)
-                .font(.cavnarBody(10.5, weight: 700))
-                .tracking(1.1)
         }
-        .foregroundStyle(color)
+        .cavnarText(.tag, color: color)
+        .padding(.horizontal, CavnarSpace.xs)
+        .padding(.vertical, 3)
+        .background(Color.cavnarPaper3, in: Capsule())
     }
 
     private var recommendations: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 11, weight: .bold))
-                Text("SUGGESTED — YOUR CALL")
-                    .font(.cavnarBody(13, weight: 700))
-                    .tracking(1.3)
-            }
-            .foregroundStyle(Color.cavnarEmber)
-            .consultantReveal(stage >= 2)
-
-            ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
-                HStack(alignment: .top, spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.cavnarEmber)
-                            .frame(width: 30, height: 30)
-                            .frame(width: 44, height: 44)   // HIG tap target (audit 7.3)
-                            .contentShape(Rectangle())
-                            .shadow(color: Color.cavnarEmber.opacity(0.6), radius: 7, x: 0, y: 0)
-                        Text("\(index + 1)")
-                            .font(.cavnarNumber(14, weight: 700))
-                            .foregroundStyle(.white)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        Self.mixedText(rec, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk)
-                            .font(.cavnarBody(16))
-                            .lineSpacing(5)
-                            .fixedSize(horizontal: false, vertical: true)
-                        // Done / Not for us / Track — only for a line the
-                        // server keyed, on a surface that opted in.
-                        if let recSurface, let key = insight.recKey(at: index) {
-                            RecAnswerRow(key: key, surface: recSurface)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-                .padding(.vertical, 14)
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.cavnarEmber.opacity(0.09))
-                .overlay(
-                    RoundedRectangle(cornerRadius: CavnarRadius.control)
-                        .strokeBorder(Color.cavnarEmber.opacity(0.22), lineWidth: 1)
-                )
-                .overlay(alignment: .leading) {
-                    Rectangle().fill(Color.cavnarEmber.opacity(0.75)).frame(width: 2.5)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        let recs = Array(insight.recommendations.enumerated())
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Suggested \u{2014} your call", icon: "bolt.fill")
                 .consultantReveal(stage >= 2)
-                .animation(.easeOut(duration: 0.45).delay(Double(index) * 0.08), value: stage)
+
+            // #1 is the hero; the rest wait behind "+N more".
+            if let first = recs.first {
+                recommendationCard(index: first.offset, text: first.element, isHero: true)
+                    .consultantReveal(stage >= 2)
+            }
+            if recs.count > 1 {
+                CavnarMoreDisclosure(hiddenCount: recs.count - 1) {
+                    ForEach(recs.dropFirst(), id: \.offset) { index, rec in
+                        recommendationCard(index: index, text: rec, isHero: false)
+                    }
+                }
+                .consultantReveal(stage >= 2)
             }
         }
     }
 
-    private func forecastPanel(_ forecast: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 11, weight: .bold))
-                Text("LOOKING AHEAD")
-                    .font(.cavnarBody(13, weight: 700))
-                    .tracking(1.3)
+    private func recommendationCard(index: Int, text rec: String, isHero: Bool) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(Color.cavnarEmber)
+                    .frame(width: 30, height: 30)
+                    .frame(width: 44, height: 44)   // HIG tap target (audit 7.3)
+                    .contentShape(Rectangle())
+                    .shadow(color: Color.cavnarEmber.opacity(0.6), radius: 7, x: 0, y: 0)
+                Text("\(index + 1)")
+                    .font(.cavnarNumber(14, weight: 700))
+                    .foregroundStyle(.white)
             }
-            .foregroundStyle(Color.cavnarAmber)
-            Self.mixedText(forecast, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk2)
-                .font(.cavnarBody(16))
-                .lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarMixedText(rec, role: isHero ? .lead : .body, color: .cavnarInk)
+                // Done / Not for us / Track — only for a line the
+                // server keyed, on a surface that opted in.
+                if let recSurface, let key = insight.recKey(at: index) {
+                    RecAnswerRow(key: key, surface: recSurface)
+                }
+            }
+            .padding(.top, 8)
+        }
+        .padding(.vertical, 14)
+        .padding(.horizontal, CavnarSpace.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarEmber.opacity(isHero ? 0.11 : 0.07))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.control)
+                .strokeBorder(Color.cavnarEmber.opacity(0.22), lineWidth: 1)
+        )
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Color.cavnarEmber.opacity(0.75)).frame(width: 2.5)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    private func forecastPanel(_ forecast: String) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // Amber: the kicker's colour is its meaning here (a projection).
+            CavnarKicker("Looking ahead", icon: "calendar.badge.clock", tint: .cavnarAmber)
+            CavnarMixedText(forecast, role: .body)
             Text("A projection, not a measurement. It assumes the current trend holds.")
-                .font(.cavnarBody(12.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(18)
+        .padding(CavnarSpace.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarAmber.opacity(0.08))
         .overlay(
@@ -384,8 +422,7 @@ private struct AIConsultantSheet: View {
         HStack(spacing: 8) {
             CavnarSealMark(size: 20)
             Text("Cavnar AI · analysis of your latest synced data")
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 6)

@@ -89,7 +89,18 @@ final class VisualParityTests: XCTestCase {
     }
 
     func testKickerAndTagAreTheTwoUppercaseSizes() {
-        XCTAssertEqual(CavnarType.kicker, 11.5)
-        XCTAssertEqual(CavnarType.tag, 10)
+        // Raised with the readability round (10/8/26): the kicker and the
+        // tag are the two roles that may sit under the 13pt caption floor.
+        XCTAssertEqual(CavnarType.kicker, 12)
+        XCTAssertEqual(CavnarType.tag, 11)
+        XCTAssertEqual(CavnarText.kicker.size, CavnarType.kicker)
+        XCTAssertEqual(CavnarText.tag.size, CavnarType.tag)
+    }
+
+    func testNoReadingRoleSitsUnderTheCaptionFloor() {
+        for role in CavnarText.allCases where role != .kicker && role != .tag {
+            XCTAssertGreaterThanOrEqual(role.size, 13, "\(role)")
+        }
+        XCTAssertTrue(CavnarText.allCases.filter(\.isFigure).allSatisfy { $0.postScriptName.hasPrefix("SpaceGroteskStatic-") })
     }
 }

@@ -117,11 +117,12 @@ struct ConfidenceLine: View {
                             showingWhy = true
                             RecEvidenceLog.viewed(key: recKey, surface: surface, module: module)
                         } label: {
+                            // A 44pt target around a caption-sized word
+                            // (10/8/26: it was ~23pt tall).
                             Text("Why?")
-                                .font(.cavnarBody(12.5, weight: 700))
+                                .font(.cavnarBody(CavnarType.caption, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
-                                .padding(.vertical, 4)
-                                .contentShape(Rectangle())
+                                .cavnarHitTarget()
                         }
                         .buttonStyle(.plain)
                         .accessibilityHint("Shows what this confidence rests on")
@@ -129,7 +130,7 @@ struct ConfidenceLine: View {
                     Spacer(minLength: 0)
                 }
                 if !compact, let caution = d.caution {
-                    HomeMixedText.make(caution, size: 12.5, weight: 500, color: .cavnarAmber)
+                    HomeMixedText.make(caution, size: CavnarType.caption, weight: 500, color: .cavnarAmber)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -140,9 +141,10 @@ struct ConfidenceLine: View {
     }
 
     private func lineText(_ d: ConfidenceDisplay) -> Text {
-        let label = HomeMixedText.make(d.lineLabel, size: 12.5, weight: 700, color: d.tone.color)
+        // Caption (13), the floor for a line an owner reads (10/8/26: 12.5).
+        let label = HomeMixedText.make(d.lineLabel, size: CavnarType.caption, weight: 700, color: d.tone.color)
         guard !compact, let reason = d.reason, !reason.isEmpty else { return label }
-        return label + HomeMixedText.make(" \u{2014} " + reason, size: 12.5, weight: 500, color: .cavnarInk3)
+        return label + HomeMixedText.make(" \u{2014} " + reason, size: CavnarType.caption, weight: 400, color: .cavnarInk3)
     }
 }
 
@@ -184,7 +186,7 @@ struct ConfidenceWhySheet: View {
                             HStack(spacing: 4) {
                                 Text("Confirm your restaurant profile")
                                     .font(.cavnarBody(14, weight: 700))
-                                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                                Image(systemName: "chevron.right").font(.cavnar(.caption))
                             }
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 44)
@@ -193,7 +195,7 @@ struct ConfidenceWhySheet: View {
                         .buttonStyle(.plain)
                         .accessibilityHint("Opens Account, Restaurant profile")
                     }
-                    HomeMixedText.make(d.footer, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(d.footer, size: CavnarType.caption, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(20)
@@ -214,8 +216,7 @@ struct ConfidenceWhySheet: View {
             // decision, 9/24/26): how well supported — not the chance it works.
             if let meaning = d.meaning {
                 Text(meaning + ".")
-                    .font(.cavnarBody(13.5, weight: 500))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let pct = d.pct {
@@ -225,8 +226,7 @@ struct ConfidenceWhySheet: View {
                         .foregroundStyle(d.tone.color)
                         .cavnarNumberGlow(d.tone.color)
                     Text("confidence")
-                        .font(.cavnarBody(15.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: .cavnarInk2)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(pct) percent confidence")
@@ -237,7 +237,7 @@ struct ConfidenceWhySheet: View {
             ConfidenceMeter(fraction: d.meterFraction, tone: d.tone, width: nil, height: 8)
                 .frame(maxWidth: .infinity)
             if let reason = d.reason {
-                HomeMixedText.make(reason, size: 15, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make(reason, size: CavnarType.body, weight: 400, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -264,15 +264,15 @@ struct ConfidenceDimensionRow: View {
                 ConfidenceMeter(fraction: row.meterFraction, tone: row.tone, width: nil, height: 6)
                     .frame(maxWidth: .infinity)
                 if !row.basis.isEmpty {
-                    HomeMixedText.make(row.basis, size: 13.5, weight: 500, color: .cavnarInk2)
+                    HomeMixedText.make(row.basis, size: CavnarType.secondary, weight: 400, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let detail = row.detail {
-                    HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(detail, size: CavnarType.caption, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let note = row.note {
-                    HomeMixedText.make(note, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(note, size: CavnarType.caption, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

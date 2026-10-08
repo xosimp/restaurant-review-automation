@@ -19,11 +19,18 @@ enum HomeMixedText {
         numberWeight: CGFloat? = nil,
         numberColor: Color? = nil
     ) -> Text {
+        // Words and figures scale on ONE path: both are `Font.custom`
+        // relative to the text style `cavnarBody` picks for `size`, so a
+        // number run grows exactly as its sentence does — under the app's
+        // `.xxxLarge` cap and `cavnarReadingSize` alike (10/8/26; the
+        // figures used to scale through UIFontMetrics, outside SwiftUI's
+        // environment, and drifted from the words around them).
+        let style = Font.bodyTextStyle(for: size)
         var result = Text(verbatim: "")
         for run in runs(string) {
             if run.isNumber {
                 result = result + Text(verbatim: run.text)
-                    .font(.cavnarNumber(size, weight: numberWeight ?? max(weight, 600)))
+                    .font(.cavnarNumber(size, weight: numberWeight ?? max(weight, 600), relativeTo: style))
                     .foregroundStyle(numberColor ?? color)
             } else {
                 result = result + Text(verbatim: run.text)

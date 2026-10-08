@@ -42,8 +42,8 @@ dark value that differs.
 | Token | Web light | Web dark | iOS | Use |
 |---|---|---|---|---|
 | `--ink` / `.cavnarInk` | `#0e0c0a` | `#f0ebe0` | Ink | Primary text |
-| `--ink2` / `.cavnarInk2` | `#3a3530` | `#c4bdb4` | Ink2 (`#e0d6c6` dark) | Secondary text, table cells |
-| `--ink3` / `.cavnarInk3` | `#7a736a` | `#cdbfa9` | Ink3 | Labels, captions, "—" |
+| `--ink2` / `.cavnarInk2` | `#3a3530` | `#c4bdb4` | Ink2 (`#BDB5A8` dark, 9.6:1) | Body text on iOS, secondary text, table cells |
+| `--ink3` / `.cavnarInk3` | `#7a736a` | `#cdbfa9` | Ink3 (`#948C80` dark, 5.9:1) | Captions, meta, "—" — never body or a label |
 | `--paper` / `.cavnarPaper` | `#f7f4ef` | `#1a1714` | Paper (`#0c0c0c` dark) | Page ground, field fill |
 | `--paper2` / `.cavnarPaper2` | `#edeae3` | `#231f1b` | Paper2 (`#121212` dark) | Card ground (iOS at 60%) |
 | `--paper3` / `.cavnarPaper3` | `#e0dbd0` | `#4a4038` | Paper3 (`#262626` dark) | Hairlines, dividers |
@@ -51,7 +51,8 @@ dark value that differs.
 | `--ember` / `.cavnarEmber` | **`#c84b2f`** | `#d4583a` | Ember (`#D4583A` dark — the same) | The brand accent — see §9 |
 | `--ember2` / `.cavnarEmber2` | `#e8956a` | `#e8956a` | Ember2 | Chart lines, kickers, soft accent |
 | `--green` / `.cavnarGreen` | `#2d6a4f` | `#4ead7a` | Green | Good / improved / on target |
-| `--red` / `.cavnarRed` | `#c0392b` | `#e3333f` | Red (`#E3333F` dark — the same) | Bad / critical / destructive |
+| `--red` / `.cavnarRed` | `#c0392b` | `#e3333f` | Red (`#E3333F` dark — the same) | Bad / critical / destructive — fills, bars, dots, icons |
+| — | — | — | RedText (`#F05A63` dark, 5.9:1) `.cavnarRedText` | iOS red TEXT under 18pt (Red is 4.3–4.5:1 on a card) |
 | `--amber` / `.cavnarAmber` | `#b7791f` | `#d4a030` | Amber | Warning, "watch", partial data |
 | `--blue` / `.cavnarBlue` | `#1a56cc` | `#6aabff` | Blue | Informational only (rare) |
 | `--bg-base` (web only) | — | `#141110` | Paper (`#0c0c0c`) plays this role | The web canvas behind every panel — darker than `--paper` so cards step up from it (below) |
@@ -105,12 +106,29 @@ canvas: see the long comment above `:root` in `dashboard.html` for why.
   or light `color:#hex` unless the same rule pins its own background.
 - Platform brand colours (Instagram, Facebook, Google) are the only
   non-ember fills allowed, and only on their own buttons.
-- iOS: honour Increase Contrast for informational secondary text with
-  `Color.cavnarInk3(contrast)`; plain `.cavnarInk3` is for decorative chrome.
-  Text a step below Ink3 (an upcoming step, a placeholder, a build stamp) is
-  `Color.cavnarInk3Muted(contrast)` — 70% of Ink3, the floor that still
-  clears AA on Paper, full Ink3 under Increase Contrast. Never 40–60% Ink3
-  on text (parity audit #82).
+- iOS ink tiers (readability round, 10/8/26). The old Ink2 `#E0D6C6` and
+  Ink3 `#CDBFA9` sat 1.2x / 1.6x below Ink, so hierarchy didn't read and Ink3
+  had become the default text colour. Now each tier is ~1.7x below the one
+  above, all on Paper `#0C0C0C` (a card, Paper2 at 60%, is 0.1–0.4 lower):
+
+  | iOS token | Dark | Ratio | Increase Contrast | Ratio |
+  |---|---|---|---|---|
+  | Ink | `#F0EBE0` | 16.5:1 | — | — |
+  | Ink2 | `#BDB5A8` | 9.6:1 | `#D9D2C6` | 13.0:1 |
+  | Ink3 | `#948C80` | 5.9:1 | `#B8B0A3` | 9.1:1 |
+  | Ember | `#D4583A` | 4.9:1 | `#E0664A` | 5.8:1 |
+  | Red | `#E3333F` | 4.5:1 | `#FF7880` | 7.7:1 |
+  | RedText | `#F05A63` | 5.9:1 | `#FF7880` | 7.7:1 |
+
+  The Increase Contrast variants live in the colorsets (`contrast: high`),
+  so every use of the token follows the setting; `Color.cavnarInk3(contrast)`
+  is now the plain token, kept for its call sites. Text a step below Ink3 (an
+  upcoming step, a placeholder, a build stamp) is
+  `Color.cavnarInk3Muted(contrast)` — Ink2 at 70%, 5.1:1, full Ink3 under
+  Increase Contrast. **An ink below 60% opacity is never text**; Ink3 is
+  never body or a label (parity audit #82; readability round).
+- The module ember wash (`cavnarModuleBackground`) is 22% at the top (was
+  38%, which took ember text over it to 3.0:1).
 - A tint of the ember is `color-mix(in srgb,var(--ember) N%,transparent)`,
   never the light-mode `rgba(200,75,47,…)` literal (83 lines of it until
   10/7/26, parity #85) — it follows the theme and a client's brand colour.
@@ -195,41 +213,99 @@ Home's Needs attention, the Results row. `.hb-kicker` is the page kicker
 above the H1 only. No `h3` of its own, no ember kicker inside a card. Headings get
 `text-wrap: balance` where supported; body copy uses `line-height:1.5–1.65`.
 
-### iOS: `CavnarType`, and one 40pt figure per screen
+### iOS: text roles (`CavnarText`) — "Web explains. iPhone decides."
 
-iOS names the scale (`CavnarType` in `Font+Cavnar.swift`). A screen reaches
-for a token, not a literal; the face stays the helper's (`cavnarBody` words,
-`cavnarHeadline` titles, `cavnarNumber` figures), so Dynamic Type still maps
-each size to its text style. The census that prompted it (9/25/26) found 18
-body sizes, 4 kicker sizes and hero figures from 27 to 56pt.
+The phone answers **what happened, why it matters and what to do next within
+five seconds**; the proof is a tap away; deep analysis and configuration are
+on the web. Text is set by **role**, never by point size (iOS readability
+round, 10/8/26 — the census found 37 sizes, tokens on ~14% of calls, ~780
+calls under 13pt and 45% of body text bold). Each role is face + size +
+weight + leading + tracking + default ink, tied to ONE system text style so
+the whole scale moves together with Dynamic Type (capped at `.xxxLarge`,
+lifted per paragraph by `cavnarReadingSize`):
 
-| Token | pt | Use |
-|---|---|---|
-| `kicker` | 11.5 | uppercase tracked label above a section or figure — and over a tile's figure; the only kicker size (parity #85 found 14) |
-| `tag` | 10 | uppercase label inside a capsule: a claim tag, a request kind, a severity pill |
-| `caption` | 12.5 | meta, timestamps, basis lines |
-| `secondary` | 13.5 | a line under a figure or title; helper copy |
-| `body` | 15 | body copy, row titles |
-| `emphasis` | 16.5 | the one sentence a card opens on |
-| `section` | 21 | a section title (Clash) — `HomeSectionHeader` |
-| `tileNumber` | 22 | a stat-strip or grid tile figure |
-| `cardNumber` | 30 | a card's own figure |
-| `heroNumber` | 40 | the screen's status figure |
+```swift
+Text("Labor is over target").cavnarText(.headline)
+Text(reason).cavnarText(.body)
+Text("$1,840").cavnarText(.figureL, color: .cavnarGreen)
+CavnarMixedText("Food cost is 34.2%, 2.1 points over", role: .lead)   // words + figures
+HomeMixedText.make(line, role: .secondary)                            // as Text, to concatenate
+Text("72%").font(.cavnar(.figureS))                                   // face and size only
+```
 
-**One 40pt figure per screen, and it is the status figure** — the number
+| Role | Face | pt / leading | Tracking | Ink | Text style | Use |
+|---|---|---|---|---|---|---|
+| `display` | Clash Medium | 34 / 40 | -0.4 | Ink | largeTitle | a screen's one title moment |
+| `title` | Clash Medium | 26 / 31 | -0.2 | Ink | title | screen title |
+| `headline` | Clash Medium | 21 / 26 | 0 | Ink | title3 | section title; a hero card's one sentence |
+| `lead` | Apfel Regular | 18 / 25 | 0 | Ink | body | the sentence a card opens on |
+| `body` | Apfel Regular | 16 / 23 | 0 | Ink2 | callout | reading text |
+| `label` | Apfel Fett | 16 / 20 | 0 | Ink | callout | row titles, button words |
+| `secondary` | Apfel Regular | 14 / 19 | 0 | Ink2 | subheadline | a line under a title; trust lines |
+| `caption` | Apfel Regular | 13 / 17 | +0.1 | Ink3 | footnote | meta, timestamps — **the floor** |
+| `kicker` | Apfel Fett, UPPERCASE | 12 | +1.2 | Ember2 | caption | above a section or figure (`CavnarKicker`) |
+| `tag` | Apfel Fett, UPPERCASE | 11 | +0.6 | Ink2 | caption2 | inside a capsule only |
+| `figureXL` | Space Grotesk 600, tabular | 48 | -1.0 | Ink | largeTitle | the screen's one status figure |
+| `figureL` | Space Grotesk 600, tabular | 34 | -0.6 | Ink | largeTitle | a card's figure |
+| `figureM` | Space Grotesk 600, tabular | 24 | -0.3 | Ink | title2 | a tile's figure |
+| `figureS` | Space Grotesk 600, tabular | 17 | 0 | Ink | body | a figure in a row |
+
+**Hard rules (iOS)**
+- Nothing under 13pt (`caption`) except `tag`, chart axes (≥ 11) and
+  print-only views.
+- `minimumScaleFactor` ≥ 0.85.
+- **One `figureXL` per screen**, and it is the status figure.
+- Ink3 never for `body` or `label`; an ink below 60% opacity is never text.
+- Bold only for `label` and `kicker` (and `tag`). Apfel ships Regular and Fett
+  only, so a 600 IS a 700 — "medium" body text does not exist.
+- Every hit target ≥ 44×44 — `cavnarHitTarget()` on the button's label.
+- Small red text is `.cavnarRedText`, never `.cavnarRed`.
+- The four layers: **L0** the glance answer (`CavnarAnswerCard`'s headline +
+  summary), **L1** one action in thumb reach (its action slot, or
+  `cavnarPinnedBar`), **L2** tap for proof (its "See the evidence",
+  `CavnarMoreDisclosure`), **L3** the web (`CavnarWebLinkRow`). See §12,
+  *The iPhone answer kit*.
+
+**Figures follow Dynamic Type like words.** `cavnarNumber` and the figure
+roles are `Font.custom` on static Space Grotesk instances
+(`SpaceGroteskStatic-Regular/-Medium/-SemiBold/-Bold`, cut 10/8/26 from the
+variable `SpaceGrotesk.ttf` with fontTools' instancer — upstream ships only
+the variable font, whose named instances carry no PostScript names) with
+`.monospacedDigit()` (the font's `tnum`). They used to scale through
+UIFontMetrics, outside SwiftUI's environment, so figures ignored the
+`.xxxLarge` cap and `cavnarReadingSize`. `HomeMixedText` sets a number run
+relative to the same text style as its words.
+
+`tests/test_ios_type_roles.py` holds the roles and ratchets the move: the
+count of literal-size `cavnarBody(` / `cavnarHeadline(` / `cavnarNumber(` /
+`HomeMixedText.make(size:)` calls under `Features/` may only fall (lower its
+`BASELINE` in the commit that lowers the count).
+
+#### `CavnarType` (the older size tokens — still valid, same sizes as the roles)
+
+`CavnarType` in `Font+Cavnar.swift` names the sizes for the three helpers
+(`cavnarBody` words, `cavnarHeadline` titles, `cavnarNumber` figures), which
+keep working at every existing call site. Raised 10/8/26 to the roles' floor:
+
+| Token | pt | Role | Use |
+|---|---|---|---|
+| `kicker` | 12 | `kicker` | uppercase tracked label above a section or figure (parity #85 found 14 sizes) |
+| `tag` | 11 | `tag` | uppercase label inside a capsule: a claim tag, a request kind, a severity pill |
+| `caption` | 13 | `caption` | meta, timestamps, basis lines |
+| `secondary` | 14 | `secondary` | a line under a figure or title; helper copy |
+| `body` | 16 | `body` | body copy, row titles |
+| `emphasis` | 18 | `lead` | the one sentence a card opens on |
+| `section` | 21 | `headline` | a section title (Clash) — `HomeSectionHeader` |
+| `tileNumber` | 22 | ~`figureM` | a stat-strip or grid tile figure |
+| `cardNumber` | 30 | ~`figureL` | a card's own figure |
+| `heroNumber` | 40 | ~`figureXL` | the screen's status figure |
+
+**One hero figure per screen, and it is the status figure** — the number
 that answers "are we OK?" in three seconds: labor % against target, food
 cost % against target, the report's score, the owner's rating against the
-market on Intel. Anything else that wants to be big is `cardNumber` or
-smaller. A measured-results figure is never the page's largest number
-(Home's value band is `cardNumber`, inside the collapsed Results).
-
-Migrated so far (density round, 9/25/26): Home (section headers, Results,
-last-night card, recommendation rows, pulse strip, module tiles), the daily
-report's score card and titled cards, Food Cost Analytics' hero and stat
-strip, Labor's groups and schedule block, Intel's hero line, Reviews' why
-line, Marketing's outcome row, Notifications' summary, the staff portal's
-next shift. Other screens move module by module; a new screen starts on
-the tokens.
+market on Intel. Anything else that wants to be big is `cardNumber` /
+`figureL` or smaller. A measured-results figure is never the page's largest
+number (Home's value band is `cardNumber`, inside the collapsed Results).
 
 ---
 
@@ -242,9 +318,25 @@ Web spacing is a 4px-based ladder; these are the values in use:
 | Hairline gap | 2–6 | Inside a row, label → value |
 | Tight | 8–10 | Chip padding, icon gaps, `.cbtn-row` gap |
 | Row | 11–14 | `.ac-row` / `.hb-row` vertical padding |
-| Card | 16–22 | `.ac-card` padding (20px 22px), iOS `cavnarCard()` (16) |
+| Card | 16–22 | `.ac-card` padding (20px 22px), iOS `cavnarCard()` (20) |
 | Block | 20–26 | Sheet padding, `VStack(spacing: 22)` |
 | Section | 34 | Gap between sections (`.hb-act`, `.fc2-sec`) |
+
+iOS spacing is `CavnarSpace` (`ViewModifiers.swift`, readability round
+10/8/26 — the census found 25 stack spacings and 42 padding literals):
+
+| Token | pt | Use |
+|---|---|---|
+| `xxs` | 4 | inside a line: icon → word, figure → unit |
+| `xs` | 8 | label → value; chip gaps |
+| `s` | 12 | lines of one card (headline → summary → cause) |
+| `m` | 16 | groups inside a card; rows of cards |
+| `l` | 20 | cards in a stack |
+| `xl` | 24 | a section header from the block above |
+| `xxl` | 32 | major blocks of a screen |
+| `section` | 40 | a screen's sections |
+| `gutter` | 20 | the screen's side margin |
+| `cardPadding` | 20 | inside `cavnarCard`, `cavnarGlassCard`, `cavnarGlossyCard` (was 16) |
 
 Radius — iOS `CavnarRadius`, web equivalents:
 
@@ -1576,6 +1668,27 @@ existed:
 | Measure bars | `.sfw1-dims .sfw1-dim` in an expanded shift | `shifts[].dimensions[]` (`score`, `floor`, `facts`) | Every counting measure as a 6px bar, its floor a 2px ink3 tick; facts lines under it at 12.5px; a leadership miss offers "Add a …" / "Swap in a …" |
 | Points | `.sfw1-pts` | `recommendation_items[].points` | "up to +6 points" in green, Space Grotesk, after the suggestion; the list sorts most valuable first |
 | Memory row | `.sfw1-mem .r` | `GET labor/schedule-memory`, `GET labor/ratings/suggested` | The learned-pattern row grown: sentence, `.mem-pill` status, a caption ("72% sure · 2 of 3 · last confirmed by hand 9/28/26"), actions at the end (Keep / Let it go / Make it a rule; Confirm N + a 1–5 `.chip-tog`) |
+
+### The iPhone answer kit (iOS readability round, 10/8/26)
+
+**Web explains. iPhone decides.** Four layers on every phone screen — L0 the
+glance answer, L1 one action in thumb reach, L2 tap for proof, L3 the web.
+`DesignSystem/CavnarAnswerKit.swift`:
+
+| Component | Layer | Use |
+|---|---|---|
+| `CavnarAnswerCard(kicker:headline:headlineRole:summary:cause:isHypothesis:alternativeCause:expectedOutcome:confidence:detailLabel:surface:actions:detail:)` | L0–L2 | The one anatomy for every AI card: kicker, headline (one sentence, `.lead` or `.headline`), summary (one sentence, Body), cause (one line; `isHypothesis` labels it **Hypothesis** in amber), "Could also be: …" (one alternative), the action slot (the one primary and/or `RecAnswerRow`), expected outcome (one line; conditional wording is the caller's), a `ConfidenceLine` passed through, and the proof behind "See the evidence" (collapsed). Missing parts collapse; Reduce Motion respected. |
+| `.cavnarPinnedBar { … }` / `CavnarPinnedBar` | L1 | A screen's primary pinned above the home indicator (`safeAreaInset(edge: .bottom)`), Labor's send-bar look. |
+| `CavnarMoreDisclosure(hiddenCount:total:) { … }` / `CavnarMoreToggle` | L2 | "+N more" / "Show all N" under a capped list, 44pt. |
+| `CavnarWebLinkRow(title:subtitle:path:)` | L3 | "Alert rules · Edit on the web ›" — opens `https://dashboard.cavnar.ai/?nav=<path>` in an in-app browser (SFSafariViewController): the app claims the dashboard's links as universal links, so `openURL` would land back in the app. `path` is a nav path (`nav.py`): `labor/schedule`, `inventory/pars`, `account/notifications`, … |
+| `CavnarKicker(_:icon:tint:)` | — | The one kicker (Ember2; `tint` only where the colour is the meaning). |
+| `CavnarMixedText(_:role:color:)` | — | Words in a role, figures in Space Grotesk, scaling together. |
+| `.cavnarHitTarget()` | — | A 44×44 tap area around a small control; on the button's label. |
+
+The AI consultant sheet (`AIConsultantView.swift`) is the first screen on it:
+the intro's first sentence is the headline and the rest Body, unverified
+figures and causes are `CavnarCaveat`s at the top, recommendation #1 is the
+hero and the rest wait behind "+N more".
 
 ## 12c. The admin console (internal, `templates/admin.html`)
 

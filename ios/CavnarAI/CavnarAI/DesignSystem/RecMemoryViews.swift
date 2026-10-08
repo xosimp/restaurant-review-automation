@@ -117,10 +117,7 @@ struct RecConflictPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(Self.kicker(conflict).uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker(Self.kicker(conflict))
             if let why = conflict.why {
                 HomeMixedText.make(why, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -145,7 +142,7 @@ struct RecConflictPanel: View {
                             HomeMixedText.make(Self.buttonLabel(choice), size: CavnarType.secondary, weight: 700,
                                                color: .cavnarEmber2)
                                 .multilineTextAlignment(.leading)
-                                .frame(minHeight: 36, alignment: .leading)
+                                .frame(minHeight: 44, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)

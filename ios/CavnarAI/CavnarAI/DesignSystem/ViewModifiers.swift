@@ -12,6 +12,48 @@ enum CavnarRadius {
     static let pill: CGFloat = 999     // fully-rounded badges/capsules
 }
 
+/// The spacing scale (iOS readability round, 10/8/26) — the census found 25
+/// distinct VStack spacings and 42 padding literals. A stack's spacing and
+/// a view's padding come from here:
+///
+///     VStack(alignment: .leading, spacing: CavnarSpace.s) { … }
+///         .padding(.horizontal, CavnarSpace.gutter)
+enum CavnarSpace {
+    /// 4 — inside a line: an icon to its word, a figure to its unit.
+    static let xxs: CGFloat = 4
+    /// 8 — between a label and its value; chip gaps.
+    static let xs: CGFloat = 8
+    /// 12 — between lines of one card (headline → summary → cause).
+    static let s: CGFloat = 12
+    /// 16 — between groups inside a card; between rows of cards.
+    static let m: CGFloat = 16
+    /// 20 — between cards in a stack.
+    static let l: CGFloat = 20
+    /// 24 — between a section header and the section above it.
+    static let xl: CGFloat = 24
+    /// 32 — between major blocks of a screen.
+    static let xxl: CGFloat = 32
+    /// 40 — between a screen's sections.
+    static let section: CGFloat = 40
+    /// The screen's side margin.
+    static let gutter: CGFloat = 20
+    /// Inside a card (`cavnarCard`, `cavnarGlassCard`, `cavnarGlossyCard`).
+    static let cardPadding: CGFloat = 20
+}
+
+extension View {
+    /// A 44×44pt minimum tap area (HIG) around a small control, with the
+    /// whole frame tappable. The visual stays its own size; the layout grows
+    /// to 44pt. Put it on the button's LABEL (or at the end of a
+    /// ButtonStyle's makeBody) — a frame added outside a Button does not
+    /// widen the Button's own hit area:
+    ///
+    ///     Button { … } label: { Text("Why?").cavnarText(.caption).cavnarHitTarget() }
+    func cavnarHitTarget() -> some View {
+        frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+    }
+}
+
 /// The house "branded pill" gradient — full-strength ember on one edge,
 /// fading continuously to fully *transparent* on the other, never hard-
 /// switching to a solid color partway through (see ScheduleHistoryView's
@@ -249,6 +291,8 @@ struct CavnarChipButtonStyle: ButtonStyle {
             .background(tone)
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
             .shadow(color: tone.opacity(configuration.isPressed ? 0.1 : 0.45), radius: configuration.isPressed ? 1 : 4, x: 0, y: configuration.isPressed ? 0 : 2)
+            // The chip is ~28pt tall; the tap area is 44.
+            .cavnarHitTarget()
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
@@ -471,7 +515,8 @@ struct CavnarCardStyle: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: CavnarRadius.card)
         content
-            .padding(16)
+            // 20, was 16 (10/8/26): room for the larger body text.
+            .padding(CavnarSpace.cardPadding)
             .background(background)
             .overlay(shape.strokeBorder(border, lineWidth: 1))
             .clipShape(shape)
@@ -937,7 +982,10 @@ extension View {
             ZStack(alignment: .top) {
                 Color.cavnarPaper
                 LinearGradient(
-                    colors: [Color.cavnarEmber.opacity(0.38), Color.cavnarEmber.opacity(0)],
+                    // 22%, was 38% (10/8/26): at .38 the wash took ember
+                    // text over it down to 3.0:1 and Ink3 to 3.6:1; at .22
+                    // they are 3.9:1 and 4.7:1, and the wash still reads.
+                    colors: [Color.cavnarEmber.opacity(0.22), Color.cavnarEmber.opacity(0)],
                     startPoint: .top, endPoint: .bottom
                 )
                 // Deliberately NO width constraint here. An attempt to

@@ -63,8 +63,8 @@ struct CavnarDropdown<Content: View>: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
-                .contentShape(Rectangle())
                 .padding(.vertical, 4)
+                .cavnarHitTarget()
             }
             .buttonStyle(.plain)
 

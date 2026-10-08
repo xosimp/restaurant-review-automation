@@ -264,14 +264,15 @@ struct RecAnswerRow: View {
                     // Queued offline: a clock, and the sentence says it has
                     // not gone yet — never the checkmark of a saved answer.
                     Image(systemName: answered.queued ? "clock.arrow.circlepath" : "checkmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.cavnar(.secondary))
                         .accessibilityHidden(true)
                     HomeMixedText.make(answered.queued ? RecAnswer.queuedLine
                                                        : (answered.message ?? answered.answer.confirmation),
-                                       size: 15, weight: 500, color: .cavnarInk2)
+                                       size: CavnarType.body, weight: 400, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(Color.cavnarInk3)
+                // Ink2, not Ink3 (10/8/26): the answer's outcome is read.
+                .foregroundStyle(Color.cavnarInk2)
                 .transition(.opacity)
                 .accessibilityElement(children: .combine)
                 if let line = answered.trackerLine {
@@ -307,7 +308,8 @@ struct RecAnswerRow: View {
                                     Capsule().strokeBorder(answer == .accepted ? Color.cavnarEmber.opacity(0.55)
                                                                                : Color.cavnarInk3.opacity(0.35),
                                                            lineWidth: 1))
-                                .contentShape(Capsule())
+                                // 44×44 at least, however short the word.
+                                .cavnarHitTarget()
                         }
                         .buttonStyle(.plain)
                         .disabled(busy)
@@ -318,8 +320,7 @@ struct RecAnswerRow: View {
                 .opacity(busy ? 0.45 : 1)
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -392,10 +393,10 @@ struct RecTrackerLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "gauge.with.dots.needle.33percent")
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarEmber2)
                 .accessibilityHidden(true)
-            HomeMixedText.make(text, size: 12.5, weight: 600, color: .cavnarInk2)
+            HomeMixedText.make(text, size: CavnarType.caption, weight: 400, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)

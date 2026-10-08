@@ -6,32 +6,47 @@ import SwiftUI
 /// these instead of Color(hex:) anywhere in the app so a future palette
 /// change only touches the asset catalog.
 extension Color {
+    /// The three ink tiers (dark appearance — the app forces dark, RootView).
+    /// Retuned 10/8/26 (iOS readability round): the old Ink2 #E0D6C6 and
+    /// Ink3 #CDBFA9 sat only 1.2x / 1.6x below Ink, so a screen's hierarchy
+    /// didn't read and Ink3 had become the default text colour. Each tier is
+    /// now ~1.7x below the one above it and all three still clear WCAG AA.
+    /// Contrast on Paper #0C0C0C (on a card ground, Paper2 at 60% ≈ #101010,
+    /// each is 0.1–0.4 lower — Red 4.4:1, Ink3 5.7:1):
+    ///
+    /// | Token | Dark | Ratio | Increase Contrast | Ratio |
+    /// |---|---|---|---|---|
+    /// | Ink | #F0EBE0 | 16.5:1 | — | — |
+    /// | Ink2 | #BDB5A8 | 9.6:1 | #D9D2C6 | 13.0:1 |
+    /// | Ink3 | #948C80 | 5.9:1 | #B8B0A3 | 9.1:1 |
+    /// | Ember | #D4583A | 4.9:1 | #E0664A | 5.8:1 |
+    /// | Red | #E3333F | 4.5:1 | #FF7880 | 7.7:1 |
+    /// | RedText | #F05A63 | 5.9:1 | #FF7880 | 7.7:1 |
+    /// | Ember2 | #E8956A | 8.3:1 | — | — |
+    ///
+    /// The Increase Contrast variants live in the colorsets themselves
+    /// (`contrast: high`), so every use of these tokens follows the setting
+    /// without a helper. Ink2 is body text; Ink3 is captions and meta only,
+    /// never body or a label; an ink at less than 60% opacity is never text.
     static let cavnarInk = Color("Ink")
     static let cavnarInk2 = Color("Ink2")
     static let cavnarInk3 = Color("Ink3")
 
-    /// Secondary text, lifted when the user has Increase Contrast on.
-    ///
-    /// The app is dark-only by design (correct for a dim dining room), but it
-    /// is also used at the pass under bright task lighting and outdoors on a
-    /// patio — the two environments where low-contrast secondary text on a
-    /// near-black ground is hardest to read, and Ink3 on Paper sits below the
-    /// WCAG AA 4.5:1 threshold for body text. Increase Contrast is the system
-    /// signal that someone is struggling; honour it rather than ignoring it
-    /// (audit 7.7).
-    ///
-    /// Use at call sites carrying real information; decorative chrome can stay
-    /// on the plain token.
+    /// Ink3 for text carrying real information. The colorset now carries its
+    /// own Increase Contrast variant (#B8B0A3, 9.1:1), so this is the plain
+    /// token; kept so existing call sites compile and read as deliberate. It
+    /// used to swap in a flat grey (white 0.82) under Increase Contrast
+    /// (audit 7.7) because the colorset had no variant of its own.
     static func cavnarInk3(_ contrast: ColorSchemeContrast) -> Color {
-        contrast == .increased ? Color(white: 0.82) : Color("Ink3")
+        .cavnarInk3
     }
 
-    /// Tertiary text that sits a step below Ink3 (an upcoming step, a
-    /// placeholder, a build stamp). 70% of Ink3 is the floor: it still
-    /// clears WCAG AA 4.5:1 on Paper, where the 40–60% it replaces fell
-    /// below it. Under Increase Contrast it is full Ink3.
+    /// Text a step below Ink3 (an upcoming step, a placeholder, a build
+    /// stamp): Ink2 at 70% — #888279 on Paper, 5.1:1, so it still clears AA.
+    /// (70% of the retuned Ink3 would be 3.4:1.) Under Increase Contrast it
+    /// is full Ink3, whose own high-contrast variant applies.
     static func cavnarInk3Muted(_ contrast: ColorSchemeContrast) -> Color {
-        contrast == .increased ? Color("Ink3") : Color("Ink3").opacity(0.7)
+        contrast == .increased ? .cavnarInk3 : Color("Ink2").opacity(0.7)
     }
 
     static let cavnarPaper = Color("Paper")
@@ -43,7 +58,12 @@ extension Color {
 
     static let cavnarGreen = Color("Green")
     static let cavnarGreenBg = Color("GreenBg")
+    /// Red for fills, bars, dots and icons. Under 18pt it is 4.5:1 on Paper
+    /// and ~4.3:1 on a card — small red TEXT takes `cavnarRedText`.
     static let cavnarRed = Color("Red")
+    /// Red for small text (an error line, an over-target figure under
+    /// 18pt): #F05A63, 5.9:1 on Paper, 5.8:1 on a card.
+    static let cavnarRedText = Color("RedText")
     static let cavnarRedBg = Color("RedBg")
     static let cavnarAmber = Color("Amber")
     static let cavnarAmberBg = Color("AmberBg")

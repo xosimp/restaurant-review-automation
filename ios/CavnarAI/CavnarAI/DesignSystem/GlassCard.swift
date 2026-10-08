@@ -15,7 +15,7 @@ struct CavnarGlassCardStyle: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(16)
+            .padding(CavnarSpace.cardPadding)
             .background(
                 LinearGradient(
                     colors: [tint.opacity(0.20), tint.opacity(0.06)],
@@ -49,7 +49,7 @@ extension View {
 /// the one ember on the card.
 struct CavnarGlossyCardStyle: ViewModifier {
     func body(content: Content) -> some View {
-        let padded = content.padding(16)
+        let padded = content.padding(CavnarSpace.cardPadding)
         Group {
             if #available(iOS 26.0, *) {
                 padded.glassEffect(

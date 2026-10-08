@@ -11,18 +11,19 @@ struct CavnarCaveat: View {
     let detail: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        // Secondary (14) throughout, the icon sized by the same font so it
+        // grows with the words (10/8/26: it was a fixed 14pt glyph).
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarAmber)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                 Text(title)
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarAmber)
                 Text(detail)
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk2)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)

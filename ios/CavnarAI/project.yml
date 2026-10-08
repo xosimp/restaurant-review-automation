@@ -64,6 +64,10 @@ targets:
           - ClashDisplay-Semibold.ttf
           - ClashDisplay-Bold.ttf
           - SpaceGrotesk.ttf
+          - SpaceGroteskStatic-Regular.ttf
+          - SpaceGroteskStatic-Medium.ttf
+          - SpaceGroteskStatic-SemiBold.ttf
+          - SpaceGroteskStatic-Bold.ttf
         UIBackgroundModes:
           - remote-notification
           # The widgets refresh with the app closed (parity audit #31): a
@@ -239,6 +243,10 @@ targets:
           - ClashDisplay-Semibold.ttf
           - ClashDisplay-Bold.ttf
           - SpaceGrotesk.ttf
+          - SpaceGroteskStatic-Regular.ttf
+          - SpaceGroteskStatic-Medium.ttf
+          - SpaceGroteskStatic-SemiBold.ttf
+          - SpaceGroteskStatic-Bold.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
@@ -292,6 +300,10 @@ targets:
           - ClashDisplay-Semibold.ttf
           - ClashDisplay-Bold.ttf
           - SpaceGrotesk.ttf
+          - SpaceGroteskStatic-Regular.ttf
+          - SpaceGroteskStatic-Medium.ttf
+          - SpaceGroteskStatic-SemiBold.ttf
+          - SpaceGroteskStatic-Bold.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationViewController
@@ -351,6 +363,10 @@ targets:
           - ClashDisplay-Semibold.ttf
           - ClashDisplay-Bold.ttf
           - SpaceGrotesk.ttf
+          - SpaceGroteskStatic-Regular.ttf
+          - SpaceGroteskStatic-Medium.ttf
+          - SpaceGroteskStatic-SemiBold.ttf
+          - SpaceGroteskStatic-Bold.ttf
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: ShareViewController

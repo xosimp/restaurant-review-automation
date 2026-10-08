@@ -122,10 +122,7 @@ struct CavnarChartHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(kicker.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.6)
-                .foregroundStyle(Color.cavnarEmber)
+            CavnarKicker(kicker)
             Text(title)
                 .font(.cavnarHeadline(20))
                 .foregroundStyle(Color.cavnarInk)

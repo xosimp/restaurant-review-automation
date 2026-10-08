@@ -226,6 +226,7 @@ struct CavnarForecastPanel<Body: View>: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.cavnarInk3)
+                        .cavnarHitTarget()
                 }
             }
             .foregroundStyle(tone)

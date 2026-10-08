@@ -39,7 +39,7 @@ struct CavnarDateChip: View {
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(picking ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
             .opacity(disabled ? 0.6 : 1)
-            .contentShape(Rectangle())
+            .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(accessibilityName), \(iso.isEmpty ? "not set" : CavnarDate.mdy(iso))")
@@ -106,7 +106,7 @@ struct CavnarTimeChip: View {
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(picking ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
                 .opacity(disabled ? 0.6 : 1)
-                .contentShape(Rectangle())
+                .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(accessibilityName), \(time.isEmpty ? "not set" : time)")
