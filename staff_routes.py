@@ -7,10 +7,18 @@ employee's own name from the session's membership. That is what makes "an
 employee cannot see another restaurant, or another employee" a property of
 the routing rather than a rule each handler has to remember.
 
-What an employee gets today is scheduling: today's shift, the week, shift
-detail, their profile, and their own task checklist. The identity layer under
-it (auth.memberships) is built so shift acknowledgment, swaps, availability,
-time-off and messaging can be added without touching authentication again.
+What an employee gets: today's shift, the week, swaps and time off, their
+task sheets, the inbox and the thread with the managers, availability and
+their own settings — in the iPhone app (Bearer token) and, since 10/7/26, in
+any phone browser (/staff/home, the PIN cookie session), both over the same
+/staff/api/* routes, so each rule has one implementation.
+
+The browser half (parity audit #100, owner 10/7/26: staff without an iPhone,
+Android included, are not left out): the restaurant's link /staff/r/<code>
+opens the PIN pad again, /staff/home is the portal (staff_portal.html), and
+every state-changing call it makes passes the double-submit CSRF check
+(staff_csrf_check, wired app-wide in hosted_dashboard). The app's Bearer
+calls are not cookie-borne and are left alone.
 """
 from flask import (Blueprint, jsonify, make_response, redirect, render_template,
                    request, url_for)
@@ -120,9 +128,12 @@ def _app_url():
 
 
 # The sign-out question: DESIGN_SYSTEM.md's dark tokens and faces, as on
-# staff_login.html. A 44px "stay" link back to the get-the-app page.
+# staff_login.html. A 44px "stay" link back to the portal. The POST carries
+# the double-submit token (staff_csrf_check): the staff cookie is
+# SameSite=Lax, and the token is the second lock on the one form that ends a
+# session from the browser. __CSRF__ is filled per request (_logout_page).
 _LOGOUT_PAGE = (
-    "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+    "<!doctype html><html lang='en' data-theme='dark'><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'><meta name='robots' content='noindex,nofollow'>"
     "<title>Sign out — Cavnar AI for staff</title>"
     "<link rel='stylesheet' href='/static/fonts/cavnar-fonts.css'>"
@@ -135,32 +146,126 @@ _LOGOUT_PAGE = (
     "p{color:var(--ink2);font-size:14.5px;line-height:1.55;margin:0 0 20px}"
     ".stay{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;margin-top:10px;"
     "color:var(--ember2);font-weight:700}</style></head><body><div class='wrap'>"
-    "<h1>Sign out?</h1><p>This signs this browser out. Your schedule stays in the Cavnar AI app.</p>"
-    "<form method='post' action='/staff/logout'><button type='submit' class='cbtn cbtn-primary cbtn-lg'>"
-    "Sign out</button></form><a class='stay' href='/staff/'>Stay signed in</a></div></body></html>")
+    "<h1>Sign out?</h1><p>This signs this browser out. The next person signs in with their own PIN.</p>"
+    "<form method='post' action='/staff/logout'><input type='hidden' name='csrf_token' value='__CSRF__'>"
+    "<button type='submit' class='cbtn cbtn-primary cbtn-lg'>"
+    "Sign out</button></form><a class='stay' href='/staff/home'>Stay signed in</a></div></body></html>")
+
+
+def _page_csrf_token():
+    """(token, minted) for a page that renders its own form or fetches: the
+    csrf_js cookie the request carries, or a fresh one the response must set
+    (csrf.ensure_csrf_cookie then leaves the response alone) — the pair the
+    dashboard and the /s/ link page use."""
+    import secrets as _secrets
+    from csrf import CSRF_COOKIE
+    tok = request.cookies.get(CSRF_COOKIE)
+    return (tok, False) if tok else (_secrets.token_urlsafe(32), True)
+
+
+def _with_csrf_cookie(resp, token, minted):
+    if minted:
+        from csrf import CSRF_COOKIE
+        resp.set_cookie(CSRF_COOKIE, token, max_age=30 * 24 * 3600, httponly=False,
+                        secure=cookies_require_secure(), samesite="Lax")
+    return resp
+
+
+def _logout_page():
+    from markupsafe import escape
+    token, minted = _page_csrf_token()
+    resp = make_response(_LOGOUT_PAGE.replace("__CSRF__", str(escape(token))))
+    return _with_csrf_cookie(resp, token, minted)
+
+
+# ── CSRF for the browser portal ────────────────────────────────────────────
+#
+# staff_bp is not in hosted_dashboard's csrf_protect tuple: the app calls it
+# with a Bearer token, and sign-in happens before any session exists. The
+# browser portal is cookie-authenticated, so every state-changing request
+# the staff_session COOKIE would authenticate must echo the csrf_js cookie
+# (the X-CSRF header from _csrf_fetch.html, or a csrf_token form field) —
+# the same double-submit check as csrf.csrf_protect.
+#
+# Left out, deliberately:
+#   * a request with no staff_session cookie — nothing a forged request
+#     could ride on;
+#   * a request carrying "Authorization: Bearer" — the app. A cross-site
+#     page cannot add that header without a CORS preflight this server never
+#     grants, so it is never the forged one;
+#   * the routes that run BEFORE a session: PIN sign-in (its one-shot nonce
+#     comes from a same-origin read a cross-site page cannot make), sign-up
+#     and forgot PIN — a stale cookie in the jar must not block them.
+STAFF_CSRF_BLUEPRINTS = frozenset({"staff", "staff_knowledge"})
+STAFF_CSRF_EXEMPT_ENDPOINTS = frozenset({
+    "staff.portal_authenticate", "staff.signup_start", "staff.signup_verify", "staff.signup_claim",
+    "staff.api_pin_forgot_start", "staff.api_pin_forgot_verify", "staff.api_pin_forgot_set",
+})
+
+
+def staff_csrf_check():
+    """App-level before_request (hosted_dashboard wires it): None to carry
+    on, or the 403 csrf.csrf_protect answers."""
+    if request.blueprint not in STAFF_CSRF_BLUEPRINTS:
+        return None
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    if not request.cookies.get("staff_session"):
+        return None
+    if request.headers.get("Authorization", "").startswith("Bearer "):
+        return None
+    if request.endpoint in STAFF_CSRF_EXEMPT_ENDPOINTS:
+        return None
+    import hmac
+    from csrf import CSRF_COOKIE, _token_from_request
+    cookie_tok = request.cookies.get(CSRF_COOKIE, "")
+    sent_tok = _token_from_request()
+    if cookie_tok and sent_tok and hmac.compare_digest(cookie_tok, sent_tok):
+        return None
+    return jsonify(ok=False, error="Request blocked (CSRF). Refresh the page and try again."), 403
+
+
+def _signed_in_staff():
+    """The employee this browser's cookie names when it is a live staff
+    session (staff_login_required's own test), else None. Read through auth
+    at call time, so a patched database is the one read."""
+    token = request.cookies.get("staff_session")
+    if not token:
+        return None
+    import auth as _auth
+    from permissions import TASKS_VIEW_OWN, has_permission
+    try:
+        user = _auth.get_session_user(token)
+    except Exception:
+        return None
+    if not user or not user.get("membership_id") or not has_permission(user, TASKS_VIEW_OWN):
+        return None
+    return user
 
 
 def _app_page(restaurant=None, join_code="", error=None, status=200, **extra):
-    """The web side of the staff portal: one page saying the portal is in
-    the iPhone app (owner, 9/30/26: "no web version for employees"), with
-    the restaurant code when the link names one. It keeps the
+    """The staff landing page: the two ways in (owner, 10/7/26 — parity
+    audit #100): "Use it in your browser" (the restaurant code, then the PIN
+    pad at /staff/r/<code>; or straight to /staff/home when this browser is
+    already signed in) and the Cavnar AI iPhone app — the App Store link
+    once IOS_APP_STORE_URL is set, else the TestFlight invite. It keeps the
     create-your-account flow because it is the opt-in page registered for
-    the staff verification texts (A2P).
-
-    It always says how to get the app — the App Store link once
-    IOS_APP_STORE_URL is set, else the TestFlight invite — and how someone
-    without an iPhone gets their week (the per-week /s/ link). A finished
-    web signup lands on /staff/home?ready=1, signed in, so the ready page
-    can show the restaurant code the app asks for first (C1, UX-08, UX-26)."""
-    return render_template("staff_login.html", restaurant=restaurant, roster=[],
-                           portal_token="", login_nonce="", join_code=join_code or "",
-                           error=error, app_url=_app_url(),
+    the staff verification texts (A2P). A finished web signup lands on
+    /staff/home?ready=1, signed in, so the ready page can show the
+    restaurant code (C1, UX-08, UX-26)."""
+    extra.setdefault("roster", [])
+    extra.setdefault("portal_token", "")
+    extra.setdefault("login_nonce", "")
+    return render_template("staff_login.html", restaurant=restaurant,
+                           join_code=join_code or "", error=error, app_url=_app_url(),
+                           signed_in=_signed_in_staff() is not None,
                            ready=request.args.get("ready") == "1", **extra), status
 
 
 @staff_bp.route("/")
 def portal_entry():
-    """Where an employee lands with no restaurant link: get the app."""
+    """Where an employee lands with no restaurant link: the browser (the
+    restaurant code, then the PIN pad) or the app."""
     return _app_page()
 
 
@@ -175,10 +280,13 @@ def portal_signup():
 
 @staff_bp.route("/r/<token>")
 def portal_login(token):
-    """The restaurant's staff link or posted code: it no longer opens a PIN
-    pad in the browser. It names the restaurant and shows its join code for
-    the app's Create your account (the app's own PIN sign-in posts to
-    /staff/r/<token>/login, below)."""
+    """The restaurant's staff link or posted code: the browser PIN pad —
+    pick your name, enter your PIN (restored 10/7/26, parity audit #100).
+    The roster is the one /staff/api/roster/<token> hands the app (PIN set,
+    employee tier, this restaurant only), the sign-in posts to
+    /staff/r/<token>/login with the one-shot nonce, and the same per-address
+    throttle and per-person lockout apply. The page still names the
+    restaurant code for the app's Create your account."""
     ip = _client_ip()
     throttled = _throttled(ip)
     if throttled:
@@ -189,7 +297,10 @@ def portal_login(token):
         return _app_page(error="That staff link isn't valid any more. Ask a manager for the current code.",
                          status=404)
     mark_portal_attempt_ok(attempt)      # a real code: not a guess (SEC-18)
-    return _app_page(restaurant=get_restaurant(rid), join_code=get_join_code(rid))
+    roster = [{"membership_id": m["id"], "name": m.get("employee_name") or m["username"]}
+              for m in get_memberships_for_restaurant(rid, role="employee") if m.get("pin_hash")]
+    return _app_page(restaurant=get_restaurant(rid), join_code=get_join_code(rid), pinpad=True,
+                     roster=roster, portal_token=token, login_nonce=issue_portal_nonce(rid))
 
 
 @staff_bp.route("/api/roster/<token>")
@@ -440,16 +551,26 @@ def portal_logout():
     if request.method != "POST":
         if not request.cookies.get("staff_session"):
             return redirect(url_for("staff.portal_entry"))
-        # The web no longer shows shifts (the portal is in the app), so the
-        # way back is "Stay signed in", not "Back to my shifts" (UX-33).
-        return _LOGOUT_PAGE
+        # "Stay signed in" goes back to the portal (UX-33).
+        return _logout_page()
     token = request.cookies.get("staff_session")
+    # Back to this restaurant's own PIN pad, so the next person on a shared
+    # phone signs in where they are; the landing page when it can't be told.
+    back = url_for("staff.portal_entry")
     if token:
+        try:
+            user = _signed_in_staff()
+            if user:
+                code = get_join_code(user["restaurant_id"])
+                if code:
+                    back = url_for("staff.portal_login", token=code)
+        except Exception:
+            pass
         try:
             delete_session(token)
         except Exception:
             pass
-    resp = make_response(redirect(url_for("staff.portal_entry")))
+    resp = make_response(redirect(back))
     resp.delete_cookie("staff_session")
     return resp
 
@@ -459,13 +580,29 @@ def portal_logout():
 @staff_bp.route("/home")
 @staff_login_required
 def portal_home(current_user):
-    """A signed-in employee who opens the web: the portal is in the app."""
-    rid, _name = _staff_context(current_user)
+    """The browser staff portal (parity audit #100): Today, Schedule,
+    Requests, Tasks, Inbox and Me, each read and written by fetch() over
+    the same /staff/api/* routes the iPhone app calls — the page holds no
+    rule of its own. The restaurant and the person come from the session.
+
+    ?ready=1 (a web sign-up just finished) is the "You're all set" page
+    with the restaurant code, offering the browser and the app."""
+    rid, name = _staff_context(current_user)
     try:
         code = get_join_code(rid)
     except Exception:
         code = ""
-    return _app_page(restaurant=get_restaurant(rid), join_code=code)
+    restaurant = get_restaurant(rid)
+    if request.args.get("ready") == "1":
+        return _app_page(restaurant=restaurant, join_code=code)
+    token, minted = _page_csrf_token()
+    signin_url = url_for("staff.portal_login", token=code) if code else url_for("staff.portal_entry")
+    resp = make_response(render_template(
+        "staff_portal.html", restaurant_name=(restaurant.name if restaurant else ""), employee_name=name,
+        signin_url=signin_url, csrf_token=token, app_url=_app_url(),
+        tasks_api_header=TASKS_API_HEADER))
+    resp.headers["Cache-Control"] = "private, no-store"
+    return _with_csrf_cookie(resp, token, minted)
 
 
 @staff_bp.route("/api/me")

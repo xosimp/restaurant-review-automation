@@ -1,7 +1,7 @@
 """The staff-facing web pages under the edge cases the CLIENT audit found.
 
 Staff reach Cavnar three ways on the web: the PIN pad (staff_login.html),
-the portal (now the iPhone app only) and the per-person schedule link in their
+the portal (the app, and the browser at /staff/home since 10/7/26) and the per-person schedule link in their
 weekly email (`/s/<token>`, staff_schedule.html). What these protect:
 
 - CLIENT-3: the server accepts a 4–8 digit PIN, the portal lets you choose
@@ -145,12 +145,19 @@ def test_a_six_digit_pin_signs_in_when_all_six_digits_reach_the_server(client, d
     assert ok.status_code == 200 and ok.get_json()["ok"]
 
 
-def test_the_web_keeps_only_the_sign_up_pad():
-    """The staff portal is in the iPhone app (owner, 9/30/26); the web page
-    keeps create-your-account (the A2P opt-in page), not a PIN sign-in."""
+def test_the_web_has_the_sign_in_pad_and_the_sign_up_pad():
+    """The browser PIN pad is back (owner, 10/7/26, parity audit #100);
+    create-your-account (the A2P opt-in page) stays beside it."""
     page = _read("staff_login.html")
     assert "'.pad button[data-sd]'" in page
-    assert "'.pad button[data-d]'" not in page and "window.submitPin" not in page
+    assert "'.pad button[data-d]'" in page and "window.submitPin = submit" in page
+
+
+def test_the_sign_in_pad_can_enter_every_pin_length_the_server_accepts():
+    lengths = _auto_submit_lengths(_read("staff_login.html"), "pin")
+    assert lengths, "the pad auto-submits only at the last possible digit"
+    for n in lengths:
+        assert n >= auth.PIN_MAX_LENGTH, "auto-submits at %d digits" % n
 
 
 def test_the_self_signup_pad_can_enter_every_pin_length_the_server_accepts():

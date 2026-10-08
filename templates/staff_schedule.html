@@ -69,7 +69,7 @@
   <h1>{{ employee_name }}</h1>
   <p class="sub">Week of {{ week_start }}{% if week_end %} – {{ week_end }}{% endif %}</p>
   {# The app is where the rest of the job lives (UX-25, C1). #}
-  <p class="app-line">Swaps, time off and today&rsquo;s tasks are in the Cavnar AI app.
+  <p class="app-line">Swaps, time off and today&rsquo;s tasks are in the Cavnar AI app and <a href="/staff/">in your browser</a> &mdash; no iPhone needed.
     {% if app_url %}<a href="{{ app_url }}">Get the app</a>{% else %}It&rsquo;s on iPhone, in testing &mdash; ask your manager for the invite.{% endif %}</p>
 
   {% if updated %}

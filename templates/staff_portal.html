@@ -1,0 +1,1803 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>{{ employee_name }} — Cavnar AI for staff</title>
+{# The browser staff portal (parity audit #100, owner 10/7/26: staff without
+   an iPhone, Android included, are not left out). Every read and every
+   write is a fetch() to the same /staff/api/* route the iPhone app calls —
+   no rule lives here. Writes carry the double-submit token
+   (_csrf_fetch.html, checked by staff_routes.staff_csrf_check). Dark only,
+   DESIGN_SYSTEM.md tokens, .cbtn buttons, ES5, M/D/YY, the ember pulse for
+   loading, 44px targets, native selects and dates — never type=time. #}
+{% include "_csrf_fetch.html" %}
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+<style>
+  /* DESIGN_SYSTEM.md section 1, the iOS dark values (a phone in a dim dining
+     room): paper #0c0c0c, cards #121212, hairlines #262626. Nothing below
+     this block names a hex. */
+  :root{
+    --paper:#0c0c0c; --paper2:#121212; --paper3:#262626; --chrome:#000000;
+    --ink:#f0ebe0; --ink2:#c4bdb4; --ink3:#cdbfa9;
+    --ember:#d4583a; --ember2:#e8956a; --green:#4ead7a; --red:#e3333f; --amber:#d4a030;
+    --ember-bg:rgba(212,88,58,.14); --green-bg:rgba(78,173,122,.14); --red-bg:rgba(227,51,63,.12);
+    --amber-bg:rgba(212,160,48,.14); --scrim:rgba(0,0,0,.62);
+    --card:var(--paper2); --line:var(--paper3);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:'Apfel Grotezk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;font-size:16px;line-height:1.45;
+       padding:0 16px calc(96px + env(safe-area-inset-bottom))}
+  .wrap{max-width:560px;margin:0 auto}
+  /* Every number in Space Grotesk (DS 2): times, dates, counts. */
+  .num{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+  h1{font-family:'Clash Display',sans-serif;font-weight:600;font-size:26px;line-height:1.15;margin:6px 0 0;letter-spacing:-.01em}
+  h2.title{font-family:'Clash Display',sans-serif;font-weight:600;font-size:22px;margin:0 0 14px}
+  .sechead{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2);margin:26px 0 10px}
+  .sechead:first-child{margin-top:0}
+  .top{padding:22px 0 14px}
+  .note{font-size:14px;color:var(--ink3);line-height:1.5;margin:6px 0 0}
+  .note.amber{color:var(--amber)}
+  .note.ink2{color:var(--ink2)}
+  .errline{font-size:14px;color:var(--red);font-weight:600;line-height:1.45;margin:8px 0 0}
+  .okline{font-size:14px;color:var(--green);font-weight:600;margin:8px 0 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
+  .card.rail{border-left:3px solid var(--ember)}
+  .card.urgent{border-left:3px solid var(--red)}
+  .card .row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+  .strong{font-weight:700}
+  .muted{color:var(--ink3)}
+  .pill{display:inline-flex;align-items:center;font-size:11.5px;font-weight:700;letter-spacing:.04em;
+        padding:3px 9px;border-radius:999px;background:var(--paper3);color:var(--ink2);white-space:nowrap}
+  .pill.good{background:var(--green-bg);color:var(--green)}
+  .pill.bad{background:var(--red-bg);color:var(--red)}
+  .pill.warn{background:var(--amber-bg);color:var(--amber)}
+  .pill.ember{background:var(--ember-bg);color:var(--ember2)}
+  .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .acts .cbtn{min-height:44px}
+  .acts.two .cbtn{flex:1}
+  .cbtn.tall{min-height:44px}
+  .empty{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 18px;margin-bottom:12px}
+  .empty .h{font-family:'Clash Display',sans-serif;font-weight:600;font-size:18px;margin-bottom:4px}
+  .empty p{margin:0;color:var(--ink3);font-size:14.5px;line-height:1.5}
+
+  /* Loading: the sliding ember pulse with a plain label (DS 10) — never a
+     spinner and never "Loading…". */
+  @keyframes pulseBarSlide{0%{left:-30%}100%{left:130%}}
+  .dr-pulse{display:block;position:relative;height:3px;width:180px;max-width:100%;border-radius:2px;background:var(--paper3);overflow:hidden}
+  .dr-pulse i{position:absolute;top:0;left:-30%;height:100%;width:30%;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
+  @media (prefers-reduced-motion: reduce){.dr-pulse i{animation:none;left:35%}}
+  .loading{padding:10px 0 14px}
+  .loading .lbl{font-size:14px;color:var(--ink3);margin-top:8px}
+
+  /* The ended-session banner: one sticky way back in (DS 10). */
+  .ended{position:sticky;top:0;z-index:30;margin:0 -16px;padding:12px 16px;background:var(--paper2);
+         border-bottom:1px solid var(--ember);font-size:14.5px;line-height:1.45;display:flex;gap:10px;align-items:center;justify-content:space-between}
+  .ended[hidden]{display:none}
+
+  /* The tab bar: true-black chrome, 6 tabs, 56px targets. */
+  .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--chrome);border-top:1px solid var(--line);
+          display:flex;justify-content:center;padding:0 4px env(safe-area-inset-bottom)}
+  .tabbar .in{display:flex;width:100%;max-width:560px}
+  .tab{flex:1;min-width:0;min-height:58px;background:none;border:0;color:var(--ink3);font-family:inherit;
+       font-size:11px;font-weight:600;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+       cursor:pointer;position:relative;padding:6px 2px}
+  .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .tab[aria-selected="true"]{color:var(--ember2)}
+  .tab:focus-visible{outline:2px solid var(--ember2);outline-offset:-4px;border-radius:10px}
+  .tab .badge{position:absolute;top:6px;left:calc(50% + 6px);min-width:18px;height:18px;padding:0 5px;border-radius:9px;
+              background:var(--red);color:var(--ink);font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;
+              display:flex;align-items:center;justify-content:center}
+  .tab .badge[hidden]{display:none}
+  .pane{display:none}
+  .pane.on{display:block}
+
+  /* Today's hero: the next shift, every leg of a double. */
+  .hero{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ember);border-radius:16px;padding:18px;margin-bottom:12px}
+  .hero .when{font-family:'Clash Display',sans-serif;font-weight:600;font-size:24px;margin-top:4px}
+  .hero .when small{font-family:'Space Grotesk',sans-serif;font-size:14px;color:var(--ink3);font-weight:500;margin-left:6px}
+  .hero .t{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;margin-top:8px;letter-spacing:-.01em}
+  .hero .rel{font-size:14.5px;color:var(--ember2);font-weight:600;margin-top:6px}
+  .leg + .leg{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}
+  .meta{font-size:14px;color:var(--ink2);margin-top:4px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{min-height:44px;min-width:64px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:var(--paper3);
+        color:var(--ink);font-family:inherit;font-size:15px;font-weight:600;cursor:pointer}
+  .chip[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  .chip:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
+
+  /* Week rows */
+  .day{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:10px}
+  .day.today{border-left:3px solid var(--green)}
+  .day.off{opacity:.72}
+  .day .dh{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .day .dn{font-weight:700;font-size:15.5px}
+  .day .dd{font-family:'Space Grotesk',sans-serif;font-size:13px;color:var(--ink3)}
+  .day .tt{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;margin-top:6px}
+
+  /* Brief */
+  .bitem{display:flex;gap:8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:14.5px}
+  .bitem:first-of-type{border-top:0}
+  .tag{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;
+       background:var(--paper3);color:var(--ink2);white-space:nowrap}
+  .tag.warn{background:var(--amber-bg);color:var(--amber)}
+
+  /* People */
+  .person{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+  .person:first-of-type{border-top:0}
+
+  /* Task sheets */
+  .bar{height:6px;border-radius:999px;background:var(--paper3);overflow:hidden;margin:10px 0 4px}
+  .bar i{display:block;height:100%;border-radius:999px;background:var(--ember)}
+  .tsec{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:12px 0 2px}
+  .tlwrap{padding:10px 0;border-top:1px solid var(--line)}
+  .tline{display:flex;gap:12px;align-items:flex-start}
+  .tick{display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0;min-height:44px;background:none;border:0;padding:0;
+        color:var(--ink);font-family:inherit;font-size:15.5px;text-align:left;cursor:pointer}
+  .tick[disabled]{cursor:default}
+  .tick:focus-visible{outline:2px solid var(--ember2);outline-offset:3px;border-radius:8px}
+  .disc{width:28px;height:28px;flex:none;border-radius:50%;border:2px solid var(--ink3);margin-top:-2px;position:relative}
+  .tline.done .disc{background:var(--green);border-color:var(--green)}
+  .tline.done .disc:after{content:"";position:absolute;left:8px;top:3px;width:7px;height:13px;border:solid var(--paper);border-width:0 3px 3px 0;transform:rotate(45deg)}
+  .tline.over .disc{border-color:var(--red)}
+  .tline.busy .disc{opacity:.5}
+  .tbody{flex:1;min-width:0}
+  .tline.done .tlabel{color:var(--ink3)}
+  .tsub{display:block;font-size:13px;color:var(--ink3);margin-top:3px}
+  .tproof{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .tproof input[type=text],.tproof input[type=number]{flex:1;min-width:120px}
+  .tphoto{display:block;max-width:160px;border-radius:10px;margin-top:8px;border:1px solid var(--line)}
+  .filebtn{position:relative;overflow:hidden}
+  .filebtn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+  .alert{background:var(--red-bg);border:1px solid var(--red);border-radius:12px;padding:12px 14px;margin-top:8px}
+  .alert .h{color:var(--red);font-weight:700}
+
+  /* Inbox */
+  .bubble{max-width:86%;padding:10px 13px;border-radius:14px;margin:6px 0;font-size:15px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word}
+  .bubble.me{margin-left:auto;background:var(--ember-bg);border:1px solid var(--ember)}
+  .bubble.them{background:var(--card);border:1px solid var(--line)}
+  .bubble .by{display:block;font-size:12px;color:var(--ink3);margin-bottom:3px;white-space:normal}
+  .thread{max-height:420px;overflow-y:auto;padding:4px 0;margin-bottom:10px}
+
+  /* Forms: native controls on the paper (DS 7). */
+  .fld,select.fld,textarea.fld{width:100%;min-height:46px;background:var(--paper);border:1px solid var(--line);border-radius:10px;
+       padding:11px 13px;color:var(--ink);font-family:inherit;font-size:16px}
+  textarea.fld{min-height:84px;resize:vertical;line-height:1.45}
+  .fld:focus{outline:none;border-color:var(--ember)}
+  .fld.is-empty::-webkit-datetime-edit{color:transparent}
+  .fld.is-empty:focus::-webkit-datetime-edit{color:var(--ink)}
+  label.lbl{display:block;font-size:13.5px;color:var(--ink3);margin:14px 0 6px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .switch{display:flex;gap:12px;align-items:flex-start;min-height:44px;cursor:pointer}
+  .switch input{width:22px;height:22px;flex:none;margin-top:2px;accent-color:var(--ember)}
+  .avday{padding:12px 0;border-top:1px solid var(--line)}
+  .avday:first-child{border-top:0}
+  .avday .dh{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .avday .dh select{max-width:170px}
+  .avsub[hidden]{display:none}
+  .disclose{width:100%;justify-content:space-between;min-height:48px}
+  .disc-body[hidden]{display:none}
+  .disc-body{padding-top:12px}
+  .src{border-top:1px solid var(--line);padding:8px 0;font-size:14px}
+  .src b{display:block;font-size:12px;color:var(--ink3)}
+
+  /* The bottom sheet: forms and confirms (DS 10 tier 2). */
+  .sheet-wrap{position:fixed;inset:0;z-index:40;display:flex;align-items:flex-end;justify-content:center}
+  .sheet-wrap[hidden]{display:none}
+  .scrim{position:absolute;inset:0;background:var(--scrim)}
+  .sheet{position:relative;width:100%;max-width:560px;max-height:88vh;overflow-y:auto;background:var(--paper2);
+         border:1px solid var(--line);border-radius:18px 18px 0 0;padding:18px 16px calc(22px + env(safe-area-inset-bottom))}
+  .sheet-h{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+  .sheet-h h2{font-family:'Clash Display',sans-serif;font-weight:600;font-size:20px;margin:0}
+  .toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:50;
+         background:var(--paper3);color:var(--ink);border:1px solid var(--green);border-radius:999px;padding:10px 16px;
+         font-size:14.5px;font-weight:600;max-width:calc(100% - 32px)}
+  .toast[hidden]{display:none}
+  .foot{margin:30px 0 10px;text-align:center;color:var(--ink3);font-size:12.5px}
+  .foot a{color:var(--ember2)}
+  @media (prefers-reduced-motion: reduce){*{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div id="session-ended" class="ended" role="alert" hidden>
+  <span>Your shift session ended, so nothing here is up to date. Sign in again to carry on.</span>
+  <a class="cbtn cbtn-primary cbtn-sm" href="{{ signin_url }}">Sign in again</a>
+</div>
+<div class="wrap">
+  <header class="top">
+    <div class="kicker">{{ restaurant_name }}</div>
+    <h1 id="greeting">Hi, {{ (employee_name or "there").split(" ")[0] }}</h1>
+  </header>
+
+  <main>
+    <section id="tab-today" class="pane on" role="tabpanel" aria-labelledby="t-today"></section>
+    <section id="tab-schedule" class="pane" role="tabpanel" aria-labelledby="t-schedule"></section>
+    <section id="tab-requests" class="pane" role="tabpanel" aria-labelledby="t-requests"></section>
+    <section id="tab-tasks" class="pane" role="tabpanel" aria-labelledby="t-tasks"></section>
+    <section id="tab-inbox" class="pane" role="tabpanel" aria-labelledby="t-inbox"></section>
+    <section id="tab-me" class="pane" role="tabpanel" aria-labelledby="t-me"></section>
+  </main>
+  <p class="foot">Cavnar AI &middot; <a href="/terms" target="_blank" rel="noopener">Terms</a> &middot; <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
+</div>
+
+<nav class="tabbar" aria-label="Staff portal">
+  <div class="in" role="tablist">
+    <button type="button" class="tab" role="tab" id="t-today" data-tab="today" aria-controls="tab-today" aria-selected="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><span>Today</span></button>
+    <button type="button" class="tab" role="tab" id="t-schedule" data-tab="schedule" aria-controls="tab-schedule" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Schedule</span></button>
+    <button type="button" class="tab" role="tab" id="t-requests" data-tab="requests" aria-controls="tab-requests" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg><span>Requests</span><b class="badge num" id="badge-requests" hidden></b></button>
+    <button type="button" class="tab" role="tab" id="t-tasks" data-tab="tasks" aria-controls="tab-tasks" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg><span>Tasks</span></button>
+    <button type="button" class="tab" role="tab" id="t-inbox" data-tab="inbox" aria-controls="tab-inbox" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13l3-8h12l3 8v6H3z"/><path d="M3 13h5l1 3h6l1-3h5"/></svg><span>Inbox</span><b class="badge num" id="badge-inbox" hidden></b></button>
+    <button type="button" class="tab" role="tab" id="t-me" data-tab="me" aria-controls="tab-me" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>Me</span></button>
+  </div>
+</nav>
+
+<div id="sheet-wrap" class="sheet-wrap" hidden>
+  <div class="scrim" data-act="sheet-close"></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet-h"><h2 id="sheet-title"></h2>
+      <button type="button" class="cbtn cbtn-text cbtn-icon cbtn-close" data-act="sheet-close" aria-label="Close">&#10005;</button></div>
+    <div id="sheet-body"></div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(function(){
+  var SIGNIN_URL = {{ signin_url|tojson }};
+  var TASKS_HEADER = {{ tasks_api_header|tojson }};
+  var S = {tab: null, loadedAt: {}, busy: {}, rowErr: {}, posted: {}, msgContext: null, msgDraft: ''};
+
+  /* ── small helpers ─────────────────────────────────────────────────── */
+  function $(id){ return document.getElementById(id); }
+  function esc(s){
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function closest(el, sel){
+    while (el && el.nodeType === 1) {
+      if ((el.matches || el.msMatchesSelector || el.webkitMatchesSelector).call(el, sel)) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+  function pad2(n){ return (n < 10 ? '0' : '') + n; }
+  /* M/D/YY for an ISO date — the date as written, never moved by this
+     phone's time zone. */
+  function mdy(x){
+    var s = String(x || '');
+    if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return esc(s);
+    return (+s.slice(5, 7)) + '/' + (+s.slice(8, 10)) + '/' + s.slice(2, 4);
+  }
+  function isoParts(s){ var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? [+m[1], +m[2], +m[3]] : null; }
+  function localDay(s){ var p = isoParts(s); return p ? new Date(p[0], p[1] - 1, p[2]) : null; }
+  function todayIso(){ var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  var WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var WDL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function shortWeekday(s){ var d = localDay(s); return d ? WD[d.getDay()] : ''; }
+  /* A UTC stamp ("…Z") as this phone's M/D/YY and time. */
+  function mdyTime(stamp){
+    if (!stamp) return '';
+    var s = String(stamp);
+    if (!/[zZ]|[+-]\d\d:?\d\d$/.test(s)) s = s.replace(' ', 'T') + 'Z';
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return esc(stamp);
+    return (d.getMonth() + 1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(2) + ' ' +
+           clockLabel(d.getHours() * 60 + d.getMinutes());
+  }
+  /* Minutes past midnight for "16:00", "4:00pm", "4pm", "4:00 PM"; null. */
+  function minutes(raw){
+    var s = String(raw == null ? '' : raw).toLowerCase().replace(/\s|\./g, '');
+    if (!s) return null;
+    var mer = null;
+    if (/(am|pm)$/.test(s)) { mer = s.slice(-2); s = s.slice(0, -2); }
+    var p = s.split(':');
+    if (p.length < 1 || p.length > 3 || !/^\d+$/.test(p[0])) return null;
+    var h = +p[0], m = p.length >= 2 ? +p[1] : 0;
+    if (isNaN(m) || m < 0 || m > 59) return null;
+    if (mer) { if (h < 1 || h > 12) return null; return ((h % 12) + (mer === 'pm' ? 12 : 0)) * 60 + m; }
+    if (h < 0 || h > 24) return null;
+    return (h % 24) * 60 + m;
+  }
+  function clockLabel(total){
+    var m = ((total % 1440) + 1440) % 1440, h = Math.floor(m / 60), mm = m % 60;
+    var h12 = h % 12 === 0 ? 12 : h % 12;
+    return h12 + (mm ? ':' + pad2(mm) : '') + (h < 12 ? 'am' : 'pm');
+  }
+  function clock(raw){ var m = minutes(raw); return m === null ? esc(raw || '') : clockLabel(m); }
+  function range(s, e){
+    var a = s ? clock(s) : '', b = e ? clock(e) : '';
+    return a && b ? a + ' – ' + b : (a || b);
+  }
+  /* "Sat 9/26/26 · 4pm – 10pm": the one way a shift is named here, as in
+     the app (StaffDay.shift). */
+  function shiftLabel(iso, s, e){
+    var day = [shortWeekday(iso), iso ? mdy(iso) : ''].join(' ').replace(/^\s+|\s+$/g, '');
+    var t = range(s, e);
+    return [day, t].filter(function(x){ return !!x; }).join(' · ');
+  }
+  function hoursLabel(h){
+    var n = parseFloat(h);
+    if (!(n > 0)) return '';
+    var r = Math.round(n * 10) / 10;
+    return r === 1 ? '1 hr' : r + ' hrs';
+  }
+  function cap(s){ s = String(s || ''); return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+  function pulse(label){
+    return '<div class="loading"><div class="dr-pulse" role="status" aria-label="' + esc(label) + '"><i></i></div>' +
+           '<div class="lbl">' + esc(label) + '</div></div>';
+  }
+  function failedBox(msg, act){
+    return '<div class="card"><div class="errline" style="margin-top:0">' + esc(msg) + '</div>' +
+           '<button type="button" class="cbtn cbtn-text tall" data-act="' + act + '">Try again</button></div>';
+  }
+  function emptyBox(title, text){
+    return '<div class="empty"><div class="h">' + esc(title) + '</div><p>' + esc(text) + '</p></div>';
+  }
+  /* Every number in a sentence in the number face (DS 2). */
+  function nums(text){ return esc(text).replace(/(\d[\d.,:\/]*\d|\d)(\s?(?:am|pm|h|m)\b)?/g, '<span class="num">$1$2</span>'); }
+
+  var toastTimer = null;
+  function toast(msg){
+    var t = $('toast');
+    t.textContent = msg;
+    t.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ t.hidden = true; }, 3200);
+  }
+
+  /* ── the API ───────────────────────────────────────────────────────
+     Every call answers an object: the server's JSON with http_status, or
+     {ok:false, error} for a network failure or a page that wasn't JSON.
+     A 401 session_expired shows the one sticky way back in. */
+  function sessionEnded(){
+    var b = $('session-ended');
+    if (b.hidden) { b.hidden = false; window.scrollTo(0, 0); }
+  }
+  function api(path, opts){
+    opts = opts || {};
+    var init = {method: opts.method || 'GET', credentials: 'same-origin', headers: opts.headers || {}};
+    if (opts.json !== undefined) {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(opts.json);
+    } else if (opts.form) {
+      init.body = opts.form;
+    }
+    return fetch(path, init).then(function(r){
+      return r.text().then(function(text){
+        var d = null;
+        try { d = JSON.parse(text); } catch (e) { d = null; }
+        if (!d || typeof d !== 'object') d = {ok: false, error: 'Something went wrong on our side. Try again.'};
+        d.http_status = r.status;
+        if (!r.ok && d.ok !== false) d.ok = false;
+        if (r.status === 401 && d.session_expired) sessionEnded();
+        return d;
+      });
+    }, function(){
+      return {ok: false, network: true, error: 'Could not reach the server. Check your connection and try again.'};
+    });
+  }
+  function postJson(path, body){ return api(path, {method: 'POST', json: body || {}}); }
+  function errText(d, fallback){ return (d && d.error) || fallback || 'That didn’t go through.'; }
+
+  /* ── the bottom sheet (forms and confirms) ─────────────────────────── */
+  var lastFocus = null;
+  function openSheet(title, html){
+    lastFocus = document.activeElement;
+    $('sheet-title').textContent = title;
+    $('sheet-body').innerHTML = html;
+    $('sheet-wrap').hidden = false;
+    var first = $('sheet-body').querySelector('input,select,textarea,button');
+    if (first) { try { first.focus(); } catch (e) {} }
+  }
+  function closeSheet(){
+    $('sheet-wrap').hidden = true;
+    $('sheet-body').innerHTML = '';
+    S.sheetConfirm = null;
+    if (lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (e) {} }
+  }
+  /* Tier 2 (DS 10): what moves, named, then one deliberate tap. */
+  function askConfirm(title, message, action, run, danger){
+    S.sheetConfirm = run;
+    openSheet(title, '<p class="note ink2" style="font-size:15px">' + nums(message) + '</p>' +
+      '<div class="acts two"><button type="button" class="cbtn cbtn-secondary" data-act="sheet-close">Not now</button>' +
+      '<button type="button" class="cbtn ' + (danger ? 'cbtn-danger' : 'cbtn-primary') + '" id="confirm-go" data-act="confirm-go">' +
+      esc(action) + '</button></div><div class="errline" id="confirm-err" role="status" aria-live="polite"></div>');
+    var go = $('confirm-go'); if (go) go.focus();
+  }
+  function busyBtn(btn, label){
+    if (!btn) return;
+    btn.setAttribute('data-label', btn.innerHTML);
+    btn.setAttribute('aria-busy', 'true');
+    btn.disabled = true;
+    btn.innerHTML = esc(label);
+  }
+  function unbusyBtn(btn){
+    if (!btn) return;
+    btn.removeAttribute('aria-busy');
+    btn.disabled = false;
+    if (btn.getAttribute('data-label') !== null) btn.innerHTML = btn.getAttribute('data-label');
+  }
+
+  /* ── tabs ──────────────────────────────────────────────────────────── */
+  var TABS = ['today', 'schedule', 'requests', 'tasks', 'inbox', 'me'];
+  var LOADERS = {};
+  function show(tab, keepScroll){
+    if (TABS.indexOf(tab) < 0) tab = 'today';
+    S.tab = tab;
+    for (var i = 0; i < TABS.length; i++) {
+      var on = TABS[i] === tab;
+      $('tab-' + TABS[i]).className = 'pane' + (on ? ' on' : '');
+      $('t-' + TABS[i]).setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    if (window.location.hash !== '#' + tab) {
+      try { history.replaceState(null, '', '#' + tab); } catch (e) { window.location.hash = tab; }
+    }
+    if (!keepScroll) window.scrollTo(0, 0);
+    var at = S.loadedAt[tab] || 0;
+    if (!at || (new Date().getTime() - at) > 60000) LOADERS[tab]();
+  }
+
+  function setBadge(id, n){
+    var b = $(id);
+    if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.hidden = false; }
+    else { b.hidden = true; }
+  }
+  function reloadBadges(){
+    api('/staff/api/shift-requests').then(function(d){
+      if (d.ok) { S.board = d; setBadge('badge-requests', (d.asks || []).length + (d.offers || []).length); }
+    });
+    api('/staff/api/inbox').then(function(d){
+      if (d.ok) { S.inbox = d; setBadge('badge-inbox', (d.unread || 0) + (d.unread_messages || 0)); }
+    });
+  }
+
+  /* ── shifts: shared by Today and Schedule ─────────────────────────── */
+  function legsOf(day){ return (day && day.shifts && day.shifts.length) ? day.shifts : ((day && day.shift) ? [day.shift] : []); }
+  function legStart(l){ return l.shift_start || l.start || ''; }
+  function legEnd(l){ return l.shift_end || l.end || ''; }
+  function span(dayIso, start, end){
+    var p = isoParts(dayIso), s = minutes(start);
+    if (!p || s === null) return null;
+    var st = new Date(p[0], p[1] - 1, p[2], 0, s);
+    var e = minutes(end);
+    if (e === null) return {start: st, end: null};
+    var en = new Date(p[0], p[1] - 1, p[2], 0, e);
+    if (en.getTime() <= st.getTime()) en = new Date(p[0], p[1] - 1, p[2] + 1, 0, e);
+    return {start: st, end: en};
+  }
+  /* Today's hero (StaffTodayPlan.hero): the first day with a leg that
+     hasn't ended. The server's is_today is the restaurant's service date
+     and is trusted over this phone's calendar. */
+  function hero(week){
+    var now = new Date().getTime();
+    for (var i = 0; i < week.length; i++) {
+      var day = week[i], legs = legsOf(day), next = null, sp = null;
+      for (var j = 0; j < legs.length; j++) {
+        var s2 = span(day.date, legStart(legs[j]), legEnd(legs[j]));
+        if (!s2 || ((s2.end || new Date(s2.start.getTime() + 3600000)).getTime() > now)) { next = legs[j]; sp = s2; break; }
+      }
+      if (!next) continue;
+      var title;
+      if (day.is_today) title = (minutes(legStart(next)) || 0) >= 16 * 60 ? 'Tonight' : 'Today';
+      else if (i > 0 && week[i - 1].is_today) title = 'Tomorrow';
+      else title = day.weekday || WDL[localDay(day.date).getDay()];
+      var rel, at = clock(legStart(next));
+      if (!sp) rel = at ? title + ' at ' + at : title;
+      else if (sp.start.getTime() <= now) rel = legEnd(next) ? 'On now · until ' + clock(legEnd(next)) : 'On now';
+      else {
+        var mins = Math.ceil((sp.start.getTime() - now) / 60000);
+        if (mins <= 720) rel = mins < 60 ? 'Starts in ' + mins + 'm'
+          : 'Starts in ' + Math.floor(mins / 60) + 'h' + (mins % 60 ? ' ' + (mins % 60) + 'm' : '');
+        else rel = ((title === 'Today' || title === 'Tonight') ? 'Today' : title) + ' at ' + at;
+      }
+      var ended = sp ? ((sp.end || sp.start).getTime() <= now) : false;
+      return {day: day, title: title, leg: next, rel: rel, canLate: !!day.is_today && !ended && !!legStart(next)};
+    }
+    return null;
+  }
+  var REQ_TAG = {swap: 'Swap', post: 'Posted open', drop: 'Giving up'};
+  function legRequestPill(r){
+    if (!r) return '';
+    var st = r.status === 'open' ? 'Open — you’re still on it' : (r.status === 'approved' ? 'Approved' : 'Waiting');
+    return '<span class="pill ' + (r.status === 'open' ? 'warn' : '') + '">' + esc((REQ_TAG[r.kind] || 'Request') + ' · ' + st) + '</span>';
+  }
+  function legMeta(l){
+    var parts = [];
+    if (l.role) parts.push(esc(l.role));
+    if (l.station) parts.push('On ' + esc(l.station));
+    if (l.section) parts.push(esc(l.section) + ' section');
+    var h = hoursLabel(l.hours); if (h) parts.push('<span class="num">' + esc(h) + '</span>');
+    var out = parts.length ? '<div class="meta">' + parts.join(' · ') + '</div>' : '';
+    if (l['break']) out += '<div class="meta">Break <span class="num">' + esc(l['break']) + '</span></div>';
+    if (l.notes) out += '<div class="meta">Note: ' + esc(l.notes) + '</div>';
+    if (l.request) out += '<div style="margin-top:6px">' + legRequestPill(l.request) + '</div>';
+    return out;
+  }
+  function legActions(date, l){
+    var a = l.actions || [], out = '';
+    var data = ' data-date="' + esc(date) + '" data-start="' + esc(legStart(l)) + '" data-end="' + esc(legEnd(l)) + '"';
+    if (a.indexOf('drop') >= 0) out += '<button type="button" class="cbtn cbtn-secondary" data-act="change" data-mode="drop"' + data + '>Give up this shift</button>';
+    if (a.indexOf('swap') >= 0) out += '<button type="button" class="cbtn cbtn-secondary" data-act="change" data-mode="swap"' + data + '>Swap this shift</button>';
+    return out;
+  }
+
+  function loadShifts(){
+    return api('/staff/api/shifts').then(function(d){ S.shifts = d; return d; });
+  }
+
+  /* ── Today ─────────────────────────────────────────────────────────── */
+  LOADERS.today = function(){
+    S.loadedAt.today = new Date().getTime();
+    S.shifts = S.brief = S.late = S.pulse = S.coworkers = undefined;
+    renderToday();
+    loadShifts().then(function(d){
+      renderToday();
+      var h = d.ok && d.published !== false ? hero(d.week || []) : null;
+      if (h) {
+        api('/staff/api/colleagues?date=' + encodeURIComponent(h.day.date)).then(function(c){ S.coworkers = c; renderToday(); });
+      } else { S.coworkers = null; }
+    });
+    api('/staff/api/preshift').then(function(d){ S.brief = d; renderToday(); });
+    api('/staff/api/running-late').then(function(d){ S.late = d; renderToday(); });
+    loadPulse().then(renderToday);
+    reloadBadges();
+  };
+  function lateReport(date, start){
+    var reps = (S.late && S.late.ok && S.late.reports) || [], m = minutes(start);
+    for (var i = 0; i < reps.length; i++) {
+      if (reps[i].date === date && minutes(reps[i].shift_start) === m) return reps[i];
+    }
+    return null;
+  }
+  function renderToday(){
+    var el = $('tab-today'), d = S.shifts, html = '';
+    if (d === undefined) { el.innerHTML = pulse('Loading your shifts'); return; }
+    if (!d.ok) {
+      el.innerHTML = failedBox('Couldn’t load your shifts. ' + errText(d, ''), 'reload-today') +
+        '<a class="cbtn cbtn-text tall" href="/staff/logout">Sign out</a>';
+      return;
+    }
+    if (d.published === false) {
+      html += emptyBox('No schedule posted yet', 'It shows up here the moment your manager publishes one.');
+    } else {
+      var week = d.week || [], h = hero(week);
+      html += heroCard(h, d);
+      html += pulseCard();
+      html += waitingStrip();
+      html += briefCard();
+      if (h) html += coworkersCard(h);
+    }
+    el.innerHTML = html;
+  }
+  function heroCard(h, d){
+    if (!h) {
+      var later = laterGroups(d.upcoming || [], d.week || []), next = later.length ? later[0] : null;
+      return '<div class="hero"><div class="kicker">Next shift</div><div class="when">You’re off for the next 7 days</div>' +
+        (next ? '<div class="meta">Next on <span class="num">' + mdy(next.date) + (legStart(next.legs[0]) ? ' at ' + clock(legStart(next.legs[0])) : '') + '</span></div>' : '') +
+        '</div>';
+    }
+    var day = h.day, legs = legsOf(day), html = '<div class="hero" aria-live="polite"><div class="kicker">Next shift</div>' +
+      '<div class="when">' + esc(h.title) + '<small>' + mdy(day.date) + '</small></div>';
+    for (var i = 0; i < legs.length; i++) {
+      html += '<div class="leg"><div class="t">' + range(legStart(legs[i]), legEnd(legs[i])) + '</div>' + legMeta(legs[i]) + '</div>';
+    }
+    html += '<div class="rel num">' + esc(h.rel) + '</div>';
+    var rep = lateReport(day.date, legStart(h.leg));
+    if (rep) html += '<p class="note ink2">You said about <span class="num">' + esc(rep.eta_minutes) + ' min</span> late' +
+      (rep.managers_told ? ' — your manager knows.' : '. Call your manager too.') + '</p>';
+    html += '<div class="acts">';
+    if (h.canLate) html += '<button type="button" class="cbtn cbtn-primary" data-act="late" data-date="' + esc(day.date) +
+      '" data-start="' + esc(legStart(h.leg)) + '">' + (rep ? 'Update my ETA' : 'I’m running late') + '</button>';
+    html += legActions(day.date, h.leg);
+    if (day.is_today) html += '<button type="button" class="cbtn cbtn-secondary" data-act="goto" data-tab="tasks">Checklist</button>';
+    html += '<button type="button" class="cbtn cbtn-secondary" data-act="message" data-shift-date="' + esc(day.date) +
+      '" data-label="' + esc(shiftLabel(day.date, legStart(h.leg), legEnd(h.leg))) + '">Message your manager</button>';
+    return html + '</div></div>';
+  }
+  function waitingStrip(){
+    var b = S.board;
+    if (!b || !b.ok) return '';
+    var asks = b.asks || [], offers = b.offers || [], n = asks.length + offers.length;
+    if (!n) return '';
+    var first = asks.length ? asks[0].employee_name + ' asked you to swap'
+      : (offers[0].employee_name ? 'Your manager offered you ' + offers[0].employee_name + '’s shift' : 'Your manager offered you a shift');
+    return '<div class="card rail"><div class="strong">Waiting on you</div><p class="note ink2">' + esc(first) +
+      (n > 1 ? ' and <span class="num">' + (n - 1) + '</span> more.' : '.') + '</p>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="goto" data-tab="requests">Open Requests</button></div></div>';
+  }
+  var BRIEF_TAGS = {volume: 'Volume', rush: 'Rush', watch: 'Watch', stock: '86 risk', eighty_sixed: '86’d',
+                    event: 'Today', weather: 'Weather', promotion: 'Promotion'};
+  function briefCard(){
+    var b = S.brief;
+    if (b === undefined) return '';
+    if (!b.ok) return '<div class="sechead">Before service</div>' + failedBox('Couldn’t load today’s brief. ' + errText(b, ''), 'reload-today');
+    if (b.working === false) return '';
+    var items = (b.items || []).filter(function(it){ return it.kind !== 'you' && it.kind !== 'station'; });
+    if (!items.length && !b.brief_text && !b.focus) return '';
+    var html = '<div class="sechead">Before service</div><div class="card">';
+    if (b.brief_text) html += '<p style="margin:0 0 8px;white-space:pre-wrap">' + esc(b.brief_text) + '</p>';
+    if (b.focus) html += '<p style="margin:0 0 8px"><b>Tonight’s focus: ' + esc(b.focus.item) + '</b>' +
+      (b.focus.line ? '<br><span class="muted">' + esc(b.focus.line) + '</span>' : '') + '</p>';
+    for (var i = 0; i < items.length; i++) {
+      var k = items[i].kind, warn = k === 'stock' || k === 'eighty_sixed';
+      html += '<div class="bitem"><span class="tag' + (warn ? ' warn' : '') + '">' + esc(BRIEF_TAGS[k] || cap(k)) + '</span><span>' + nums(items[i].text) + '</span></div>';
+    }
+    return html + '</div>';
+  }
+  function coworkersCard(h){
+    var r = S.coworkers;
+    var title = (h.title === 'Today' || h.title === 'Tonight') ? 'On with you today' : (h.title === 'Tomorrow' ? 'On with you tomorrow' : 'On with you ' + h.title);
+    if (r === undefined || r === null) return '';
+    if (!r.ok) return '<div class="sechead">' + esc(title) + '</div>' + failedBox('Couldn’t load who’s on. ' + errText(r, ''), 'reload-today');
+    if (r.date && r.date !== h.day.date) return '';
+    var people = r.coworkers || [], html = '<div class="sechead">' + esc(title) + '</div><div class="card">';
+    if (!people.length) html += '<p class="note" style="margin:0">' + (r.posted === false ? 'That day isn’t posted yet.' : 'Nobody else is on the schedule that day.') + '</p>';
+    for (var i = 0; i < people.length; i++) {
+      var p = people[i], sub = [p.role, p.station ? 'On ' + p.station : ''].filter(function(x){ return !!x; }).join(' · ');
+      html += '<div class="person"><div><div class="strong">' + esc(p.name) + '</div>' + (sub ? '<div class="meta">' + esc(sub) + '</div>' : '') +
+        '</div><div class="num muted">' + range(p.shift_start, p.shift_end) + '</div></div>';
+    }
+    return html + '</div>';
+  }
+
+  /* The post-shift pulse (V6): Today and Inbox show the same card. */
+  var PULSE_WORDS = ['', 'Rough', 'Hard', 'OK', 'Good', 'Great'];
+  function loadPulse(){ return api('/staff/api/pulse').then(function(d){ S.pulse = d; return d; }); }
+  function pulseCard(){
+    var p = S.pulse;
+    if (S.pulseThanks) return '<div class="card"><div class="okline" style="margin:0">Thanks — sent.</div></div>';
+    if (S.pulseClosed) return S.pulseClosed ? '<div class="card"><p class="note" style="margin:0">' + esc(S.pulseClosed) + '</p></div>' : '';
+    if (!p || !p.ok || !p.due) return '';
+    var due = p.due, sel = S.pulseRating || 0, html = '<div class="card"><div class="strong" style="font-size:17px">How did your shift go?</div>' +
+      '<p class="note">' + nums([shortWeekday(due.date) + ' ' + (due.date_label || mdy(due.date)), due.start ? clock(due.start) : '', due.role || ''].filter(function(x){ return !!x; }).join(' · ')) + '</p>' +
+      '<div class="chips" style="margin-top:10px" role="group" aria-label="How it went, 1 to 5">';
+    for (var r = 1; r <= 5; r++) {
+      html += '<button type="button" class="chip" style="flex:1;min-width:52px" data-act="pulse-rate" data-r="' + r + '" aria-pressed="' + (sel === r ? 'true' : 'false') +
+        '" aria-label="' + r + ' of 5, ' + PULSE_WORDS[r] + '"><span class="num">' + r + '</span><br><small>' + PULSE_WORDS[r] + '</small></button>';
+    }
+    html += '</div>';
+    if (sel) {
+      html += '<label class="lbl" for="pulse-note">Anything to add? (optional)</label><textarea class="fld" id="pulse-note" maxlength="300">' +
+        esc(S.pulseNote || '') + '</textarea><div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="pulse-send" data-date="' +
+        esc(due.date) + '">Send</button></div>';
+    }
+    html += '<p class="note">Your manager sees the team’s answers together, never who said what.</p>';
+    if (S.pulseErr) html += '<div class="errline">' + esc(S.pulseErr) + '</div>';
+    return html + '</div>';
+  }
+  function rerenderPulse(){ if (S.tab === 'today') renderToday(); if (S.tab === 'inbox') renderInbox(); }
+
+  /* ── Schedule ──────────────────────────────────────────────────────── */
+  LOADERS.schedule = function(){
+    S.loadedAt.schedule = new Date().getTime();
+    $('tab-schedule').innerHTML = '<h2 class="title">Schedule</h2>' + pulse('Loading your shifts');
+    loadShifts().then(renderSchedule);
+  };
+  function laterGroups(upcoming, week){
+    var last = week.length ? week[week.length - 1].date : '', order = [], by = {};
+    for (var i = 0; i < upcoming.length; i++) {
+      var iso = upcoming[i].date_iso || upcoming[i].date;
+      if (!iso || !last || iso <= last) continue;
+      if (!by[iso]) { by[iso] = []; order.push(iso); }
+      by[iso].push(upcoming[i]);
+    }
+    order.sort();
+    return order.map(function(k){ return {date: k, legs: by[k]}; });
+  }
+  function dayCard(date, weekday, legs, opts){
+    var today = opts && opts.today, posted = !opts || opts.posted !== false;
+    var html = '<div class="day' + (today ? ' today' : '') + (legs.length ? '' : ' off') + '"><div class="dh"><span class="dn">' +
+      esc(today ? 'Today' : weekday) + '</span><span class="dd">' + (today ? esc(weekday) + ' ' : '') + mdy(date) + '</span></div>';
+    if (!legs.length) html += '<div class="meta">' + (posted ? 'Off' : 'Not posted yet') + '</div>';
+    for (var i = 0; i < legs.length; i++) {
+      var acts = legActions(date, legs[i]);
+      html += '<div class="leg"><div class="tt">' + range(legStart(legs[i]), legEnd(legs[i])) + '</div>' + legMeta(legs[i]) +
+        (acts ? '<div class="acts">' + acts + '</div>' : '') + '</div>';
+    }
+    return html + '</div>';
+  }
+  function renderSchedule(){
+    var el = $('tab-schedule'), d = S.shifts, html = '<h2 class="title">Schedule</h2>';
+    if (!d || !d.ok) { el.innerHTML = html + failedBox('Couldn’t load your shifts. ' + errText(d, ''), 'reload-schedule'); return; }
+    if (d.published === false) {
+      el.innerHTML = html + emptyBox('No schedule posted yet', 'It shows up here the moment your manager publishes one.');
+      return;
+    }
+    var week = d.week || [];
+    if (d.week_hours !== undefined && d.week_hours !== null) {
+      html += '<p class="note" style="margin:-6px 0 14px">Hours, next 7 days: <b class="num" style="color:var(--ink)">' + esc(d.week_hours) + '</b></p>';
+    }
+    html += '<div class="sechead">This week</div>';
+    for (var i = 0; i < week.length; i++) {
+      html += dayCard(week[i].date, week[i].weekday, legsOf(week[i]), {today: week[i].is_today, posted: week[i].posted});
+    }
+    var later = laterGroups(d.upcoming || [], week);
+    if (later.length) {
+      html += '<div class="sechead">Later</div>';
+      for (var j = 0; j < later.length; j++) {
+        var ld = localDay(later[j].date);
+        html += dayCard(later[j].date, ld ? WDL[ld.getDay()] : '', later[j].legs, {});
+      }
+    }
+    html += '<p class="note">Your calendar feed and your usual week are on Me.</p>';
+    el.innerHTML = html;
+  }
+
+  /* ── Give up / swap a shift (one sheet, from Today, Schedule or a
+     conflict after an availability save) ─────────────────────────────── */
+  function openChange(date, start, end, mode){
+    S.change = {date: date, start: start, end: end, mode: mode, cands: undefined};
+    renderChange();
+    if (mode === 'swap') {
+      api('/staff/api/colleagues?shift_date=' + encodeURIComponent(date) + '&shift_start=' + encodeURIComponent(start)).then(function(d){
+        if (!S.change) return;
+        S.change.cands = d;
+        renderChange();
+      });
+    }
+  }
+  function renderChange(keep){
+    var c = S.change, html = '<p class="strong num" style="font-size:17px;margin:0 0 6px">' + shiftLabel(c.date, c.start, c.end) + '</p>';
+    if (c.mode === 'swap') {
+      var cd = c.cands;
+      if (cd === undefined) html += pulse('Finding who can swap');
+      else if (!cd.ok) html += failedBox(errText(cd, 'Couldn’t load who can swap.'), 'change-retry');
+      else if (!(cd.colleagues || []).length) html += '<p class="note">' + esc(cd.note || 'Nobody on the app has a shift that week you could trade for.') + '</p>';
+      else {
+        html += '<label class="lbl" for="sw-who">Swap with</label><select class="fld" id="sw-who"><option value="">Choose a colleague</option>';
+        for (var i = 0; i < cd.colleagues.length; i++) {
+          html += '<option value="' + i + '"' + (c.who === i ? ' selected' : '') + '>' + esc(cd.colleagues[i].name) + '</option>';
+        }
+        html += '</select>';
+        if (c.who !== undefined && c.who !== null && cd.colleagues[c.who]) {
+          var sh = cd.colleagues[c.who].shifts || [];
+          html += '<label class="lbl" for="sw-shift">For their shift</label><select class="fld" id="sw-shift"><option value="">Choose their shift</option>';
+          for (var j = 0; j < sh.length; j++) {
+            html += '<option value="' + j + '">' + esc(shiftLabel(sh[j].date, sh[j].shift_start, sh[j].shift_end) + (sh[j].role ? ' · ' + sh[j].role : '') +
+              (sh[j].checked === false ? ' (checked when you ask)' : '')) + '</option>';
+          }
+          html += '</select>';
+        }
+        if (cd.note) html += '<p class="note">' + esc(cd.note) + '</p>';
+      }
+    }
+    html += '<label class="lbl" for="sw-why">' + (c.mode === 'swap' ? 'Why (optional)' : 'Why can’t you work it? (optional)') + '</label>' +
+      '<textarea class="fld" id="sw-why" maxlength="300">' + esc(c.why || '') + '</textarea>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" data-act="change-send">' +
+      (c.mode === 'swap' ? 'Ask to swap' : 'Ask to give it up') + '</button></div>' +
+      '<div class="errline" id="change-err" role="status" aria-live="polite"></div>' +
+      '<p class="note">' + (c.mode === 'swap' ? 'Both shifts move once your manager approves and your colleague says yes.'
+        : 'Your manager decides. If they approve, you’re still on it until someone on the team picks it up.') + '</p>';
+    if (keep) { $('sheet-body').innerHTML = html; }
+    else openSheet(c.mode === 'swap' ? 'Swap this shift' : 'Give up this shift', html);
+  }
+
+  /* ── Running late (today's shift only — the server holds that rule) ── */
+  function openLate(date, start){
+    var l = S.late && S.late.ok ? S.late : {eta_choices: [10, 20, 30, 45], eta_max: 120};
+    var rep = lateReport(date, start);
+    S.lateForm = {date: date, start: start, eta: rep ? rep.eta_minutes : null};
+    var html = '<p class="note ink2" style="margin-top:0">For your <span class="num">' + clock(start) + '</span> shift today.</p>';
+    if (rep) html += '<p class="note">You already said about <span class="num">' + esc(rep.eta_minutes) + ' min</span>. Sending again updates it; your manager isn’t paged twice.</p>';
+    html += '<div class="sechead" style="margin-top:14px">About how late?</div><div class="chips" role="group" aria-label="About how late">';
+    var ch = l.eta_choices || [10, 20, 30, 45];
+    for (var i = 0; i < ch.length; i++) {
+      html += '<button type="button" class="chip num" data-act="late-eta" data-eta="' + ch[i] + '" aria-pressed="' + (S.lateForm.eta === ch[i] ? 'true' : 'false') + '">' + ch[i] + ' min</button>';
+    }
+    html += '</div><label class="lbl" for="late-other">Longer</label><select class="fld" id="late-other"><option value="">—</option>';
+    for (var m = 50; m <= (l.eta_max || 120); m += 10) html += '<option value="' + m + '"' + (S.lateForm.eta === m ? ' selected' : '') + '>' + m + ' min</option>';
+    html += '</select><label class="lbl" for="late-note">Note for your manager (optional)</label><textarea class="fld" id="late-note" maxlength="200"></textarea>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" data-act="late-send">' + (rep ? 'Update my ETA' : 'Tell my manager') + '</button></div>' +
+      '<div class="errline" id="late-err" role="status" aria-live="polite"></div>' +
+      '<p class="note">Running much later than <span class="num">45</span> minutes? Call your manager, or ask to give the shift up.</p>';
+    openSheet('Running late', html);
+  }
+
+  /* ── Requests ──────────────────────────────────────────────────────── */
+  LOADERS.requests = function(){
+    S.loadedAt.requests = new Date().getTime();
+    S.board = S.timeoff = undefined;
+    renderRequests();
+    api('/staff/api/shift-requests').then(function(d){
+      S.board = d;
+      if (d.ok) setBadge('badge-requests', (d.asks || []).length + (d.offers || []).length);
+      renderRequests();
+    });
+    api('/staff/api/time-off').then(function(d){ S.timeoff = d; renderRequests(); });
+  };
+  function isLive(st){ return st === 'pending' || st === 'approved' || st === 'open'; }
+  var TO_CHIP = {approved: ['Approved', 'good'], denied: ['Not approved', 'bad'], withdrawn: ['Withdrawn', ''], cancelled: ['Called off', '']};
+  function shiftChip(r){
+    var who = r.target_name || '', swap = r.kind === 'swap';
+    switch (r.status) {
+      case 'pending': return [swap && who ? (r.target_accepted ? who + ' said yes' : 'Waiting') : 'Waiting', ''];
+      case 'approved': return ['Approved', ''];
+      case 'open': return ['Open — you’re still on it', 'warn'];
+      case 'covered': return [swap ? 'Swapped' : 'Covered', 'good'];
+      case 'denied': return ['Not approved', 'bad'];
+      case 'withdrawn': return ['Withdrawn', ''];
+      case 'cancelled': return ['Cancelled', ''];
+      case 'expired': return ['Expired', ''];
+      default: return [cap(r.status), ''];
+    }
+  }
+  function shiftDetail(r){
+    var who = r.target_name || 'your colleague', swap = r.kind === 'swap';
+    switch (r.status) {
+      case 'pending': return swap ? (r.target_accepted ? who + ' said yes — waiting on your manager.' : 'Waiting on your manager and ' + who + '.') : 'Waiting on your manager.';
+      case 'approved': return swap ? 'Your manager said yes — waiting on ' + who + '.' : 'Your manager said yes.';
+      case 'open': return 'Your manager approved it. You’re still on this shift until someone picks it up — we’ll tell you when they do.';
+      case 'covered': return swap ? 'The swap went through.' : ((r.replacement_name ? r.replacement_name + ' took it.' : 'Someone took it.') + ' It’s off your schedule.');
+      case 'expired': return 'The shift passed before anyone answered.';
+      default: return '';
+    }
+  }
+  function renderRequests(){
+    var el = $('tab-requests'), b = S.board, t = S.timeoff, html = '<h2 class="title">Requests</h2>';
+    if (b === undefined) html += '<div class="sechead">Waiting on you</div>' + pulse('Loading your shift requests');
+    else if (!b.ok) html += '<div class="sechead">Waiting on you</div>' + failedBox(errText(b, 'Your shift requests didn’t load.'), 'reload-requests');
+    else {
+      var asks = b.asks || [], offers = b.offers || [], open = b.open || [], i;
+      if (asks.length || offers.length || open.length) html += '<div class="sechead">Waiting on you</div>';
+      for (i = 0; i < asks.length; i++) html += askRow(asks[i]);
+      for (i = 0; i < offers.length; i++) html += offerRow(offers[i]);
+      if (open.length) html += '<div class="strong" style="margin:14px 0 8px;color:var(--ink2)">Open shifts</div>';
+      for (i = 0; i < open.length; i++) html += openRow(open[i]);
+    }
+    html += '<div class="sechead">Your requests</div>';
+    if (b === undefined || t === undefined) html += pulse('Loading your requests');
+    else {
+      var items = [];
+      if (t.ok) for (var a = 0; a < (t.requests || []).length; a++) items.push({kind: 'to', r: t.requests[a], at: t.requests[a].start_date || ''});
+      if (b.ok) for (var c = 0; c < (b.requests || []).length; c++) items.push({kind: 'sr', r: b.requests[c], at: b.requests[c].date || ''});
+      items.sort(function(x, y){
+        var lx = isLive(x.r.status) ? 0 : 1, ly = isLive(y.r.status) ? 0 : 1;
+        return lx !== ly ? lx - ly : (x.at < y.at ? -1 : (x.at > y.at ? 1 : 0));
+      });
+      for (var k = 0; k < items.length; k++) html += items[k].kind === 'to' ? timeOffRow(items[k].r) : myShiftRow(items[k].r);
+      if (!t.ok) html += failedBox('Your time off didn’t load. ' + errText(t, ''), 'reload-requests');
+      if (!items.length && t.ok && b.ok) html += emptyBox('No requests yet', 'Can’t make a shift? Open it on Schedule and choose Give up this shift or Swap this shift. Days away go in a time-off request.');
+    }
+    html += '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" data-act="timeoff-open">Ask for time off</button></div>';
+    el.innerHTML = html;
+  }
+  function rowErr(key){ return S.rowErr[key] ? '<div class="errline">' + esc(S.rowErr[key]) + '</div>' : ''; }
+  function askRow(a){
+    var key = 'ask' + a.id;
+    return '<div class="card rail"><div class="strong">' + esc(a.employee_name) + ' asked to swap</div>' +
+      '<div class="meta">Their shift: <span class="num">' + shiftLabel(a.date, a.shift_start, a.shift_end) + '</span></div>' +
+      '<div class="meta">Your shift: <span class="num">' + shiftLabel(a.target_date, a.target_start, a.target_end) + '</span></div>' +
+      (a.manager_approved ? '<p class="note">Your manager already said yes.</p>' : '') +
+      '<div class="acts two"><button type="button" class="cbtn cbtn-secondary" data-act="ask-no" data-id="' + a.id + '">Decline</button>' +
+      '<button type="button" class="cbtn cbtn-secondary" data-act="ask-yes" data-id="' + a.id + '">Accept</button></div>' + rowErr(key) + '</div>';
+  }
+  function offerRow(o){
+    var key = 'offer' + o.id;
+    return '<div class="card rail"><div class="strong">' + esc(o.employee_name ? 'Your manager offered you ' + o.employee_name + '’s shift' : 'Your manager offered you an extra shift') + '</div>' +
+      '<div class="meta num">' + shiftLabel(o.date, o.shift_start, o.shift_end) + (o.role ? ' · ' + esc(o.role) : '') + '</div>' +
+      (o.note ? '<p class="note ink2">“' + esc(o.note) + '”</p>' : '') +
+      (o.for_coverage ? '<p class="note">Your manager needs this one covered.</p>' : '') +
+      (o.pickup_overtime_note ? '<p class="note amber">' + nums(o.pickup_overtime_note) + '</p>' : '') +
+      '<div class="acts two"><button type="button" class="cbtn cbtn-secondary" data-act="offer-no" data-id="' + o.id + '">Decline</button>' +
+      '<button type="button" class="cbtn cbtn-secondary" data-act="offer-yes" data-id="' + o.id + '">Take it</button></div>' + rowErr(key) + '</div>';
+  }
+  function openRow(s){
+    var key = 'open' + s.id, why = s.can_take === false ? (s.why_not ? 'You can’t take this one: ' + s.why_not.charAt(0).toLowerCase() + s.why_not.slice(1) : 'You can’t take this one.') : '';
+    return '<div class="card"><div class="strong num">' + shiftLabel(s.date, s.shift_start, s.shift_end) + (s.role ? ' · ' + esc(s.role) : '') + '</div>' +
+      '<div class="meta">' + esc(s.posted_by_manager ? 'Posted by your manager' : (s.employee_name ? s.employee_name + ' can’t work it' : 'Open')) + '</div>' +
+      (s.pickup_overtime_note ? '<p class="note amber">' + nums(s.pickup_overtime_note) + '</p>' : '') +
+      (why ? '<p class="note">' + esc(why) + '</p>' : '') +
+      '<div class="acts"><button type="button" class="cbtn cbtn-text tall" data-act="claim" data-id="' + s.id + '"' + (s.can_take === false ? ' disabled' : '') + '>Pick this up</button></div>' + rowErr(key) + '</div>';
+  }
+  function timeOffLabel(t){ return t.span_label || (t.start_date === t.end_date ? mdy(t.start_date) : mdy(t.start_date) + '–' + mdy(t.end_date)); }
+  function timeOffRow(t){
+    var key = 'to' + t.id, chip = TO_CHIP[t.status] || ['Waiting', ''], acts = '';
+    if (t.status === 'pending') acts += '<button type="button" class="cbtn cbtn-text tall" data-act="to-withdraw" data-id="' + t.id + '">Withdraw</button>';
+    else if (t.status === 'approved' && t.can_cancel) acts += '<button type="button" class="cbtn cbtn-text tall" data-act="to-cancel" data-id="' + t.id + '">Call it off</button>';
+    if (t.status === 'pending' || t.status === 'approved') acts += '<button type="button" class="cbtn cbtn-text tall" data-act="message" data-request-id="' + t.id +
+      '" data-request-kind="time_off" data-label="' + esc('Time off ' + timeOffLabel(t)) + '">Message your manager</button>';
+    var still = (t.still_scheduled || []).map(function(x){ return x.label || shiftLabel(x.date, x.shift_start, x.shift_end); });
+    return '<div class="card"><div class="row"><div class="strong">Time off <span class="num">' + esc(timeOffLabel(t)) + '</span></div>' +
+      '<span class="pill ' + chip[1] + '">' + esc(chip[0]) + '</span></div>' +
+      (t.reason ? '<p class="note">You said: “' + esc(t.reason) + '”</p>' : '') +
+      (t.decision_note ? '<p class="note ink2">Your manager: “' + esc(t.decision_note) + '”</p>' : '') +
+      (still.length ? '<p class="note amber">Still on your schedule: ' + nums(still.join('; ')) + '. Your manager moves these — you’re on them until they do.</p>' : '') +
+      (acts ? '<div class="acts">' + acts + '</div>' : '') + rowErr(key) + '</div>';
+  }
+  function myShiftRow(r){
+    var key = 'sr' + r.id, chip = shiftChip(r), acts = '', detail = shiftDetail(r);
+    if (isLive(r.status) && r.kind !== 'post') acts += '<button type="button" class="cbtn cbtn-text tall" data-act="sr-withdraw" data-id="' + r.id + '">Withdraw</button>';
+    if (isLive(r.status)) acts += '<button type="button" class="cbtn cbtn-text tall" data-act="message" data-request-id="' + r.id +
+      '" data-request-kind="shift" data-label="' + esc((REQ_TAG[r.kind] || 'Request') + ' ' + shiftLabel(r.date, r.shift_start, r.shift_end)) + '">Message your manager</button>';
+    return '<div class="card"><div class="row"><div><div class="kicker" style="color:var(--ink3)">' + esc(REQ_TAG[r.kind] || 'Giving up') + '</div>' +
+      '<div class="strong num">' + shiftLabel(r.date, r.shift_start, r.shift_end) + '</div></div><span class="pill ' + chip[1] + '">' + esc(chip[0]) + '</span></div>' +
+      (r.kind === 'swap' && r.target_name ? '<div class="meta">For ' + esc(r.target_name) + '’s <span class="num">' + shiftLabel(r.target_date, r.target_start, r.target_end) + '</span></div>' : '') +
+      (detail ? '<p class="note">' + esc(detail) + '</p>' : '') +
+      (r.decision_note ? '<p class="note ink2">Your manager: “' + esc(r.decision_note) + '”</p>' : '') +
+      (acts ? '<div class="acts">' + acts + '</div>' : '') + rowErr(key) + '</div>';
+  }
+  function findIn(list, id){ for (var i = 0; i < (list || []).length; i++) if (String(list[i].id) === String(id)) return list[i]; return null; }
+  /* One answer on one row: its error stays under that row; success is the
+     posted line at the top, never optimistic. */
+  function act(key, path, body, posted, after){
+    S.rowErr[key] = null;
+    return postJson(path, body).then(function(d){
+      if (d.ok) {
+        closeSheet();
+        toast(posted);
+        if (after) after(d);
+        S.loadedAt.today = S.loadedAt.schedule = 0;
+        LOADERS.requests();
+      } else {
+        var e = $('confirm-err');
+        if (e) e.textContent = errText(d);
+        else { S.rowErr[key] = errText(d); renderRequests(); }
+        var go = $('confirm-go'); if (go) unbusyBtn(go);
+      }
+      return d;
+    });
+  }
+
+  /* Time off (the dates, part of the day, a reason). Times are 15-minute
+     selects (cavTimeOptions), never type=time (DS 7). */
+  function timeOptions(value){
+    var v = minutes(value), h = '<option value="">—</option>';
+    for (var t = 0; t < 96; t++) {
+      var m = t * 15, val = pad2(Math.floor(m / 60)) + ':' + pad2(m % 60);
+      h += '<option value="' + val + '"' + (v === m ? ' selected' : '') + '>' + clockLabel(m) + '</option>';
+    }
+    return h;
+  }
+  function dateEmpty(el){ if (el) el.className = el.className.replace(/\s*is-empty/g, '') + (el.value ? '' : ' is-empty'); }
+  var PARTS = [['whole', 'All day'], ['until', 'Until…'], ['from', 'From…'], ['lunch', 'Lunch'], ['dinner', 'Dinner']];
+  function openTimeOff(){
+    S.toPart = 'whole';
+    var t = todayIso(), html = '<p class="note" style="margin-top:0">Your manager answers it in Cavnar AI. An approved range stays off the next schedule. Your usual week goes in My availability, on Me.</p>' +
+      '<div class="grid2"><div><label class="lbl" for="to-start">First day off</label><input class="fld num" type="date" id="to-start" min="' + t + '"></div>' +
+      '<div><label class="lbl" for="to-end">Last day off</label><input class="fld num" type="date" id="to-end" min="' + t + '"></div></div>' +
+      '<div class="lbl">Part of the day</div><div class="chips" role="group" aria-label="Part of the day">';
+    for (var i = 0; i < PARTS.length; i++) {
+      html += '<button type="button" class="chip" data-act="to-part" data-part="' + PARTS[i][0] + '" aria-pressed="' + (i === 0 ? 'true' : 'false') + '">' + PARTS[i][1] + '</button>';
+    }
+    html += '</div><div id="to-time" hidden><label class="lbl" for="to-time-sel" id="to-time-lbl">Off until</label><select class="fld" id="to-time-sel"></select></div>' +
+      '<label class="lbl" for="to-why">Why (optional)</label><textarea class="fld" id="to-why" maxlength="300"></textarea>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" data-act="timeoff-send">Ask for these days</button></div>' +
+      '<div class="errline" id="to-err" role="status" aria-live="polite"></div>';
+    openSheet('Time off', html);
+    dateEmpty($('to-start')); dateEmpty($('to-end'));
+  }
+
+  /* ── Tasks ─────────────────────────────────────────────────────────── */
+  LOADERS.tasks = function(){
+    S.loadedAt.tasks = new Date().getTime();
+    if (!S.tasks) $('tab-tasks').innerHTML = '<h2 class="title">Tasks</h2>' + pulse('Loading your sheets');
+    var h = {}; h[TASKS_HEADER] = '2';
+    api('/staff/api/tasks', {headers: h}).then(function(d){ S.tasks = d; renderTasks(); });
+  };
+  var KIND_LABEL = {opening: 'Opening', closing: 'Closing', mid: 'Mid', any: 'All day'};
+  function lineKey(aid, lid){ return aid + ':' + lid; }
+  function renderTasks(){
+    var el = $('tab-tasks'), d = S.tasks, html = '<h2 class="title">Tasks</h2>';
+    if (!d || !d.ok) { el.innerHTML = html + failedBox('Couldn’t load your sheets. ' + errText(d, ''), 'reload-tasks'); return; }
+    var sheets = d.sheets || [], i;
+    if (d.task_date) html += '<p class="note" style="margin:-6px 0 14px">Sheets for <span class="num">' + mdy(d.task_date) + '</span></p>';
+    if (d.last_night_note && sheets.some(function(s){ return s.shift_kind === 'opening'; })) {
+      var n = d.last_night_note;
+      html += '<div class="card rail"><div class="kicker">Last night’s note</div><p style="margin:6px 0 0;white-space:pre-wrap">' + esc(n.note) + '</p>' +
+        '<p class="note">' + esc(n.signed_by || '') + (n.date_label ? ' · <span class="num">' + esc(n.date_label) + '</span>' : '') + '</p></div>';
+    }
+    if (!sheets.length) html += emptyBox('No sheets for you today', 'Your manager’s sheets for your role show up here on the days you’re on the schedule.');
+    for (i = 0; i < sheets.length; i++) html += sheetCard(sheets[i], true);
+    if (d.manager) html += managerBlock(d);
+    el.innerHTML = html;
+  }
+  function sheetCard(a, mine){
+    var pct = a.total ? Math.round(100 * a.done / a.total) : 0, open = a.status === 'open';
+    var html = '<div class="card" id="sheet-' + a.id + '"><div class="row"><div><div class="strong" style="font-size:16.5px">' + esc(a.title) + '</div>' +
+      '<div class="meta">' + esc(a.shift_label || KIND_LABEL[a.shift_kind] || '') + (a.shift_start ? ' · <span class="num">' + range(a.shift_start, a.shift_end) + '</span>' : '') +
+      (!mine && a.assignees && a.assignees.length ? ' · ' + esc(a.assignees.join(', ')) : '') + '</div></div>' +
+      '<div class="num strong" style="color:var(--ink2)">' + a.done + '/' + a.total + '</div></div>' +
+      '<div class="bar" role="img" aria-label="' + a.done + ' of ' + a.total + ' done"><i style="width:' + pct + '%"></i></div>';
+    if (!open) html += '<p class="note">This sheet closed at the end of the shift.</p>';
+    var sec = null, lines = a.lines || [];
+    for (var j = 0; j < lines.length; j++) {
+      var l = lines[j];
+      if (l.section && l.section !== sec) { sec = l.section; html += '<div class="tsec">' + esc(sec) + '</div>'; }
+      html += mine ? lineRow(a, l, open) : '<div class="tlwrap"><div class="tline' + (l.done ? ' done' : '') + (l.overdue ? ' over' : '') + '"><span class="disc" aria-hidden="true"></span>' +
+        '<div class="tbody"><div class="tlabel">' + esc(l.label) + '</div>' + lineSub(l) + '</div></div></div>';
+    }
+    return html + '</div>';
+  }
+  function lineSub(l){
+    var parts = [];
+    if (l.done) {
+      parts.push('Done' + (l.completed_at ? ' <span class="num">' + clock(String(l.completed_at).slice(11, 16)) + '</span>' : '') + (l.completed_by ? ' by ' + esc(l.completed_by) : ''));
+      if (l.proof_value) parts.push(esc(l.proof_label || 'Reading') + ': <span class="num">' + esc(l.proof_value) + '</span>');
+    } else if (l.due_at) {
+      parts.push((l.overdue ? '<span style="color:var(--red)">Overdue · was due ' : 'Due ') + '<span class="num">' + clock(String(l.due_at).slice(11, 16)) + '</span>' + (l.overdue ? '</span>' : ''));
+    }
+    var tags = '';
+    if (l.critical) tags += '<span class="pill ember" style="margin-left:6px">Critical</span>';
+    if (l.late) tags += '<span class="pill warn" style="margin-left:6px">Late</span>';
+    if (l.flagged) tags += '<span class="pill bad" style="margin-left:6px">Out of range</span>';
+    return (parts.length || tags) ? '<span class="tsub">' + parts.join(' · ') + tags + '</span>' : '';
+  }
+  function lineRow(a, l, open){
+    var key = lineKey(a.id, l.line_id), busy = !!S.busy[key], proof = l.proof || 'none';
+    var cls = 'tline' + (l.done ? ' done' : '') + (l.overdue ? ' over' : '') + (busy ? ' busy' : '');
+    var attrs = ' data-a="' + a.id + '" data-l="' + l.line_id + '"';
+    var tickable = open && !busy && (l.done || proof === 'none');
+    var html = '<div class="tlwrap" id="line-' + a.id + '-' + l.line_id + '"><div class="' + cls + '">' +
+      '<button type="button" class="tick" data-act="tick"' + attrs + ' aria-pressed="' + (l.done ? 'true' : 'false') + '"' + (tickable ? '' : ' disabled') +
+      ' aria-label="' + esc(l.label) + (l.done ? ', done' + (open ? '. Tap to undo.' : '') : (proof === 'none' ? '' : ', needs ' + proof)) + '">' +
+      '<span class="disc" aria-hidden="true"></span><span class="tbody"><span class="tlabel">' + esc(l.label) + '</span>' + lineSub(l) + '</span></button></div>';
+    var extra = '';
+    if (open && !l.done && !busy) {
+      if (proof === 'number' || proof === 'note') {
+        extra += '<div class="tproof"><input class="fld' + (proof === 'number' ? ' num' : '') + '" type="' + (proof === 'number' ? 'text' : 'text') + '"' +
+          (proof === 'number' ? ' inputmode="decimal"' : ' maxlength="300"') + ' id="pv-' + a.id + '-' + l.line_id + '" aria-label="' + esc(l.proof_label || (proof === 'number' ? 'Reading' : 'Note')) +
+          '" placeholder="' + esc(l.proof_label || (proof === 'number' ? 'Reading' : 'Note')) + '">' +
+          '<button type="button" class="cbtn cbtn-secondary tall" data-act="tick-proof"' + attrs + '>Save</button></div>';
+      } else if (proof === 'photo') {
+        extra += '<div class="tproof"><label class="cbtn cbtn-secondary tall filebtn">Take photo<input type="file" accept="image/*" capture="environment" data-photo="1"' + attrs +
+          ' aria-label="Take a photo for ' + esc(l.label) + '"></label>' +
+          '<label class="cbtn cbtn-text tall filebtn">Choose from library<input type="file" accept="image/*" data-photo="1"' + attrs + ' aria-label="Choose a photo for ' + esc(l.label) + '"></label></div>';
+      }
+    }
+    if (busy) extra += '<div class="dr-pulse" role="status" aria-label="Saving" style="margin-top:8px"><i></i></div>';
+    if (l.done && l.photo) extra += '<img class="tphoto" alt="Proof photo for ' + esc(l.label) + '" src="/staff/api/tasks/photo/' + encodeURIComponent(l.photo) + '">';
+    var note = S.posted[key];
+    if (note && note.alert) {
+      extra += '<div class="alert" role="alert"><div class="h">' + esc(note.alert.title || 'Tell your manager now') + '</div><p class="note ink2" style="margin-top:4px">' + nums(note.alert.message || '') + '</p>' +
+        '<button type="button" class="cbtn cbtn-text tall" data-act="message" data-label="' + esc(a.title + ' — ' + l.label) + '" data-draft="' + esc(note.alert.message || '') + '">Message your manager</button></div>';
+    } else if (note && note.info) {
+      extra += '<p class="note">' + esc(note.info) + '</p>';
+    }
+    if (S.rowErr[key]) extra += '<div class="errline">' + esc(S.rowErr[key]) + '</div>';
+    return html + extra + '</div>';
+  }
+  function replaceSheet(sheet){
+    var d = S.tasks;
+    if (!sheet || !d || !d.sheets) return false;
+    for (var i = 0; i < d.sheets.length; i++) if (d.sheets[i].id === sheet.id) { d.sheets[i] = sheet; return true; }
+    return false;
+  }
+  /* A tick names the state it wants (done true or false), so sending it
+     twice changes nothing; a line takes one request at a time. */
+  function tick(aid, lid, done, value, photo){
+    var key = lineKey(aid, lid);
+    if (S.busy[key]) return;
+    S.busy[key] = true;
+    S.rowErr[key] = null; S.posted[key] = null;
+    renderTasks();
+    var req;
+    if (photo) {
+      var fd = new FormData();
+      fd.append('assignment_id', String(aid)); fd.append('line_id', String(lid));
+      fd.append('file', photo, photo.name || 'photo.jpg');
+      req = api('/staff/api/tasks/photo', {method: 'POST', form: fd});
+    } else {
+      var body = {assignment_id: aid, line_id: lid, done: done};
+      if (value !== undefined && value !== null) body.value = value;
+      req = postJson('/staff/api/tasks/complete', body);
+    }
+    req.then(function(d){
+      S.busy[key] = false;
+      if (d.ok) {
+        if (!replaceSheet(d.sheet)) { LOADERS.tasks(); }
+        if (d.alert) S.posted[key] = {alert: d.alert};
+        else if (d.flagged) S.posted[key] = {info: 'Out of range — saved and flagged for your manager.'};
+        else if (d.late) S.posted[key] = {info: 'Saved — after its due time.'};
+      } else {
+        S.rowErr[key] = errText(d);
+      }
+      renderTasks();
+    });
+  }
+  /* A phone photo can be larger than the server takes (3.5 MB): anything
+     over 3 MB is redrawn at 1600px as a JPEG before it goes. */
+  function shrinkPhoto(file, done){
+    if (!file || file.size <= 3000000 || !window.FileReader || !document.createElement('canvas').toBlob) { done(file); return; }
+    var reader = new FileReader();
+    reader.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        var w = img.width, h = img.height, k = Math.min(1, 1600 / Math.max(w, h));
+        var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(function(blob){ done(blob || file); }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function(){ done(file); };
+      img.src = reader.result;
+    };
+    reader.onerror = function(){ done(file); };
+    reader.readAsDataURL(file);
+  }
+  function managerBlock(d){
+    var html = '', signed = {}, i;
+    for (i = 0; i < (d.signoffs || []).length; i++) signed[d.signoffs[i].shift_kind] = d.signoffs[i];
+    var kinds = d.can_sign_off || [];
+    if (kinds.length) {
+      html += '<div class="sechead">Sign off</div>';
+      for (i = 0; i < kinds.length; i++) {
+        var k = kinds[i], s = signed[k];
+        if (s) {
+          html += '<div class="card"><div class="strong">' + esc(KIND_LABEL[k] || k) + ' signed off</div><p class="note">' + esc(s.signed_by || '') +
+            (s.signed_at ? ' · <span class="num">' + mdyTime(s.signed_at) + '</span>' : '') + '</p>' + (s.note ? '<p class="note ink2">“' + esc(s.note) + '”</p>' : '') + '</div>';
+        } else {
+          html += '<div class="card"><div class="strong">' + esc(KIND_LABEL[k] || k) + '</div><label class="lbl" for="so-' + k + '">Note for the next shift (optional)</label>' +
+            '<textarea class="fld" id="so-' + k + '" maxlength="500"></textarea><div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="signoff" data-kind="' + esc(k) + '">Sign off ' +
+            esc((KIND_LABEL[k] || k).toLowerCase()) + '</button></div>' + rowErr('so' + k) + '</div>';
+        }
+      }
+    }
+    var floor = d.floor || [];
+    if (floor.length) {
+      html += '<div class="sechead">The floor</div>';
+      for (i = 0; i < floor.length; i++) html += sheetCard(floor[i], false);
+    }
+    return html;
+  }
+
+  /* ── Inbox ─────────────────────────────────────────────────────────── */
+  LOADERS.inbox = function(){
+    S.loadedAt.inbox = new Date().getTime();
+    S.inbox = S.thread = undefined;
+    renderInbox();
+    api('/staff/api/inbox').then(function(d){
+      S.inbox = d;
+      renderInbox();
+      if (d.ok) setBadge('badge-inbox', (d.unread || 0));
+    });
+    api('/staff/api/messages').then(function(d){ S.thread = d; renderInbox(); scrollThread(); });
+    loadPulse().then(renderInbox);
+  };
+  function scrollThread(){ var t = $('thread'); if (t) t.scrollTop = t.scrollHeight; }
+  function renderInbox(){
+    var el = $('tab-inbox'), d = S.inbox, th = S.thread, html = '<h2 class="title">Inbox</h2>';
+    var draft = $('msg-body') ? $('msg-body').value : S.msgDraft;
+    html += pulseCard();
+    html += '<div class="sechead">Announcements</div>';
+    if (d === undefined) html += pulse('Loading your inbox');
+    else if (!d.ok) html += failedBox(errText(d, 'Your inbox didn’t load.'), 'reload-inbox');
+    else if (!(d.announcements || []).length) html += emptyBox('Nothing from your manager yet', 'Announcements for the team land here. Tap Got it so your manager knows you read one.');
+    else for (var i = 0; i < d.announcements.length; i++) html += annRow(d.announcements[i]);
+
+    html += '<div class="sechead">Your manager</div><div class="card">';
+    if (th === undefined) html += pulse('Loading your messages');
+    else if (!th.ok) html += failedBox(errText(th, 'Your messages didn’t load.'), 'reload-inbox');
+    else {
+      var msgs = th.messages || [];
+      if (!msgs.length) html += '<p class="note" style="margin:0 0 10px">Ask a question or follow up on a request. Your managers answer here.</p>';
+      else {
+        html += '<div class="thread" id="thread" aria-live="polite">';
+        for (var j = 0; j < msgs.length; j++) {
+          var m = msgs[j], mine = m.from === 'staff';
+          var ctx = m.shift_date ? 'About ' + mdy(m.shift_date) : '';
+          html += '<div class="bubble ' + (mine ? 'me' : 'them') + '"><span class="by">' + esc(mine ? 'You' : (m.sender_name || 'Your manager')) +
+            ' · <span class="num">' + mdyTime(m.created_at) + '</span>' + (ctx ? ' · ' + ctx : '') + '</span>' + esc(m.body) + '</div>';
+        }
+        html += '</div>';
+      }
+      if (S.msgContext) html += '<div class="row" style="align-items:center;margin-bottom:8px"><span class="pill ember">About: ' + esc(S.msgContext.label || '') + '</span>' +
+        '<button type="button" class="cbtn cbtn-text cbtn-sm" data-act="msg-ctx-clear" aria-label="Remove what this is about">Remove</button></div>';
+      html += '<label class="lbl" for="msg-body" style="margin-top:0">Message your manager</label><textarea class="fld" id="msg-body" maxlength="1000">' + esc(draft || '') + '</textarea>' +
+        '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-block" data-act="msg-send">Send</button></div>' +
+        '<div class="errline" id="msg-err" role="status" aria-live="polite"></div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  }
+  function annRow(a){
+    var orig = S.showOriginal && S.showOriginal[a.id], title = orig && a.original_title ? a.original_title : a.title,
+        body = orig && a.original_body ? a.original_body : a.body;
+    var by = [a.created_by_name || '', a.created_at ? mdyTime(a.created_at) : ''].filter(function(x){ return !!x; }).join(' · ');
+    return '<div class="card' + (a.priority === 'urgent' ? ' urgent' : '') + '">' +
+      (a.priority === 'urgent' ? '<div class="kicker" style="color:var(--red)">Urgent</div>' : '') +
+      '<div class="strong" style="font-size:17px">' + esc(title) + '</div>' + (body ? '<p style="margin:6px 0 0;white-space:pre-wrap;color:var(--ink2)">' + esc(body) + '</p>' : '') +
+      (a.translated ? '<button type="button" class="cbtn cbtn-text cbtn-sm" data-act="ann-orig" data-id="' + a.id + '">' + (orig ? 'Show translation' : 'Show original') + '</button>' : '') +
+      (by ? '<p class="note num">' + by + '</p>' : '') + (a.expires_on ? '<p class="note">Until <span class="num">' + mdy(a.expires_on) + '</span></p>' : '') +
+      '<div class="acts">' + (a.acked_at ? '<span class="pill good">Read ' + mdyTime(a.acked_at).split(' ')[0] + '</span>'
+        : '<button type="button" class="cbtn cbtn-secondary" data-act="ann-ack" data-id="' + a.id + '">Got it</button>') + '</div>' + rowErr('ann' + a.id) + '</div>';
+  }
+  function openMessages(ctx, draft){
+    S.msgContext = ctx;
+    S.msgDraft = draft || '';
+    if ($('msg-body')) $('msg-body').value = S.msgDraft;
+    closeSheet();
+    show('inbox');
+    renderInbox();
+    setTimeout(function(){ var b = $('msg-body'); if (b) { b.focus(); } }, 0);
+  }
+
+  /* ── Me ────────────────────────────────────────────────────────────── */
+  LOADERS.me = function(){
+    S.loadedAt.me = new Date().getTime();
+    S.me = S.prefs = S.lang = undefined;
+    S.prefDraft = null;
+    renderMe();
+    api('/staff/api/me').then(function(d){ S.me = d; renderMe(); });
+    api('/staff/api/preferences').then(function(d){ S.prefs = d; renderMe(); });
+    api('/staff/api/language').then(function(d){ S.lang = d; renderMe(); });
+  };
+  var ME_OPEN = {};
+  function disclosure(id, label, value, body){
+    var open = !!ME_OPEN[id];
+    return '<button type="button" class="cbtn cbtn-secondary disclose" data-act="me-open" data-id="' + id + '" aria-expanded="' + (open ? 'true' : 'false') +
+      '" aria-controls="me-' + id + '"><span>' + esc(label) + '</span><span class="muted">' + (value ? esc(value) + ' ' : '') + (open ? '&#9652;' : '&#9662;') + '</span></button>' +
+      '<div class="disc-body" id="me-' + id + '"' + (open ? '' : ' hidden') + '>' + (open ? body() : '') + '</div>';
+  }
+  function renderMe(){
+    var el = $('tab-me'), m = S.me, html = '<h2 class="title">Me</h2>';
+    if (m && m.ok && m.employee) html += '<p class="note ink2" style="margin:-8px 0 16px">' + esc([m.employee.name, m.employee.restaurant].filter(function(x){ return !!x; }).join(' · ')) + '</p>';
+    else if (m && !m.ok) html += failedBox(errText(m, 'Your details didn’t load.'), 'reload-me');
+    html += '<div class="sechead">Your week</div>';
+    html += '<div class="card">' + disclosure('avail', 'My availability', '', availBody) + '<div style="height:10px"></div>' +
+      disclosure('prefs', 'What I’d like', '', prefsBody) + '</div>';
+    html += '<div class="sechead">Notices</div><div class="card">';
+    var p = S.prefs;
+    if (p === undefined) html += pulse('Loading your notices');
+    else if (!p.ok) html += failedBox(errText(p, 'Your notices didn’t load.'), 'reload-me');
+    else if (p.sms_available) {
+      html += '<label class="switch"><input type="checkbox" id="texts-on"' + (p.schedule_texts ? ' checked' : '') + ' data-version="' + esc(p.schedule_texts_consent_version || 2) + '">' +
+        '<span><b>Schedule texts</b><br><span class="note" style="display:block;margin:2px 0 0">' + esc(p.schedule_texts_consent || '') + '</span></span></label>' +
+        '<div class="errline" id="texts-err" role="status" aria-live="polite"></div>';
+    } else html += '<p class="note" style="margin:0">Shift and task reminders come as notices in the Cavnar AI iPhone app. Here, your inbox and requests show what’s new each time you open it.</p>';
+    html += '</div>';
+    html += '<div class="sechead">Language</div><div class="card">';
+    var l = S.lang;
+    if (l === undefined) html += pulse('Loading languages');
+    else if (!l.ok) html += failedBox(errText(l, 'Languages didn’t load.'), 'reload-me');
+    else {
+      html += '<label class="lbl" for="lang" style="margin-top:0">Announcements and your brief in</label><select class="fld" id="lang">';
+      for (var i = 0; i < (l.languages || []).length; i++) {
+        html += '<option value="' + esc(l.languages[i].code) + '"' + (l.languages[i].code === l.language ? ' selected' : '') + '>' + esc(l.languages[i].name) + '</option>';
+      }
+      html += '</select><div class="errline" id="lang-err" role="status" aria-live="polite"></div>';
+    }
+    html += '</div>';
+    html += '<div class="sechead">More</div><div class="card">' + disclosure('cal', 'Calendar feed', '', calBody) + '<div style="height:10px"></div>' +
+      disclosure('docs', 'Docs & house rules', '', docsBody) + '<div style="height:10px"></div>' +
+      disclosure('pin', 'Change PIN', '', pinBody) + '</div>';
+    html += '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="message" data-label="">Message your manager</button></div>' +
+      '<div class="acts"><a class="cbtn cbtn-danger cbtn-ghost cbtn-block tall" href="/staff/logout">Sign out</a></div>';
+    el.innerHTML = html;
+  }
+
+  /* My availability: each weekday any time, can't work, or some hours,
+     either with optional dates; saved with the updated_at it loaded, so a
+     save never lands over a change made somewhere else (PERF-05). */
+  var AV_STATUS = [['any', 'Any time'], ['off', 'Can’t work'], ['window', 'Some hours']];
+  function loadAvail(){
+    S.av = undefined;
+    api('/staff/api/availability').then(function(d){
+      S.av = d;
+      S.avDraft = d.ok ? JSON.parse(JSON.stringify(d.week || [])) : null;
+      S.avNotes = d.ok ? (d.notes || '') : '';
+      if (ME_OPEN.avail) refreshDisc('avail', availBody);
+    });
+  }
+  function refreshDisc(id, body){ var b = $('me-' + id); if (b) b.innerHTML = body(); }
+  function availBody(){
+    var d = S.av, html = '';
+    if (d === undefined) return pulse('Loading your availability');
+    if (!d.ok) return failedBox(errText(d, 'Your availability didn’t load.'), 'avail-reload');
+    if (S.avStale) html += '<p class="note amber">' + esc(S.avStale) + '</p>';
+    html += '<p class="note" style="margin-top:0">' + esc(d.time_off_hint || 'Your usual week. Dates you’re away go in a time-off request.') + '</p>';
+    var week = S.avDraft || [];
+    for (var i = 0; i < week.length; i++) {
+      var w = week[i], id = 'av-' + i;
+      html += '<div class="avday"><div class="dh"><label class="strong" for="' + id + '-st">' + esc(w.day) + '</label><select class="fld" id="' + id + '-st" data-av="' + i + '" data-k="status">';
+      for (var s = 0; s < AV_STATUS.length; s++) html += '<option value="' + AV_STATUS[s][0] + '"' + (w.status === AV_STATUS[s][0] ? ' selected' : '') + '>' + AV_STATUS[s][1] + '</option>';
+      html += '</select></div><div class="avsub"' + (w.status === 'any' ? ' hidden' : '') + '>';
+      if (w.status === 'window') {
+        html += '<div class="grid2"><div><label class="lbl" for="' + id + '-e">No start before</label><select class="fld num" id="' + id + '-e" data-av="' + i + '" data-k="earliest">' + timeOptions(w.earliest) + '</select></div>' +
+          '<div><label class="lbl" for="' + id + '-l">Done by</label><select class="fld num" id="' + id + '-l" data-av="' + i + '" data-k="latest">' + timeOptions(w.latest) + '</select></div></div>';
+      }
+      html += '<div class="grid2"><div><label class="lbl" for="' + id + '-f">Starting</label><input class="fld num" type="date" id="' + id + '-f" data-av="' + i + '" data-k="from" value="' + esc(w.from || '') + '"></div>' +
+        '<div><label class="lbl" for="' + id + '-u">Until</label><input class="fld num" type="date" id="' + id + '-u" data-av="' + i + '" data-k="until" min="' + todayIso() + '" value="' + esc(w.until || '') + '"></div></div>' +
+        '<p class="note">' + (w.from || w.until ? 'Only between these dates.' : 'Every week, until you change it.') + '</p></div></div>';
+    }
+    html += '<label class="lbl" for="av-notes">Anything else</label><textarea class="fld" id="av-notes" maxlength="300" placeholder="“Rides the bus — not before 10am”">' + esc(S.avNotes || '') + '</textarea>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-block" data-act="avail-save">Save my availability</button></div>' +
+      '<div class="errline" id="av-err" role="status" aria-live="polite">' + esc(S.avErr || '') + '</div>';
+    if (S.avSaved) html += '<div class="okline">' + esc(S.avSaved) + '</div>';
+    var cf = S.avConflicts || [];
+    if (cf.length) {
+      html += '<div class="card" style="margin-top:12px"><p class="note amber" style="margin-top:0">' + nums(S.avConflictsText || 'You’re still on shifts this rules out.') + '</p>';
+      for (var c = 0; c < cf.length; c++) {
+        html += '<div class="person"><div><div class="strong num">' + shiftLabel(cf[c].date, cf[c].shift_start, cf[c].shift_end) + (cf[c].role ? ' · ' + esc(cf[c].role) : '') + '</div>' +
+          (cf[c].reason ? '<div class="meta">' + esc(cap(cf[c].reason)) + '</div>' : '') + '</div>' +
+          '<button type="button" class="cbtn cbtn-text tall" data-act="change" data-mode="drop" data-date="' + esc(cf[c].date) + '" data-start="' + esc(cf[c].shift_start) +
+          '" data-end="' + esc(cf[c].shift_end || '') + '">Give up this shift</button></div>';
+      }
+      html += '<p class="note">Your manager has been told about these.</p></div>';
+    }
+    if (S.avHint) html += '<div class="card" style="margin-top:12px"><p class="note" style="margin-top:0">' + esc(S.avHint.text || S.avHint) + '</p>' +
+      '<button type="button" class="cbtn cbtn-text tall" data-act="timeoff-open">Ask for time off</button></div>';
+    return html;
+  }
+  function prefsBody(){
+    var p = S.prefs;
+    if (p === undefined) return pulse('Loading what you’d like');
+    if (!p.ok) return failedBox(errText(p, 'What you’d like didn’t load.'), 'reload-me');
+    if (!S.prefDraft) S.prefDraft = {parts: (p.preferred_dayparts || []).slice(), hours: p.desired_hours === null || p.desired_hours === undefined ? '' : String(Math.round(p.desired_hours))};
+    var dp = S.prefDraft.parts;
+    return '<p class="note" style="margin-top:0">The shifts you’d rather have, and how many hours a week you want.</p>' +
+      '<div class="lbl">Shifts you’d rather have</div><div class="chips"><button type="button" class="chip" data-act="pref-part" data-part="morning" aria-pressed="' + (dp.indexOf('morning') >= 0) + '">Days</button>' +
+      '<button type="button" class="chip" data-act="pref-part" data-part="night" aria-pressed="' + (dp.indexOf('night') >= 0) + '">Nights</button></div>' +
+      '<label class="lbl" for="pref-hours">Hours a week</label><input class="fld num" id="pref-hours" inputmode="numeric" maxlength="2" placeholder="—" value="' + esc(S.prefDraft.hours) + '" style="max-width:120px">' +
+      '<p class="note">A wish, not a rule — the schedule honours it where coverage allows.</p>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-block" data-act="prefs-save">Save</button></div>' +
+      '<div class="errline" id="pref-err" role="status" aria-live="polite"></div>';
+  }
+  function calBody(){
+    var c = S.cal;
+    if (c === undefined) return pulse('Loading your calendar link');
+    if (c && c.revoked) return emptyBox('Calendar link turned off', 'Calendars that used it stop showing your shifts.') +
+      '<button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="cal-load">Get a link</button>';
+    if (!c.ok) return failedBox(errText(c, 'Your calendar link didn’t load.'), 'cal-load');
+    return '<p class="note" style="margin-top:0">' + esc(c.note || '') + '</p>' +
+      '<label class="lbl" for="cal-url">Your link</label><input class="fld" id="cal-url" readonly value="' + esc(c.url || '') + '">' +
+      '<div class="acts">' + (c.webcal_url ? '<a class="cbtn cbtn-primary tall" href="' + esc(c.webcal_url) + '">Subscribe in Calendar</a>' : '') +
+      '<button type="button" class="cbtn cbtn-secondary" data-act="cal-copy">Copy link</button></div>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-text tall" data-act="cal-reset">Get a new link</button>' +
+      '<button type="button" class="cbtn cbtn-text cbtn-danger tall" data-act="cal-revoke">Turn it off</button></div>' +
+      '<div class="errline" id="cal-err" role="status" aria-live="polite"></div>';
+  }
+  function docsBody(){
+    var d = S.docs, html = '';
+    if (d === undefined) return pulse('Loading your docs');
+    if (!d.ok) return failedBox(errText(d, 'Your docs didn’t load.'), 'docs-load');
+    if (d.can_ask) {
+      html += '<div class="lbl" style="margin-top:0">Ask the house rules</div><textarea class="fld" id="ask-q" maxlength="300" placeholder="“What’s the rule on phones on the floor?”">' + esc(S.askQ || '') + '</textarea>' +
+        '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-block" data-act="ask">Ask</button></div><div class="errline" id="ask-err" role="status" aria-live="polite"></div>';
+      var a = S.askA;
+      if (a) {
+        html += '<div class="card" style="margin-top:10px;' + (a.answered ? 'border-color:var(--ember)' : '') + '"><p style="margin:0">' + nums(a.answer || '') + '</p>';
+        if ((a.sources || []).length) {
+          html += '<div class="kicker" style="color:var(--ink3);margin-top:10px">From</div>';
+          for (var s = 0; s < a.sources.length; s++) html += '<div class="src"><b>' + esc(a.sources[s].source) + '</b>“' + esc(a.sources[s].line) + '”</div>';
+        }
+        if (a.suggest_message) html += '<button type="button" class="cbtn cbtn-text tall" data-act="ask-manager">Ask your manager</button>';
+        html += '</div>';
+      }
+    }
+    var empty = !d.house_rules && !(d.docs || []).length && !(d.certifications || []).length;
+    if (empty) html += emptyBox('No house rules yet', 'When your manager adds the house rules or a how-to, it shows up here.');
+    if (d.house_rules) html += '<div class="sechead">' + esc(d.house_rules.title || 'House rules') + '</div><p style="white-space:pre-wrap;color:var(--ink2);margin:0">' + esc(d.house_rules.body) + '</p>' +
+      (d.house_rules.updated_at ? '<p class="note">Updated <span class="num">' + mdyTime(d.house_rules.updated_at).split(' ')[0] + '</span></p>' : '');
+    if ((d.docs || []).length) {
+      html += '<div class="sechead">For your role</div>';
+      for (var i = 0; i < d.docs.length; i++) {
+        html += '<details class="card"><summary class="strong" style="min-height:44px;cursor:pointer">' + esc(d.docs[i].title) + ' <span class="muted" style="font-weight:400">· ' + esc(d.docs[i].kind_label || '') + '</span></summary>' +
+          '<p style="white-space:pre-wrap;color:var(--ink2);margin:8px 0 0">' + esc(d.docs[i].body) + '</p></details>';
+      }
+    }
+    if ((d.certifications || []).length) {
+      html += '<div class="sechead">Your certificates</div>';
+      var CERT = {expired: ['Expired', 'bad'], expiring: ['Expiring', 'warn'], current: ['Current', 'good']};
+      for (var c = 0; c < d.certifications.length; c++) {
+        var ce = d.certifications[c], ch = CERT[ce.status] || ['No expiry on file', ''];
+        html += '<div class="person"><div class="strong">' + esc(cap(ce.cert)) + '</div><div style="text-align:right"><span class="pill ' + ch[1] + '">' + ch[0] + '</span>' +
+          (ce.expires_on ? '<div class="meta">' + (ce.status === 'expired' ? 'Expired ' : 'Expires ') + '<span class="num">' + mdy(ce.expires_on) + '</span></div>' : '') + '</div></div>';
+      }
+    }
+    return html;
+  }
+  function pinBody(){
+    return '<p class="note" style="margin-top:0">4 to 8 digits. Changing it signs you out everywhere; sign in again with the new one.</p>' +
+      '<label class="lbl" for="pin-cur">Current PIN</label><input class="fld num" id="pin-cur" type="password" inputmode="numeric" autocomplete="off" maxlength="8">' +
+      '<label class="lbl" for="pin-new">New PIN</label><input class="fld num" id="pin-new" type="password" inputmode="numeric" autocomplete="off" maxlength="8">' +
+      '<label class="lbl" for="pin-new2">New PIN again</label><input class="fld num" id="pin-new2" type="password" inputmode="numeric" autocomplete="off" maxlength="8">' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-block" data-act="pin-save">Change my PIN</button></div>' +
+      '<div class="errline" id="pin-err" role="status" aria-live="polite"></div>';
+  }
+
+  /* ── every tap, in one place ───────────────────────────────────────── */
+  var ACTS = {
+    'sheet-close': function(){ closeSheet(); },
+    'confirm-go': function(btn){ var run = S.sheetConfirm; if (run) { busyBtn(btn, 'Sending'); run(btn); } },
+    goto: function(el){ show(el.getAttribute('data-tab')); },
+    'reload-today': function(){ LOADERS.today(); },
+    'reload-schedule': function(){ LOADERS.schedule(); },
+    'reload-requests': function(){ LOADERS.requests(); },
+    'reload-tasks': function(){ LOADERS.tasks(); },
+    'reload-inbox': function(){ LOADERS.inbox(); },
+    'reload-me': function(){ LOADERS.me(); },
+    message: function(el){
+      var ctx = null, sd = el.getAttribute('data-shift-date'), rid = el.getAttribute('data-request-id');
+      if (sd) ctx = {shift_date: sd, label: el.getAttribute('data-label') || mdy(sd)};
+      else if (rid) ctx = {request_id: +rid, request_kind: el.getAttribute('data-request-kind'), label: el.getAttribute('data-label')};
+      openMessages(ctx, el.getAttribute('data-draft') || '');
+    },
+    late: function(el){ openLate(el.getAttribute('data-date'), el.getAttribute('data-start')); },
+    'late-eta': function(el){
+      S.lateForm.eta = +el.getAttribute('data-eta');
+      var chips = $('sheet-body').querySelectorAll('[data-act="late-eta"]');
+      for (var i = 0; i < chips.length; i++) chips[i].setAttribute('aria-pressed', chips[i] === el ? 'true' : 'false');
+      $('late-other').value = '';
+    },
+    'late-send': function(btn){
+      var f = S.lateForm, other = $('late-other').value;
+      if (other) f.eta = +other;
+      if (!f.eta) { $('late-err').textContent = 'Choose about how late you’ll be.'; return; }
+      busyBtn(btn, 'Sending');
+      postJson('/staff/api/running-late', {date: f.date, shift_start: f.start, eta_minutes: f.eta, note: $('late-note').value}).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('late-err').textContent = errText(d); return; }
+        closeSheet();
+        toast(d.created === false ? 'ETA updated' : (d.managers_told ? 'Your manager knows' : 'Saved — call your manager too'));
+        api('/staff/api/running-late').then(function(x){ S.late = x; renderToday(); });
+      });
+    },
+    change: function(el){ openChange(el.getAttribute('data-date'), el.getAttribute('data-start'), el.getAttribute('data-end'), el.getAttribute('data-mode')); },
+    'change-retry': function(){ var c = S.change; openChange(c.date, c.start, c.end, c.mode); },
+    'change-send': function(btn){
+      var c = S.change, body = {date: c.date, shift_start: c.start, reason: ($('sw-why').value || '').replace(/^\s+|\s+$/g, '')}, who = null;
+      if (c.mode === 'swap') {
+        var cd = c.cands, wi = $('sw-who') ? $('sw-who').value : '', si = $('sw-shift') ? $('sw-shift').value : '';
+        if (!cd || !cd.ok || wi === '' || si === '') { $('change-err').textContent = 'Choose a colleague and their shift.'; return; }
+        who = cd.colleagues[+wi]; var their = who.shifts[+si];
+        body.kind = 'swap'; body.target_name = who.name; body.target_date = their.date; body.target_start = their.shift_start;
+      }
+      busyBtn(btn, 'Sending');
+      postJson('/staff/api/shift-requests', body).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('change-err').textContent = errText(d); return; }
+        closeSheet();
+        toast(c.mode === 'swap' ? 'Asked — your manager and ' + who.name + ' are told' : 'Sent to your manager');
+        S.loadedAt = {}; LOADERS[S.tab]();
+      });
+    },
+    'ask-yes': function(el){
+      var a = findIn(S.board.asks, el.getAttribute('data-id'));
+      if (!a) return;
+      var their = shiftLabel(a.date, a.shift_start, a.shift_end), mine = shiftLabel(a.target_date, a.target_start, a.target_end);
+      askConfirm('Accept the swap?', 'You’ll work ' + a.employee_name + '’s ' + their + '; ' + a.employee_name + ' takes your ' + mine + '.' +
+        (a.manager_approved ? ' Your manager already said yes, so it happens as soon as you accept.' : ' It happens once your manager approves too.'),
+        'Accept the swap', function(){ act('ask' + a.id, '/staff/api/shift-requests/' + a.id + '/respond', {accept: true}, a.manager_approved ? 'Swapped' : 'Accepted — waiting on your manager'); });
+    },
+    'ask-no': function(el){
+      var a = findIn(S.board.asks, el.getAttribute('data-id'));
+      if (!a) return;
+      askConfirm('Decline the swap?', a.employee_name + ' is told you said no.', 'Decline', function(){
+        act('ask' + a.id, '/staff/api/shift-requests/' + a.id + '/respond', {accept: false}, 'Declined — ' + a.employee_name + ' is told');
+      });
+    },
+    'offer-yes': function(el){
+      var o = findIn(S.board.offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Take ' + shiftLabel(o.date, o.shift_start, o.shift_end) + '?', 'It goes on your schedule' + (o.role ? ' as ' + o.role : '') + ', and your manager hears you said yes.' +
+        (o.pickup_overtime_note ? ' ' + o.pickup_overtime_note : ''), 'Take it', function(){
+        act('offer' + o.id, '/staff/api/offers/' + o.id + '/respond', {accept: true}, 'It’s on your schedule');
+      });
+    },
+    'offer-no': function(el){
+      var o = findIn(S.board.offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Decline this shift?', 'Your manager is told you can’t take it.', 'Decline', function(){
+        act('offer' + o.id, '/staff/api/offers/' + o.id + '/respond', {accept: false}, 'Declined — your manager is told');
+      });
+    },
+    claim: function(el){
+      var s = findIn(S.board.open, el.getAttribute('data-id'));
+      if (!s) return;
+      askConfirm('Pick up ' + shiftLabel(s.date, s.shift_start, s.shift_end) + '?', 'It goes on your schedule' + (s.role ? ' as ' + s.role : '') + '.' +
+        (s.pickup_overtime_note ? ' ' + s.pickup_overtime_note : ''), 'Pick it up', function(){
+        act('open' + s.id, '/staff/api/open-shifts/' + s.id + '/claim', {}, 'It’s on your schedule');
+      });
+    },
+    'to-withdraw': function(el){
+      var t = findIn(S.timeoff.requests, el.getAttribute('data-id'));
+      if (!t) return;
+      askConfirm('Withdraw time off ' + timeOffLabel(t) + '?', 'Your manager won’t be asked about these days any more.', 'Withdraw', function(){
+        act('to' + t.id, '/staff/api/time-off/' + t.id + '/withdraw', {}, 'Withdrew time off ' + timeOffLabel(t));
+      }, true);
+    },
+    'to-cancel': function(el){
+      var t = findIn(S.timeoff.requests, el.getAttribute('data-id'));
+      if (!t) return;
+      askConfirm('Call off time off ' + timeOffLabel(t) + '?', 'You’ll be available for those days again, and your manager is told.', 'Call it off', function(){
+        act('to' + t.id, '/staff/api/time-off/' + t.id + '/cancel', {}, 'Called off time off ' + timeOffLabel(t));
+      }, true);
+    },
+    'sr-withdraw': function(el){
+      var r = findIn(S.board.requests, el.getAttribute('data-id'));
+      if (!r) return;
+      var label = (REQ_TAG[r.kind] || 'Request') + ' ' + shiftLabel(r.date, r.shift_start, r.shift_end);
+      askConfirm('Withdraw this request?', label + ' — you stay on the shift.', 'Withdraw', function(){
+        act('sr' + r.id, '/staff/api/shift-requests/' + r.id + '/withdraw', {}, 'Withdrew ' + label.charAt(0).toLowerCase() + label.slice(1));
+      }, true);
+    },
+    'timeoff-open': function(){ openTimeOff(); },
+    'to-part': function(el){
+      S.toPart = el.getAttribute('data-part');
+      var chips = $('sheet-body').querySelectorAll('[data-act="to-part"]');
+      for (var i = 0; i < chips.length; i++) chips[i].setAttribute('aria-pressed', chips[i] === el ? 'true' : 'false');
+      var t = $('to-time');
+      t.hidden = !(S.toPart === 'until' || S.toPart === 'from');
+      if (!t.hidden) {
+        $('to-time-lbl').textContent = S.toPart === 'until' ? 'Off until' : 'Off from';
+        $('to-time-sel').innerHTML = timeOptions(S.toPart === 'until' ? '16:00' : '17:00');
+      }
+    },
+    'timeoff-send': function(btn){
+      var start = $('to-start').value, end = $('to-end').value || start;
+      if (!start) { $('to-err').textContent = 'Choose your first day off.'; return; }
+      var body = {start_date: start, end_date: end, reason: ($('to-why').value || '').replace(/^\s+|\s+$/g, '')};
+      if (S.toPart === 'until' || S.toPart === 'from') {
+        var tv = $('to-time-sel').value;
+        if (!tv) { $('to-err').textContent = 'Choose the time.'; return; }
+        if (S.toPart === 'until') body.end_time = tv; else body.start_time = tv;
+      } else if (S.toPart === 'lunch' || S.toPart === 'dinner') body.daypart = S.toPart;
+      busyBtn(btn, 'Sending');
+      postJson('/staff/api/time-off', body).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('to-err').textContent = errText(d); return; }
+        closeSheet();
+        toast('Sent to your manager');
+        S.loadedAt.requests = 0;
+        if (S.tab === 'requests') LOADERS.requests();
+      });
+    },
+    tick: function(el){
+      var aid = +el.getAttribute('data-a'), lid = +el.getAttribute('data-l');
+      var line = findLine(aid, lid);
+      if (!line) return;
+      tick(aid, lid, !line.done);
+    },
+    'tick-proof': function(el){
+      var aid = +el.getAttribute('data-a'), lid = +el.getAttribute('data-l'), input = $('pv-' + aid + '-' + lid);
+      var v = input ? (input.value || '').replace(/^\s+|\s+$/g, '') : '';
+      if (!v) { S.rowErr[lineKey(aid, lid)] = 'Fill it in to tick this off.'; renderTasks(); return; }
+      tick(aid, lid, true, v);
+    },
+    signoff: function(el){
+      var k = el.getAttribute('data-kind'), note = ($('so-' + k) || {}).value || '';
+      askConfirm('Sign off the ' + (KIND_LABEL[k] || k).toLowerCase() + ' shift?', 'The sheets are signed off as they stand now' + (note ? ', with your note.' : '.'), 'Sign off', function(btn){
+        postJson('/staff/api/tasks/signoff', {shift_kind: k, note: note}).then(function(d){
+          if (!d.ok) { $('confirm-err').textContent = errText(d); unbusyBtn(btn); return; }
+          closeSheet(); toast('Signed off'); LOADERS.tasks();
+        });
+      });
+    },
+    'pulse-rate': function(el){ S.pulseNote = $('pulse-note') ? $('pulse-note').value : S.pulseNote; S.pulseRating = +el.getAttribute('data-r'); rerenderPulse(); },
+    'pulse-send': function(btn){
+      var note = ($('pulse-note').value || '').replace(/^\s+|\s+$/g, '');
+      busyBtn(btn, 'Sending');
+      postJson('/staff/api/pulse', {date: btn.getAttribute('data-date'), rating: S.pulseRating, note: note || null}).then(function(d){
+        if (d.ok) { S.pulseThanks = true; S.pulse = null; }
+        else if (d.http_status === 409) { S.pulseClosed = errText(d); S.pulse = null; }
+        else { S.pulseErr = errText(d); unbusyBtn(btn); }
+        rerenderPulse();
+      });
+    },
+    'ann-ack': function(el){
+      var id = el.getAttribute('data-id');
+      busyBtn(el, 'Saving');
+      postJson('/staff/api/announcements/' + id + '/ack', {}).then(function(d){
+        if (!d.ok) { S.rowErr['ann' + id] = errText(d); renderInbox(); return; }
+        var a = findIn(S.inbox.announcements, id); if (a) a.acked_at = d.acked_at || new Date().toISOString();
+        S.inbox.unread = Math.max(0, (S.inbox.unread || 0) - 1);
+        setBadge('badge-inbox', S.inbox.unread || 0);
+        renderInbox();
+      });
+    },
+    'ann-orig': function(el){ S.showOriginal = S.showOriginal || {}; var id = el.getAttribute('data-id'); S.showOriginal[id] = !S.showOriginal[id]; renderInbox(); },
+    'msg-ctx-clear': function(){ S.msgDraft = $('msg-body') ? $('msg-body').value : ''; S.msgContext = null; renderInbox(); },
+    'msg-send': function(btn){
+      var text = ($('msg-body').value || '').replace(/^\s+|\s+$/g, '');
+      if (!text) { $('msg-err').textContent = 'Type a message first.'; return; }
+      var body = {body: text}, c = S.msgContext;
+      if (c && c.shift_date) body.shift_date = c.shift_date;
+      if (c && c.request_id) { body.request_id = c.request_id; body.request_kind = c.request_kind; }
+      busyBtn(btn, 'Sending');
+      postJson('/staff/api/messages', body).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('msg-err').textContent = errText(d); return; }
+        S.msgDraft = ''; S.msgContext = null; $('msg-body').value = '';
+        toast(d.managers_told ? 'Sent — your manager is told' : 'Sent');
+        api('/staff/api/messages').then(function(x){ S.thread = x; renderInbox(); scrollThread(); });
+      });
+    },
+    'me-open': function(el){
+      var id = el.getAttribute('data-id');
+      ME_OPEN[id] = !ME_OPEN[id];
+      if (ME_OPEN[id]) {
+        if (id === 'avail' && S.av === undefined) loadAvail();
+        if (id === 'cal' && S.cal === undefined) ACTS['cal-load']();
+        if (id === 'docs' && S.docs === undefined) ACTS['docs-load']();
+      }
+      renderMe();
+    },
+    'avail-reload': function(){ loadAvail(); refreshDisc('avail', availBody); },
+    'avail-save': function(btn){
+      S.avNotes = $('av-notes').value;
+      S.avErr = S.avSaved = S.avStale = null; S.avConflicts = []; S.avHint = null;
+      busyBtn(btn, 'Saving');
+      postJson('/staff/api/availability', {updated_at: S.av.updated_at || null, week: S.avDraft, notes: S.avNotes}).then(function(d){
+        unbusyBtn(btn);
+        if (d.ok) {
+          S.av = {ok: true, week: d.week, notes: d.notes, updated_at: d.updated_at, time_off_hint: S.av.time_off_hint};
+          S.avDraft = JSON.parse(JSON.stringify(d.week || [])); S.avNotes = d.notes || '';
+          S.avConflicts = d.conflicts || []; S.avConflictsText = d.conflicts_text || '';
+          S.avHint = d.hint || null;
+          S.avSaved = 'Saved — your manager’s next schedule reads it';
+        } else if (d.http_status === 409 && d.availability) {
+          S.av = {ok: true, week: d.availability.week, notes: d.availability.notes, updated_at: d.availability.updated_at, time_off_hint: d.availability.time_off_hint};
+          S.avDraft = JSON.parse(JSON.stringify(d.availability.week || [])); S.avNotes = d.availability.notes || '';
+          S.avStale = 'Someone changed this — here’s the latest. Make your change again.';
+        } else {
+          S.avErr = errText(d);
+          S.avHint = d.hint || null;
+        }
+        refreshDisc('avail', availBody);
+      });
+    },
+    'pref-part': function(el){
+      var p = el.getAttribute('data-part'), parts = S.prefDraft.parts, i = parts.indexOf(p);
+      S.prefDraft.hours = $('pref-hours').value;
+      if (i >= 0) parts.splice(i, 1); else parts.push(p);
+      refreshDisc('prefs', prefsBody);
+    },
+    'prefs-save': function(btn){
+      var raw = ($('pref-hours').value || '').replace(/[^0-9]/g, '').slice(0, 2);
+      S.prefDraft.hours = raw;
+      var order = ['morning', 'night'].filter(function(x){ return S.prefDraft.parts.indexOf(x) >= 0; });
+      busyBtn(btn, 'Saving');
+      postJson('/staff/api/preferences', {preferred_dayparts: order, desired_hours: raw ? +raw : null}).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('pref-err').textContent = errText(d, 'Could not save.'); return; }
+        S.prefs.preferred_dayparts = d.preferred_dayparts; S.prefs.desired_hours = d.desired_hours;
+        toast('Saved — the next draft reads it');
+      });
+    },
+    'cal-load': function(){
+      S.cal = undefined; refreshDisc('cal', calBody);
+      api('/staff/api/calendar-link').then(function(d){ S.cal = d; refreshDisc('cal', calBody); });
+    },
+    'cal-copy': function(){
+      var input = $('cal-url'), url = input.value;
+      var done = function(){ toast('Link copied'); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function(){ input.select(); });
+      else { input.select(); try { document.execCommand('copy'); done(); } catch (e) {} }
+    },
+    'cal-reset': function(){
+      askConfirm('Get a new link?', 'The old link stops working in any calendar that uses it — subscribe again with the new one.', 'Get a new link', function(btn){
+        postJson('/staff/api/calendar-link/reset', {}).then(function(d){
+          if (!d.ok) { $('confirm-err').textContent = errText(d); unbusyBtn(btn); return; }
+          S.cal = d; closeSheet(); refreshDisc('cal', calBody); toast('New link ready');
+        });
+      });
+    },
+    'cal-revoke': function(){
+      askConfirm('Turn the calendar link off?', 'Calendars that use it stop showing your shifts.', 'Turn it off', function(btn){
+        postJson('/staff/api/calendar-link/revoke', {}).then(function(d){
+          if (!d.ok) { $('confirm-err').textContent = errText(d); unbusyBtn(btn); return; }
+          S.cal = {ok: true, revoked: true}; closeSheet(); refreshDisc('cal', calBody);
+        });
+      }, true);
+    },
+    'docs-load': function(){
+      S.docs = undefined; refreshDisc('docs', docsBody);
+      api('/staff/api/docs').then(function(d){ S.docs = d; refreshDisc('docs', docsBody); });
+    },
+    ask: function(btn){
+      var q = ($('ask-q').value || '').replace(/^\s+|\s+$/g, '');
+      S.askQ = q;
+      if (!q) { $('ask-err').textContent = 'Type a question.'; return; }
+      S.askA = null;
+      busyBtn(btn, 'Looking it up');
+      postJson('/staff/api/ask', {question: q}).then(function(d){
+        unbusyBtn(btn);
+        if (d.ok) S.askA = d;
+        else if (d.suggest_message) S.askA = {answered: false, answer: errText(d), suggest_message: true, sources: []};
+        else { $('ask-err').textContent = errText(d); return; }
+        refreshDisc('docs', docsBody);
+      });
+    },
+    'ask-manager': function(){ openMessages(null, S.askQ || ''); },
+    'pin-save': function(btn){
+      var cur = $('pin-cur').value, nw = $('pin-new').value, nw2 = $('pin-new2').value;
+      if (!cur || !nw) { $('pin-err').textContent = 'Enter your current PIN and a new one.'; return; }
+      if (nw !== nw2) { $('pin-err').textContent = 'The new PINs don’t match.'; return; }
+      busyBtn(btn, 'Saving');
+      postJson('/staff/api/pin', {current_pin: cur, new_pin: nw}).then(function(d){
+        if (d.ok || d.signed_out) {
+          $('pin-err').textContent = '';
+          toast(d.ok ? 'PIN changed — sign in with your new PIN' : errText(d));
+          setTimeout(function(){ window.location = SIGNIN_URL; }, 1600);
+          return;
+        }
+        unbusyBtn(btn);
+        $('pin-err').textContent = errText(d);
+      });
+    }
+  };
+  function findLine(aid, lid){
+    var sheets = (S.tasks && S.tasks.sheets) || [];
+    for (var i = 0; i < sheets.length; i++) if (sheets[i].id === aid) {
+      for (var j = 0; j < sheets[i].lines.length; j++) if (sheets[i].lines[j].line_id === lid) return sheets[i].lines[j];
+    }
+    return null;
+  }
+
+  document.addEventListener('click', function(e){
+    var tabBtn = closest(e.target, '.tab[data-tab]');
+    if (tabBtn) { show(tabBtn.getAttribute('data-tab')); return; }
+    var el = closest(e.target, '[data-act]');
+    if (!el || el.disabled) return;
+    var fn = ACTS[el.getAttribute('data-act')];
+    if (fn) { e.preventDefault(); fn(el); }
+  });
+  document.addEventListener('change', function(e){
+    var t = e.target;
+    if (t.getAttribute('data-photo')) {
+      var file = t.files && t.files[0], aid = +t.getAttribute('data-a'), lid = +t.getAttribute('data-l');
+      if (file) shrinkPhoto(file, function(f){ tick(aid, lid, true, null, f); });
+      return;
+    }
+    if (t.id === 'sw-who') { S.change.who = t.value === '' ? null : +t.value; S.change.why = $('sw-why').value; renderChange(true); return; }
+    if (t.getAttribute('data-av') !== null) {
+      var w = S.avDraft[+t.getAttribute('data-av')], k = t.getAttribute('data-k');
+      w[k] = t.value || null;
+      S.avNotes = $('av-notes') ? $('av-notes').value : S.avNotes;
+      if (k === 'status') {
+        if (t.value === 'any') { w.from = w.until = w.earliest = w.latest = null; }
+        if (t.value !== 'window') { w.earliest = w.latest = null; }
+      }
+      if (k === 'status' || k === 'from' || k === 'until') refreshDisc('avail', availBody);
+      return;
+    }
+    if (t.type === 'date') dateEmpty(t);
+    if (t.id === 'texts-on') {
+      var on = t.checked;
+      postJson('/staff/api/preferences', {schedule_texts: on, consent_version: +t.getAttribute('data-version') || 2}).then(function(d){
+        if (!d.ok) { t.checked = !on; $('texts-err').textContent = errText(d); return; }
+        S.prefs.schedule_texts = d.schedule_texts;
+        toast(d.schedule_texts ? 'Schedule texts on' : 'Schedule texts off');
+      });
+    }
+    if (t.id === 'lang') {
+      postJson('/staff/api/language', {language: t.value}).then(function(d){
+        if (!d.ok) { $('lang-err').textContent = errText(d); return; }
+        S.lang = d; toast('Language saved');
+      });
+    }
+  });
+  document.addEventListener('input', function(e){
+    if (e.target.id === 'msg-body') S.msgDraft = e.target.value;
+    if (e.target.id === 'pulse-note') S.pulseNote = e.target.value;
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && !$('sheet-wrap').hidden) closeSheet();
+  });
+  /* Back after five minutes away: everything again (H6) — a week
+     republished or a swap answered while the phone sat in a pocket. */
+  var hiddenAt = 0;
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) { hiddenAt = new Date().getTime(); return; }
+    if (hiddenAt && new Date().getTime() - hiddenAt > 300000) { S.loadedAt = {}; LOADERS[S.tab](); reloadBadges(); }
+  });
+  window.addEventListener('hashchange', function(){ var h = window.location.hash.replace('#', ''); if (h && h !== S.tab) show(h); });
+
+  show((window.location.hash || '#today').replace('#', ''));
+  if (S.tab !== 'today') reloadBadges();
+})();
+</script>
+</body>
+</html>

@@ -281,12 +281,16 @@ app.register_blueprint(strategy_bp)
 app.register_blueprint(strategy_mobile_bp)
 app.register_blueprint(issue_link_bp)
 
-# The staff portal. Deliberately NOT in the csrf_protect tuple above: its
-# sign-in POST happens before any session exists (there is no cookie jar to
-# double-submit from yet), and every authenticated call it makes is a JSON
-# fetch carrying its own httponly session cookie with SameSite=Lax, which is
-# the same posture mobile_bp already takes.
-from staff_routes import staff_bp
+# The staff portal. Deliberately NOT in the csrf_protect tuple above: the
+# iPhone app calls it with a Bearer token, and its sign-in POST happens
+# before any session exists. The browser portal (/staff/home, 10/7/26) is
+# cookie-authenticated, so staff_csrf_check — app-wide, for staff_bp and
+# staff_knowledge_bp only — holds every cookie-authenticated write to the
+# double-submit token; a Bearer call and the pre-session sign-in, sign-up
+# and forgot-PIN routes are left alone (staff_routes, "CSRF for the browser
+# portal").
+from staff_routes import staff_bp, staff_csrf_check
+app.before_request(staff_csrf_check)
 # Running late, announcements and the staff ↔ manager thread (staff_comms):
 # its staff routes are on staff_bp (staff_routes imports them). Its owner
 # half is the Team inbox under Labor — web CSRF-protected like strategy_bp,

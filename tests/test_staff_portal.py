@@ -82,16 +82,19 @@ def _login(client, token, membership_id, pin):
 
 # ── sign in ────────────────────────────────────────────────────────────────
 
-def test_the_staff_link_points_to_the_app_and_lists_no_one(client, db_path):
-    """No web portal for employees (owner, 9/30/26): the restaurant's link
-    names the restaurant and its join code for the app, and lists nobody."""
+def test_the_staff_link_opens_the_pin_pad_and_still_names_the_app(client, db_path):
+    """The browser PIN pad is back (owner, 10/7/26, parity audit #100 —
+    it was cut to "get the app" on 9/30/26): the restaurant's link lists
+    the people with a PIN there and posts the one-shot nonce, and still
+    names the app and the restaurant code."""
     from auth import get_join_code
     rid = _restaurant(db_path)
     _staff(db_path, rid, username="jordan", name="Jordan P.", pin="8317")
     token = get_or_create_staff_portal_token(rid, db_path=db_path)
     body = client.get(f"/staff/r/{token}").data.decode()
-    assert "Jordan P." not in body and "Cavnar AI app" in body
-    assert get_join_code(rid, db_path=db_path) in body
+    assert "Jordan P." in body and "Who&rsquo;s starting a shift?" in body
+    assert "window.submitPin" in body and 'var NONCE = "' in body and 'var NONCE = ""' not in body
+    assert "Cavnar AI app" in body and get_join_code(rid, db_path=db_path) in body
 
 
 def test_a_revoked_portal_link_stops_working(client, db_path):
