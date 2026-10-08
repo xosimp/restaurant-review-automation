@@ -2727,6 +2727,11 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # policy's rung — T2, the call site's own Sonnet 5, unless the console
     # overrides it). Every call of the turn goes out on it; with no run
     # behind the turn (the weekly plan), the call site's own model.
+    # max_tokens goes through the route with the model (context re-audit
+    # 10/7/26 #4): Route.apply raises it to THINKING_MIN_MAX_TOKENS on a
+    # thinking tier only when it is in the dict it is given, and a console
+    # override of the ladder to T3/T4 otherwise spent the turn's whole budget
+    # thinking and came back cut off.
     if _route is not None and getattr(_route, "tier", "default") != "default":
         _on_route = _route.apply
         model = _route.model
@@ -3033,8 +3038,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             break
         message = create_with_retry(
             get_client(),
-            **_on_route({"model": model}),
-            max_tokens=max_tokens,
+            **_on_route({"model": model, "max_tokens": max_tokens}),
             system=system_blocks,
             messages=_cached_messages(messages, turn_start),
             tools=tool_specs,
@@ -3201,7 +3205,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             # tool_choice changes: the message cache cannot be read here, so
             # the turn goes as it is, with no breakpoint nothing would read (#16).
             final = create_with_retry(
-                get_client(), **_on_route({"model": model}), max_tokens=max_tokens,
+                get_client(), **_on_route({"model": model, "max_tokens": max_tokens}),
                 system=system_blocks, messages=messages,
                 tools=tool_specs, tool_choice={"type": "none"},
                 restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
@@ -3217,7 +3221,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # Ran out of rounds (or of time) — answer with what it has rather than
     # looping.
     final = create_with_retry(
-        get_client(), **_on_route({"model": model}), max_tokens=max_tokens,
+        get_client(), **_on_route({"model": model, "max_tokens": max_tokens}),
         system=system_blocks, messages=messages,
         tools=tool_specs, tool_choice={"type": "none"},
         restaurant_id=restaurant.id, action=action, readiness=_ready_ask,

@@ -224,6 +224,29 @@ def test_the_canary_column_is_added_at_boot_to_an_old_table(tmp_path, monkeypatc
     orch.init_ai_orchestration(path)          # twice: no error
 
 
+# ── #4 an Ask turn on a thinking tier keeps room to answer ──────────────────
+
+from test_orch_dsr_ask import _M, _T, _ask_rest, _script, ask_env  # noqa: E402,F401  (fixture)
+
+
+def test_an_ask_turn_overridden_to_a_thinking_tier_gets_the_thinking_minimum(monkeypatch, ask_env, orch_clean):
+    import ai_workflows as wf
+    import ask_cavnar
+    orch = orch_clean
+    r = _ask_rest()
+    calls = _script(monkeypatch, [_M("end_turn", [_T("You open at 11.")])])
+    ask_cavnar.ask_with_tools(r, "when do we open")
+    plain = calls[-1]
+    assert plain["model"] == wf.route_for(wf.POLICIES["ask_cavnar"], 0).model
+    assert "thinking" not in plain and 0 < plain["max_tokens"] < wf.THINKING_MIN_MAX_TOKENS
+    orch.set_override("ask_cavnar", {"ladder": ["T3"]}, actor="test")
+    ask_cavnar.ask_with_tools(r, "when do we close")
+    deep = calls[-1]
+    assert deep["model"] == wf.route_for(wf.policy("ask_cavnar"), 0).model
+    assert deep["thinking"] == {"type": "adaptive"}
+    assert deep["max_tokens"] >= wf.THINKING_MIN_MAX_TOKENS, "the thinking shares max_tokens with the answer"
+
+
 def test_the_canary_is_documented():
     env = open("docs/ops/ENVIRONMENT.md", encoding="utf-8").read()
     lib = open("PROMPT_LIBRARY.md", encoding="utf-8").read()
