@@ -56,6 +56,7 @@ struct MarketingAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .cavnarCard()
                 }
+                topPostCard
                 attributionCard
                 // How you compare — the Benchmark Engine's card (#23).
                 HowYouCompareCard(module: "marketing")
@@ -193,6 +194,35 @@ struct MarketingAnalyticsSection: View {
     /// A period against the period before it. "Total reach 4,231" with no
     /// denominator and no trend is a number, not a metric — and engagement
     /// RATE is the one that survives a follower count changing.
+    /// "Top performing post" — named only over the floor of measured posts
+    /// (AUX-13); below it, when one will be named. The web's
+    /// `#mkt-perf-top-wrap`.
+    @ViewBuilder
+    private var topPostCard: some View {
+        if let p = viewModel.performance {
+            if let title = p.topPostTitle {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("TOP PERFORMING POST")
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.cavnarEmber2)
+                    Text(title)
+                        .font(.cavnarBody(15, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let metrics = p.topPostMetrics {
+                        HomeMixedText.make(metrics, size: 13, weight: 500, color: .cavnarInk3)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cavnarCard()
+            } else if let wait = p.topPostWaitLine {
+                HomeMixedText.make(wait, size: 13, weight: 500, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     private func statsTile(_ window: MarketingWindow) -> some View {
         HStack(alignment: .center, spacing: 8) {
             bigStat(window.reach.formatted(), "Reach", window.change.reach)

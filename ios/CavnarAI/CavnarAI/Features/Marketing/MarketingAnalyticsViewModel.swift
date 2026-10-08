@@ -20,6 +20,10 @@ struct MarketingPerformance: Decodable {
     /// "Metrics synced 9/21/26", tone warn when the nightly Meta pull is
     /// stale or failing (DH4-8). Lenient; absent on an older server.
     var metricsSyncField: LenientStatusLine? = nil
+    /// One definition of the best post (AUX-13): named only once this many
+    /// posts are measured; `measuredPosts` so far. Absent on an older server.
+    var topPostFloor: Int? = nil
+    var measuredPosts: Int? = nil
 
     var metricsSync: ServerStatusLine? { metricsSyncField?.value }
 
@@ -30,6 +34,34 @@ struct MarketingPerformance: Decodable {
         case totalEngagement = "total_engagement"
         case topPost = "top_post"
         case metricsSyncField = "metrics_sync"
+        case topPostFloor = "top_post_floor"
+        case measuredPosts = "measured_posts"
+    }
+
+    /// "Fall menu · instagram" — the topic cut at 60, as the web cuts it.
+    var topPostTitle: String? {
+        guard let top = topPost else { return nil }
+        var topic = (top.topic ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if topic.count > 60 { topic = String(topic.prefix(60)).trimmingCharacters(in: .whitespaces) + "\u{2026}" }
+        if let platform = top.platform, !platform.isEmpty { return topic.isEmpty ? platform : "\(topic) \u{00B7} \(platform)" }
+        return topic.isEmpty ? nil : topic
+    }
+
+    /// "1,204 reach · 38 likes · 4 comments · 2 shares", what is above zero.
+    var topPostMetrics: String? {
+        guard let top = topPost else { return nil }
+        var parts: [String] = []
+        if top.reach > 0 { parts.append("\(top.reach.formatted()) reach") }
+        if top.likes > 0 { parts.append("\(top.likes) likes") }
+        if top.comments > 0 { parts.append("\(top.comments) comments") }
+        if top.shares > 0 { parts.append("\(top.shares) shares") }
+        return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// Without a top post: when one will be named.
+    var topPostWaitLine: String? {
+        guard topPost == nil, let floor = topPostFloor else { return nil }
+        return "A top post is named once \(floor) posts are measured \u{2014} \(measuredPosts ?? 0) so far."
     }
 }
 

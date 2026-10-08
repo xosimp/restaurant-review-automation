@@ -21,6 +21,28 @@ struct MarketingContentType: Decodable, Identifiable, Hashable {
     let id: String
     let label: String
     let description: String
+    /// "social", "text" or "email" (marketing.CONTENT_CHANNELS). Content
+    /// drafts and publishes social types only; a text or an email type is
+    /// written in the Campaign Studio (web d0ef5a85, AUX-4). Nil from an
+    /// older server, which is then read from the type's id.
+    var channel: String? = nil
+
+    /// The channel, from the server or — on an older one — the type itself.
+    var resolvedChannel: String {
+        if let channel, !channel.isEmpty { return channel }
+        return MarketingContentType.guestChannel(of: id) ?? "social"
+    }
+
+    var isSocial: Bool { resolvedChannel == "social" }
+
+    /// "text" or "email" for a type that goes to guests, else nil.
+    static func guestChannel(of type: String) -> String? {
+        switch type {
+        case "loyalty_nudge", "guest_sms": return "text"
+        case "weekly_email": return "email"
+        default: return nil
+        }
+    }
 
     /// Platform ceilings, used for the live counter under the editor. The web
     /// tab has always shown these; the app let an owner send a 3,000-character
@@ -259,6 +281,10 @@ final class MarketingViewModel {
     ]
     var contentTypes: [MarketingContentType] = MarketingViewModel.fallbackContentTypes
 
+    /// What the Content tab offers: social types only. Text and email are
+    /// the Campaign Studio's (it sends them to the right audience).
+    var socialContentTypes: [MarketingContentType] { contentTypes.filter(\.isSocial) }
+
     /// How long to wait on a model. Generating a post or a week of calendar
     /// ideas takes several seconds and occasionally much longer; the
     /// session-wide 20s is tuned for ordinary reads and was cutting these off
@@ -355,9 +381,10 @@ final class MarketingViewModel {
         metricsSync = response.metricsSync?.value
         if let types = response.contentTypes, !types.isEmpty {
             contentTypes = types
-            if !types.contains(where: { $0.id == selectedType }) {
-                selectedType = types[0].id
-            }
+        }
+        // The generator holds a social type only.
+        if !socialContentTypes.contains(where: { $0.id == selectedType }), let first = socialContentTypes.first {
+            selectedType = first.id
         }
     }
 
@@ -536,12 +563,17 @@ final class MarketingViewModel {
 
     // MARK: - Publish
 
-    private struct PostBody: Encodable {
+    /// A direct post. The photo goes by its library id (`media_id`), which
+    /// the route resolves and checks against this restaurant exactly as the
+    /// web's does (social_routes.photo_url_from) — Facebook used to drop it
+    /// and Google never carried one (parity audit #6, CS-20).
+    struct PostBody: Encodable {
         let caption: String
         let imageUrl: String?
         let topic: String
         var contentLogId: Int? = nil
         var draftRef: Int? = nil
+        var mediaId: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case caption
@@ -549,6 +581,7 @@ final class MarketingViewModel {
             case topic
             case contentLogId = "content_log_id"
             case draftRef = "draft_ref"
+            case mediaId = "media_id"
         }
     }
 
@@ -591,24 +624,25 @@ final class MarketingViewModel {
         }
     }
 
-    func postToInstagram(imageURL: String?) async {
+    func postToInstagram(imageURL: String?, mediaId: Int? = nil) async {
         guard hasDraft else { return }
         let url = (imageURL ?? "").trimmingCharacters(in: .whitespaces)
-        guard !url.isEmpty else {
+        guard !url.isEmpty || mediaId != nil else {
             postError = "Instagram needs a photo — add one above first."
             return
         }
         await publish("/mobile/api/marketing/post-to-instagram",
                       body: PostBody(caption: draft, imageUrl: url, topic: lastGeneratedTopic,
-                                     contentLogId: contentLogId, draftRef: draftRef),
+                                     contentLogId: contentLogId, draftRef: draftRef, mediaId: mediaId),
                       platform: "Instagram")
     }
 
-    func postToFacebook() async {
+    /// With the photo the preview showed, by its library id.
+    func postToFacebook(mediaId: Int? = nil) async {
         guard hasDraft else { return }
         await publish("/mobile/api/marketing/post-to-facebook",
                       body: PostBody(caption: draft, imageUrl: nil, topic: lastGeneratedTopic,
-                                     contentLogId: contentLogId, draftRef: draftRef),
+                                     contentLogId: contentLogId, draftRef: draftRef, mediaId: mediaId),
                       platform: "Facebook")
     }
 
@@ -640,16 +674,16 @@ final class MarketingViewModel {
     /// One tap, every selected channel, one after another — each through its
     /// own route, so each keeps its own duplicate guard and its own error.
     /// Confirmed by the caller first (it goes outside the restaurant).
-    func postToAll(imageURL: String?) async {
-        let targets = socialTargets(hasMedia: !(imageURL ?? "").isEmpty)
+    func postToAll(media: MarketingMedia?) async {
+        let targets = socialTargets(hasMedia: media != nil)
         guard hasDraft, !targets.isEmpty else { return }
         var posted: [String] = []
         var failures: [String] = []
         for platform in targets {
             if platform == "Instagram" {
-                await postToInstagram(imageURL: imageURL)
+                await postToInstagram(imageURL: media?.url, mediaId: media?.id)
             } else {
-                await postToFacebook()
+                await postToFacebook(mediaId: media?.id)
             }
             if alreadyPosted(to: platform) {
                 posted.append(platform)
@@ -661,12 +695,14 @@ final class MarketingViewModel {
         postError = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 
-    private struct GooglePostBody: Encodable {
+    struct GooglePostBody: Encodable {
         let summary: String
         let ctaType: String
         let ctaUrl: String
         var contentLogId: Int? = nil
         var draftRef: Int? = nil
+        /// The photo, by its library id (the route resolves it).
+        var mediaId: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case summary
@@ -674,13 +710,14 @@ final class MarketingViewModel {
             case ctaUrl = "cta_url"
             case contentLogId = "content_log_id"
             case draftRef = "draft_ref"
+            case mediaId = "media_id"
         }
     }
 
     /// Publishes the generated Google Promo copy to the connected Google
     /// Business Profile listing — the step this content type was always
     /// written for but never had.
-    func postToGoogle() async {
+    func postToGoogle(mediaId: Int? = nil) async {
         guard hasDraft else { return }
         let link = googleCTALink.trimmingCharacters(in: .whitespaces)
         if googleCTA.needsLink && link.isEmpty {
@@ -694,7 +731,7 @@ final class MarketingViewModel {
         await publish("/mobile/api/marketing/google-post",
                       body: GooglePostBody(summary: draft, ctaType: googleCTA.rawValue,
                                            ctaUrl: googleCTA.needsLink ? link : "",
-                                           contentLogId: contentLogId, draftRef: draftRef),
+                                           contentLogId: contentLogId, draftRef: draftRef, mediaId: mediaId),
                       platform: "Google")
     }
 }

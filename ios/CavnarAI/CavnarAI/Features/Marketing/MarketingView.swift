@@ -2,6 +2,7 @@ import SwiftUI
 
 private enum MarketingSubTab: String, CaseIterable, Identifiable {
     case content = "Content"
+    case campaigns = "Campaigns"
     case analytics = "Analytics"
     var id: String { rawValue }
 }
@@ -20,9 +21,29 @@ private enum MarketingShelfDestination: String, Identifiable {
 }
 
 struct MarketingView: View {
+    /// Where a route asked to land (nav.py: marketing, marketing/
+    /// opportunities, marketing/campaigns, marketing/text-club,
+    /// marketing/drafts, …) and the item in it — an opportunity card's key,
+    /// or a drafted post's id (the quiet-night push's post_draft_id).
+    var focusSection: String? = nil
+    var focusItem: String? = nil
+
+    init(focusSection: String? = nil, focusItem: String? = nil) {
+        self.focusSection = focusSection
+        self.focusItem = focusItem
+    }
+
+    @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel = MarketingViewModel()
     @State private var analyticsViewModel = MarketingAnalyticsViewModel()
     @State private var compose = MarketingComposeViewModel()
+    @State private var opportunities = MarketingOpportunityViewModel()
+    @State private var campaigns = CampaignsTabViewModel()
+    /// The Campaign Studio, open on one seed.
+    @State private var studioSeed: StudioSeed?
+    @State private var focusApplied = false
+    /// The Google post's confirm (it goes live on the listing at once).
+    @State private var confirmingGoogle = false
     @State private var subTab: MarketingSubTab = .content
     @State private var showingPreview = false
     @State private var showingSchedule = false
@@ -34,6 +55,8 @@ struct MarketingView: View {
     /// watches it and moves to the caption box. A token rather than a Bool so
     /// tapping a second day still scrolls.
     @State private var scrollToDraft: UUID?
+    /// Bumped to bring the Opportunity Feed into view (a linked card).
+    @State private var scrollToOpportunities: UUID?
     /// Index into viewModel.calendar of the day the focus card is showing.
     /// Starts on today when today is in the week, else the first day.
     @State private var selectedDay = 0
@@ -53,10 +76,18 @@ struct MarketingView: View {
             ScrollViewReader { scroll in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if subTab == .content {
+                    if subTab == .campaigns {
+                        CampaignsTabSection(viewModel: campaigns, isOwner: isOwner,
+                                            onOpenStudio: { studioSeed = $0 },
+                                            onOpenTextClub: { shelfDestination = .guestTextClub })
+                    } else if subTab == .content {
                         if viewModel.stats != nil {
                             CachedDataNotice(text: viewModel.stalenessNotice)
                             outcomeRow
+                            MarketingOpportunitySection(viewModel: opportunities, draftingKey: nil) { card in
+                                draftFromCard(card)
+                            }
+                            .id(Self.opportunitiesAnchor)
                             // How current the post metrics are (DH4-8),
                             // amber when the nightly pull is stale or failing.
                             if let sync = viewModel.metricsSync {
@@ -85,10 +116,21 @@ struct MarketingView: View {
             // reloaded the CONTENT view model regardless, so pulling on
             // Analytics did nothing visible.
             .cavnarEmberRefreshable {
-                if subTab == .content {
-                    await viewModel.load()
-                } else {
+                switch subTab {
+                case .content:
+                    async let a: Void = viewModel.load()
+                    async let b: Void = opportunities.load(quiet: true)
+                    _ = await (a, b)
+                case .campaigns:
+                    await campaigns.load()
+                case .analytics:
                     await analyticsViewModel.refresh()
+                }
+            }
+            .onChange(of: scrollToOpportunities) { _, token in
+                guard token != nil else { return }
+                withAnimation(.easeOut(duration: 0.45)) {
+                    scroll.scrollTo(Self.opportunitiesAnchor, anchor: .top)
                 }
             }
             .onChange(of: scrollToDraft) { _, token in
@@ -116,17 +158,16 @@ struct MarketingView: View {
                 MarketingQueueView(viewModel: compose)
             case .drafts:
                 MarketingDraftsView(viewModel: compose) { draft in
-                    // An expired draft can't be posted or sent; the row
-                    // doesn't offer Open, and this holds regardless.
-                    guard draft.canOpenInComposer else { return }
-                    viewModel.draft = draft.body
-                    viewModel.hasDraft = true
-                    if let type = draft.contentType { viewModel.selectedType = type }
-                    viewModel.topic = draft.topic ?? ""
-                    // Its id and photo too: Save updates this draft, and
-                    // Post / Schedule carry the photo it was saved with.
-                    compose.open(draft)
-                    shelfDestination = nil
+                    openDraft(draft)
+                }
+            }
+        }
+        .sheet(item: $studioSeed) { seed in
+            CampaignStudioView(seed: seed, connected: viewModel.channels, isOwner: isOwner) {
+                Task {
+                    async let a: Void = campaigns.load()
+                    async let b: Void = opportunities.load(quiet: true)
+                    _ = await (a, b)
                 }
             }
         }
@@ -137,6 +178,15 @@ struct MarketingView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
         .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
+        .task { await opportunities.load() }
+        .task(id: subTab) {
+            if subTab == .campaigns { await campaigns.load() }
+        }
+        .task {
+            guard !focusApplied else { return }
+            focusApplied = true
+            await applyFocus()
+        }
         // New copy is a new draft, not an edit of the one last opened.
         .onChange(of: viewModel.isGenerating) { _, generating in
             if generating { compose.savedDraftID = nil }
@@ -151,10 +201,10 @@ struct MarketingView: View {
         // Reopening the app after a while re-reads whichever tab is on
         // screen rather than showing earlier numbers as current (audit 4.2).
         .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) {
-            if subTab == .content {
-                await viewModel.load()
-            } else {
-                await analyticsViewModel.refresh()
+            switch subTab {
+            case .content: await viewModel.load()
+            case .campaigns: await campaigns.load()
+            case .analytics: await analyticsViewModel.refresh()
             }
         }
         .onChange(of: viewModel.calendar.map(\.id)) { _, _ in
@@ -382,7 +432,7 @@ struct MarketingView: View {
                 fillsWidth: true,
                 action: { Task { await viewModel.generate() } }
             ) {
-                ForEach(viewModel.contentTypes) { type in
+                ForEach(viewModel.socialContentTypes) { type in
                     Button {
                         viewModel.selectedType = type.id
                     } label: {
@@ -393,6 +443,13 @@ struct MarketingView: View {
                         }
                     }
                 }
+            }
+
+            // Content is social-only (web d0ef5a85): a text or an email is
+            // written in the Campaign Studio, which sends it to an audience.
+            HStack(spacing: 10) {
+                guestChannelButton("Write a text", systemImage: "message", channel: .text)
+                guestChannelButton("Write an email", systemImage: "envelope", channel: .email)
             }
 
             if viewModel.isGenerating {
@@ -576,9 +633,10 @@ struct MarketingView: View {
         }
     }
 
-    /// A publish button for an account that isn't connected can only fail, and
-    /// Instagram/Facebook has no connect flow in the app — so this says where
-    /// to go instead of offering a dead end.
+    /// A publish button for an account that isn't connected can only fail —
+    /// so this says where to connect it (Account → Connections, where
+    /// Instagram and Google connect from the phone) instead of offering a
+    /// dead end.
     private var notConnectedNotice: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "link.badge.plus").foregroundStyle(Color.cavnarEmber)
@@ -650,7 +708,7 @@ struct MarketingView: View {
             .confirmationDialog("Post this caption to \(MarketingViewModel.channelList(targets))?",
                                 isPresented: $confirmingPostAll, titleVisibility: .visible) {
                 Button(targets.count == 1 ? "Post to \(targets[0])" : "Post to \(targets.count) channels") {
-                    Task { await viewModel.postToAll(imageURL: compose.media?.url) }
+                    Task { await viewModel.postToAll(media: compose.media) }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -680,13 +738,32 @@ struct MarketingView: View {
                     .focused($focusedField, equals: .ctaLink)
             }
 
+            // It goes live on the listing at once, with the photo above —
+            // confirmed first, like every other publish.
             Button {
-                Task { await viewModel.postToGoogle() }
+                Haptic.light()
+                confirmingGoogle = true
             } label: {
-                Text("Post to Google").frame(maxWidth: .infinity)
+                Group {
+                    if viewModel.isPosting {
+                        CavnarShimmerText(text: "Posting\u{2026}", color: .white)
+                    } else {
+                        Text("Post to Google")
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(CavnarPrimaryButtonStyle())
             .disabled(viewModel.isPosting || viewModel.isOverLimit || viewModel.alreadyPosted(to: "Google"))
+            .confirmationDialog("Post this to your Google listing?", isPresented: $confirmingGoogle,
+                                titleVisibility: .visible) {
+                Button(compose.media == nil ? "Post to Google" : "Post with the photo") {
+                    Task { await viewModel.postToGoogle(mediaId: compose.media?.id) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("It goes live on your Business Profile right away.")
+            }
         }
     }
 
@@ -958,12 +1035,119 @@ struct MarketingView: View {
     /// the draft, which lands hundreds of points above the calendar. Only
     /// scroll once there is actually something there to scroll to.
     private func write(_ idea: ContentCalendarIdea) async {
+        // A calendar SMS or Email idea is written in the Campaign Studio
+        // on that channel, never as a post (AUX-4).
+        if let channel = MarketingContentType.guestChannel(of: idea.type) {
+            studioSeed = StudioSeed(prompt: idea.angle, channels: [channel == "email" ? .email : .text],
+                                    recKey: idea.recKey, autoCreate: true)
+            return
+        }
         await viewModel.generate(from: idea)
         guard viewModel.hasDraft else { return }
         justWrote = true
         scrollToDraft = UUID()
         try? await Task.sleep(for: .seconds(1.4))
         justWrote = false
+    }
+}
+
+// MARK: - Routing and the Studio
+
+extension MarketingView {
+    static let opportunitiesAnchor = "marketing-opportunities"
+
+    var isOwner: Bool { sessionStore.currentUser?.isOwner ?? false }
+
+    /// "Write a text" / "Write an email" — the Studio on that channel, the
+    /// topic typed so far as its goal.
+    fileprivate func guestChannelButton(_ title: String, systemImage: String, channel: StudioChannel) -> some View {
+        Button {
+            Haptic.light()
+            let goal = viewModel.topic.trimmingCharacters(in: .whitespacesAndNewlines)
+            studioSeed = StudioSeed(prompt: goal, channels: [channel], autoCreate: !goal.isEmpty)
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.cavnarBody(14, weight: 600))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarSecondaryButtonStyle())
+        .accessibilityHint("Opens the Campaign Studio, which sends it to an audience you pick")
+    }
+
+    /// "Draft it" on a feed card: the Studio, the goal typed and only the
+    /// card's channels that can reach someone on; the card's key rides on
+    /// every send (rec_key).
+    func draftFromCard(_ card: MarketingOpportunity) {
+        let wanted = card.wantedChannels.compactMap(StudioChannel.init(rawValue:))
+        studioSeed = StudioSeed(prompt: card.goal, channels: wanted, recKey: card.key, autoCreate: true)
+    }
+
+    /// A saved draft opened from the shelf: a post goes to the composer; a
+    /// text or an email draft (the old quiet-night guest text, a saved
+    /// Re-engagement text or Weekly email) goes to the Studio on its channel.
+    func openDraft(_ draft: MarketingDraft) {
+        // An expired draft can't be posted or sent; the row doesn't offer
+        // Open, and this holds regardless.
+        guard draft.canOpenInComposer else { return }
+        if let channel = MarketingContentType.guestChannel(of: draft.contentType ?? "") {
+            shelfDestination = nil
+            studioSeed = StudioSeed(prompt: draft.topic ?? "", channels: [channel == "email" ? .email : .text])
+            return
+        }
+        viewModel.draft = draft.body
+        viewModel.hasDraft = true
+        if let type = draft.contentType { viewModel.selectedType = type }
+        viewModel.topic = draft.topic ?? ""
+        // Its id and photo too: Save updates this draft, and
+        // Post / Schedule carry the photo it was saved with.
+        compose.open(draft)
+        shelfDestination = nil
+    }
+
+    /// Lands where the route asked: the sub-tab, the feed card, the Text
+    /// Club, the queue, the drafts — or a drafted post by id.
+    func applyFocus() async {
+        let section = (focusSection ?? "").lowercased()
+        let item = focusItem?.trimmingCharacters(in: .whitespaces)
+        switch section {
+        case "campaigns", "campaign", "guests", "newsletter":
+            subTab = .campaigns
+        case "analytics":
+            subTab = .analytics
+        case "text-club", "textclub", "guest-text-club", "contacts":
+            shelfDestination = .guestTextClub
+        case "scheduled", "queue", "schedule":
+            shelfDestination = .scheduled
+        case "opportunities", "opportunity":
+            subTab = .content
+            if !opportunities.loaded { await opportunities.load() }
+            await opportunities.focus(item)
+            scrollToOpportunities = UUID()
+            return
+        case "drafts", "draft":
+            if let id = item.flatMap({ Int($0) }) { await openDraft(id: id) } else { shelfDestination = .drafts }
+            return
+        default:
+            break
+        }
+        // marketing with a post_draft_id: the drafted post, in the composer.
+        if section.isEmpty || section == "marketing" || section == "content",
+           let id = item.flatMap({ Int($0) }) {
+            await openDraft(id: id)
+        }
+    }
+
+    private func openDraft(id: Int) async {
+        if !compose.drafts.contains(where: { $0.id == id }) { await compose.loadDrafts() }
+        if let draft = compose.drafts.first(where: { $0.id == id }), draft.canOpenInComposer {
+            subTab = .content
+            openDraft(draft)
+            scrollToDraft = UUID()
+        } else {
+            shelfDestination = .drafts
+        }
     }
 }
 

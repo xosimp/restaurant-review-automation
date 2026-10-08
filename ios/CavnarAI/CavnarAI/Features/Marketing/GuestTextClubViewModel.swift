@@ -84,16 +84,23 @@ final class GuestTextClubViewModel {
     var ledger: ConsentLedger?
     var linkURL = ""
 
-    // Newsletter
+    // Newsletter — written and sent in the Campaign Studio (AI draft,
+    // design, preview, audience, the mailing address); this screen shows
+    // who's subscribed and opens it.
     var subscriberCount = 0
     /// The subscriber count failed to load — not the same as nobody having
     /// opted in, which is what the screen used to say (CLIENT-58).
     private(set) var newsletterLoadFailed = false
-    var newsletterBody = ""
-    var newsletterSubject = ""
-    var isSendingNewsletter = false
-    var newsletterResult: String?
     var newsletterError: String?
+
+    /// The guest overview: whether texts can go now and the window's words
+    /// (guest_sms_window_label) — nothing on this screen hard-codes them.
+    var overview: GuestOverview?
+    /// What the send gate flagged on the last send (reasons + sentence),
+    /// for the "Cavnar AI flagged this" sheet.
+    var gateFlag: SendGateFlag?
+    /// The campaign whose Stop sending is in flight.
+    private(set) var stoppingID: Int?
 
     private let client: APIClient
 
@@ -101,10 +108,44 @@ final class GuestTextClubViewModel {
         self.client = client
     }
 
-    /// How many this campaign would actually reach, which is the number an
-    /// owner wants before pressing send, not after.
+    /// How many this campaign would actually reach NOW — the three-day
+    /// spacing and any campaign still sending taken out (`eligible`, CS-5).
+    /// The number "Send to N" promises, before pressing send, not after.
     var selectedSegmentCount: Int {
+        segments.first { $0.key == selectedSegment }?.reach ?? 0
+    }
+
+    /// Everyone in the audience who joined by text — the gap to
+    /// `selectedSegmentCount` is who was texted in the last few days.
+    var selectedSegmentTotal: Int {
         segments.first { $0.key == selectedSegment }?.count ?? 0
+    }
+
+    /// The window's words, from the server (guest_sms_window_label).
+    var smsWindow: String? { overview?.window ?? ledger?.window }
+    /// False outside the window: a send then waits for it (`hold`).
+    var sendingNow: Bool { overview?.sendingNow != false }
+    var opensAt: String { SMSWindow.opens(smsWindow) ?? "sending hours open" }
+
+    func loadOverview() async {
+        if let o: GuestOverview = try? await client.send("/mobile/api/guest-overview", hapticOnError: false) {
+            overview = o
+            if joinURL == nil { joinURL = o.joinURL }
+            if receiptHint == nil { receiptHint = o.receiptHint }
+        }
+    }
+
+    /// The reads this screen needs, at once rather than one after another
+    /// (parity audit drift: six serial loads).
+    func loadAll() async {
+        async let a: Void = load()
+        async let b: Void = loadJoinLink()
+        async let c: Void = loadSegments()
+        async let d: Void = loadHistory()
+        async let e: Void = loadNewsletter()
+        async let f: Void = loadWinback()
+        async let g: Void = loadOverview()
+        _ = await (a, b, c, d, e, f, g)
     }
 
     var selectedSegmentHelp: String? {
@@ -130,11 +171,13 @@ final class GuestTextClubViewModel {
         }
         if audienceUnknown { campaignError = nil }
         audienceUnknown = false
+        let firstLoad = segments.isEmpty
         segments = response.segments
         segmentDefaults = response.defaults
         // Picking a tone suggests the audience it was written for, instead of
-        // leaving the two unrelated the way "win-back to everyone" was.
-        if let suggested = response.defaults[campaignType] { selectedSegment = suggested }
+        // leaving the two unrelated the way "win-back to everyone" was. A
+        // re-read (after a send, for the new counts) keeps the owner's pick.
+        if firstLoad, let suggested = response.defaults[campaignType] { selectedSegment = suggested }
     }
 
     func campaignTypeChanged() {
@@ -182,50 +225,6 @@ final class GuestTextClubViewModel {
         } catch {
             newsletterLoadFailed = true
             newsletterError = (error as? APIClient.APIError)?.message ?? "Couldn't load your email list."
-        }
-    }
-
-    private struct NewsletterBody: Encodable {
-        let body: String
-        let subject: String?
-    }
-
-    private struct NewsletterResponse: Decodable {
-        let ok: Bool
-        let sent: Int?
-        let total: Int?
-        /// Still to go out: the server sends the first batch now and the
-        /// rest from its scheduler over the next few minutes.
-        let queued: Int?
-        let subject: String?
-        let error: String?
-    }
-
-    func sendNewsletter() async {
-        isSendingNewsletter = true
-        newsletterError = nil
-        newsletterResult = nil
-        defer { isSendingNewsletter = false }
-        do {
-            let response: NewsletterResponse = try await client.send(
-                "/mobile/api/guest-newsletter", method: .post,
-                body: NewsletterBody(body: newsletterBody,
-                                     subject: newsletterSubject.isEmpty ? nil : newsletterSubject))
-            if response.ok {
-                Haptic.success()
-                if let queued = response.queued, queued > 0 {
-                    newsletterResult = "Sending to \(response.total ?? 0) — \(response.sent ?? 0) out so far, the rest over the next few minutes"
-                } else {
-                    newsletterResult = "Sent to \(response.sent ?? 0) of \(response.total ?? 0)"
-                }
-                newsletterBody = ""
-            } else {
-                newsletterError = response.error ?? "Couldn't send that newsletter."
-            }
-        } catch let error as APIClient.APIError {
-            newsletterError = error.message
-        } catch {
-            newsletterError = "Couldn't send that newsletter."
         }
     }
 
@@ -420,30 +419,36 @@ final class GuestTextClubViewModel {
         }
     }
 
-    private struct SendBody: Encodable {
+    /// Every key the send route reads, as the web's snapshot sends them.
+    struct SendBody: Encodable {
         let message: String
         let segment: String
         /// The campaign kind, as the web sends it: the server labels the
         /// tracked link with it (it read "campaign" for every phone send).
         let type: String
         let linkUrl: String?
+        /// Outside the window the owner was told it waits for the window to
+        /// open: queued for then, not refused (CS-6).
+        var hold: Bool = false
+        var targetDay: String = ""
+        var recKey: String = ""
         /// The model draft the text started from, when it did.
         var draftRef: Int? = nil
 
         enum CodingKeys: String, CodingKey {
-            case message, segment, type
+            case message, segment, type, hold
             case linkUrl = "link_url"
             case draftRef = "draft_ref"
+            case targetDay = "target_day"
+            case recKey = "rec_key"
         }
     }
 
-    private struct SendResponse: Decodable {
-        let ok: Bool
-        let sent: Int?
-        let total: Int?
-        let queued: Bool?
-        let error: String?
-    }
+    private typealias SendResponse = CampaignSendResult
+
+    /// The line under a send that was queued: "Texting 31 guests" or "31
+    /// texts wait until 8:00 AM, then go".
+    private(set) var sendLine: String?
 
     func sendCampaign() async {
         // A second tap while the first send is in flight must not start a
@@ -460,20 +465,14 @@ final class GuestTextClubViewModel {
             let response: SendResponse = try await client.send(
                 "/mobile/api/guest-campaign/send", method: .post,
                 body: SendBody(message: draftMessage, segment: selectedSegment, type: campaignType,
-                               linkUrl: linkURL.isEmpty ? nil : linkURL, draftRef: draftRef)
+                               linkUrl: linkURL.isEmpty ? nil : linkURL, hold: !sendingNow, draftRef: draftRef),
+                retryTransient: false
             )
-            sentCount = response.sent
-            // The server now texts in the background and answers at once
-            // with how many it is sending to.
-            queuedCount = response.queued == true ? response.total : nil
-            if response.ok {
-                Haptic.success()
-                didSend = true
-                await loadHistory()
-                await load()
-            } else {
-                campaignError = response.error ?? "Couldn't send the campaign."
-            }
+            await handleSend(response)
+        } catch let error as APIClient.APIError where error.status != nil && error.decodeBody(SendResponse.self) != nil {
+            // A refusal with its reasons (the send gate, an unknown
+            // audience, too long): said, and the flagged one opens why.
+            await handleSend(error.decodeBody(SendResponse.self) ?? SendResponse())
         } catch let error as APIClient.APIError where error.isRetryable || error.status == nil {
             // The answer was lost, not necessarily the send: the server may
             // still be texting. "Tap to retry" invited a second blast. The
@@ -487,6 +486,53 @@ final class GuestTextClubViewModel {
             campaignError = "Lost the connection mid-send. Check the campaign history before sending again — anyone already texted is skipped."
             await loadHistory()
         }
+    }
+
+    private func handleSend(_ response: SendResponse) async {
+        sentCount = response.sent
+        // The server texts in the background and answers at once with how
+        // many it is sending to — or that they wait for the window.
+        queuedCount = response.queued ? response.total : nil
+        if response.ok {
+            Haptic.success()
+            didSend = true
+            sendLine = response.acceptedLine
+            async let h: Void = loadHistory()
+            async let c: Void = load()
+            async let s: Void = loadSegments()
+            _ = await (h, c, s)
+        } else if response.isGateFlag {
+            gateFlag = SendGateFlag(channel: "text", message: response.error ?? "Cavnar AI held this text back.",
+                                    reasons: response.reasons)
+            campaignError = "Cavnar AI flagged this text \u{2014} nothing was sent."
+        } else {
+            if response.isQuietHours { overview?.sendingNow = false }
+            campaignError = response.error ?? "Couldn't send the campaign."
+        }
+    }
+
+    /// "Discard" on a flagged text.
+    func discardDraft() {
+        draftMessage = ""
+        draftRef = nil
+        campaignError = nil
+    }
+
+    /// Stop a campaign still sending or waiting for the window: its pending
+    /// texts never go. Confirmed by the caller first.
+    func stop(_ campaign: GuestCampaign) async {
+        stoppingID = campaign.id
+        defer { stoppingID = nil }
+        do {
+            let r: SendResponse = try await client.send("/mobile/api/guest-campaign/\(campaign.id)/cancel",
+                                                        method: .post, retryTransient: false)
+            if r.ok { Haptic.success() } else { campaignError = r.error ?? "Couldn\u{2019}t stop it." }
+        } catch let error as APIClient.APIError {
+            campaignError = error.decodeBody(SendResponse.self)?.error ?? error.message
+        } catch {
+            campaignError = "Couldn\u{2019}t stop it."
+        }
+        await loadHistory()
     }
 
     // MARK: - Suggested win-back
@@ -534,7 +580,7 @@ final class GuestTextClubViewModel {
         }
     }
 
-    private struct WinbackSendBody: Encodable { let message: String }
+    private typealias WinbackBody = WinbackSendBody
     private struct WinbackSendResponse: Decodable {
         let ok: Bool
         let queued: Bool?
@@ -550,7 +596,7 @@ final class GuestTextClubViewModel {
         do {
             let r: WinbackSendResponse = try await client.send(
                 "/mobile/api/guest-winback/\(draft.id)/send", method: .post,
-                body: WinbackSendBody(message: winbackMessage),
+                body: WinbackBody(message: winbackMessage, hold: !sendingNow),
                 retryTransient: false)
             if r.ok {
                 Haptic.success()

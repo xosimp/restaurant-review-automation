@@ -50,7 +50,7 @@ struct ModuleDestinationView: View {
         case "labor":
             LaborView(focusSection: route?.section, focusItem: route?.itemId)
         case "marketing":
-            MarketingView()
+            MarketingView(focusSection: route?.section, focusItem: route?.itemId ?? route?.navPath?.query["card"] ?? route?.navPath?.rest.dropFirst().first)
         case "intel":
             IntelView()
         default:
