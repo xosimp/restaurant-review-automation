@@ -291,6 +291,31 @@ def test_a_row_change_keeps_l2_and_the_version_still_moves_with_the_row():
     assert _l2(rid, "memory") == []
 
 
+# ── #8 a weekly stored read states dates, not ages ──────────────────────────
+
+def test_the_food_window_gives_the_count_dates_never_their_ages():
+    import inventory
+    a = {"count_freshness": {"items_total": 12, "counted_recent": 9, "fresh_days": 7,
+                             "oldest_count_at": "2026-10-01", "oldest_age_days": 6, "last_count_at": "2026-10-05",
+                             "age_days": 2}}
+    _waste, window = inventory.food_prompt_data_lines(a)
+    assert "10/1/26" in window and "days ago" not in window
+    _waste, window = inventory.food_prompt_data_lines({"count_freshness": {"last_count_at": "2026-10-05",
+                                                                           "age_days": 2}})
+    assert "10/5/26" in window and "ago" not in window
+
+
+def test_both_weekly_reads_tell_the_model_to_date_not_age():
+    """Asserted against the source: the two reads keyed on the ISO week."""
+    import inspect
+    import client_api
+    import insight_store
+    import inventory
+    assert "DATED_NOT_AGED" in inspect.getsource(inventory.get_claude_insights)
+    assert "DATED_NOT_AGED" in inspect.getsource(client_api._do_review_insight)
+    assert "M/D/YY" in insight_store.DATED_NOT_AGED and "days ago" in insight_store.DATED_NOT_AGED
+
+
 def test_the_canary_is_documented():
     env = open("docs/ops/ENVIRONMENT.md", encoding="utf-8").read()
     lib = open("PROMPT_LIBRARY.md", encoding="utf-8").read()

@@ -1127,16 +1127,15 @@ def food_prompt_data_lines(analysis: dict) -> tuple:
     fresh_days = cf.get("fresh_days") or 7
     if total:
         oldest = cf.get("oldest_count_at")
+        # The date, never "N days ago" (context re-audit 10/7/26 #8): the
+        # read is stored for the ISO week and an age in the prompt became an
+        # age in a text shown on later days.
         parts.append(f"{recent} of {total} items counted in the last {fresh_days} days; "
-                     + (f"oldest count {_mdy_fl(str(oldest)[:10])}"
-                        + (f", {cf['oldest_age_days']} days ago" if cf.get("oldest_age_days") is not None else "")
-                        if oldest else "some items never counted"))
+                     + (f"oldest count {_mdy_fl(str(oldest)[:10])}" if oldest else "some items never counted"))
     elif last:
         # An analysis without per-item counts (built elsewhere): the newest
-        # count and its age, as before.
-        age = cf.get("age_days")
-        parts.append(f"newest stock count {_mdy_fl(str(last)[:10])}"
-                     + (f", {age} day{'' if age == 1 else 's'} ago" if age is not None else ""))
+        # count's date.
+        parts.append(f"newest stock count {_mdy_fl(str(last)[:10])}")
     else:
         parts.append("no stock count on file")
     line = "- Data window: " + "; ".join(parts) + "."
@@ -1623,7 +1622,8 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     import data_health as _dh_food
     from ai_utils import with_data_state as _with_ds_food
     _ready_food = _dh_food.readiness(restaurant_id, "food") if restaurant_id else _dh_food.NOT_APPLICABLE
-    prompt = _with_ds_food(prompt, _ready_food)
+    import insight_store as _ist_dates
+    prompt = _with_ds_food(prompt + "\n\n" + _ist_dates.DATED_NOT_AGED, _ready_food)
     _ctx = food_read_context(restaurant_id, prompt, analysis,
                              food_insight_validation_facts(analysis, ranked_drivers, _forecasts, cfo_facts),
                              cause_anchors, alt_anchors,
