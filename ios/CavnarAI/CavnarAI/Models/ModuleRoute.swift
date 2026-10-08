@@ -40,13 +40,16 @@ struct ModuleRoute: Hashable {
             ModuleRoute(key: key, label: labelFor(key), filter: filter, section: section, itemId: item, nav: nav)
         }
         let filter = nav.query["filter"]
+        // "<module>/<section>/<id>" names an item inside the section
+        // (nav.py: "labor/inbox/<thread>", "marketing/opportunities/<id>").
+        let sectionItem = nav.rest.count > 1 ? nav.rest[1] : nil
         switch nav.head {
         case "reviews":
             return route("reviews", filter: filter, section: nav.target)
         case "review":
             return route("reviews", filter: filter, item: nav.target)
         case "labor":
-            return route("labor", section: nav.target)
+            return route("labor", section: nav.target, item: sectionItem)
         case "schedule":
             return route("labor", section: "schedule", item: nav.target)
         case "person":
@@ -60,15 +63,20 @@ struct ModuleRoute: Hashable {
             let isTimeOff = kind.contains("time") || kind == "pto"
             return route("labor", section: isTimeOff ? "timeoff" : "requests", item: id)
         case "inventory", "food":
-            return route("inventory", section: nav.target)
+            return route("inventory", section: nav.target, item: sectionItem)
         case "invoice":
             return route("inventory", section: "invoices", item: nav.target)
         case "order":
             return route("inventory", section: "order", item: nav.target)
         case "marketing":
-            return route("marketing", section: nav.target)
+            // The quiet-night push (push.nav_for, parity audit #22):
+            // "marketing/opportunities?card=slow_day:Tue&post_draft_id=41" —
+            // the section, and the drafted post as the item. The card key
+            // stays on the route's `nav` (query["card"]).
+            let draft = nav.query["post_draft_id"].flatMap { $0.isEmpty ? nil : $0 }
+            return route("marketing", section: nav.target, item: draft ?? sectionItem)
         case "intel", "competitor":
-            return route("intel", section: nav.target)
+            return route("intel", section: nav.target, item: sectionItem)
         default:
             return nil
         }

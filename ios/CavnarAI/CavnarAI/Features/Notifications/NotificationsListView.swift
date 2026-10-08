@@ -48,10 +48,10 @@ final class NotificationsListViewModel {
             // notifications yet."
             if response.ok {
                 notifications = response.notifications
-                // Reading the list is what clears the app icon's number.
-                // The backend sends an unread count with every push now and
-                // nothing was clearing it, so it could only ever go up.
-                PushManager.shared.clearBadge()
+                // The app icon carries what is still unread — never zero
+                // while rows are (parity audit #81: reading the list used to
+                // clear it, and the rows it named stayed unread on the web).
+                PushManager.shared.setBadge(unreadCount)
                 await loadActionables()
             } else {
                 errorMessage = response.error ?? "Couldn't load notifications."
@@ -76,6 +76,7 @@ final class NotificationsListViewModel {
         // An urgent row the server can't read a subject for is handled once
         // opened — the server's own rule for the bell's red count.
         if notifications[i].resolvesOnOpen == true { notifications[i].resolved = true }
+        PushManager.shared.setBadge(unreadCount)
     }
 
     private struct OpenedBody: Encodable {
@@ -104,6 +105,7 @@ final class NotificationsListViewModel {
                                                    hapticOnError: false)
         guard r?.ok == true else { return }
         for i in notifications.indices { notifications[i].unread = false }
+        PushManager.shared.setBadge(0)
     }
 
     var unreadCount: Int { notifications.filter(\.isUnread).count }
@@ -279,6 +281,8 @@ final class NotificationsBadgeViewModel {
                                                                 query: ["scope": "group"]) {
             unreadCount = response.count
             urgentCount = response.urgent ?? 0
+            // The app icon says the same number as the bell (parity #81).
+            PushManager.shared.setBadge(response.count)
         }
     }
 }

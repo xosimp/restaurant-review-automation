@@ -10,11 +10,27 @@ enum SystemDestination: Equatable {
     case nav(NavPath)
     /// A path from a LINK — a `cavnarai://` or dashboard.cavnar.ai URL,
     /// which any web page or message can carry. It may open a place; it may
-    /// not act: an Ask question is filled in, never sent, and a location is
-    /// offered in the switcher, never switched to (F3-12).
-    case link(NavPath)
+    /// not act: an Ask question is filled in, never sent, and a
+    /// `location/<id>` path is offered in the switcher, never switched to
+    /// (F3-12). Its context is what the link said beyond the place.
+    case link(NavPath, LinkContext = LinkContext())
     /// The command sheet (find or ask anything).
     case commandSheet
+}
+
+/// What a dashboard link carries beside the place (parity audit #1): the
+/// location it is about (`loc=`, or a recommendation link's `rid=`) — the
+/// app switches there first when this login has it, as the web's
+/// checkTabParam does, and opens it where it is otherwise — and the
+/// recommendation it names (`rec=` + `src=`), whose open is recorded the way
+/// the web records it on page load (rec_delivery.record_link_open).
+struct LinkContext: Equatable, Sendable {
+    var location: Int? = nil
+    var rec: String? = nil
+    var src: String? = nil
+    var rid: Int? = nil
+
+    var isEmpty: Bool { location == nil && rec == nil }
 }
 
 /// The one door every system entry point walks through. It never routes
@@ -51,18 +67,24 @@ enum SystemEntry {
     @discardableResult
     static func handle(url: URL) -> Bool {
         guard let destination = destination(for: url) else { return false }
-        open(fromLink(destination))
+        open(fromLink(destination, context: linkContext(for: url)))
         return true
     }
 
     /// A URL's destination as a link: nobody in the app chose it.
     nonisolated static func fromLink(_ destination: SystemDestination) -> SystemDestination {
-        if case .nav(let path) = destination { return .link(path) }
+        fromLink(destination, context: LinkContext())
+    }
+
+    nonisolated static func fromLink(_ destination: SystemDestination, context: LinkContext) -> SystemDestination {
+        if case .nav(let path) = destination { return .link(path, context) }
         return destination
     }
 
     /// `userInfo` key on a `.cavnarOpenNav` post that came from a link.
     nonisolated static let fromLinkKey = "cavnar.fromLink"
+    /// `userInfo` key carrying the link's `LinkContext`.
+    nonisolated static let linkContextKey = "cavnar.linkContext"
 
     @discardableResult
     static func handle(shortcut item: UIApplicationShortcutItem) -> Bool {
@@ -82,11 +104,11 @@ enum SystemEntry {
             if let last = lastPosted, last.raw == path.raw, Date().timeIntervalSince(last.at) < 1 { return }
             lastPosted = (path.raw, Date())
             NotificationCenter.default.post(name: .cavnarOpenNav, object: path)
-        case .link(let path):
+        case .link(let path, let context):
             if let last = lastPosted, last.raw == path.raw, Date().timeIntervalSince(last.at) < 1 { return }
             lastPosted = (path.raw, Date())
             NotificationCenter.default.post(name: .cavnarOpenNav, object: path,
-                                            userInfo: [fromLinkKey: true])
+                                            userInfo: [fromLinkKey: true, linkContextKey: context])
         }
     }
 
@@ -96,11 +118,16 @@ enum SystemEntry {
     /// `cavnarai://` auth callbacks, which ASWebAuthenticationSession
     /// consumes itself — is not ours to route.
     nonisolated static let webHosts: Set<String> = ["dashboard.cavnar.ai"]
+    nonisolated static let dashboardPaths: Set<String> = ["", "/", "/dashboard", "/dashboard/"]
 
     /// `cavnarai://nav/review/412?x=1` → "review/412?x=1";
     /// `cavnarai://command` → the command sheet;
-    /// `https://dashboard.cavnar.ai/dashboard?nav=labor/schedule` or
-    /// `…/dashboard#labor/schedule` → that path; `?review=412` → review/412.
+    /// `https://dashboard.cavnar.ai/?nav=labor/schedule` or
+    /// `…/#labor/schedule` → that path; `?review=412` → review/412;
+    /// `?ask=<question>` → Ask with it filled in; `?tab=<module>` (an older
+    /// sender's) → that module. The links are the dashboard's own
+    /// (notify.alert_url, rec_delivery.ask_url, morning_brief, reporter) and
+    /// what hosted_dashboard's apple-app-site-association claims.
     /// Nil for anything else.
     nonisolated static func destination(for url: URL) -> SystemDestination? {
         let scheme = url.scheme?.lowercased()
@@ -117,6 +144,10 @@ enum SystemEntry {
             }
         }
         guard scheme == "https", let host = url.host?.lowercased(), webHosts.contains(host) else { return nil }
+        // The dashboard only (`/`, and `/dashboard` from the F3-16 links):
+        // the sign-in, billing, admin and public staff/guest pages are the
+        // web's, as the apple-app-site-association says.
+        guard dashboardPaths.contains(url.path.lowercased()) else { return nil }
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         if let nav = items.first(where: { $0.name == "nav" })?.value, let path = NavPath(nav) {
             return .nav(path)
@@ -124,11 +155,50 @@ enum SystemEntry {
         if let review = items.first(where: { $0.name == "review" })?.value, let id = Int(review), id > 0 {
             return NavPath("review/\(id)").map { .nav($0) }
         }
+        // A question from an email's "Ask about this" (rec_delivery.ask_url):
+        // Ask, with it filled in — a link never sends it (F3-12).
+        if let ask = items.first(where: { $0.name == "ask" })?.value,
+           !ask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let path = askPath(ask) {
+            return .nav(path)
+        }
         if let fragment = url.fragment, let path = NavPath(fragment) {
+            return .nav(path)
+        }
+        if let tab = items.first(where: { $0.name == "tab" })?.value, let path = NavPath(tabPath(tab)) {
             return .nav(path)
         }
         // A bare dashboard link: the app, on whatever it opens on.
         return NavPath("home").map { .nav($0) }
+    }
+
+    /// A web tab id (`?tab=`, dashboard.html's `tab-<id>` buttons) as the
+    /// app's module head: the web calls Intel "competitor" and Food Cost
+    /// "inventory" or "food".
+    nonisolated static func tabPath(_ tab: String) -> String {
+        let t = tab.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch t {
+        case "competitor", "competitors": return "intel"
+        case "food", "foodcost", "food_cost": return "inventory"
+        case "": return "home"
+        default: return t
+        }
+    }
+
+    /// Everything a dashboard link says beside its place (`loc=`, `rid=`,
+    /// `rec=`, `src=`). Empty for a widget or `cavnarai://` link.
+    nonisolated static func linkContext(for url: URL) -> LinkContext {
+        guard url.scheme?.lowercased() == "https" else { return LinkContext() }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? {
+            let v = items.first(where: { $0.name == name })?.value?.trimmingCharacters(in: .whitespaces)
+            return (v?.isEmpty == false) ? v : nil
+        }
+        func id(_ name: String) -> Int? { value(name).flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil } }
+        let rid = id("rid")
+        return LinkContext(location: id("loc") ?? rid,
+                           rec: value("rec").map { String($0.prefix(160)) },
+                           src: value("src").map { String($0.prefix(32)) },
+                           rid: rid)
     }
 
     /// "ask" or "ask?q=<the question>", percent-encoded so a question with

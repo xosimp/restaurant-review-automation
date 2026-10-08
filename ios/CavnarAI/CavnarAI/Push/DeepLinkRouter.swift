@@ -126,16 +126,62 @@ final class DeepLinkRouter {
         return false
     }
 
+    /// Whether this login may be on a location — one of its group's (the
+    /// switcher's list). Set by RootView; nil means unknown, and a link's
+    /// location is then not acted on.
+    var mayOpenLocation: (@MainActor (Int) async -> Bool)?
+
     /// A path from a link anyone could have written (SystemEntry `.link`):
     /// it opens a place and nothing more. An Ask question is filled in for
-    /// the owner to send; a location is offered in the switcher, not
-    /// switched to (F3-12).
-    func openFromLink(_ nav: NavPath) {
+    /// the owner to send; a `location/<id>` path is offered in the switcher,
+    /// not switched to (F3-12).
+    ///
+    /// An email or text link about one location (`loc=`, or `rid=` on a
+    /// recommendation link — parity audit #1) switches there first when this
+    /// login has that location, as the web's checkTabParam does, so the item
+    /// is not "not found" inside another store; a location the login does
+    /// not have is ignored and the place opens where the session is. A link
+    /// naming a recommendation (`rec=` + `src=`) records the open, as the
+    /// web does when the page loads from one.
+    func openFromLink(_ nav: NavPath, context: LinkContext = LinkContext()) {
+        if context.rec != nil {
+            Task { await Self.recordLinkOpen(context) }
+        }
         if nav.head == "location" {
             pendingLocationPicker = true
             return
         }
+        let current = activeRestaurantId()
+        if let target = context.location, target > 0, current > 0, target != current,
+           let switchLocation, let mayOpenLocation {
+            Task {
+                if await mayOpenLocation(target) {
+                    guard await switchedOrExplained(switchLocation, to: target) else { return }
+                }
+                apply(nav, askAutoSend: false, askPrompt: nil)
+            }
+            return
+        }
         open(nav, askAutoSend: false)
+    }
+
+    /// POST /mobile/api/recs/link-open — rec_delivery.record_link_open, the
+    /// web's own body. Best effort: a failure never stands in the way.
+    struct LinkOpenBody: Encodable, Equatable {
+        let rec: String
+        let src: String?
+        let rid: Int?
+    }
+
+    static func linkOpenBody(_ context: LinkContext) -> LinkOpenBody? {
+        guard let rec = context.rec, !rec.isEmpty else { return nil }
+        return LinkOpenBody(rec: rec, src: context.src, rid: context.rid)
+    }
+
+    private static func recordLinkOpen(_ context: LinkContext) async {
+        guard let body = linkOpenBody(context) else { return }
+        let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(
+            "/mobile/api/recs/link-open", method: .post, body: body, hapticOnError: false)
     }
 
     /// The destination of a nav path. Unknown heads degrade to Home, never

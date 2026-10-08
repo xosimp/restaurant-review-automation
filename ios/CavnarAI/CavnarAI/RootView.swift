@@ -130,6 +130,19 @@ struct RootView: View {
                 }
                 return ok
             }
+            // A link's location (loc= / rid=) is switched to only when it
+            // is one of this login's (parity audit #1).
+            deepLinkRouter.mayOpenLocation = { target in
+                let switcher = LocationSwitcherViewModel()
+                await switcher.load()
+                return switcher.locations.contains { $0.id == target }
+            }
+            // A push that arrives while the app is open re-reads the bell
+            // (parity audit #81) — its count used to wait for the next launch.
+            let badge = chrome.notificationsBadge
+            PushManager.shared.onForegroundPush = {
+                Task { await badge.refresh() }
+            }
             PushManager.shared.router = deepLinkRouter
             // The staff tier files its push token with its own bearer and
             // opens its own notices (C4).
@@ -231,9 +244,15 @@ struct RootView: View {
                 privacyShieldUp = false
                 // Foreground is a reconnect opportunity for anything queued
                 // while offline, and for a push token that failed to register.
+                // The bell (and the app icon's number) re-read too: rows
+                // fired or were read on the web while the app was away
+                // (parity audit #81).
+                let signedIn = sessionStore.isAuthenticated
+                let badge = chrome.notificationsBadge
                 Task {
                     await PendingWriteQueue.shared.drain()
                     await PushManager.shared.flushPendingToken()
+                    if signedIn { await badge.refresh() }
                 }
             @unknown default:
                 break
@@ -334,7 +353,8 @@ struct RootView: View {
             // A link (a URL anyone could send) opens; it never sends an Ask
             // question or switches location on its own (F3-12).
             if note.userInfo?[SystemEntry.fromLinkKey] as? Bool == true {
-                deepLinkRouter.openFromLink(nav)
+                deepLinkRouter.openFromLink(nav, context: note.userInfo?[SystemEntry.linkContextKey] as? LinkContext
+                                                ?? LinkContext())
             } else {
                 deepLinkRouter.open(nav)
             }
