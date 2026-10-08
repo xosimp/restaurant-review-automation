@@ -38,7 +38,8 @@ and inline `<script>` blocks (`<script>` without `src`):
 | `staff_login.html` | ~14 | 1 | public (staff PIN) |
 | `client_data.html` | ~12 | 1 | legacy admin page |
 | `audit_list.html`, `audit_cheatsheet.html` | 6, 5 | 1, 1 | |
-| `_fc_receive_js.html`, `login.html`, `staff_portal.html` (removed 9/30/26), `audit_report.html` | 3, 2, 1, 1 | 1, 1, 1, — | |
+| `_fc_receive_js.html`, `login.html`, `audit_report.html` | 3, 2, 1 | 1, 1, — | |
+| `staff_portal.html` (rebuilt 10/7/26) | 0 | 2 (`_csrf_fetch.html` + the page) | events are delegated listeners, no inline handlers: a nonce is enough |
 | `_csrf_fetch.html`, `admin_two_factor.html`, `billing_paused.html`, `forgot_password.html`, `reset_password.html`, `two_fa.html`, `guest_optin.html`, `status.html` | 0 | 1–2 each | inline scripts only: a nonce is enough |
 
 No template uses a `javascript:` URL. There are about 2,200 inline `style=`
