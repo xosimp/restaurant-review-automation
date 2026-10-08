@@ -141,6 +141,9 @@ final class DailyReportViewModel {
     }
 
     var isOwner: Bool { view == "owner" }
+    /// The location's report switch, as the list read said (parity audit
+    /// #64) — the last one recorded when this screen opened on a date.
+    var enabled: Bool = DSRAvailability.isEnabled
 
     /// The stage that is running now, e.g. "awaiting_close".
     var currentStage: String? { checklist?.status ?? report?.status }
@@ -152,7 +155,7 @@ final class DailyReportViewModel {
     /// (D3-9). Before, a manager on the phone had no button on a night that
     /// couldn't finish. Anyone with the console may.
     var canCloseDay: Bool {
-        guard selectedVersion == nil, !runStarted, !isSubmitting else { return false }
+        guard enabled, selectedVersion == nil, !runStarted, !isSubmitting else { return false }
         if phase == .notStarted || phase == .failed || phase == .provisional { return true }
         return phase == .running && (currentStage == "scheduled" || currentStage == "awaiting_close")
     }
@@ -182,6 +185,8 @@ final class DailyReportViewModel {
                 let list: DSRListResponse = try await client.send("/mobile/api/dsr", query: ["limit": "1"],
                                                                   hapticOnError: false)
                 view = list.view ?? view
+                DSRAvailability.record(list.enabled)
+                enabled = list.enabled ?? enabled
                 guard let latest = list.reports.first else {
                     nothingYet = true
                     return
@@ -372,6 +377,8 @@ final class DailyReportListViewModel {
     private(set) var reachedEnd = false
     private(set) var errorMessage: String?
     private(set) var noAccess = false
+    /// The location's report switch (GET /dsr `enabled`, parity audit #64).
+    private(set) var enabled: Bool = DSRAvailability.isEnabled
     /// When the list last loaded — the foreground-refresh clock.
     private(set) var lastLoadedAt: Date?
     private let client: APIClient
@@ -404,6 +411,8 @@ final class DailyReportListViewModel {
             cachedAt = nil
             reports = r.reports
             view = r.view
+            enabled = r.enabled ?? enabled
+            DSRAvailability.record(r.enabled)
             reachedEnd = r.reports.count < Self.pageSize
             lastLoadedAt = Date()
         } catch let error as APIClient.APIError {
@@ -473,6 +482,11 @@ final class DailyReportWeekViewModel {
     private(set) var grid: DSRGrid?
     private(set) var isLoading = false
     private(set) var errorMessage: String?
+    /// "owner" or "manager" — the budget editor is the owner's.
+    private(set) var view: String?
+    /// /dsr/period answered 409: no fiscal calendar yet. The screen says
+    /// so, and where to set one (the calendar stays on the web, #64).
+    private(set) var needsCalendar = false
     private let client: APIClient
 
     init(client: APIClient = .shared) { self.client = client }
@@ -489,21 +503,33 @@ final class DailyReportWeekViewModel {
         // A switch between week and period must not leave the other's grid
         // on screen under the new title.
         if let g = grid, (g.kind == "period") != period { grid = nil }
+        needsCalendar = false
         do {
             if period {
                 let r: DSRPeriodResponse = try await client.send("/mobile/api/dsr/period", query: query, hapticOnError: false)
                 grid = r.period
+                view = r.view ?? view
             } else {
                 let r: DSRWeekResponse = try await client.send("/mobile/api/dsr/week", query: query, hapticOnError: false)
                 grid = r.week
+                view = r.view ?? view
             }
         } catch let error as APIClient.APIError {
             // 409 without a fiscal calendar: the server's sentence says so.
+            needsCalendar = period && error.status == 409
+            if needsCalendar { grid = nil }
             errorMessage = error.message
         } catch is CancellationError {
         } catch {
             errorMessage = period ? "Couldn\u{2019}t load the period." : "Couldn\u{2019}t load the week."
         }
+    }
+
+    /// The budget editor is the owner's, on a week whose budget columns
+    /// this login was sent.
+    var canEditBudget: Bool {
+        guard let g = grid, g.kind != "period", view == "owner", g.showsBudget else { return false }
+        return !g.days.isEmpty
     }
 
     /// A day inside the week (or period) before / after the one showing.

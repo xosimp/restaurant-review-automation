@@ -395,6 +395,15 @@ enum DSRHeadline {
                 b.metric("reach").map { "\(DSRFormat.count($0)) reach" },
                 b.metric("texts_sent").map { "\(DSRFormat.count($0)) texts sent" },
             ]
+        case "service":
+            // The night in detail, collapsed: its checks, the servers read,
+            // and what was given away when this login may see it.
+            let given = b.lossGiven?.total
+            parts = [
+                b.metric("checks").map { "\(DSRFormat.count($0)) checks" },
+                b.metric("servers_measured").flatMap { $0 > 0 ? "\(DSRFormat.count($0)) server\($0 == 1 ? "" : "s")" : nil },
+                given.map { "\(DSRFormat.money($0)) given away" },
+            ]
         case "intel":
             parts = [b.weatherSummary, b.eventsSummary == "Nothing listed" ? nil : b.eventsSummary]
         case "closeout":

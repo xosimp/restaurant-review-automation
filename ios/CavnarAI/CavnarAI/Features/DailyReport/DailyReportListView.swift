@@ -21,7 +21,13 @@ struct DailyReportListView: View {
                         .cavnarCard()
                 } else {
                     CachedDataNotice(text: viewModel.stalenessNotice)
-                    tonightCard
+                    // Switched off here (parity audit #64): past nights
+                    // still open; nothing new is built, so no Close day.
+                    if viewModel.enabled {
+                        tonightCard
+                    } else {
+                        CavnarCaveat(title: "Switched off", detail: DSRAvailability.offLine)
+                    }
                     if let error = viewModel.errorMessage, viewModel.reports.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)

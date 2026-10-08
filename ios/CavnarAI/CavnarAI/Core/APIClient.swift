@@ -468,6 +468,24 @@ actor APIClient {
     /// decode (the original caller is long gone and there is no one to hand a
     /// response to) but keeps auth, status handling and error classification
     /// identical, so a queued write fails the same way a live one would.
+    /// A file a route serves — the week's .xlsx (parity audit #79) — as raw
+    /// bytes, with this session's auth. A refusal carries the server's
+    /// sentence like any other call; nothing is retried on a guess.
+    func fetchFile(_ path: String, query: [String: String] = [:]) async throws -> Data {
+        let request = try buildRequest(path: path, method: HTTPMethod.get.rawValue, body: nil, query: query)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError(message: "No response from server")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
+            throw APIError(kind: envelope?.kind ?? .server,
+                           message: envelope?.error ?? "Couldn\u{2019}t download that (\(http.statusCode)).",
+                           status: http.statusCode, body: data)
+        }
+        return data
+    }
+
     func sendQueuedWrite(path: String, method: String, bodyJSON: Data?) async throws {
         var request = try buildRequest(path: path, method: method, body: nil, query: [:])
         if let bodyJSON {

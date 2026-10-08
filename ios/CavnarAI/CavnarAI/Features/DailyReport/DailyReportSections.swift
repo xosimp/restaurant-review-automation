@@ -128,14 +128,119 @@ struct DSRTomorrow: Decodable, Hashable {
         /// "70%", or the server's "—" when there is no figure — never 0%.
         var figure: String { pct.map { "\($0)%" } ?? (label?.isEmpty == false ? label! : "\u{2014}") }
     }
+    /// The day after's labor: the published schedule priced at each
+    /// person's pay over Cavnar AI's forecast (dsr.tomorrow.labor_plan) —
+    /// the salaried share is the owner's (access.tomorrow_for strips it
+    /// otherwise). Absent for a login without the Labor view.
+    struct LaborPlan: Decodable, Hashable {
+        let hours: Double?
+        let hourlyCost: Double?
+        let overtimeHours: Double?
+        let hourlyPct: Double?
+        let forecastNet: Double?
+        let salariedTotalCost: Double?
+        let salariedTotalPct: Double?
+        let targetPct: Double?
+        let targetSource: String?
+        let basis: String?
+
+        enum CodingKeys: String, CodingKey {
+            case hours, basis
+            case hourlyCost = "hourly_cost"
+            case overtimeHours = "overtime_hours"
+            case hourlyPct = "hourly_pct"
+            case forecastNet = "forecast_net"
+            case salariedTotalCost = "salaried_total_cost"
+            case salariedTotalPct = "salaried_total_pct"
+            case targetPct = "target_pct"
+            case targetSource = "target_source"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            func num(_ k: CodingKeys) -> Double? { (try? c.decodeIfPresent(Double.self, forKey: k)) ?? nil }
+            hours = num(.hours); hourlyCost = num(.hourlyCost); overtimeHours = num(.overtimeHours)
+            hourlyPct = num(.hourlyPct); forecastNet = num(.forecastNet)
+            salariedTotalCost = num(.salariedTotalCost); salariedTotalPct = num(.salariedTotalPct)
+            targetPct = num(.targetPct)
+            targetSource = (try? c.decodeIfPresent(String.self, forKey: .targetSource)) ?? nil
+            basis = (try? c.decodeIfPresent(String.self, forKey: .basis)) ?? nil
+        }
+
+        /// Points over (+) or under (−) the target, to one decimal.
+        func gap(pct: Double?) -> Double? {
+            guard let pct, let t = targetPct else { return nil }
+            return ((pct - t) * 10).rounded() / 10
+        }
+
+        /// "1.4 pts over the 28% target" / "On Cavnar AI's starting 30%" —
+        /// a target the owner never set is never called theirs.
+        func targetLine(pct: Double?) -> String? {
+            guard let g = gap(pct: pct), let t = targetPct else { return nil }
+            let soft = targetSource == "default"
+            let tg = DSRFormat.pct(t)
+            if g == 0 { return soft ? "On Cavnar AI\u{2019}s starting \(tg)" : "On the \(tg) target" }
+            let pts = String(format: "%.1f", abs(g))
+            return "\(pts) pts \(g > 0 ? "over" : "under") " + (soft ? "Cavnar AI\u{2019}s starting \(tg)" : "the \(tg) target")
+        }
+    }
+
+    /// The payroll week's overtime if the schedule holds
+    /// (dsr.tomorrow.overtime_outlook): who goes past 40 hours, the extra
+    /// it costs, and a same-role teammate with room.
+    struct Overtime: Decodable, Hashable {
+        struct Person: Decodable, Hashable, Identifiable {
+            let employee: String
+            let role: String?
+            let projectedHours: Double?
+            let overtimeHours: Double?
+            let extraCost: Double?
+            let room: [String]
+            var id: String { employee + (role ?? "") }
+            enum CodingKeys: String, CodingKey {
+                case employee, role, room
+                case projectedHours = "projected_hours"
+                case overtimeHours = "overtime_hours"
+                case extraCost = "extra_cost"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                employee = (try? c.decode(String.self, forKey: .employee)) ?? "Someone"
+                role = (try? c.decodeIfPresent(String.self, forKey: .role)) ?? nil
+                projectedHours = (try? c.decodeIfPresent(Double.self, forKey: .projectedHours)) ?? nil
+                overtimeHours = (try? c.decodeIfPresent(Double.self, forKey: .overtimeHours)) ?? nil
+                extraCost = (try? c.decodeIfPresent(Double.self, forKey: .extraCost)) ?? nil
+                room = (try? c.decodeIfPresent([String].self, forKey: .room)) ?? []
+            }
+        }
+        let people: [Person]
+        let overCount: Int?
+        let extraCost: Double?
+        let basis: String?
+        enum CodingKeys: String, CodingKey {
+            case people, basis
+            case overCount = "over_count"
+            case extraCost = "extra_cost"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            people = (try? c.decodeIfPresent([Person].self, forKey: .people)) ?? []
+            overCount = (try? c.decodeIfPresent(Int.self, forKey: .overCount)) ?? nil
+            extraCost = (try? c.decodeIfPresent(Double.self, forKey: .extraCost)) ?? nil
+            basis = (try? c.decodeIfPresent(String.self, forKey: .basis)) ?? nil
+        }
+    }
+
     let date: String?
     let weekday: String?
     let items: [Item]
     let scheduled: Int?
     let forecast: Forecast?
     let confidence: Confidence?
+    var labor: LaborPlan? = nil
+    var overtime: Overtime? = nil
 
-    enum CodingKeys: String, CodingKey { case date, weekday, items, scheduled, forecast, confidence }
+    enum CodingKeys: String, CodingKey { case date, weekday, items, scheduled, forecast, confidence, labor, overtime }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         date = try? c.decodeIfPresent(String.self, forKey: .date)
@@ -144,6 +249,8 @@ struct DSRTomorrow: Decodable, Hashable {
         scheduled = try? c.decodeIfPresent(Int.self, forKey: .scheduled)
         forecast = try? c.decodeIfPresent(Forecast.self, forKey: .forecast)
         confidence = try? c.decodeIfPresent(Confidence.self, forKey: .confidence)
+        labor = (try? c.decodeIfPresent(LaborPlan.self, forKey: .labor)) ?? nil
+        overtime = (try? c.decodeIfPresent(Overtime.self, forKey: .overtime)) ?? nil
     }
 }
 

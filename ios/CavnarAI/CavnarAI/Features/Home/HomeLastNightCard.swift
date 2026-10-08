@@ -197,7 +197,10 @@ final class HomeLastNightViewModel {
         do {
             let list: DSRListResponse = try await client.send("/mobile/api/dsr", query: ["limit": "1"],
                                                               hapticOnError: false)
-            guard let latest = list.reports.first else {
+            // The report switched off for this location: no "Last night"
+            // card at all (parity audit #64).
+            DSRAvailability.record(list.enabled)
+            guard list.enabled != false, let latest = list.reports.first else {
                 state = .hidden
                 return
             }

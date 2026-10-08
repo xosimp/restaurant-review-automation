@@ -291,7 +291,9 @@ final class WidgetSnapshotService {
         } catch {
             return nil
         }
-        guard let latest = list.reports.first else { return NightPart.none }
+        // A report switched off for this location has no "Last night" (parity audit #64).
+        DSRAvailability.record(list.enabled)
+        guard list.enabled != false, let latest = list.reports.first else { return NightPart.none }
         var part = NightPart(date: latest.businessDate, label: latest.displayDate)
         part.setVerdict(HomeLastNightCard.verdict(latest, nil))
         // The list's own net-minus-budget (dsr.access.summary) — present

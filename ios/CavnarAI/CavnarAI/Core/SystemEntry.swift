@@ -163,7 +163,9 @@ enum QuickAction: String, CaseIterable {
         switch self {
         case .ask: return .nav(NavPath("ask")!)
         case .approveReplies: return .nav(NavPath("reviews?filter=pending")!)
-        case .lastNight: return .nav(NavPath("dsr")!)
+        // The static quick action can't be withdrawn at runtime: with the
+        // report switched off (parity audit #64) it opens Home instead.
+        case .lastNight: return .nav(NavPath(DSRAvailability.isEnabled ? "dsr" : "home")!)
         case .scanInvoice: return .nav(NavPath("inventory/invoices?scan=camera")!)
         }
     }
