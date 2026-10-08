@@ -1649,6 +1649,24 @@ def finish_job_request(request_id, ok, error=None):
         log.error(f"finish_job_request({request_id}) failed: {e}")
 
 
+def return_job_request(request_id):
+    """Hand a taken request back (running -> pending) when it could not be
+    started now — its job's lane is busy (platform re-audit 10/7/26 #11) —
+    so a later tick takes it again; take_job_requests still expires it
+    after RUN_REQUEST_TTL_MINUTES."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE job_run_requests SET status='pending', taken_at=NULL, taken_by=NULL "
+                         "WHERE id=? AND status='running'", (int(request_id),))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(f"return_job_request({request_id}) failed: {e}")
+
+
 def job_requests(limit=20):
     """Recent run-now requests, newest first, for the console."""
     try:

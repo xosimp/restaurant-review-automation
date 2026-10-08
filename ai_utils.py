@@ -244,6 +244,15 @@ AI_PLACES_MONTHLY_BUDGET_USD = float(os.getenv("AI_PLACES_MONTHLY_BUDGET_USD", "
 # meeting normal use, and 80% pages Will first. The review fetch is still
 # never refused (PLACES_ESSENTIAL_ACTIONS). 0 disables it.
 AI_PLACES_GLOBAL_MONTHLY_USD = float(os.getenv("AI_PLACES_GLOBAL_MONTHLY_USD", "300"))
+# ...which is a floor, not the ceiling (platform re-audit 10/7/26 #9): a
+# fixed $300 meets normal use at ~30-60 restaurants, and then every Places
+# call but the review fetch is refused for every client. Like the AI pool
+# it grows by AI_PLACES_GLOBAL_PER_CLIENT_USD a paying client (about three
+# times a restaurant's few dollars a month), never past
+# AI_PLACES_GLOBAL_MAX_MONTHLY_USD — a deliberate Railway variable, not a
+# side effect of signing clients (places_global_monthly_budget).
+AI_PLACES_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_PLACES_GLOBAL_PER_CLIENT_USD", "15"))
+AI_PLACES_GLOBAL_MAX_MONTHLY_USD = float(os.getenv("AI_PLACES_GLOBAL_MAX_MONTHLY_USD", "3000"))
 
 # Spend past this share of a ceiling is a warning: an issue on the console
 # and, for the global pool, a page — before the ceiling stops anything.
@@ -532,9 +541,22 @@ def ai_budget_status(restaurant_id=None, db_path=None):
 PLACES_GLOBAL_LABEL = "monthly Google Places budget across all clients"
 
 
+def places_global_monthly_budget(db_path=None):
+    """The platform's Google Places ceiling for this many paying clients
+    (#9): never below AI_PLACES_GLOBAL_MONTHLY_USD, otherwise
+    AI_PLACES_GLOBAL_PER_CLIENT_USD a paying client, at most
+    AI_PLACES_GLOBAL_MAX_MONTHLY_USD. 0 still disables it."""
+    if not AI_PLACES_GLOBAL_MONTHLY_USD:
+        return 0.0
+    scaled = max(AI_PLACES_GLOBAL_MONTHLY_USD, _paying_client_count(db_path) * AI_PLACES_GLOBAL_PER_CLIENT_USD)
+    if AI_PLACES_GLOBAL_MAX_MONTHLY_USD:
+        scaled = min(scaled, max(AI_PLACES_GLOBAL_MAX_MONTHLY_USD, AI_PLACES_GLOBAL_MONTHLY_USD))
+    return scaled
+
+
 def places_budget_status(restaurant_id=None, db_path=None):
     """One restaurant's Google Places spend against its own ceilings, plus
-    the platform's (`global_month`, AI_PLACES_GLOBAL_MONTHLY_USD, #22); with
+    the platform's (`global_month`, places_global_monthly_budget, #22, #9); with
     no restaurant, the platform's alone — as `month` (what the console has
     always read) and `global_month`."""
     from datetime import datetime, timezone
@@ -543,7 +565,7 @@ def places_budget_status(restaurant_id=None, db_path=None):
     month = now.strftime("%Y-%m-01 00:00:00")
     _prune_budget_cache((day, month))
     fleet = {"spend": _cached_spend(("places:all", month), month, None, db_path, scope="places"),
-             "budget": AI_PLACES_GLOBAL_MONTHLY_USD, "resets_at": _resets_at("month")}
+             "budget": places_global_monthly_budget(db_path), "resets_at": _resets_at("month")}
     if restaurant_id is None:
         return _finish_status({"month": dict(fleet), "global_month": dict(fleet)})
     key = _places_key(restaurant_id)
@@ -648,7 +670,8 @@ def _record_budget_stop(scope, restaurant_id, vendor="anthropic"):
     if scope == PLACES_GLOBAL_LABEL:
         _page("budget_stop:google_places", "Cavnar AI: Google lookups are paused for every client (budget)",
               [f"The {scope} was reached — every Google Places request except the review fetch is refused "
-               "until the month resets or the ceiling is raised (AI_PLACES_GLOBAL_MONTHLY_USD).",
+               "until the month resets or the ceiling is raised (AI_PLACES_GLOBAL_PER_CLIENT_USD / "
+               "AI_PLACES_GLOBAL_MAX_MONTHLY_USD; AI_PLACES_GLOBAL_MONTHLY_USD is the floor).",
                "Open the admin console → Operations → AI to see which restaurant or action spent it."])
     elif "across all clients" in str(scope):
         _page(f"budget_stop:{vendor}", "Cavnar AI: AI is paused for every client (budget)",
@@ -698,7 +721,8 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
                                               f"{int(AI_BUDGET_WARN_PCT)}%",
                   [f"Google Places spend across every restaurant is {detail}.",
                    "At 100% every Places request except the review fetch is refused until the month "
-                   "resets. Raise AI_PLACES_GLOBAL_MONTHLY_USD if the spend is real."])
+                   "resets. Raise AI_PLACES_GLOBAL_PER_CLIENT_USD (or AI_PLACES_GLOBAL_MAX_MONTHLY_USD) if the "
+                   "spend is real."])
         elif scope == "global_month":
             _page(f"budget_warn:{vendor}", "Cavnar AI: the platform AI budget is past "
                                           f"{int(AI_BUDGET_WARN_PCT)}%",
@@ -1182,9 +1206,13 @@ def get_client(timeout=None):
 # the request thread and release_interactive_slot() in the worker that
 # finishes it — so it counts once, never once per round, and can never
 # deadlock against itself: inside a held slot create_with_retry takes none
-# and keeps its caller's own timeouts. One process, one count: the same
-# multiply-with-workers caveat as ASK_MAX_CONCURRENT (CLAUDE.md, gunicorn
-# --workers).
+# and keeps its caller's own timeouts. A workflow run (ai_orchestrator.
+# generate: attempts, escalations, the reviewer gate) holds one the same way
+# with interactive_run(), but its calls keep the shorter leash (platform
+# re-audit 10/7/26 #6). Work handed to a background pool runs through
+# background_runner(): never "on a request", so it takes no slot (#3).
+# One process, one count: the same multiply-with-workers caveat as
+# ASK_MAX_CONCURRENT (CLAUDE.md, gunicorn --workers).
 INTERACTIVE_AI_SLOTS = max(1, int(os.getenv("INTERACTIVE_AI_SLOTS", "2")))
 INTERACTIVE_AI_WAIT_SECONDS = float(os.getenv("INTERACTIVE_AI_WAIT_SECONDS", "3"))
 INTERACTIVE_AI_TIMEOUT = float(os.getenv("INTERACTIVE_AI_TIMEOUT", "40"))
@@ -1194,6 +1222,16 @@ _INTERACTIVE_SLOTS = threading.BoundedSemaphore(INTERACTIVE_AI_SLOTS)
 # True while this context holds a slot (a turn, or the call itself), so a
 # nested call — or a pool thread run in a copy of this context — takes none.
 _INTERACTIVE_HELD = contextvars.ContextVar("cavnar_ai_interactive_held", default=False)
+# True inside a workflow run that holds one slot for all its calls
+# (interactive_run, platform re-audit 10/7/26 #6): unlike an Ask turn, its
+# calls keep the request thread's shorter leash.
+_INTERACTIVE_LEASH = contextvars.ContextVar("cavnar_ai_interactive_leash", default=False)
+# A slot wait already spent: inside a run whose own wait for a slot came
+# back empty, each call asks once more without waiting again.
+_SLOT_WAIT = contextvars.ContextVar("cavnar_ai_slot_wait", default=None)
+# True in work handed to a background pool (background_runner, platform
+# re-audit 10/7/26 #3): never a request thread, whatever it was copied from.
+_OFF_REQUEST = contextvars.ContextVar("cavnar_ai_off_request", default=False)
 
 _BUSY_MESSAGE = "Cavnar AI is busy with other requests right now — try again in a moment."
 
@@ -1206,7 +1244,10 @@ class AIBusy(AIProviderDown):
 
 
 def on_request_thread() -> bool:
-    """Whether this code runs inside a Flask request (a request thread)."""
+    """Whether this code runs inside a Flask request (a request thread) —
+    never in work a background pool runs (background_runner)."""
+    if _OFF_REQUEST.get():
+        return False
     try:
         from flask import has_request_context
         return bool(has_request_context())
@@ -1219,6 +1260,8 @@ def acquire_interactive_slot(wait=None) -> bool:
     (INTERACTIVE_AI_WAIT_SECONDS by default). False when none came free.
     The caller releases it with release_interactive_slot() — from whichever
     thread finishes the work."""
+    if wait is None:
+        wait = _SLOT_WAIT.get()
     return _INTERACTIVE_SLOTS.acquire(timeout=INTERACTIVE_AI_WAIT_SECONDS if wait is None else max(0.0, wait))
 
 
@@ -1255,6 +1298,37 @@ def interactive_slot(wait=None):
         with interactive_slot_held():
             yield True
     finally:
+        release_interactive_slot()
+
+
+@contextlib.contextmanager
+def interactive_run():
+    """Hold ONE slot for a whole workflow run on a request thread — its
+    attempts, escalations and the Haiku reviewer gate (platform re-audit
+    10/7/26 #6). Each call taking its own slot let the reviewer, the last
+    call of a run, be the one refused under pressure, and a refused gate
+    passes the text unreviewed ("reviewer_unavailable"). Unlike
+    interactive_slot() (an Ask turn), the run's calls keep the request
+    thread's shorter leash unless they name their own. Never raises: when
+    no slot comes free the run goes on and each call asks for its own,
+    without waiting again — the first refusal is its own 'busy' row and
+    AIBusy, exactly as before. Re-entrant; off a request it takes nothing."""
+    if _INTERACTIVE_HELD.get() or not on_request_thread():
+        yield False
+        return
+    if not acquire_interactive_slot():
+        token = _SLOT_WAIT.set(0.0)
+        try:
+            yield False
+        finally:
+            _SLOT_WAIT.reset(token)
+        return
+    leash = _INTERACTIVE_LEASH.set(True)
+    try:
+        with interactive_slot_held():
+            yield True
+    finally:
+        _INTERACTIVE_LEASH.reset(leash)
         release_interactive_slot()
 
 
@@ -1361,6 +1435,47 @@ def context_runner(fn):
 
     def run(*a, **k):
         return snapshot.copy().run(fn, *a, **k)
+    return run
+
+
+# Context variables that belong to a request thread and never travel into
+# a background pool: Flask's request and app contexts (a pool thread that
+# copies them reads as "on a request" — has_request_context() — and its
+# model calls took interactive slots meant for the request threads), and
+# this module's own slot state.
+_REQUEST_ONLY_VARS = ("flask.request_ctx", "flask.app_ctx")
+
+
+def background_runner(fn):
+    """`fn` wrapped for a background pool that works OFF the request path —
+    the shadow reviews, the learner's scoring (platform re-audit 10/7/26
+    #3). context_runner copies the whole context, Flask's request context
+    with it, so a pool thread started from a request was "on a request"
+    (on_request_thread, has_request_context) and its calls took the
+    interactive slots, with the request thread's short leash, meant for the
+    four request threads. This runs `fn` in a copy of the submitting
+    context WITHOUT Flask's context variables or the slot state, marked
+    off-request, under the attribution of the moment it was handed over
+    (attributed()): who asked, never the request itself. A pool whose work
+    is part of a request the request waits on (an Ask turn's reads) keeps
+    context_runner."""
+    snapshot = contextvars.copy_context()
+    attr = {k: v for k, v in attribution_for_thread().items() if v is not None}
+    dropped = (_INTERACTIVE_HELD, _INTERACTIVE_LEASH, _SLOT_WAIT)
+
+    def _body(*a, **k):
+        _OFF_REQUEST.set(True)
+        with ai_context(**attr):
+            return fn(*a, **k)
+
+    def run(*a, **k):
+        ctx = contextvars.Context()
+        for var, value in snapshot.items():
+            if var.name in _REQUEST_ONLY_VARS or var in dropped:
+                continue
+            ctx.run(var.set, value)
+        return ctx.run(_body, *a, **k)
+    run.__name__ = getattr(fn, "__name__", "background")
     return run
 
 
@@ -1796,7 +1911,8 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
     # thread time (readiness, deadline, budget, breaker), held for the
     # attempts and the backoff between them, given back however they end.
     took_slot = False
-    if not _INTERACTIVE_HELD.get() and on_request_thread():
+    on_request = on_request_thread()
+    if not _INTERACTIVE_HELD.get() and on_request:
         if not acquire_interactive_slot():
             # If the breaker check above let this call through as its one
             # probe, hand the probe back: a busy server proves nothing about
@@ -1806,6 +1922,10 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                         detail=f"all {INTERACTIVE_AI_SLOTS} interactive slots were in use", **attribution)
             raise AIBusy(_BUSY_MESSAGE)
         took_slot = True
+    # The shorter leash: a call that took its own slot, or one inside a
+    # workflow run holding one for all its calls (interactive_run, #6) —
+    # never an Ask turn's (interactive_slot), which keeps its own.
+    if on_request and (took_slot or _INTERACTIVE_LEASH.get()):
         if retries is None:
             retries = INTERACTIVE_AI_RETRIES
         if deadline is None and "timeout" not in kwargs:
@@ -2406,6 +2526,30 @@ def _log_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, c
 
 
 STREAM_CUT_REASON = "stream_cut"
+# The same row when its output tokens are estimated from what had streamed
+# (platform re-audit 10/7/26 #10) rather than the SDK's count.
+STREAM_CUT_ESTIMATED_REASON = "stream_cut_est"
+# Roughly four characters a token for English and JSON — an estimate, and
+# the row says so.
+_CHARS_PER_TOKEN = 4
+
+
+def _streamed_output_estimate(partial) -> int:
+    """Output tokens a cut stream had produced, estimated from its
+    accumulated snapshot: text, thinking and tool-input characters / 4."""
+    chars = 0
+    for block in getattr(partial, "content", None) or []:
+        for attr in ("text", "thinking"):
+            val = getattr(block, attr, None)
+            if isinstance(val, str):
+                chars += len(val)
+        inp = getattr(block, "input", None)
+        if inp:
+            try:
+                chars += len(json.dumps(inp, default=str))
+            except Exception:
+                pass
+    return chars // _CHARS_PER_TOKEN
 
 
 def _log_stream_cut_safe(partial, model, restaurant_id, action, latency_ms, attempts, call_id, attribution,
@@ -2420,9 +2564,12 @@ def _log_stream_cut_safe(partial, model, restaurant_id, action, latency_ms, atte
     failure came before the stream started: nothing was billed) or its
     usage is all zero. The input and cache tokens are the stream's
     message_start figures; the SDK updates output_tokens only at the
-    stream's end (message_delta), so a cut stream's output reads as what
-    message_start said — the row undercounts the output it was billed for,
-    never overcounts it. Never raises."""
+    stream's end (message_delta), so a cut stream's output read as what
+    message_start said (a token or two) and the row undercounted the output
+    it was billed for. When the accumulated snapshot's text, thinking and
+    tool input come to more (characters / 4), that estimate is filed
+    instead, under reason 'stream_cut_est' (platform re-audit 10/7/26 #10)
+    — still an estimate, and the row says so. Never raises."""
     try:
         usage = getattr(partial, "usage", None) if partial is not None else None
         if usage is None:
@@ -2433,11 +2580,15 @@ def _log_stream_cut_safe(partial, model, restaurant_id, action, latency_ms, atte
         cr = getattr(usage, "cache_read_input_tokens", 0) or 0
         if not (tin or tout or cw or cr):
             return None
+        reason = STREAM_CUT_REASON
+        est = _streamed_output_estimate(partial)
+        if est > tout:
+            tout, reason = est, STREAM_CUT_ESTIMATED_REASON
         att = attribution or {}
         return log_ai_usage(
             restaurant_id, action or "unspecified", model, tin, tout,
             cache_write_tokens=cw, cache_read_tokens=cr, latency_ms=latency_ms,
-            status="error", outcome="error", reason=STREAM_CUT_REASON, attempts=attempts,
+            status="error", outcome="error", reason=reason, attempts=attempts,
             error=(f"{type(error).__name__}: {str(error)[:400]}" if error is not None else None),
             request_id=getattr(partial, "id", None),
             trigger=att.get("trigger"), actor_user_id=att.get("actor_user_id"),
@@ -2594,9 +2745,9 @@ def mark_outcome(message_or_call_id, outcome, reason=None, db_path=None):
             # An attempt's cut-stream row (#72) shares the call id and keeps
             # its own verdict: only the answer the caller judged is re-filed.
             cur = conn.execute("UPDATE ai_usage SET outcome=?, status=?, reason=COALESCE(?, reason) WHERE call_id=? "
-                               "AND COALESCE(reason, '') <> ?",
+                               "AND COALESCE(reason, '') NOT IN (?, ?)",
                                (outcome, _status_for(outcome), (str(reason)[:60] if reason else None), call_id,
-                                STREAM_CUT_REASON))
+                                STREAM_CUT_REASON, STREAM_CUT_ESTIMATED_REASON))
             try:
                 conn.execute("UPDATE ai_calls SET outcome=? WHERE call_id=?", (outcome, call_id))
             except sqlite3.OperationalError:

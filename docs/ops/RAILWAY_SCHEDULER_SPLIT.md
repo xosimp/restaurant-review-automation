@@ -67,9 +67,12 @@ in the database. Since 9/29/26 (#134):
   stuck in a job past twice its bound (`jobs_registry` `max_minutes`), so a
   standby takes over instead of a stuck loop holding the lease forever.
 - **Shutdown**: `ops.shutdown_scheduler()` — registered at exit by
-  `scheduler.start_scheduler`, and called by `worker.py` on SIGTERM — marks the
-  process as exiting BEFORE it releases the lease, so the loop, a pulse or the
-  keeper (daemon threads still running) cannot take it back.
+  `scheduler.start_scheduler` (`scheduler.register_shutdown`: a
+  `threading._register_atexit` hook, so it runs BEFORE Python joins the
+  thread pools, plus `atexit` — platform re-audit 10/7/26 #13), and called by
+  `worker.py` on SIGTERM — marks the process as exiting BEFORE it releases
+  the lease, so the loop, a pulse or the keeper (daemon threads still
+  running) cannot take it back.
 - A process that newly takes the lease closes the runs its predecessor left
   open (`ops.close_orphaned_runs`) and clears the job it was inside, so the
   Jobs page does not read the new runner as wedged.

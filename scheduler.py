@@ -5057,7 +5057,15 @@ def _run_manual_requests(pulsed):
     process takes (ops.take_job_requests — a compare-and-set, so two
     processes never both run one) is run here, under the lease, through the
     loop's own run_job — with the pulse, and never beside a live run of the
-    same job. Returns how many ran."""
+    same job. Returns how many ran (or were started on their lane).
+
+    A job the loop runs on a worker lane (jobs_registry `lane`) is started
+    on that lane here too (platform re-audit 10/7/26 #11): run inline, a
+    Run now of the weekly plan or the auto-draft held this tick's batch
+    collector, DSR sweep, reminders and briefs behind an hour of model
+    calls. The request is finished when the lane's run ends; a busy lane
+    hands the request back (pending), and a later tick starts it — or
+    take_job_requests expires it after RUN_REQUEST_TTL_MINUTES."""
     ran = 0
     for req in _ops.take_job_requests(limit=3):
         name = req["job"]
@@ -5094,12 +5102,38 @@ def _run_manual_requests(pulsed):
         except Exception:
             import contextlib as _ctxlib
             manual_ctx = _ctxlib.nullcontext()
+        def finish(req_id=req["id"], outcome=outcome):
+            state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else _ops.RUN_FAILED
+            _ops.finish_job_request(req_id, state != _ops.RUN_FAILED,
+                                    outcome.get("error") or (None if state != _ops.RUN_FAILED else "the run failed"))
+        context = f"manual by {req.get('requested_by') or 'admin'}"
+        lane = spec.get("lane")
+        if lane in _LANES:
+            def lane_body(body=body, name=name, req_id=req["id"]):
+                # The lane thread starts with no ai_context: the admin's
+                # attribution is entered here, as the inline run's is.
+                try:
+                    import ai_utils as _ai_lane
+                    ctx = _ai_lane.ai_context(trigger="admin", correlation_id=f"run_now:{name}:{req_id}")
+                except Exception:
+                    import contextlib as _ctxlib
+                    ctx = _ctxlib.nullcontext()
+                with ctx:
+                    return body()
+
+            def done(finish=finish):
+                try:
+                    finish()
+                except Exception as e:
+                    log.warning(f"Run now: request not finished: {e}")
+            if _LANES[lane].submit(name, lane_body, context=context, request_id=req["id"], _on_done=done):
+                ran += 1
+            else:
+                _ops.return_job_request(req["id"])
+            continue
         with manual_ctx:
-            pulsed.run_job(name, body, context=f"manual by {req.get('requested_by') or 'admin'}",
-                           request_id=req["id"])
-        state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else _ops.RUN_FAILED
-        _ops.finish_job_request(req["id"], state != _ops.RUN_FAILED,
-                                outcome.get("error") or (None if state != _ops.RUN_FAILED else "the run failed"))
+            pulsed.run_job(name, body, context=context, request_id=req["id"])
+        finish()
         ran += 1
     return ran
 
@@ -5893,15 +5927,39 @@ def start_scheduler():
     _ops.close_orphaned_runs()
     t = threading.Thread(target=_run_scheduler_thread, daemon=True)
     t.start()
-    # A redeploy SIGTERMs this process; gunicorn exits the worker cleanly and
-    # atexit runs, so the replacement takes the lease on its next tick rather
-    # than 30 minutes later. shutdown_scheduler first marks this process as
-    # exiting, so the loop, a pulse or the lease keeper — daemon threads still
-    # running — cannot take the lease back after it is released (#161).
-    import atexit
-    atexit.register(_ops.shutdown_scheduler)
+    register_shutdown()
     log.info("Scheduler thread started")
     return t
+
+
+def register_shutdown(release=None):
+    """Release the lease as the process starts to exit (#161), and BEFORE
+    the thread pools are joined (platform re-audit 10/7/26 #13).
+
+    A redeploy SIGTERMs this process; gunicorn exits the worker cleanly, so
+    the replacement takes the lease on its next tick rather than 30 minutes
+    later. shutdown_scheduler first marks this process as exiting, so the
+    loop, a pulse or the lease keeper — daemon threads still running —
+    cannot take the lease back after it is released.
+
+    atexit alone ran too late: Python joins every ThreadPoolExecutor (the
+    owner AI jobs, the shadow and score pools, the Ask summary and read
+    pools, the admin pools) in threading's own shutdown, before atexit —
+    a long job in one of them outlasted gunicorn's graceful timeout, the
+    worker was SIGKILLed with the lease still held, and the next deploy's
+    scheduler sat out LEASE_OWNER_GONE_SECONDS. threading._register_atexit
+    runs its hooks first, newest first, so this one — registered after
+    concurrent.futures registered its own join at import — runs before
+    the joins. atexit stays as the fallback (an interpreter without the
+    hook); a second release is a no-op."""
+    release = release or _ops.shutdown_scheduler
+    import atexit
+    import concurrent.futures.thread  # noqa: F401 — its join hook must be registered before ours
+    try:
+        threading._register_atexit(release)
+    except Exception as e:                         # shutting down already, or no such hook
+        log.warning(f"lease release not registered before the pool joins: {e}")
+    atexit.register(release)
 
 
 def auto_approve_five_stars(rid: int, restaurant) -> int:

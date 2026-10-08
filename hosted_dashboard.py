@@ -1204,10 +1204,10 @@ def _restart_scheduler_loop():
     t.start()
     if _SCHED_START_FAILED:
         # start_scheduler never got as far as registering the clean-exit
-        # lease release; do it once for the loop that did start.
-        import atexit
-        import ops as _ops_lease
-        atexit.register(_ops_lease.release_scheduler_lease)
+        # lease release; do it once for the loop that did start — the same
+        # registration, ahead of the thread pools' joins (platform re-audit
+        # 10/7/26 #13).
+        _sched_mod.register_shutdown()
         _SCHED_START_FAILED = False
     return t
 

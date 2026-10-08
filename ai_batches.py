@@ -62,6 +62,26 @@ and discarded — the callback never runs. The collector claims an item
 answer can never both act; when every item of a batch is cancelled the
 batch is cancelled at Anthropic too, so requests not yet run are not billed.
 
+CALLBACKS RUN OFF THE LOOP (platform re-audit 10/7/26 #1). The collector
+runs at the top of every scheduler tick, ahead of the DSR sweep, the
+reminders and the briefs; a callback may make a synchronous model call
+(a fallback on an errored, expired or cut-off item, the DSR's one-tier
+escalation), and run inline it held the loop for as long as the model
+took. So the loop thread only ledgers and claims: each callback is handed
+to a small pool of daemon threads (CALLBACK_WORKERS), and the pass waits
+at most CALLBACK_INLINE_WAIT_SECONDS for the ones it handed over — a
+judged answer is stored in that time, so the DSR sweep right after still
+finishes the night's narrative in the same tick; a slow fallback goes on
+in the pool and the loop moves on. Bounded: past CALLBACK_MAX_PENDING
+callbacks waiting or running the pass stops claiming, leaving the batch
+in progress (items are idempotent by status, so the next pass picks up
+the rest), and the pass checks its time bound per item, not per batch.
+A callback a crash or a deploy cut short leaves its item `collecting`
+(or `cut_off`): the sweep finds it STALE_COLLECTING_MINUTES later,
+wherever its batch is, and tells its callback once more
+(BatchItemFailed("stale"), or "cutoff" again) — a second cut-short call
+closes it as failed, never a third.
+
 ONLY WHERE THE SCHEDULER RUNS. A local backend holds a copy of real
 restaurants and production's key; it never submits and never collects
 (scheduler.scheduling_allowed). AI_BATCHES_ENABLED=0 switches the whole
@@ -71,8 +91,10 @@ import importlib
 import json
 import logging
 import os
+import queue
 import re
 import sqlite3
+import threading
 import time
 import zlib
 
@@ -98,10 +120,23 @@ API_TIMEOUT_SECONDS = 60.0
 # queue, oldest first, so a pass that stops early leaves the rest for the next).
 COLLECT_MAX_BATCHES = 50
 COLLECT_MAX_SECONDS = 120
-# An item claimed for its callback this long ago by a pass that never
-# finished it (a deploy killed the process mid-callback) is closed as
-# failed — never handed to its callback twice.
+# An item claimed for its callback this long ago whose callback is not
+# running in this process (a deploy killed the process mid-callback) is
+# handed to its callback once more as BatchItemFailed("stale"), so its
+# caller falls back; one already re-told is closed as failed — never a
+# third time (platform re-audit 10/7/26 #7).
 STALE_COLLECTING_MINUTES = 15
+STALE_MAX_ITEMS = 10
+# The callbacks' pool (platform re-audit 10/7/26 #1): daemon threads, so a
+# callback in a synchronous model call never holds the process's exit (the
+# stale sweep re-tells one cut short); two, so the night's DSR narrative is
+# not queued behind a slow weekly fallback.
+CALLBACK_WORKERS = max(1, int(os.getenv("AI_BATCH_CALLBACK_WORKERS", "2")))
+# Past this many callbacks waiting or running, a pass stops claiming more.
+CALLBACK_MAX_PENDING = 20
+# How long a pass waits for the callbacks it handed over before it returns
+# (the loop goes on; the rest finish in the pool).
+CALLBACK_INLINE_WAIT_SECONDS = 20
 # Items past their own cutoff handed back per collector pass (AI cost audit
 # 10/7/26 #59-#62): each callback falls back to a synchronous call, so the
 # pass is bounded; the rest are the next pass's, oldest cutoff first.
@@ -116,6 +151,7 @@ COLLECTING = "collecting"      # claimed by the collector for its callback
 DONE = "done"                  # answered; callback ran
 FAILED = "failed"              # errored / expired / canceled; callback told
 CANCELLED = "cancelled"        # the caller stopped waiting
+CUT_OFF = "cut_off"            # past its cutoff_at: cancelled, its callback owed (-> cancelled)
 DISCARDED = "discarded"        # answered after it was cancelled: ledgered, dropped
 OPEN = (QUEUED, SUBMITTED)
 
@@ -526,11 +562,20 @@ def cancel(workflow, custom_id, client=None):
     should read what the callback did. When no item of the batch is still
     wanted the batch is cancelled at Anthropic as well (best effort), so the
     requests it has not run yet are not billed."""
+    return _stop_waiting(workflow, custom_id, client, CANCELLED, "the caller stopped waiting")
+
+
+def _stop_waiting(workflow, custom_id, client, status, reason):
+    """cancel()'s body: the item out (queued or submitted) -> `status`,
+    atomically; the batch cancelled at Anthropic when nothing in it is
+    still wanted. The cutoff sweep moves an item to CUT_OFF the same way
+    (its callback is owed), stamping claimed_at for the stale sweep."""
     conn = _conn()
     try:
-        cur = conn.execute("UPDATE ai_batch_items SET status=?, reason='the caller stopped waiting', collected_at=? "
+        cur = conn.execute("UPDATE ai_batch_items SET status=?, reason=?, collected_at=?, "
+                           "claimed_at=CASE WHEN ?=? THEN ? ELSE claimed_at END "
                            "WHERE workflow=? AND custom_id=? AND status IN (?,?)",
-                           (CANCELLED, _now(), workflow, str(custom_id), *OPEN))
+                           (status, reason, _now(), status, CUT_OFF, _now(), workflow, str(custom_id), *OPEN))
         conn.commit()
         if cur.rowcount != 1:
             return False
@@ -665,9 +710,123 @@ def _error_text(result):
     return (f"{kind}: {msg}" if kind or msg else None)
 
 
+
+
+# ── the callbacks' pool (platform re-audit 10/7/26 #1) ─────────────────────
+#
+# The loop thread ledgers and claims; a callback — which may call a model
+# synchronously — runs here. Daemon threads on one queue; `_cb_inflight`
+# names every item handed over and not finished in this process (the stale
+# sweep leaves those alone, and a pass waits only for its own).
+
+_cb_queue = queue.Queue()
+_cb_cond = threading.Condition()
+_cb_inflight = set()
+_cb_threads = []
+
+
+def _callback_worker():
+    while True:
+        key, fn = _cb_queue.get()
+        try:
+            fn()
+        except Exception as e:                    # _invoke captures the callback's own; never kill the worker
+            log.warning("ai_batches: callback %s:%s failed outside its capture: %s", key[0], key[1], e)
+        finally:
+            with _cb_cond:
+                _cb_inflight.discard(key)
+                _cb_cond.notify_all()
+
+
+def _callbacks_pending():
+    with _cb_cond:
+        return len(_cb_inflight)
+
+
+def _handed_over(workflow, custom_id):
+    with _cb_cond:
+        return (workflow, str(custom_id)) in _cb_inflight
+
+
+def _dispatch(workflow, custom_id, fn):
+    """Hand fn (one item's callback and the write that closes it) to the
+    pool. False when that item's callback is already waiting or running
+    here."""
+    key = (workflow, str(custom_id))
+    with _cb_cond:
+        if key in _cb_inflight:
+            return False
+        _cb_inflight.add(key)
+        _cb_threads[:] = [t for t in _cb_threads if t.is_alive()]
+        while len(_cb_threads) < CALLBACK_WORKERS:
+            t = threading.Thread(target=_callback_worker, daemon=True,
+                                 name=f"ai-batch-callback-{len(_cb_threads) + 1}")
+            t.start()
+            _cb_threads.append(t)
+    _cb_queue.put((key, fn))
+    return True
+
+
+def _wait_for(keys, seconds):
+    """Wait at most `seconds` for these handed-over callbacks to finish.
+    The keys of those still going."""
+    end = time.monotonic() + max(0.0, seconds)
+    with _cb_cond:
+        while True:
+            left = [k for k in keys if k in _cb_inflight]
+            remaining = end - time.monotonic()
+            if not left or remaining <= 0:
+                return left
+            _cb_cond.wait(remaining)
+
+
+def _run_callback(workflow, custom_id, error=None, message=None, finish=None):
+    """On the pool: the item's callback (its row read fresh, as ledgered),
+    then finish(err) — the status write that closes the item."""
+    import contextlib
+    try:
+        import logging_setup
+        log_ctx = logging_setup.context(job="ai_batch_callback")
+    except Exception:
+        log_ctx = contextlib.nullcontext()
+    with log_ctx:
+        row = item(workflow, custom_id)
+        if row is None:
+            return
+        err = _invoke(row, message=message, error=error)
+        if finish is not None:
+            finish(err)
+
+
+def _finish_collected(workflow, custom_id, final, err):
+    """collecting -> done / failed, only while it is still collecting."""
+    conn = _conn()
+    try:
+        conn.execute("UPDATE ai_batch_items SET status=?, callback_error=? WHERE workflow=? AND custom_id=? "
+                     "AND status=?", (final, err, workflow, custom_id, COLLECTING))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _finish_cut_off(workflow, custom_id, err):
+    """cut_off -> cancelled once its callback has been told — discarded when
+    its answer landed meanwhile (ledgered by _collect_one, never handed
+    over)."""
+    conn = _conn()
+    try:
+        conn.execute("UPDATE ai_batch_items SET status=CASE WHEN result_type IS NOT NULL THEN ? ELSE ? END, "
+                     "reason='past its cutoff', callback_error=? WHERE workflow=? AND custom_id=? AND status=?",
+                     (DISCARDED, CANCELLED, err, workflow, custom_id, CUT_OFF))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _collect_one(workflow, custom_id, result, ended_at):
-    """One result: ledger it, then hand it to its callback (or discard it).
-    Returns the item's new status, or None when there was nothing to do."""
+    """One result: ledger it, then hand it to its callback on the pool (or
+    discard it). Returns the item's new status — COLLECTING while its
+    callback is owed — or None when there was nothing to do."""
     row = item(workflow, custom_id)
     if row is None:
         log.warning("ai_batches: a result for an unknown item %s:%s", workflow, custom_id)
@@ -679,6 +838,11 @@ def _collect_one(workflow, custom_id, result, ended_at):
         if not _discard(workflow, custom_id):
             return None
         status = DISCARDED
+    elif row["status"] == CUT_OFF and not row.get("result_type"):
+        # Past its cutoff, its fallback owed or running: the answer that
+        # landed anyway was billed, so it is ledgered — and dropped
+        # (_finish_cut_off closes it as discarded).
+        status = CUT_OFF
     elif row["status"] == SUBMITTED:
         if not _claim(workflow, custom_id):
             return None                      # cancelled a moment ago; the next pass discards it
@@ -690,57 +854,55 @@ def _collect_one(workflow, custom_id, result, ended_at):
                   stop_reason=(getattr(message, "stop_reason", None) if message is not None else None),
                   error=error_text, usage_json=(json.dumps(_usage_counts(message)) if message is not None else None),
                   collected_at=_now(), request_z=None)
-    if status == DISCARDED:
-        _update(workflow, custom_id, **fields)
-        return DISCARDED
     _update(workflow, custom_id, **fields)
-    row = item(workflow, custom_id)
+    if status in (DISCARDED, CUT_OFF):
+        return status
     if rtype == "succeeded" and message is not None:
-        err = _invoke(row, message=message)
-        final = DONE
+        final, kw = DONE, {"message": message}
     else:
-        err = _invoke(row, error=BatchItemFailed(rtype, error_text))
-        final = FAILED
-    _update(workflow, custom_id, status=final, callback_error=err)
-    return final
+        final, kw = FAILED, {"error": BatchItemFailed(rtype, error_text)}
+    _dispatch(workflow, custom_id, lambda: _run_callback(
+        workflow, custom_id, finish=lambda err: _finish_collected(workflow, custom_id, final, err), **kw))
+    return COLLECTING
 
 
-def _close_stale(batch_id):
-    """Items a killed pass claimed and never finished: failed, not re-run."""
-    from datetime import datetime, timedelta
-    cutoff = (datetime.utcnow() - timedelta(minutes=STALE_COLLECTING_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
-    conn = _conn()
-    try:
-        conn.execute("UPDATE ai_batch_items SET status=?, callback_error='the collector stopped mid-callback' "
-                     "WHERE batch_id=? AND status=? AND claimed_at < ?", (FAILED, batch_id, COLLECTING, cutoff))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _collect_batch(client, job, batch):
-    """Every result of one ended batch; then the job row closed."""
+def _collect_batch(client, job, batch, started, handed):
+    """The results of one ended batch, each ledgered and its callback handed
+    to the pool (named in `handed`); then the job row closed.
+    (complete, items collected): incomplete when the pass's time bound
+    passed or the pool is full — the job stays in progress and the next
+    pass reads its results again (an item already collected is skipped by
+    its status)."""
     batch_id, workflow = job["batch_id"], job["workflow"]
     ended_at = getattr(batch, "ended_at", None)
     counts = getattr(batch, "request_counts", None)
-    seen = set()
+    seen, n = set(), 0
+
+    def one(cid, result):
+        status = _collect_one(workflow, cid, result, ended_at)
+        if status == COLLECTING:
+            handed.append((workflow, cid))
+        return 0 if status is None else 1
     for res in client.messages.batches.results(batch_id):
+        # Per item, not per batch (#1): one batch of hundreds must not
+        # hold the loop past the pass's bound.
+        if time.monotonic() - started > COLLECT_MAX_SECONDS or _callbacks_pending() >= CALLBACK_MAX_PENDING:
+            return False, n
         cid = str(getattr(res, "custom_id", "") or "")
         seen.add(cid)
-        _collect_one(workflow, cid, getattr(res, "result", None), ended_at)
+        n += one(cid, getattr(res, "result", None))
     # An item the results never named (should not happen): its caller is
     # told, so it falls back rather than waiting on nothing.
     conn = _conn()
     try:
         left = [r["custom_id"] for r in conn.execute(
-            "SELECT custom_id FROM ai_batch_items WHERE batch_id=? AND status IN (?,?)",
-            (batch_id, SUBMITTED, CANCELLED)).fetchall()]
+            "SELECT custom_id FROM ai_batch_items WHERE batch_id=? AND status IN (?,?,?)",
+            (batch_id, SUBMITTED, CANCELLED, CUT_OFF)).fetchall()]
     finally:
         conn.close()
     for cid in left:
         if cid not in seen:
-            _collect_one(workflow, cid, _Missing(), ended_at)
-    _close_stale(batch_id)
+            n += one(cid, _Missing())
     conn = _conn()
     try:
         conn.execute("UPDATE ai_batch_jobs SET status='collected', ended_at=?, collected_at=?, checked_at=?, "
@@ -751,18 +913,21 @@ def _collect_batch(client, job, batch):
         conn.commit()
     finally:
         conn.close()
+    return True, n
 
 
 class _Missing:
     type = "missing"
 
 
-def _sweep_cutoffs(client, started, out):
+def _sweep_cutoffs(client, started, out, handed):
     """Items still out past their own cutoff_at (AI cost audit 10/7/26
-    #59-#62): each cancelled (its answer, if it ever lands, is ledgered and
-    dropped) and its callback told BatchItemFailed("cutoff"), so its caller
-    writes it synchronously now. Oldest cutoff first, at most
-    CUTOFF_MAX_ITEMS a pass and inside the collector's time bound."""
+    #59-#62): each moved to CUT_OFF (cancelled: its answer, if it ever
+    lands, is ledgered and dropped) and its callback told
+    BatchItemFailed("cutoff") on the pool, so its caller writes it
+    synchronously — off the loop thread (platform re-audit 10/7/26 #1).
+    Oldest cutoff first, at most CUTOFF_MAX_ITEMS a pass and inside the
+    collector's time bound."""
     conn = _conn()
     try:
         rows = [dict(r) for r in conn.execute(
@@ -773,23 +938,83 @@ def _sweep_cutoffs(client, started, out):
     if len(rows) > CUTOFF_MAX_ITEMS:
         rows, out["hit_bound"] = rows[:CUTOFF_MAX_ITEMS], True
     for r in rows:
-        if time.monotonic() - started > COLLECT_MAX_SECONDS:
+        if time.monotonic() - started > COLLECT_MAX_SECONDS or _callbacks_pending() >= CALLBACK_MAX_PENDING:
             out["hit_bound"] = True
             break
-        if not cancel(r["workflow"], r["custom_id"], client=client):
+        wf_, cid = r["workflow"], str(r["custom_id"])
+        if not _stop_waiting(wf_, cid, client, CUT_OFF, "past its cutoff"):
             continue                       # the collector took it a moment ago
-        row = item(r["workflow"], r["custom_id"])
-        if row is None:
-            continue
-        err = _invoke(row, error=BatchItemFailed("cutoff", "not answered by its cutoff"))
-        _update(r["workflow"], r["custom_id"], reason="past its cutoff", callback_error=err)
+        if _dispatch(wf_, cid, _told(wf_, cid, BatchItemFailed("cutoff", "not answered by its cutoff"), CUT_OFF)):
+            handed.append((wf_, cid))
         out["cut_off"] = out.get("cut_off", 0) + 1
 
 
-def _capture_sweep(e):
+def _told(workflow, custom_id, error, status):
+    """The pool's job for an item whose callback is told `error`: then
+    closed from `status` (cut_off -> cancelled, collecting -> failed)."""
+    if status == CUT_OFF:
+        def finish(err):
+            _finish_cut_off(workflow, custom_id, err)
+    else:
+        def finish(err):
+            _finish_collected(workflow, custom_id, FAILED, err)
+    return lambda: _run_callback(workflow, custom_id, error=error, finish=finish)
+
+
+_STALE_REASON = "stale: told again after the collector stopped mid-callback"
+
+
+def _sweep_stale(out, handed):
+    """Items whose callback was owed and never finished — a crash or a
+    deploy mid-callback — wherever their batch is (platform re-audit
+    10/7/26 #7: the old check ran only when its batch was collected, which
+    an ended batch never is again). Claimed more than
+    STALE_COLLECTING_MINUTES ago and not in this process's pool: told once
+    more (a collected item BatchItemFailed("stale"), a cut-off one
+    "cutoff" again) with claimed_at re-stamped; one already told again is
+    closed with no third call."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(minutes=STALE_COLLECTING_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = _conn()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT workflow, custom_id, status, reason FROM ai_batch_items WHERE status IN (?,?) "
+            "AND claimed_at IS NOT NULL AND claimed_at < ? ORDER BY claimed_at LIMIT ?",
+            (COLLECTING, CUT_OFF, cutoff, STALE_MAX_ITEMS)).fetchall()]
+    finally:
+        conn.close()
+    for r in rows:
+        wf_, cid, status = r["workflow"], str(r["custom_id"]), r["status"]
+        if _handed_over(wf_, cid):
+            continue                       # still waiting or running here: not stale
+        conn = _conn()
+        try:
+            if r.get("reason") == _STALE_REASON:
+                conn.execute("UPDATE ai_batch_items SET status=?, callback_error=? WHERE workflow=? "
+                             "AND custom_id=? AND status=?",
+                             (CANCELLED if status == CUT_OFF else FAILED,
+                              "the collector stopped mid-callback twice", wf_, cid, status))
+                conn.commit()
+                out["stale_closed"] = out.get("stale_closed", 0) + 1
+                continue
+            cur = conn.execute("UPDATE ai_batch_items SET claimed_at=?, reason=? WHERE workflow=? AND custom_id=? "
+                               "AND status=? AND claimed_at < ?", (_now(), _STALE_REASON, wf_, cid, status, cutoff))
+            conn.commit()
+            if cur.rowcount != 1:
+                continue
+        finally:
+            conn.close()
+        error = (BatchItemFailed("cutoff", "not answered by its cutoff") if status == CUT_OFF
+                 else BatchItemFailed("stale", "the collector stopped before its callback finished"))
+        if _dispatch(wf_, cid, _told(wf_, cid, error, status)):
+            handed.append((wf_, cid))
+        out["stale"] = out.get("stale", 0) + 1
+
+
+def _capture_sweep(e, what="cutoff sweep"):
     try:
         import ops
-        ops.capture(e, job="ai_batch_collect", context="cutoff sweep")
+        ops.capture(e, job="ai_batch_collect", context=what)
     except Exception:
         pass
 
@@ -797,13 +1022,18 @@ def _capture_sweep(e):
 def run_collector(client=None):
     """The scheduled job (ai_batch_collect, every ~5 minutes): every batch
     still out, oldest first, asked whether it has ended; an ended one's
-    results ledgered and handed to their callbacks. Bounded by
-    COLLECT_MAX_BATCHES and COLLECT_MAX_SECONDS; the jobs table is the queue,
-    so a pass cut short leaves the rest for the next. Then each item still
-    out past its own cutoff is handed back for a synchronous call
-    (_sweep_cutoffs, counted in `cut_off`). Only on the production
-    scheduler's host. Returns the standard counts: attempted = batches that
-    had ended, skipped = batches still running."""
+    results ledgered and their callbacks handed to the pool — never run on
+    the loop thread (platform re-audit 10/7/26 #1). Bounded by
+    COLLECT_MAX_BATCHES, by COLLECT_MAX_SECONDS checked per item and by
+    CALLBACK_MAX_PENDING; the jobs table is the queue, so a pass cut short
+    leaves the rest for the next. Then each item still out past its own
+    cutoff is handed back for a synchronous call (_sweep_cutoffs, counted
+    in `cut_off`) and each callback a crash cut short is told again
+    (_sweep_stale, #7, counted in `stale`). The pass waits at most
+    CALLBACK_INLINE_WAIT_SECONDS for the callbacks it handed over
+    (`callbacks_running`: those still going when it returned). Only on the
+    production scheduler's host. Returns the standard counts: attempted =
+    batches that had ended, skipped = batches still running."""
     out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "items": 0, "cut_off": 0}
     if not _scheduling_allowed():
         return dict(out, reason="not the production scheduler host")
@@ -815,17 +1045,13 @@ def run_collector(client=None):
     finally:
         conn.close()
     started = time.monotonic()
-    if not jobs:
-        try:
-            _sweep_cutoffs(client, started, out)
-        except Exception as e:
-            _capture_sweep(e)
-        return out
+    handed = []
     if len(jobs) > COLLECT_MAX_BATCHES:
         jobs, out["hit_bound"] = jobs[:COLLECT_MAX_BATCHES], True
-    client = client or _client()
+    if jobs:
+        client = client or _client()
     for job in jobs:
-        if time.monotonic() - started > COLLECT_MAX_SECONDS:
+        if time.monotonic() - started > COLLECT_MAX_SECONDS or _callbacks_pending() >= CALLBACK_MAX_PENDING:
             out["hit_bound"] = True
             break
         try:
@@ -842,9 +1068,19 @@ def run_collector(client=None):
                 out["skipped"] += 1
                 continue
             out["attempted"] += 1
-            _collect_batch(client, job, batch)
+            complete, n = _collect_batch(client, job, batch, started, handed)
             out["ok"] += 1
-            out["items"] += int(job.get("n_items") or 0)
+            out["items"] += n
+            if not complete:
+                # Left in progress: the next pass reads it again.
+                out["hit_bound"] = True
+                c = _conn()
+                try:
+                    c.execute("UPDATE ai_batch_jobs SET checked_at=? WHERE batch_id=?", (_now(), job["batch_id"]))
+                    c.commit()
+                finally:
+                    c.close()
+                break
         except Exception as e:
             out["attempted"] += 1
             out["failed"] += 1
@@ -862,7 +1098,17 @@ def run_collector(client=None):
                 c.close()
     # After the results: an answer that landed this pass is never cut off.
     try:
-        _sweep_cutoffs(client, started, out)
+        _sweep_cutoffs(client, started, out, handed)
     except Exception as e:
         _capture_sweep(e)
+    try:
+        _sweep_stale(out, handed)
+    except Exception as e:
+        _capture_sweep(e, "stale sweep")
+    # A judged answer is stored within moments, so the DSR sweep right
+    # after this job still finishes the night in the same tick; a slow
+    # fallback keeps running in the pool and the loop goes on.
+    left = _wait_for(handed, CALLBACK_INLINE_WAIT_SECONDS)
+    if left:
+        out["callbacks_running"] = len(left)
     return out
