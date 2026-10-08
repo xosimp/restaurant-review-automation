@@ -14,7 +14,7 @@ struct ServiceLiveActivity: Widget {
                 .cavnarForcedDark()
                 .activityBackgroundTint(Color.cavnarPaperDark)
                 .activitySystemActionForegroundColor(Color.cavnarInkDark)
-                .widgetURL(URL(string: "cavnarai://nav/labor"))
+                .widgetURL(context.attributes.link)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -48,7 +48,7 @@ struct ServiceLiveActivity: Widget {
                     .foregroundStyle(Color.cavnarEmber)
                     .cavnarForcedDark()
             }
-            .widgetURL(URL(string: "cavnarai://nav/labor"))
+            .widgetURL(context.attributes.link)
         }
     }
 }

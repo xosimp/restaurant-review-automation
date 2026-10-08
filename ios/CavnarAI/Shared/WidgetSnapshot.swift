@@ -105,10 +105,15 @@ struct WidgetSnapshot: Codable, Equatable {
     /// The widget's link: that night's report when the snapshot knows the
     /// date (bare "dsr" is the latest night), the command sheet while
     /// something is waiting.
+    ///
+    /// Every link names the location the figures are from (`?loc=`,
+    /// re-audit 10/8/26 #6): a widget set to another of the group's
+    /// locations opens that location's report, not the one the app is on.
     func link(now: Date = Date()) -> String {
-        if waitingIsCurrent(now: now), waitingCount > 0 { return "cavnarai://command" }
-        if let nightDate, !nightDate.isEmpty { return "cavnarai://nav/dsr/night/" + nightDate }
-        return "cavnarai://nav/dsr"
+        if waitingIsCurrent(now: now), waitingCount > 0 {
+            return CavnarLink.located("cavnarai://command", restaurantId)
+        }
+        return nightLink
     }
 
     /// "Good day 82/100" — the verdict with its score when both exist;
@@ -121,8 +126,10 @@ struct WidgetSnapshot: Codable, Equatable {
     /// The "Last night" widget's link: that night's report when the
     /// snapshot knows the date, else the latest night.
     var nightLink: String {
-        if let nightDate, !nightDate.isEmpty { return "cavnarai://nav/dsr/night/" + nightDate }
-        return "cavnarai://nav/dsr"
+        if let nightDate, !nightDate.isEmpty {
+            return CavnarLink.located("cavnarai://nav/dsr/night/" + nightDate, restaurantId)
+        }
+        return CavnarLink.located("cavnarai://nav/dsr", restaurantId)
     }
 
     /// Last night's figures as one spoken sentence — what "How was last
@@ -237,5 +244,16 @@ enum WidgetLocations {
 
     static func clear() {
         defaults?.removeObject(forKey: storageKey)
+    }
+}
+
+/// The location a widget or Live Activity link is about (re-audit 10/8/26
+/// #6): `?loc=<restaurant id>` on a `cavnarai://` link, which SystemEntry
+/// reads the way it reads a dashboard link's `loc=` — the app switches
+/// there first when this login has it.
+enum CavnarLink {
+    static func located(_ raw: String, _ restaurantId: Int?) -> String {
+        guard let restaurantId, restaurantId > 0 else { return raw }
+        return raw + (raw.contains("?") ? "&" : "?") + "loc=\(restaurantId)"
     }
 }

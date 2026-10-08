@@ -54,4 +54,11 @@ struct ScheduleBuildAttributes: ActivityAttributes {
     let jobId: String
     /// "Next week" / "Week of 10/12/26" / "Redoing 2 days".
     let weekLabel: String
+    /// The location the generation is for: a tap opens it there
+    /// (`?loc=`, re-audit 10/8/26 #6). Nil on an activity started before
+    /// it existed.
+    var restaurantId: Int? = nil
+
+    /// The tap's link: the schedule, at its own location.
+    var link: URL? { URL(string: CavnarLink.located("cavnarai://nav/labor/schedule", restaurantId)) }
 }

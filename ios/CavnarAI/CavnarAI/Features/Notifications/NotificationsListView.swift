@@ -509,7 +509,8 @@ struct NotificationsListView: View {
                     deepLinkRouter.handleNotificationTap(alertType: item.type, reviewId: item.reviewId,
                                                          alertId: item.alertId,
                                                          module: item.module, restaurantId: item.restaurantId,
-                                                         nav: item.nav)
+                                                         nav: item.nav,
+                                                         platformAlert: PlatformAlert(row: item))
                     dismiss()
                 } label: {
                     HStack(spacing: 10) {

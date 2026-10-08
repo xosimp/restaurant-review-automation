@@ -147,6 +147,12 @@ struct LastNightSummaryIntent: AppIntent {
 /// afterwards). An answer that proposes an action never acts: Siri says
 /// what was proposed and that it is waiting in Ask, where the confirm card
 /// is. Needs an unlocked device — the restaurant's figures, out loud.
+///
+/// With the app's own lock on (Face ID to reopen, or an app passcode) the
+/// answer is never given outside the app: nothing is asked, and Siri says
+/// to open Cavnar AI, whose lock runs first (re-audit 10/8/26 #8). An
+/// unlocked iPhone handed to someone else used to answer from the
+/// restaurant's figures with no app lock at all.
 struct AskCavnarAnswerIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask Cavnar AI"
     static let description = IntentDescription("Asks Cavnar AI about your restaurant and tells you the answer.")
@@ -160,7 +166,7 @@ struct AskCavnarAnswerIntent: AppIntent {
     init(question: String) { self.question = question }
 
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
-        let outcome = await SiriAsk.ask(question)
+        let outcome = SessionStore.appLockConfigured ? SiriAsk.locked : await SiriAsk.ask(question)
         return .result(dialog: IntentDialog(stringLiteral: outcome.spoken),
                        view: SiriAskSnippet(question: question, outcome: outcome))
     }
@@ -223,6 +229,13 @@ enum SiriAsk {
 
     /// The longest answer Siri reads out; the snippet shows all of it.
     static let spokenLimit = 600
+
+    /// What Siri says when the app's lock is on (SessionStore.appLockConfigured):
+    /// no question is sent, no figure is read out.
+    static let locked = Outcome(
+        spoken: "Cavnar AI is locked with Face ID or a passcode on this iPhone. Open Cavnar AI to ask there.",
+        text: "Cavnar AI is locked with Face ID or a passcode on this iPhone. Open Cavnar AI to ask there.",
+        proposals: 0, ok: false)
 
     static func ask(_ question: String, client: APIClient = .shared) async -> Outcome {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)

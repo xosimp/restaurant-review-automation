@@ -113,17 +113,46 @@ enum Keychain {
     struct SharedSession: Codable, Equatable {
         let token: String
         let baseURL: String
+        /// The location the session is on and its name, for a login with
+        /// more than one (nil otherwise): the Share sheet says where an
+        /// invoice will land (re-audit 10/8/26 #12). The upload itself goes
+        /// to the session's location on the server, whatever this says.
+        var restaurantId: Int? = nil
+        var locationName: String? = nil
         enum CodingKeys: String, CodingKey {
             case token
             case baseURL = "base_url"
+            case restaurantId = "restaurant_id"
+            case locationName = "location_name"
         }
     }
 
     /// Writes the copy when it differs from what is there. No-op without a
-    /// shared group (an unsigned Simulator build).
+    /// shared group (an unsigned Simulator build). The same sign-in keeps
+    /// the location it was named with; a new one starts with none.
     static func mirrorSessionForExtensions(_ token: String) {
         guard let group = sharedAccessGroup, !token.isEmpty else { return }
-        let session = SharedSession(token: token, baseURL: AppEnvironment.baseURL.absoluteString)
+        var session = SharedSession(token: token, baseURL: AppEnvironment.baseURL.absoluteString)
+        if let existing = readSharedSession(group: group), existing.token == token,
+           existing.baseURL == session.baseURL {
+            session.restaurantId = existing.restaurantId
+            session.locationName = existing.locationName
+        }
+        writeSharedSession(session, group: group)
+    }
+
+    /// The location the session is on now — after a switch, and from each
+    /// widget refresh's read of the group's locations. `name` nil for a
+    /// single-location login.
+    static func mirrorSessionLocation(restaurantId: Int, name: String?) {
+        guard let group = sharedAccessGroup, var session = readSharedSession(group: group) else { return }
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.restaurantId = restaurantId > 0 ? restaurantId : nil
+        session.locationName = (trimmed?.isEmpty == false) ? trimmed : nil
+        writeSharedSession(session, group: group)
+    }
+
+    private static func writeSharedSession(_ session: SharedSession, group: String) {
         if readSharedSession(group: group) == session { return }
         guard let data = try? JSONEncoder().encode(session) else { return }
         let query: [String: Any] = [

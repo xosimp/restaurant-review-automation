@@ -251,6 +251,11 @@ final class WidgetSnapshotService {
                 // Siri's "Switch to <location>" learns the new names.
                 CavnarShortcuts.updateAppShortcutParameters()
             }
+            // The Share sheet names the location an invoice lands at (#12)
+            // — only when the session is still where this read was made.
+            if rid == SessionScope.activeRestaurantId {
+                Keychain.mirrorSessionLocation(restaurantId: rid, name: name)
+            }
         }
         var wrote = false
         if let snapshot = Self.merge(previous: WidgetSnapshot.load(), restaurantId: rid,
@@ -263,7 +268,7 @@ final class WidgetSnapshotService {
             UIApplication.shared.shortcutItems =
                 [QuickAction.approveRepliesItem(waiting: waiting.replies)].compactMap { $0 }
         }
-        if let p { PendingSendActivities.sync(p.actions ?? []) }
+        if let p { PendingSendActivities.sync(p.actions ?? [], restaurantId: rid) }
         // The phone's Live Activity tokens follow the session and location
         // it is on now (#38, #61, #94).
         await LiveActivitySync.shared.refresh(bearer: token)
@@ -473,7 +478,9 @@ enum PendingSendActivities {
         }
     }
 
-    static func sync(_ rows: [PendingAction]) {
+    /// `restaurantId`: the location the pending list was read at — each
+    /// countdown names it, so its tap opens there (re-audit 10/8/26 #6).
+    static func sync(_ rows: [PendingAction], restaurantId: Int? = nil) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let wanted = countdowns(rows)
         let wantedIds = Set(wanted.map { $0.0.id })
@@ -493,7 +500,8 @@ enum PendingSendActivities {
                 continue
             }
             let title = (row.label?.isEmpty == false ? row.label! : PendingSendAttributes.plainTitle(kind: row.kind))
-            let attributes = PendingSendAttributes(actionId: row.id, kind: row.kind, title: title)
+            let attributes = PendingSendAttributes(actionId: row.id, kind: row.kind, title: title,
+                                                   restaurantId: (restaurantId ?? 0) > 0 ? restaurantId : nil)
             // With a push token (#61): the server ends it when the send runs
             // or is undone elsewhere, with the app closed. The server may
             // also have started one by push-to-start — that one is found by

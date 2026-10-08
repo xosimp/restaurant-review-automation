@@ -55,6 +55,8 @@ final class ShareModel {
     init(providers: [NSItemProvider]) { self.providers = providers }
 
     var signedIn: Bool { ShareUploader.session() != nil }
+    /// The location it goes to, for a group's login (re-audit 10/8/26 #12).
+    var destination: String? { ShareUploader.destinationLine(ShareUploader.session()) }
 
     func load() async {
         items = await ShareUploader.load(providers)
@@ -102,6 +104,14 @@ struct ShareSheetView: View {
             Text("Supplier invoice")
                 .font(.cavnarHeadline(24))
                 .foregroundStyle(Color.cavnarInk)
+            if model.signedIn, let destination = model.destination {
+                // A group owner's invoice lands at the location the app is
+                // on: say which, before Send.
+                Label(destination, systemImage: "mappin.and.ellipse")
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineLimit(1)
+            }
             switch model.phase {
             case .loading:
                 CavnarSkeletonBar(height: 3)

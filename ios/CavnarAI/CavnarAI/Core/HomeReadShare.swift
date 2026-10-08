@@ -45,21 +45,35 @@ final class HomeReadShare {
 
     // MARK: Home's side
 
-    func beginActions() { actionsStarted = Date() }
+    /// A read is stamped with the location it is made AT, here: stamped at
+    /// its finish, a read begun at Chicago that landed after a switch to
+    /// Dallas was lent to Dallas's widget as Dallas's queue (re-audit
+    /// 10/8/26, Home #5). The caller hands the stamp back to `finish…`.
+    @discardableResult
+    func beginActions(restaurantId: Int = SessionScope.activeRestaurantId) -> Int {
+        actionsStarted = Date()
+        return restaurantId
+    }
 
-    /// Home's queue read: each item's key and count (nil when it failed).
-    func finishActions(_ items: [(key: String, count: Int?)]?, restaurantId: Int = SessionScope.activeRestaurantId) {
+    /// Home's queue read: each item's key and count (nil when it failed),
+    /// for the location `beginActions` stamped.
+    func finishActions(_ items: [(key: String, count: Int?)]?, restaurantId: Int) {
         actionsStarted = nil
         guard let items else { return }
         let part = WidgetSnapshotService.waiting(fromHome: items)
         actions = Actions(count: part.count, replies: part.replies, restaurantId: restaurantId, at: Date())
     }
 
-    func beginNight() { nightStarted = Date() }
+    @discardableResult
+    func beginNight(restaurantId: Int = SessionScope.activeRestaurantId) -> Int {
+        nightStarted = Date()
+        return restaurantId
+    }
 
     /// Home's night read: the latest list row, `.some(nil)` for "no report
-    /// for this login", nil when the read failed.
-    func finishNight(_ latest: DSRSummary??, restaurantId: Int = SessionScope.activeRestaurantId) {
+    /// for this login", nil when the read failed — for the location
+    /// `beginNight` stamped.
+    func finishNight(_ latest: DSRSummary??, restaurantId: Int) {
         nightStarted = nil
         guard let latest else { return }
         night = Night(latest: latest, restaurantId: restaurantId, at: Date())

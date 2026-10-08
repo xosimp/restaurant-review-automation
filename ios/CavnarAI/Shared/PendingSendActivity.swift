@@ -35,6 +35,13 @@ struct PendingSendAttributes: ActivityAttributes {
     let kind: String
     /// The row's own label, or a plain one for its kind.
     let title: String
+    /// The location the send is at (live_activities.pending_send_attributes
+    /// `restaurantId`): a tap opens it there (`?loc=`, re-audit 10/8/26 #6).
+    /// Nil from an older server or an activity started before it existed.
+    var restaurantId: Int? = nil
+
+    /// The tap's link: the queued send's own sheet, at its location.
+    var link: URL? { URL(string: CavnarLink.located("cavnarai://nav/action/\(actionId)", restaurantId)) }
 
     /// "Schedule goes out" / "Order goes out" — the kicker.
     var kicker: String {

@@ -16,7 +16,7 @@ struct PendingSendLiveActivity: Widget {
                 // A tint is a value, not a view: the dark token itself (#18).
                 .activityBackgroundTint(Color.cavnarPaperDark)
                 .activitySystemActionForegroundColor(Color.cavnarInkDark)
-                .widgetURL(URL(string: "cavnarai://nav/action/\(context.attributes.actionId)"))
+                .widgetURL(context.attributes.link)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -54,7 +54,7 @@ struct PendingSendLiveActivity: Widget {
                     .foregroundStyle(Color.cavnarEmber)
                     .cavnarForcedDark()
             }
-            .widgetURL(URL(string: "cavnarai://nav/action/\(context.attributes.actionId)"))
+            .widgetURL(context.attributes.link)
         }
     }
 }

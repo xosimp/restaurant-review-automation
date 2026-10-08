@@ -19,10 +19,24 @@ enum ShareUploader {
     struct SharedSession: Decodable {
         let token: String
         let baseURL: String
+        /// The location the app's session is on, named for a login with
+        /// more than one (Keychain.mirrorSessionLocation); nil otherwise.
+        let restaurantId: Int?
+        let locationName: String?
         enum CodingKeys: String, CodingKey {
             case token
             case baseURL = "base_url"
+            case restaurantId = "restaurant_id"
+            case locationName = "location_name"
         }
+    }
+
+    /// "Goes to North Ave." — where the upload lands, for a group's login;
+    /// nil when there is only one place it could go.
+    static func destinationLine(_ session: SharedSession?) -> String? {
+        guard let name = session?.locationName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else { return nil }
+        return "Goes to \(name)"
     }
 
     /// The same item and group the app writes (Keychain.sharedSessionAccount).
