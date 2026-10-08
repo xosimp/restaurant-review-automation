@@ -1518,8 +1518,11 @@ Data Health). A dimension below its minimum data is None with what it needs
 ("needs 28 days of sales in the last 8 weeks (has 9 …)"), never 0. No
 "personality" labels: a profile is measured figures. `GET /api/dna` +
 `/mobile/api/dna` return `dna.profile` — label, value, display text,
-trend against 4 weeks ago, basis, needs — projected by module view
-permissions.
+trend against 4 weeks ago, basis, needs, and (10/7/26) `history`, the
+restaurant's own last `HISTORY_WEEKS` (12) stored weeks of a measured
+numeric dimension — projected by module view permissions. Web Home's
+Results and the iOS Restaurant DNA sheet draw it, one chart per
+dimension; nothing in it is another restaurant's.
 
 **Similarity.** `dna.distance(a, b)` = sqrt(Σ w·δ·(z_a − z_b)² ÷ Σ w·δ)
 over the dimensions both measured; a categorical mismatch counts as a
