@@ -1204,7 +1204,7 @@
   function annRow(a){
     var orig = S.showOriginal && S.showOriginal[a.id], title = orig && a.original_title ? a.original_title : a.title,
         body = orig && a.original_body ? a.original_body : a.body;
-    var by = [a.created_by_name || '', a.created_at ? mdyTime(a.created_at) : ''].filter(function(x){ return !!x; }).join(' · ');
+    var by = [esc(a.created_by_name || ''), a.created_at ? mdyTime(a.created_at) : ''].filter(function(x){ return !!x; }).join(' · ');
     return '<div class="card' + (a.priority === 'urgent' ? ' urgent' : '') + '">' +
       (a.priority === 'urgent' ? '<div class="kicker" style="color:var(--red)">Urgent</div>' : '') +
       '<div class="strong" style="font-size:17px">' + esc(title) + '</div>' + (body ? '<p style="margin:6px 0 0;white-space:pre-wrap;color:var(--ink2)">' + esc(body) + '</p>' : '') +

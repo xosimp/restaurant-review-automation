@@ -444,3 +444,21 @@ def test_the_content_tab_is_social_only_on_the_phone():
     view = _swift("MarketingView.swift")
     assert "ForEach(viewModel.socialContentTypes)" in view
     assert "Paste in a Weekly email" not in _swift("GuestTextClubView.swift")
+
+
+# ── re-audit 10/8/26: a retry or a send-to-new is a send ────────────────────
+
+def test_a_login_that_cannot_publish_cannot_retry_or_send_a_newsletter_to_new_subscribers(app, db_path, monkeypatch):
+    rid = create_restaurant(Restaurant(name="Gate Co", owner_email="g@x.test", module_marketing=1), db_path=db_path)
+    called = []
+    monkeypatch.setattr(guest_email, "retry_failed", lambda *a, **k: called.append("retry") or {"ok": True})
+    monkeypatch.setattr(guest_email, "send_to_new_subscribers", lambda *a, **k: called.append("new") or {"ok": True})
+    member = Phone(app, db_path, rid, role="member", username="teammate")
+    for path in ("/mobile/api/guest-newsletter/1/retry", "/mobile/api/guest-newsletter/1/send-new"):
+        r = member.post(path, json={})
+        assert r.status_code == 403, path
+    assert called == []
+    owner = Phone(app, db_path, rid)
+    assert owner.post("/mobile/api/guest-newsletter/1/retry", json={}).status_code == 200
+    assert owner.post("/mobile/api/guest-newsletter/1/send-new", json={}).status_code == 200
+    assert called == ["retry", "new"]

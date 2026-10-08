@@ -484,3 +484,10 @@ def test_the_portal_follows_the_house_rules():
                 "'sr-withdraw'", "signoff:", "'cal-reset'", "'cal-revoke'"):
         i = page.index(act)
         assert "askConfirm(" in page[i:i + 700], act
+
+
+def test_the_announcement_author_is_escaped():
+    """Re-audit 10/8/26: a manager's display name is text, never markup, in
+    every staff browser that opens the inbox."""
+    src = open("templates/staff_portal.html", encoding="utf-8").read()
+    assert "esc(a.created_by_name || '')" in src

@@ -4704,6 +4704,11 @@ def mobile_guest_newsletter_retry(current_user, newsletter_id):
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    # Emailing the list is publishing under the restaurant's name (CS-1):
+    # a retry or a send to new subscribers is a send too (re-audit 10/8/26).
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"newsletterretry:{rid}", max_calls=6, window_secs=600):
         return jsonify(ok=False, error="Too many retries — wait a few minutes."), 429
@@ -4721,6 +4726,11 @@ def mobile_guest_newsletter_send_new(current_user, newsletter_id):
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    # Emailing the list is publishing under the restaurant's name (CS-1):
+    # a retry or a send to new subscribers is a send too (re-audit 10/8/26).
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"newsletternew:{rid}", max_calls=4, window_secs=600):
         return jsonify(ok=False, error="Too many sends recently — wait a few minutes."), 429
