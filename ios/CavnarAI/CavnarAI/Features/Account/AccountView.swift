@@ -662,14 +662,13 @@ struct AccountView: View {
 
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            // 13.5, not the 15.5 a prior type-scale pass bumped this to —
-            // that read as oversized once Dynamic Type started scaling it
-            // (see RootView's cap). Matches the 13pt kickers inside the
-            // Account sheets, so the tab and its sheets share one scale.
+            // The one kicker size and colour (parity audit #85) — the same
+            // as AccountKicker inside the Account sheets and the web's
+            // `.ac-kicker`, so the tab and its sheets share one scale.
             Text(title.uppercased())
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.3)
-                .foregroundStyle(Color.cavnarEmber2)
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .tracking(1.6)
+                .foregroundStyle(Color.cavnarEmber)
             VStack(spacing: 0) { content() }
                 .background(Color.cavnarPaper2)
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.cavnarPaper3, lineWidth: 1))

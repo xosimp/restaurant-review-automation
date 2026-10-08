@@ -26,6 +26,25 @@ struct VisibilityOrbitChart: View {
         CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score.map(String.init) ?? "none")-\(runs.count)", ambient: true) { ctx, size, t, clock in
             draw(&ctx, size: size, t: t, clock: clock)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("AI visibility score")
+        .accessibilityValue(Self.spokenSummary(score: score, runs: runs))
+    }
+
+    /// The ring and the trend in a sentence. No measurement is said as
+    /// "not measured", never as zero.
+    static func spokenSummary(score: Int?, runs: [AIVisibilityRun]) -> String {
+        guard let score else { return "Not measured." }
+        var parts = ["\(score) out of 100"]
+        if runs.count >= 2 {
+            let vals = runs.map(\.aiScore)
+            let delta = vals[vals.count - 1] - vals[vals.count - 2]
+            parts.append(delta == 0 ? "No change since last run" : (delta > 0 ? "Up \(delta) since last run" : "Down \(-delta) since last run"))
+            parts.append("Last \(runs.count) runs ranged \(vals.min() ?? 0) to \(vals.max() ?? 0)")
+        } else {
+            parts.append("First check, no trend yet")
+        }
+        return parts.joined(separator: ". ") + "."
     }
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double, clock: Double) {

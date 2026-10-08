@@ -279,7 +279,7 @@ private struct LaborStatTile: View {
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarInk3)
             Text(sublabel)
-                .font(.cavnarBody(14.5))
+                .font(.cavnarBody(CavnarType.kicker))
                 .foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

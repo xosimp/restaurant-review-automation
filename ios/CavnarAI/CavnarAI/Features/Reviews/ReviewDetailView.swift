@@ -297,7 +297,7 @@ struct ReviewDetailView: View {
                 HStack(spacing: 6) {
                     StarRatingView(rating: viewModel.review.rating ?? 0, size: 13, animated: true)
                     Text(viewModel.review.platformDisplayName)
-                        .font(.cavnarBody(14.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
                         .tracking(0.4)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.cavnarInk3)
@@ -327,7 +327,7 @@ struct ReviewDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(label)
-                            .font(.cavnarBody(11, weight: 700))
+                            .font(.cavnarBody(CavnarType.tag, weight: 700))
                             .tracking(0.6)
                             .textCase(.uppercase)
                         if r.severityReason != nil {
@@ -538,7 +538,7 @@ struct ReviewDetailView: View {
                 // no longer spends a Sonnet call on its own.
                 VStack(alignment: .leading, spacing: 10) {
                     Text("No reply drafted yet")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
                         .tracking(0.6)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.cavnarEmber)
@@ -584,6 +584,10 @@ struct ReviewDetailView: View {
                     .font(.cavnarBody(17))
                     .lineSpacing(5)
                     .lineLimit(6...20)
+                    // The reply an owner proofreads before it goes public:
+                    // past the app's text-size cap, a full-width field
+                    // that only grows taller.
+                    .cavnarReadingSize()
                     .focused($isDraftFocused)
                     .padding(14)
                     .background(Color.cavnarEmber.opacity(0.20))
@@ -619,7 +623,7 @@ struct ReviewDetailView: View {
     private var elsewhereCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Replied on \(viewModel.review.platformDisplayName)")
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(0.6)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarEmber)

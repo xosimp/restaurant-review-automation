@@ -724,7 +724,7 @@ private struct FlowChips: View {
                 HStack(spacing: 5) {
                     ForEach(Array(row.enumerated()), id: \.offset) { _, chip in
                         Text(chip.0.uppercased())
-                            .font(.cavnarBody(10.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.tag, weight: 700))
                             .tracking(0.6)
                             .foregroundStyle(chip.1)
                             .padding(.horizontal, 8)

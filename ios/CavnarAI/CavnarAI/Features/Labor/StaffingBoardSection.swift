@@ -430,7 +430,7 @@ struct StaffingBoardSection: View {
                                      @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(kicker.uppercased())
-                .font(.cavnarBody(11.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.4)
                 .foregroundStyle(Color.cavnarInk3)
             content()

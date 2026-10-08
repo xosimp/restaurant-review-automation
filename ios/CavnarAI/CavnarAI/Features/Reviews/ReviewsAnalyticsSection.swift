@@ -199,7 +199,7 @@ struct ReviewsAnalyticsSection: View {
             .filter { !$0.isEmpty }
         return VStack(alignment: .leading, spacing: 12) {
             Text("Cavnar AI's read on your reviews")
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.1)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarEmber)
@@ -217,7 +217,7 @@ struct ReviewsAnalyticsSection: View {
                             .textCase(.uppercase)
                             .foregroundStyle(Color.cavnarEmber)
                         Text(parsed.text)
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnarBody(CavnarType.tag))
                             .italic()
                             .foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -376,7 +376,7 @@ struct ReviewsAnalyticsSection: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(OwnerCopy.diagnosisHeading)
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.1)
                     .textCase(.uppercase)
                     .foregroundStyle(Color.cavnarEmber)
@@ -462,7 +462,7 @@ struct ReviewsAnalyticsSection: View {
                 if !d.evidenceReviewIds.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("Reviews this rests on")
-                            .font(.cavnarBody(10, weight: 700))
+                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
                             .tracking(0.9)
                             .textCase(.uppercase)
                             .foregroundStyle(Color.cavnarInk3)
@@ -513,7 +513,7 @@ struct ReviewsAnalyticsSection: View {
     private func diagnosisRow(_ label: String, _ body: String, quiet: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(0.9)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarInk3)

@@ -265,7 +265,7 @@ struct LaborWaitingOnYou: View {
 
     private func tag(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.cavnarBody(9.5, weight: 700))
+            .font(.cavnarBody(CavnarType.tag, weight: 700))
             .tracking(0.5)
             .foregroundStyle(Color.cavnarInk3)
             .padding(.horizontal, 5)

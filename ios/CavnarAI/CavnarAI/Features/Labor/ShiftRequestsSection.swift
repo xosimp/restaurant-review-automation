@@ -191,7 +191,7 @@ struct ShiftRequestsSection: View {
 
     private func kindPill(_ req: ShiftRequest) -> some View {
         Text(req.kindLabel.uppercased())
-            .font(.cavnarBody(9.5, weight: 700))
+            .font(.cavnarBody(CavnarType.tag, weight: 700))
             .tracking(0.5)
             .foregroundStyle(req.isSwap ? Color.cavnarBlue : Color.cavnarInk3)
             .padding(.horizontal, 5)

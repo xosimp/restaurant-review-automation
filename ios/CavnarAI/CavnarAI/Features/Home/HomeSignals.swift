@@ -52,7 +52,7 @@ struct HomeSignals: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(kicker.uppercased())
-                        .font(.cavnarBody(11, weight: 700))
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
                         .tracking(1.2)
                         .foregroundStyle(Color.cavnarEmber2)
                     Spacer(minLength: 8)

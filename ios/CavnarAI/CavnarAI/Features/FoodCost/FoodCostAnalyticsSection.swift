@@ -408,7 +408,7 @@ struct FoodCostAnalyticsSection: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Where the money is going")
-                        .font(.cavnarBody(11, weight: 700)).tracking(1.1)
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.1)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.cavnarEmber)
                     Spacer(minLength: 0)
@@ -577,7 +577,7 @@ struct FoodCostAnalyticsSection: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Ranked by dollars, then confidence, then ease")
-                    .font(.cavnarBody(10, weight: 700)).tracking(0.9)
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(0.9)
                     .textCase(.uppercase)
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer(minLength: 0)
@@ -645,7 +645,7 @@ struct FoodCostAnalyticsSection: View {
     private func cfoRow(_ label: String, _ body: String, quiet: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.cavnarBody(10, weight: 700)).tracking(0.9)
+                .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(0.9)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarInk3)
             Text(body)

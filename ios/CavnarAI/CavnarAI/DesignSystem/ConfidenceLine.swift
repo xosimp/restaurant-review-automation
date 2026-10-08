@@ -299,7 +299,7 @@ struct ClaimKindTag: View {
     var body: some View {
         if let label = ClaimKind.label(kind: kind, modelWritten: modelWritten) {
             Text(label.uppercased())
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(1)
                 .foregroundStyle(Color.cavnarInk3)
                 .padding(.horizontal, 7)

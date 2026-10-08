@@ -350,7 +350,7 @@ struct AccountMemoryView: View {
     private func choice<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title.uppercased())
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
             content()

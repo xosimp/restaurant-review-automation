@@ -899,7 +899,7 @@ struct ShiftQualityPanel: View {
         if let lines, !lines.isEmpty {
             VStack(alignment: .leading, spacing: 5) {
                 Text(label.uppercased())
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.1)
                     .foregroundStyle(color)
                 ForEach(lines.prefix(limit), id: \.self) { line in

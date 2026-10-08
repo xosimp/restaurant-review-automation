@@ -1866,6 +1866,9 @@ private struct LaborHeroPercent: View {
 
     @State private var animatedValue: Double = 0
     @State private var start = Date()
+    // Reduce Motion: the glow holds at its mid strength and the figure
+    // lands without counting up.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var lightenedTone: Color {
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
@@ -1876,9 +1879,9 @@ private struct LaborHeroPercent: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
             let t = timeline.date.timeIntervalSince(start)
-            let glow = 0.4 + 0.4 * (0.5 + 0.5 * sin(t * 2 * .pi / 2.6))
+            let glow = reduceMotion ? 0.6 : 0.4 + 0.4 * (0.5 + 0.5 * sin(t * 2 * .pi / 2.6))
             CavnarAnimatableNumber(value: animatedValue, format: { String(format: "%.1f%%", $0) })
                 .font(.cavnarNumber(40, weight: 700))
                 .foregroundStyle(
@@ -1889,6 +1892,7 @@ private struct LaborHeroPercent: View {
                 .cavnarSensitive()
         }
         .onAppear {
+            if reduceMotion { animatedValue = value; return }
             withAnimation(.easeOut(duration: 1.1)) { animatedValue = value }
         }
         .onChange(of: value) { _, newValue in
@@ -1976,7 +1980,7 @@ private struct ScheduleGenerateButton: View {
         .disabled(isGenerating)
         .scaleEffect(isGenerating ? 0.99 : 1)
         .animation(.easeOut(duration: 0.15), value: isGenerating)
-        .sensoryFeedback(.impact(weight: .medium), trigger: isGenerating) { old, new in !old && new }
+        .sensoryFeedback(.impact(weight: .medium), trigger: isGenerating) { old, new in !old && new && AppPreferences.hapticsEnabledSnapshot }
     }
 }
 
@@ -1987,6 +1991,8 @@ private struct ScheduleGenerateButton: View {
 private struct PulsingSparkleIcon: View {
     let color: Color
     @State private var pulse = false
+    // Reduce Motion: the sparkle holds at full strength, no breath.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Image(systemName: "sparkles")
@@ -1995,6 +2001,7 @@ private struct PulsingSparkleIcon: View {
             .opacity(pulse ? 1 : 0.45)
             .scaleEffect(pulse ? 1.08 : 0.9)
             .onAppear {
+                if reduceMotion { pulse = true; return }
                 withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
                     pulse = true
                 }
@@ -2059,10 +2066,20 @@ private struct ShimmerText: View {
     let text: String
     let font: Font
     let color: Color
+    // Reduce Motion: the status line as plain text, no sweep.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let period: Double = 1.6
 
     var body: some View {
+        if reduceMotion {
+            Text(text).font(font).foregroundStyle(color)
+        } else {
+            sweeping
+        }
+    }
+
+    private var sweeping: some View {
         TimelineView(.animation) { timeline in
             let elapsed = timeline.date.timeIntervalSinceReferenceDate
             let phase = (elapsed.truncatingRemainder(dividingBy: Self.period)) / Self.period

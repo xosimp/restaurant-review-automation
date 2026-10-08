@@ -27,6 +27,46 @@ struct WeekRadarChart: View {
             CavnarAnimatedCanvas(duration: 1.5, height: 260, replayKey: values.map { "\($0)" }.joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
+            // A Canvas exposes nothing to VoiceOver: the shape is read as
+            // the figures it draws, and the audio graph walks the days.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Week Radar, labor percent by weekday")
+            .accessibilityValue(Self.spokenSummary(dowSummary: dowSummary, target: target, positiveAllowed: positiveAllowed))
+            .accessibilityChartDescriptor(RadarDescriptor(dowSummary: dowSummary, target: target))
+        }
+    }
+
+    /// The radar in a sentence: each measured day, the worst one against
+    /// the target. A day with no figure is said as "no data", never drawn
+    /// into a number (the shape draws it at the target line).
+    static func spokenSummary(dowSummary: [String: Double], target: Double, positiveAllowed: Bool) -> String {
+        let present = days.enumerated().compactMap { i, d in dowSummary[d].map { (i, $0) } }
+        guard let worst = present.max(by: { $0.1 < $1.1 }) else { return "No weekday figures yet." }
+        var parts = ["Target \(Int(target.rounded())) percent"]
+        parts.append(days.map { d in dowSummary[d].map { "\(d) \(Int($0.rounded())) percent" } ?? "\(d) no data" }.joined(separator: ", "))
+        let over = present.filter { $0.1 > target }
+        if over.isEmpty {
+            parts.append(positiveAllowed ? "Every day on target" : "No day over target, data incomplete")
+        } else {
+            parts.append("Highest \(days[worst.0]), \(Int((worst.1 - target).rounded())) points over target. \(over.count) of \(present.count) days over")
+        }
+        return parts.joined(separator: ". ") + "."
+    }
+
+    private struct RadarDescriptor: AXChartDescriptorRepresentable {
+        let dowSummary: [String: Double]
+        let target: Double
+        func makeChartDescriptor() -> AXChartDescriptor {
+            let present = WeekRadarChart.days.compactMap { d in dowSummary[d].map { (d, $0) } }
+            let values = present.map(\.1) + [target]
+            let x = AXCategoricalDataAxisDescriptor(title: "Weekday", categoryOrder: present.map(\.0))
+            let y = AXNumericDataAxisDescriptor(title: "Labor percent",
+                                                range: (values.min() ?? 0)...(max(values.max() ?? 1, (values.min() ?? 0) + 1)),
+                                                gridlinePositions: [target]) { "\(Int($0.rounded())) percent" }
+            let series = AXDataSeriesDescriptor(name: "Labor percent", isContinuous: false,
+                                                dataPoints: present.map { AXDataPoint(x: $0.0, y: $0.1) })
+            return AXChartDescriptor(title: "Week Radar", summary: "Target \(Int(target.rounded())) percent",
+                                     xAxis: x, yAxis: y, additionalAxes: [], series: [series])
         }
     }
 

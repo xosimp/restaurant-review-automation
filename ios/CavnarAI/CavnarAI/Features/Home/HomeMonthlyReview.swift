@@ -158,7 +158,7 @@ struct HomeMonthlyReviewCard: View {
 
     private func kicker(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.cavnarBody(11, weight: 700))
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
             .tracking(1.4)
             .foregroundStyle(Color.cavnarInk3)
             .padding(.top, 2)
@@ -168,10 +168,11 @@ struct HomeMonthlyReviewCard: View {
         let tone = Self.tone(m.verdict)
         return VStack(alignment: .leading, spacing: 4) {
             Text(m.label.uppercased())
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarInk3)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
             Text(Self.format(m.value ?? 0, unit: m.unit))
                 .font(.cavnarNumber(22, weight: 700))
                 .foregroundStyle(tone == Color.cavnarInk3 ? Color.cavnarInk : tone)

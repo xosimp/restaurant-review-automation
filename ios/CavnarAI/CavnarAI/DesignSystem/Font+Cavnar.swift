@@ -109,8 +109,13 @@ extension Font {
 /// the status figure** (labor % against target, food cost % against target,
 /// the report's score). Anything else that wants to be big is `cardNumber`.
 enum CavnarType {
-    /// Uppercase tracked kicker above a section or figure.
+    /// Uppercase tracked kicker above a section or figure — and the label
+    /// over a tile's figure. One size everywhere (parity audit #85: the
+    /// census found 14).
     static let kicker: CGFloat = 11.5
+    /// Uppercase label INSIDE a capsule (a claim tag, a request kind, a
+    /// severity pill) — the one size below the kicker.
+    static let tag: CGFloat = 10
     /// Meta, timestamps, basis lines.
     static let caption: CGFloat = 12.5
     /// Secondary copy under a figure or title; helper lines.

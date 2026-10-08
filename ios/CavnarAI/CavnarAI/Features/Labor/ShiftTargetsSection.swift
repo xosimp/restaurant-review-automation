@@ -369,7 +369,7 @@ private struct LeaderRuleEditor: View {
                                       @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label.uppercased())
-                .font(.cavnarBody(11.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
             if let hint {

@@ -709,7 +709,7 @@ struct InvoiceScanSheet: View {
             // 2026-09-18 (CLIENT-45).
             Text(([inv.supplier ?? "Supplier not read", inv.invoiceDate.map(CavnarDate.mdy)].compactMap { $0 })
                 .joined(separator: " · ").uppercased())
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarInk3)
             if let tc = inv.totalCheck, !tc.plausible {

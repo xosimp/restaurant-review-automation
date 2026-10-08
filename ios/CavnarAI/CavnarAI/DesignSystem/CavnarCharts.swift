@@ -123,9 +123,9 @@ struct CavnarChartHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(kicker.uppercased())
-                .font(.cavnarBody(12, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarEmber2)
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .tracking(1.6)
+                .foregroundStyle(Color.cavnarEmber)
             Text(title)
                 .font(.cavnarHeadline(20))
                 .foregroundStyle(Color.cavnarInk)
@@ -224,7 +224,7 @@ enum CavnarChart {
     }
 
     static func kicker(_ value: String, color: Color = .cavnarEmber2) -> Text {
-        Text(value.uppercased()).font(.cavnarBody(9.5, weight: 700)).tracking(1.2).foregroundStyle(color)
+        Text(value.uppercased()).font(.cavnarBody(CavnarType.tag, weight: 700)).tracking(1.2).foregroundStyle(color)
     }
 
     /// Faint horizontal grid — three lines across the plot.

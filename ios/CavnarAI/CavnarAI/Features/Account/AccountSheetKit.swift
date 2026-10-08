@@ -126,10 +126,11 @@ struct AccountFlowLayout: Layout {
 struct AccountKicker: View {
     let text: String
     var body: some View {
+        // The web's `.ac-kicker`: ember, the one kicker size (parity #85).
         Text(text.uppercased())
-            .font(.cavnarBody(13, weight: 700))
-            .tracking(1.4)
-            .foregroundStyle(Color.cavnarInk3)
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
+            .tracking(1.6)
+            .foregroundStyle(Color.cavnarEmber)
     }
 }
 
@@ -202,7 +203,7 @@ struct AccountStatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label.uppercased())
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarInk3)
             Text(value)
@@ -337,7 +338,7 @@ private struct AccountFieldLabel: View {
         // font's own metrics.
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(text.uppercased())
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
             Image(systemName: "pencil")
@@ -356,7 +357,7 @@ private struct AccountCaptionLabel: View {
     let text: String
     var body: some View {
         Text(text.uppercased())
-            .font(.cavnarBody(13, weight: 700))
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
             .tracking(0.8)
             .foregroundStyle(Color.cavnarInk3)
     }
@@ -634,6 +635,7 @@ struct AccountStateSwitch: View {
 
     private static let cell: CGFloat = 36
     private static let height: CGFloat = 30
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // The tapped-but-not-yet-confirmed position. Network-backed switches
     // used to sit still until the round-trip finished and then snap — with
@@ -702,7 +704,7 @@ struct AccountStateSwitch: View {
     private func glyph(_ name: String, active: Bool) -> some View {
         Image(systemName: name)
             .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(active ? Color.cavnarInk : Color.cavnarInk3.opacity(0.55))
+            .foregroundStyle(active ? Color.cavnarInk : Color.cavnarInk3Muted(contrast))
             .frame(width: Self.cell, height: Self.height)
             .animation(.easeOut(duration: 0.2), value: active)
     }

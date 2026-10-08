@@ -294,6 +294,9 @@ private struct SparklineCanvas: View {
 
     @State private var startDate = Date()
     @State private var isRevealed = false
+    // Reduce Motion: the line is drawn whole at once and the endpoint dot
+    // holds still — no reveal, no breathing.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Drives the endpoint dot/glow's breathing pulse — separate from the
     // Canvas entirely (see PulsingEndpointDot below) so the pulse can use
     // ordinary SwiftUI animation instead of forcing the line/fill drawing
@@ -311,7 +314,7 @@ private struct SparklineCanvas: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if isRevealed {
+                if isRevealed || reduceMotion {
                     // drawEndpointMarker: false — the pulsing overlay above
                     // owns the endpoint dot/glow once the reveal has settled.
                     Canvas { context, size in draw(context: context, size: size, progress: 1, drawEndpointMarker: false) }
@@ -336,13 +339,14 @@ private struct SparklineCanvas: View {
                     }
                 }
 
-                if isRevealed, let endpoint = endpointPosition(in: geo.size) {
+                if isRevealed || reduceMotion, let endpoint = endpointPosition(in: geo.size) {
                     PulsingEndpointDot(pulse: pulse)
                         .position(endpoint)
                 }
             }
         }
         .onAppear {
+            guard !reduceMotion else { return }
             // Waits for the line reveal to finish so the dot doesn't jump
             // straight into a mid-pulse frame the instant it appears.
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealDuration) {

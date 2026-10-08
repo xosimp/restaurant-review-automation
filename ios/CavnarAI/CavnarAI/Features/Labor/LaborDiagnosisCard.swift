@@ -64,7 +64,7 @@ struct LaborDiagnosisCard: View {
     private func row(_ label: String, _ text: String, quiet: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label.uppercased())
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(0.9)
                 .foregroundStyle(Color.cavnarInk3)
             HomeMixedText.make(text, size: 14, weight: quiet ? 500 : 600, color: quiet ? .cavnarInk2 : .cavnarInk)

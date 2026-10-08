@@ -326,7 +326,7 @@ struct DishScorecardSheet: View {
                     }
                 } header: {
                     Text(group.title.uppercased())
-                        .font(.cavnarBody(12, weight: 700)).tracking(1.2)
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.2)
                         .foregroundStyle(group.title == "Check units first" ? Color.cavnarAmber : Color.cavnarEmber2)
                 }
             }
@@ -389,7 +389,7 @@ struct DishScorecardSheet: View {
 
     private func stat(_ label: String, _ value: String, tone: Color = .cavnarInk) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label.uppercased()).font(.cavnarBody(10, weight: 700)).tracking(0.8).foregroundStyle(Color.cavnarInk3)
+            Text(label.uppercased()).font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(0.8).foregroundStyle(Color.cavnarInk3)
             Text(value).font(.cavnarNumber(13.5, weight: 600)).foregroundStyle(value == DSRFormat.dash ? Color.cavnarInk3 : tone)
         }
     }

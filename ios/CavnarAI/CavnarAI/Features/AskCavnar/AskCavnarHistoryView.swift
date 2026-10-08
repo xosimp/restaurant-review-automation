@@ -97,7 +97,7 @@ struct AskCavnarHistoryView: View {
                 }
             } header: {
                 Text("\(viewModel.conversations.count) \(viewModel.conversations.count == 1 ? "conversation" : "conversations") · swipe left to delete")
-                    .font(.cavnarBody(13, weight: 700))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.2)
                     .textCase(.uppercase)
                     .foregroundStyle(Color.cavnarInk3)

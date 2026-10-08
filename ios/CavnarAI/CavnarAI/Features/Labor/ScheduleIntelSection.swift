@@ -95,7 +95,7 @@ struct ScheduleIntelSection: View {
 
     private func kicker(_ text: String, tone: Color = .cavnarInk3) -> some View {
         Text(text.uppercased())
-            .font(.cavnarBody(11.5, weight: 700))
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
             .tracking(1.1)
             .foregroundStyle(tone)
     }
@@ -170,8 +170,12 @@ struct ScheduleIntelSection: View {
     private func keptBar(_ week: AcceptanceWeek) -> some View {
         let share = week.unchangedShare ?? 0
         return HStack(spacing: 8) {
-            HomeMixedText.make(week.weekStart.map { "Wk of \(CavnarDate.mdy($0))" } ?? "A week", size: 12.5, weight: 600, color: .cavnarInk2)
-                .frame(width: 96, alignment: .leading)
+            // "Week of 9/21/26" in full — the web's label; "Wk" was an
+            // abbreviation nothing else in the app uses (parity audit #84).
+            HomeMixedText.make(week.weekStart.map { "Week of \(CavnarDate.mdy($0))" } ?? "A week", size: 12.5, weight: 600, color: .cavnarInk2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(width: 112, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.cavnarPaper3.opacity(0.6))

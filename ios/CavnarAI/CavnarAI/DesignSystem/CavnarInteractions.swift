@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // The small, reusable interaction pieces the motion audit asked for — the
 // house answer to a spinner, the confirmation overlay every successful
@@ -263,13 +264,61 @@ struct CavnarCodeEntry: View {
 /// A blinking ember caret, wall-clock driven so it can't be frozen by an
 /// ambient transaction.
 private struct CavnarCaret: View {
+    // Reduce Motion: a steady caret, no blink.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.55)) { timeline in
-            let on = Int(timeline.date.timeIntervalSinceReferenceDate / 0.55) % 2 == 0
+            let on = reduceMotion || Int(timeline.date.timeIntervalSinceReferenceDate / 0.55) % 2 == 0
             RoundedRectangle(cornerRadius: 1)
                 .fill(Color.cavnarEmber)
                 .frame(width: 2, height: 24)
                 .opacity(on ? 1 : 0)
         }
+    }
+}
+
+// MARK: - Reading surfaces past the app-wide Dynamic Type cap
+
+/// The app caps Dynamic Type at `.xxxLarge` (RootView): ~400 dense call
+/// sites — KPI tiles, charts, tracked kickers — were never laid out for
+/// the accessibility sizes. A handful of surfaces exist to be READ, not
+/// scanned: the Home brief's headline, the Daily Report's written summary,
+/// a review reply being edited. Each is a single wrapping paragraph with
+/// nothing beside it, so it can follow the phone's own text size into the
+/// accessibility range without breaking anything around it.
+///
+/// `.dynamicTypeSize(range)` only CLAMPS the inherited value, so a child
+/// can't lift itself past an ancestor's cap that way — this re-reads the
+/// system setting and writes it back into the environment for the one
+/// subtree, bounded by `upTo`. App target only: it reads
+/// UIApplication, which the extensions can't.
+struct CavnarReadingSize: ViewModifier {
+    var upTo: DynamicTypeSize = .accessibility3
+    @State private var system: DynamicTypeSize = CavnarReadingSize.systemSize()
+
+    static func systemSize() -> DynamicTypeSize {
+        DynamicTypeSize(UIApplication.shared.preferredContentSizeCategory) ?? .large
+    }
+
+    /// The size the surface reads at: the phone's own, bounded by `upTo`.
+    static func resolved(system: DynamicTypeSize, upTo: DynamicTypeSize) -> DynamicTypeSize {
+        min(system, upTo)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.dynamicTypeSize, Self.resolved(system: system, upTo: upTo))
+            .onReceive(NotificationCenter.default.publisher(for: UIContentSizeCategory.didChangeNotification)) { _ in
+                system = Self.systemSize()
+            }
+    }
+}
+
+extension View {
+    /// Lets a single reading paragraph follow the phone's text size past
+    /// the app's `.xxxLarge` cap (see CavnarReadingSize).
+    func cavnarReadingSize(upTo: DynamicTypeSize = .accessibility3) -> some View {
+        modifier(CavnarReadingSize(upTo: upTo))
     }
 }

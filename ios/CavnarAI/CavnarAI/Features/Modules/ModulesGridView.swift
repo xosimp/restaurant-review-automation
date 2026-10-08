@@ -138,7 +138,7 @@ struct ModulesGridView: View {
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(route: route)
             }
-            .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger)
+            .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger) { _, _ in AppPreferences.hapticsEnabledSnapshot }
             // Same ember-to-black wash every module screen (Reviews, Labor,
             // etc.) already has behind its tiles, instead of flat black —
             // this is the grid that leads into those screens, so it reads

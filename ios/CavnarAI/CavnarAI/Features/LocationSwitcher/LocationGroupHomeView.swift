@@ -234,10 +234,11 @@ struct LocationGroupHomeView: View {
     private func cell(_ label: String, _ value: (figure: String, detail: String?)) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.uppercased())
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarInk3)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
             Text(value.figure)
                 .font(.cavnarNumber(19, weight: 700))
                 .foregroundStyle(value.figure == LocationGroupFormat.dash ? Color.cavnarInk3 : Color.cavnarInk)

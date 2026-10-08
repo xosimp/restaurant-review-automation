@@ -743,7 +743,7 @@ struct ReviewRow: View {
             showingSeverityReason = true
         } label: {
             Text(label)
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(0.6)
                 .textCase(.uppercase)
                 .foregroundStyle(tone)
@@ -842,7 +842,7 @@ struct StatusPill: View {
 
     var body: some View {
         Text(label)
-            .font(.cavnarBody(10.5, weight: 700))
+            .font(.cavnarBody(CavnarType.tag, weight: 700))
             .tracking(0.8)
             .textCase(.uppercase)
             .lineLimit(1)

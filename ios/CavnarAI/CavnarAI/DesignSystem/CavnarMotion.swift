@@ -711,6 +711,9 @@ struct CavnarComposingLines: View {
     var tint: Color = .cavnarEmber
 
     @State private var start = Date()
+    // Reduce Motion: the timeline pauses and the lines hold their written
+    // state (every line full, caret on) — the still picture of "composing".
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let grow: Double = 0.85
     private static let hold: Double = 1.1
@@ -726,15 +729,15 @@ struct CavnarComposingLines: View {
     }
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSince(start)
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
             let n = Double(widths.count)
+            let t = reduceMotion ? n * Self.grow : timeline.date.timeIntervalSince(start)
             let cycle = n * Self.grow + Self.hold + Self.fade
             let local = t.truncatingRemainder(dividingBy: cycle)
             let fadeOut = min(max((local - (n * Self.grow + Self.hold)) / Self.fade, 0), 1)
             let active = min(Int(local / Self.grow), widths.count - 1)
             let holding = local >= n * Self.grow
-            let blinkOn = !holding || (t.truncatingRemainder(dividingBy: 0.7) < 0.38)
+            let blinkOn = reduceMotion || !holding || (t.truncatingRemainder(dividingBy: 0.7) < 0.38)
 
             GeometryReader { geo in
                 ZStack(alignment: .topLeading) {
@@ -772,6 +775,10 @@ struct CavnarRadarSweep: View {
     var caption: String? = nil
 
     @State private var start = Date()
+    // Reduce Motion: one still frame with the ripples where they sit and
+    // the blips already landed.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let stillTime: Double = 4.6
 
     // (dx, dy) as fractions of `size` from center, plus each blip's delay
     // into the 6s cycle.
@@ -792,8 +799,8 @@ struct CavnarRadarSweep: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            TimelineView(.animation) { timeline in
-                let t = timeline.date.timeIntervalSince(start)
+            TimelineView(.animation(paused: reduceMotion)) { timeline in
+                let t = reduceMotion ? Self.stillTime : timeline.date.timeIntervalSince(start)
                 ZStack {
                     ForEach([0.12, 0.3, 0.48], id: \.self) { r in
                         Circle()
@@ -852,6 +859,8 @@ struct CavnarWeekBuilder: View {
     var caption: String? = nil
 
     @State private var start = Date()
+    // Reduce Motion: the week holds filled in, the header dash parked.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let days = ["S", "M", "T", "W", "T", "F", "S"]
     private static let blocks: [(row: Int, col: Int, ember: Bool)] = [
@@ -875,9 +884,9 @@ struct CavnarWeekBuilder: View {
     }
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSince(start)
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
             let blocksDone = Double(Self.blocks.count - 1) * Self.stagger + Self.grow
+            let t = reduceMotion ? blocksDone : timeline.date.timeIntervalSince(start)
             let cycle = blocksDone + Self.hold + Self.fade
             let local = t.truncatingRemainder(dividingBy: cycle)
             let fadeOut = min(max((local - (blocksDone + Self.hold)) / Self.fade, 0), 1)
@@ -952,6 +961,8 @@ struct CavnarLedgerFill: View {
     ]
 
     @State private var start = Date()
+    // Reduce Motion: the ledger holds filled in with no sheen.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let stagger: Double = 0.3
     private static let grow: Double = 0.9
@@ -964,14 +975,14 @@ struct CavnarLedgerFill: View {
     }
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSince(start)
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
             let barsDone = Double(rows.count - 1) * Self.stagger + Self.grow
+            let t = reduceMotion ? barsDone : timeline.date.timeIntervalSince(start)
             let cycle = barsDone + Self.hold + Self.fade
             let local = t.truncatingRemainder(dividingBy: cycle)
             let fadeOut = min(max((local - (barsDone + Self.hold)) / Self.fade, 0), 1)
             // Sheen starts once the first bars are up and sweeps every 2.6s.
-            let sheen = local < 1.6 ? -1.0 : ((local - 1.6).truncatingRemainder(dividingBy: 2.6)) / 1.1
+            let sheen = (reduceMotion || local < 1.6) ? -1.0 : ((local - 1.6).truncatingRemainder(dividingBy: 2.6)) / 1.1
 
             VStack(spacing: 14) {
                 ForEach(rows.indices, id: \.self) { i in
@@ -1188,6 +1199,8 @@ struct CavnarHandshake: View {
     var caption: String? = nil
 
     @State private var start = Date()
+    // Reduce Motion: the dashes hold still while connecting.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 12) {
@@ -1195,8 +1208,8 @@ struct CavnarHandshake: View {
                 tile { CavnarSealMark(size: 26) }
 
                 ZStack {
-                    TimelineView(.animation(paused: state != .connecting)) { timeline in
-                        let phase = timeline.date.timeIntervalSince(start).truncatingRemainder(dividingBy: 0.6) / 0.6
+                    TimelineView(.animation(paused: state != .connecting || reduceMotion)) { timeline in
+                        let phase = reduceMotion ? 0 : timeline.date.timeIntervalSince(start).truncatingRemainder(dividingBy: 0.6) / 0.6
                         CavnarHorizontalLine()
                             .stroke(
                                 Color.cavnarInk3.opacity(0.6),
@@ -1500,14 +1513,16 @@ struct CavnarEmberPullIndicator: View {
 
     @State private var start = Date()
     @State private var showBurst = false
+    // Reduce Motion: the dot shows at full size while refreshing, no breath.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var pullProgress: CGFloat { min(pull / 70, 1) }
     private var visible: Bool { isRefreshing || pull > 4 }
 
     var body: some View {
-        TimelineView(.animation(paused: !isRefreshing)) { timeline in
+        TimelineView(.animation(paused: !isRefreshing || reduceMotion)) { timeline in
             let t = timeline.date.timeIntervalSince(start)
-            let breathe: CGFloat = isRefreshing ? 1 + 0.16 * CGFloat(sin(t * 2 * .pi / 1.3)) : 1
+            let breathe: CGFloat = (isRefreshing && !reduceMotion) ? 1 + 0.16 * CGFloat(sin(t * 2 * .pi / 1.3)) : 1
             let scale = isRefreshing ? breathe : 0.5 + 0.5 * pullProgress
             let dotOpacity = isRefreshing ? 1.0 : Double(pullProgress)
 

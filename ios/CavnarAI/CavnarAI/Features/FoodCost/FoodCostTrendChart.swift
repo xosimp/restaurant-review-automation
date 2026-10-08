@@ -41,13 +41,14 @@ struct FoodCostTrendChart: View {
 
     private static let industryLow = 4.0
     private static let industryHigh = 5.0
-    // A fixed light yellow, not a translucent white overlay — .white.opacity
+    // One solid token, not a translucent white overlay — .white.opacity
     // blended with whatever fill tone sits underneath it (green/amber/red
     // depending on this restaurant's current bucket) would read as a
     // DIFFERENT color depending on which bucket a restaurant happened to
-    // be in, and never match the legend swatch sitting on plain black
-    // beside it. This is the one color used for both, always.
-    private static let industryBandColor = Color(red: 0.95, green: 0.85, blue: 0.45)
+    // be in, and never match the legend swatch beside it. Blue: the one
+    // token that is none of the bars' green/amber/red (parity #85 — it was
+    // a raw Color(red:) yellow).
+    private static let industryBandColor = Color.cavnarBlue
 
     /// The server's waste label against the owner's target (or Cavnar's
     /// starting one) — "Under / Near / Over / Well over target"
@@ -179,9 +180,7 @@ struct FoodCostTrendChart: View {
                         .annotation(position: .top, alignment: .trailing) {
                             // Rounded, not truncated: Int(347.90) is 347,
                             // and the rest of this module rounds first.
-                            Text("your avg $\(Int(average.rounded()))")
-                                .font(.cavnarBody(13.5, weight: 700))
-                                .foregroundStyle(Color.black)
+                            HomeMixedText.make("your avg $\(Int(average.rounded()))", size: 13.5, weight: 700, color: .cavnarPaper)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
                                 .background(Color.cavnarInk)
@@ -197,9 +196,8 @@ struct FoodCostTrendChart: View {
                             .annotation(position: .top, alignment: .leading) {
                                 // Named as the server names it (#10): a
                                 // starting target is never "your target".
-                                Text("\(target?.label ?? "target") ~$\(Int(industryTargetDollar.rounded()))")
-                                    .font(.cavnarBody(13.5, weight: 700))
-                                    .foregroundStyle(Color.black)
+                                HomeMixedText.make("\(target?.label ?? "target") ~$\(Int(industryTargetDollar.rounded()))",
+                                                   size: 13.5, weight: 700, color: .cavnarPaper)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
                                     .background(Self.industryBandColor)
@@ -214,7 +212,7 @@ struct FoodCostTrendChart: View {
                         AxisValueLabel {
                             if let d = value.as(Double.self) {
                                 Text("$\(Int(d))")
-                                    .font(.system(size: 9))
+                                    .font(.cavnarNumber(10))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                         }
@@ -222,7 +220,7 @@ struct FoodCostTrendChart: View {
                 }
                 .chartXAxis {
                     AxisMarks { _ in
-                        AxisValueLabel().font(.system(size: 9)).foregroundStyle(Color.cavnarInk3)
+                        AxisValueLabel().font(.cavnarNumber(10)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 .chartOverlay { proxy in

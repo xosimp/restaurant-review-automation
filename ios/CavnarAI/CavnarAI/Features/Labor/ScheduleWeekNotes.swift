@@ -94,7 +94,7 @@ struct ScheduleWeekNotes: View {
     private func stat(_ label: String, value: String, tone: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.uppercased())
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1)
                 .foregroundStyle(Color.cavnarInk3)
             Text(value)

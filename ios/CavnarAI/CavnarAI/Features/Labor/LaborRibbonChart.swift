@@ -26,6 +26,45 @@ struct LaborRibbonChart: View {
             CavnarAnimatedCanvas(duration: 3.2, height: 250, replayKey: points.map(\.id).joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Labor Ribbon, labor percent, \(subtitle)")
+            .accessibilityValue(Self.spokenSummary(points: points, target: target))
+            .accessibilityChartDescriptor(RibbonDescriptor(points: points, target: target))
+        }
+    }
+
+    /// The ribbon in a sentence: the range, the latest point and how many
+    /// points sat over the target, since the drawing can't be read.
+    static func spokenSummary(points: [Point], target: Double) -> String {
+        guard let first = points.first, let last = points.last else { return "No labor figures yet." }
+        let over = points.filter { $0.pct > target }
+        var parts = ["Target \(Int(target.rounded())) percent"]
+        if points.count == 1 {
+            parts.append("\(last.label): \(Int(last.pct.rounded())) percent")
+        } else {
+            parts.append("\(first.label) \(Int(first.pct.rounded())) percent to \(last.label) \(Int(last.pct.rounded())) percent")
+            if let hi = points.max(by: { $0.pct < $1.pct }) {
+                parts.append("Highest \(hi.label), \(Int(hi.pct.rounded())) percent")
+            }
+        }
+        parts.append(over.isEmpty ? "None over target" : "\(over.count) of \(points.count) over target")
+        return parts.joined(separator: ". ") + "."
+    }
+
+    private struct RibbonDescriptor: AXChartDescriptorRepresentable {
+        let points: [Point]
+        let target: Double
+        func makeChartDescriptor() -> AXChartDescriptor {
+            let values = points.map(\.pct) + [target]
+            let lo = values.min() ?? 0, hi = max(values.max() ?? 1, lo + 1)
+            let x = AXCategoricalDataAxisDescriptor(title: "Period", categoryOrder: points.map(\.label))
+            let y = AXNumericDataAxisDescriptor(title: "Labor percent", range: lo...hi, gridlinePositions: [target]) {
+                "\(Int($0.rounded())) percent"
+            }
+            let series = AXDataSeriesDescriptor(name: "Labor percent", isContinuous: true,
+                                                dataPoints: points.map { AXDataPoint(x: $0.label, y: $0.pct) })
+            return AXChartDescriptor(title: "Labor Ribbon", summary: LaborRibbonChart.spokenSummary(points: points, target: target),
+                                     xAxis: x, yAxis: y, additionalAxes: [], series: [series])
         }
     }
 

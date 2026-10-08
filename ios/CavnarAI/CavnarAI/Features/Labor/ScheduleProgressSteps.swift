@@ -19,6 +19,7 @@ import SwiftUI
 /// real measure is the days drafted (`progress`), shown under it; the server
 /// reports no percentage, and this never invents one.
 struct ScheduleProgressSteps: View {
+    @Environment(\.colorSchemeContrast) private var contrast
     /// Whether last year's same days are an input to this draft (the
     /// labor payload's `last_year_available`, read tolerantly). A progress
     /// line is a claim about the inputs, and most restaurants have no year
@@ -94,7 +95,7 @@ struct ScheduleProgressSteps: View {
             } else {
                 Text(steps[index].text)
                     .font(.cavnarBody(13.5, weight: done ? 400 : 400))
-                    .foregroundStyle(done ? Color.cavnarInk3 : Color.cavnarInk3.opacity(0.55))
+                    .foregroundStyle(done ? Color.cavnarInk3 : Color.cavnarInk3Muted(contrast))
             }
             Spacer(minLength: 0)
         }

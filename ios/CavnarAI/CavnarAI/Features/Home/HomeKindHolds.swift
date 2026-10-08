@@ -108,7 +108,7 @@ struct HomeKindHoldBars: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
                 Text(label.uppercased())
-                    .font(.cavnarBody(CavnarType.kicker - 1, weight: 700))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.0)
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer(minLength: 8)

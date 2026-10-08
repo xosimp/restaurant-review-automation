@@ -33,20 +33,9 @@ struct RoleDonutChart: View {
     /// the original 7 left empty (deep indigo, burnt amber, deep emerald,
     /// deep rose, slate) rather than being a lighter/darker twin of an
     /// existing one.
-    static let colors: [Color] = [
-        Color(red: 0.784, green: 0.294, blue: 0.184),  // #c84b2f ember red-orange
-        Color(red: 0.435, green: 0.812, blue: 0.592),  // #6fcf97 mint green
-        Color(red: 0.937, green: 0.624, blue: 0.153),  // #ef9f27 amber
-        Color(red: 0.376, green: 0.678, blue: 0.961),  // #60adf5 sky blue
-        Color(red: 0.702, green: 0.616, blue: 0.953),  // #b39df3 lavender
-        Color(red: 0.957, green: 0.447, blue: 0.714),  // #f472b6 pink
-        Color(red: 0.302, green: 0.816, blue: 0.882),  // #4dd0e1 cyan
-        Color(red: 0.263, green: 0.220, blue: 0.792),  // #4338ca deep indigo
-        Color(red: 0.851, green: 0.467, blue: 0.024),  // #d97706 burnt amber
-        Color(red: 0.020, green: 0.588, blue: 0.412),  // #059669 deep emerald
-        Color(red: 0.859, green: 0.153, blue: 0.467),  // #db2777 deep rose
-        Color(red: 0.392, green: 0.455, blue: 0.545),  // #64748b slate
-    ]
+    /// The app's series palette (Color+Cavnar `cavnarSeries`) — one token
+    /// set, ember first as the dark token (parity audit #85).
+    static let colors: [Color] = Color.cavnarSeries
 
     /// Sorted highest-cost-first, once, so the ring's biggest segment leads
     /// and the collapsed legend's top rows are the roles that actually

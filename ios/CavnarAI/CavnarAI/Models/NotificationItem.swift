@@ -94,7 +94,9 @@ struct NotificationItem: Codable, Identifiable {
 
     private static let relativeFormatter = ThreadLocalFormatter<RelativeDateTimeFormatter> {
         let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
+        // .abbreviated — "2h ago", the web's own form (dashboard ago());
+        // .short read "2 hr. ago" (parity audit #84).
+        formatter.unitsStyle = .abbreviated
         return formatter
     }
 
@@ -103,7 +105,13 @@ struct NotificationItem: Codable, Identifiable {
     /// nothing at all.
     var relativeFiredAt: String {
         guard let date = Self.firedAtFormatter.value.date(from: firedAt) else { return firedAt }
-        return Self.relativeFormatter.value.localizedString(for: date, relativeTo: Date())
+        return Self.relative(date, now: Date())
+    }
+
+    /// The web's ago(): "just now" under a minute, then "5m ago", "2h ago".
+    static func relative(_ date: Date, now: Date) -> String {
+        if abs(now.timeIntervalSince(date)) < 60 { return "just now" }
+        return relativeFormatter.value.localizedString(for: date, relativeTo: now)
     }
 
     var firedAtDate: Date? { Self.firedAtFormatter.value.date(from: firedAt) }

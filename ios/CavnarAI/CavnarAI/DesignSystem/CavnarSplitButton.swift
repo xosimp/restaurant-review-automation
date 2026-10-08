@@ -59,7 +59,7 @@ struct CavnarSplitButton<MenuContent: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .sensoryFeedback(.impact(weight: .light), trigger: actionTapTrigger)
+            .sensoryFeedback(.impact(weight: .light), trigger: actionTapTrigger) { _, _ in AppPreferences.hapticsEnabledSnapshot }
 
             Rectangle()
                 .fill(Color.white.opacity(0.22))

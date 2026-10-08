@@ -372,7 +372,7 @@ private struct DemandSignalEditor: View {
 
     private func kicker(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.cavnarBody(11.5, weight: 700))
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
             .tracking(0.8)
             .foregroundStyle(Color.cavnarInk3)
     }
@@ -405,6 +405,7 @@ private struct DemandSignalEditor: View {
 private struct DemandSignalPasteSheet: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorSchemeContrast) private var contrast
 
     @State private var csv = ""
     @FocusState private var focused: Bool
@@ -462,7 +463,7 @@ private struct DemandSignalPasteSheet: View {
                             if csv.isEmpty {
                                 Text("9/26/26,64\n9/27/26,88")
                                     .font(.cavnarNumber(15))
-                                    .foregroundStyle(Color.cavnarInk3.opacity(0.6))
+                                    .foregroundStyle(Color.cavnarInk3Muted(contrast))
                                     .padding(.horizontal, 15)
                                     .padding(.top, 18)
                                     .allowsHitTesting(false)

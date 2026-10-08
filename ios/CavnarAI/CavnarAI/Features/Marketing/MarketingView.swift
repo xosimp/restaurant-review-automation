@@ -934,7 +934,7 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 Text(idea.platform.uppercased())
-                    .font(.cavnarBody(12, weight: 700))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarEmber2)
                     .contentTransition(.opacity)

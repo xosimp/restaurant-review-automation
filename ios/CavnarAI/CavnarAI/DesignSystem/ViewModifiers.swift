@@ -160,7 +160,7 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             // missing or delayed feedback); this is Apple's own dedicated,
             // race-resistant mechanism for tying haptics to a value change.
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
-                new && !isDisabled
+                new && !isDisabled && AppPreferences.hapticsEnabledSnapshot
             }
     }
 }
@@ -198,7 +198,7 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
-                new && !isDisabled
+                new && !isDisabled && AppPreferences.hapticsEnabledSnapshot
             }
     }
 }
@@ -225,7 +225,7 @@ struct CavnarSoftButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
-                new && !isDisabled
+                new && !isDisabled && AppPreferences.hapticsEnabledSnapshot
             }
     }
 }
@@ -252,7 +252,7 @@ struct CavnarChipButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
-                new
+                new && AppPreferences.hapticsEnabledSnapshot
             }
     }
 }
@@ -303,7 +303,7 @@ struct CavnarGlassButtonStyle: ButtonStyle {
         .scaleEffect(configuration.isPressed ? 0.98 : 1)
         .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
         .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
-            new && !isDisabled
+            new && !isDisabled && AppPreferences.hapticsEnabledSnapshot
         }
     }
 }
@@ -667,10 +667,20 @@ struct PulsingText: View {
 struct CavnarShimmerText: View {
     let text: String
     var color: Color = .white
+    // Reduce Motion: plain text at full strength, no sweep.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let period: Double = 1.6
 
     var body: some View {
+        if reduceMotion {
+            Text(text).foregroundStyle(color)
+        } else {
+            sweeping
+        }
+    }
+
+    private var sweeping: some View {
         TimelineView(.animation) { timeline in
             let elapsed = timeline.date.timeIntervalSinceReferenceDate
             let phase = (elapsed.truncatingRemainder(dividingBy: Self.period)) / Self.period
@@ -700,13 +710,16 @@ struct CavnarShimmerText: View {
 struct CavnarShimmerLine: View {
     var color: Color = .cavnarEmber
     var height: CGFloat = 3
+    // Reduce Motion: the track holds with a still bright segment at its
+    // centre — still reads as "working", nothing moves.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let period: Double = 1.6
 
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
             let elapsed = timeline.date.timeIntervalSinceReferenceDate
-            let phase = (elapsed.truncatingRemainder(dividingBy: Self.period)) / Self.period
+            let phase = reduceMotion ? 0.67 : (elapsed.truncatingRemainder(dividingBy: Self.period)) / Self.period
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {

@@ -1313,7 +1313,7 @@ private struct PairEditorSheet: View {
 
     private func kicker(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.cavnarBody(11.5, weight: 700))
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
             .tracking(0.8)
             .foregroundStyle(Color.cavnarInk3)
     }

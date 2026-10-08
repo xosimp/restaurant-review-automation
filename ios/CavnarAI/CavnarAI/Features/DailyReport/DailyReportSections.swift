@@ -333,7 +333,7 @@ struct DSRKPIGrid: View {
     private func tile(_ k: DSRKPI) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(k.label.uppercased() + (k.estimate ? " · EST." : ""))
-                .font(.cavnarBody(10.5, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarInk3)
+                .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarInk3)
             HStack(alignment: .center) {
                 Text(k.valueText).font(.cavnarNumber(22, weight: 600)).foregroundStyle(Color.cavnarInk)
                 Spacer(minLength: 4)

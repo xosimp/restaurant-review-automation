@@ -18,6 +18,7 @@ private struct FAQGroup: Identifiable {
 /// features, not placeholder copy.
 struct AccountHelpView: View {
     @State private var expanded: Set<UUID> = []
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private static let groups: [FAQGroup] = [
         FAQGroup(title: "Getting started", items: [
@@ -110,7 +111,7 @@ struct AccountHelpView: View {
 
                     Text("Build \(BuildInfo.gitSHA) · \(BuildInfo.builtAt)")
                         .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3.opacity(0.6))
+                        .foregroundStyle(Color.cavnarInk3Muted(contrast))
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.top, 8)
                 }

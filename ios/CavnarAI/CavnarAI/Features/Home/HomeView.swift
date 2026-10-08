@@ -479,7 +479,7 @@ struct HomeView: View {
             .onChange(of: deepLinkRouter.pendingIssueId) { _, id in
                 if id != nil { Task { @MainActor in takePendingIssue() } }
             }
-            .sensoryFeedback(.impact(weight: .medium), trigger: navHapticTrigger)
+            .sensoryFeedback(.impact(weight: .medium), trigger: navHapticTrigger) { _, _ in AppPreferences.hapticsEnabledSnapshot }
             // The base colour behind everything — where the field's own
             // bottom fade ends, and for any content below it.
             .background(Color.cavnarPaper)
@@ -613,6 +613,12 @@ struct HomeView: View {
                     .font(.cavnarHeadline(27))
                     .foregroundStyle(Self.briefToneColor(summary.brief?.tone))
                     .lineSpacing(3)
+                    // The 3-second answer reads at the phone's own size, past
+                    // the app's xxxLarge cap: one centred, wrapping line
+                    // with nothing beside it. accessibility2, not 3 — at 27pt
+                    // a title2-relative headline is already the largest
+                    // type on the screen.
+                    .cavnarReadingSize(upTo: .accessibility2)
             }
             .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
             .accessibilityElement(children: .combine)

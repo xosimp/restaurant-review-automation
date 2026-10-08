@@ -444,7 +444,7 @@ struct IntelView: View {
         VStack(spacing: 5) {
             value
             Text(label.uppercased())
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(0.4)
                 .foregroundStyle(Color.cavnarInk3)
                 .lineLimit(1)
@@ -584,7 +584,7 @@ struct IntelView: View {
                 Image(systemName: isGood ? "arrow.up.right" : (isBad ? "arrow.down.right" : "dollarsign"))
                     .font(.system(size: 9, weight: .bold))
                 Text(section.name.uppercased())
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.2)
             }
             .foregroundStyle(tone)
@@ -875,7 +875,7 @@ struct IntelView: View {
                 .foregroundStyle(Color.cavnarInk)
             if let tag {
                 Text(tag.uppercased())
-                    .font(.cavnarBody(10.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
                     .tracking(0.6)
                     .foregroundStyle(Color.cavnarEmber)
                     .padding(.horizontal, 7).padding(.vertical, 2)

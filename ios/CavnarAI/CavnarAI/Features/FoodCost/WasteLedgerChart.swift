@@ -28,6 +28,34 @@ struct WasteLedgerChart: View {
             CavnarAnimatedCanvas(duration: 2.9, height: height, replayKey: shown.map(\.id).joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue(Self.spokenSummary(headline: headline, rows: shown))
+            .accessibilityChartDescriptor(LedgerDescriptor(title: title, rows: shown))
+        }
+    }
+
+    /// The ledger read top to bottom: the headline, then each bar's dollar
+    /// figure and its reason, in the order drawn (largest first).
+    static func spokenSummary(headline: String, rows: [Row]) -> String {
+        guard !rows.isEmpty else { return headline + "." }
+        let lines = rows.map { row -> String in
+            let amount = "$\(Int(row.value.rounded()).formatted())"
+            return [row.name, amount, row.detail].compactMap { $0 }.joined(separator: ", ")
+        }
+        return ([headline] + lines).joined(separator: ". ") + "."
+    }
+
+    private struct LedgerDescriptor: AXChartDescriptorRepresentable {
+        let title: String
+        let rows: [Row]
+        func makeChartDescriptor() -> AXChartDescriptor {
+            let x = AXCategoricalDataAxisDescriptor(title: "Item", categoryOrder: rows.map(\.name))
+            let y = AXNumericDataAxisDescriptor(title: "Dollars", range: 0...max(1, rows.map(\.value).max() ?? 1),
+                                                gridlinePositions: []) { "$\(Int($0.rounded()).formatted())" }
+            let series = AXDataSeriesDescriptor(name: title, isContinuous: false,
+                                                dataPoints: rows.map { AXDataPoint(x: $0.name, y: $0.value, label: $0.detail) })
+            return AXChartDescriptor(title: title, summary: nil, xAxis: x, yAxis: y, additionalAxes: [], series: [series])
         }
     }
 

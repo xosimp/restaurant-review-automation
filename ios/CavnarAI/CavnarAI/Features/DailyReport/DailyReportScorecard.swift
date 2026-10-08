@@ -138,7 +138,7 @@ struct DSRScorecardCard: View {
     @ViewBuilder
     private func component(_ c: DSRScorecard.Component) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(c.label.uppercased()).font(.cavnarBody(10.5, weight: 700)).tracking(1.2)
+            Text(c.label.uppercased()).font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.2)
                 .foregroundStyle(Color.cavnarInk3)
             if c.measured, let value = c.value {
                 if c.key == "guests" {

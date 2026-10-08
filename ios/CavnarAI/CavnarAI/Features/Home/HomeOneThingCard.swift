@@ -158,7 +158,7 @@ struct HomeOneThingCard: View {
                             ForEach(Array(modules.enumerated()), id: \.offset) { index, module in
                                 if index > 0 { EmberThread(axis: .horizontal, length: 22) }
                                 Text(RecSummaryFormat.moduleLabel(module).uppercased())
-                                    .font(.cavnarBody(10.5, weight: 700))
+                                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                                     .tracking(1.0)
                                     .foregroundStyle(Color.cavnarInk3)
                             }
@@ -330,7 +330,7 @@ struct HomeLinkEvidenceSheet: View {
                         HStack(spacing: 8) {
                             EmberThread(axis: .horizontal, length: 34)
                             Text(modules.map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + ").uppercased())
-                                .font(.cavnarBody(11, weight: 700))
+                                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                                 .tracking(1.0)
                                 .foregroundStyle(Color.cavnarInk3)
                         }

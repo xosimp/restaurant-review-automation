@@ -528,7 +528,7 @@ struct ScheduleTileCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(tile.label.uppercased())
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1)
                 .foregroundStyle(Color.cavnarEmber2)
             HStack(alignment: .firstTextBaseline, spacing: 1) {

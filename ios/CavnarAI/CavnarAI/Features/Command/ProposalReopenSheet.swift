@@ -83,7 +83,7 @@ struct ProposalReopenSheet: View {
                         ProposalCard(proposal: proposal, viewModel: viewModel.askViewModel)
                     } else if let line = viewModel.response?.settledLine {
                         Text(line.uppercased())
-                            .font(.cavnarBody(12, weight: 700))
+                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
                             .tracking(1.4)
                             .foregroundStyle(Color.cavnarInk3)
                         if let summary = viewModel.response?.summary {

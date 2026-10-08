@@ -253,7 +253,7 @@ struct RegisterView: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.cavnarBody(12, weight: 700))
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
             .tracking(1.2)
             .foregroundStyle(Color.cavnarInk3)
     }

@@ -482,6 +482,10 @@ struct DailyReportView: View {
                 HomeMixedText.make(summary.text, size: 16.5, weight: 500, color: .cavnarInk)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
+                    // The night in sentences: the one DSR block that is
+                    // read, not scanned, so it follows the phone's text size
+                    // past the app's cap. The KPI tiles stay capped.
+                    .cavnarReadingSize()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard(.ai)

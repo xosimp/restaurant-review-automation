@@ -59,7 +59,7 @@ struct ScheduleRowTag: View {
         HStack(spacing: 3) {
             if let symbol { Image(systemName: symbol).font(.system(size: 8, weight: .bold)) }
             Text(text.uppercased())
-                .font(.cavnarBody(9, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(0.5)
         }
         .foregroundStyle(tone)
@@ -592,7 +592,7 @@ struct ScheduleReviewExtras: View {
 
     private func kicker(_ text: String, _ color: Color = .cavnarInk3) -> some View {
         Text(text.uppercased())
-            .font(.cavnarBody(11, weight: 700))
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
             .tracking(1.1)
             .foregroundStyle(color)
     }
