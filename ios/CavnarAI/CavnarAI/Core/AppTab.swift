@@ -40,3 +40,14 @@ enum AppTab: String, CaseIterable, Identifiable {
         }
     }
 }
+
+extension AppTab {
+    /// ⌘1…⌘4 on a hardware keyboard, in the tab bar's (and the iPad
+    /// sidebar's) order — the digit a tab answers to, and back.
+    var shortcutDigit: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
+
+    static func forShortcut(_ digit: Int) -> AppTab? {
+        let i = digit - 1
+        return allCases.indices.contains(i) ? allCases[i] : nil
+    }
+}

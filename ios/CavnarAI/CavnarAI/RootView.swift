@@ -89,6 +89,12 @@ struct RootView: View {
     // Tabs whose content has been built ahead of being selected — filled in
     // one at a time, on settled frames, a beat after the landing.
     @State private var warmedTabs: Set<AppTab> = []
+    // The iPad (parity audit #99): a regular width puts the tabs in a
+    // NavigationSplitView's sidebar, a compact one keeps the tab bar.
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    // The module whose screen the Modules stack opened on, so the sidebar
+    // can highlight it; nil on the grid (and whenever the stack empties).
+    @State private var sidebarModuleKey: String?
 
     private var loginCoverUp: Bool {
         guard !staffSessionStore.isAuthenticated, !staffDeviceEntry else { return false }
@@ -167,6 +173,7 @@ struct RootView: View {
         }
         .sheet(isPresented: $showingPasscodeSetup) {
             AppPasscodeSheet(mode: .create)
+                .cavnarFormSheet()
         }
         #if DEBUG
         // Debug-only, opt-in auto-login for UI-automation/screenshot
@@ -597,40 +604,17 @@ struct RootView: View {
     // and .selection (not .impact) matches the system's own tab/segmented-
     // control haptic convention for a discrete-choice change.
     private var mainTabs: some View {
-        TabView(selection: $selectedTab) {
-            HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared,
-                     onHeroAppear: startIntroSequence, tabVisible: selectedTab == .home)
-                .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
-                // Where the thumb already is (#32): the system's red badge
-                // carries the URGENT count, the bell's red number — a red
-                // count of merely-unread rows would say "urgent" when the
-                // web bell (and ours) says only a grey dot.
-                .badge(chrome.notificationsBadge.urgentCount)
-                .tag(AppTab.home)
-
-            // Seeded with the modules Home already fetched, so the tab's
-            // first open renders the grid instead of a loading seal.
-            LazyTab(active: tabIsBuilt(.modules)) {
-                ModulesGridView(path: $modulesPath, initialModules: homeViewModel.summary?.modules ?? [])
+        Group {
+            if CavnarLayout.usesSidebar(sizeClass) {
+                splitShell
+            } else {
+                tabShell
             }
-            .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
-            .tag(AppTab.modules)
-
-            // A tab, not a floating button + sheet: the FAB sat over tap
-            // targets on every screen, and a sheet's own swipe-to-dismiss
-            // recognizer fought the chat's keyboard for every tap. The orb
-            // freezes while another tab is up — TabView keeps this mounted.
-            LazyTab(active: tabIsBuilt(.ask)) {
-                AskCavnarView(viewModel: askCavnarViewModel, motionPaused: selectedTab != .ask)
-            }
-            .tabItem { Label(AppTab.ask.title, systemImage: AppTab.ask.systemImage) }
-            .tag(AppTab.ask)
-
-            LazyTab(active: tabIsBuilt(.account)) {
-                AccountView()
-            }
-            .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
-            .tag(AppTab.account)
+        }
+        // ⌘1…⌘4, ⌘K, ⌘N and ⌘R from a hardware keyboard, either shape.
+        .background { keyboardShortcuts }
+        .onChange(of: modulesPath.count) { _, count in
+            if count == 0 { sidebarModuleKey = nil }
         }
         .onAppear {
             DebugFrameWatchdog.mark("mainTabs onAppear")
@@ -668,6 +652,7 @@ struct RootView: View {
         .sheet(isPresented: Binding(get: { chrome.showingNotifications },
                                     set: { chrome.showingNotifications = $0 })) {
             NotificationsListView(viewModel: chrome.notificationsList)
+                .cavnarFormSheet()
         }
         .onChange(of: chrome.showingNotifications) { wasShowing, isShowing in
             if wasShowing && !isShowing {
@@ -679,6 +664,7 @@ struct RootView: View {
             // The reset itself runs from SessionStore.onLocationSwitched,
             // which every switch path reaches — not just this one.
             LocationSwitcherView {}
+                .cavnarFormSheet()
         }
         // Team messages, opened by the button beside the bell or a
         // teammate's push (messages/<id>), over whichever tab is up (#71).
@@ -689,6 +675,7 @@ struct RootView: View {
                              set: { deepLinkRouter.pendingActionId = $0 })) { ref in
             PendingActionSheet(actionId: ref.id)
                 .presentationDetents([.medium])
+                .cavnarFormSheet()
         }
         // An Ask proposal left open (the command sheet's Waiting on you):
         // its confirm card again, read back without a model call (F3-2).
@@ -696,6 +683,7 @@ struct RootView: View {
                              set: { deepLinkRouter.pendingProposalId = $0 })) { ref in
             ProposalReopenSheet(proposalId: ref.id)
                 .presentationDetents([.medium, .large])
+                .cavnarFormSheet()
         }
         .onChange(of: deepLinkRouter.locationSwitches) { _, _ in
             // Any switch (see didSwitchLocation): the badge and the title
@@ -713,6 +701,130 @@ struct RootView: View {
         .task {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             startIntroSequence()
+        }
+    }
+
+
+    /// The phone's shape, and an iPad's compact width (Split View's narrow
+    /// side, Slide Over): the tab bar, exactly as it has always been.
+    private var tabShell: some View {
+        TabView(selection: $selectedTab) {
+            HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared,
+                     onHeroAppear: startIntroSequence, tabVisible: selectedTab == .home)
+                .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
+                // Where the thumb already is (#32): the system's red badge
+                // carries the URGENT count, the bell's red number — a red
+                // count of merely-unread rows would say "urgent" when the
+                // web bell (and ours) says only a grey dot.
+                .badge(chrome.notificationsBadge.urgentCount)
+                .tag(AppTab.home)
+
+            // Seeded with the modules Home already fetched, so the tab's
+            // first open renders the grid instead of a loading seal.
+            LazyTab(active: tabIsBuilt(.modules)) {
+                ModulesGridView(path: $modulesPath, initialModules: homeViewModel.summary?.modules ?? [])
+            }
+            .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
+            .tag(AppTab.modules)
+
+            // A tab, not a floating button + sheet: the FAB sat over tap
+            // targets on every screen, and a sheet's own swipe-to-dismiss
+            // recognizer fought the chat's keyboard for every tap. The orb
+            // freezes while another tab is up — TabView keeps this mounted.
+            LazyTab(active: tabIsBuilt(.ask)) {
+                AskCavnarView(viewModel: askCavnarViewModel, motionPaused: selectedTab != .ask)
+            }
+            .tabItem { Label(AppTab.ask.title, systemImage: AppTab.ask.systemImage) }
+            .tag(AppTab.ask)
+
+            LazyTab(active: tabIsBuilt(.account)) {
+                AccountView()
+            }
+            .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
+            .tag(AppTab.account)
+        }
+    }
+
+    /// An iPad's regular width (parity audit #99): the tabs and each module
+    /// in a sidebar, the selected screen in the detail column. The same
+    /// state as the tab bar — `selectedTab` and the two paths RootView owns
+    /// — so the router, pushes, links and the location switcher land the
+    /// same way in either shape.
+    private var splitShell: some View {
+        NavigationSplitView {
+            AppSidebar(selection: sidebarSelection,
+                       modules: homeViewModel.summary?.modules ?? [],
+                       urgentCount: chrome.notificationsBadge.urgentCount,
+                       locationName: chrome.showsLocation ? chrome.locationName : nil,
+                       onSwitchLocation: { chrome.showingLocationSwitcher = true })
+                .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 320)
+        } detail: {
+            splitDetail
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    /// The selected tab's own screen, with its own NavigationStack. Each is
+    /// built when selected; what must outlive a switch (Home's summary, the
+    /// paths, Ask's chat) is RootView state already.
+    @ViewBuilder
+    private var splitDetail: some View {
+        switch selectedTab {
+        case .home:
+            HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared,
+                     onHeroAppear: startIntroSequence, tabVisible: true)
+        case .modules:
+            ModulesGridView(path: $modulesPath, initialModules: homeViewModel.summary?.modules ?? [],
+                            onRoute: { sidebarModuleKey = $0.key })
+        case .ask:
+            AskCavnarView(viewModel: askCavnarViewModel, motionPaused: false)
+        case .account:
+            AccountView()
+        }
+    }
+
+    private var sidebarSelection: Binding<SidebarItem?> {
+        Binding(
+            get: { SidebarItem.current(tab: selectedTab, moduleKey: sidebarModuleKey) },
+            set: { item in if let item { openFromSidebar(item) } })
+    }
+
+    /// A sidebar row: a tab, or a module on a fresh Modules stack (Back
+    /// lands on the grid). "Modules" itself is always the grid.
+    private func openFromSidebar(_ item: SidebarItem) {
+        switch item {
+        case .tab(let tab):
+            if tab == .modules { modulesPath = NavigationPath() }
+            sidebarModuleKey = nil
+            selectedTab = tab
+        case .module(let key):
+            let label = homeViewModel.summary?.modules.first(where: { $0.key == key })?.label ?? key.capitalized
+            var fresh = NavigationPath()
+            fresh.append(ModuleRoute(key: key, label: label))
+            modulesPath = fresh
+            sidebarModuleKey = key
+            selectedTab = .modules
+        }
+    }
+
+    /// The hardware keyboard's commands, listed in the iPad's ⌘ overlay.
+    /// ⌘R reaches the screen on top through its pull-to-refresh.
+    private var keyboardShortcuts: some View {
+        ZStack {
+            ForEach(AppTab.allCases) { tab in
+                CavnarShortcutButton(title: tab.title,
+                                     key: KeyEquivalent(Character(String(tab.shortcutDigit)))) {
+                    selectedTab = tab
+                }
+            }
+            CavnarShortcutButton(title: "Find or ask", key: "k") { CommandSheetRequest.request() }
+            CavnarShortcutButton(title: "New Ask", key: "n") {
+                selectedTab = .ask
+                askCavnarViewModel.startNewChat()
+            }
+            CavnarShortcutButton(title: "Refresh", key: "r") {
+                NotificationCenter.default.post(name: CavnarKeyCommand.refresh, object: nil)
+            }
         }
     }
 

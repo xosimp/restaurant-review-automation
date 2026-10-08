@@ -66,10 +66,15 @@ final class ModulesGridViewModel {
 struct ModulesGridView: View {
     @State private var viewModel: ModulesGridViewModel
 
-    init(path: Binding<NavigationPath>, initialModules: [ModuleSummary] = []) {
+    init(path: Binding<NavigationPath>, initialModules: [ModuleSummary] = [],
+         onRoute: ((ModuleRoute) -> Void)? = nil) {
         _path = path
         _viewModel = State(initialValue: ModulesGridViewModel(initialModules: initialModules))
+        self.onRoute = onRoute
     }
+    /// Told which module a tile or a link opened — the iPad sidebar
+    /// highlights it (parity audit #99). Nil on the phone.
+    private let onRoute: ((ModuleRoute) -> Void)?
     // Bound from RootView, not owned here — RootView.body swaps this
     // entire view out for LockedView (and back) across a Face ID
     // lock/unlock cycle, which tears down and recreates ModulesGridView
@@ -198,6 +203,7 @@ struct ModulesGridView: View {
         var fresh = NavigationPath()
         fresh.append(route)
         path = fresh
+        onRoute?(route)
     }
 
     // See HomeView.navigate(to:) for why this is debounced rather than
@@ -208,5 +214,6 @@ struct ModulesGridView: View {
         lastNavigationAt = now
         navHapticTrigger += 1
         path.append(route)
+        onRoute?(route)
     }
 }

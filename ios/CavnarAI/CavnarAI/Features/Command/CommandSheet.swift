@@ -33,6 +33,8 @@ private struct CommandSheetHost: ViewModifier {
                 CommandSheet()
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
+                    // ⌘K on an iPad opens a centred form, not a page (#99).
+                    .cavnarFormSheet()
             }
     }
 }

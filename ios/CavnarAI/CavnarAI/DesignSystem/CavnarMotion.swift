@@ -1442,6 +1442,10 @@ struct CavnarEmberRefreshable: ViewModifier {
     @State private var pull: CGFloat = 0
     @State private var isRefreshing = false
     @State private var flareID = 0
+    // ⌘R (iPad keyboard, parity audit #99) refreshes only the screen on
+    // top: a tab behind another, or a stack's root under a pushed screen,
+    // has disappeared and sits this one out.
+    @State private var onScreen = false
 
     func body(content: Content) -> some View {
         Group {
@@ -1471,6 +1475,17 @@ struct CavnarEmberRefreshable: ViewModifier {
         .overlay(alignment: .top) {
             CavnarEmberPullIndicator(pull: pull, isRefreshing: isRefreshing, flareID: flareID)
                 .allowsHitTesting(false)
+        }
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
+        .onReceive(NotificationCenter.default.publisher(for: CavnarKeyCommand.refresh)) { _ in
+            guard onScreen, !isRefreshing else { return }
+            Task {
+                flareID += 1
+                isRefreshing = true
+                await action()
+                isRefreshing = false
+            }
         }
     }
 }
