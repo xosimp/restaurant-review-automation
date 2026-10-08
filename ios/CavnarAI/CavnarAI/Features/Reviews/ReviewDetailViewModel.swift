@@ -44,6 +44,9 @@ final class ReviewDetailViewModel {
     var flagReason: String?
     /// True while the "Post it anyway?" confirm for a flagged draft is up.
     var needsFlagConfirm = false
+    /// The approve the flag confirm is holding was "Approve after all", so
+    /// "Post it anyway" carries `approve_skipped` too.
+    var flagConfirmApprovesSkipped = false
     static let defaultFlagReason = "states something Cavnar AI cannot confirm"
     /// drafter.FIX_REVIEW_REASON — a reply that names a change the owner
     /// marked done (memory round, 9/29/26). Held so the owner checks the
@@ -108,12 +111,24 @@ final class ReviewDetailViewModel {
     /// `draft_changed` otherwise), so an approve that lands late — from the
     /// offline queue — can never publish an older draft than the one the
     /// owner read, even when the edit saved ahead of it was refused.
+    ///
+    /// `approveSkipped`: "Approve after all" on a reply shown as skipped —
+    /// the only approve the server lets overturn a skip (re-audit 10/8/26).
+    /// Never queued: a replay lands later than it was made.
     struct ApproveBody: Encodable {
         let confirmFlagged: Bool
         var expectedDraft: String? = nil
+        var approveSkipped: Bool = false
         enum CodingKeys: String, CodingKey {
             case confirmFlagged = "confirm_flagged"
             case expectedDraft = "expected_draft"
+            case approveSkipped = "approve_skipped"
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(confirmFlagged, forKey: .confirmFlagged)
+            try c.encodeIfPresent(expectedDraft, forKey: .expectedDraft)
+            if approveSkipped { try c.encode(true, forKey: .approveSkipped) }
         }
     }
 
@@ -217,7 +232,10 @@ final class ReviewDetailViewModel {
     /// `confirmFlagged`: the owner saw the flag's reason and chose to post
     /// anyway. A flagged draft without it stops at the confirm (the view's
     /// dialog calls back with true); the server refuses it too (M-1).
-    func approve(confirmFlagged: Bool = false) async {
+    ///
+    /// `approveSkipped`: the skipped screen's "Approve after all" — sent
+    /// as `approve_skipped`; every other approve leaves a skip standing.
+    func approve(confirmFlagged: Bool = false, approveSkipped: Bool = false) async {
         // Flush any pending debounced edit first so what gets posted matches
         // what's on screen, rather than racing the 800ms save timer.
         //
@@ -244,6 +262,7 @@ final class ReviewDetailViewModel {
         }
         // Read first: the save above may have just flagged the edit.
         if flagReason != nil && !confirmFlagged {
+            flagConfirmApprovesSkipped = approveSkipped
             needsFlagConfirm = true
             return
         }
@@ -257,7 +276,8 @@ final class ReviewDetailViewModel {
         do {
             let response: ApproveResponse = try await client.send(
                 "/mobile/api/reviews/\(review.id)/approve", method: .post,
-                body: ApproveBody(confirmFlagged: confirmFlagged, expectedDraft: editedDraft)
+                body: ApproveBody(confirmFlagged: confirmFlagged, expectedDraft: editedDraft,
+                                  approveSkipped: approveSkipped)
             )
             Haptic.success()
             let status = response.posted ? "posted" : "approved"
@@ -268,6 +288,10 @@ final class ReviewDetailViewModel {
             // A failed post keeps the owner on this screen, where the retry
             // is, instead of popping back to the list as a plain success.
             didComplete = (response.shortfall == nil)
+        } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer && approveSkipped {
+            // "Approve after all" is never queued: a replay carries no
+            // approve_skipped, so the server would leave the skip standing.
+            errorMessage = "You\u{2019}re offline, so this reply wasn\u{2019}t approved. Try Approve after all again once you\u{2019}re back online."
         } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer {
             // Never left the phone, so replaying it later is safe.
             await queueApprove(confirmFlagged: confirmFlagged)
@@ -283,6 +307,7 @@ final class ReviewDetailViewModel {
                let refusal = error.decodeBody(FlagRefusal.self), refusal.needsReview == true {
                 // Flagged since this screen opened: show why, then ask.
                 flagReason = refusal.reviewReason ?? Self.defaultFlagReason
+                flagConfirmApprovesSkipped = approveSkipped
                 needsFlagConfirm = true
                 return
             }

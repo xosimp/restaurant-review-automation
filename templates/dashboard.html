@@ -17300,8 +17300,11 @@ function saveDraft(id) {
     if (sd.needs_review && !_revFlagOk(id, sd.review_reason || 'states something Cavnar AI cannot confirm')) {
       settle(); toast('Saved as a draft — not posted','success'); return;
     }
+    /* The words just saved are the words approved (expected_draft): a
+       regenerate or an edit elsewhere in between is not posted. (The save
+       itself puts a skipped reply back to drafted.) */
     fetch('/approve/'+id, {method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({confirm_flagged:!!sd.needs_review})}).then(apiJson).then(function(ad){
+      body:JSON.stringify({confirm_flagged:!!sd.needs_review, expected_draft:draft})}).then(apiJson).then(function(ad){
       settle();
       if (ad.ok) {
         var txtEl = document.getElementById('draft-txt-'+id);
@@ -17803,7 +17806,7 @@ function waRender(checks){
     + '<div class="ac-field"><label for="wa-gsc">Search Console property</label><input class="ac-input" id="wa-gsc" autocomplete="off" placeholder="sc-domain:yoursite.com" value="' + e(d.gsc_site_url || '') + '"><small>Your domain (yoursite.com), or exactly as Search Console shows it: sc-domain:yoursite.com or https://yoursite.com/.</small></div>'
     + '</div>'
     + '<div class="wa-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="wa-save" onclick="waSave(this)">Save and check</button>'
-    + ((d.ga4_property_id || d.gsc_site_url) ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="waSync(this)">Read now</button>' : '')
+    + ((d.ga4_property_id || d.gsc_site_url) && d.can_sync ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="waSync(this)">Read now</button>' : '')
     + ((d.ga4_property_id || d.gsc_site_url) ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-sm" onclick="waDisconnect(this)">Disconnect</button>' : '')
     + '</div><div id="wa-checks">' + waChecksHtml(checks) + '</div>'
     + (d.synced_at && !checks ? '<div class="wa-check">Last read ' + e(typeof mdy === 'function' ? mdy(String(d.synced_at).slice(0, 10)) : String(d.synced_at).slice(0, 10)) + '. Cavnar AI reads it again every morning.</div>' : '')
@@ -19905,22 +19908,30 @@ function _revShowFlag(id, reason){
   d.appendChild(ic);d.appendChild(body);
   txt.parentNode.insertBefore(d,txt.nextSibling);
 }
-function approveR(id, confirmed){
+/* skipped: the card's "Approve after all" on a reply shown as skipped -
+   the only approve that may overturn a skip (approve_skipped, re-audit
+   10/8/26). The reply on the card goes as expected_draft: the server posts
+   it only while it is still the stored reply. */
+function approveR(id, confirmed, skipped){
   if(_revInflight['approve'+id])return;
   var _flag=confirmed?'':_revFlagReason(id);
   if(_flag&&!_revFlagOk(id,_flag))return;
   var _conf=!!confirmed||!!_flag;
+  var _shownEl=document.getElementById('draft-txt-'+id);
+  var _body={confirm_flagged:_conf};
+  if(_shownEl)_body.expected_draft=_shownEl.textContent||'';
+  if(skipped===true)_body.approve_skipped=true;
   _revInflight['approve'+id]=1;
   var _appBtn=_revBtn('approveR',id)||document.querySelector('#rc-'+id+' .cbtn-primary');
   var done=cbtnBusy(_appBtn,'Approving\u2026');
   function settle(){delete _revInflight['approve'+id];done();}
-  fetch('/approve/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_flagged:_conf})}).then(apiJson).then(function(d){
+  fetch('/approve/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_body)}).then(apiJson).then(function(d){
   settle();
   // Flagged since this card was drawn (an edit on the phone, the
   // auto-approve hold): show why, ask, and only then post.
   if(!d.ok&&d.needs_review&&!_conf){
     _revShowFlag(id,d.review_reason||'states something Cavnar AI cannot confirm');
-    if(_revFlagOk(id,d.review_reason||'states something Cavnar AI cannot confirm'))approveR(id,true);
+    if(_revFlagOk(id,d.review_reason||'states something Cavnar AI cannot confirm'))approveR(id,true,skipped);
     return;
   }
   if(d.ok){
@@ -19967,7 +19978,7 @@ function approveR(id, confirmed){
         } else {
           document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
             '<span class="cbtn cbtn-success cbtn-ghost cbtn-done cbtn-sm">✓ Approved</span>' +
-            '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Will post to Google once connected</span>';
+            '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Post it once Google is connected</span>';
           toast('Response approved and saved ✓','success');
         }
       } else {
@@ -20197,7 +20208,7 @@ function skipR(id){
       var actions = document.getElementById('draft-actions-'+id);
       if(actions) {
         actions.innerHTML =
-          '<button class="cbtn cbtn-secondary cbtn-sm" onclick="approveR('+id+')">✓ Approve after all</button>' +
+          '<button class="cbtn cbtn-secondary cbtn-sm" onclick="approveR('+id+',false,true)">✓ Approve after all</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit response</button>' +
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate</button>';
         actions.style.display='flex';

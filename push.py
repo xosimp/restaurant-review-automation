@@ -756,7 +756,11 @@ def _publishable_draft(restaurant_id, review_id, db_path=DB_PATH):
 # field that can be long: it is clipped here and, if the whole payload is
 # still too big, cut further at delivery (_fit_payload). `draft_complete`
 # says whether the text is the whole reply — only then does the phone send
-# it back as `expected_draft` with the approve.
+# it back as `expected_draft` with the approve. `draft_hash`
+# (models.draft_hash of the stored reply) always rides with it and survives
+# every cut, so a clipped or dropped draft still binds the lock-screen
+# approve to the reply the push was about (`expected_draft_hash`, re-audit
+# 10/8/26): a reply regenerated or edited since is never posted.
 PUSH_DRAFT_MAX_CHARS = 900
 APNS_MAX_PAYLOAD_BYTES = 4096
 _ELLIPSIS = "\u2026"
@@ -766,15 +770,18 @@ def _draft_fields(draft) -> dict:
     exact = str(draft or "").strip()
     if not exact:
         return {}
+    from models import draft_hash
     if len(exact) <= PUSH_DRAFT_MAX_CHARS:
-        return {"draft": exact, "draft_complete": True}
-    return {"draft": exact[:PUSH_DRAFT_MAX_CHARS - 1].rstrip() + _ELLIPSIS, "draft_complete": False}
+        return {"draft": exact, "draft_complete": True, "draft_hash": draft_hash(exact)}
+    return {"draft": exact[:PUSH_DRAFT_MAX_CHARS - 1].rstrip() + _ELLIPSIS, "draft_complete": False,
+            "draft_hash": draft_hash(exact)}
 
 
 def _fit_payload(payload) -> bytes:
     """The payload's bytes, never over APNS_MAX_PAYLOAD_BYTES: the draft is
     shortened (nothing else is touched), and dropped when even a short one
-    does not fit. Mutates `payload` to match what is returned."""
+    does not fit. `draft_hash` is never cut: it is what binds a clipped or
+    dropped draft's approve. Mutates `payload` to match what is returned."""
     def enc():
         return json.dumps(payload, separators=(",", ":")).encode()
     out = enc()

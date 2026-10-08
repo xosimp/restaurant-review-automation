@@ -93,7 +93,7 @@ def test_m1_web_review_card_renders_the_flag_and_approve_asks_first(db_path):
     assert 'id="draft-flag-%d"' % rv in html
     assert "Read this one before you post it" in html and "on us" in html
     dash = _read("templates", "dashboard.html")
-    body = dash[dash.index("function approveR(id, confirmed){"):]
+    body = dash[dash.index("function approveR(id, confirmed, skipped){"):]
     body = body[:body.index("\n}\n")]
     # Asks with the card's own reason; the server holds the same line
     # (confirm_flagged, parity round).

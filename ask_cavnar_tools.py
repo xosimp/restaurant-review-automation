@@ -112,9 +112,23 @@ def _read_reviews(restaurant_id, sentiment=None, urgency=None, search=None,
         review_id = None
     rows = get_reviews_data(restaurant_id, filter_by=filter_by, search=(search or ""), review_id=review_id)
     if needs_response is True:
-        rows = [r for r in rows if not (r.get("draft_response") or "").strip()]
+        # Answered outside Cavnar AI is answered, draft or not.
+        rows = [r for r in rows if not (r.get("draft_response") or "").strip() and not r.get("replied_elsewhere")]
     out = []
     for r in rows[:min(int(limit or 10), _MAX_ROWS)]:
+        # A review answered outside Cavnar AI (models.mark_replied_elsewhere)
+        # has an unused draft: never handed over as "the reply" — the model
+        # gets the reply actually posted, when Google gave it (re-audit
+        # 10/8/26), like the inbox card.
+        elsewhere = bool(r.get("replied_elsewhere"))
+        if elsewhere:
+            mine = {"replied_elsewhere": True}
+            if review_id and (r.get("external_reply") or "").strip():
+                mine["reply_posted"] = (r.get("external_reply") or "")[:800]
+        else:
+            # The drafted reply, when the owner is asking about one review
+            # ("make this reply warmer" needs the reply).
+            mine = {"draft": (r.get("draft_response") or "")[:800]} if review_id else {}
         out.append({
             "id": r.get("id"),
             "author": r.get("author"),
@@ -124,11 +138,9 @@ def _read_reviews(restaurant_id, sentiment=None, urgency=None, search=None,
             "text": (r.get("text") or "")[:400],
             "sentiment": r.get("sentiment"),
             "urgency": r.get("urgency"),
-            "has_draft": bool((r.get("draft_response") or "").strip()),
+            "has_draft": bool((r.get("draft_response") or "").strip()) and not elsewhere,
             "status": r.get("response_status"),
-            # The drafted reply, when the owner is asking about one review
-            # ("make this reply warmer" needs the reply).
-            **({"draft": (r.get("draft_response") or "")[:800]} if review_id else {}),
+            **mine,
         })
     return {"count": len(out), "reviews": out}
 
@@ -4104,6 +4116,15 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
         route["mobile"] = route["mobile"].replace("{review_id}", str(review_id))
         summary = summary.replace("{review_id}", str(review_id))
         args = {k: v for k, v in args.items() if k != "review_id"}
+        if name == "approve_review" and restaurant_id is not None:
+            # The card shows the reply in full (proposal_details' preview);
+            # its fingerprint rides in the body, so Confirm posts that reply
+            # or nothing — one regenerated or edited since is a 409
+            # draft_changed (re-audit 10/8/26). No draft yet binds to the
+            # empty reply, so one written after the card never posts on it.
+            from models import draft_hash as _dh
+            _row = _review_row(restaurant_id, review_id)
+            args["expected_draft_hash"] = _dh((_row["draft_response"] if _row else "") or "")
     # A request is addressed the same way (decide_time_off /
     # decide_shift_request): the id in the path, the decision in the body,
     # and the card names the person from the stored request — never from the
@@ -4148,10 +4169,16 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
     # A bulk publish posts exactly the replies its card lists (re-audit
     # F1-9): their ids travel in the body, so a draft that lands between
     # the card and Confirm waits for the next one.
+    _bulk_preview = None
     if name == "approve_all_reviews" and restaurant_id is not None:
         try:
-            go, _held = bulk_publish_preview(restaurant_id)
+            go, _held = _bulk_preview = bulk_publish_preview(restaurant_id)
             args["review_ids"] = [int(r["id"]) for r in go]
+            # ...and each with the fingerprint of the words the card lists
+            # (re-audit 10/8/26): a reply rewritten between the card and
+            # Confirm is not posted on a "yes" to other words.
+            from models import draft_hash as _dh
+            args["review_hashes"] = {str(int(r["id"])): _dh(r["draft_response"] or "") for r in go}
         except Exception as e:
             log.warning("ask_cavnar approve-all set for rid=%s failed: %s", restaurant_id, e)
     out = {
@@ -4173,7 +4200,8 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
     # reply. Read-only lookups; a failure leaves the card as it was.
     if restaurant_id is not None:
         try:
-            out.update(proposal_details(name, proposal_args(name, tool_input), restaurant_id))
+            out.update(proposal_details(name, proposal_args(name, tool_input), restaurant_id,
+                                        bulk_preview=_bulk_preview))
         except Exception as e:
             log.warning("ask_cavnar proposal details for %s failed: %s", name, e)
     return out
@@ -4184,6 +4212,7 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
 # `draft_hash` is set by build_proposal itself from the draft as it stands.
 PROPOSAL_DENYLIST = frozenset({
     "acknowledge", "resend", "draft_hash", "earned", "include_4star", "paused",
+    "expected_draft", "expected_draft_hash", "review_hashes", "approve_skipped",
     "automatic", "manual", "force", "override", "skip_checks", "bulk", "auto",
 })
 
@@ -4197,6 +4226,8 @@ _FIELD_LABELS = {
     "decision": "Answer",
     "use_checked": "Lines",
     "review_ids": "Replies",
+    "review_hashes": "Words",
+    "expected_draft_hash": "Reply",
     "add": "Closed on",
     "employee_name": "Who",
     "unavailable_days": "Not available on",
@@ -4652,6 +4683,10 @@ def fields_shown(body) -> list:
             val = "only the lines Cavnar AI checked"
         if k == "review_ids" and isinstance(v, (list, tuple)):
             val = f"only the {len(v)} listed above"
+        if k == "review_hashes" and isinstance(v, dict):
+            val = "exactly as listed above — a reply changed since is not posted"
+        if k == "expected_draft_hash":
+            val = "exactly as shown above — if it changes, nothing is posted"
         if k == "segment":
             try:
                 import guest_marketing
@@ -4746,7 +4781,7 @@ def bulk_publish_preview(restaurant_id, limit=25):
     return go, held
 
 
-def proposal_details(name, args, restaurant_id) -> dict:
+def proposal_details(name, args, restaurant_id, bulk_preview=None) -> dict:
     """{"details": [{"label", "value"}], "preview": text that would go out,
     "at_stake": dollars or None} for one proposal — read from the same data
     the confirmed route will act on, never from the model's own words
@@ -4804,7 +4839,9 @@ def proposal_details(name, args, restaurant_id) -> dict:
         # The words, not a count (NS5 M10): the same set and the same check
         # client_api._do_approve_all runs, so the card lists what would post
         # and says how many the check would hold back.
-        go, held = bulk_publish_preview(restaurant_id)
+        # The very rows the body's ids and fingerprints came from, when
+        # build_proposal read them: the card lists what Confirm binds.
+        go, held = bulk_preview if bulk_preview is not None else bulk_publish_preview(restaurant_id)
         details.append({"label": "Replies that would post", "value": str(len(go))})
         if held:
             details.append({"label": "Held for you to read", "value": f"{held} — their wording needs a look first"})

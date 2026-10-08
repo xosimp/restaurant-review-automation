@@ -65,7 +65,7 @@ final class IOSFixRoundTests: XCTestCase {
         XCTAssertNotNil(try outcome(#"{"ok": true, "post_status": "not_google"}"#).shortfall)
         XCTAssertNotNil(try outcome(#"{"ok": true, "auto_posted": false, "post_error": "Google said no"}"#).shortfall,
                         "an older server's answer is read too")
-        let approve = PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 4])
+        let approve = PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 4, "draft_hash": "ab12"])
         XCTAssertEqual(approve?.postsReply, true)
     }
 
@@ -359,7 +359,7 @@ final class IOSFixRoundTests: XCTestCase {
     // MARK: F3-13 — lock-screen actions and the app's own lock
 
     func testAPasscodeKeepsOutwardActionsInTheApp() throws {
-        let approve = try XCTUnwrap(PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 4]))
+        let approve = try XCTUnwrap(PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 4, "draft_hash": "ab12"]))
         let undo = try XCTUnwrap(PushManager.backgroundAction(for: PushManager.undoAction, cavnar: ["delayed_action_id": 7]))
         XCTAssertTrue(PushManager.needsAppUnlock(approve, passcodeSet: true))
         XCTAssertFalse(PushManager.needsAppUnlock(approve, passcodeSet: false))

@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Observation
 
 /// The web inbox's filter chips, on the phone.
@@ -411,7 +412,10 @@ final class ReviewsListViewModel {
     private var selectedReviews: [Review] { reviews.filter { selection.contains($0.id) } }
     /// The selected replies the bulk route may post: the swipe's own bar
     /// (canQuickApprove — drafted, not flagged, not urgent, recent).
-    var bulkApprovable: [Int] { selectedReviews.filter { Self.canQuickApprove($0) }.map(\.id) }
+    var bulkApprovable: [Int] { bulkApprovableReviews.map(\.id) }
+    /// The same replies themselves — the confirm lists their words (NS5
+    /// M10, re-audit 10/8/26: "words, not a count").
+    var bulkApprovableReviews: [Review] { selectedReviews.filter { Self.canQuickApprove($0) } }
     var bulkSkippable: [Int] { selectedReviews.filter { Self.isSkippable($0) }.map(\.id) }
     /// Selected but not ready to post in bulk — read one at a time.
     var bulkHeld: Int { selection.count - bulkApprovable.count }
@@ -421,52 +425,68 @@ final class ReviewsListViewModel {
         if selection.contains(review.id) { selection.remove(review.id) } else { selection.insert(review.id) }
     }
 
-    private struct BulkApproveBody: Encodable {
+    struct BulkApproveBody: Encodable {
         let reviewIds: [Int]
         let limit: Int
+        /// {id: models.draft_hash} of the words the confirm listed: a reply
+        /// rewritten since is not posted (re-audit 10/8/26).
+        var reviewHashes: [String: String]? = nil
         enum CodingKeys: String, CodingKey {
             case reviewIds = "review_ids"
             case limit
+            case reviewHashes = "review_hashes"
         }
     }
 
-    /// The approve-all route pinned to these ids, 25 at a time (its cap) —
-    /// the server re-checks each and never posts a flagged or urgent draft.
-    static func bulkApproveBodies(_ ids: [Int]) -> [Data] {
-        stride(from: 0, to: ids.count, by: 25).compactMap { start in
-            let chunk = Array(ids[start..<min(start + 25, ids.count)])
-            return try? JSONEncoder().encode(BulkApproveBody(reviewIds: chunk, limit: chunk.count))
+    /// models.draft_hash: sha256 hex of the reply stripped.
+    nonisolated static func draftHash(_ text: String) -> String {
+        let data = Data(text.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The approve-all route pinned to these replies, 25 at a time (its
+    /// cap), each bound to the words the confirm showed — the server
+    /// re-checks each and never posts a flagged, urgent or rewritten draft.
+    static func bulkApproveBodies(_ reviews: [Review]) -> [BulkApproveBody] {
+        stride(from: 0, to: reviews.count, by: 25).map { start in
+            let chunk = Array(reviews[start..<min(start + 25, reviews.count)])
+            var hashes: [String: String] = [:]
+            for r in chunk { hashes[String(r.id)] = draftHash(r.draftResponse ?? "") }
+            return BulkApproveBody(reviewIds: chunk.map(\.id), limit: chunk.count, reviewHashes: hashes)
         }
     }
 
-    /// The bar's Approve, after its confirm.
-    func bulkApprove() async {
-        let ids = bulkApprovable
-        guard !ids.isEmpty, !isBulkWorking else { return }
+    /// The bar's Approve, after its confirm: exactly the replies the
+    /// confirm listed (`shown`), in the words it showed.
+    func bulkApprove(shown: [Review]) async {
+        guard !shown.isEmpty, !isBulkWorking else { return }
         isBulkWorking = true
         defer { isBulkWorking = false }
-        var approved = 0, posted = 0, failed = 0
+        // Selected but never in the bulk (flagged, urgent, old, already
+        // decided) — held for a read just as much as one the server held.
+        let notInBulk = max(0, selection.count - shown.count)
+        var approved = 0, posted = 0, failed = 0, changed = 0
         var lost = false
-        for start in stride(from: 0, to: ids.count, by: 25) {
-            let chunk = Array(ids[start..<min(start + 25, ids.count)])
+        for body in Self.bulkApproveBodies(shown) {
             do {
                 let r: BulkPublishResult = try await client.send(
-                    "/mobile/api/reviews/approve-all", method: .post,
-                    body: BulkApproveBody(reviewIds: chunk, limit: chunk.count), retryTransient: false)
+                    "/mobile/api/reviews/approve-all", method: .post, body: body, retryTransient: false)
                 approved += r.approved
                 posted += r.posted
                 failed += r.failed
+                changed += r.changed ?? 0
             } catch let error as APIClient.APIError {
-                failed += chunk.count
+                failed += body.reviewIds.count
                 if error.mayHaveReachedServer { lost = true }
             } catch {
-                failed += chunk.count
+                failed += body.reviewIds.count
                 lost = true
             }
         }
-        let held = ids.count - approved - failed
+        let held = notInBulk + max(0, shown.count - approved - failed - changed)
         var bits = ["\(approved) approved" + (posted > 0 ? " (\(posted) posted to Google)" : "")]
         if held > 0 { bits.append("\(held) held for you to read") }
+        if changed > 0 { bits.append("\(changed) changed since you read \(changed == 1 ? "it" : "them") \u{2014} not posted") }
         if failed > 0 { bits.append("\(failed) didn\u{2019}t go through" + (lost ? " \u{2014} check before trying again" : "")) }
         bulkNote = (bits.joined(separator: " \u{00B7} "), failed > 0)
         if failed == 0 { Haptic.success() }

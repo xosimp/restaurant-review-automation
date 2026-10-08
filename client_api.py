@@ -196,7 +196,7 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # without duplicating it.
 
 def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False,
-                expected_draft=None, user=None, expected_draft_hash=None):
+                expected_draft=None, user=None, expected_draft_hash=None, approve_skipped=False):
     """Approve (and post) one drafted reply.
 
     `confirm_flagged`: the person was shown the reply guard's flag on this
@@ -227,6 +227,10 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
     The stored reply must hash to it, and the approve is then held to that
     exact text — so a draft that changed after the row was read is never
     posted (409 `draft_changed`).
+
+    `approve_skipped`: the person pressed "Approve after all" on a reply
+    shown as skipped — the only approve that may overturn a skip
+    (models.claim_approval). Never with `bulk` or `auto`.
 
     `user`: the login approving (the route's current_user). Who approved is
     recorded with the approval (models.reply_approver: the login, its
@@ -265,7 +269,8 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             expected_draft = _stored
     if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk),
                           allow_flagged=bool(confirm_flagged), expected_draft=expected_draft,
-                          approver=reply_approver(user, auto=bool(auto))):
+                          approver=reply_approver(user, auto=bool(auto)),
+                          approve_skipped=(approve_skipped is True and not bulk and not auto)):
         _gc = get_conn()
         _cur = _gc.execute("SELECT response_status, deleted_at, draft_needs_review, draft_review_reason, "
                            "draft_response "
@@ -278,6 +283,12 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             return {"ok": False, "error": "That review was removed."}, 409
         if _cur["response_status"] in ("approved", "posted"):
             return {"ok": False, "error": "That reply has already been approved."}, 409
+        if _cur["response_status"] == "skipped" and not (approve_skipped is True and not bulk and not auto):
+            # Skipped after this approve was made (a queued replay, a
+            # lock-screen or bell approve): the skip stands.
+            return {"ok": False, "skipped": True,
+                    "error": "This reply was skipped, so it wasn't posted. "
+                             "Open the review and choose Approve after all to post it."}, 409
         if expected_draft is not None and (_cur["draft_response"] or "") not in (expected_draft, expected_draft.strip()):
             return {"ok": False, "draft_changed": True,
                     "error": "This reply changed after you approved it, so it wasn't posted. "
@@ -453,8 +464,15 @@ def _attempt_google_post(rid, restaurant_id, google=None):
             # Read from Google's public listing, not the Business Profile
             # connection, so there is no review to attach a reply to. GBP is
             # connected, so saying nothing read as "posted" (MOD A1 R2 #16).
-            return False, ("This review came from Google's public listing, so Cavnar AI can't post the "
-                           "reply for you. Copy it and reply on Google directly.")
+            return False, _record_post_error(rid, restaurant_id, (
+                "This review came from Google's public listing, so Cavnar AI can't post the "
+                "reply for you. Copy it and reply on Google directly."))
+        # One post at a time (re-audit 10/8/26): the attempt is claimed on
+        # the row, so a Retry pressed in another inbox while this one is
+        # still waiting on Google never sends the reply a second time.
+        if not _claim_post_attempt(rid, restaurant_id):
+            return False, ("This reply is being posted to Google right now. "
+                           "Refresh in a minute to see whether it went live.")
         result = post_reply(restaurant_id, row["review_name"], row["draft_response"])
         if result["ok"]:
             from models import mark_posted
@@ -479,6 +497,7 @@ def _attempt_google_post(rid, restaurant_id, google=None):
                 pass
             return True, None
         print(f"[GMB] Auto-post failed for review {rid}: {result['error']}")
+        _record_post_error(rid, restaurant_id, result["error"])
         if result.get("no_token") and google is not None:
             google["unreachable"] = result["error"]
         if result.get("removed"):
@@ -506,7 +525,44 @@ def _attempt_google_post(rid, restaurant_id, google=None):
                "use Retry posting in a few minutes.")
         if google is not None:
             google["unreachable"] = msg
-        return False, msg
+        return False, _record_post_error(rid, restaurant_id, msg)
+
+
+def _claim_post_attempt(rid, restaurant_id) -> bool:
+    """Start a Google post of an approved reply, as a compare-and-set: True
+    for the one caller that may post it now; False while another attempt
+    is in flight (started within models.REVIEW_POST_IN_FLIGHT_MINUTES with
+    no answer recorded) or the reply is no longer approved."""
+    from models import REVIEW_POST_IN_FLIGHT_MINUTES
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE reviews SET post_attempted_at=datetime('now'), post_error=NULL "
+            "WHERE id=? AND restaurant_id=? AND response_status='approved' "
+            "AND NOT (post_attempted_at IS NOT NULL AND post_error IS NULL "
+            "         AND post_attempted_at > datetime('now', ?))",
+            (rid, restaurant_id, f"-{int(REVIEW_POST_IN_FLIGHT_MINUTES)} minutes"))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def _record_post_error(rid, restaurant_id, error):
+    """The answer to a post that failed, on the row (the inbox's "Couldn't
+    post to Google" and its reason). Returns `error`. Never raises."""
+    try:
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE reviews SET post_attempted_at=COALESCE(post_attempted_at, datetime('now')), "
+                         "post_error=? WHERE id=? AND restaurant_id=?",
+                         (str(error or "")[:500] or "The post failed.", rid, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[GMB] could not record the post error for review {rid}: {e}")
+    return error
 
 
 def _do_retry_post(rid, restaurant_id):
@@ -524,7 +580,7 @@ def _do_retry_post(rid, restaurant_id):
     return _post_payload(rid, restaurant_id, auto_posted, post_error), 200
 
 
-def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None):
+def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None, review_hashes=None):
     """Publish every drafted reply in one go.
 
     `review_ids`: the replies a confirm card listed (ask_cavnar_tools
@@ -532,6 +588,13 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None):
     they are still publishable; a draft that landed after the card waits
     for the next one. An empty list posts nothing. None (Home's inline
     fallback, an older client) is every publishable draft up to `limit`.
+
+    `review_hashes`: {review id: models.draft_hash} of the words the card
+    showed (Ask's proposal, the phone's Select confirm — re-audit 10/8/26).
+    When given, a reply posts only while it still hashes to what was shown
+    (each approve is held to it, `expected_draft_hash`), and one the card
+    did not fingerprint does not post; a reply rewritten since is counted
+    in `changed`, never posted.
 
     Each review goes through the same _do_approve path a single approve
     uses — response_action, activity log, webhook, background Google post —
@@ -560,6 +623,20 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None):
             pinned = None
         if pinned is None:
             return {"ok": False, "error": "review_ids must be a list of review ids."}, 400
+    hashes = None
+    if review_hashes is not None:
+        if not isinstance(review_hashes, dict):
+            return {"ok": False, "error": "review_hashes must map review ids to reply fingerprints."}, 400
+        hashes = {}
+        for k, v in review_hashes.items():
+            try:
+                if isinstance(v, str) and v.strip():
+                    hashes[int(k)] = v.strip().lower()
+            except (TypeError, ValueError):
+                continue
+        if pinned is None:
+            # Bound words without a list: the fingerprinted replies are the list.
+            pinned = sorted(hashes)[:25]
     conn = get_conn()
     if pinned is None:
         rows = conn.execute(
@@ -614,15 +691,22 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None):
         checked.append(row)
     rows = checked
 
-    approved = posted = failed = 0
+    approved = posted = failed = changed = 0
     google = {}
     for row in rows:
         try:
-            payload, status = _do_approve(row["id"], restaurant_id, google, bulk=True, user=user)
+            if hashes is not None and row["id"] not in hashes:
+                # Listed without its words: nothing binds what would post.
+                changed += 1
+                continue
+            payload, status = _do_approve(row["id"], restaurant_id, google, bulk=True, user=user,
+                                          expected_draft_hash=(hashes or {}).get(row["id"]))
             if status == 200 and payload.get("ok"):
                 approved += 1
                 if payload.get("auto_posted"):
                     posted += 1
+            elif payload.get("draft_changed"):
+                changed += 1
             else:
                 failed += 1
         except Exception:
@@ -652,9 +736,11 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None):
     # wait for someone to read them one at a time.
     # `held_for_review`: replies this run held because their words failed
     # the public-reply check (NS5 M10) — also inside `held`.
+    # `changed`: listed replies rewritten since the card showed them (or
+    # listed with no fingerprint) — not posted, waiting to be read again.
     return {"ok": True, "approved": approved, "posted": posted,
             "failed": failed, "remaining": int(remaining), "held": int(held),
-            "held_for_review": held_now}, 200
+            "held_for_review": held_now, "changed": changed}, 200
 
 
 
@@ -672,7 +758,8 @@ def approve_all_reviews_api(current_user):
     # this route, its mobile twin and Ask's confirm all do it.
     data = request.get_json(silent=True) or {}
     payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
-                                      review_ids=data.get("review_ids"), user=current_user)
+                                      review_ids=data.get("review_ids"), user=current_user,
+                                      review_hashes=data.get("review_hashes"))
     return jsonify(**payload), status
 
 
@@ -816,7 +903,8 @@ def approve(rid, current_user):
     payload, status = _do_approve(rid, current_user["restaurant_id"],
                                   confirm_flagged=_body.get("confirm_flagged") is True, user=current_user,
                                   expected_draft=_body.get("expected_draft"),
-                                  expected_draft_hash=_body.get("expected_draft_hash"))
+                                  expected_draft_hash=_body.get("expected_draft_hash"),
+                                  approve_skipped=_body.get("approve_skipped") is True)
     return jsonify(**payload), status
 
 
@@ -13385,9 +13473,13 @@ def _web_analytics_status(rid):
 
 
 def _do_web_analytics_get(current_user):
-    from permissions import is_principal
+    from permissions import is_principal, has_permission, MARKETING_APPROVE
     out = _web_analytics_status(current_user["restaurant_id"])
-    out.update(ok=True, can_edit=bool(is_principal(current_user)))
+    # `can_sync`: whether Read now is this login's to press — the gate
+    # _do_web_analytics_sync holds (re-audit 10/8/26: both clients offered
+    # it to logins the route refuses).
+    out.update(ok=True, can_edit=bool(is_principal(current_user)),
+               can_sync=bool(has_permission(current_user, MARKETING_APPROVE)))
     return out, 200
 
 
@@ -13518,5 +13610,16 @@ def web_analytics_sync_api(current_user):
 @client_bp.route("/api/marketing/website")
 @login_required
 def marketing_website_api(current_user):
+    payload, status = _do_marketing_website(current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/intel/website")
+@login_required
+def intel_website_api(current_user):
+    """The same website summary, gated as Intel (auth._MODULE_PREFIXES): the
+    phone shows the website card under Intel, and reading the Marketing
+    route there answered a restaurant without Marketing with Marketing's
+    plan refusal (re-audit 10/8/26)."""
     payload, status = _do_marketing_website(current_user)
     return jsonify(**payload), status

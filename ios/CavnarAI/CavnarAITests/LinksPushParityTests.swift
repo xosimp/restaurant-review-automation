@@ -139,11 +139,13 @@ final class LinksPushParityTests: XCTestCase {
         let whole = PushManager.backgroundAction(for: PushManager.approvePostAction,
                                                  cavnar: ["review_id": 4, "draft": "Thanks!", "draft_complete": true])
         XCTAssertEqual(try json(whole)["expected_draft"] as? String, "Thanks!")
-        // A clipped draft is not the text approved: no expected_draft.
+        // A clipped draft is not the text approved: no expected_draft — and
+        // with no fingerprint either, nothing binds the words, so the button
+        // only opens the review (re-audit 10/8/26).
         let clipped = PushManager.backgroundAction(for: PushManager.approvePostAction,
                                                    cavnar: ["review_id": 4, "draft": "Thanks…", "draft_complete": false])
-        XCTAssertNil(clipped?.body)
-        XCTAssertNil(PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 4])?.body)
+        XCTAssertNil(clipped)
+        XCTAssertNil(PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 4]))
     }
 
     func testThePreviewShowsTheReplyAndSaysWhenItIsClipped() {

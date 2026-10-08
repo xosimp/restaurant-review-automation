@@ -298,21 +298,23 @@ struct WebsiteAnalyticsSection: View {
                                        size: 12.5, weight: 500, color: .cavnarInk3)
                 }
                 Spacer(minLength: 0)
-                Button {
-                    Haptic.light()
-                    Task { await viewModel.readNow() }
-                } label: {
-                    if viewModel.isSyncing {
-                        CavnarWorkingLine(width: 60, color: .cavnarEmber2)
-                    } else {
-                        Text("Read now")
-                            .font(.cavnarBody(14, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
+                if viewModel.canReadNow {
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.readNow() }
+                    } label: {
+                        if viewModel.isSyncing {
+                            CavnarWorkingLine(width: 60, color: .cavnarEmber2)
+                        } else {
+                            Text("Read now")
+                                .font(.cavnarBody(14, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .disabled(viewModel.isSyncing)
                 }
-                .buttonStyle(.plain)
-                .frame(minHeight: 44)
-                .disabled(viewModel.isSyncing)
             }
             if let note = viewModel.syncNote {
                 Text(note).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk2)
@@ -467,21 +469,23 @@ struct WebsiteConnectSheet: View {
                 .disabled(!conn.canEdit || viewModel.isSaving)
                 if conn.isConnected {
                     HStack(spacing: 10) {
-                        Button {
-                            Haptic.light()
-                            Task { await viewModel.readNow() }
-                        } label: {
-                            Group {
-                                if viewModel.isSyncing {
-                                    CavnarWorkingLine(width: 60)
-                                } else {
-                                    Text("Read now")
+                        if conn.canSync {
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.readNow() }
+                            } label: {
+                                Group {
+                                    if viewModel.isSyncing {
+                                        CavnarWorkingLine(width: 60)
+                                    } else {
+                                        Text("Read now")
+                                    }
                                 }
+                                .frame(maxWidth: .infinity)
                             }
-                            .frame(maxWidth: .infinity)
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                            .disabled(viewModel.isSyncing)
                         }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
-                        .disabled(viewModel.isSyncing)
                         if conn.canEdit {
                             Button(role: .destructive) {
                                 Haptic.light()

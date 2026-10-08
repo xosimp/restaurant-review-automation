@@ -109,7 +109,7 @@ final class FrictionNavigationTests: XCTestCase {
     // MARK: - #22 acting from the notification
 
     func testTheLockScreenButtonsCallTheirRoutes() {
-        let approve = PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 42])
+        let approve = PushManager.backgroundAction(for: PushManager.approvePostAction, cavnar: ["review_id": 42, "draft_hash": "ab12"])
         XCTAssertEqual(approve?.path, "/mobile/api/reviews/42/approve")
         XCTAssertNil(approve?.decision)
 

@@ -258,7 +258,8 @@ struct ReviewDetailView: View {
             titleVisibility: .visible
         ) {
             Button("Post it anyway") {
-                Task { await viewModel.approve(confirmFlagged: true) }
+                Task { await viewModel.approve(confirmFlagged: true,
+                                               approveSkipped: viewModel.flagConfirmApprovesSkipped) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -766,7 +767,7 @@ struct ReviewDetailView: View {
                         HStack(spacing: 10) {
                             Button {
                                 Haptic.light()
-                                Task { await viewModel.approve() }
+                                Task { await viewModel.approve(approveSkipped: true) }
                             } label: {
                                 Text("\u{2713} Approve after all").frame(maxWidth: .infinity)
                             }
@@ -798,7 +799,7 @@ struct ReviewDetailView: View {
     }
 
     /// Under an approved reply that isn't live: what happens next. Google
-    /// posts itself once the Business Profile is connected; Yelp is copied
+    /// is posted from the card once the Business Profile is connected; Yelp is copied
     /// and posted by hand (#53); anywhere else is marked posted by hand —
     /// the web card's three lines.
     @ViewBuilder
@@ -806,7 +807,9 @@ struct ReviewDetailView: View {
         let r = viewModel.review
         if r.platform == "google" {
             if !viewModel.postFailedOnGoogle {
-                Label("Will post to Google once connected", systemImage: "clock")
+                // Nothing posts it on its own once Google is connected; the
+                // card's Retry posting does then (re-audit 10/8/26).
+                Label("Post it once Google is connected", systemImage: "clock")
                     .font(.cavnarBody(13.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk3)
                     .frame(maxWidth: .infinity, alignment: .leading)

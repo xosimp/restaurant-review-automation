@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-/// GET /mobile/api/marketing/website (web_analytics.summary) — the web's
+/// GET /mobile/api/intel/website (web_analytics.summary; the Intel-gated
+/// twin of /marketing/website, since this card sits under Intel) — the web's
 /// "Your website" card: the last 28 days against the 28 before, the daily
 /// visits line, where visits came from, clicks out of the site, the top
 /// Google searches, and what moved against a typical day of its weekday,
@@ -130,6 +131,9 @@ struct WebsiteConnection: Decodable {
     var gscSiteUrl: String? = nil
     var syncedAt: String? = nil
     var canEdit: Bool = false
+    /// Read now is this login's to press (the sync route's own gate:
+    /// owner or manager). False from an older server.
+    var canSync: Bool = false
     var syncing: Bool? = nil
     var checks: [String: Check]? = nil
 
@@ -141,6 +145,7 @@ struct WebsiteConnection: Decodable {
         case gscSiteUrl = "gsc_site_url"
         case syncedAt = "synced_at"
         case canEdit = "can_edit"
+        case canSync = "can_sync"
     }
 
     init() {}
@@ -156,6 +161,7 @@ struct WebsiteConnection: Decodable {
         gscSiteUrl = try? c.decodeIfPresent(String.self, forKey: .gscSiteUrl)
         syncedAt = try? c.decodeIfPresent(String.self, forKey: .syncedAt)
         canEdit = (try? c.decodeIfPresent(Bool.self, forKey: .canEdit)) ?? false
+        canSync = (try? c.decodeIfPresent(Bool.self, forKey: .canSync)) ?? false
         syncing = try? c.decodeIfPresent(Bool.self, forKey: .syncing)
         checks = try? c.decodeIfPresent([String: Check].self, forKey: .checks)
     }
@@ -209,10 +215,18 @@ final class WebsiteAnalyticsViewModel {
 
     init(client: APIClient = .shared) { self.client = client }
 
+    /// The Intel-gated summary route: the card lives under Intel, and the
+    /// Marketing route refused a restaurant without Marketing (re-audit
+    /// 10/8/26).
+    static let summaryPath = "/mobile/api/intel/website"
+
+    /// Read now is offered only to a login the sync route accepts.
+    var canReadNow: Bool { connection?.canSync == true }
+
     func load() async {
         isLoading = summary == nil
         defer { isLoading = false }
-        async let s: WebsiteSummary? = try? client.send("/mobile/api/marketing/website", hapticOnError: false)
+        async let s: WebsiteSummary? = try? client.send(WebsiteAnalyticsViewModel.summaryPath, hapticOnError: false)
         async let c: WebsiteConnection? = try? client.send("/mobile/api/web-analytics", hapticOnError: false)
         let (sum, conn) = await (s, c)
         if let sum { summary = sum }
@@ -292,7 +306,7 @@ final class WebsiteAnalyticsViewModel {
     }
 
     private func reloadSummary() async {
-        if let s: WebsiteSummary = try? await client.send("/mobile/api/marketing/website", hapticOnError: false) {
+        if let s: WebsiteSummary = try? await client.send(WebsiteAnalyticsViewModel.summaryPath, hapticOnError: false) {
             summary = s
         }
     }

@@ -164,4 +164,7 @@ struct BulkPublishResult: Decodable {
     let posted: Int
     let failed: Int
     let remaining: Int?
+    /// Listed replies rewritten since the confirm showed them — not posted
+    /// (`review_hashes`, re-audit 10/8/26). Nil from an older server.
+    var changed: Int? = nil
 }
