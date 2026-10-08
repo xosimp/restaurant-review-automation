@@ -178,7 +178,8 @@ final class PlatformNativeTests: XCTestCase {
         let snap = try XCTUnwrap(lastNight())
         XCTAssertEqual(snap.budgetLabel, "+$525 vs budget")
         XCTAssertEqual(snap.budgetIsUp, true)
-        XCTAssertEqual(snap.nightLink, "cavnarai://nav/dsr/night/2026-09-24")
+        // The location rides along (re-audit 10/8/26 #6).
+        XCTAssertEqual(snap.nightLink, "cavnarai://nav/dsr/night/2026-09-24?loc=9")
         let under = try XCTUnwrap(lastNight(budget: -135))
         XCTAssertEqual(under.budgetIsUp, false)
         XCTAssertEqual(under.budgetLabel?.hasSuffix("$135 vs budget"), true)

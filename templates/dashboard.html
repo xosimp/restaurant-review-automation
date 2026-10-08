@@ -2367,6 +2367,8 @@ function pastDueFix(btn) {
     <button class="tab" role="tab" id="tab-account" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
     <span id="tab-indicator"></span>
 </div>
+<!-- An admin login (never a view-as session, which is the client's own login): the nav router's admin/ head reads it. -->
+<script>window.CAV_IS_ADMIN={{ 'true' if current_user and current_user.is_admin else 'false' }};</script>
 <script id="cav-nav">
 /* ── Nav paths, the one router, the modal helper (Friction audit 9/25/26) ──
    One address for every place and item: the same string the server sends
@@ -2615,6 +2617,15 @@ cavNavRegister('issue', function (p) {
     if (el.scrollIntoView) el.scrollIntoView({behavior: 'smooth', block: 'center'});
     cavFlash(el);
   })();
+  return true;
+});
+/* An operator page (platform_alert, admin/platform): the console's
+   Operations area, where it is worked - for an admin login only. Anyone else
+   lands on Home, never a module the address does not name (re-audit 10/8/26
+   #14: the head had no handler and fell through to a module guess). */
+cavNavRegister('admin', function (p) {
+  if (!window.CAV_IS_ADMIN) { cavNavOpenModule('home'); return true; }
+  window.location.href = '/admin#operations';
   return true;
 });
 /* A stored Ask proposal, reopened from its row - no model call (U4-20). */

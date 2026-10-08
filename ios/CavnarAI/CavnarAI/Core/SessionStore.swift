@@ -568,6 +568,12 @@ final class SessionStore {
             currentUser = user
         }
         SessionScope.begin(userId: currentUser?.id, restaurantId: restaurantId)
+        // The Lock Screen's push-to-start tokens follow the session to the
+        // new location (re-audit 10/8/26 #4) — after the scope above, which
+        // they are filed against.
+        Task { await LiveActivitySync.shared.locationSwitched() }
+        // "Send to Cavnar AI" names where an invoice will land (#12).
+        Keychain.mirrorSessionLocation(restaurantId: restaurantId, name: name)
         learnRestaurantClock()
         // Cached labor/schedule data belongs to the old location — but the
         // offline queue was just trimmed to the new one, and purging its file
@@ -654,7 +660,7 @@ final class SessionStore {
     /// user's devices. Defaults to true (opt-out) so existing users keep
     /// today's mandatory-lock behavior until they explicitly turn it off;
     /// a new install also starts locked, matching every install to date.
-    private static let biometricLockDefaultsKey = "cavnar.biometric_lock_enabled"
+    nonisolated private static let biometricLockDefaultsKey = "cavnar.biometric_lock_enabled"
     // A stored property, not a computed get/set over UserDefaults: @Observable
     // only tracks stored properties, so the computed version never told the
     // Security sheet's switch to re-render after a tap — it wrote the new
@@ -663,9 +669,18 @@ final class SessionStore {
         didSet { UserDefaults.standard.set(biometricLockEnabled, forKey: Self.biometricLockDefaultsKey) }
     }
 
-    private static var biometricLockPreference: Bool {
+    nonisolated private static var biometricLockPreference: Bool {
         guard UserDefaults.standard.object(forKey: biometricLockDefaultsKey) != nil else { return true }
         return UserDefaults.standard.bool(forKey: biometricLockDefaultsKey)
+    }
+
+    /// Whether the app's own lock is switched on — Face ID to reopen, or an
+    /// app passcode — read outside the store (a Siri intent runs with no
+    /// SessionStore of its own). Anything that shows the restaurant's data
+    /// without opening the app must not step around it (re-audit 10/8/26
+    /// #8).
+    nonisolated static var appLockConfigured: Bool {
+        biometricLockPreference || AppPasscode.isSet
     }
 
     // MARK: - App passcode

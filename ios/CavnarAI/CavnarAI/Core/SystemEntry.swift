@@ -67,8 +67,23 @@ enum SystemEntry {
     @discardableResult
     static func handle(url: URL) -> Bool {
         guard let destination = destination(for: url) else { return false }
-        open(fromLink(destination, context: linkContext(for: url)))
+        let context = linkContext(for: url)
+        open(located(destination, context: context, activeRestaurantId: SessionScope.activeRestaurantId))
         return true
+    }
+
+    /// A link's destination, with the location it names honoured. The
+    /// command sheet searches the location the app is on, so a widget's
+    /// "3 things waiting" about ANOTHER of the group's locations opens that
+    /// location's Home — its queue — after the switch, not the sheet on the
+    /// wrong store (re-audit 10/8/26 #6).
+    nonisolated static func located(_ destination: SystemDestination, context: LinkContext,
+                                    activeRestaurantId: Int) -> SystemDestination {
+        if destination == .commandSheet, let loc = context.location, loc != activeRestaurantId,
+           let home = NavPath("home") {
+            return .link(home, context)
+        }
+        return fromLink(destination, context: context)
     }
 
     /// A URL's destination as a link: nobody in the app chose it.
@@ -137,7 +152,8 @@ enum SystemEntry {
                 return .commandSheet
             case "nav":
                 var raw = url.path.hasPrefix("/") ? String(url.path.dropFirst()) : url.path
-                if let q = url.query, !q.isEmpty { raw += "?" + q }
+                // `loc=` is the link's location (linkContext), not the place's.
+                if let q = withoutLocation(url.query), !q.isEmpty { raw += "?" + q }
                 return NavPath(raw).map { .nav($0) }
             default:
                 return nil
@@ -193,15 +209,19 @@ enum SystemEntry {
     }
 
     /// Everything a dashboard link says beside its place (`loc=`, `rid=`,
-    /// `rec=`, `src=`). Empty for a widget or `cavnarai://` link.
+    /// `rec=`, `src=`). A widget or Live Activity's `cavnarai://` link says
+    /// only its location (`loc=`, re-audit 10/8/26 #6): the figures it
+    /// showed are that location's, and the tap opens them there.
     nonisolated static func linkContext(for url: URL) -> LinkContext {
-        guard url.scheme?.lowercased() == "https" else { return LinkContext() }
+        let scheme = url.scheme?.lowercased()
+        guard scheme == "https" || scheme == "cavnarai" else { return LinkContext() }
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         func value(_ name: String) -> String? {
             let v = items.first(where: { $0.name == name })?.value?.trimmingCharacters(in: .whitespaces)
             return (v?.isEmpty == false) ? v : nil
         }
         func id(_ name: String) -> Int? { value(name).flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil } }
+        if scheme == "cavnarai" { return LinkContext(location: id("loc")) }
         let rid = id("rid")
         return LinkContext(location: id("loc") ?? rid,
                            rec: value("rec").map { String($0.prefix(160)) },
@@ -223,6 +243,15 @@ enum SystemEntry {
     /// The widget / Live Activity deep link for a nav path.
     nonisolated static func url(for path: String) -> URL? {
         URL(string: "cavnarai://nav/" + path)
+    }
+
+    /// A `cavnarai://` query without its `loc=` item; nil when nothing else
+    /// is left.
+    nonisolated static func withoutLocation(_ query: String?) -> String? {
+        guard let query, !query.isEmpty else { return nil }
+        let kept = query.split(separator: "&", omittingEmptySubsequences: true)
+            .filter { !$0.lowercased().hasPrefix("loc=") }
+        return kept.isEmpty ? nil : kept.joined(separator: "&")
     }
 }
 

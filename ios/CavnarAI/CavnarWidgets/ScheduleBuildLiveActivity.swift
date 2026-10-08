@@ -14,7 +14,7 @@ struct ScheduleBuildLiveActivity: Widget {
                 .cavnarForcedDark()
                 .activityBackgroundTint(Color.cavnarPaperDark)
                 .activitySystemActionForegroundColor(Color.cavnarInkDark)
-                .widgetURL(URL(string: "cavnarai://nav/labor/schedule"))
+                .widgetURL(context.attributes.link)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -50,7 +50,7 @@ struct ScheduleBuildLiveActivity: Widget {
             } minimal: {
                 ScheduleBuildGlyph(state: context.state).cavnarForcedDark()
             }
-            .widgetURL(URL(string: "cavnarai://nav/labor/schedule"))
+            .widgetURL(context.attributes.link)
         }
     }
 }

@@ -259,7 +259,7 @@ def test_a_queued_send_starts_the_countdown_on_phones_that_may_undo_it(db, apns)
     assert starts[0]["headers"]["apns-priority"] == "10"
     assert aps["attributes-type"] == "PendingSendAttributes"
     assert aps["attributes"] == {"actionId": row["id"], "kind": "order_send",
-                                 "title": "Sending the Sysco order ($1,234, 5 items)"}
+                                 "title": "Sending the Sysco order ($1,234, 5 items)", "restaurantId": rid}
     assert aps["content-state"]["status"] == "pending"
     assert aps["content-state"]["fireAt"] == push.apple_date(row["execute_at"])
     assert aps["alert"]["title"] == "Supplier order goes out"
@@ -419,6 +419,10 @@ def test_the_pushed_json_matches_the_swift_attributes():
     assert {"actionId", "kind", "title"} <= _swift_fields(pending, "PendingSendAttributes")
     assert set(live_activities.pending_send_attributes({"id": 1, "kind": "order_send", "label": ""})) == \
         {"actionId", "kind", "title"}
+    # With its restaurant (re-audit 10/8/26 #6), a key Swift reads too.
+    assert set(live_activities.pending_send_attributes({"id": 1, "kind": "order_send", "label": "",
+                                                        "restaurant_id": 2})) <= \
+        _swift_fields(pending, "PendingSendAttributes")
     assert set(live_activities.pending_send_state("2026-10-09T23:00:00Z", note="x")) <= \
         _swift_fields(pending, "ContentState")
 

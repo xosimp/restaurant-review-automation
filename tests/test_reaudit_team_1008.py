@@ -77,8 +77,9 @@ def test_a_lineup_draft_cut_to_fit_loses_approve():
     payload = {"aps": {"alert": {"title": "t", "body": "b" * 3700}, "category": push.CATEGORY_LINEUP},
                "cavnar": {"alert_type": "lineup_brief_waiting", "day": "2026-10-02", "brief_rev": "r1",
                           "draft": "Big night, team. " * 30, "draft_complete": True}}
-    out = json.loads(push._fit_payload(payload))
-    assert len(json.dumps(out, separators=(",", ":")).encode()) <= push.APNS_MAX_PAYLOAD_BYTES
+    raw = push._fit_payload(payload)            # the bytes APNs gets (UTF-8, unescaped)
+    assert len(raw) <= push.APNS_MAX_PAYLOAD_BYTES
+    out = json.loads(raw)
     assert out["cavnar"].get("draft_complete") is not True
     assert out["aps"]["category"] == push.CATEGORY_LINEUP_REVIEW, "words nobody can read whole are never one tap"
     # A review push cut the same way keeps its own category (F_push #3 is the reviews round's).

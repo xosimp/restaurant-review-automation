@@ -946,7 +946,7 @@ final class HomeFollowThroughViewModel {
         defer { isLoading = false }
         // The widget refresh borrows this read rather than making its own
         // at the same moment (HomeReadShare).
-        HomeReadShare.shared.beginActions()
+        let readAt = HomeReadShare.shared.beginActions()
         async let a: ActionsResponse? = try? client.send("/mobile/api/actions", hapticOnError: false)
         async let g: GoalsResponse? = try? client.send("/mobile/api/goals", hapticOnError: false)
         async let o: RecOutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
@@ -958,7 +958,8 @@ final class HomeFollowThroughViewModel {
         async let lazy: Void = refreshResultsIfLoaded()
         let actionsRead = await a
         actions = actionsRead?.items ?? []
-        HomeReadShare.shared.finishActions(actionsRead.map { $0.items.map { (key: $0.key, count: $0.count) } })
+        HomeReadShare.shared.finishActions(actionsRead.map { $0.items.map { (key: $0.key, count: $0.count) } },
+                                           restaurantId: readAt)
         let goalsResponse = await g
         goals = goalsResponse?.goals ?? []
         proposedGoals = goalsResponse?.proposed?.items ?? []

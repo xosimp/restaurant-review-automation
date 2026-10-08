@@ -782,16 +782,52 @@ def _draft_fields(draft) -> dict:
             "draft_hash": draft_hash(exact)}
 
 
+# Keys a generic trim never shortens: what the app routes, matches or acts
+# on by value. Only prose is cut.
+_FIT_KEEP = ("alert_type", "nav", "category", "kind", "tab", "module", "silent")
+_FIT_KEEP_PARTS = ("_id", "hash", "url", "link", "token", "date", "_at", "expected")
+_FIT_MIN_CHARS = 40
+
+
+def _fit_bytes(payload) -> bytes:
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _fit_trimmable(payload):
+    """(container, key) for each prose string the trim may shorten: the
+    alert's body and title, and the `cavnar` data's text values (a list's
+    lines too) — never an id, a nav path, a hash or a date."""
+    out = []
+    aps = payload.get("aps") or {}
+    alert = aps.get("alert") if isinstance(aps.get("alert"), dict) else None
+    if alert is not None:
+        for k in ("body", "subtitle", "title"):
+            if isinstance(alert.get(k), str):
+                out.append((alert, k))
+    cav = payload.get("cavnar") if isinstance(payload.get("cavnar"), dict) else {}
+    for k, v in cav.items():
+        lk = str(k).lower()
+        if lk in _FIT_KEEP or any(part in lk for part in _FIT_KEEP_PARTS) or lk == "draft":
+            continue
+        if isinstance(v, str):
+            out.append((cav, k))
+        elif isinstance(v, list):
+            out.extend((v, i) for i, x in enumerate(v) if isinstance(x, str))
+    return out
+
+
 def _fit_payload(payload) -> bytes:
-    """The payload's bytes, never over APNS_MAX_PAYLOAD_BYTES: the draft is
-    shortened (nothing else is touched), and dropped when even a short one
-    does not fit. `draft_hash` is never cut: it is what binds a clipped or
-    dropped draft's approve. Mutates `payload` to match what is returned."""
-    def enc():
-        return json.dumps(payload, separators=(",", ":")).encode()
+    """The payload's bytes (UTF-8, unescaped), never over
+    APNS_MAX_PAYLOAD_BYTES. The draft is shortened first, and dropped when
+    even a short one does not fit; then any other prose (the alert's body,
+    a platform page's lines — _fit_trimmable), longest first, down to
+    _FIT_MIN_CHARS each (re-audit 10/8/26 #13: only the draft was ever cut,
+    and an escaped non-ASCII letter cost six bytes). Mutates `payload` to
+    match what is returned. `draft_hash` is never cut: it binds a clipped
+    or dropped draft's approve."""
+    enc = lambda: _fit_bytes(payload)
     out = enc()
-    cav = payload.get("cavnar") or {}
-    if len(out) <= APNS_MAX_PAYLOAD_BYTES or not cav.get("draft"):
+    if len(out) <= APNS_MAX_PAYLOAD_BYTES:
         return out
     # A lineup brief cut to fit is no longer the words Approve would send:
     # the push keeps Open only (re-audit 10/8/26) — set before the fit, so
@@ -799,23 +835,42 @@ def _fit_payload(payload) -> bytes:
     aps = payload.get("aps") or {}
     if aps.get("category") == CATEGORY_LINEUP:
         aps["category"] = CATEGORY_LINEUP_REVIEW
-    text = str(cav["draft"])
-    if text.endswith(_ELLIPSIS):
-        text = text[:-1]
-    lo, hi, best = 0, len(text), None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        cav["draft"], cav["draft_complete"] = text[:mid].rstrip() + _ELLIPSIS, False
-        if len(enc()) <= APNS_MAX_PAYLOAD_BYTES:
-            best, lo = mid, mid + 1
+    cav = payload.get("cavnar") or {}
+    if cav.get("draft"):
+        text = str(cav["draft"])
+        if text.endswith(_ELLIPSIS):
+            text = text[:-1]
+        lo, hi, best = 0, len(text), None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            cav["draft"], cav["draft_complete"] = text[:mid].rstrip() + _ELLIPSIS, False
+            if len(enc()) <= APNS_MAX_PAYLOAD_BYTES:
+                best, lo = mid, mid + 1
+            else:
+                hi = mid - 1
+        if best is None or best < 40:
+            cav.pop("draft", None)
+            cav.pop("draft_complete", None)
         else:
-            hi = mid - 1
-    if best is None or best < 40:
-        cav.pop("draft", None)
-        cav.pop("draft_complete", None)
-    else:
-        cav["draft"], cav["draft_complete"] = text[:best].rstrip() + _ELLIPSIS, False
-    return enc()
+            cav["draft"], cav["draft_complete"] = text[:best].rstrip() + _ELLIPSIS, False
+        out = enc()
+    # Then the rest of the prose, the longest string first, each cut by
+    # what is still over (in bytes, so never more than the overflow).
+    for _ in range(64):
+        over = len(out) - APNS_MAX_PAYLOAD_BYTES
+        if over <= 0:
+            break
+        spots = [(c, k) for c, k in _fit_trimmable(payload) if len(c[k].rstrip(_ELLIPSIS)) > _FIT_MIN_CHARS]
+        if not spots:
+            break
+        c, k = max(spots, key=lambda ck: len(ck[0][ck[1]].encode("utf-8")))
+        text = c[k][:-1] if c[k].endswith(_ELLIPSIS) else c[k]
+        keep = len(text)
+        while keep > _FIT_MIN_CHARS and len(text.encode("utf-8")) - len(text[:keep].encode("utf-8")) < over + 3:
+            keep -= max(1, (keep - _FIT_MIN_CHARS) // 8)
+        c[k] = text[:max(keep, _FIT_MIN_CHARS)].rstrip() + _ELLIPSIS
+        out = enc()
+    return out
 
 
 def staff_tab(alert_type, data=None) -> str:
@@ -1854,7 +1909,9 @@ def _apns_post(apns_token, environment, payload, push_type, priority, topic, col
     """One POST to APNs, with the one other-host retry a BadDeviceToken
     earns (see _deliver). Returns (ok, status, reason, environment it
     reached). Never raises."""
-    body = json.dumps(payload, separators=(",", ":")).encode()
+    # UTF-8 as is: "\u00e9" escapes cost six bytes of APNs' 4 KB for one
+    # letter (re-audit 10/8/26 #13).
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
     def _post(env):
         headers = {
@@ -2116,6 +2173,12 @@ def live_activity_payload(activity_type, event, content_state, attributes=None, 
         aps["attributes-type"] = LIVE_ACTIVITY_ATTRIBUTES[activity_type]
         aps["attributes"] = attributes or {}
         aps["alert"] = alert or {"title": "Cavnar AI", "body": ""}
+        # Asks iOS for the started activity's own update token (Apple's
+        # push-to-start payload, iOS 18: "input-push-token": 1), which the
+        # app files as it arrives (LiveActivitySync.watch) so the update and
+        # the end reach it. An older iOS ignores the key (re-audit 10/8/26
+        # #15).
+        aps["input-push-token"] = 1
     elif alert:
         aps["alert"] = alert
     if stale_at is not None:

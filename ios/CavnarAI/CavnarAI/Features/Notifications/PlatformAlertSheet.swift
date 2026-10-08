@@ -35,6 +35,17 @@ struct PlatformAlert: Identifiable, Equatable, Sendable {
         self.alertAt = (cavnar["alert_at"] as? String).flatMap { CavnarDate.timestamp($0) }
     }
 
+    /// From a bell row (re-audit 10/8/26 #14): the row's own words and when
+    /// it fired, so the sheet a row opens says what the page was about — it
+    /// opened empty, with nothing but the console button. Nil for any other
+    /// row.
+    init?(row: NotificationItem) {
+        guard row.type == "platform_alert" else { return nil }
+        let words = (row.snippet ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.init(subject: words.isEmpty ? row.label : String(words.prefix(160)), lines: [],
+                  alertAt: CavnarDate.timestamp(row.firedAt))
+    }
+
     /// "Sent 10/7/26 · 9:05am" on the phone's clock, or nil.
     func sentLine(in zone: TimeZone = .current) -> String? {
         alertAt.map { "Sent " + CavnarDate.mdyTime($0, in: zone) }

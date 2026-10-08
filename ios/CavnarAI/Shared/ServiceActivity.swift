@@ -81,4 +81,8 @@ struct ServiceAttributes: ActivityAttributes {
     let businessDate: String
     /// "Fri 10/9/26".
     let dayLabel: String
+
+    /// The tap's link: Labor, at the restaurant the night is about
+    /// (`?loc=`, re-audit 10/8/26 #6).
+    var link: URL? { URL(string: CavnarLink.located("cavnarai://nav/labor", restaurantId)) }
 }

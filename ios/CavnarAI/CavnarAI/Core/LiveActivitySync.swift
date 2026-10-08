@@ -5,18 +5,33 @@ import UIKit
 // MARK: - Push tokens for the Live Activities (parity audit #38, #61, #94)
 
 /// The body POST /mobile/api/live-activity-tokens reads — every key
-/// live_activities.register_token takes.
+/// live_activities.register_token takes. `restaurant_id` is a running
+/// "Tonight's service" activity's own location (its attributes'), so the
+/// server files its token there whatever location the app is on now; the
+/// server reads a countdown's and a generation's from its own rows.
 struct LiveActivityTokenBody: Encodable, Equatable {
     let activityType: String
     let kind: String
     let token: String
     let environment: String
     let activityKey: String
+    var restaurantId: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case kind, token, environment
         case activityType = "activity_type"
         case activityKey = "activity_key"
+        case restaurantId = "restaurant_id"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(activityType, forKey: .activityType)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(token, forKey: .token)
+        try c.encode(environment, forKey: .environment)
+        try c.encode(activityKey, forKey: .activityKey)
+        try c.encodeIfPresent(restaurantId, forKey: .restaurantId)
     }
 }
 
@@ -61,6 +76,11 @@ final class LiveActivitySync {
     /// What this session has already filed ("type|kind|key" -> token), so a
     /// refresh re-sends only what changed.
     private var filed: [String: String] = [:]
+    /// The sign-in AND the location `filed` is true for. The server files a
+    /// push-to-start token at the session's location and forgets it on a
+    /// switch, so a switch starts the record afresh — keyed by the bearer
+    /// alone, it never re-filed one and the phone kept the old location's
+    /// countdowns and none of the new one's (re-audit 10/8/26 #4).
     private var filedFor: String?
     /// The newest push-to-start token per type, as iOS hands them over.
     private var startTokens: [String: String] = [:]
@@ -73,12 +93,20 @@ final class LiveActivitySync {
         data.map { String(format: "%02x", $0) }.joined()
     }
 
+    nonisolated static func scope(bearer: String, restaurantId: Int) -> String { "\(bearer)|r\(restaurantId)" }
+
+    /// Starts the record afresh when the sign-in or the location changed.
+    private func rescope(bearer: String) {
+        let scope = Self.scope(bearer: bearer, restaurantId: SessionScope.activeRestaurantId)
+        if filedFor != scope {
+            filed = [:]
+            filedFor = scope
+        }
+    }
+
     /// Called from every widget refresh with the owner session's bearer.
     func refresh(bearer: String) async {
-        if filedFor != bearer {
-            filed = [:]
-            filedFor = bearer
-        }
+        rescope(bearer: bearer)
         observeIfNeeded()
         if #available(iOS 17.2, *) {
             if let t = Activity<PendingSendAttributes>.pushToStartToken { startTokens[Self.pendingSend] = Self.hex(t) }
@@ -103,10 +131,21 @@ final class LiveActivitySync {
         for a in Activity<ServiceAttributes>.activities {
             if let t = a.pushToken {
                 await file(type: Self.service, kind: "update", token: Self.hex(t), key: a.attributes.businessDate,
-                           bearer: bearer)
+                           bearer: bearer, restaurantId: a.attributes.restaurantId)
             }
         }
         await ServiceActivities.sync(bearer: bearer)
+    }
+
+    /// SessionStore.didSwitchLocation: the server has just forgotten this
+    /// session's push-to-start tokens (client_api._do_switch_location), so
+    /// they are filed again now, at the new location — not on the widget's
+    /// next refresh, which Low Data Mode may put off.
+    func locationSwitched() async {
+        filed = [:]
+        filedFor = nil
+        guard let bearer = Keychain.get(Keychain.Key.sessionToken), !bearer.isEmpty else { return }
+        await refresh(bearer: bearer)
     }
 
     /// Turning "Tonight's service" off: the server forgets this phone's
@@ -127,27 +166,35 @@ final class LiveActivitySync {
         }
     }
 
-    private func file(type: String, kind: String, token: String, key: String, bearer: String) async {
+    private func file(type: String, kind: String, token: String, key: String, bearer: String,
+                      restaurantId: Int? = nil) async {
         let slot = "\(type)|\(kind)|\(key)"
         guard filed[slot] != token else { return }
         let body = LiveActivityTokenBody(activityType: type, kind: kind, token: token,
-                                         environment: PushManager.apnsEnvironment, activityKey: key)
+                                         environment: PushManager.apnsEnvironment, activityKey: key,
+                                         restaurantId: restaurantId)
         do {
             let r: APIClient.OKResponse = try await client.sendWithBearer(
                 "/mobile/api/live-activity-tokens", method: .post, body: body, bearer: bearer)
             if r.ok { filed[slot] = token }
+        } catch let error as APIClient.APIError where Self.isFinalAnswer(error.status ?? 0) {
+            // This login may not follow it, or it is over: asking again on
+            // every refresh would only be refused again.
+            filed[slot] = token
         } catch {
-            // Offline, or this login may not hold it: the next refresh tries again.
+            // Offline: the next refresh tries again.
         }
     }
 
-    private func fileNow(type: String, kind: String, token: String, key: String) {
+    /// A refusal (403) or "not running any more" (404) is the server's
+    /// answer for this token, not a failure to retry.
+    nonisolated static func isFinalAnswer(_ status: Int) -> Bool { status == 403 || status == 404 }
+
+    private func fileNow(type: String, kind: String, token: String, key: String, restaurantId: Int? = nil) {
         guard let bearer = Keychain.get(Keychain.Key.sessionToken), !bearer.isEmpty else { return }
-        if filedFor != bearer {
-            filed = [:]
-            filedFor = bearer
-        }
-        Task { await self.file(type: type, kind: kind, token: token, key: key, bearer: bearer) }
+        rescope(bearer: bearer)
+        Task { await self.file(type: type, kind: kind, token: token, key: key, bearer: bearer,
+                               restaurantId: restaurantId) }
     }
 
     /// Follows the tokens iOS hands over: a push-to-start token (and each
@@ -184,7 +231,8 @@ final class LiveActivitySync {
         }
         Task {
             for await activity in Activity<ServiceAttributes>.activityUpdates {
-                self.watch(activity, type: Self.service, key: activity.attributes.businessDate)
+                self.watch(activity, type: Self.service, key: activity.attributes.businessDate,
+                           restaurantId: activity.attributes.restaurantId)
                 // A push-started night and one the app started: one stays.
                 ServiceActivities.endDuplicates()
             }
@@ -196,15 +244,16 @@ final class LiveActivitySync {
             watch($0, type: Self.scheduleBuild, key: $0.attributes.jobId)
         }
         Activity<ServiceAttributes>.activities.forEach {
-            watch($0, type: Self.service, key: $0.attributes.businessDate)
+            watch($0, type: Self.service, key: $0.attributes.businessDate, restaurantId: $0.attributes.restaurantId)
         }
     }
 
-    private func watch<A: ActivityAttributes>(_ activity: Activity<A>, type: String, key: String) {
+    private func watch<A: ActivityAttributes>(_ activity: Activity<A>, type: String, key: String,
+                                              restaurantId: Int? = nil) {
         guard watched.insert(activity.id).inserted else { return }
         Task {
             for await data in activity.pushTokenUpdates {
-                self.fileNow(type: type, kind: "update", token: Self.hex(data), key: key)
+                self.fileNow(type: type, kind: "update", token: Self.hex(data), key: key, restaurantId: restaurantId)
             }
         }
     }
@@ -245,12 +294,14 @@ enum ScheduleBuildActivities {
         return pickerLabel
     }
 
-    static func start(jobId: String, weekLabel: String, typicalSeconds: Int?, startedAt: Date = Date()) {
+    static func start(jobId: String, weekLabel: String, typicalSeconds: Int?, startedAt: Date = Date(),
+                      restaurantId: Int = SessionScope.activeRestaurantId) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         if Activity<ScheduleBuildAttributes>.activities.contains(where: { $0.attributes.jobId == jobId }) { return }
         let end = typicalSeconds.flatMap { $0 > 0 ? startedAt.addingTimeInterval(TimeInterval($0)) : nil }
         let state = ScheduleBuildAttributes.ContentState(status: "building", estimatedEnd: end)
-        let attributes = ScheduleBuildAttributes(jobId: jobId, weekLabel: weekLabel)
+        let attributes = ScheduleBuildAttributes(jobId: jobId, weekLabel: weekLabel,
+                                                 restaurantId: restaurantId > 0 ? restaurantId : nil)
         // Stale an hour on: past any generation's own deadline.
         _ = try? Activity.request(attributes: attributes,
                                   content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(3600)),

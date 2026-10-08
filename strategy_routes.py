@@ -854,11 +854,27 @@ def _do_actions(u):
     out = action_queue.items(_rid(u), viewer=u, today=_local_today(u), present=not peek)
     # The widget's "3 things waiting" follows the queue: a count the web
     # finds changed wakes this login's phones to redraw it (iOS parity audit
-    # 10/7/26 #31). Never raises.
-    import live_activities
-    live_activities.note_waiting_count(_rid(u), u.get("id"), len(out.get("items") or []),
-                                       from_web=request.path.startswith("/api/"))
+    # 10/7/26 #31). Never raises. Only the login's own look at the queue
+    # counts (re-audit 10/8/26 #11): a peek (the widget's background read)
+    # and an admin's view-as read are reads, and a GET that wrote a row and
+    # woke the owner's phone for them was a side effect of looking.
+    if not peek and not _viewing_as(u):
+        import live_activities
+        live_activities.note_waiting_count(_rid(u), u.get("id"), len(out.get("items") or []),
+                                           from_web=request.path.startswith("/api/"))
     return {"ok": True, **out}, 200
+
+
+def _viewing_as(u) -> bool:
+    """An admin (or support login) reading through view-as — the login dict's
+    acting fields, or the request's view-as context."""
+    if (u or {}).get("acting_admin_id") or (u or {}).get("acting_admin") or (u or {}).get("acting_admin_role"):
+        return True
+    try:
+        from flask import g, has_request_context
+        return bool(has_request_context() and getattr(g, "view_as", None))
+    except Exception:
+        return False
 
 
 # ── the Command Center (command_center.py; Friction audit #14, #48) ──────────

@@ -108,8 +108,10 @@ final class LocationSwitcherViewModel {
             // Everything held for the previous location — queued offline
             // writes, cached labor/schedule data — belongs to that location,
             // not this one.
+            // The switcher's own label for it (the location's name, which
+            // tells a group's stores apart; the response's is the brand's).
             await session?.didSwitchLocation(to: response.restaurantId,
-                                             name: response.restaurantName)
+                                             name: location.name.isEmpty ? response.restaurantName : location.name)
             return true
         } catch let error as APIClient.APIError {
             errorMessage = error.message
