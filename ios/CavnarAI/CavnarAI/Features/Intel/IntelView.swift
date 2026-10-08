@@ -1,9 +1,28 @@
 import SwiftUI
 
-private enum IntelSubTab: String, CaseIterable, Identifiable {
+enum IntelSubTab: String, CaseIterable, Identifiable {
     case competitors = "Competitors"
     case aiVisibility = "AI Visibility"
     var id: String { rawValue }
+
+    /// The tab a nav path's section opens on (nav.py: "intel",
+    /// "intel/ai-visibility", "intel/competitors", "competitor/<x>"; the
+    /// website card lives beside AI visibility). Nil for no section.
+    init?(section: String?) {
+        guard let raw = section?.lowercased().replacingOccurrences(of: "_", with: "-"), !raw.isEmpty else {
+            return nil
+        }
+        switch raw {
+        case "ai-visibility", "aivisibility", "visibility", "aivis", "ai", "website", "web", "web-analytics":
+            self = .aiVisibility
+        case "intel", "competitors", "competitor", "movement", "recs", "market":
+            self = .competitors
+        default:
+            // competitor/<place id or name> arrives with the target as the
+            // section: it is about a competitor.
+            self = .competitors
+        }
+    }
 }
 
 /// Competitors tab is deliberately unboxed — no .cavnarCard() walls anywhere
@@ -17,6 +36,17 @@ struct IntelView: View {
     @State private var viewModel = IntelViewModel()
     @State private var aiVisibilityViewModel = AIVisibilityViewModel()
     @State private var subTab: IntelSubTab = .competitors
+    /// Where the link that opened this was pointing (ModuleRoute's section
+    /// and item): the AI-visibility tab, or a competitor opened in the list.
+    let focusSection: String?
+    let focusItem: String?
+    @State private var focusApplied = false
+
+    init(focusSection: String? = nil, focusItem: String? = nil) {
+        self.focusSection = focusSection
+        self.focusItem = focusItem
+        _subTab = State(initialValue: IntelSubTab(section: focusSection) ?? .competitors)
+    }
     @State private var expandedCompetitors: Set<String> = []
     /// Recommendations whose cited competitor reviews are open.
     @State private var expandedCites: Set<String> = []
@@ -118,10 +148,35 @@ struct IntelView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .competitors, secondaryTab: .aiVisibility)
         .task {
             await viewModel.load()
+            applyFocus()
         }
         // Reopening the app after a while re-reads competitor intel rather
         // than showing an earlier load as current (audit 4.2).
         .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) { await viewModel.load() }
+    }
+
+    /// The route's focus, once the competitors have loaded: a competitor
+    /// named by place id or name opens expanded.
+    private func applyFocus() {
+        guard !focusApplied else { return }
+        focusApplied = true
+        guard subTab == .competitors, let summary = viewModel.summary else { return }
+        let keys = [focusItem, focusSection].compactMap { $0?.lowercased() }
+        if let hit = summary.competitors.first(where: { c in
+            keys.contains(c.placeId.lowercased()) || keys.contains(c.name.lowercased())
+        }) {
+            expandedCompetitors.insert(hit.id)
+        }
+    }
+
+    /// A competitor's distance in the phone's own units — miles in the US,
+    /// kilometres elsewhere, feet or metres when close — with Measurement's
+    /// road usage, never a hard-coded "km".
+    static func distanceText(meters: Int, locale: Locale = .current) -> String {
+        Measurement(value: Double(meters), unit: UnitLength.meters)
+            .formatted(.measurement(width: .abbreviated, usage: .road,
+                                    numberFormatStyle: .number.precision(.fractionLength(0...1)))
+                .locale(locale))
     }
 
     /// "Cold Hearth" while there's nothing here (the CTA is what lights
@@ -929,10 +984,11 @@ struct IntelView: View {
                     // How far away, when we know. A competitor selected on
                     // the widened pass can be five miles out and used to
                     // read exactly like one across the street.
+                    // In the owner's own units (miles for a US phone),
+                    // through Measurement — it was always m / km.
                     if let m = c.distanceM, m > 0 {
-                        Text(m >= 1000 ? "· \(String(format: "%.1f", Double(m) / 1000)) km"
-                                       : "· \(m) m")
-                            .font(.cavnarBody(14))
+                        Text("\u{00B7} \(Self.distanceText(meters: m))")
+                            .font(.cavnarNumber(14))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     if c.isCustom {

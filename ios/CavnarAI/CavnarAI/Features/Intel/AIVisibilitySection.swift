@@ -94,12 +94,16 @@ struct AIVisibilitySection: View {
                     checkButton
                 }
             }
+            // The restaurant's own website — Google Analytics and Search
+            // Console, read every morning (parity audit 10/7/26 #52).
+            WebsiteAnalyticsSection()
         }
         // The recorded check first (re-audit P1: a GET, never a live run),
         // then the history the Orbit draws.
         .task {
             await viewModel.loadStored()
             await viewModel.loadHistory()
+            await viewModel.loadQueryHistory()
         }
     }
 
@@ -596,7 +600,8 @@ struct AIVisibilitySection: View {
     }
 
     private func queryRow(_ q: AIVisibilityQuery) -> some View {
-        QueryResultRow(q: q)
+        QueryResultRow(q: q, history: viewModel.queryHistory?.question(for: q.query),
+                       runs: viewModel.queryHistory?.runs ?? [])
     }
 
     /// Google vs AI (10/7/26): the Google searches put to AI, and the share of
@@ -926,6 +931,9 @@ struct AIVisibilitySection: View {
 /// than sharing one across all of them.
 private struct QueryResultRow: View {
     let q: AIVisibilityQuery
+    /// This question across the recent checks (the web's dot strip).
+    var history: AIVisibilityQueryHistory.Question? = nil
+    var runs: [AIVisibilityQueryHistory.Run] = []
 
     @State private var isPressed = false
 
@@ -1008,6 +1016,10 @@ private struct QueryResultRow: View {
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }
+                if let history, history.asked > 0 {
+                    historyStrip(history)
+                        .padding(.top, 3)
+                }
             }
             Spacer(minLength: 8)
             badge
@@ -1058,6 +1070,31 @@ private struct QueryResultRow: View {
         } onPressingChanged: { pressing in
             if !pressing { isPressed = false }
         }
+    }
+
+    /// A dot per check, oldest first: green where the answer named you,
+    /// a ring where it didn't, faint where that check didn't ask it — then
+    /// "named in 3 of 5 checks" (the web's in2-qc strip, parity #75).
+    private func historyStrip(_ h: AIVisibilityQueryHistory.Question) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 3) {
+                ForEach(Array(h.appeared.enumerated()), id: \.offset) { _, a in
+                    Circle()
+                        .fill(a == true ? Color.cavnarGreen : (a == false ? Color.clear : Color.cavnarPaper3.opacity(0.5)))
+                        .overlay(Circle().strokeBorder(a == false ? Color.cavnarInk3 : Color.clear, lineWidth: 1))
+                        .frame(width: 7, height: 7)
+                }
+            }
+            HomeMixedText.make(AIVisibilityQueryHistory.line(h), size: 12, weight: 500, color: .cavnarInk3)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(historySpoken(h))
+    }
+
+    private func historySpoken(_ h: AIVisibilityQueryHistory.Question) -> String {
+        var parts = [AIVisibilityQueryHistory.line(h).prefix(1).uppercased() + AIVisibilityQueryHistory.line(h).dropFirst()]
+        if let last = runs.last?.at, !last.isEmpty { parts.append("latest check \(CavnarDate.mdyLocal(last))") }
+        return parts.joined(separator: ", ")
     }
 
     private var badge: some View {

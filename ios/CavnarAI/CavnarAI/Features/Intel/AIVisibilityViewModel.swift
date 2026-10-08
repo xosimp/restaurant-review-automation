@@ -70,6 +70,40 @@ struct AIVisibilitySearchDemand: Decodable {
     }
 }
 
+/// GET /mobile/api/intel/ai-visibility/queries (models.ai_visibility_query_
+/// history): the last checks, oldest first, and each question across them —
+/// named (true), asked and not named (false), or not asked that time (null).
+/// The web paints it as a dot per check beside each latest answer.
+struct AIVisibilityQueryHistory: Decodable {
+    struct Run: Decodable {
+        let at: String?
+    }
+    struct Question: Decodable {
+        let query: String
+        let kind: String?
+        let appeared: [Bool?]
+        let appearances: Int
+        let asked: Int
+    }
+    let ok: Bool
+    let runs: [Run]
+    let queries: [Question]
+
+    /// The history of the question an answer was for — the web matches the
+    /// question's text; here also ignoring case and spacing.
+    func question(for text: String) -> Question? {
+        func norm(_ s: String) -> String {
+            s.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        }
+        return queries.first { $0.query == text } ?? queries.first { norm($0.query) == norm(text) }
+    }
+
+    /// "named in 3 of 5 checks".
+    static func line(_ q: Question) -> String {
+        "named in \(q.appearances) of \(q.asked) check\(q.asked == 1 ? "" : "s")"
+    }
+}
+
 struct CompetitorAppearance: Decodable, Identifiable {
     let name: String
     let queries: Int
@@ -153,7 +187,7 @@ struct AIVisibilityRoadmapCard: Decodable, Identifiable, Equatable {
     var showsAnswers: Bool { !done && answerable == true && answered != true }
 }
 
-struct AIVisibilityResult: Decodable {
+struct AIVisibilityResult: Decodable, Sendable {
     let ok: Bool
     /// The server's roadmap (newer servers). Nil on an older one, which
     /// keeps the locally built cards.
@@ -410,16 +444,42 @@ final class AIVisibilityViewModel {
         }
     }
 
+    /// Each question across the recent checks (GET
+    /// /mobile/api/intel/ai-visibility/queries): a dot per check, so a steady
+    /// three-of-six reads differently from a different three every week.
+    var queryHistory: AIVisibilityQueryHistory?
+
+    func loadQueryHistory() async {
+        if let h: AIVisibilityQueryHistory = try? await client.send(
+            "/mobile/api/intel/ai-visibility/queries", hapticOnError: false), h.ok {
+            queryHistory = h
+        }
+    }
+
+    /// `async`: the check runs as a job on the server's owner AI pool and
+    /// is polled through /ai-jobs (parity audit 10/7/26 #75) — it held one
+    /// of the server's four request threads for the whole ~10 s run.
+    struct CheckBody: Encodable {
+        var runAsJob = true
+        enum CodingKeys: String, CodingKey {
+            case runAsJob = "async"
+        }
+    }
+
     func check() async {
         isChecking = true
         checkError = nil
         defer { isChecking = false }
         do {
             // POST runs every query live (a GET served the recorded run, so
-            // Re-run came back instantly with the old answers). The run
-            // takes tens of seconds; never retried on a guess - it is billed.
-            let fresh: AIVisibilityResult = try await client.send("/mobile/api/intel/ai-visibility", method: .post,
-                                                                  timeout: 110, retryTransient: false)
+            // Re-run came back instantly with the old answers). Asked as a
+            // job and polled to its end; an older server runs it in the
+            // request and answers directly (resolveAIJob), hence the long
+            // timeout. Never retried on a guess - it is billed.
+            let started: APIClient.AIJobAnswer<AIVisibilityResult> =
+                try await client.send("/mobile/api/intel/ai-visibility", method: .post, body: CheckBody(),
+                                      timeout: 110, retryTransient: false)
+            let fresh: AIVisibilityResult = try await client.resolveAIJob(started)
             if !fresh.ok, let last = result, last.ok, !last.isNotMeasured {
                 // Not a reading: the last recorded check stays (re-audit P8).
                 checkError = fresh.error ?? "Couldn't check AI visibility."
@@ -428,6 +488,7 @@ final class AIVisibilityViewModel {
                 if fresh.ok { notMeasuredReason = nil }
             }
             await loadHistory()
+            await loadQueryHistory()
         } catch {
             if result == nil || result?.ok == false {
                 result = nil

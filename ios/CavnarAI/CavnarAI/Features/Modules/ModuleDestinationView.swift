@@ -52,7 +52,7 @@ struct ModuleDestinationView: View {
         case "marketing":
             MarketingView()
         case "intel":
-            IntelView()
+            IntelView(focusSection: route?.section, focusItem: route?.itemId)
         default:
             ComingSoonView(moduleLabel: moduleLabel)
         }
