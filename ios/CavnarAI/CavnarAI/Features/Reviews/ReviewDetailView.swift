@@ -15,6 +15,15 @@ struct ReviewDetailView: View {
     @State private var showingRetag = false
     @State private var retagged: ReviewTags?
     @FocusState private var isDraftFocused: Bool
+    @State private var showingSeverityReason = false
+    /// Yelp (parity audit 10/7/26 #53): the reply was copied and Yelp for
+    /// Business opened; on coming back the owner is asked whether it went up
+    /// before anything is marked posted.
+    @State private var awaitingYelpReturn = false
+    @State private var confirmingYelpPosted = false
+    @State private var copiedNote: String?
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     var onCompleted: (String) -> Void
     /// Queue mode (friction audit #21): the next reply waiting after this
     /// one, from the list that opened it, and how that list is told this one
@@ -47,7 +56,13 @@ struct ReviewDetailView: View {
                 Divider()
                 reviewText
                 Divider()
-                draftEditor
+                // Answered outside Cavnar AI: the reply actually posted —
+                // never Cavnar AI's unused draft (parity audit 10/7/26 #9).
+                if viewModel.isAnsweredElsewhere {
+                    elsewhereCard
+                } else {
+                    draftEditor
+                }
                 if let error = viewModel.errorMessage {
                     Text(error)
                         .font(.cavnarBody(14.5))
@@ -182,6 +197,35 @@ struct ReviewDetailView: View {
         .task {
             await viewModel.loadTemplates()
         }
+        // An approve that went through but didn't post keeps the owner here
+        // (where Retry is); the list still learns its new state — approved,
+        // or "Couldn't post to Google" — instead of showing it waiting.
+        .onChange(of: viewModel.finalStatus) { _, status in
+            guard status == "approved", !viewModel.didComplete else { return }
+            onCompleted(viewModel.listStatus)
+        }
+        // Back from Yelp: ask, never assume (an outward action's confirm).
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, awaitingYelpReturn else { return }
+            awaitingYelpReturn = false
+            confirmingYelpPosted = true
+        }
+        .confirmationDialog(
+            "Did the reply go up on Yelp?",
+            isPresented: $confirmingYelpPosted,
+            titleVisibility: .visible
+        ) {
+            Button("Yes, mark it posted") {
+                Task {
+                    if await viewModel.markPosted() {
+                        onCompleted(viewModel.currentStatus)
+                    }
+                }
+            }
+            Button("Not yet", role: .cancel) {}
+        } message: {
+            Text("Cavnar AI can\u{2019}t post to Yelp for you, so it only counts the reply once you say it\u{2019}s live.")
+        }
 
         .sheet(isPresented: $showingRetag) {
             ReviewRetagSheet(review: viewModel.review, current: retagged ?? ReviewTags(viewModel.review)) { tags in
@@ -258,9 +302,56 @@ struct ReviewDetailView: View {
                         .textCase(.uppercase)
                         .foregroundStyle(Color.cavnarInk3)
                 }
+                severityLine
             }
             Spacer()
-            StatusPill(status: viewModel.currentStatus)
+            // The web card's state pill, as this screen last left it.
+            if let pill = viewModel.displayReview.statusPill {
+                StatusPill(label: pill.label, tone: pill.tone)
+            }
+        }
+    }
+
+    /// The safety / legal tier, and — on tap — why: this review's own
+    /// complaint, then what the tier means (models.severity_reason, the web
+    /// chip's hover). Decoded and never shown before.
+    @ViewBuilder
+    private var severityLine: some View {
+        let r = viewModel.review
+        if r.isHighSeverity, let label = r.severityLabel {
+            let tone = r.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    Haptic.selection()
+                    withAnimation(.easeOut(duration: 0.2)) { showingSeverityReason.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(label)
+                            .font(.cavnarBody(11, weight: 700))
+                            .tracking(0.6)
+                            .textCase(.uppercase)
+                        if r.severityReason != nil {
+                            Image(systemName: showingSeverityReason ? "chevron.up" : "info.circle")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                    }
+                    .foregroundStyle(tone)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(tone.opacity(0.13), in: Capsule())
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(r.severityReason == nil)
+                .accessibilityHint(r.severityReason == nil ? "" : "Says why it is rated this serious")
+                if showingSeverityReason, let why = r.severityReason {
+                    Text(why)
+                        .font(.cavnarBody(13.5))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity)
+                }
+            }
         }
     }
 
@@ -522,24 +613,69 @@ struct ReviewDetailView: View {
         }
     }
 
-    private var actionButtons: some View {
-        Group {
-            switch viewModel.currentStatus {
-            case "posted" where viewModel.isAnsweredElsewhere:
-                // Answered outside Cavnar AI (10/2/26): someone replied on
-                // Google by hand. Undo puts it back in the queue; Retract
-                // never touches a reply that isn't ours.
-                completedBanner(
-                    "Answered on \(viewModel.review.platformDisplayName)", icon: "checkmark.circle.fill",
-                    color: .cavnarGreen, background: .cavnarGreenBg,
-                    undoLabel: "Undo"
-                ) {
+    /// The reply someone posted outside Cavnar AI, read-only: the words
+    /// Google gave (when it gave them), who said it was answered and when,
+    /// and Undo — the web card's "Replied on Google" box.
+    private var elsewhereCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Replied on \(viewModel.review.platformDisplayName)")
+                .font(.cavnarBody(13, weight: 700))
+                .tracking(0.6)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.cavnarEmber)
+            if let reply = viewModel.review.externalReply?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !reply.isEmpty {
+                Text(reply)
+                    .font(.cavnarBody(16))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            } else {
+                Text("The reply\u{2019}s words weren\u{2019}t sent with the mark \u{2014} it\u{2019}s on \(viewModel.review.platformDisplayName).")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label("Answered outside Cavnar AI", systemImage: "checkmark.circle.fill")
+                    .font(.cavnarBody(13.5, weight: 700))
+                    .foregroundStyle(Color.cavnarGreen)
+                Spacer(minLength: 0)
+            }
+            HomeMixedText.make(viewModel.review.externalReplyLine, size: 13, weight: 500, color: .cavnarInk3)
+            if viewModel.isSubmitting {
+                CavnarWorkingLine(width: 80)
+            } else {
+                Button {
+                    Haptic.light()
                     Task {
                         if await viewModel.undo() {
                             onCompleted(viewModel.currentStatus)
                         }
                     }
+                } label: {
+                    Text("Undo \u{2014} put it back in my queue")
+                        .font(.cavnarBody(14.5, weight: 600))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 44)
                 }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarGreen.opacity(0.08))
+        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarGreen.opacity(0.25), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    private var actionButtons: some View {
+        Group {
+            switch viewModel.currentStatus {
+            case "posted" where viewModel.isAnsweredElsewhere:
+                // The reply and its Undo are in the card above (#9).
+                EmptyView()
             case "posted":
                 // Blue for live-on-the-platform, green for approved —
                 // matching the web, which had them the other way round here.
@@ -558,12 +694,11 @@ struct ReviewDetailView: View {
                 }
             case "approved":
                 VStack(spacing: 10) {
-                    // The reply was approved but Google refused it. The
-                    // post runs synchronously server-side, so this is a
-                    // finished failure, not work still in flight — it used
-                    // to show a plain "Approved" with no sign anything had
-                    // gone wrong and no way to try again.
-                    if let failure = viewModel.postFailure {
+                    // Google refused it (the row's post_failed, so this is
+                    // here again on reopening). The post runs synchronously
+                    // server-side, so this is a finished failure, not work
+                    // still in flight.
+                    if viewModel.postFailedOnGoogle, let failure = viewModel.postFailure {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Couldn't post to Google", systemImage: "exclamationmark.triangle.fill")
                                 .font(.cavnarBody(14.5, weight: 700))
@@ -577,6 +712,8 @@ struct ReviewDetailView: View {
                                 Task {
                                     if await viewModel.retryPost() {
                                         onCompleted(viewModel.currentStatus)
+                                    } else {
+                                        onCompleted(viewModel.listStatus)
                                     }
                                 }
                             } label: {
@@ -603,31 +740,47 @@ struct ReviewDetailView: View {
                             }
                         }
                     }
-                    // Google replies post themselves once GBP is connected;
-                    // everywhere else the owner pastes the reply in by hand
-                    // and tells Cavnar it's live — same as the web's button.
-                    if viewModel.review.platform != "google", !viewModel.isSubmitting {
-                        Button {
-                            Task {
-                                if await viewModel.markPosted() {
-                                    onCompleted(viewModel.currentStatus)
-                                }
-                            }
-                        } label: {
-                            Label("Mark as posted on \(viewModel.review.platformDisplayName)", systemImage: "checkmark.seal")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
-                    }
+                    approvedNextStep
                 }
             case "skipped":
-                completedBanner(
-                    "Skipped", icon: "minus.circle.fill", color: .cavnarInk3, background: .cavnarPaper2,
-                    undoLabel: "Undo"
-                ) {
-                    Task {
-                        if await viewModel.undo() {
-                            onCompleted(viewModel.currentStatus)
+                // Skipped is a decision: the reply stays available, but not
+                // as the primary action (the web card, 10/6/26).
+                VStack(spacing: 10) {
+                    completedBanner(
+                        "Skipped \u{00B7} no reply sent", icon: "minus.circle.fill", color: .cavnarInk3,
+                        background: .cavnarPaper2, undoLabel: "Undo"
+                    ) {
+                        Task {
+                            if await viewModel.undo() {
+                                onCompleted(viewModel.currentStatus)
+                            }
+                        }
+                    }
+                    if !viewModel.isSubmitting {
+                        HStack(spacing: 10) {
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.approve() }
+                            } label: {
+                                Text("\u{2713} Approve after all").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                            .disabled(viewModel.editedDraft.isEmpty)
+                            Button {
+                                Haptic.light()
+                                Task {
+                                    await viewModel.regenerateDraft()
+                                    // A new draft puts it back in the queue
+                                    // (the server's regenerate sets drafted).
+                                    if viewModel.errorMessage == nil {
+                                        viewModel.currentStatus = "drafted"
+                                        onCompleted("drafted")
+                                    }
+                                }
+                            } label: {
+                                Label("Regenerate", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
                         }
                     }
                 }
@@ -637,6 +790,81 @@ struct ReviewDetailView: View {
             }
         }
     }
+
+    /// Under an approved reply that isn't live: what happens next. Google
+    /// posts itself once the Business Profile is connected; Yelp is copied
+    /// and posted by hand (#53); anywhere else is marked posted by hand —
+    /// the web card's three lines.
+    @ViewBuilder
+    private var approvedNextStep: some View {
+        let r = viewModel.review
+        if r.platform == "google" {
+            if !viewModel.postFailedOnGoogle {
+                Label("Will post to Google once connected", systemImage: "clock")
+                    .font(.cavnarBody(13.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if !viewModel.isSubmitting {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Copy and post to \(r.platformDisplayName)")
+                    .font(.cavnarBody(13.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk3)
+                if r.platform == "yelp" {
+                    Button {
+                        copyAndOpenYelp()
+                    } label: {
+                        Label("Copy & open Yelp", systemImage: "doc.on.doc")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.editedDraft.isEmpty))
+                    .disabled(viewModel.editedDraft.isEmpty)
+                    if let copiedNote {
+                        Text(copiedNote)
+                            .font(.cavnarBody(13))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Button {
+                        Haptic.light()
+                        confirmingYelpPosted = true
+                    } label: {
+                        Text("I posted it on Yelp").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                } else {
+                    Button {
+                        Task {
+                            if await viewModel.markPosted() {
+                                onCompleted(viewModel.currentStatus)
+                            }
+                        }
+                    } label: {
+                        Label("Mark as posted on \(r.platformDisplayName)", systemImage: "checkmark.seal")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
+            }
+        }
+    }
+
+    /// The web's "Copy & open Yelp": the reply on the clipboard, Yelp for
+    /// Business opened to paste it. Nothing is marked posted until the owner
+    /// comes back and says it went up.
+    private func copyAndOpenYelp() {
+        let reply = viewModel.editedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reply.isEmpty else { return }
+        UIPasteboard.general.string = reply
+        Haptic.success()
+        copiedNote = "Reply copied \u{2014} paste it on Yelp, then come back."
+        awaitingYelpReturn = true
+        openURL(ReviewDetailView.yelpForBusinessURL)
+    }
+
+    /// Yelp for Business, where an owner answers a review (the web opens
+    /// the same address).
+    static let yelpForBusinessURL = URL(string: "https://business.yelp.com")!
 
     /// undoLabel nil hides the undo action entirely — used where the
     /// action exists in principle but cannot succeed for this review (a
@@ -705,7 +933,7 @@ struct ReviewDetailView: View {
         Button {
             Task { await viewModel.markRepliedElsewhere() }
         } label: {
-            Text("Replied on \(viewModel.review.platformDisplayName)")
+            Text("Mark as replied on \(viewModel.review.platformDisplayName)")
                 .font(.cavnarBody(14.5, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
         }

@@ -14,8 +14,8 @@ struct Review: Codable, Identifiable, Hashable {
     let reviewDate: String?
     let sentiment: String?
     let urgency: String
-    let draftResponse: String?
-    let responseStatus: String
+    var draftResponse: String?
+    var responseStatus: String
     let categories: [String]
     // Set when the draft generated cleanly but states something this system
     // cannot stand behind — a specific action the restaurant may never have
@@ -36,6 +36,22 @@ struct Review: Codable, Identifiable, Hashable {
     /// gave it.
     @LenientBool var repliedElsewhereFlag: Bool?
     let externalReply: String?
+    /// Who said it was answered elsewhere — "google" (read from the Business
+    /// Profile) or "owner" (marked by the team) — and when the reply was
+    /// made (`external_reply_at`, else the mark's own `posted_at`).
+    var externalReplySource: String? = nil
+    var externalReplyAt: String? = nil
+    var postedAt: String? = nil
+    /// Server-computed (models.review_post_failed — the web card reads the
+    /// same field): approved, on Google, Business Profile connected, never
+    /// posted. Kept on the row, so "Couldn't post to Google" and its Retry
+    /// survive reopening the review (it was session-only).
+    @LenientBool var postFailedFlag: Bool?
+    /// The server's urgency rule (models.is_urgent_review) on this row, and
+    /// the severity chip's reason (models.severity_reason) — the phone no
+    /// longer recomputes either.
+    @LenientBool var urgentFlag: Bool?
+    var severityReason: String? = nil
     /// False while the review is still waiting on Claude's analysis — its
     /// sentiment, categories and urgency are all absent, and showing it as
     /// "neutral" claimed a reading nobody made.
@@ -96,6 +112,12 @@ struct Review: Codable, Identifiable, Hashable {
         case canRetractFlag = "can_retract"
         case repliedElsewhereFlag = "replied_elsewhere"
         case externalReply = "external_reply"
+        case externalReplySource = "external_reply_source"
+        case externalReplyAt = "external_reply_at"
+        case postedAt = "posted_at"
+        case postFailedFlag = "post_failed"
+        case urgentFlag = "urgent"
+        case severityReason = "severity_reason"
         case reviewDate = "review_date"
         case draftResponse = "draft_response"
         case responseStatus = "response_status"
@@ -130,23 +152,42 @@ struct Review: Codable, Identifiable, Hashable {
     var repliedElsewhere: Bool { repliedElsewhereFlag ?? false }
     var isPosted: Bool { responseStatus == "posted" }
     var isApproved: Bool { responseStatus == "approved" }
-    /// "Urgent" as the owner sees it, the server's rule (models.is_urgent_review):
-    /// the analyser's safety/legal call, or a 1-2 star review still owed a
-    /// reply — unanswered and from the last 30 days
-    /// (thresholds.REPLY_OWED_MAX_AGE_DAYS). A review with no date counts
-    /// as owed, as the server falls back to when it was fetched.
-    var isUrgent: Bool {
-        if urgency == "high" { return true }
-        guard let rating, (1...2).contains(rating),
-              !["posted", "approved", "skipped"].contains(responseStatus) else { return false }
-        guard let day = reviewDate?.prefix(10), day.count == 10 else { return true }
-        let cutoff = Calendar.current.date(byAdding: .day, value: -Review.replyOwedDays, to: Date()) ?? Date()
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return String(day) >= f.string(from: cutoff)
+    /// "Urgent" as the owner sees it: the server's own `urgent`
+    /// (models.is_urgent_review — the analyser's safety/legal call, or a 1-2
+    /// star review still owed a reply), never recomputed on the phone, whose
+    /// clock and day boundary are not the server's. An older server or a
+    /// cached page without the field falls back to the analyser's call.
+    var isUrgent: Bool { urgentFlag ?? (urgency == "high") }
+
+    /// Posted, approved or skipped: nothing waiting on anyone — the row is
+    /// dimmed and never urgent (the web card's `_handled`, 10/6/26).
+    var isHandled: Bool { ["posted", "approved", "skipped"].contains(responseStatus) }
+    /// Whether the server says the Google post failed (see postFailedFlag).
+    var postFailed: Bool { postFailedFlag ?? false }
+
+    /// The status pill, in the web card's words and tones (6de5a675):
+    /// nil while the review still waits on a decision.
+    var statusPill: (label: String, tone: CavnarTone)? {
+        let site = platformDisplayName
+        if repliedElsewhere { return ("Replied on \(site)", .good) }
+        switch responseStatus {
+        case "posted": return ("Live on \(site)", .good)
+        case "approved":
+            if postFailed { return ("Couldn\u{2019}t post to Google", .bad) }
+            return ("Approved \u{00B7} not on \(site) yet", .warning)
+        case "skipped": return ("Skipped \u{00B7} no reply sent", .neutral)
+        case "pending-sync": return ("Waiting to sync", .neutral)
+        default: return nil
+        }
     }
-    static let replyOwedDays = 30
+
+    /// "Read from Google · 10/3/26" / "Marked by your team · 10/3/26" —
+    /// where an answered-elsewhere mark came from, on the phone's calendar.
+    var externalReplyLine: String {
+        let who = externalReplySource == "google" ? "Read from Google" : "Marked by your team"
+        guard let when = externalReplyAt ?? postedAt, !when.isEmpty else { return who }
+        return "\(who) \u{00B7} \(CavnarDate.mdyLocal(when))"
+    }
 
     /// review_date's format depends entirely on which source fetched it
     /// (fetcher.py/gmb.py) — there's no single shape:
@@ -211,37 +252,29 @@ struct Review: Codable, Identifiable, Hashable {
     /// The same review with a draft reply now on file. A review that had no
     /// draft becomes "drafted", the status the server gives it.
     func withDraft(_ draft: String) -> Review {
-        let status = responseStatus == "pending" ? "drafted" : responseStatus
-        return Review(
-            id: id, platform: platform, author: author, rating: rating, text: text,
-            reviewDate: reviewDate, sentiment: sentiment, urgency: urgency,
-            draftResponse: draft, responseStatus: status, categories: categories,
-            draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
-            editedAt: editedAt, originalRating: originalRating,
-            canRetractFlag: canRetractFlag, repliedElsewhereFlag: repliedElsewhereFlag,
-            externalReply: externalReply, processed: processed,
-            summary: summary, specificComplaint: specificComplaint,
-            severity: severity, severityLabel: severityLabel, entities: entities
-        )
+        var copy = self
+        copy.draftResponse = draft
+        if responseStatus == "pending" { copy.responseStatus = "drafted" }
+        return copy
     }
 
     /// "posted-elsewhere" (ReviewDetailViewModel.markRepliedElsewhere): posted
     /// because someone answered outside Cavnar AI - never retractable here.
+    /// "approved-failed": approved, but Google refused the post — the row
+    /// carries the failure the server would send on the next read.
     func withStatus(_ newStatus: String) -> Review {
         let elsewhere = newStatus == "posted-elsewhere"
-        let status = elsewhere ? "posted" : newStatus
-        let retractable = elsewhere ? false : ((status == "posted" && platform == "google") ? true : canRetractFlag)
-        return Review(
-            id: id, platform: platform, author: author, rating: rating, text: text,
-            reviewDate: reviewDate, sentiment: sentiment, urgency: urgency,
-            draftResponse: draftResponse, responseStatus: status, categories: categories,
-            draftNeedsReview: draftNeedsReview, draftReviewReason: draftReviewReason,
-            editedAt: editedAt, originalRating: originalRating,
-            canRetractFlag: retractable, repliedElsewhereFlag: elsewhere ? true : repliedElsewhereFlag,
-            externalReply: externalReply, processed: processed,
-            summary: summary, specificComplaint: specificComplaint,
-            severity: severity, severityLabel: severityLabel, entities: entities
-        )
+        let failed = newStatus == "approved-failed"
+        let status = elsewhere ? "posted" : (failed ? "approved" : newStatus)
+        var copy = self
+        copy.responseStatus = status
+        copy.canRetractFlag = elsewhere ? false : ((status == "posted" && platform == "google") ? true : canRetractFlag)
+        if elsewhere { copy.repliedElsewhereFlag = true }
+        if status != "posted" && repliedElsewhere { copy.repliedElsewhereFlag = false }
+        copy.postFailedFlag = failed
+        // Answered or skipped is never urgent (the server's rule).
+        if ["posted", "approved", "skipped"].contains(status) { copy.urgentFlag = false }
+        return copy
     }
 }
 
@@ -267,6 +300,13 @@ struct ReviewPostOutcome: Decodable, Equatable {
     }
 
     var posted: Bool { postStatus.map { $0 == "posted" } ?? (autoPosted == true) }
+
+    /// Google was asked and refused — the row's `post_failed`, not "not
+    /// connected yet" (which waits to post once connected).
+    var failedOnGoogle: Bool {
+        if let postStatus { return postStatus == "failed" }
+        return !(postError ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     /// Why it isn't live, in the server's words when it gave them; nil when
     /// it posted, or when an older server said nothing either way.

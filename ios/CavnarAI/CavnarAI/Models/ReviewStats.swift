@@ -37,6 +37,30 @@ struct ReviewStats: Codable {
     /// whole history, unless this says otherwise.
     var holdsEveryReview: Bool { isFullHistory ?? true }
 
+    /// What one bulk publish may post (models.BULK_PUBLISHABLE_SQL) and how
+    /// many drafts it holds back for a read — the inbox's "Publish N ready"
+    /// (parity audit 10/7/26 #34). Nil from an older server.
+    var publishable: Int? = nil
+    var publishHeld: Int? = nil
+
+    /// "6 new this month · avg reply 5h" — the web header's two segments.
+    /// The reply time reads "—" when there is none, or it is over 30 days.
+    var receivedLine: String {
+        "\(receivedThisMonth) new this month \u{00B7} avg reply \(Self.replyTime(avgResponseHours))"
+    }
+
+    /// The web header's rule: hours under a day, days under a week, weeks
+    /// up to 30 days; anything else is not a reply time worth stating.
+    static func replyTime(_ hours: Double?) -> String {
+        guard let h = hours, h > 0, h <= 720 else { return "\u{2014}" }
+        if h < 24 {
+            let r = (h * 10).rounded() / 10
+            return r == r.rounded() ? "\(Int(r))h" : "\(r)h"
+        }
+        if h < 168 { return "\(Int(h / 24))d" }
+        return "\(Int(h / 168))w"
+    }
+
     enum CodingKeys: String, CodingKey {
         case total, positive, negative, neutral, urgent, posted, responded, skipped
         case positivePct = "positive_pct"
@@ -54,5 +78,7 @@ struct ReviewStats: Codable {
         case officialRating = "official_rating"
         case officialReviewCount = "official_review_count"
         case isFullHistory = "is_full_history"
+        case publishable
+        case publishHeld = "publish_held"
     }
 }

@@ -94,6 +94,7 @@ struct SendReviewRequestSheet: View {
     @State private var phone = ""
     @State private var message = ""
     @State private var smsConsent = false
+    @State private var showingContacts = false
     @FocusState private var focusedField: SendReviewRequestField?
     // Set only on the real 200 — the posted check plays, then the sheet
     // closes itself (see cavnarPostedOverlay).
@@ -112,6 +113,30 @@ struct SendReviewRequestSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
+                    // A guest already in the phone's contacts, without
+                    // retyping them (parity audit 10/7/26 #91). Only the one
+                    // contact tapped comes back; a phone number from it is
+                    // not consent — the toggle below still has to be set.
+                    Button {
+                        Haptic.light()
+                        focusedField = nil
+                        showingContacts = true
+                    } label: {
+                        Label("Choose from Contacts", systemImage: "person.crop.circle.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .background(
+                        GuestContactPicker(isPresented: $showingContacts) { pick in
+                            if !pick.name.isEmpty { name = pick.name }
+                            email = pick.email
+                            phone = pick.phone
+                            // A new number has not agreed to anything.
+                            smsConsent = false
+                        }
+                        .frame(width: 0, height: 0)
+                    )
+
                     CavnarFloatingField(
                         icon: "person", placeholder: "Guest name", text: $name, textContentType: .name,
                         focus: $focusedField, field: .name

@@ -66,6 +66,35 @@ final class ReviewDetailViewModel {
         self.client = client
         self.flagReason = review.draftIsFlagged
             ? (review.draftReviewReason ?? Self.defaultFlagReason) : nil
+        // A Google post that failed before this screen opened (the row's
+        // post_failed): the failure and its Retry are back on reopening —
+        // they lived only as long as the screen that saw the approve.
+        if review.isApproved && review.postFailed {
+            self.postFailure = Self.savedFailureNote
+            self.postFailedOnGoogle = true
+        }
+    }
+
+    /// The web card's line under a failed post.
+    static let savedFailureNote = "The reply is saved \u{2014} try posting it again."
+
+    /// The review as it stands on this screen — its status and post state
+    /// as this screen last left them — for the header's pill.
+    var displayReview: Review {
+        if markedElsewhere && currentStatus == "posted" { return review.withStatus("posted-elsewhere") }
+        if currentStatus == review.responseStatus && postFailedOnGoogle == review.postFailed { return review }
+        if currentStatus == "approved" && postFailedOnGoogle { return review.withStatus("approved-failed") }
+        return review.withStatus(currentStatus)
+    }
+
+    /// The last post attempt reached Google and Google refused it (the
+    /// row's post_failed) — as opposed to Google not being connected yet.
+    var postFailedOnGoogle = false
+
+    /// What the list should record for this review once it's left approved:
+    /// "approved-failed" when Google refused the post.
+    var listStatus: String {
+        currentStatus == "approved" && postFailedOnGoogle ? "approved-failed" : currentStatus
     }
 
     /// The flag as a draft answer states it.
@@ -233,6 +262,7 @@ final class ReviewDetailViewModel {
             Haptic.success()
             let status = response.posted ? "posted" : "approved"
             postFailure = response.shortfall
+            postFailedOnGoogle = !response.posted && response.failedOnGoogle
             finalStatus = status
             currentStatus = status
             // A failed post keeps the owner on this screen, where the retry
@@ -440,6 +470,8 @@ final class ReviewDetailViewModel {
                 Haptic.light()
                 currentStatus = "drafted"
                 markedElsewhere = false
+                postFailure = nil
+                postFailedOnGoogle = false
                 return true
             } else {
                 errorMessage = response.error ?? "Couldn't undo — try again."
@@ -571,11 +603,13 @@ final class ReviewDetailViewModel {
             if response.posted {
                 Haptic.success()
                 postFailure = nil
+                postFailedOnGoogle = false
                 currentStatus = "posted"
                 finalStatus = "posted"
                 return true
             }
             postFailure = response.shortfall ?? "Google isn't connected yet."
+            postFailedOnGoogle = response.failedOnGoogle
             return false
         } catch let error as APIClient.APIError {
             errorMessage = error.message

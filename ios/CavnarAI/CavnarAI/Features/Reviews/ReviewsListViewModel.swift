@@ -382,9 +382,119 @@ final class ReviewsListViewModel {
     /// (filter=all), not just an actionable queue, so a completed review
     /// should stay visible with its updated status pill, not disappear.
     func markCompleted(reviewID: Int, status: String) {
-        if status == "deleted" { remove(reviewID: reviewID); return }
+        if status == "deleted" { remove(reviewID: reviewID); selection.remove(reviewID); return }
         guard let index = reviews.firstIndex(where: { $0.id == reviewID }) else { return }
         reviews[index] = reviews[index].withStatus(status)
+    }
+
+    // MARK: - Multi-select (parity audit 10/7/26 #34, the web desk's #2)
+
+    /// The reviews ticked in Select mode.
+    var selection: Set<Int> = []
+    /// True while a bulk approve or skip is running.
+    private(set) var isBulkWorking = false
+    /// What the last bulk action did — "3 approved (2 posted to Google) ·
+    /// 1 held for you to read" — and whether any of it didn't go through.
+    var bulkNote: (text: String, failed: Bool)?
+
+    /// A card the web offers a box on: one still waiting on a decision.
+    static func isSelectable(_ review: Review) -> Bool {
+        !["posted", "approved", "pending-sync"].contains(review.responseStatus)
+    }
+
+    /// Skip applies to what is still in the queue (not answered, not
+    /// already skipped) — the web's rvSelSkippable.
+    static func isSkippable(_ review: Review) -> Bool {
+        !["posted", "approved", "skipped", "pending-sync"].contains(review.responseStatus)
+    }
+
+    private var selectedReviews: [Review] { reviews.filter { selection.contains($0.id) } }
+    /// The selected replies the bulk route may post: the swipe's own bar
+    /// (canQuickApprove — drafted, not flagged, not urgent, recent).
+    var bulkApprovable: [Int] { selectedReviews.filter { Self.canQuickApprove($0) }.map(\.id) }
+    var bulkSkippable: [Int] { selectedReviews.filter { Self.isSkippable($0) }.map(\.id) }
+    /// Selected but not ready to post in bulk — read one at a time.
+    var bulkHeld: Int { selection.count - bulkApprovable.count }
+
+    func toggleSelection(_ review: Review) {
+        guard Self.isSelectable(review) else { return }
+        if selection.contains(review.id) { selection.remove(review.id) } else { selection.insert(review.id) }
+    }
+
+    private struct BulkApproveBody: Encodable {
+        let reviewIds: [Int]
+        let limit: Int
+        enum CodingKeys: String, CodingKey {
+            case reviewIds = "review_ids"
+            case limit
+        }
+    }
+
+    /// The approve-all route pinned to these ids, 25 at a time (its cap) —
+    /// the server re-checks each and never posts a flagged or urgent draft.
+    static func bulkApproveBodies(_ ids: [Int]) -> [Data] {
+        stride(from: 0, to: ids.count, by: 25).compactMap { start in
+            let chunk = Array(ids[start..<min(start + 25, ids.count)])
+            return try? JSONEncoder().encode(BulkApproveBody(reviewIds: chunk, limit: chunk.count))
+        }
+    }
+
+    /// The bar's Approve, after its confirm.
+    func bulkApprove() async {
+        let ids = bulkApprovable
+        guard !ids.isEmpty, !isBulkWorking else { return }
+        isBulkWorking = true
+        defer { isBulkWorking = false }
+        var approved = 0, posted = 0, failed = 0
+        var lost = false
+        for start in stride(from: 0, to: ids.count, by: 25) {
+            let chunk = Array(ids[start..<min(start + 25, ids.count)])
+            do {
+                let r: BulkPublishResult = try await client.send(
+                    "/mobile/api/reviews/approve-all", method: .post,
+                    body: BulkApproveBody(reviewIds: chunk, limit: chunk.count), retryTransient: false)
+                approved += r.approved
+                posted += r.posted
+                failed += r.failed
+            } catch let error as APIClient.APIError {
+                failed += chunk.count
+                if error.mayHaveReachedServer { lost = true }
+            } catch {
+                failed += chunk.count
+                lost = true
+            }
+        }
+        let held = ids.count - approved - failed
+        var bits = ["\(approved) approved" + (posted > 0 ? " (\(posted) posted to Google)" : "")]
+        if held > 0 { bits.append("\(held) held for you to read") }
+        if failed > 0 { bits.append("\(failed) didn\u{2019}t go through" + (lost ? " \u{2014} check before trying again" : "")) }
+        bulkNote = (bits.joined(separator: " \u{00B7} "), failed > 0)
+        if failed == 0 { Haptic.success() }
+        selection.removeAll()
+        await reload()
+    }
+
+    /// The bar's Skip, after its confirm: the single skip route in turn.
+    func bulkSkip() async {
+        let ids = bulkSkippable
+        guard !ids.isEmpty, !isBulkWorking else { return }
+        isBulkWorking = true
+        defer { isBulkWorking = false }
+        var skipped = 0, bad = 0
+        for id in ids {
+            do {
+                let _: APIClient.EmptyResponse = try await client.send(
+                    "/mobile/api/reviews/\(id)/skip", method: .post, hapticOnError: false)
+                skipped += 1
+                markCompleted(reviewID: id, status: "skipped")
+            } catch {
+                bad += 1
+            }
+        }
+        bulkNote = ("\(skipped) skipped" + (bad > 0 ? " \u{00B7} \(bad) didn\u{2019}t go through" : ""), bad > 0)
+        if bad == 0 { Haptic.light() }
+        selection.removeAll()
+        await loadStats()
     }
 }
 

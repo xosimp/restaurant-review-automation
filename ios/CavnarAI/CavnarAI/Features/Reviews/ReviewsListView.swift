@@ -27,6 +27,15 @@ struct ReviewsListView: View {
     @State private var approvingRowId: Int?
     @State private var postedLabel: String?
     @State private var focusConsumed = false
+    /// Select mode (parity audit 10/7/26 #34): a box on every review still
+    /// waiting on a decision, and a bar to approve or skip the ticked ones.
+    @State private var editMode: EditMode = .inactive
+    @State private var confirmingBulkApprove = false
+    @State private var confirmingBulkSkip = false
+    /// "Publish N ready": Home's publish confirm, from the inbox header.
+    @State private var showingPublishReady = false
+
+    private var isSelecting: Bool { editMode.isEditing }
 
     init(initialFilter: String? = nil, focusReviewId: Int? = nil) {
         self.initialFilter = initialFilter
@@ -57,6 +66,28 @@ struct ReviewsListView: View {
         .toolbar { cavnarTitleToolbar("Reviews") }
         .cavnarTabSwipeNavigation($subTab, primaryTab: .inbox, secondaryTab: .analytics)
         .toolbar {
+            if subTab == .inbox && viewModel.reviews.contains(where: ReviewsListViewModel.isSelectable) {
+                cavnarToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            if isSelecting {
+                                editMode = .inactive
+                                viewModel.selection.removeAll()
+                            } else {
+                                editMode = .active
+                            }
+                        }
+                    } label: {
+                        Text(isSelecting ? "Done" : "Select")
+                            .font(.cavnarBody(15, weight: 600))
+                            .foregroundStyle(Color.cavnarEmber)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(isSelecting ? "Leaves Select mode" : "Choose several reviews to approve or skip")
+                }
+            }
             cavnarToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     Haptic.light()
@@ -82,6 +113,44 @@ struct ReviewsListView: View {
         }
         .sheet(isPresented: $showingSendRequest) {
             SendReviewRequestSheet()
+        }
+        .sheet(isPresented: $showingPublishReady) {
+            PublishReadySheet(count: viewModel.stats?.publishable ?? 0) { label in
+                postedLabel = label
+                Task { await viewModel.reload() }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        // The bar's two outward actions ask first, with the counts (the
+        // web's confirm): never one tap from a list.
+        .confirmationDialog(
+            "Approve and post \(viewModel.bulkApprovable.count) \(viewModel.bulkApprovable.count == 1 ? "reply" : "replies")?",
+            isPresented: $confirmingBulkApprove, titleVisibility: .visible
+        ) {
+            Button("Approve \(viewModel.bulkApprovable.count)") {
+                Task {
+                    await viewModel.bulkApprove()
+                    editMode = .inactive
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(Self.bulkApproveMessage(held: viewModel.bulkHeld))
+        }
+        .confirmationDialog(
+            "Skip \(viewModel.bulkSkippable.count) \(viewModel.bulkSkippable.count == 1 ? "review" : "reviews")?",
+            isPresented: $confirmingBulkSkip, titleVisibility: .visible
+        ) {
+            Button("Skip \(viewModel.bulkSkippable.count)", role: .destructive) {
+                Task {
+                    await viewModel.bulkSkip()
+                    editMode = .inactive
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Nothing is posted; each can still be approved or undone from its review.")
         }
         .navigationDestination(item: $deepLinkedReview) { review in
             ReviewDetailView(
@@ -161,7 +230,20 @@ struct ReviewsListView: View {
                             ReviewsStatStrip(stats: stats)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 14, trailing: 16))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+                            // What came in and how fast it's answered — the
+                            // web header's "6 new this month · avg reply 5h".
+                            HStack(spacing: 10) {
+                                HomeMixedText.make(stats.receivedLine, size: CavnarType.secondary, weight: 500,
+                                                   color: .cavnarInk3)
+                                Spacer(minLength: 0)
+                                if let ready = stats.publishable, ready > 0, !isSelecting {
+                                    publishReadyPill(ready)
+                                }
+                            }
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
                             // What the reviews are about, in one line
                             // (density #32) — the server's why line (the
                             // rating's move, the stored top complaint) on
@@ -204,6 +286,28 @@ struct ReviewsListView: View {
                     if let notice = viewModel.stalenessNotice {
                         CachedDataNotice(text: notice).listRowBackground(Color.clear).listRowSeparator(.hidden)
                     }
+                    // What the last bulk approve or skip did, in counts.
+                    if let note = viewModel.bulkNote {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            HomeMixedText.make(note.text, size: 14, weight: 600,
+                                               color: note.failed ? .cavnarRed : .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            Button {
+                                Haptic.light()
+                                viewModel.bulkNote = nil
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Dismiss")
+                        }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    }
                     // A refresh or chip change that failed over rows already
                     // on screen: say so above them, with the way to retry.
                     if let error = viewModel.errorMessage {
@@ -236,12 +340,25 @@ struct ReviewsListView: View {
                     // used for deep links fires the haptic AND navigates
                     // reliably, since there's only ever one gesture involved.
                     Button {
+                        if isSelecting {
+                            // Select mode: a tap ticks the review instead of
+                            // opening it; answered ones have no box.
+                            guard ReviewsListViewModel.isSelectable(review) else { return }
+                            Haptic.selection()
+                            viewModel.toggleSelection(review)
+                            return
+                        }
                         Haptic.light()
                         deepLinkedReview = review
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            ReviewRow(review: review)
-                                .opacity(approvingRowId == review.id ? 0.5 : 1)
+                            HStack(alignment: .center, spacing: 10) {
+                                if isSelecting {
+                                    selectionMark(for: review)
+                                }
+                                ReviewRow(review: review, showsChevron: !isSelecting)
+                                    .opacity(approvingRowId == review.id ? 0.5 : 1)
+                            }
                             if let rowError, rowError.id == review.id {
                                 Text(rowError.message)
                                     .font(.cavnarBody(13))
@@ -259,7 +376,7 @@ struct ReviewsListView: View {
                     // swipe: one flick published to Google with nothing in
                     // between (F3-14) — the button is the decision.
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if ReviewsListViewModel.canQuickApprove(review) {
+                        if !isSelecting && ReviewsListViewModel.canQuickApprove(review) {
                             Button {
                                 quickApprove(review)
                             } label: {
@@ -298,6 +415,16 @@ struct ReviewsListView: View {
         .overlay {
             if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingOrb() }
         }
+        .environment(\.editMode, $editMode)
+        // Select mode's bar, where the thumb is: what the ticked reviews can
+        // become, each behind its own confirm.
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                bulkBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: isSelecting)
         .cavnarEmberRefreshable { await viewModel.reload() }
         // Each chip is answered by the server over the whole inbox, not by
         // filtering the page already on the phone.
@@ -307,6 +434,95 @@ struct ReviewsListView: View {
             guard viewModel.inboxOpened else { return }
             Task { await viewModel.reload() }
         }
+    }
+
+    /// The tick in Select mode — a filled ember circle when chosen, an empty
+    /// ring when it can be, nothing (a spacer) for an answered review.
+    @ViewBuilder
+    private func selectionMark(for review: Review) -> some View {
+        let on = viewModel.selection.contains(review.id)
+        if ReviewsListViewModel.isSelectable(review) {
+            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(on ? Color.cavnarEmber : Color.cavnarInk3)
+                .frame(width: 28)
+                .accessibilityLabel(on ? "Selected" : "Not selected")
+        } else {
+            Color.clear.frame(width: 28, height: 22)
+        }
+    }
+
+    static func bulkApproveMessage(held: Int) -> String {
+        "Each goes out as written."
+            + (held > 0 ? " The other \(held) stay for you to read one at a time \u{2014} a flagged or urgent reply, or one already decided, is approved on its own." : "")
+    }
+
+    /// "3 selected", why some can't go in bulk, then Approve N · Skip N.
+    private var bulkBar: some View {
+        let n = viewModel.selection.count
+        let ap = viewModel.bulkApprovable.count
+        let sk = viewModel.bulkSkippable.count
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HomeMixedText.make(n == 0 ? "Tap the reviews to act on" : "\(n) selected",
+                                   size: 15, weight: 700, color: .cavnarInk)
+                Spacer(minLength: 0)
+                if viewModel.isBulkWorking {
+                    CavnarWorkingLine(width: 60)
+                }
+            }
+            if n > 0 {
+                HomeMixedText.make(viewModel.bulkHeld > 0
+                                   ? "\(viewModel.bulkHeld) \(viewModel.bulkHeld == 1 ? "isn\u{2019}t" : "aren\u{2019}t") ready to post in bulk \u{2014} read \(viewModel.bulkHeld == 1 ? "it" : "them") one at a time."
+                                   : "Every selected reply is ready to post.",
+                                   size: 13, weight: 500, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    Haptic.light()
+                    confirmingBulkApprove = true
+                } label: {
+                    HomeMixedText.make("Approve \(ap)", size: 15, weight: 700, color: .white, numberColor: .white)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: ap == 0 || viewModel.isBulkWorking))
+                .disabled(ap == 0 || viewModel.isBulkWorking)
+                Button {
+                    Haptic.light()
+                    confirmingBulkSkip = true
+                } label: {
+                    HomeMixedText.make("Skip \(sk)", size: 15, weight: 700, color: .cavnarInk)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(sk == 0 || viewModel.isBulkWorking)
+                .opacity(sk == 0 ? 0.5 : 1)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(Color.cavnarPaper2.opacity(0.97))
+        .overlay(alignment: .top) { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+    }
+
+    /// "Publish 4 ready" — every reply one bulk publish may post, behind
+    /// Home's own confirm card (the replies in their own words).
+    private func publishReadyPill(_ ready: Int) -> some View {
+        Button {
+            Haptic.light()
+            showingPublishReady = true
+        } label: {
+            HomeMixedText.make("Publish \(ready) ready", size: 13.5, weight: 700, color: .cavnarEmber2,
+                               numberWeight: 700, numberColor: .cavnarEmber2)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 44)
+                .background(Color.cavnarPaper2.opacity(0.85), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Shows the replies before anything is posted")
     }
 
     private var inboxFilters: some View {
@@ -417,8 +633,11 @@ struct ReviewsListView: View {
                 rowError = (review.id, "Read this one first: it \(detail.flagReason ?? ReviewDetailViewModel.defaultFlagReason). Open it to post.")
             } else if let status = detail.finalStatus, detail.postFailure != nil {
                 // Approved but the post failed: the row says so, and the
-                // detail screen has the retry.
-                viewModel.markCompleted(reviewID: review.id, status: status)
+                // detail screen has the retry. Only a Google refusal is a
+                // failed post; not connected yet is "will post once
+                // connected" (the server's post_failed rule).
+                viewModel.markCompleted(reviewID: review.id,
+                                        status: detail.postFailedOnGoogle ? "approved-failed" : status)
                 rowError = (review.id, detail.postFailure ?? "Approved, but it didn't post — open it to retry.")
             } else {
                 rowError = (review.id, detail.errorMessage ?? "Couldn't approve — open it to try again.")
@@ -429,6 +648,10 @@ struct ReviewsListView: View {
 
 struct ReviewRow: View {
     let review: Review
+    /// Off in Select mode, where a tap ticks the row instead of opening it.
+    var showsChevron: Bool = true
+    /// The severity chip's reason, shown on tap (models.severity_reason).
+    @State private var showingSeverityReason = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -439,37 +662,38 @@ struct ReviewRow: View {
                         Text(review.author ?? "Anonymous")
                             .font(.cavnarBody(14.5, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
-                        StatusPill(status: review.responseStatus)
                         if let date = review.formattedDate {
                             Text(date)
                                 .font(.cavnarNumber(14.5))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
-                        if review.isUrgent {
+                        // Urgent only while it waits on someone: an
+                        // answered review is not urgent (the web card's
+                        // `r.urgent and not _handled`, the server's rule).
+                        if review.isUrgent && !review.isHandled {
                             Image(systemName: "exclamationmark.circle.fill")
                                 .foregroundStyle(Color.cavnarRed)
                                 .font(.system(size: 12))
                         }
                         // The severity tier, for the two tiers an owner must
-                        // not scroll past. The urgency dot above answers
-                        // "should this have woken me up?"; this answers "what
-                        // kind of problem is it?", which is what orders a
-                        // dozen open complaints on a Tuesday morning.
+                        // not scroll past. A tap says why — this review's
+                        // own complaint, then what the tier means — the
+                        // web chip's hover (severity_reason).
                         if review.isHighSeverity, let label = review.severityLabel {
-                            Text(label)
-                                .font(.cavnarBody(10, weight: 700))
-                                .tracking(0.6)
-                                .textCase(.uppercase)
-                                .foregroundStyle(review.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber)
-                                .padding(.horizontal, 7).padding(.vertical, 2)
-                                .background((review.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber).opacity(0.13),
-                                            in: Capsule())
+                            severityChip(label)
                         }
+                    }
+                    // The handled state in the web card's words and tones
+                    // (Live on Google, Replied on Google, Couldn't post to
+                    // Google, Approved · not on Google yet, Skipped · no
+                    // reply sent). Nothing while it still waits.
+                    if let pill = review.statusPill {
+                        StatusPill(label: pill.label, tone: pill.tone)
                     }
                     Text(review.text ?? "")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
-                        .lineLimit(2)
+                        .lineLimit(review.isHandled ? 3 : 4)
                     // Cavnar's one-line read, which the analyser has written
                     // on every review since the product existed and which
                     // nothing on either platform ever showed.
@@ -496,24 +720,59 @@ struct ReviewRow: View {
             // sits in its own outer HStack(alignment: .center) so it stays
             // vertically centered regardless of how tall the top-aligned
             // content beside it grows.
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.cavnarInk3)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
         }
         .padding(.vertical, 4)
+        // Handled reviews sit back (owner, 10/6/26: "replied ones look the
+        // same as the ones not replied to") — the web card's 0.6.
+        .opacity(review.isHandled ? 0.6 : 1)
         // One element with a sentence, rather than six unlabelled pieces.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityHint("Opens the review and its reply")
     }
 
+    private func severityChip(_ label: String) -> some View {
+        let tone = review.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber
+        return Button {
+            Haptic.selection()
+            showingSeverityReason = true
+        } label: {
+            Text(label)
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(0.6)
+                .textCase(.uppercase)
+                .foregroundStyle(tone)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(tone.opacity(0.13), in: Capsule())
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(review.severityReason == nil)
+        .popover(isPresented: $showingSeverityReason) {
+            Text(review.severityReason ?? label)
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 280, alignment: .leading)
+                .padding(14)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
     private var accessibilitySummary: String {
         var parts: [String] = []
         parts.append("\(review.rating ?? 0) star review")
         parts.append("by \(review.author ?? "Anonymous")")
-        if review.isUrgent { parts.append("urgent") }
-        if review.isHighSeverity, let label = review.severityLabel { parts.append(label) }
-        parts.append(StatusPill.spokenStatus(review.responseStatus))
+        if review.isUrgent && !review.isHandled { parts.append("urgent") }
+        if review.isHighSeverity, let label = review.severityLabel {
+            parts.append(review.severityReason ?? label)
+        }
+        parts.append(review.statusPill?.label ?? StatusPill.spokenStatus(review.responseStatus))
         if !review.isAnalysed { parts.append("analysis pending") }
         if let complaint = review.specificComplaint, !complaint.isEmpty { parts.append(complaint) }
         if let date = review.formattedDate { parts.append(date) }
@@ -561,32 +820,49 @@ struct StarRatingView: View {
     }
 }
 
+/// A review's handled state, as the web card draws it (`.rv2-state`,
+/// 10/6/26 — 6de5a675): small uppercase words in the state's own colour
+/// inside a hairline capsule of the same colour. good = live or replied,
+/// warn = approved but not on the platform yet, bad = couldn't post, mute
+/// (ink3) = skipped. A review still waiting carries no pill (Review.statusPill).
 struct StatusPill: View {
-    let status: String
+    let label: String
+    let tone: CavnarTone
+
+    init(label: String, tone: CavnarTone) {
+        self.label = label
+        self.tone = tone
+    }
+
+    /// The pill for a review as it stands, or nothing while it waits.
+    init?(review: Review) {
+        guard let pill = review.statusPill else { return nil }
+        self.init(label: pill.label, tone: pill.tone)
+    }
 
     var body: some View {
         Text(label)
-            .font(.cavnarBody(13.5, weight: 700))
-            .tracking(0.4)
+            .font(.cavnarBody(10.5, weight: 700))
+            .tracking(0.8)
             .textCase(.uppercase)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(background)
-            .foregroundStyle(foreground)
-            .clipShape(Capsule())
+            .lineLimit(1)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
+            .foregroundStyle(color)
+            .overlay(Capsule().strokeBorder(color, lineWidth: 1))
     }
 
-    private var label: String {
-        switch status {
-        case "posted": return "Live"
-        case "approved": return "Approved"
-        case "drafted": return "Pending"
-        case "skipped": return "Skipped"
-        default: return "New"
+    /// The web's tones: --hb-good, --hb-warn, --hb-bad and --ink3.
+    private var color: Color {
+        switch tone {
+        case .good: return .cavnarGreen
+        case .warning: return .cavnarAmber
+        case .bad: return .cavnarRed
+        case .neutral: return .cavnarInk3
         }
     }
 
-    /// Spoken form for VoiceOver — "Live" alone doesn't say live where.
+    /// Spoken form for VoiceOver when a review carries no pill.
     static func spokenStatus(_ status: String) -> String {
         switch status {
         case "posted": return "live on the platform"
@@ -594,30 +870,6 @@ struct StatusPill: View {
         case "drafted": return "reply drafted, waiting for you"
         case "skipped": return "skipped"
         default: return "no reply yet"
-        }
-    }
-
-    // Blue = live on the platform, green = approved. This was the other way
-    // round here while the web used blue for posted and green for approved,
-    // so the same two states were shown in each other's colours depending
-    // on which screen the owner happened to be looking at.
-    private var background: Color {
-        switch status {
-        case "posted": return .cavnarBlueBg
-        case "approved": return .cavnarGreenBg
-        case "drafted": return .cavnarAmberBg
-        case "skipped": return .cavnarPaper3
-        default: return .cavnarEmber.opacity(0.1)
-        }
-    }
-
-    private var foreground: Color {
-        switch status {
-        case "posted": return .cavnarBlue
-        case "approved": return .cavnarGreen
-        case "drafted": return .cavnarAmber
-        case "skipped": return .cavnarInk3
-        default: return .cavnarEmber
         }
     }
 }
