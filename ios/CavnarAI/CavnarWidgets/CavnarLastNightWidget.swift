@@ -9,9 +9,11 @@ import WidgetKit
 /// calls the API. Tapping it opens that night's report.
 struct CavnarLastNightWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: WidgetSnapshot.lastNightWidgetKind, provider: WaitingProvider()) { entry in
+        AppIntentConfiguration(kind: WidgetSnapshot.lastNightWidgetKind, intent: CavnarLocationWidgetIntent.self,
+                               provider: WaitingProvider()) { entry in
             LastNightWidgetView(entry: entry)
-                .containerBackground(for: .widget) { Color.cavnarPaper }
+                .cavnarForcedDark()
+                .containerBackground(for: .widget) { Color.cavnarPaper.cavnarForcedDark() }
         }
         .configurationDisplayName("Last night")
         .description("Last night's net sales against last week and budget.")
@@ -48,7 +50,7 @@ struct LastNightWidgetView: View {
     @ViewBuilder
     private var small: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let name = entry.snapshot?.restaurantName {
+            if let name = entry.locationName ?? entry.snapshot?.restaurantName {
                 Text(name.uppercased())
                     .font(.cavnarBody(10, weight: 700))
                     .tracking(1.2)
@@ -88,8 +90,10 @@ struct LastNightWidgetView: View {
                 }
             } else {
                 Spacer(minLength: 0)
-                Text(entry.snapshot == nil ? "Sign in to Cavnar AI to see last night."
-                                           : "No report for last night yet.")
+                Text(entry.snapshot == nil
+                     ? (entry.locationName.map { "Open \($0) in Cavnar AI to load it here." }
+                        ?? "Sign in to Cavnar AI to see last night.")
+                     : "No report for last night yet.")
                     .font(.cavnarBody(13))
                     .foregroundStyle(Color.cavnarInk2)
                 Spacer(minLength: 0)
