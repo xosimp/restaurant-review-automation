@@ -2544,6 +2544,15 @@ window.cavNav = cavNav; window.cavNavRegister = cavNavRegister; window.cavNavPar
     if (!d || !d.open || !d._cavUserOpen || Date.now() - d._cavUserOpen > 1500) return;
     d._cavUserOpen = 0;
     setTimeout(function () {
+      // Inside the Studio the scroller is its own .ss-main: scrolling the
+      // window there moved the dashboard behind the docked Studio and its
+      // Home showed through above the step bar (owner, 10/8/26).
+      var sc = d.closest && d.closest('.ss') ? d.closest('.ss').querySelector('.ss-main') : null;
+      if (sc) {
+        var to = sc.scrollTop + d.getBoundingClientRect().top - sc.getBoundingClientRect().top - 12;
+        try { sc.scrollTo({top: to, behavior: 'smooth'}); } catch (x) { sc.scrollTop = to; }
+        return;
+      }
       var chrome = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cav-chrome'), 10) || 110;
       var top = d.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop) - chrome - 12;
       try { window.scrollTo({top: top, behavior: 'smooth'}); } catch (x) { window.scrollTo(0, top); }
@@ -25933,6 +25942,9 @@ window.addEventListener('resize', function () {
   ssDock();
   var t = document.getElementById('tab-schedule'); if (t && window._moveTabIndicator) _moveTabIndicator(t);
 });
+// The page under the Studio can still be scrolled by code; wherever the tab
+// bar ends up, the Studio meets it, so the dashboard never shows between.
+window.addEventListener('scroll', function () { if (window._ssOpen) ssDock(); }, {passive: true});
 // Back and Forward cross the Studio's address; the dashboard's one router
 // (cavRoute) asks this first, so there is still one popstate owner.
 function studioOnRoute() {
