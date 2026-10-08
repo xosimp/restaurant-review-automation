@@ -1515,14 +1515,22 @@ weeks — waste-logging regularity (F3), days between counts, comps and
 voids), marketing (posts) and the management loop (recommendations taken,
 accepted changes made, measured improvement rate, data completeness ×
 Data Health). A dimension below its minimum data is None with what it needs
-("needs 28 days of sales in the last 8 weeks (has 9 …)"), never 0. No
-"personality" labels: a profile is measured figures. `GET /api/dna` +
+("needs 28 days of sales in the last 8 weeks (has 9 …)"), never 0. A
+profile is measured figures; since 10/8/26 (owner's call) `dna_story`
+names TRAITS from them — each earned by a measured figure against a rule
+stated beside it ("Weekend Driven": 55% or more of sales Friday to
+Sunday), never from an unmeasured dimension, never by a model; the shape
+scores axes 0–100 with 50 the stated benchmark (`anchor`), never another
+restaurant's figure; connections read measured figures side by side, the
+measured elasticity the only arithmetic claim. `GET /api/dna` +
 `/mobile/api/dna` return `dna.profile` — label, value, display text,
 trend against 4 weeks ago, basis, needs, and (10/7/26) `history`, the
 restaurant's own last `HISTORY_WEEKS` (12) stored weeks of a measured
-numeric dimension — projected by module view permissions. Web Home's
-Results and the iOS Restaurant DNA sheet draw it, one chart per
-dimension; nothing in it is another restaurant's.
+numeric dimension — projected by module view permissions — and `story`
+(`intelligence.dna_story`: headline, identity, traits, learning with real
+progress, axes, connections, observed). Web Home's DNA card (under Before
+service) opens the full page at `/dna`; iOS's Home card opens the DNA
+screen. Nothing in it is another restaurant's.
 
 **Similarity.** `dna.distance(a, b)` = sqrt(Σ w·δ·(z_a − z_b)² ÷ Σ w·δ)
 over the dimensions both measured; a categorical mismatch counts as a

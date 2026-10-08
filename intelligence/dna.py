@@ -23,8 +23,10 @@ The rules this module never bends:
     Every stored row passes privacy.assert_anonymous (keys and values).
   * A dimension below its minimum data is None — never 0 — and carries what
     it needs ("needs 28 sales days, has 9").
-  * No "personality" labels ("a steady-demand powerhouse"): a profile is a
-    list of measured figures, never a type the model or the code names.
+  * A profile is measured figures. A trait name ("Weekend Driven") is only
+    ever EARNED by a measured figure against a rule stated beside it
+    (intelligence.dna_story, owner 10/8/26 — this replaced "no labels");
+    never a type the model invents, never from an unmeasured dimension.
   * Normalisation is stated: below MIN_ROBUST_N restaurants measuring a
     dimension, z = (raw − centre) ÷ scale against the stated ANCHORS; from
     MIN_ROBUST_N up, the robust z (raw − median) ÷ (1.4826 × MAD) over the
@@ -1291,7 +1293,7 @@ def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
     unmeasured one what would measure it. `modules` (a set of permission-
     module keys, or None for no restriction) leaves out the dimensions of a
     module this login can't view. Never another restaurant's figure, never
-    a z-score, never a personality label."""
+    a z-score, never a trait (dna_story names those, from these figures)."""
     row = latest(restaurant_id, db_path=db_path)
     if not row:
         return {"available": False, "why_not": "Your profile builds with the nightly pass — check back tomorrow.",
@@ -1357,4 +1359,18 @@ def payload_for(user, db_path=DB_PATH) -> dict:
     if not rid:
         return {"ok": False, "error": "No restaurant on this login."}
     from .engine import _visible_modules
-    return {"ok": True, "profile": profile(rid, db_path=db_path, modules=_visible_modules(user))}
+    p = profile(rid, db_path=db_path, modules=_visible_modules(user))
+    # The told DNA (intelligence.dna_story, owner 10/8/26): earned traits,
+    # the shape, the connections and what is still learning — read from
+    # this same projected profile, so a login never sees a trait from a
+    # module it can't view.
+    told = {}
+    try:
+        from . import dna_story
+        from models import get_restaurant
+        r = get_restaurant(rid) if db_path == DB_PATH else get_restaurant(rid, db_path=db_path)
+        told = dna_story.story(rid, p, name=getattr(r, "name", None), db_path=db_path)
+    except Exception as e:                       # the profile still answers
+        import logging
+        logging.getLogger(__name__).warning("dna story unavailable rid=%s: %s", rid, e)
+    return {"ok": True, "profile": p, "story": told}

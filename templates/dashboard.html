@@ -2512,6 +2512,7 @@ function cavNav(path, opts) {
    can fire for one step; the second finds the address already routed. */
 function cavRoute() {
   if (window.studioOnRoute) studioOnRoute();
+  if (window.dnaOnRoute) dnaOnRoute();
   var h = window.location.hash || '';
   if (h === _cavHist.routed) return;
   _cavHist.routed = h;
@@ -3515,19 +3516,232 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-goal .bar{height:6px;border-radius:999px;background:var(--hb-line2);margin-top:8px;overflow:hidden}
 .hb-goal .bar i{display:block;height:100%;border-radius:999px;background:var(--ember);width:0;transition:width .9s cubic-bezier(.2,.9,.3,1)}
 .hb-goal.good .bar i{background:var(--hb-good)}.hb-goal.critical .bar i{background:var(--hb-bad)}
-/* Restaurant DNA in Results (parity audit #98): one row per dimension -
-   the figure, the weeks behind it as a sparkline, the move against four
-   weeks ago, how it was measured or what would measure it. */
-.hb-dna-fam{margin-top:18px}
-.hb-dna-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 14px;padding:11px 0;border-top:1px solid var(--hb-line2)}
-.hb-dna-fam .hb-h3+.hb-dna-row{border-top:none}
-.hb-dna-row .l{font-size:15px;font-weight:600;color:var(--ink);line-height:1.4;min-width:0}
-.hb-dna-row .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink);text-align:right;white-space:nowrap}
-.hb-dna-row .v.none{color:var(--ink3)}
-.hb-dna-row .s{grid-column:1/-1;font-size:13px;color:var(--ink3);line-height:1.45}
-.hb-dna-row .s.good{color:var(--hb-good)}.hb-dna-row .s.bad{color:var(--hb-bad)}
-.hb-dna-row svg{grid-column:1/-1;width:100%;height:44px;display:block;overflow:visible}
-.hb-dna-row .ends{grid-column:1/-1;display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink3)}
+/* ── Restaurant DNA (owner, 10/8/26; DESIGN_SYSTEM.md -> Restaurant DNA) ──
+   The restaurant's personality, revealed: a Home card under Before service
+   that opens a full-screen page at /dna (over the dashboard, like the
+   Studio's own address). Earned traits, the shape, what moves together,
+   what is still learning, then every measurement. Ember is the measured,
+   amber a watch, dashed the still-learning. dn- is the prefix. */
+body.dn-open{overflow:hidden}
+body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
+.dn{position:fixed;inset:0;z-index:980;display:flex;flex-direction:column;color:var(--ink);background-color:var(--paper);background-image:radial-gradient(1200px 560px at 78% -200px,rgba(212,88,58,.24),transparent 70%),radial-gradient(900px 600px at -12% 38%,rgba(232,149,106,.06),transparent 70%)}
+.dn[hidden]{display:none}
+.dn-bar{flex:0 0 60px;display:flex;align-items:center;gap:14px;padding:0 20px;border-bottom:1px solid var(--hb-line2);background:rgba(20,17,15,.55);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);position:relative;z-index:2}
+.dn-bar-t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:17px;color:var(--ink)}
+.dn-bar-r{margin-left:auto;font-size:13px;color:var(--ink3)}
+.dn-scroll{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.dn-wrap{max-width:1140px;margin:0 auto;padding:46px 28px 120px}
+.dn-sec{margin-top:84px}
+.dn-k{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
+.dn-h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:32px;line-height:1.14;letter-spacing:-.01em;margin:10px 0 8px;color:var(--ink);text-wrap:balance}
+.dn-sub{font-size:15.5px;color:var(--ink2);max-width:66ch;line-height:1.55;margin:0}
+.dn-rv{opacity:0;transform:translateY(14px);transition:opacity .7s cubic-bezier(.2,.8,.2,1),transform .7s cubic-bezier(.2,.8,.2,1)}
+.dn-rv.in{opacity:1;transform:none}
+/* hero: the read, the traits it earned, how long it has watched; the strand */
+.dn-hero{display:grid;grid-template-columns:minmax(0,1.38fr) minmax(0,.92fr);gap:44px;align-items:center}
+.dn-read{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(28px,3.4vw,46px);line-height:1.12;letter-spacing:-.012em;margin:16px 0 24px;color:var(--ink);text-wrap:pretty}
+.dn-read .w{display:inline-block;opacity:0;transform:translateY(9px);filter:blur(5px);animation:dnWord .75s cubic-bezier(.2,.8,.2,1) forwards}
+.dn em{font-style:normal;font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
+.dn-read em,.dn-home h3 em{font-style:normal;font-family:inherit;font-weight:inherit;color:var(--ember2)}
+@keyframes dnWord{to{opacity:1;transform:none;filter:none}}
+.dn-read2{font-size:18px;line-height:1.6;color:var(--ink2);margin:-6px 0 18px;max-width:58ch;animation-delay:.5s}
+.dn-read2 em{font-style:normal;font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
+.dn-read2 .wt{color:var(--amber);font-weight:700}
+.dn-lede{font-size:15px;color:var(--ink3);margin-top:-8px;margin-bottom:20px;line-height:1.5}
+.dn-chips{display:flex;flex-wrap:wrap;gap:8px}
+.dn-chip{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:999px;font-size:13.5px;font-weight:600;border:1px solid var(--hb-line);color:var(--ink2);background:rgba(255,255,255,.03);white-space:nowrap}
+.dn-chip svg{width:14px;height:14px;flex:none}
+.dn-chip.t{border-color:rgba(212,88,58,.45);color:var(--ink);background:linear-gradient(180deg,rgba(212,88,58,.18),rgba(212,88,58,.06));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 22px -12px rgba(212,88,58,.7)}
+.dn-chip.t svg{color:var(--ember2)}
+.dn-chip.watch{border-color:rgba(212,160,48,.45);background:rgba(212,160,48,.09);box-shadow:none}
+.dn-chip.watch svg{color:var(--amber)}
+.dn-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:32px}
+.dn-stat{padding:15px 16px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid var(--hb-line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.dn-stat b{display:block;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:29px;line-height:1.05;color:var(--ink);font-variant-numeric:tabular-nums}
+.dn-stat span{display:block;font-size:12.5px;color:var(--ink3);line-height:1.35;margin-top:4px}
+.dn-helix-box{position:relative;height:440px;border-radius:30px;background:radial-gradient(closest-side,rgba(212,88,58,.15),transparent),linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));border:1px solid var(--hb-line2);box-shadow:0 40px 90px -50px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden}
+.dn-helix-box canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+.dn-helix-cap{position:absolute;left:20px;right:20px;bottom:15px;display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink3);pointer-events:none}
+.dn-helix-cap i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:0;background:var(--ember);box-shadow:0 0 8px rgba(212,88,58,.8)}
+.dn-helix-cap i.off{background:transparent;box-shadow:none;border:1px dashed var(--ink3)}
+.dn-tip{position:absolute;pointer-events:none;max-width:230px;padding:9px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--hb-line);font-size:12.5px;line-height:1.4;color:var(--ink2);box-shadow:0 14px 34px -12px rgba(0,0,0,.8);opacity:0;transition:opacity .15s ease;z-index:3}
+.dn-tip b{display:block;color:var(--ink);font-size:13px;margin-bottom:2px}
+.dn-tip em{font-style:normal;font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ember2)}
+/* the shape */
+.dn-shape{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:40px;align-items:center;margin-top:28px}
+.dn-radar{display:block;width:100%;max-width:500px;justify-self:center;overflow:visible}
+.dn-radar .grid{fill:none;stroke:var(--hb-line2);stroke-width:1}
+.dn-radar .spoke{stroke:var(--hb-line2);stroke-width:1}
+.dn-radar .spoke.learn{stroke-dasharray:3 5}
+.dn-radar .typ{fill:none;stroke:var(--ember2);stroke-opacity:.55;stroke-dasharray:4 6;stroke-width:1.2}
+.dn-radar .shape{transform-box:view-box;transform-origin:50% 50%;transform:scale(.15);opacity:0;transition:transform 1.3s cubic-bezier(.2,.8,.2,1),opacity .7s ease}
+.dn-radar.in .shape,.dn-home .dn-radar .shape{transform:none;opacity:1}
+.dn-radar .poly{stroke:var(--ember);stroke-width:2;stroke-linejoin:round}
+.dn-radar .dot{fill:var(--ember2);stroke:var(--paper);stroke-width:2}
+.dn-radar .hole{fill:var(--paper);stroke:var(--ink3);stroke-dasharray:2 3}
+.dn-radar text{fill:var(--ink2);font-size:12px;font-family:'Apfel Grotezk',sans-serif}
+.dn-radar text.sc{fill:var(--ink);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:13px}
+.dn-radar text.learn{fill:var(--ink3)}
+.dn-radar text.ty{fill:var(--ember2);font-size:10.5px;letter-spacing:.08em}
+.dn-axes{display:grid}
+.dn-ax{display:grid;grid-template-columns:minmax(120px,170px) minmax(0,1fr) 44px;gap:14px;align-items:center;padding:10px 12px;border-radius:12px;transition:background .2s}
+.dn-ax+.dn-ax{border-top:1px solid var(--hb-line2)}
+.dn-ax:hover,.dn-ax.hl{background:rgba(212,88,58,.07)}
+.dn-ax .n{font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.3}
+.dn-ax .n small{display:block;font-size:11.5px;font-weight:500;color:var(--ink3);margin-top:1px}
+.dn-ax .bar{position:relative;height:8px;border-radius:999px;background:rgba(255,255,255,.06)}
+.dn-ax .bar i{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:999px;background:linear-gradient(90deg,var(--ember),var(--ember2));box-shadow:0 0 12px rgba(212,88,58,.45);transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
+.dn-ax .bar u{position:absolute;left:50%;top:-4px;bottom:-4px;width:1px;background:var(--ink3);opacity:.55}
+.dn-ax .s{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;text-align:right;color:var(--ink);font-variant-numeric:tabular-nums}
+.dn-ax.learn .n,.dn-ax.learn .s{color:var(--ink3)}
+.dn-ax.learn .bar{background:repeating-linear-gradient(90deg,rgba(255,255,255,.07) 0 6px,transparent 6px 11px)}
+.dn-key{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;font-size:12px;color:var(--ink3)}
+/* traits */
+.dn-traits{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:28px}
+.dn-tr{position:relative;border-radius:24px;padding:22px 22px 18px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.015));border:1px solid var(--hb-line2);box-shadow:0 30px 70px -48px rgba(0,0,0,.95),inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden;transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s,opacity .7s cubic-bezier(.2,.8,.2,1)}
+.dn-tr::before{content:'';position:absolute;top:-90px;right:-70px;width:240px;height:240px;border-radius:50%;background:radial-gradient(closest-side,rgba(212,88,58,.2),transparent);pointer-events:none;transition:transform .5s}
+.dn-tr:hover{transform:translateY(-3px);border-color:rgba(212,88,58,.38);box-shadow:0 34px 80px -40px rgba(212,88,58,.38),inset 0 1px 0 rgba(255,255,255,.08)}
+.dn-tr:hover::before{transform:scale(1.15)}
+.dn-tr.watch::before{background:radial-gradient(closest-side,rgba(212,160,48,.18),transparent)}
+.dn-tr.watch:hover{border-color:rgba(212,160,48,.4);box-shadow:0 34px 80px -40px rgba(212,160,48,.3)}
+.dn-tr.big{grid-column:span 2}
+.dn-tr .top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.dn-tr .ic{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;color:var(--ember2);background:rgba(212,88,58,.14);box-shadow:inset 0 0 0 1px rgba(212,88,58,.28),0 0 24px -6px rgba(212,88,58,.5)}
+.dn-tr .ic svg{width:21px;height:21px}
+.dn-tr.watch .ic{color:var(--amber);background:rgba(212,160,48,.12);box-shadow:inset 0 0 0 1px rgba(212,160,48,.3)}
+.dn-tr .tag{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.dn-tr.watch .tag{color:var(--amber)}
+.dn-tr .nm{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink);margin-top:16px;line-height:1.2}
+.dn-tr .fig{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:42px;letter-spacing:-.02em;line-height:1;color:var(--ink);margin-top:8px;font-variant-numeric:tabular-nums}
+.dn-tr.big .fig{font-size:58px}
+.dn-tr .fl{font-size:13px;color:var(--ink3);margin-top:5px}
+.dn-tr .viz{margin-top:18px}
+.dn-tr .sen{font-size:14.5px;color:var(--ink2);line-height:1.55;margin-top:16px}
+.dn-tr.big .sen{font-size:16px;max-width:60ch}
+.dn-meter{display:flex;align-items:center;gap:10px;margin-top:16px;font-size:12px;color:var(--ink3)}
+.dn-meter .bar{flex:1;height:4px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden}
+.dn-meter .bar i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--ember),var(--ember2));transition:width 1.3s cubic-bezier(.2,.8,.2,1)}
+.dn-tr.watch .dn-meter .bar i{background:var(--amber)}
+.dn-meter b{font-family:'Space Grotesk',sans-serif;color:var(--ink2);font-weight:600}
+.dn-why{margin-top:14px;border-top:1px solid var(--hb-line2);padding-top:10px}
+.dn-why>summary{list-style:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--ember2);display:inline-flex;align-items:center;gap:6px}
+.dn-why>summary::-webkit-details-marker{display:none}
+.dn-why>summary:after{content:'';width:6px;height:6px;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;transform:rotate(45deg);margin-top:-3px;transition:transform .2s}
+.dn-why[open]>summary:after{transform:rotate(225deg);margin-top:3px}
+.dn-why>summary:focus-visible,.dn-fam>summary:focus-visible{outline:2px solid var(--ember2);outline-offset:3px;border-radius:6px}
+.dn-why .rule{font-size:12.5px;color:var(--ink3);margin:10px 0 4px}
+.dn-ev{padding:10px 0;border-top:1px solid var(--hb-line2);font-size:13px;color:var(--ink2);line-height:1.45}
+.dn-ev:first-of-type{border-top:none}
+.dn-ev .h{display:flex;justify-content:space-between;gap:10px;color:var(--ink);font-weight:600}
+.dn-ev .h b{font-family:'Space Grotesk',sans-serif}
+.dn-ev .m{font-size:12px;color:var(--ink3);margin-top:2px}
+.dn-ev svg{display:block;width:100%;height:34px;margin-top:6px;overflow:visible}
+/* the small charts inside a trait */
+.dn-split{display:flex;height:34px;border-radius:10px;overflow:hidden;position:relative;background:rgba(255,255,255,.05)}
+.dn-split .a{background:rgba(255,255,255,.07);display:flex;align-items:center;padding:0 10px;font-size:12px;color:var(--ink2);white-space:nowrap;min-width:0;transition:flex-basis 1.2s cubic-bezier(.2,.8,.2,1)}
+.dn-split .b{background:linear-gradient(90deg,var(--ember),var(--ember2));display:flex;align-items:center;justify-content:flex-end;padding:0 10px;font-size:12px;font-weight:700;color:var(--paper);white-space:nowrap;min-width:0;transition:flex-basis 1.2s cubic-bezier(.2,.8,.2,1)}
+.dn-split u{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.5}
+.dn-cap{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--ink3);margin-top:6px}
+.dn-g .tr{position:relative;height:10px;border-radius:999px;background:rgba(255,255,255,.07)}
+.dn-g .tr i{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:999px;background:linear-gradient(90deg,var(--ember),var(--ember2));transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
+.dn-g.watch .tr i{background:linear-gradient(90deg,rgba(212,160,48,.6),var(--amber))}
+.dn-g .tr u{position:absolute;top:-5px;bottom:-5px;width:2px;border-radius:2px;background:var(--ink);opacity:.55}
+.dn-g+.dn-g{margin-top:12px}
+.dn-g .gl{font-size:12px;color:var(--ink2);margin-bottom:6px;display:flex;justify-content:space-between}
+.dn-g .gl b{font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+.dn-ringv{display:flex;align-items:center;gap:14px}
+.dn-ringv span{font-size:12.5px;color:var(--ink3);line-height:1.4}
+.dn-ring{flex:none;display:block;overflow:visible}
+.dn-ring .bg{fill:none;stroke:rgba(255,255,255,.08)}
+.dn-ring .arc{fill:none;stroke:var(--ember);stroke-linecap:round;transition:stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1);filter:drop-shadow(0 0 6px rgba(212,88,58,.55))}
+.dn-ring text{fill:var(--ink);font-family:'Space Grotesk',sans-serif;font-weight:600}
+.dn-ring text.s{fill:var(--ink3);font-family:'Apfel Grotezk',sans-serif;font-weight:500}
+.dn-stars{display:flex;gap:6px}
+.dn-stars svg{width:30px;height:30px}
+.dn-stars .e{fill:rgba(255,255,255,.08)}
+.dn-stars .f{fill:var(--ember2)}
+/* what moves together */
+.dn-chain{margin-top:18px;border-radius:26px;padding:26px 28px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.012));border:1px solid var(--hb-line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.dn-chain:first-of-type{margin-top:28px}
+.dn-chain .t{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.dn-nodes{display:flex;align-items:stretch;margin-top:16px}
+.dn-node{flex:1 1 0;min-width:0;padding:16px 18px;border-radius:18px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:0 18px 40px -30px rgba(0,0,0,.9)}
+.dn-node .l{font-size:13.5px;font-weight:600;color:var(--ink)}
+.dn-node b{display:block;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:28px;color:var(--ink);margin-top:6px;line-height:1.05}
+.dn-node b.none{color:var(--ink3);font-size:20px}
+.dn-node .nt{font-size:12px;color:var(--ink3);margin-top:3px}
+.dn-link{flex:0 0 54px;align-self:center;height:2px;position:relative;overflow:hidden;background:rgba(212,88,58,.25)}
+.dn-link:after{content:'';position:absolute;top:-1px;bottom:-1px;width:45%;left:-45%;background:linear-gradient(90deg,transparent,var(--ember2),transparent);animation:dnFlow 2.2s linear infinite}
+@keyframes dnFlow{to{left:100%}}
+.dn-chain .sen{font-size:16.5px;color:var(--ink);line-height:1.6;margin-top:18px;max-width:74ch}
+/* still learning */
+.dn-learn{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-top:28px}
+.dn-ln{display:flex;gap:14px;align-items:center;padding:16px 18px;border-radius:18px;border:1px dashed var(--hb-line);background:rgba(255,255,255,.018)}
+.dn-ln.near{border-style:solid;border-color:rgba(212,88,58,.38);background:rgba(212,88,58,.05)}
+.dn-ln .ic{flex:none;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:var(--ink3);border:1px dashed var(--hb-line)}
+.dn-ln .ic svg{width:19px;height:19px}
+.dn-ln .nm{font-size:15px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dn-ln .nm span{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember2)}
+.dn-ln .t{font-size:12.5px;color:var(--ink3);line-height:1.45;margin-top:3px}
+/* every measurement */
+.dn-fams{display:grid;gap:10px;margin-top:28px}
+.dn-fam{border-radius:20px;border:1px solid var(--hb-line2);background:rgba(255,255,255,.025);overflow:hidden}
+.dn-fam>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:14px;padding:17px 20px}
+.dn-fam>summary::-webkit-details-marker{display:none}
+.dn-fam>summary .nm{font-size:16px;font-weight:600;color:var(--ink)}
+.dn-fam>summary .c{font-family:'Space Grotesk',sans-serif;font-size:13px;color:var(--ink3)}
+.dn-dots{display:flex;flex-wrap:wrap;gap:5px;margin-left:auto;max-width:50%;justify-content:flex-end}
+.dn-dots i{width:7px;height:7px;border-radius:50%;border:1px dashed var(--ink3);opacity:.6}
+.dn-dots i.on{border:none;opacity:1;background:var(--ember);box-shadow:0 0 8px rgba(212,88,58,.6)}
+.dn-fam>summary:after{content:'';flex:none;width:7px;height:7px;border-right:2px solid var(--ink3);border-bottom:2px solid var(--ink3);transform:rotate(45deg);margin:-3px 4px 0 6px;transition:transform .2s}
+.dn-fam[open]>summary:after{transform:rotate(225deg);margin-top:4px}
+.dn-row{display:grid;grid-template-columns:minmax(0,1fr) 120px 96px;gap:4px 18px;align-items:center;padding:13px 20px;border-top:1px solid var(--hb-line2)}
+.dn-row .l{font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.35}
+.dn-row .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink);text-align:right;white-space:nowrap}
+.dn-row svg{width:120px;height:30px;display:block;overflow:visible}
+.dn-row .b{grid-column:1/-1;font-size:12.5px;color:var(--ink3);line-height:1.45}
+.dn-row .b.good{color:var(--hb-good)}.dn-row .b.bad{color:var(--hb-bad)}
+.dn-row.off .l,.dn-row.off .v{color:var(--ink3)}
+.dn-foot{margin-top:56px;font-size:12.5px;color:var(--ink3);line-height:1.55;max-width:80ch}
+.dn-empty{margin-top:24px;padding:28px;border-radius:22px;border:1px dashed var(--hb-line);color:var(--ink2);font-size:15px;line-height:1.55}
+/* Home: the DNA card, under Before service */
+.dn-home{display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:24px;align-items:center;margin-top:34px;padding:22px 26px;border-radius:24px;position:relative;overflow:hidden;color:var(--ink);text-decoration:none;background:linear-gradient(115deg,rgba(212,88,58,.14),rgba(255,255,255,.02) 58%);border:1px solid rgba(212,88,58,.3);box-shadow:0 30px 70px -50px rgba(212,88,58,.6),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s}
+.dn-home:before{content:'';position:absolute;left:-80px;top:-110px;width:300px;height:300px;border-radius:50%;background:radial-gradient(closest-side,rgba(212,88,58,.2),transparent);pointer-events:none}
+.dn-home:hover{transform:translateY(-2px);border-color:rgba(212,88,58,.55);box-shadow:0 36px 80px -44px rgba(212,88,58,.7),inset 0 1px 0 rgba(255,255,255,.08)}
+.dn-home:focus-visible{outline:2px solid var(--ember2);outline-offset:3px}
+.dn-home .mini{position:relative}
+.dn-home .mini .dn-radar{max-width:132px}
+.dn-home h3{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;line-height:1.28;margin:7px 0 13px;color:var(--ink);text-wrap:pretty}
+.dn-home .dn-chip{height:28px;font-size:12.5px;padding:0 11px}
+.dn-home .go{display:flex;flex-direction:column;align-items:center;gap:10px;position:relative}
+.dn-home .go .cbtn{pointer-events:none}
+.dn-fadein{animation:dnFade .8s cubic-bezier(.2,.8,.2,1) both}
+@keyframes dnFade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.dn-home.quiet{grid-template-columns:minmax(0,1fr);border-style:dashed;background:rgba(255,255,255,.02);box-shadow:none;cursor:default}
+@media (max-width:900px){
+  .dn-wrap{padding:30px 18px 90px}
+  .dn-sec{margin-top:64px}
+  .dn-hero,.dn-shape{grid-template-columns:minmax(0,1fr);gap:28px}
+  .dn-helix-box{height:300px}
+  .dn-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dn-tr.big{grid-column:auto}
+  .dn-tr.big .fig{font-size:46px}
+  .dn-nodes{flex-direction:column}
+  .dn-link{flex-basis:26px;width:2px;height:26px}
+  .dn-link:after{width:auto;height:45%;left:-1px;right:-1px;top:-45%;bottom:auto;background:linear-gradient(180deg,transparent,var(--ember2),transparent);animation-name:dnFlowY}
+  .dn-row{grid-template-columns:minmax(0,1fr) auto}
+  .dn-row svg{grid-column:1/-1;width:100%}
+  .dn-home{grid-template-columns:84px minmax(0,1fr);gap:16px;padding:18px}
+  .dn-home .go{grid-column:1/-1;flex-direction:row;justify-content:space-between}
+  .dn-h2{font-size:27px}
+}
+@keyframes dnFlowY{to{top:100%}}
+@media (prefers-reduced-motion:reduce){
+  .dn-read .w{animation:none;opacity:1;transform:none;filter:none}
+  .dn-rv,.dn-radar .shape{transition:none;opacity:1;transform:none}
+  .dn-link:after{animation:none;display:none}
+  .dn-tr,.dn-home{transition:none}
+}
 /* checklist */
 .hb-chk{display:flex;align-items:flex-start;gap:12px;padding:11px 0;border-top:1px solid var(--hb-line2)}
 .hb-chk:first-of-type{border-top:none}
@@ -5578,6 +5792,9 @@ svg:hover .hb-xh{opacity:1}
     // Progressive: the day shimmers where it will land, instead of the page
     // jumping when its reads arrive.
     h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet hb-skel-stack" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%;height:11px;min-height:11px"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
+    // Restaurant DNA (owner, 10/8/26): its own card under Before service,
+    // opening the full page at /dna - it used to sit at the foot of Results.
+    h+='<section id="hb-dna-card" aria-label="Restaurant DNA"></section>';
     h+=renderRecs(d,used&&used.rec?1:0);
     // No readiness pills under the recommendations (owner's call, 9/26/26):
     // readiness leads the page only for an account with nothing connected.
@@ -5589,14 +5806,11 @@ svg:hover .hb-xh{opacity:1}
     // each lives here (density fix #20).
     h+=renderSignals(d);
     h+='<section id="hb-follow" aria-label="Follow-through"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:34%;height:11px;margin-bottom:14px"></div><div class="hb-skel" style="width:84%"></div><div class="hb-skel" style="width:62%;margin-top:9px"></div><div class="hb-skel" style="width:71%;margin-top:9px"></div></div></section>';
-    // Restaurant DNA (parity audit #98) - read the first time Results opens.
-    h+='<section id="hb-dna" aria-label="Restaurant DNA"></section>';
     h+='</details>';
     body.innerHTML='<div class="hb-fade">'+h+'</div>';
     var rs=document.getElementById('hb-results');
-    _hbDnaLoaded=false;
-    if(rs&&rs.open)hbDnaLoad();
-    if(rs)rs.addEventListener('toggle',function(){try{localStorage.setItem('cavnar_hb_results',rs.open?'1':'0');}catch(e){}if(rs.open)hbDnaLoad();});
+    if(rs)rs.addEventListener('toggle',function(){try{localStorage.setItem('cavnar_hb_results',rs.open?'1':'0');}catch(e){}});
+    if(window.dnaHomeCard)dnaHomeCard(document.getElementById('hb-dna-card'));
     if(document.getElementById('hb-hero'))renderHero(d);
     if(window.cavBench)window.cavBench.strip(document.getElementById('hb-bench'));
     hbReveal();hbLiveStart();
@@ -5662,61 +5876,6 @@ svg:hover .hb-xh{opacity:1}
     if(pr.length){h+='<div class="hb-h3" style="margin-top:16px"><span>Worth your time next month</span></div><div class="hb-ledger">';for(var k=0;k<Math.min(pr.length,3);k++){var p=pr[k];var amt=p.is_range?('$'+num2(p.monthly_low)+'–$'+num2(p.monthly_high)+'/mo'):(p.monthly?'$'+num2(p.monthly)+'/mo':'');h+='<span>'+num(p.label+(amt?' · '+amt:''))+'</span>';}h+='</div>';}
     h+='<div class="ft" style="margin-top:14px"><button type="button" class="cbtn cbtn-text cbtn-inline" data-print="hb-month" title="Print this month, or save it as a PDF from the print dialog">Print</button><span class="hb-ft-sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(mr.ask||('Walk me through '+r.month))+'">Ask about this month →</button></div>';
     return h+'</section></div>';
-  }
-  // ── Restaurant DNA (parity audit #98) ─────────────────────────────────────
-  // The restaurant's own operating profile (GET /api/dna, intelligence/dna):
-  // each dimension's figure, its weeks as a sparkline, its move against four
-  // weeks ago and how it was measured. Below its floor a dimension is a dash
-  // with what would measure it - never 0. Own figures only: no other
-  // restaurant's number, no z-score, no personality label. Read when Results
-  // opens, not on every Home load.
-  var _hbDnaLoaded=false;
-  function hbIsoMonday(wk){
-    var m=/^(\d{4})-W(\d{1,2})$/.exec(String(wk||''));if(!m)return '';
-    var j4=new Date(Date.UTC(+m[1],0,4)),dw=j4.getUTCDay()||7;
-    var mon=new Date(j4.getTime()+(((+m[2])-1)*7-(dw-1))*86400000);
-    var mm=mon.getUTCMonth()+1,dd=mon.getUTCDate();
-    return mdy(mon.getUTCFullYear()+'-'+(mm<10?'0':'')+mm+'-'+(dd<10?'0':'')+dd);
-  }
-  function hbDnaSpark(pts,tone,label){
-    if(!pts||pts.length<2)return '';
-    var lo=Infinity,hi=-Infinity,i,v;
-    for(i=0;i<pts.length;i++){v=+pts[i].value;if(v<lo)lo=v;if(v>hi)hi=v;}
-    var pad=(hi-lo)*0.2||Math.abs(hi)*0.02||1,top=hi+pad,bot=lo-pad,xy=[];
-    for(i=0;i<pts.length;i++)xy.push((i*300/(pts.length-1)).toFixed(1)+','+(40-((+pts[i].value-bot)/(top-bot))*36).toFixed(1));
-    var c=tone==='good'?'var(--hb-good)':(tone==='bad'?'var(--hb-bad)':'var(--ember2)');
-    var last=xy[xy.length-1].split(',');
-    return '<svg viewBox="0 0 300 44" preserveAspectRatio="none" role="img" aria-label="'+esc(label+' over '+pts.length+' weeks')+'">'
-      +'<polyline fill="none" vector-effect="non-scaling-stroke" style="stroke:'+c+';stroke-width:2;stroke-linecap:round;stroke-linejoin:round" points="'+xy.join(' ')+'"/>'
-      +'<circle cx="'+last[0]+'" cy="'+last[1]+'" r="3" style="fill:'+c+'"/></svg>';
-  }
-  function renderDna(d){
-    var p=d&&d.ok?d.profile:null;if(!p)return '';
-    var h='<section class="hb-card quiet hb-rise" style="margin-top:34px" aria-label="Restaurant DNA"><div class="hb-h3"><span class="hb-kicker">Restaurant DNA</span>'
-      +(p.available&&p.of?'<span class="cnt">'+num(p.measured+' of '+p.of+' measured')+'</span>':'')+'</div>';
-    if(!p.available)return h+'<div class="hb-empty">'+esc(p.why_not||'Your profile builds with the nightly pass — check back tomorrow.')+'</div></section>';
-    h+='<div class="hb-empty" style="padding-top:0">'+num('How this restaurant runs, measured from its own data'+(p.as_of?' · as of '+p.as_of:''))+'</div>';
-    var fams=p.families||[],i,j;
-    for(i=0;i<fams.length;i++){var f=fams[i],ds=f.dimensions||[];if(!ds.length)continue;
-      h+='<div class="hb-dna-fam"><div class="hb-h3"><span>'+esc(f.label)+'</span></div>';
-      for(j=0;j<ds.length;j++){var x=ds[j],dir=(x.trend&&x.trend.direction)||'',tone='';
-        if(x.measured&&x.better&&(dir==='up'||dir==='down'))tone=((dir==='up')===(x.better==='higher'))?'good':'bad';
-        h+='<div class="hb-dna-row"><div class="l">'+esc(x.label)+'</div><div class="v'+(x.measured?'':' none')+'">'+esc(x.measured?(x.display||'—'):'—')+'</div>';
-        var hs=x.history||[];
-        if(x.measured&&hs.length>=2){h+=hbDnaSpark(hs,tone,x.label);var a=hbIsoMonday(hs[0].week),b=hbIsoMonday(hs[hs.length-1].week);
-          if(a&&b)h+='<div class="ends"><span class="hb-num">'+a+'</span><span class="hb-num">'+b+'</span></div>';}
-        if(x.measured&&dir)h+='<div class="s '+tone+'">'+num(dir==='steady'?'Steady against four weeks ago':((dir==='up'?'Up':'Down')+' from '+((x.trend&&x.trend.previous_display)||'before')+' four weeks ago'))+'</div>';
-        if(!x.measured)h+='<div class="s">'+num(x.dormant?('Not measurable on Cavnar AI yet — needs '+(x.needs||'a source')):('Needs '+(x.needs||'more data')))+'</div>';
-        else if(x.basis)h+='<div class="s">'+num(x.basis)+'</div>';
-        h+='</div>';}
-      h+='</div>';}
-    if(p.note)h+='<div class="hb-empty" style="font-size:12px">'+esc(p.note)+'</div>';
-    return h+'</section>';
-  }
-  function hbDnaLoad(){
-    var el=document.getElementById('hb-dna');if(!el||_hbDnaLoaded)return;_hbDnaLoaded=true;
-    fetch('/api/dna',{credentials:'same-origin'}).then(apiJson).then(function(d){el.innerHTML=renderDna(d);hbReveal();})
-      .catch(function(){_hbDnaLoaded=false;});
   }
   // ── comps, voids and refunds ──────────────────────────────────────────────
   // loss_detection has measured these against an 8-week baseline since it
@@ -41645,6 +41804,472 @@ function sfw2RuleCheck(chk) {
     }
     return '<div class="hb-gaps' + (hidden ? ' hb-iss-more' : '') + '" data-issue-gaps="' + (+x.id) + '"' + (hidden ? ' hidden' : '') + '>' + h + '</div>';
   };
+})();
+</script>
+<script>window._DNA_BOOT={{ 'true' if request.path == '/dna' else 'false' }};</script>
+<script>
+/* ── Restaurant DNA (owner, 10/8/26; DESIGN_SYSTEM.md -> Restaurant DNA).
+   One read of /api/dna (intelligence.dna profile + dna_story) feeds two
+   places: Home's DNA card under Before service, and the full page at /dna,
+   opened over the dashboard with its own address. Every trait shown is
+   earned by a measured figure against the rule printed with it; the
+   still-learning ones are dashed and say what would measure them. ES5. */
+(function () {
+  var DATA = null, WAIT = null, OPEN = false, FROM_DASH = false, BACK_TO = null, HELIX = null, IO = null;
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  // Figures set apart: split the RAW text on numbers, then escape each piece,
+  // so an escaped character (&#39;) is never cut by the number match.
+  function figs(t) {
+    var parts = String(t == null ? '' : t).split(/([+\-]?\d[\d,]*(?:\.\d+)?(?:%|\u2605| pts|h\b|\u00d7)?)/), out = '', k;
+    for (k = 0; k < parts.length; k++) out += (k % 2) ? '<em>' + esc(parts[k]) + '</em>' : esc(parts[k]);
+    return out;
+  }
+  function reduce() { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  function css(n, dflt) { var v = ''; try { v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); } catch (e) { } return v || dflt; }
+  function rgba(hex, a) {
+    var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+    if (!m) return hex;
+    return 'rgba(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ',' + a + ')';
+  }
+  function load(cb) {
+    if (DATA) { cb(DATA); return; }
+    if (WAIT) { WAIT.push(cb); return; }
+    WAIT = [cb];
+    fetch('/api/dna', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      DATA = (d && d.ok) ? d : null; var q = WAIT; WAIT = null;
+      for (var i = 0; i < q.length; i++) q[i](DATA);
+    }).catch(function () { var q = WAIT; WAIT = null; for (var i = 0; i < q.length; i++) q[i](null); });
+  }
+  function dimsOf(p) {
+    var out = {}, list = [], f = (p && p.families) || [], i, j;
+    for (i = 0; i < f.length; i++) for (j = 0; j < (f[i].dimensions || []).length; j++) {
+      var x = f[i].dimensions[j]; x._fam = f[i].label; out[x.key] = x; list.push(x);
+    }
+    return {map: out, list: list};
+  }
+  // ── icons: one stroke family, drawn on a 24 grid ──
+  var IC = {
+    calendar: '<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>',
+    moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+    wave: '<path d="M2 12c2.5-5 5-5 7.5 0s5 5 7.5 0c1.5-3 3.5-3 5-2"/>',
+    target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
+    leaf: '<path d="M5 19c0-8 5-14 15-14 0 10-6 15-14 15"/><path d="M5 19l7-7"/>',
+    trend_up: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+    trend_down: '<path d="M3 7l6 6 4-4 8 8"/><path d="M15 17h6v-6"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.4 3-5.2 6-5.2s5.4 1.8 6 5.2"/><path d="M16 4.8a3.2 3.2 0 0 1 0 6.4M21 19c-.4-2.4-1.7-4-3.6-4.8"/>',
+    shield: '<path d="M12 3l7 3v5.5c0 4.4-3 7.8-7 9.5-4-1.7-7-5.1-7-9.5V6z"/><path d="M9 12l2 2 4-4"/>',
+    flex: '<path d="M5 20V11M10 20V5M15 20v-8M20 20v-5"/>',
+    star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z"/>',
+    reply: '<path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 6 6v1"/>',
+    register: '<rect x="3" y="8" width="18" height="12" rx="2.5"/><path d="M7 8V4h10v4M7 13h4M7 16h7"/>',
+    spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
+    glass: '<path d="M7 3h10l-1 9a4 4 0 0 1-8 0z"/><path d="M12 16v5M8.5 21h7"/>',
+    heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>'
+  };
+  function icon(k) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (IC[k] || IC.spark) + '</svg>'; }
+  function chip(t) { return '<span class="dn-chip t' + (t.tone === 'watch' ? ' watch' : '') + '">' + icon(t.icon) + esc(t.name) + '</span>'; }
+  // ── small charts ──
+  function ring(frac, size, big, small) {
+    frac = Math.max(0, Math.min(1, +frac || 0));
+    var r = size / 2 - 5, c = 2 * Math.PI * r, w = size > 60 ? 6 : 4.5;
+    return '<svg class="dn-ring" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" aria-hidden="true">'
+      + '<circle class="bg" cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" stroke-width="' + w + '"/>'
+      + '<circle class="arc" cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" stroke-width="' + w + '" transform="rotate(-90 ' + size / 2 + ' ' + size / 2 + ')"'
+      + ' stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + c.toFixed(1) + '" data-off="' + (c * (1 - frac)).toFixed(1) + '"/>'
+      + (big ? '<text x="50%" y="' + (small ? '47%' : '53%') + '" text-anchor="middle" dominant-baseline="middle" font-size="' + Math.round(size * 0.24) + '">' + esc(big) + '</text>' : '')
+      + (small ? '<text class="s" x="50%" y="68%" text-anchor="middle" dominant-baseline="middle" font-size="' + Math.max(9, Math.round(size * 0.12)) + '">' + esc(small) + '</text>' : '')
+      + '</svg>';
+  }
+  function gauge(lo, hi, v, typ, fmt, label, watch) {
+    var pct = function (x) { return Math.max(0, Math.min(100, (x - lo) / (hi - lo) * 100)); };
+    return '<div class="dn-g' + (watch ? ' watch' : '') + '">' + (label ? '<div class="gl"><span>' + esc(label) + '</span><b>' + esc(fmt(v)) + '</b></div>' : '')
+      + '<div class="tr"><i data-w="' + pct(v).toFixed(1) + '"></i>' + (typ != null ? '<u style="left:' + pct(typ).toFixed(1) + '%"></u>' : '') + '</div>'
+      + '<div class="dn-cap"><span>' + esc(fmt(lo)) + '</span>' + (typ != null ? '<span>typical ' + esc(fmt(typ)) + '</span>' : '') + '<span>' + esc(fmt(hi)) + '</span></div></div>';
+  }
+  function pctf(x) { return Math.round(x * 100) + '%'; }
+  function split(share) {
+    var b = Math.round(share * 100), a = 100 - b;
+    return '<div class="dn-split"><div class="a" style="flex-basis:50%" data-fb="' + a + '">Mon–Thu ' + a + '%</div><div class="b" style="flex-basis:50%" data-fb="' + b + '">Fri–Sun ' + b + '%</div>'
+      + '<u style="left:55%"></u></div><div class="dn-cap"><span>Monday to Thursday</span><span>typical weekend 45%</span><span>Friday to Sunday</span></div>';
+  }
+  function stars(v) {
+    var h = '<div class="dn-stars" role="img" aria-label="' + esc(v.toFixed(2)) + ' of 5 stars">', i;
+    var P = 'M12 2.8l2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3L2.9 9.5l6.3-.9z';
+    for (i = 0; i < 5; i++) {
+      var f = Math.max(0, Math.min(1, v - i)), id = 'dnst' + i + Math.round(v * 100);
+      h += '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><clipPath id="' + id + '"><rect x="0" y="0" width="' + (24 * f).toFixed(1) + '" height="24"/></clipPath></defs>'
+        + '<path class="e" d="' + P + '"/><path class="f" clip-path="url(#' + id + ')" d="' + P + '"/></svg>';
+    }
+    return h + '</div>';
+  }
+  function spark(pts, tone, label) {
+    if (!pts || pts.length < 2) return '';
+    var lo = Infinity, hi = -Infinity, i, v, xy = [];
+    for (i = 0; i < pts.length; i++) { v = +pts[i].value; if (v < lo) lo = v; if (v > hi) hi = v; }
+    var pad = (hi - lo) * 0.25 || Math.abs(hi) * 0.03 || 1, top = hi + pad, bot = lo - pad;
+    for (i = 0; i < pts.length; i++) xy.push((i * 120 / (pts.length - 1)).toFixed(1) + ',' + (28 - ((+pts[i].value - bot) / (top - bot)) * 24).toFixed(1));
+    var c = tone === 'good' ? 'var(--hb-good)' : (tone === 'bad' ? 'var(--hb-bad)' : 'var(--ember2)'), last = xy[xy.length - 1].split(',');
+    return '<svg viewBox="0 0 120 30" preserveAspectRatio="none" role="img" aria-label="' + esc(label + ' over ' + pts.length + ' weeks') + '">'
+      + '<polyline fill="none" vector-effect="non-scaling-stroke" style="stroke:' + c + ';stroke-width:2;stroke-linecap:round;stroke-linejoin:round" points="' + xy.join(' ') + '"/>'
+      + '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.6" style="fill:' + c + '"/></svg>';
+  }
+  function toneOf(x) {
+    var dir = (x.trend && x.trend.direction) || '';
+    if (!x.measured || !x.better || (dir !== 'up' && dir !== 'down')) return '';
+    return ((dir === 'up') === (x.better === 'higher')) ? 'good' : 'bad';
+  }
+  function trendWords(x) {
+    var dir = (x.trend && x.trend.direction) || '';
+    if (!dir) return '';
+    return dir === 'steady' ? 'Steady against four weeks ago' : ((dir === 'up' ? 'Up' : 'Down') + ' from ' + ((x.trend && x.trend.previous_display) || 'before') + ' four weeks ago');
+  }
+  // ── the shape: a radar of the measured axes; still-learning ones dashed ──
+  var _rid = 0;
+  function radar(axes, size, mini) {
+    var n = axes.length; if (n < 3) return '';
+    var id = 'dnrf' + (++_rid), cx = size / 2, cy = size / 2, R = mini ? size * 0.44 : size * 0.39, i, h = '';
+    function pt(i, r) { var a = -Math.PI / 2 + i * 2 * Math.PI / n; return [cx + Math.cos(a) * r, cy + Math.sin(a) * r]; }
+    function ring_(f, cls) { var p = []; for (var k = 0; k < n; k++) { var q = pt(k, R * f); p.push(q[0].toFixed(1) + ',' + q[1].toFixed(1)); } return '<polygon class="' + cls + '" points="' + p.join(' ') + '"/>'; }
+    var pad = mini ? 4 : 64;
+    h += '<svg class="dn-radar" viewBox="' + (-pad) + ' ' + (-pad / 2) + ' ' + (size + 2 * pad) + ' ' + (size + pad) + '" role="img" aria-label="Restaurant DNA shape: ' + esc(axes.map(function (a) { return a.label + ' ' + (a.score == null ? 'still learning' : a.score); }).join(', ')) + '">'
+      + '<defs><radialGradient id="' + id + '"><stop offset="0" style="stop-color:var(--ember);stop-opacity:.55"/><stop offset="1" style="stop-color:var(--ember2);stop-opacity:.12"/></radialGradient></defs>';
+    h += ring_(1, 'grid') + ring_(0.75, 'grid') + ring_(0.25, 'grid') + ring_(0.5, 'typ');
+    for (i = 0; i < n; i++) { var e = pt(i, R); h += '<line class="spoke' + (axes[i].score == null ? ' learn' : '') + '" x1="' + cx + '" y1="' + cy + '" x2="' + e[0].toFixed(1) + '" y2="' + e[1].toFixed(1) + '"/>'; }
+    var poly = [], dots = '';
+    for (i = 0; i < n; i++) {
+      if (axes[i].score == null) continue;
+      var q = pt(i, R * Math.max(0.04, axes[i].score / 100)); poly.push(q[0].toFixed(1) + ',' + q[1].toFixed(1));
+      dots += '<circle class="dot" cx="' + q[0].toFixed(1) + '" cy="' + q[1].toFixed(1) + '" r="' + (mini ? 2.6 : 4.2) + '"/>';
+    }
+    h += '<g class="shape">' + (poly.length >= 3 ? '<polygon class="poly" style="fill:url(#' + id + ')" points="' + poly.join(' ') + '"/>' : '') + dots + '</g>';
+    for (i = 0; i < n; i++) if (axes[i].score == null) { var hq = pt(i, R * 0.5); h += '<circle class="hole" cx="' + hq[0].toFixed(1) + '" cy="' + hq[1].toFixed(1) + '" r="' + (mini ? 2 : 3.4) + '"/>'; }
+    if (!mini) {
+      for (i = 0; i < n; i++) {
+        var lp = pt(i, R + 26), ca = Math.cos(-Math.PI / 2 + i * 2 * Math.PI / n), anc = Math.abs(ca) < 0.2 ? 'middle' : (ca > 0 ? 'start' : 'end');
+        var learn = axes[i].score == null;
+        h += '<text x="' + lp[0].toFixed(1) + '" y="' + (lp[1] - 6).toFixed(1) + '" text-anchor="' + anc + '"' + (learn ? ' class="learn"' : '') + '>' + esc(axes[i].label) + '</text>'
+          + '<text class="sc' + (learn ? ' learn' : '') + '" x="' + lp[0].toFixed(1) + '" y="' + (lp[1] + 10).toFixed(1) + '" text-anchor="' + anc + '">' + (learn ? 'learning' : axes[i].score) + '</text>';
+      }
+      var tq = pt(0, R * 0.5);
+      h += '<text class="ty" x="' + (tq[0] + 6).toFixed(1) + '" y="' + (tq[1] - 4).toFixed(1) + '">TYPICAL</text>';
+    }
+    return h + '</svg>';
+  }
+  // ── the strand: every dimension a rung; lit when measured ──
+  function Helix(box, list) {
+    var cv = box.querySelector('canvas'), tip = box.querySelector('.dn-tip'), ctx = cv.getContext('2d');
+    var ember = css('--ember', '#d4583a'), ember2 = css('--ember2', '#e8956a'), ink3 = css('--ink3', '#cdbfa9');
+    var t0 = 0, raf = 0, hover = -1, alive = true, W = 0, H = 0, dpr = Math.min(2, window.devicePixelRatio || 1), still = reduce();
+    function size() { W = box.clientWidth; H = box.clientHeight; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    function geo(i, t) {
+      var n = list.length, top = 34, bot = H - 52, y = top + (n > 1 ? i * (bot - top) / (n - 1) : 0);
+      var ph = t * 0.00055 + i * 0.34, A = Math.min(W * 0.24, 96);
+      return {y: y, x1: W / 2 + A * Math.sin(ph), x2: W / 2 - A * Math.sin(ph), d: Math.cos(ph)};
+    }
+    function draw(ts) {
+      if (!alive) return;
+      if (!t0) t0 = ts || 1;
+      var t = still ? 0 : (ts - t0), grow = still ? 1 : Math.min(1, t / 1400), n = list.length, i, g;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+      var shown = Math.ceil(n * grow);
+      for (i = 0; i < shown; i++) {
+        g = geo(i, t); var on = list[i].measured, a = 0.35 + 0.45 * (g.d * 0.5 + 0.5);
+        ctx.beginPath(); ctx.moveTo(g.x1, g.y); ctx.lineTo(g.x2, g.y);
+        if (on) { var gr = ctx.createLinearGradient(g.x1, 0, g.x2, 0); gr.addColorStop(0, rgba(ember, a)); gr.addColorStop(1, rgba(ember2, a)); ctx.strokeStyle = gr; ctx.lineWidth = i === hover ? 3 : 1.6; ctx.setLineDash([]); }
+        else { ctx.strokeStyle = rgba(ink3, i === hover ? 0.5 : 0.16); ctx.lineWidth = i === hover ? 2 : 1; ctx.setLineDash([3, 4]); }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      for (var s = 0; s < 2; s++) {
+        ctx.beginPath();
+        for (i = 0; i < shown; i++) { g = geo(i, t); var x = s ? g.x2 : g.x1; if (!i) ctx.moveTo(x, g.y); else ctx.lineTo(x, g.y); }
+        ctx.strokeStyle = rgba(ember2, 0.42); ctx.lineWidth = 1.3; ctx.stroke();
+      }
+      for (i = 0; i < shown; i++) {
+        g = geo(i, t);
+        for (s = 0; s < 2; s++) {
+          var px = s ? g.x2 : g.x1, front = s ? g.d < 0 : g.d > 0, r = (front ? 3.2 : 2) + (i === hover ? 1.6 : 0);
+          ctx.beginPath(); ctx.arc(px, g.y, r, 0, Math.PI * 2);
+          if (list[i].measured) { ctx.fillStyle = front ? ember2 : rgba(ember, 0.7); ctx.shadowColor = rgba(ember, 0.9); ctx.shadowBlur = front ? 12 : 4; ctx.fill(); ctx.shadowBlur = 0; }
+          else { ctx.strokeStyle = rgba(ink3, front ? 0.5 : 0.25); ctx.lineWidth = 1; ctx.stroke(); }
+        }
+      }
+      if (!still && !document.hidden) raf = requestAnimationFrame(draw);
+    }
+    function at(ev) {
+      var r = cv.getBoundingClientRect(), y = (ev.touches ? ev.touches[0].clientY : ev.clientY) - r.top, n = list.length;
+      var top = 34, bot = H - 52, i = Math.round((y - top) / ((bot - top) / Math.max(1, n - 1)));
+      if (i < 0 || i >= n) { hover = -1; tip.style.opacity = '0'; if (still) draw(0); return; }
+      hover = i; var x = list[i], g = geo(i, still ? 0 : (performance.now() - t0));
+      tip.innerHTML = '<b>' + esc(x.label) + '</b>' + (x.measured ? '<em>' + esc(x.display || '') + '</em> · ' + esc(x._fam) : 'Still learning — needs ' + esc(x.needs || 'more data'));
+      var left = Math.max(g.x1, g.x2) + 16; if (left + 230 > W) left = Math.min(g.x1, g.x2) - 246;
+      tip.style.left = Math.max(8, left) + 'px'; tip.style.top = Math.max(8, Math.min(H - 70, g.y - 22)) + 'px'; tip.style.opacity = '1';
+      if (still) draw(0);
+    }
+    cv.addEventListener('mousemove', at); cv.addEventListener('touchstart', at, {passive: true});
+    cv.addEventListener('mouseleave', function () { hover = -1; tip.style.opacity = '0'; if (still) draw(0); });
+    var onResize = function () { size(); if (still) draw(0); };
+    window.addEventListener('resize', onResize);
+    size(); raf = requestAnimationFrame(draw);
+    return {stop: function () { alive = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); },
+            wake: function () { if (alive && !still) { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); } }};
+  }
+  // ── reveals: counts, rings, bars and the shape as each comes into view ──
+  function countUp(el) {
+    var to = parseFloat(el.getAttribute('data-count')), dec = +(el.getAttribute('data-dec') || 0), pre = el.getAttribute('data-pre') || '', suf = el.getAttribute('data-suf') || '';
+    if (isNaN(to) || reduce()) return;
+    var t0 = 0, dur = 1100;
+    function step(ts) { if (!t0) t0 = ts; var f = Math.min(1, (ts - t0) / dur), e = 1 - Math.pow(1 - f, 3); el.textContent = pre + (to * e).toFixed(dec) + suf; if (f < 1) requestAnimationFrame(step); else el.textContent = pre + to.toFixed(dec) + suf; }
+    requestAnimationFrame(step);
+  }
+  function play(el) {
+    if (el._dnIn) return; el._dnIn = true; el.classList.add('in');
+    var i, q = el.querySelectorAll('[data-count]'); for (i = 0; i < q.length; i++) countUp(q[i]);
+    q = el.querySelectorAll('[data-off]'); for (i = 0; i < q.length; i++) q[i].style.strokeDashoffset = q[i].getAttribute('data-off');
+    q = el.querySelectorAll('[data-w]'); for (i = 0; i < q.length; i++) q[i].style.width = q[i].getAttribute('data-w') + '%';
+    q = el.querySelectorAll('[data-fb]'); for (i = 0; i < q.length; i++) q[i].style.flexBasis = q[i].getAttribute('data-fb') + '%';
+    q = el.querySelectorAll('.dn-radar'); for (i = 0; i < q.length; i++) q[i].classList.add('in');
+  }
+  function reveal(root, scroller) {
+    var els = root.querySelectorAll('.dn-rv'), i;
+    if (IO) { IO.disconnect(); IO = null; }
+    if (!('IntersectionObserver' in window) || reduce()) { for (i = 0; i < els.length; i++) play(els[i]); return; }
+    IO = new IntersectionObserver(function (ents) {
+      for (var k = 0; k < ents.length; k++) if (ents[k].isIntersecting) { play(ents[k].target); IO.unobserve(ents[k].target); }
+    }, {root: scroller || null, threshold: 0.12});
+    for (i = 0; i < els.length; i++) IO.observe(els[i]);
+  }
+  function countHtml(fig) {
+    var m = /^([^0-9+\-]*)([+\-]?\d+(?:\.\d+)?)(.*)$/.exec(String(fig || ''));
+    if (!m || /·/.test(fig)) return esc(fig);
+    var dec = (m[2].split('.')[1] || '').length;
+    return '<span data-count="' + esc(m[2]) + '" data-dec="' + dec + '" data-pre="' + esc(m[1]) + '" data-suf="' + esc(m[3]) + '">' + esc(fig) + '</span>';
+  }
+  // ── a trait's own chart ──
+  function vizFor(t, dm) {
+    function v(k) { var x = dm[k]; return x && x.measured ? +x.value : null; }
+    var k = t.key, x;
+    if ((k === 'weekend_driven' || k === 'weekday_business') && (x = v('weekend_share')) != null) return split(x);
+    if (k === 'long_hours' && (x = v('open_hours')) != null) return '<div class="dn-ringv">' + ring(x / 168, 64, Math.round(x) + 'h', '') + '<span>' + Math.round(x) + ' of the 168 hours in a week. A typical restaurant is open about 70.</span></div>';
+    if (k === 'overtime_controlled' && (x = v('overtime_intensity')) != null) return gauge(0, 0.1, x, 0.03, pctf, 'Overtime share of hours', false);
+    if (k === 'answers_reviews' && (x = v('reply_rate')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Of the last 30 days’ reviews. A typical restaurant answers about 60%.</span></div>';
+    if (k === 'open_to_advice' && (x = v('rec_uptake')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Of recommendations answered or expired in 90 days.</span></div>';
+    if ((k === 'well_rated' || k === 'guest_favorite') && (x = v('rating_level')) != null) return stars(x);
+    if (k === 'tight_register') {
+      var c = v('comp_rate'), vd = v('void_rate'), f = function (y) { return (+y).toFixed(1) + '%'; };
+      return (c != null ? gauge(0, 3, c, 1.5, f, 'Comps', false) : '') + (vd != null ? gauge(0, 2, vd, 1, f, 'Voids', false) : '');
+    }
+    if (k === 'uneven_labor_days' && (x = v('labor_swing')) != null) return gauge(0, 15, x, 5, function (y) { return (+y).toFixed(1) + ' pts'; }, 'Day-to-day labor % swing', true);
+    if (k === 'labor_efficient' && (x = v('labor_pct')) != null) return gauge(20, 40, x, 30, function (y) { return (+y).toFixed(1) + '%'; }, 'Labor % of sales', false);
+    if (k === 'staffs_to_demand' && (x = v('labor_flex')) != null) return gauge(0, 1.2, x, 0.5, function (y) { return (+y).toFixed(2); }, 'Hours per 1% of sales', false);
+    if ((k === 'steady_demand' || k === 'swingy_demand') && (x = v('sales_volatility')) != null) return gauge(0, 0.5, x, 0.2, pctf, 'Day-to-day swing', k === 'swingy_demand');
+    if (k === 'highly_predictable' && (x = v('demand_predictability')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Better than a naive guess, over scored weekly forecasts.</span></div>';
+    return '';
+  }
+  function evidence(t, dm) {
+    var h = '<details class="dn-why"><summary>How it was measured</summary><div class="rule">Earned by: ' + esc(t.rule) + '</div>', i;
+    for (i = 0; i < (t.dims || []).length; i++) {
+      var x = dm[t.dims[i]]; if (!x) continue;
+      h += '<div class="dn-ev"><div class="h"><span>' + esc(x.label) + '</span><b>' + esc(x.display || '—') + '</b></div>'
+        + '<div class="m">' + figs(x.basis || '') + (trendWords(x) ? ' · ' + esc(trendWords(x)) : '') + '</div>' + spark(x.history, toneOf(x), x.label) + '</div>';
+    }
+    return h + '</details>';
+  }
+  // ── the page ──
+  function hero(p, s, all) {
+    // The first sentence is the headline; the rest of the read sits under it.
+    var full = String(s.headline || ''), cut = full.indexOf('. '), head = cut > 0 ? full.slice(0, cut + 1) : full, rest = cut > 0 ? full.slice(cut + 2) : '';
+    var words = head.split(' '), read = '', i;
+    for (i = 0; i < words.length; i++) read += '<span class="w" style="animation-delay:' + (120 + i * 26) + 'ms">' + figs(words[i]) + '</span> ';
+    var chips = '', ids = s.identity || [], tr = s.traits || [];
+    for (i = 0; i < ids.length; i++) chips += '<span class="dn-chip">' + esc(ids[i].label) + '</span>';
+    for (i = 0; i < tr.length; i++) chips += chip(tr[i]);
+    var o = s.observed || {}, st = '';
+    function stat(n, label) { return '<div class="dn-stat"><b>' + countHtml(String(n)) + '</b><span>' + esc(label) + '</span></div>'; }
+    if (o.nights) st += stat(o.nights, 'nights of sales watched' + (o.since ? ' since ' + o.since : ''));
+    st += stat(o.measured || 0, 'of ' + (o.of || 0) + ' traits measured');
+    st += stat(o.learning || 0, 'still learning');
+    st += stat(o.coverage_pct || 0, '% of the profile filled in');
+    var measured = 0; for (i = 0; i < all.length; i++) if (all[i].measured) measured++;
+    return '<section class="dn-hero"><div><div class="dn-k">Restaurant DNA' + (p.as_of ? ' · as of ' + esc(p.as_of) : '') + '</div>'
+      + '<h1 class="dn-read">' + read + '</h1>' + (rest ? '<p class="dn-read2 dn-fadein">' + figs(rest).replace('Watch:', '<span class="wt">Watch:</span>') + '</p>' : '')
+      + (s.lede ? '<p class="dn-lede">' + esc(s.lede) + '</p>' : '')
+      + '<div class="dn-chips">' + chips + '</div><div class="dn-stats dn-rv">' + st + '</div></div>'
+      + '<div class="dn-helix-box" id="dn-helix"><canvas aria-label="Every trait Cavnar AI measures, as a strand: ' + measured + ' measured, ' + (all.length - measured) + ' still learning" role="img"></canvas><div class="dn-tip"></div>'
+      + '<div class="dn-helix-cap"><span><i></i>' + measured + ' measured</span><span><i class="off"></i>' + (all.length - measured) + ' still learning</span></div></div></section>';
+  }
+  function shape(s) {
+    var ax = s.axes || [], h = '', i; if (ax.length < 3) return '';
+    for (i = 0; i < ax.length; i++) {
+      var a = ax[i], l = a.score == null;
+      h += '<div class="dn-ax' + (l ? ' learn' : '') + '" data-ax="' + i + '"><div class="n">' + esc(a.label) + '<small>' + (l ? 'still learning' : (a.measured + ' of ' + a.of + ' measured')) + '</small></div>'
+        + '<div class="bar">' + (l ? '' : '<i data-w="' + a.score + '"></i>') + '<u></u></div><div class="s">' + (l ? '—' : countHtml(String(a.score))) + '</div></div>';
+    }
+    return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up</h2>'
+      + '<p class="dn-sub">Each axis runs 0 to 100, and the dashed ring at 50 is a typical restaurant on Cavnar AI’s stated benchmarks. Dashed spokes are still learning.</p>'
+      + '<div class="dn-shape dn-rv">' + radar(ax, 360, false) + '<div class="dn-axes">' + h + '</div></div></section>';
+  }
+  function traits(s, dm) {
+    var tr = (s.traits || []).slice(), h = '', i, big = -1;
+    tr.sort(function (a, b) { return (a.tone === 'watch') - (b.tone === 'watch'); });
+    for (i = 0; i < tr.length; i++) if (tr[i].tone !== 'watch') { big = i; break; }
+    if (!tr.length) return '<section class="dn-sec"><div class="dn-k">Traits</div><h2 class="dn-h2">No traits earned yet</h2><div class="dn-empty">A trait is named only when a measured figure clears its rule. As more of your data comes in, they appear here.</div></section>';
+    for (i = 0; i < tr.length; i++) {
+      var t = tr[i], w = t.tone === 'watch';
+      h += '<article class="dn-tr dn-rv' + (w ? ' watch' : '') + (i === big && tr.length > 2 ? ' big' : '') + '" style="transition-delay:' + Math.min(i, 6) * 60 + 'ms">'
+        + '<div class="top"><div class="ic">' + icon(t.icon) + '</div><span class="tag">' + (w ? 'Watch' : 'Trait') + '</span></div>'
+        + '<div class="nm">' + esc(t.name) + '</div><div class="fig">' + countHtml(t.figure) + '</div><div class="fl">' + esc(t.figure_label) + '</div>'
+        + '<div class="viz">' + vizFor(t, dm) + '</div><div class="sen">' + figs(t.sentence) + '</div>'
+        + (t.strength != null ? '<div class="dn-meter"><span>' + (w ? 'How strongly' : 'Strength') + '</span><div class="bar"><i data-w="' + t.strength + '"></i></div><b>' + t.strength + '</b></div>' : '')
+        + evidence(t, dm) + '</article>';
+    }
+    return '<section class="dn-sec"><div class="dn-k">Traits</div><h2 class="dn-h2">What it’s become</h2>'
+      + '<p class="dn-sub">Each trait is earned by a measured figure against the rule shown under it. Open one to see the evidence.</p><div class="dn-traits">' + h + '</div></section>';
+  }
+  function chains(s) {
+    var cs = s.connections || [], h = '', i, j; if (!cs.length) return '';
+    for (i = 0; i < cs.length; i++) {
+      var c = cs[i], nodes = '';
+      for (j = 0; j < c.nodes.length; j++) {
+        var n = c.nodes[j];
+        nodes += (j ? '<div class="dn-link" aria-hidden="true"></div>' : '') + '<div class="dn-node"><div class="l">' + esc(n.label) + '</div>'
+          + (n.figure != null ? '<b>' + countHtml(n.figure) + '</b>' : '<b class="none">measuring</b>') + '<div class="nt">' + esc(n.note || '') + '</div></div>';
+      }
+      h += '<div class="dn-chain dn-rv"><div class="t">' + esc(c.title) + '</div><div class="dn-nodes">' + nodes + '</div><p class="sen">' + figs(c.sentence) + '</p></div>';
+    }
+    return '<section class="dn-sec"><div class="dn-k">How it connects</div><h2 class="dn-h2">What moves together</h2>'
+      + '<p class="dn-sub">Measured figures read side by side. Where one drives another, the measurement says how much.</p>' + h + '</section>';
+  }
+  function learning(s) {
+    var ls = s.learning || [], h = '', i; if (!ls.length) return '';
+    for (i = 0; i < ls.length; i++) {
+      var l = ls[i], pr = l.progress, near = pr && pr.pct >= 75;
+      h += '<div class="dn-ln dn-rv' + (near ? ' near' : '') + '">' + (pr ? ring(pr.pct / 100, 46, pr.pct + '%', '') : '<div class="ic">' + icon(l.icon) + '</div>')
+        + '<div><div class="nm">' + esc(l.name) + (near ? '<span>Almost there</span>' : '') + '</div><div class="t">'
+        + (pr ? figs(pr.have + ' of ' + pr.need + ' ' + pr.unit) : (l.dormant ? 'Not measurable on Cavnar AI yet — needs ' : 'Needs ') + esc(l.needs)) + '</div></div></div>';
+    }
+    return '<section class="dn-sec"><div class="dn-k">Still learning</div><h2 class="dn-h2">' + ls.length + ' traits are still taking shape</h2>'
+      + '<p class="dn-sub">Nothing here is guessed. Each fills in once its data clears the floor, closest first.</p><div class="dn-learn">' + h + '</div></section>';
+  }
+  function evidenceAll(p) {
+    var fs = p.families || [], h = '', i, j;
+    for (i = 0; i < fs.length; i++) {
+      var f = fs[i], ds = f.dimensions || [], on = 0, dots = '', rows = '';
+      for (j = 0; j < ds.length; j++) {
+        var x = ds[j], tone = toneOf(x); if (x.measured) on++;
+        dots += '<i' + (x.measured ? ' class="on"' : '') + '></i>';
+        rows += '<div class="dn-row' + (x.measured ? '' : ' off') + '"><div class="l">' + esc(x.label) + '</div>'
+          + (x.measured && (x.history || []).length >= 2 ? spark(x.history, tone, x.label) : '<span></span>')
+          + '<div class="v">' + esc(x.measured ? (x.display || '—') : '—') + '</div>'
+          + '<div class="b' + (x.measured && tone ? ' ' + tone : '') + '">' + (x.measured ? figs((trendWords(x) ? trendWords(x) + ' · ' : '') + (x.basis || ''))
+            : figs((x.dormant ? 'Not measurable on Cavnar AI yet — needs ' : 'Needs ') + (x.needs || 'more data'))) + '</div></div>';
+      }
+      h += '<details class="dn-fam"><summary><span class="nm">' + esc(f.label) + '</span><span class="c">' + on + ' of ' + ds.length + '</span><span class="dn-dots" aria-hidden="true">' + dots + '</span></summary>' + rows + '</details>';
+    }
+    return '<section class="dn-sec"><div class="dn-k">The evidence</div><h2 class="dn-h2">Every measurement</h2>'
+      + '<p class="dn-sub">All ' + (p.of || '') + ' dimensions, each with the figure, how it was measured and its weeks so far, or what would measure it.</p><div class="dn-fams">' + h + '</div></section>';
+  }
+  function page(d) {
+    var p = d && d.profile, s = (d && d.story) || {};
+    if (!p || !p.available) return '<div class="dn-k">Restaurant DNA</div><h1 class="dn-read" style="font-size:32px">Your DNA is still forming.</h1><div class="dn-empty">' + esc((p && p.why_not) || 'Your profile builds with the nightly pass — check back tomorrow.') + '</div>';
+    var all = dimsOf(p);
+    return hero(p, s, all.list) + shape(s) + traits(s, all.map) + chains(s) + learning(s) + evidenceAll(p)
+      + '<p class="dn-foot">' + esc(s.basis || '') + ' ' + esc(p.note || '') + '</p>';
+  }
+  // ── open, close, the address ──
+  function shell() {
+    var el = document.getElementById('dna');
+    if (el) return el;
+    el = document.createElement('div'); el.id = 'dna'; el.className = 'dn'; el.hidden = true;
+    el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Restaurant DNA');
+    el.innerHTML = '<div class="dn-bar"><button type="button" class="cbtn cbtn-glass cbtn-sm" id="dn-close" aria-label="Back to the dashboard">← Back</button>'
+      + '<span class="dn-bar-t">Restaurant DNA</span><span class="dn-bar-r" id="dn-asof"></span></div><div class="dn-scroll" id="dn-scroll"><div class="dn-wrap" id="dn-body"></div></div>';
+    document.body.appendChild(el);
+    document.getElementById('dn-close').addEventListener('click', function () { dnaClose(); });
+    el.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); dnaClose(); } });
+    return el;
+  }
+  function paint() {
+    var body = document.getElementById('dn-body'), sc = document.getElementById('dn-scroll');
+    if (!body) return;
+    if (HELIX) { HELIX.stop(); HELIX = null; }
+    body.innerHTML = '<div class="dn-k">Restaurant DNA</div><div class="dr-pulse wide" role="status" aria-label="Loading" style="margin-top:24px"><i></i></div>';
+    load(function (d) {
+      if (!OPEN) return;
+      if (!d) { body.innerHTML = '<div class="dn-empty">Your Restaurant DNA couldn’t be read just now. Try again in a minute.</div>'; return; }
+      body.innerHTML = page(d);
+      var as = document.getElementById('dn-asof'); if (as) as.textContent = d.profile && d.profile.as_of ? 'as of ' + d.profile.as_of : '';
+      var hb = document.getElementById('dn-helix');
+      if (hb) HELIX = new Helix(hb, dimsOf(d.profile).list);
+      reveal(body, sc);
+      var rows = body.querySelectorAll('.dn-ax'), i;
+      for (i = 0; i < rows.length; i++) (function (r) {
+        r.addEventListener('mouseenter', function () { r.classList.add('hl'); });
+        r.addEventListener('mouseleave', function () { r.classList.remove('hl'); });
+      })(rows[i]);
+    });
+  }
+  window.dnaOpen = function (opts) {
+    opts = opts || {};
+    var el = shell();
+    if (!OPEN) {
+      OPEN = true; BACK_TO = document.activeElement; el.hidden = false; document.body.classList.add('dn-open');
+      if (!opts.fromBoot && !opts.fromPop && window.location.pathname !== '/dna' && window.history && history.pushState) {
+        history.pushState({dna: 1}, '', '/dna'); FROM_DASH = true;
+      }
+      var sc = document.getElementById('dn-scroll'); if (sc) sc.scrollTop = 0;
+      paint();
+      var cb = document.getElementById('dn-close'); if (cb) cb.focus();
+    }
+    return false;
+  };
+  window.dnaClose = function (opts) {
+    opts = opts || {};
+    var el = document.getElementById('dna');
+    if (!OPEN || !el) return;
+    OPEN = false; el.hidden = true; document.body.classList.remove('dn-open');
+    if (HELIX) { HELIX.stop(); HELIX = null; }
+    if (IO) { IO.disconnect(); IO = null; }
+    if (!opts.fromPop && window.location.pathname === '/dna') {
+      if (FROM_DASH) { FROM_DASH = false; history.back(); }
+      else history.replaceState(null, '', '/');
+    }
+    if (BACK_TO && BACK_TO.focus) { try { BACK_TO.focus(); } catch (e) { } }
+  };
+  // Back and Forward cross the DNA page's address (cavRoute asks first).
+  window.dnaOnRoute = function () {
+    var at = window.location.pathname === '/dna';
+    if (at && !OPEN) window.dnaOpen({fromPop: true});
+    else if (!at && OPEN) window.dnaClose({fromPop: true});
+  };
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && HELIX) HELIX.wake(); });
+  // ── Home: the DNA card, under Before service ──
+  window.dnaHomeCard = function (el) {
+    if (!el) return;
+    el.innerHTML = '<div class="hb-card quiet hb-skel-stack" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:30%;height:11px;min-height:11px"></div><div class="hb-skel" style="width:78%"></div><div class="hb-skel" style="width:52%"></div></div>';
+    load(function (d) {
+      var p = d && d.profile, s = (d && d.story) || {};
+      if (!p) { el.innerHTML = ''; return; }
+      if (!p.available) { el.innerHTML = '<div class="dn-home quiet"><div><div class="hb-kicker">Restaurant DNA</div><h3>Your DNA is still forming.</h3><div class="hb-empty" style="padding:0">' + esc(p.why_not || '') + '</div></div></div>'; return; }
+      var first = String(s.headline || '').split('. ')[0], tr = (s.traits || []).slice(), chips = '', i, o = s.observed || {};
+      if (first && first.slice(-1) !== '.') first += '.';
+      tr.sort(function (a, b) { return (a.tone === 'watch') - (b.tone === 'watch'); });
+      for (i = 0; i < tr.length && i < 4; i++) chips += chip(tr[i]);
+      if (tr.length > 4) chips += '<span class="dn-chip">+' + (tr.length - 4) + ' more</span>';
+      el.innerHTML = '<a class="dn-home dn-fadein" href="/dna" aria-label="Open your Restaurant DNA">'
+        + '<div class="mini">' + radar(s.axes || [], 120, true) + '</div>'
+        + '<div><div class="hb-kicker">Restaurant DNA</div><h3>' + figs(first) + '</h3><div class="dn-chips">' + chips + '</div></div>'
+        + '<div class="go">' + ring((o.coverage_pct || 0) / 100, 76, (o.measured || 0) + '/' + (o.of || 0), 'measured') + '<span class="cbtn cbtn-soft cbtn-sm">Explore your DNA →</span></div></a>';
+      var a = el.querySelector('.dn-home');
+      if (a) {
+        a.addEventListener('click', function (e) { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return; e.preventDefault(); window.dnaOpen(); });
+        var rg = a.querySelectorAll('[data-off]'); setTimeout(function () { for (var k = 0; k < rg.length; k++) rg[k].style.strokeDashoffset = rg[k].getAttribute('data-off'); }, 120);
+      }
+    });
+  };
+  document.addEventListener('DOMContentLoaded', function () { if (window._DNA_BOOT) window.dnaOpen({fromBoot: true}); });
 })();
 </script>
 </body>

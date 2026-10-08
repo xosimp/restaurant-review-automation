@@ -481,10 +481,12 @@ Sitemap: https://cavnar.ai/sitemap.xml"""
 
 @app.route("/")
 @app.route("/schedule/studio")
+@app.route("/dna")
 @login_required
 def index(current_user):
     # /schedule/studio is the same page opened on the Schedule Studio (the
-    # template reads request.path): one application, its own address.
+    # template reads request.path): one application, its own address. /dna
+    # is the same page opened on Restaurant DNA (owner, 10/8/26).
     # An admin has no dashboard of its own; the console is his. (A
     # view-as session is the client's login — is_admin 0 — so it lands here
     # and gets the client's dashboard, with the view-as banner.) An admin

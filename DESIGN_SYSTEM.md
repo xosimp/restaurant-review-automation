@@ -1772,6 +1772,49 @@ connections, then the demo form. Rules:
   stays verbatim (`tests/test_a2p_staff_verification_optin.py`).
 - **Integrations** list only what is live; anything else is "on request".
 
+### Restaurant DNA — the restaurant's personality, revealed (10/8/26)
+
+A signature screen, not a table (owner, 10/8/26: "make it feel like an AI is
+revealing the personality of the restaurant"). Data: `GET /api/dna` →
+`profile` + `story` (`intelligence/dna_story.py`). Web prefix `dn-`
+(`templates/dashboard.html`); iOS `Features/Home/HomeDNA.swift`.
+
+- **Where.** A Home card under Before service (`#hb-dna-card`,
+  `dnaHomeCard`): the mini shape, the first sentence of the read, the top
+  four traits as chips, a measured/total ring and "Explore your DNA →". It
+  opens the full page at **`/dna`**, over the dashboard with its own address
+  (Back, Escape and the browser's Back close it; a direct `/dna` load opens
+  it). It no longer sits at the foot of Results. iOS: the same card on Home
+  opens the DNA screen full-screen.
+- **Order on the page.** (1) The read: the first sentence as a Clash
+  headline revealed word by word, figures in ember2; the rest of the read
+  in a 18px paragraph with "Watch:" in amber; the owner-set identity chips
+  then the earned trait chips; four counted stats (nights watched, traits
+  measured, still learning, % filled). Beside it the **strand**: a canvas
+  double helix, one rung per dimension — lit ember when measured, dashed
+  when still learning — slowly turning; hover a rung for its figure.
+  (2) **The shape**: a radar of the axes (50 = the stated benchmark, a
+  dashed ring), measured axes only in the polygon, learning axes dashed
+  spokes with a hollow dot; beside it one bar per axis with the 50 tick.
+  (3) **Traits**: cards, the strongest one twice as wide; each its own
+  small chart (a Mon–Thu/Fri–Sun split, a ring, stars, a gauge with the
+  typical tick), its sentence, a strength meter, and "How it was measured"
+  (the rule, each figure's basis, trend and weeks). A watch trait is amber.
+  (4) **What moves together**: measured figures as nodes joined by a
+  flowing ember link, with the sentence that reads them. (5) **Still
+  learning**: dashed cards, a progress ring where the dimension's own count
+  measures it ("19 of 20 analysed reviews"), "Almost there" from 75%.
+  (6) **Every measurement**: one disclosure per family (dots lit per
+  measured dimension), every figure with its basis, trend and spark line.
+- **The rules it keeps.** A trait only from a measured figure against the
+  rule shown with it; nothing unmeasured is named, scored or drawn as 0;
+  the read is composed from earned traits (no model call, no dollars).
+- **Motion.** Word reveal, count-ups, rings and bars filling, the shape
+  growing from the centre, cards rising as they scroll in (an
+  IntersectionObserver on the page's own scroller), the strand turning and
+  the links flowing. All of it off under Reduce Motion (static strand, no
+  reveals).
+
 ### The Ember Core — Cavnar AI's intelligence, drawn (10/7/26)
 
 The core is the AI itself, not a decoration, and the same one wherever it

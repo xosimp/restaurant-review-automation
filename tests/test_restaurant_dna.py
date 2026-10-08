@@ -889,13 +889,19 @@ def test_a_pos_sync_forgets_codes_and_station_logins_but_keeps_people_who_left(d
 
 
 def test_both_clients_render_the_dna_from_their_own_route():
-    """Parity audit #98: /dna had no screen on either client. The web reads it
-    into Home's Results when they open; the phone opens a sheet from Results."""
+    """Parity audit #98: /dna had no screen on either client. Since the
+    redesign (owner, 10/8/26) the web shows a DNA card under Before service
+    that opens the full page at its own address, /dna; the phone opens its
+    screen from Home."""
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     web = open(os.path.join(root, "templates", "dashboard.html")).read()
-    assert "fetch('/api/dna'" in web and '<section id="hb-dna"' in web
-    assert "if(rs.open)hbDnaLoad();" in web                     # lazily, when Results opens
+    assert "fetch('/api/dna'" in web and "id=\"hb-dna-card\"" in web
+    assert "dnaHomeCard(document.getElementById('hb-dna-card'))" in web
+    assert '<section id="hb-dna"' not in web                     # no longer at the foot of Results
+    assert "history.pushState({dna: 1}, '', '/dna')" in web and "if (window.dnaOnRoute) dnaOnRoute();" in web
+    app = open(os.path.join(root, "hosted_dashboard.py")).read()
+    assert '@app.route("/dna")' in app
     ios = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeDNA.swift")).read()
     assert '"/mobile/api/dna"' in ios and "LineMark" in ios
     home = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeView.swift")).read()
