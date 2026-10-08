@@ -217,12 +217,14 @@ def measured_value(user) -> dict:
     flight = int(d.get("in_flight") or 0)
     net = d.get("net_monthly")
     if net is None:
-        net = d.get("monthly") or 0
+        net = d.get("monthly")
     if int(d.get("wins") or 0) > 0 or int(worse.get("count") or 0) > 0:
-        amount = ("−" if net < 0 else "") + "$" + f"{abs(round(net)):,}"
-        line = f"Measured, net: {amount}/mo · {n} change{'' if n == 1 else 's'} measured"
-        return {"line": line, "net_monthly": round(float(net), 2), "evaluated": n, "in_flight": flight,
-                "measured": True}
+        # Changes were measured but no dollar figure came with them: "—",
+        # never $0 standing in for a figure nobody has (re-audit 10/8/26, #16).
+        amount = "—" if net is None else ("−" if net < 0 else "") + "$" + f"{abs(round(net)):,}"
+        line = f"Measured, net: {amount}{'' if net is None else '/mo'} · {n} change{'' if n == 1 else 's'} measured"
+        return {"line": line, "net_monthly": None if net is None else round(float(net), 2), "evaluated": n,
+                "in_flight": flight, "measured": True}
     if flight > 0:
         line = f"Nothing measured yet — {flight} change{'' if flight == 1 else 's'} being measured"
     else:
@@ -240,8 +242,18 @@ def features(restaurant) -> list:
     return [{"key": k, "label": label, "detail": detail, "on": on[k]} for k, label, detail in FEATURES]
 
 
-def payload(user, restaurant=None, include_value=True) -> dict:
-    """GET /api/account/health and its mobile twin. See the module doc."""
+# The subscription item as the app says it (re-audit 10/8/26, #15): the app
+# points to no payment page (App Store Guideline 3.1.1), so it never tells an
+# owner to update a card or a payment method — billing is under the service
+# agreement. The fix still opens Account → Billing, read only.
+IOS_BILLING_NOTE = "Billing is handled under your service agreement"
+IOS_SUBSCRIPTION_FIX = "See your plan"
+
+
+def payload(user, restaurant=None, include_value=True, surface="web") -> dict:
+    """GET /api/account/health and its mobile twin (`surface="ios"`, which
+    words the subscription item neutrally — IOS_BILLING_NOTE). See the
+    module doc."""
     from permissions import is_principal
     from models import get_restaurant
     rid = user["restaurant_id"]
@@ -362,7 +374,9 @@ def payload(user, restaurant=None, include_value=True) -> dict:
             pts += 1
             put("subscription", "ok", "Trial — first charge on day 31")
         elif status == "past_due":
-            put("subscription", "bad", "Payment past due — update your card", "the payment is past due")
+            put("subscription", "bad",
+                f"Payment past due — {IOS_BILLING_NOTE.lower()}" if surface == "ios"
+                else "Payment past due — update your card", "the payment is past due")
         elif status == "paused":
             put("subscription", "warn", "Paused — billing and the briefs resume on their own", "the subscription is paused")
         else:
@@ -372,6 +386,8 @@ def payload(user, restaurant=None, include_value=True) -> dict:
     tone = "good" if score >= 90 else ("warn" if score >= 60 else "bad")
     labels = {k: label for k, label, _fix in HEALTH_ITEMS}
     fixes = {k: fix for k, _label, fix in HEALTH_ITEMS}
+    if surface == "ios":
+        fixes["subscription"] = IOS_SUBSCRIPTION_FIX
     order = [k for k, _l, _f in HEALTH_ITEMS]
     bad = [k for k in order if k in items and items[k]["state"] == "bad"]
     warn = [k for k in order if k in items and items[k]["state"] == "warn"]

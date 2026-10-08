@@ -476,7 +476,10 @@ def test_account_health_payload(client, db_path, monkeypatch):
     # The web answers the same body.
     monkeypatch.setattr(auth, "get_current_user", lambda: dict(auth.get_user_by_id(uid)))
     w = client.get("/api/account/health").get_json()
-    assert w["score"] == d["score"] and w["items"] == d["items"]
+    # The same score and items; only the app's billing words differ — it
+    # never says "update your card" (re-audit 10/8/26, #15).
+    sub = lambda items: [dict(i, sub=None) if i["key"] == "subscription" else i for i in items]  # noqa: E731
+    assert w["score"] == d["score"] and sub(w["items"]) == sub(d["items"])
 
 
 def test_a_teammates_health_leaves_billing_out_and_nothing_measured_is_not_zero(client, db_path, monkeypatch):

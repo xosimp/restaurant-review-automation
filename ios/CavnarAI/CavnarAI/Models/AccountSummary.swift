@@ -78,10 +78,15 @@ struct AccountInfo: Decodable {
     /// A push and a bell entry when an employee opens the staff app (the
     /// web's switch; nil from an older server).
     var staffSignInNotify: Bool? = nil
+    /// Whether Account → Delete my login is offered: the delete route's own
+    /// rule — a teammate, or a co-owner while another owner remains (re-audit
+    /// 10/8/26, #7). Nil on an older server (then: not an owner).
+    var canDeleteLogin: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case username, email
         case staffSignInNotify = "staff_signin_notify"
+        case canDeleteLogin = "can_delete_login"
         case recoveryEmail = "recovery_email"
         case recoveryEmailPending = "recovery_email_pending"
         case twoFAEnabled = "two_fa_enabled"

@@ -4318,37 +4318,104 @@ def revoke_team_member(restaurant_id: int, user_id: int, acting_user_id: int,
     return {"ok": True}
 
 
-def delete_own_login(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """A teammate deletes their own login (App Store Guideline 5.1.1(v),
-    parity #13): the login is turned off, every session, remembered device,
-    passkey and push token it holds is removed, and what identified the
-    person on it (email, username, phone, recovery address, Apple and Google
-    links, password) is cleared, so the address is free to be invited again.
-    The restaurant's own records stay the restaurant's: their schedule row,
-    ratings and what they wrote are business data, and their private memory
-    notes are archived for the owner exactly as on a revoke.
+# The password hash a login deleted by its own holder carries (delete_own_login)
+# — never a hash any password verifies against, and how the console knows not
+# to switch it back on (login_deleted_by_holder).
+DELETED_LOGIN_MARK = "!deleted:"
 
-    Never an account holder's login (they close the account instead) or a
-    Cavnar AI staff login, and never the restaurant's last active login."""
+
+def login_deleted_by_holder(row) -> bool:
+    """Whether a users row was deleted by the person who held it — its
+    credentials and what identified them are gone, so switching it back on
+    would revive a login nobody can sign in to as themselves, with whatever
+    roles and grants it had (re-audit 10/8/26, #5). They are invited again."""
+    if not row:
+        return False
+    try:
+        h = row["password_hash"]
+    except (KeyError, IndexError, TypeError):
+        h = (row.get("password_hash") if isinstance(row, dict) else None)
+    return str(h or "").startswith(DELETED_LOGIN_MARK)
+
+
+def own_login_deletion_refusal(user: dict, db_path: str = DB_PATH):
+    """None when this login may delete itself, else the sentence why not.
+
+    A teammate's login, always. An owner's too when it is a co-owner (role
+    'owner', re-audit 10/8/26, #7) and another active owner login remains to
+    run the account — never the account holder of record (role 'client', or
+    the login with the restaurant's owner email), who closes the account
+    instead, never a Cavnar AI staff login, and never the restaurant's last
+    active login."""
+    if not user:
+        return "Sign in first."
+    if user.get("is_admin"):
+        return "A Cavnar AI staff login isn't deleted here."
+    rid = user.get("restaurant_id")
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT id, is_admin, COALESCE(NULLIF(role,''),'client') AS r FROM users "
-            "WHERE id=? AND restaurant_id=? AND is_active=1", (user_id, restaurant_id)).fetchone()
+            "SELECT id, email, is_admin, COALESCE(NULLIF(role,''),'client') AS r FROM users "
+            "WHERE id=? AND restaurant_id=? AND is_active=1", (user.get("id"), rid)).fetchone()
         if not row:
-            return {"ok": False, "error": "That login wasn't found."}
-        if row["is_admin"] or row["r"] in _PRINCIPAL_ROLES:
-            return {"ok": False, "error": "An owner's login closes with the account — use Close my account."}
+            return "That login wasn't found."
+        if row["is_admin"]:
+            return "A Cavnar AI staff login isn't deleted here."
+        if row["r"] in _PRINCIPAL_ROLES:
+            holder = conn.execute("SELECT owner_email FROM restaurants WHERE id=?", (rid,)).fetchone()
+            holder_email = ((holder["owner_email"] if holder else "") or "").strip().lower()
+            is_holder = row["r"] == "client" or (holder_email and holder_email == (row["email"] or "").strip().lower())
+            if is_holder:
+                return "An owner's login closes with the account \u2014 use Close my account."
+            if _principal_count(conn, rid, excluding=row["id"]) < 1:
+                return "You're the only owner left \u2014 add another owner before deleting your login."
         active = conn.execute("SELECT COUNT(*) AS n FROM users WHERE restaurant_id=? AND is_active=1",
-                              (restaurant_id,)).fetchone()["n"]
+                              (rid,)).fetchone()["n"]
         if active <= 1:
-            return {"ok": False, "error": "Can't remove the only remaining login."}
-        import secrets as _secrets_del
+            return "Can't remove the only remaining login."
+    finally:
+        conn.close()
+    return None
+
+
+def delete_own_login(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """A login's holder deletes it (App Store Guideline 5.1.1(v), parity
+    #13). It ends everywhere it signs in, not only here — one login can hold
+    a staff PIN at several locations — so (re-audit 10/8/26, #5):
+
+    - the login is turned off, its password replaced by the deleted mark
+      (DELETED_LOGIN_MARK, which no password verifies and the console will
+      not switch back on — login_deleted_by_holder), and what identified the
+      person (email, username, phone, recovery address, Apple and Google
+      links) is cleared, so the address is free to be invited again;
+    - every session (dashboard, app and staff PIN), remembered device,
+      passkey, push token and per-location delivery choice goes;
+    - its second factor goes: an authenticator secret, backup codes and any
+      code waiting to be typed;
+    - its extra permissions at every location go;
+    - every membership it holds, at every location, ends as the staff app's
+      own delete does (delete_own_staff_account): stamped deleted_at so the
+      roster switch never restores it, the PIN and its attempt counters, the
+      texts consent and the claimed phone cleared, its emailed schedule links
+      expired.
+
+    The restaurants' own records stay theirs: schedule rows, ratings and what
+    the person wrote are business data, and their private memory notes are
+    archived for the owner exactly as on a revoke. Who may do it is
+    own_login_deletion_refusal."""
+    refusal = own_login_deletion_refusal({"id": user_id, "restaurant_id": restaurant_id}, db_path=db_path)
+    if refusal:
+        return {"ok": False, "error": refusal}
+    import secrets as _secrets_del
+    conn = get_conn(db_path)
+    ended = []
+    try:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             "UPDATE users SET is_active=0, email=?, username=?, password_hash=?, reset_token=NULL, "
             "reset_token_expires=NULL WHERE id=?",
             (f"deleted-{user_id}@deleted.invalid", f"deleted-{user_id}",
-             "!deleted:" + _secrets_del.token_hex(16), user_id))
+             DELETED_LOGIN_MARK + _secrets_del.token_hex(16), user_id))
         # Columns added by migrations, each cleared only where it exists.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
         for col in ("phone", "recovery_email", "recovery_email_pending", "recovery_email_code",
@@ -4356,21 +4423,51 @@ def delete_own_login(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -
             if col in cols:
                 conn.execute(f"UPDATE users SET {col}=NULL WHERE id=?", (user_id,))
         conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
-        for table in ("trusted_devices", "user_passkeys", "device_tokens", "login_prefs"):
+        for table in ("trusted_devices", "user_passkeys", "device_tokens", "login_prefs", "user_totp",
+                      "user_backup_codes", "permission_grants", "two_fa_challenges"):
             try:
                 conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
             except sqlite3.OperationalError as e:
                 if "no such table" not in str(e):   # only a table this database doesn't have yet
                     raise
+        # Every membership, at every location.
+        mcols = {r[1] for r in conn.execute("PRAGMA table_info(memberships)").fetchall()}
+        clear = ["is_active=0", "pin_hash=NULL", "pin_set_at=NULL", "updated_at=datetime('now')"]
+        clear += [f"{c}=NULL" for c in ("schedule_texts_at", "claimed_by_phone") if c in mcols]
+        if "deleted_at" in mcols:
+            clear.append("deleted_at=COALESCE(deleted_at, datetime('now'))")
+        rows = conn.execute("SELECT id, restaurant_id, employee_name, is_active FROM memberships WHERE user_id=?",
+                            (user_id,)).fetchall()
+        for m in rows:
+            conn.execute(f"UPDATE memberships SET {', '.join(clear)} WHERE id=?", (m["id"],))
+            for counter in _PIN_COUNTERS.values():
+                try:
+                    conn.execute(f"DELETE FROM {counter} WHERE membership_id=?", (m["id"],))
+                except sqlite3.OperationalError as e:
+                    if "no such table" not in str(e):
+                        raise
+            if m["is_active"]:
+                _expire_share_links(conn, m["restaurant_id"], m["employee_name"])
+                ended.append((m["restaurant_id"], m["employee_name"]))
+        conn.execute("INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, "
+                     "device_type) VALUES (?,?,?,?,?,?)",
+                     (user_id, restaurant_id, "account_deleted", "", "", "self"))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
+    for rid, name in ended:
+        _expire_person_links(rid, name, db_path=db_path)
+    if ended:
+        unregister_staff_push(user_id, None)
     try:
         import owner_memory
         owner_memory.retire_departed(restaurant_id, db_path=db_path)
     except Exception as e:
         print(f"[auth] deleted login's memory not retired rid={restaurant_id}: {e}")
-    return {"ok": True}
+    return {"ok": True, "memberships_ended": len(ended)}
 
 
 def list_users(db_path: str = DB_PATH) -> list[dict]:

@@ -848,6 +848,14 @@ def index(current_user):
         _principal = bool(_is_principal(current_user))
     except Exception:
         _principal = current_user.get("role") in ("owner", "client")
+    # Account → Delete my login: a teammate, or a co-owner while another
+    # owner remains — the delete route's own rule (re-audit 10/8/26, #7).
+    try:
+        from auth import own_login_deletion_refusal as _old_refusal
+        _can_delete_login = not (current_user.get("acting_admin") or current_user.get("acting_admin_id")) \
+            and _old_refusal(current_user) is None
+    except Exception:
+        _can_delete_login = not _principal
     try:
         from mobile_api import export_scopes_for as _export_scopes_for
         _export_scopes = _export_scopes_for(restaurant, current_user)
@@ -863,7 +871,7 @@ def index(current_user):
     return render_template('dashboard.html',
         social_channels=_social_channels,
         show_welcome=show_welcome,
-        is_principal=_principal, export_scopes=_export_scopes,
+        is_principal=_principal, export_scopes=_export_scopes, can_delete_login=_can_delete_login,
         onboarding_steps=onboarding_steps,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,

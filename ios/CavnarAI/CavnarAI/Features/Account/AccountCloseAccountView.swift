@@ -144,10 +144,9 @@ struct AccountDeleteLoginView: View {
 
                     AccountSection(kicker: "What happens") {
                         VStack(alignment: .leading, spacing: 10) {
-                            bullet("You're signed out on every device, right away.")
-                            bullet("Your email, phone, passkeys and remembered devices come off the login.")
-                            bullet("\(viewModel.summary?.profile.restaurantName ?? "The restaurant")'s own records — schedules, ratings, notes — stay theirs.")
-                            bullet("The owner can invite you again any time.")
+                            ForEach(Self.whatHappens(restaurantName: viewModel.summary?.profile.restaurantName), id: \.self) {
+                                bullet($0)
+                            }
                         }
                         .padding(.vertical, 9)
                     }
@@ -184,7 +183,7 @@ struct AccountDeleteLoginView: View {
                         }
                         Button("Cancel", role: .cancel) {}
                     } message: {
-                        Text("This can't be undone. You won't be able to sign in again unless the owner invites you.")
+                        Text("This can't be undone. It ends at every location you sign in to, your staff PIN included, and you won't be able to sign in again unless an owner invites you.")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -192,6 +191,19 @@ struct AccountDeleteLoginView: View {
             }
             .accountSheetChrome("Delete My Login")
         }
+    }
+
+    /// What deleting the login does, as the server does it
+    /// (auth.delete_own_login; re-audit 10/8/26, #5): everywhere the login
+    /// signs in, not only this location.
+    static func whatHappens(restaurantName: String?) -> [String] {
+        [
+            "You're signed out on every device, right away.",
+            "It ends at every location you sign in to — \(restaurantName ?? "this one") and any other — your staff PIN included.",
+            "Your email, phone, passkeys, two-factor and remembered devices come off the login.",
+            "Each restaurant's own records — schedules, ratings, notes — stay theirs.",
+            "An owner can invite you again any time.",
+        ]
     }
 
     private func bullet(_ text: String) -> some View {

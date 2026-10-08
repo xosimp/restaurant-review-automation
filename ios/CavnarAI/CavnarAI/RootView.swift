@@ -775,6 +775,20 @@ struct RootView: View {
             splitDetail
         }
         .navigationSplitViewStyle(.balanced)
+        // The sidebar's module list is Home's summary. In this shape Home is
+        // built only while selected, so a cold launch (or a restored
+        // selection) onto another screen read nothing and the list stayed
+        // empty (re-audit 10/8/26, #2) — it is read here too.
+        .task {
+            if homeViewModel.summary == nil { await homeViewModel.load() }
+        }
+    }
+
+    /// Whether HomeView is built right now, and so reloads Home's summary on
+    /// a location switch itself: always under the tab bar (TabView keeps it),
+    /// only while selected in the split shape.
+    static func homeIsMounted(usesSidebar: Bool, selectedTab: AppTab) -> Bool {
+        !usesSidebar || selectedTab == .home
     }
 
     /// The selected tab's own screen, with its own NavigationStack. Each is
@@ -908,6 +922,13 @@ struct RootView: View {
         homePath = NavigationPath()
         // HomeView reloads on this; the observer above re-reads the chrome.
         deepLinkRouter.locationSwitches += 1
+        // The iPad sidebar's module list is Home's summary: with Home not
+        // built (another screen selected in the split shape) nothing else
+        // reloads it, and the old location's modules stayed listed (re-audit
+        // 10/8/26, #2).
+        if !Self.homeIsMounted(usesSidebar: CavnarLayout.usesSidebar(sizeClass), selectedTab: selectedTab) {
+            Task { await homeViewModel.load() }
+        }
         Task { await WidgetSnapshotService.shared.refresh(force: true) }
     }
 

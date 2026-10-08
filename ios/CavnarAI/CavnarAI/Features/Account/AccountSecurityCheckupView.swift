@@ -89,6 +89,19 @@ struct AccountSecurityCheckupView: View {
                                         showsDivider: index < checkup.items.count - 1)
                             }
                         }
+                    } else if let error = viewModel.securitySummaryError {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                Haptic.light()
+                                Task {
+                                    await viewModel.loadSecuritySummary()
+                                    withAnimation(.easeOut(duration: 1.0)) { animatedScore = Double(score ?? 0) }
+                                }
+                            } label: { Text("Try again").frame(maxWidth: .infinity) }
+                                .buttonStyle(CavnarSecondaryButtonStyle())
+                        }
                     } else {
                         CavnarSkeletonBar(height: 3)
                             .padding(.vertical, 10)

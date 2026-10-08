@@ -42,8 +42,8 @@ struct AccountHelpView: View {
                     answer: "Yes — the account owner can add teammates from Account → Manage team. Each teammate gets their own real login (not a shared password), and the owner can remove access at any time."),
         ]),
         FAQGroup(title: "Billing & account", items: [
-            FAQItem(question: "How do I change my plan or payment method?",
-                    answer: "Go to Account → Plan & payment. If you don't have an active plan yet, or need something changed on your contract, contact Will directly."),
+            FAQItem(question: "How is billing handled?",
+                    answer: "Billing is handled under your service agreement. Account → Plan & payment shows your plan and recent invoices; for anything to change on it, contact Will directly."),
             FAQItem(question: "Can I export my review data?",
                     answer: "Yes — Account → Export my data emails you a CSV of your reviews (date, rating, text, and response status)."),
             FAQItem(question: "How do I cancel my account?",

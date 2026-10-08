@@ -22,6 +22,9 @@ struct AccountConnectionsDetailView: View {
     @State private var showingToastConnect = false
     @State private var showingSquareConnect = false
     @State private var showingCloverConnect = false
+    @State private var showingWebsiteConnect = false
+    /// The Intel card's own model, so the connect sheet is the one Intel uses.
+    @State private var websiteModel = WebsiteAnalyticsViewModel()
     /// A disconnect waiting on its confirm: what it disconnects and how.
     @State private var pendingDisconnect: (name: String, action: () async -> Void)?
 
@@ -397,8 +400,9 @@ struct AccountConnectionsDetailView: View {
         }
     }
 
-    /// Website analytics (GA4 / Search Console) — status here; it's set up
-    /// on the web, under Marketing. Counted with the rest (parity #80).
+    /// Website analytics (GA4 / Search Console) — status here, and the
+    /// owner connects or manages it in Intel's connect sheet. Counted with
+    /// the rest (parity #80).
     @ViewBuilder
     private var webAnalyticsRow: some View {
         if let wa = connections.webAnalytics {
@@ -423,11 +427,31 @@ struct AccountConnectionsDetailView: View {
                             .foregroundStyle(wa.connected ? Color.cavnarGreen : Color.cavnarInk3)
                     }
                 }
-                Text("Google Analytics and Search Console, set up on the web under Marketing \u{2192} Website.")
+                Text("Google Analytics and Search Console \u{2014} the same connection as Intel \u{2192} Your website.")
                     .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+                // Connecting it is the owner's (the route answers 403
+                // owner_only to anyone else): the Intel connect sheet, here
+                // too (re-audit 10/8/26, #18).
+                if isOwner {
+                    Button {
+                        Haptic.light()
+                        showingWebsiteConnect = true
+                    } label: {
+                        Text(wa.connected ? "Manage the connection" : "Connect my website").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
             }
             .cavnarCard()
+            .sheet(isPresented: $showingWebsiteConnect, onDismiss: {
+                // Connected or disconnected there: the count and this row re-read.
+                Task { await viewModel.load() }
+            }) {
+                WebsiteConnectSheet(viewModel: websiteModel)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
         }
     }
 

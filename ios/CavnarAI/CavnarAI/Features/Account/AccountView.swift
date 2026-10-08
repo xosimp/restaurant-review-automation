@@ -113,6 +113,12 @@ struct AccountView: View {
     /// The account owner's login (User.isOwner — permissions.TEAM_INVITE).
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
 
+    /// Delete my login is offered on the server's word (`can_delete_login`);
+    /// an older server that doesn't say offers it to everyone but an owner.
+    static func offersDeleteLogin(canDeleteLogin: Bool?, isOwner: Bool) -> Bool {
+        canDeleteLogin ?? !isOwner
+    }
+
     private func openLinkedSection() {
         guard viewModel.summary != nil, deepLinkRouter.pendingAccountSection != nil,
               let section = deepLinkRouter.consumePendingAccountSection() else { return }
@@ -469,9 +475,14 @@ struct AccountView: View {
                     } action: {
                         showingCloseAccount = true
                     }
-                } else {
-                    // A teammate deletes their own login (Guideline
-                    // 5.1.1(v), parity #13); closing the account is the owner's.
+                }
+                // A teammate deletes their own login (Guideline 5.1.1(v),
+                // parity #13), and so may a co-owner while another owner
+                // remains (re-audit 10/8/26, #7) — the server's rule.
+                if Self.offersDeleteLogin(canDeleteLogin: viewModel.summary?.account.canDeleteLogin, isOwner: isOwner) {
+                    if isOwner {
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                    }
                     settingsRow {
                         row("Delete my login", systemImage: "person.crop.circle.badge.xmark")
                     } action: {

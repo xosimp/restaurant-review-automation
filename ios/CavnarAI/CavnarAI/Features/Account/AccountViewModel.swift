@@ -1699,10 +1699,26 @@ final class AccountViewModel {
     // MARK: - Security checkup and account health, scored on the server
 
     var securitySummary: SecuritySummary?
+    /// The checkup couldn't be read and there is nothing to show — said,
+    /// with Try again, never a loading bar left up (re-audit 10/8/26, #12).
+    var securitySummaryError: String?
     var health: AccountHealth?
 
     func loadSecuritySummary() async {
-        securitySummary = try? await client.send("/mobile/api/account/security-summary", hapticOnError: false)
+        do {
+            let s: SecuritySummary = try await client.send("/mobile/api/account/security-summary", hapticOnError: false)
+            if s.ok {
+                securitySummary = s
+                securitySummaryError = nil
+            } else if securitySummary == nil {
+                securitySummaryError = "The security checkup couldn\u{2019}t be loaded."
+            }
+        } catch is CancellationError {
+        } catch let e as APIClient.APIError {
+            if securitySummary == nil { securitySummaryError = e.message }
+        } catch {
+            if securitySummary == nil { securitySummaryError = "The security checkup couldn\u{2019}t be loaded." }
+        }
     }
 
     func loadHealth() async {

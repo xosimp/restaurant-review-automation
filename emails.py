@@ -443,6 +443,7 @@ _SUPPRESSION_EXEMPT = {
     "send_password_reset_code_email",
     "send_password_changed_email",
     "send_email_changed_email",
+    "send_passkey_added_email",
     "send_recovery_email_code",
     "send_login_notification",
 }
@@ -809,6 +810,7 @@ FLOOD_LIMITS = {
     "send_recovery_email_code": (6, 3600),
     "send_email_changed_email": (6, 3600),
     "send_password_changed_email": (6, 3600),
+    "send_passkey_added_email": (6, 3600),
     "send_team_invite_email": (10, 3600),
     "digest_preview": (6, 3600),
 }
@@ -3959,6 +3961,51 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
                   "preheader": "If this wasn't you, contact will@cavnar.ai immediately.", "html": _html_document(html)})
     except Exception as e:
         log.warning("send_email_changed_email: request to Resend failed: %s", e)
+        return not_sent("build_error", str(e)[:300])
+
+
+def send_passkey_added_email(to_email: str, restaurant_name: str, passkey_name: str = None,
+                             report_url: str = None, tz: str = None,
+                             restaurant_id: int = None) -> "SendResult":
+    """A passkey was added to this login (re-audit 10/8/26, #1): a passkey
+    is a way back in that outlives a password reset unless "This wasn't me"
+    removes it, so adding one is said to the login's own address — the same
+    security family as the password-changed and new sign-in notices. The
+    link is the sign-in notice's one-time "This wasn't me"
+    (auth.consume_login_report): every session, remembered device and
+    passkey of the login ends and the password must be reset."""
+    if not _resend_key():
+        log.warning("send_passkey_added_email: RESEND_API_KEY not set — nothing sent")
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    now_str = security_stamp(tz)
+    device = esc(passkey_name or "a device")
+    b = BRAND
+    action = (f'<p style="margin:22px 0 0"><a href="{esc(report_url)}" style="display:inline-block;'
+              f'background:{b["ember"]};color:{b["card"]};font-weight:700;font-size:14px;text-decoration:none;'
+              f'padding:11px 20px;border-radius:8px">This wasn&rsquo;t me</a></p>') if report_url else ""
+    html = f"""
+    <div style="background:{b["paper"]};width:100%;padding:40px 20px;box-sizing:border-box">
+    <div style="font-family:{_SANS};max-width:480px;margin:0 auto;background:{b["paper"]};padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="{_WORDMARK}" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
+      </div>
+      <div style="background:{b["card"]};border-radius:10px;padding:28px 24px;border:1px solid {b["border"]}">
+        <p style="color:{b["ink"]};font-size:15px;margin:0 0 16px">A passkey was added to your <strong>{esc(restaurant_name)}</strong> login on {now_str}, from {device}.</p>
+        <p style="color:{b["muted"]};font-size:13px;margin:16px 0 0;line-height:1.6">A passkey signs in with Face ID or a fingerprint instead of your password. If this was you, no action needed. If it wasn&rsquo;t, press the button: every device signed in to this login is signed out, its passkeys are removed, and the password has to be reset.</p>
+        {action}
+      </div>
+      <p style="color:{b["muted"]};font-size:11px;text-align:center;margin-top:20px"><img src="{_SEAL}" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    </div>
+    """
+    try:
+        return deliver(email_type="send_passkey_added_email", restaurant_id=restaurant_id,
+                       payload={"from": sender("client"), "to": [to_email],
+                                "subject": "A passkey was added to your Cavnar AI login",
+                                "preheader": "If this wasn't you, press This wasn't me in this email.",
+                                "html": _html_document(html)})
+    except Exception as e:
+        log.warning("send_passkey_added_email: request to Resend failed: %s", e)
         return not_sent("build_error", str(e)[:300])
 
 

@@ -171,6 +171,19 @@ def test_reactivate_refuses_an_admin_row(app, db_path):
     assert _one(db_path, "SELECT is_active FROM users WHERE id=?", (other_admin,))[0] == 0
 
 
+def test_reactivate_never_revives_a_login_its_holder_deleted(app, db_path):
+    """Re-audit 10/8/26, #5: Delete my login is the holder's decision; the
+    console says to invite them again instead of switching the row back on."""
+    c, _, _ = _admin_client(app, db_path)
+    rid = _restaurant(db_path)
+    _login(db_path, rid, "owner")
+    mate = _login(db_path, rid, "mate", role="member")
+    assert auth.delete_own_login(mate, rid, db_path=db_path)["ok"]
+    r = _post(c, "/admin/reactivate-client/%d" % mate)
+    assert r.status_code == 409 and r.get_json()["deleted_by_holder"] is True
+    assert _one(db_path, "SELECT is_active FROM users WHERE id=?", (mate,))[0] == 0
+
+
 # ── #139: deactivate ends everything; freeze reaches the whole restaurant ───
 
 def test_deactivate_ends_sessions_and_devices_and_reactivate_revives_nothing(app, db_path):

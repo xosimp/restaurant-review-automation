@@ -264,7 +264,7 @@ final class AccountParityTests: XCTestCase {
     // MARK: #13 Billing
 
     func testBillingSaysWhereItIsManagedAsPlainText() {
-        XCTAssertEqual(AccountBillingDetailView.manageNote, "Manage billing at dashboard.cavnar.ai")
+        XCTAssertEqual(AccountBillingDetailView.manageNote, "Billing is handled under your service agreement.")
         XCTAssertFalse(AccountBillingDetailView.manageNote.contains("://"))
         XCTAssertEqual(AccountBillingDetailView.invoiceStatus("open"), "Due")
     }

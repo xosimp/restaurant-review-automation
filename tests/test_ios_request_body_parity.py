@@ -934,6 +934,11 @@ class Unresolved(Exception):
     pass
 
 
+class Carried(Exception):
+    """The path is a lock-screen action's, read where the action is built
+    (_carrier_writes)."""
+
+
 class Param(Exception):
     """The expression is the enclosing function's parameter."""
 
@@ -1072,7 +1077,7 @@ def resolve_string(sw, e, depth=0):
             right = ["{*}"]          # `"/people/" + key.addingPercentEncoding(…)`
         return [l + r for l in left for r in right]
     if t.startswith('"') and t.endswith('"') and s.count('"') == 2:
-        return [_interpolate(sw, e, depth)]
+        return _interpolate(sw, e, depth)
     if _IDENT.match(t):
         decl, typ, fn = _local_decl(sw, e, t)
         if decl is not None:
@@ -1087,6 +1092,8 @@ def resolve_string(sw, e, depth=0):
     m = re.match(r"^([a-z]\w*(?:\.\w+)*)\.(\w+)$", t)
     if m:
         owner = type_of(sw, Expr(e.file, e.a, e.a + len(m.group(1))))
+        if m.group(2) == "path" and (owner or "").split(".")[-1] in _PATH_CARRIERS:
+            raise Carried(t)
         if owner and not owner.startswith(("(", "[")):
             return _const(sw, e.file, e.a, m.group(2), depth, owner)
     m = re.match(r"^(?:(?:Self|self|[A-Z]\w*)\.)?([a-z]\w*)\s*\(", t)
@@ -1113,25 +1120,28 @@ def _top_char(s, ch, start=0):
 
 
 def _interpolate(sw, e, depth):
+    """Every path a string literal can be. An interpolation of a path (or of
+    one of several: `\\(base)/\\(id)/decide` where `base` is one of two
+    routes) is spelled out; anything else is `{*}`."""
     t = e.text
-    out, j = [], 1
+    outs, j = [""], 1
     while j < len(t) - 1:
         if t.startswith("\\(", j):
             close = match_close(e.file.masked, e.a + j + 1)
             inner = Expr(e.file, e.a + j + 2, close)
-            piece = "{*}"
+            pieces = ["{*}"]
             try:
                 vals = resolve_string(sw, inner, depth + 1)
-                if len(vals) == 1 and vals[0].startswith("/"):
-                    piece = vals[0]
+                if vals and all(v.startswith("/") for v in vals):
+                    pieces = list(dict.fromkeys(vals))
             except (Unresolved, Param):
                 pass
-            out.append(piece)
+            outs = [o + p for o in outs for p in pieces]
             j = close - e.a + 1
             continue
-        out.append(t[j])
+        outs = [o + t[j] for o in outs]
         j += 1
-    return "".join(out)
+    return outs
 
 
 def _const(sw, f, off, name, depth, owner=None):
@@ -1581,6 +1591,8 @@ def collect_writes(sw):
                     query = set() if q.opaque else q.keys - {"{dynamic}"}
                 except (Unresolved, Param):
                     pass
+        except Carried:
+            return              # read where the action is built (_carrier_writes)
         except Param as p:
             fn = p.func
             files = [fn.file] if fn.private else sw.files
@@ -1616,6 +1628,123 @@ def collect_writes(sw):
         if body is None:
             body = _following_http_body(sw, call)
         visit(call, {"path": path, "method": call.arg("method"), "body": body, "query": call.arg("query")}, [], [])
+    cw, cu = _carrier_writes(sw)
+    return writes + cw, unresolved + cu
+
+
+# ── lock-screen actions: a route and its body carried as a value ────────────
+#
+# PushManager's notification buttons are built as values —
+# `BackgroundAction(path: "…", decision:/payload:/body:/savesDraft:/
+# asksCoverForIssue: …)` — and one function, `perform`, posts whichever the
+# value carries: `action.path` with its `payload`, else its `body` (an
+# ActionBody case), else `{decision}` (DecisionBody), else `{}` (EmptyBody);
+# a typed reply's `savesDraft` (SavedDraft) first posts `{draft}`
+# (SaveDraftBody) to its own path; "Ask someone to cover"
+# (`asksCoverForIssue`) posts `{name}` (CoverBody). Each value's literal path
+# and body are read where it is built; the send sites that only pass a
+# carried path on (`action.path`, `save.path`) are not writes of their own.
+# test_lock_screen_actions_are_read_where_they_are_built pins `perform`'s
+# order, so a new branch there cannot slip past this reading.
+
+_PATH_CARRIERS = {"BackgroundAction", "SavedDraft"}
+
+
+def _present(e):
+    return e is not None and e.text.strip() not in ("", "nil")
+
+
+def _action_case_shape(sw, f, off, case):
+    """The keys an ActionBody case encodes: its section of the enum's
+    `encode(to:)` (`forKey: .k` through the enum's CodingKeys), or — a case
+    that hands the encoder to its associated value — that value's type."""
+    t = sw.find_type("ActionBody", f, off)
+    if t is None:
+        raise Unresolved("type ActionBody")
+    enc = next((fn for fn in t.file.funcs if fn.name == "encode" and t.a < fn.start < t.b), None)
+    if enc is None:
+        raise Unresolved("ActionBody.encode(to:)")
+    body = t.file.masked[enc.body_a:enc.body_b]
+    cases = list(re.finditer(r"\bcase\s+\.(\w+)\b", body))
+    for i, cm in enumerate(cases):
+        if cm.group(1) != case:
+            continue
+        sec = body[cm.end():cases[i + 1].start() if i + 1 < len(cases) else len(body)]
+        ck = _coding_keys(sw, t)
+        keys = {ck[k] for k in re.findall(r"forKey:\s*\.(\w+)", sec) if k in ck}
+        if re.search(r"\.encode\(to:\s*encoder\)", sec):
+            dm = re.search(r"\bcase\s+" + re.escape(case) + r"\s*\(\s*(?:\w+\s*:\s*)?([\w.]+)",
+                           _top_level(t.file, t.a, t.b))
+            if not dm:
+                raise Unresolved(f"ActionBody.{case}'s value")
+            keys |= _struct_shape(sw, f, off, dm.group(1)).keys
+        return Shape(keys, origin=f"ActionBody.{case}")
+    raise Unresolved(f"ActionBody.{case}")
+
+
+def _carrier_body(sw, e):
+    """A carried body: an ActionBody case (`.approve(expectedDraft: x)`), a
+    body built from a dictionary literal (`PushActionBody(["k": …])`), or
+    anything resolve_body reads."""
+    e = _strip(e)
+    m = re.match(r"^\.(\w+)\b", e.skel)
+    if m:
+        return _action_case_shape(sw, e.file, e.a, m.group(1))
+    m = re.match(r"^[A-Z][\w.]*\s*\(\s*\[", e.skel)
+    if m:
+        lb = e.a + m.end() - 1
+        return Shape(_dict_keys(Expr(e.file, lb, match_close(e.file.skel, lb) + 1)), origin="dictionary literal")
+    return resolve_body(sw, e)
+
+
+def _later_sets(sw, c, labels):
+    """`var action = BackgroundAction(…)` then `action.body = …`: the
+    expressions set on the value after it is built, in the same function."""
+    f = c.file
+    line_start = f.skel.rfind("\n", 0, c.a) + 1
+    vm = re.search(r"\bvar\s+(\w+)\s*=\s*$", f.skel[line_start:c.a])
+    if not vm:
+        return []
+    fn = sw.enclosing_func(f, c.a)
+    hi = fn.body_b if fn else len(f.skel)
+    out = []
+    pat = re.compile(r"\b" + re.escape(vm.group(1)) + r"\.(" + "|".join(labels) + r")\s*=(?!=)\s*")
+    for m in pat.finditer(f.skel, c.b, hi):
+        out.append(Expr(f, m.end(), _stmt_end(f.skel, m.end())))
+    return out
+
+
+def _carrier_writes(sw):
+    writes, unresolved = [], []
+    _ENV.clear()
+    for c in _calls_named(sw, "BackgroundAction", sw.files):
+        if c.arg("path") is None:
+            continue
+        try:
+            paths = resolve_string(sw, c.arg("path"))
+            if _present(c.arg("asksCoverForIssue")):
+                shape = _struct_shape(sw, c.file, c.a, "CoverBody")
+            else:
+                parts = [_carrier_body(sw, e) for e in [c.arg("payload"), c.arg("body")] if _present(e)]
+                parts += [_carrier_body(sw, e) for e in _later_sets(sw, c, ("payload", "body"))]
+                if not parts:
+                    parts = [_struct_shape(sw, c.file, c.a, "DecisionBody") if _present(c.arg("decision"))
+                             else Shape(origin="EmptyBody")]
+                shape = Shape(set().union(*(p.keys for p in parts)),
+                              opaque=next((p.opaque for p in parts if p.opaque), None),
+                              origin=" | ".join(p.origin for p in parts))
+        except (Unresolved, Param) as u:
+            unresolved.append((c, [c], f"carried action: {u}"))
+            continue
+        writes.append(Write(c, paths, "POST", shape, []))
+    for c in _calls_named(sw, "SavedDraft", sw.files):
+        if c.arg("path") is None:
+            continue
+        try:
+            writes.append(Write(c, resolve_string(sw, c.arg("path")), "POST",
+                                _struct_shape(sw, c.file, c.a, "SaveDraftBody"), []))
+        except (Unresolved, Param) as u:
+            unresolved.append((c, [c], f"carried draft: {u}"))
     return writes, unresolved
 
 
@@ -1703,7 +1832,6 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/account/update-profile", "expected_version"): _WEB_TOO + " (models' optional row_version check)",
     ("/mobile/api/account/update-profile", "category"): _WEB_TOO + " (the intelligence cohort, set by admin)",
     ("/mobile/api/account/staff/<int:membership_id>", "role"): _WEB_TOO + " (moves a login between tiers; name, job and active are what both send)",
-    ("/mobile/api/account/memory/add", "replaces"): _WEB_TOO + " (Ask's correct-a-fact path)",
     ("/mobile/api/account/memory/add", "scope"): _WEB_TOO + " (scope is its own route, /account/memory/scope)",
     ("/mobile/api/account/memory/restore", "due_on"): _WEB_TOO,
     ("/mobile/api/account/memory/restore", "valid_until"): _WEB_TOO,
@@ -1773,8 +1901,6 @@ UNREADABLE_OK = {
     ("RecMemoryViews.swift", "answerUndoWhy"): "the undo-why ask carries its own route (UndoAskWhy.route)",
     ("HomeFollowThrough.swift", "run"): "a follow-through step's route is the server's (step.route.mobile)",
     ("AskCavnarViewModel.swift", "confirm"): "a confirmed proposal posts the server's route and body (proposal.route.mobile)",
-    ("PushManager.swift", "perform"): "a lock-screen action's path is the push payload's (PushAction.path)",
-    ("PushManager.swift", "performAskCover"): "a lock-screen action's path is the push payload's (PushAction.path)",
     ("StaffRequestsViews.swift", "commit"): "an undone withdraw/cancel: PendingUndo.path holds one of two literal "
                                             "/staff/api/time-off paths, body StaffEmptyBody",
     ("PendingWriteQueue.swift", "drain"): "the offline queue replays the path, method and body it was given",
@@ -2038,6 +2164,81 @@ def test_server_reader_follows_the_body_into_helpers():
     keys, dynamic, _, aliases, _ = _reads(view)
     assert {"include_4star", "limit", "a", "b", "count", "employee_name", "name", "text"} <= set(keys)
     assert frozenset({"employee_name", "name"}) in aliases
+
+
+def test_lock_screen_actions_are_read_where_they_are_built():
+    """PushManager's buttons are read from their BackgroundAction values,
+    not allowlisted as unreadable (re-audit 10/8/26, #8). `perform` still
+    sends in the order _carrier_writes reads: payload, ActionBody, decision,
+    empty — a typed reply's draft first, and a cover ask's name."""
+    with open(os.path.join(IOS, "CavnarAI", "Push", "PushManager.swift")) as fh:
+        src = fh.read()
+    perform = src[src.index("nonisolated static func perform("):src.index("nonisolated static func scheduleSendAllowed")]
+    order = [perform.index(x) for x in ("if let save = action.savesDraft", "body: SaveDraftBody(draft: save.text)",
+                                         "if let payload = action.payload", "else if let body = action.body",
+                                         "else if let decision = action.decision",
+                                         "body: DecisionBody(decision: decision)", "body: EmptyBody()")]
+    assert order == sorted(order)
+    assert "action.path, method: .post, body: CoverBody(name: name)" in src
+    w, unresolved = _carrier_writes(load_swift())
+    assert not unresolved
+    got = {}
+    for x in w:
+        for p in x.paths:
+            got.setdefault(p, set()).update(x.shape.keys)
+    assert got["/mobile/api/account/not-me"] == {"login_user_id"}
+    assert got["/mobile/api/labor/time-off/{*}/decide"] == {"decision"}
+    assert got["/mobile/api/labor/shift-requests/{*}/decide"] == {"decision"}
+    assert got["/mobile/api/reviews/{*}/approve"] == {"expected_draft"}
+    assert got["/mobile/api/reviews/{*}/save-draft"] == {"draft"}
+    assert got["/mobile/api/issues/{*}/ask-cover"] == {"name"}
+    assert got["/mobile/api/staff-brief/approve"] == {"day", "text"}
+    assert not any(k[0] == "PushManager.swift" for k in UNREADABLE_OK)
+
+
+def test_parser_reads_a_carried_action():
+    sw = _sw('''
+struct BackgroundAction: Equatable {
+    let path: String
+    let decision: String?
+    var body: ActionBody? = nil
+}
+enum ActionBody: Encodable {
+    case notMe(loginUserId: Int)
+    case rec(RecBody)
+    private enum Keys: String, CodingKey { case loginUserId = "login_user_id" }
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .notMe(let id):
+            var c = encoder.container(keyedBy: Keys.self)
+            try c.encode(id, forKey: .loginUserId)
+        case .rec(let body):
+            try body.encode(to: encoder)
+        }
+    }
+}
+struct RecBody: Encodable { let key: String; let event: String }
+struct DecisionBody: Encodable { let decision: String }
+func make(_ kind: String, id: Int) -> BackgroundAction? {
+    let base = kind == "t" ? "/mobile/api/time-off" : "/mobile/api/shifts"
+    if kind == "n" { return BackgroundAction(path: "/mobile/api/not-me", decision: nil, body: .notMe(loginUserId: id)) }
+    if kind == "r" {
+        var a = BackgroundAction(path: "/mobile/api/recs", decision: nil)
+        a.body = .rec(RecBody(key: "k", event: "e"))
+        return a
+    }
+    return BackgroundAction(path: "\\(base)/\\(id)/decide", decision: "approve")
+}
+func perform(_ action: BackgroundAction) async {
+    _ = try? await client.send(action.path, method: .post, body: DecisionBody(decision: "x"))
+}
+''')
+    writes, unresolved = collect_writes(sw)
+    got = {tuple(w.paths): w.shape.keys for w in writes}
+    assert got[("/mobile/api/not-me",)] == {"login_user_id"}
+    assert got[("/mobile/api/recs",)] == {"key", "event"}
+    assert got[("/mobile/api/time-off/{*}/decide", "/mobile/api/shifts/{*}/decide")] == {"decision"}
+    assert not unresolved
 
 
 def test_rule_matching_prefers_a_converter():

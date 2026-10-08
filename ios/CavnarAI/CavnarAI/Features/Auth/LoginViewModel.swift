@@ -103,20 +103,45 @@ final class LoginViewModel {
 
     // MARK: - Passkeys (iOS parity #57)
 
+    /// How long one AutoFill request is left open before it is asked again
+    /// with a fresh challenge: the server's lasts PASSKEY_CHALLENGE_MINUTES
+    /// (5), and a passkey picked from the keyboard bar after that was refused
+    /// as expired (re-audit 10/8/26, #9). Under it, with room for the round trip.
+    static let autoFillRefreshSeconds: Double = 270
+    /// Set by the refresh timer just before it ends the request it outlived.
+    @ObservationIgnored private var autoFillExpired = false
+
     /// Offers this phone's passkey in the QuickType bar over the username
     /// field (AutoFill-assisted): the request waits until the person picks
-    /// it, signs in another way, or the screen goes. Silent on every
+    /// it, signs in another way, or the screen goes — asked again with a
+    /// fresh challenge every autoFillRefreshSeconds. Silent on every
     /// failure — the password form is right there.
     func startPasskeyAutoFill() {
         autoFillTask?.cancel()
         autoFillTask = Task { [weak self] in
-            guard let self else { return }
-            guard let options = try? await sessionStore.passkeySignInOptions(), !Task.isCancelled else { return }
-            do {
-                let credential = try await passkeys.assert(options, autoFill: true)
-                await finishPasskey(credential)
-            } catch {
-                // Cancelled or unavailable — the form stands.
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard let options = try? await sessionStore.passkeySignInOptions(), !Task.isCancelled else { return }
+                // Before the challenge expires, this request is ended and the
+                // loop asks for a new one; the person never sees the swap.
+                autoFillExpired = false
+                let timer = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(Self.autoFillRefreshSeconds))
+                    guard !Task.isCancelled, let self else { return }
+                    self.autoFillExpired = true
+                    self.passkeys.cancel()
+                }
+                do {
+                    let credential = try await passkeys.assert(options, autoFill: true)
+                    timer.cancel()
+                    await finishPasskey(credential)
+                    return
+                } catch {
+                    timer.cancel()
+                    // Cancelled or unavailable — the form stands. Only the
+                    // refresh above asks again.
+                    if !autoFillExpired { return }
+                }
             }
         }
     }

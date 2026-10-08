@@ -35,6 +35,9 @@ struct AccountAlertsDetailView: View {
     @State private var sendingTestPush = false
     @State private var savingIssueTexts = false
     @State private var showingAddTextContact = false
+    /// The saved contacts' ids when "Add someone to text" opened — whoever
+    /// the server has beyond them afterwards is the person just added.
+    @State private var contactIdsBeforeAdd: Set<Int> = []
     private enum AlertsField: Hashable { case extraEmails, contactName(Int), contactPhone(Int) }
 
     /// Alert settings, alert contacts and the account's email preferences
@@ -43,6 +46,31 @@ struct AccountAlertsDetailView: View {
     /// their own phone's test push stays theirs.
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
     @FocusState private var focusedField: AlertsField?
+
+    /// The contacts on screen after "Add someone to text" saved one: the
+    /// draft as the owner left it (names and numbers typed and not yet
+    /// saved stay), a consent the server just recorded on one of them taken
+    /// from the server, and each contact the server has that it did not
+    /// have before (`before`) appended. An empty new row left blank gives
+    /// way, so the list never passes the two the server keeps.
+    static func mergeAddedContacts(draft: [AlertContact], before: Set<Int>,
+                                   server: [AlertContact]) -> [AlertContact] {
+        let onScreen = Set(draft.map(\.id))
+        let added = server.filter { !before.contains($0.id) && !onScreen.contains($0.id) }
+        var out: [AlertContact] = draft.compactMap { local in
+            if local.id < 0, !added.isEmpty,
+               local.name.trimmingCharacters(in: .whitespaces).isEmpty,
+               local.phone.filter(\.isNumber).isEmpty {
+                return nil
+            }
+            guard let s = server.first(where: { $0.id == local.id }), s.smsConsent != local.smsConsent else {
+                return local
+            }
+            return AlertContact(id: local.id, name: local.name, phone: local.phone, smsConsent: s.smsConsent)
+        }
+        out.append(contentsOf: added)
+        return out
+    }
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -489,8 +517,17 @@ struct AccountAlertsDetailView: View {
         .sheet(isPresented: $showingAddTextContact) {
             IssueTextContactSheet { updated in
                 routing = updated
-                // The person also joined the alert contacts: re-read them.
-                Task { await viewModel.load(); if let c = viewModel.summary?.alerts.contacts { contacts = c } }
+                // The person also joined the alert contacts: re-read them,
+                // and merge only who is new into the list on screen — an
+                // unsaved edit to the others is the owner's, never replaced
+                // by the server's copy (re-audit 10/8/26, #3).
+                let before = contactIdsBeforeAdd
+                Task {
+                    await viewModel.load()
+                    if let server = viewModel.summary?.alerts.contacts {
+                        contacts = Self.mergeAddedContacts(draft: contacts, before: before, server: server)
+                    }
+                }
             }
             .presentationDetents([.medium, .large])
         }
@@ -726,6 +763,7 @@ struct AccountAlertsDetailView: View {
         AccountActionRow(label: "Add someone to text",
                          detail: "Their name, mobile number and that they agreed to texts.",
                          symbol: "person.badge.plus", showsDivider: false) {
+            contactIdsBeforeAdd = Set((viewModel.summary?.alerts.contacts ?? contacts).map(\.id))
             showingAddTextContact = true
         }
         if let routingError {
