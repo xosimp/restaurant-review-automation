@@ -58,6 +58,22 @@ struct AccountMemoryView: View {
             .onChange(of: viewModel.draft.kind) { _, kind in
                 viewModel.draft.days = kind == "followup" ? 7 : 0
             }
+            // A note that looks like one already kept: does this replace it?
+            // (the web's confirm after Remember; re-audit 10/8/26, #8)
+            .confirmationDialog(
+                "This looks like an earlier note",
+                isPresented: Binding(get: { viewModel.pendingReplace != nil },
+                                     set: { if !$0 { viewModel.pendingReplace = nil } }),
+                titleVisibility: .visible,
+                presenting: viewModel.pendingReplace
+            ) { _ in
+                Button("Replace the earlier note") {
+                    Task { await viewModel.replaceEarlier() }
+                }
+                Button("Keep both", role: .cancel) {}
+            } message: { pending in
+                Text("\u{201C}\(pending.similar.fact)\u{201D} \u{2014} does the new one replace it?")
+            }
             .confirmationDialog(
                 "Let this note go for good?",
                 isPresented: Binding(get: { pendingDismiss != nil }, set: { if !$0 { pendingDismiss = nil } }),
@@ -666,16 +682,49 @@ final class AccountMemoryViewModel {
         var validUntil: String? = nil
         var dueOn: String? = nil
         let audience: String
+        /// The earlier note this one replaces — sent only on the second post,
+        /// once the owner said yes to "Does the new one replace it?" (the
+        /// web's acctRemember; re-audit 10/8/26, #8). The server archives
+        /// that note as replaced.
+        var replaces: Int? = nil
         enum CodingKeys: String, CodingKey {
-            case fact, kind, modules, audience
+            case fact, kind, modules, audience, replaces
             case validUntil = "valid_until"
             case dueOn = "due_on"
         }
     }
-    private struct AddResponse: Decodable {
+
+    /// A note already kept that the new one looks like (`similar`).
+    struct SimilarFact: Decodable, Equatable, Identifiable {
+        let id: Int
+        let fact: String
+        enum CodingKeys: String, CodingKey { case id, fact }
+        init(id: Int, fact: String) { self.id = id; self.fact = fact }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = c.setupInt(.id) ?? 0
+            fact = c.setupText(.fact) ?? ""
+        }
+    }
+
+    /// The question asked after a save that looks like an earlier note:
+    /// the note, and the body to post again with `replaces` on a yes.
+    struct PendingReplace: Equatable, Identifiable {
+        let similar: SimilarFact
+        let body: AddBody
+        var id: Int { similar.id }
+    }
+
+    struct AddResponse: Decodable {
         let ok: Bool
         let error: String?
         var evicted: Int? = nil
+        /// Notes this one may replace, closest first.
+        var similar: [SimilarFact] = []
+        /// The note it replaced (its words), on a post with `replaces`.
+        var replaced: String? = nil
+        /// Someone had already said it: this login's words were stamped on theirs.
+        var confirmed = false
         /// True when the fact went to owners only because it is about
         /// someone's job or pay (owner_memory.is_private).
         var privateDefault: Bool? = nil
@@ -685,7 +734,7 @@ final class AccountMemoryViewModel {
         /// anything else, and on an older server.
         var scheduleRule: ScheduleRuleReadback? = nil
         enum CodingKeys: String, CodingKey {
-            case ok, error, evicted
+            case ok, error, evicted, similar, replaced, confirmed
             case privateDefault = "private_default"
             case scheduleRule = "schedule_rule"
         }
@@ -694,6 +743,10 @@ final class AccountMemoryViewModel {
             ok = c.setupBool(.ok) ?? false
             error = c.setupText(.error)
             evicted = c.setupInt(.evicted)
+            similar = ((try? c.decodeIfPresent([SimilarFact].self, forKey: .similar)) ?? nil)?
+                .filter { $0.id > 0 && !$0.fact.isEmpty } ?? []
+            replaced = c.setupText(.replaced)
+            confirmed = c.setupBool(.confirmed) ?? false
             privateDefault = c.setupBool(.privateDefault)
             scheduleRule = (try? c.decodeIfPresent(ScheduleRuleReadback.self, forKey: .scheduleRule)) ?? nil
         }
@@ -725,6 +778,10 @@ final class AccountMemoryViewModel {
     /// The last staffing rule added, as the schedule will check it — kept
     /// under the form until the next add, since the posted check fades.
     var lastScheduleRule: ScheduleRuleReadback?
+    /// "This looks like an earlier note — does the new one replace it?",
+    /// asked after a save whose answer named one (`similar`).
+    var pendingReplace: PendingReplace?
+    var replacing = false
 
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
@@ -774,18 +831,58 @@ final class AccountMemoryViewModel {
             Haptic.success()
             lastScheduleRule = (r.scheduleRule?.text.isEmpty ?? true) ? nil : r.scheduleRule
             draft = Draft()
-            if r.privateDefault == true {
-                posted = "Remembered for owners only \u{2014} it is about someone\u{2019}s job or pay. "
-                    + "Share it from its row to tell the team."
-            } else {
-                posted = (r.evicted ?? 0) > 0 ? "Remembered \u{2014} the oldest of its kind moved to the archive"
-                                              : "Remembered"
-            }
+            posted = Self.addedMessage(r)
+            pendingReplace = r.similar.first.map { PendingReplace(similar: $0, body: body) }
             await load()
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn\u{2019}t save that."
+        }
+    }
+
+    /// The check's words after a save, as the web's toast says them.
+    static func addedMessage(_ r: AddResponse) -> String {
+        if r.privateDefault == true {
+            return "Remembered for owners only \u{2014} it is about someone\u{2019}s job or pay. "
+                + "Share it from its row to tell the team."
+        }
+        if r.confirmed { return "Already remembered \u{2014} noted you said it too" }
+        if let old = r.replaced, !old.isEmpty { return "Remembered \u{2014} it replaced \u{201C}\(old)\u{201D}" }
+        return (r.evicted ?? 0) > 0 ? "Remembered \u{2014} the oldest of its kind moved to the archive" : "Remembered"
+    }
+
+    /// The body that says yes to "does the new one replace it?": the same
+    /// note, posted again with the earlier one's id.
+    static func replaceBody(_ pending: PendingReplace) -> AddBody {
+        var body = pending.body
+        body.replaces = pending.similar.id
+        return body
+    }
+
+    /// Yes: the new note replaces the earlier one (the server archives it as
+    /// replaced). No is just letting the question go — both stay.
+    func replaceEarlier() async {
+        guard let pending = pendingReplace, !replacing else { return }
+        pendingReplace = nil
+        replacing = true
+        errorMessage = nil
+        defer { replacing = false }
+        do {
+            let r: AddResponse = try await client.send("/mobile/api/account/memory/add", method: .post,
+                                                       body: Self.replaceBody(pending), retryTransient: false)
+            guard r.ok, r.replaced != nil else {
+                errorMessage = r.error ?? "Couldn\u{2019}t replace it."
+                Haptic.error()
+                return
+            }
+            Haptic.success()
+            posted = "Replaced the earlier note"
+            await load()
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = "Couldn\u{2019}t replace it."
         }
     }
 

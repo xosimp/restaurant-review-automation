@@ -364,14 +364,39 @@ struct AccountProfileDetailView: View {
     // Saves on change (not with the Save button below) — it's a rule with
     // real consequences, so flipping it should land immediately and
     // visibly, same as 2FA's own Turn on/off.
+    /// A save the server refused (a teammate's 403 owner_only, a dropped
+    /// connection) puts every switch back to what is saved — the screen
+    /// never shows a rule that isn't the one running (re-audit 10/8/26, #13).
     private func saveAutoApprove() {
+        guard isOwner else { resyncAutoApprove(); return }
         Task {
             if await viewModel.saveAutoApprove(enabled: autoApproveEnabled, paused: autoApprovePaused,
                                                dailyCap: autoApproveCap, earned: autoApproveEarned,
                                                include4star: autoApprove4star) {
                 Haptic.success()
+            } else {
+                Haptic.error()
+                resyncAutoApprove()
             }
         }
+    }
+
+    /// The switches as saved (the account summary's reviews block).
+    private func resyncAutoApprove() {
+        let saved = Self.savedAutoApprove(viewModel.summary?.reviews)
+        autoApproveEnabled = saved.enabled
+        autoApprovePaused = saved.paused
+        autoApproveCap = saved.dailyCap
+        autoApproveEarned = saved.earned
+        autoApprove4star = saved.include4star
+    }
+
+    /// What the switches read when nothing is being changed: the saved rule,
+    /// or all off at the server's default cap.
+    static func savedAutoApprove(_ reviews: AutoApproveSettings?) -> AccountViewModel.AutoApproveBody {
+        AccountViewModel.AutoApproveBody(enabled: reviews?.enabled ?? false, paused: reviews?.paused ?? false,
+                                         dailyCap: reviews?.dailyCap ?? 5, earned: reviews?.earned ?? false,
+                                         include4star: reviews?.include4star ?? false)
     }
 
     /// The rule in words, as the web's card says it (parity #2: this read
@@ -384,7 +409,30 @@ struct AccountProfileDetailView: View {
         return "\(bands), \(floor) \(viewModel.summary?.reviews.approvedToday ?? 0) auto-approved today."
     }
 
+    /// Auto-approve publishes replies with nobody reading them first, so
+    /// only the account owner changes it (client_api._do_auto_approve, 403
+    /// owner_only); everyone else reads the rule as it stands.
+    @ViewBuilder
     private var autoApproveSection: some View {
+        if isOwner {
+            autoApproveControls
+        } else {
+            AccountSection(kicker: "Auto-approve") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(!autoApproveEnabled ? "Off \u{2014} every reply waits for someone to read it."
+                         : autoApprovePaused ? "Paused \u{2014} nothing posts on its own until it resumes."
+                         : autoApproveRuleLine)
+                        .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Only the account owner can change auto-approve.")
+                        .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                }
+                .padding(.vertical, 9)
+            }
+        }
+    }
+
+    private var autoApproveControls: some View {
         AccountSection(kicker: "Auto-approve") {
             AccountSwitchRow(
                 label: autoApprove4star ? "Post 5- and 4-star replies automatically" : "Post 5-star replies automatically",

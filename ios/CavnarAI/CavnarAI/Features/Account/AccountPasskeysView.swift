@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Observation
 
 /// Account → Security → Passkeys (iOS parity #57): this login's passkeys —
@@ -27,7 +28,20 @@ struct AccountPasskeysView: View {
                             .accessibilityLabel("Loading your passkeys")
                     } else {
                         AccountSection(kicker: "On this login") {
-                            if model.rows.isEmpty {
+                            if let loadError = model.loadError, model.rows.isEmpty {
+                                // A list that didn't load is never "None yet"
+                                // (re-audit 10/8/26, #12).
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text(loadError).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Button {
+                                        Haptic.light()
+                                        Task { await model.load() }
+                                    } label: { Text("Try again").frame(maxWidth: .infinity) }
+                                        .buttonStyle(CavnarSecondaryButtonStyle())
+                                }
+                                .padding(.vertical, 9)
+                            } else if model.rows.isEmpty {
                                 Text("None yet. A passkey lives in your iCloud Keychain and signs you in with Face ID — here and on dashboard.cavnar.ai.")
                                     .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -185,12 +199,27 @@ final class AccountPasskeysModel {
     var adding = false
     var busyId: Int?
     var error: String?
+    /// The list couldn't be read — said, with Try again, never "None yet".
+    var loadError: String?
     var posted: String?
 
-    private struct ListResponse: Decodable { let ok: Bool; let passkeys: [PasskeyRow]? }
+    private struct ListResponse: Decodable { let ok: Bool; let passkeys: [PasskeyRow]?; let error: String? }
     private struct OptionsResponse: Decodable { let ok: Bool; let options: PasskeyRegistrationOptions?; let error: String? }
     private struct PasswordBody: Encodable { let password: String }
-    struct RegisterBody: Encodable { let credential: PasskeyCredentialJSON }
+    /// Every key the register route reads: the credential, and the device
+    /// it was made on, which names it (mobile_api.mobile_passkeys_register —
+    /// an iPad's passkey was saved as "iPhone"; re-audit 10/8/26, #11).
+    struct RegisterBody: Encodable, Equatable {
+        let credential: PasskeyCredentialJSON
+        let device: String
+    }
+
+    /// "iPhone", "iPad" or "Mac" — the words the server names a passkey by.
+    static func deviceName(idiom: UIUserInterfaceIdiom = UIDevice.current.userInterfaceIdiom,
+                           onMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac) -> String {
+        if onMac || idiom == .mac { return "Mac" }
+        return idiom == .pad ? "iPad" : "iPhone"
+    }
 
     private let client: APIClient
     private let coordinator = PasskeyCoordinator()
@@ -199,8 +228,19 @@ final class AccountPasskeysModel {
     func load() async {
         isLoading = true
         defer { isLoading = false; loaded = true }
-        if let r: ListResponse = try? await client.send("/mobile/api/passkeys", hapticOnError: false), r.ok {
-            rows = r.passkeys ?? []
+        do {
+            let r: ListResponse = try await client.send("/mobile/api/passkeys", hapticOnError: false)
+            if r.ok {
+                rows = r.passkeys ?? []
+                loadError = nil
+            } else {
+                loadError = r.error ?? "Your passkeys couldn\u{2019}t be loaded."
+            }
+        } catch is CancellationError {
+        } catch let e as APIClient.APIError {
+            loadError = e.message
+        } catch {
+            loadError = "Your passkeys couldn\u{2019}t be loaded."
         }
     }
 
@@ -215,7 +255,7 @@ final class AccountPasskeysModel {
             guard o.ok, let options = o.options else { error = o.error ?? "Couldn\u{2019}t start that."; return }
             let credential = try await coordinator.register(options)
             let r: APIClient.OKResponse = try await client.send("/mobile/api/passkeys", method: .post,
-                                                                body: RegisterBody(credential: credential),
+                                                                body: RegisterBody(credential: credential, device: Self.deviceName()),
                                                                 retryTransient: false)
             guard r.ok else { error = r.error ?? "That passkey couldn\u{2019}t be saved."; return }
             Haptic.success()

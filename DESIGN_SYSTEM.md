@@ -285,7 +285,7 @@ Split View is a phone. Dark only, the same tokens and components.
 | Labor week | The pager's segments gain **Week** (the default): `ScheduleWeekGrid`, person × day in a `Grid` that scrolls sideways — a 150pt name column (hours, past 40h in red), 112pt day columns (weekday kicker, M/D, count or ⚠), each shift an ember-tinted chip (amber when flagged); a tap opens `ShiftEditSheet` (History: opens the day) | By day / By person |
 | Sheets | `.cavnarFormSheet()` — `presentationSizing(.form)` on iOS 18, iPad idiom only | Detents unchanged |
 | Pointer | `.cavnarHoverCard()` (lift) on primary tappable cards — module tiles, week-grid chips; `.hoverEffect(.highlight)` on list rows (reviews). Never on a card that is only read | — |
-| Keyboard | ⌘1–⌘4 the tabs (staff: its four), ⌘K Find or ask, ⌘N a new Ask, ⌘R refreshes the screen on top through its own pull-to-refresh (`CavnarEmberRefreshable`) — invisible `CavnarShortcutButton`s, listed in the ⌘ overlay | Same, with a hardware keyboard |
+| Keyboard | ⌘1–⌘4 the tabs (staff: its four), ⌘K Find or ask, ⌘N a new Ask, ⌘R refreshes the screen on top through its own pull-to-refresh (`CavnarEmberRefreshable`) — only one on screen and in its window's topmost presentation (`CavnarPresentation.isTopmost`), never the screen under an open sheet — invisible `CavnarShortcutButton`s, listed in the ⌘ overlay | Same, with a hardware keyboard |
 | Widgets | The waiting widget adds `systemLarge`: the medium's halves stacked, then last night's labor and food cost (est.) against target, "—" when unmeasured | — |
 
 Kept phone-shaped on purpose: the sign-in, lock and PIN screens (centred

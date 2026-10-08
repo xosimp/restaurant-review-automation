@@ -136,17 +136,29 @@ final class PasskeyCoordinator: NSObject, ASAuthorizationControllerDelegate,
         return try await run([request], autoFill: false)
     }
 
-    /// Ends a pending AutoFill request (the login screen going away, or the
-    /// person signing in another way).
+    /// Ends a pending request (the login screen going away, the person
+    /// signing in another way, an AutoFill challenge about to expire). Its
+    /// caller hears `.cancelled` now; the system's own late answer for that
+    /// controller is ignored (`isCurrent`).
     func cancel() {
+        let pending = continuation
+        continuation = nil
         controller?.cancel()
         controller = nil
+        pending?.resume(throwing: PasskeyError.cancelled)
+    }
+
+    /// Whether a delegate callback belongs to the request now in flight. A
+    /// cancelled AutoFill request answers `.canceled` after the next request
+    /// has started; read as the new one's answer, it ended the request the
+    /// person was about to use (re-audit 10/8/26, #10).
+    static func isCurrent(_ callback: ASAuthorizationController, current: ASAuthorizationController?) -> Bool {
+        current != nil && callback === current
     }
 
     private func run(_ requests: [ASAuthorizationRequest], autoFill: Bool) async throws -> PasskeyCredentialJSON {
         cancel()
         return try await withCheckedThrowingContinuation { continuation in
-            self.continuation?.resume(throwing: PasskeyError.cancelled)
             self.continuation = continuation
             let controller = ASAuthorizationController(authorizationRequests: requests)
             controller.delegate = self
@@ -162,6 +174,7 @@ final class PasskeyCoordinator: NSObject, ASAuthorizationControllerDelegate,
 
     func authorizationController(controller: ASAuthorizationController,
                                  didCompleteWithAuthorization authorization: ASAuthorization) {
+        guard Self.isCurrent(controller, current: self.controller) else { return }
         let result: Result<PasskeyCredentialJSON, Error>
         if let reg = authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialRegistration,
            let attestation = reg.rawAttestationObject {
@@ -180,6 +193,7 @@ final class PasskeyCoordinator: NSObject, ASAuthorizationControllerDelegate,
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        guard Self.isCurrent(controller, current: self.controller) else { return }
         self.controller = nil
         let code = (error as? ASAuthorizationError)?.code
         if code == .canceled {

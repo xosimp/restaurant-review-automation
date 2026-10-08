@@ -676,15 +676,18 @@ final class AccountTargetsModel {
         }
     }
 
-    /// Saves the field the owner just left, if it changed.
+    /// Saves the field the owner just left, if it changed. What was typed
+    /// stays in the box until the server took it (re-audit 10/8/26, #4: a
+    /// refused or failed save cleared the draft, and the figure vanished
+    /// back to the old one with only the error to say why).
     func commit(_ key: String) async {
         guard canEdit, let p = payload, let typed = drafts[key],
               let body = TargetsBody.forField(key, typed: typed, current: p) else { return }
+        guard await save(body, busyKey: key, done: "Saved") else { return }
+        drafts[key] = nil
         // The revenue pair: the box not typed in follows the server's answer.
         if key == TargetsPayload.Field.monthly { drafts[TargetsPayload.Field.weekly] = nil }
         if key == TargetsPayload.Field.weekly { drafts[TargetsPayload.Field.monthly] = nil }
-        await save(body, busyKey: key, done: "Saved")
-        drafts[key] = nil
     }
 
     func setWeekStart(_ day: Int) async {

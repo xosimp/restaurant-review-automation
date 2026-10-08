@@ -17,8 +17,10 @@ struct AccountBillingDetailView: View {
     /// snapshot would keep showing the old state forever (audit 4.1).
     private var live: BillingSummary? { viewModel.billing ?? billing }
 
-    /// Where billing is managed — plain text, deliberately not a link (3.1.1).
-    static let manageNote = "Manage billing at dashboard.cavnar.ai"
+    /// How billing is handled — plain text, deliberately not a link (3.1.1),
+    /// and neutral: the app sends nobody anywhere to pay (re-audit 10/8/26,
+    /// #15; the server's health card says the same, account_health.IOS_BILLING_NOTE).
+    static let manageNote = "Billing is handled under your service agreement."
 
     // Own NavigationStack — presented as a sheet from AccountView, matching
     // every other Account detail screen (see ScheduleHistoryView's comment

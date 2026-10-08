@@ -1441,6 +1441,11 @@ struct CavnarEmberRefreshable: ViewModifier {
     // top: a tab behind another, or a stack's root under a pushed screen,
     // has disappeared and sits this one out.
     @State private var onScreen = false
+    /// A sheet over this screen leaves it "appeared" (a presented sheet
+    /// sends no onDisappear to what is under it), so ⌘R also asks whether
+    /// this screen is in the topmost presentation of its window (re-audit
+    /// 10/8/26, #17: it refreshed the screen under an open sheet).
+    @State private var probe = CavnarPresentationProbe()
 
     func body(content: Content) -> some View {
         Group {
@@ -1471,10 +1476,11 @@ struct CavnarEmberRefreshable: ViewModifier {
             CavnarEmberPullIndicator(pull: pull, isRefreshing: isRefreshing, flareID: flareID)
                 .allowsHitTesting(false)
         }
+        .background(CavnarPresentationProbeView(probe: probe).allowsHitTesting(false))
         .onAppear { onScreen = true }
         .onDisappear { onScreen = false }
         .onReceive(NotificationCenter.default.publisher(for: CavnarKeyCommand.refresh)) { _ in
-            guard onScreen, !isRefreshing else { return }
+            guard onScreen, !isRefreshing, CavnarPresentation.isTopmost(probe.view) else { return }
             Task {
                 flareID += 1
                 isRefreshing = true
@@ -1482,6 +1488,50 @@ struct CavnarEmberRefreshable: ViewModifier {
                 isRefreshing = false
             }
         }
+    }
+}
+
+/// Holds the UIView a screen's probe sits in — a reference, so it can be
+/// kept in @State and read when ⌘R arrives.
+final class CavnarPresentationProbe {
+    weak var view: UIView?
+}
+
+/// A zero-size UIView behind a screen, so the screen can tell where it is in
+/// the window's presentations.
+struct CavnarPresentationProbeView: UIViewRepresentable {
+    let probe: CavnarPresentationProbe
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView(frame: .zero)
+        v.isUserInteractionEnabled = false
+        v.isAccessibilityElement = false
+        probe.view = v
+        return v
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        probe.view = uiView
+    }
+}
+
+@MainActor
+enum CavnarPresentation {
+    /// The view controller on top of `root`: the last of its presented
+    /// controllers that is not on its way out.
+    static func topmost(from root: UIViewController) -> UIViewController {
+        var top = root
+        while let next = top.presentedViewController, !next.isBeingDismissed {
+            top = next
+        }
+        return top
+    }
+
+    /// Whether `view` is in its window's topmost presentation — false under
+    /// a sheet, and for a view in no window at all.
+    static func isTopmost(_ view: UIView?) -> Bool {
+        guard let view, let root = view.window?.rootViewController else { return false }
+        return view.isDescendant(of: topmost(from: root).view)
     }
 }
 
