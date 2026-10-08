@@ -4597,11 +4597,16 @@ def mobile_guest_overview(current_user):
     form the web used to show is refused by /join (guest_links)."""
     from guest_marketing import campaign_overview
     from guest_links import sign_join
+    from marketing_drafts import may_publish
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    # can_publish: whether this login may send, stop, retry or send on —
+    # the one rule every send route asks (may_publish), so the phone hides
+    # what the server would refuse (re-audit 10/8/26).
     return jsonify(ok=True, join_url=request.url_root.rstrip("/") + f"/join/{sign_join(rid)}",
-                   receipt_hint=_receipt_hint(get_restaurant(rid)), **campaign_overview(rid))
+                   receipt_hint=_receipt_hint(get_restaurant(rid)), can_publish=may_publish(current_user),
+                   **campaign_overview(rid))
 
 
 @mobile_bp.route("/guest-campaigns")
@@ -4627,14 +4632,17 @@ def mobile_guest_optin_invites(current_user):
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    # can_change: the rule below, said up front so a client never offers
+    # the switch to a login it refuses — an admin included (re-audit 10/8/26).
+    can_change = normalize_role(current_user.get("role")) in (ROLE_OWNER, ROLE_CLIENT)
     if request.method == "GET":
-        return jsonify(ok=True, **_gm.optin_invites_state(get_restaurant(rid)))
-    if normalize_role(current_user.get("role")) not in (ROLE_OWNER, ROLE_CLIENT):
+        return jsonify(ok=True, can_change=can_change, **_gm.optin_invites_state(get_restaurant(rid)))
+    if not can_change:
         return jsonify(ok=False, error="Only the account owner can turn invite texts on or off."), 403
     data = request.get_json(silent=True) or {}
     res = _gm.set_optin_invites(rid, bool(data.get("enabled")), user_id=current_user.get("id"),
                                 acknowledged=bool(data.get("acknowledged")))
-    return jsonify(**res), (200 if res.get("ok") else 400)
+    return jsonify(can_change=can_change, **res), (200 if res.get("ok") else 400)
 
 
 # ── Newsletter ────────────────────────────────────────────────────────────

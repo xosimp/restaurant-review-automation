@@ -167,6 +167,19 @@ def get_media_token(media_id: int, restaurant_id: int, db_path: str = DB_PATH):
     return row["token"] if row else None
 
 
+def token_belongs_to(token: str, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Whether a library token (the "<token>" of /m/<token>.jpg) is this
+    restaurant's photo — a URL alone must never post another's."""
+    if not token:
+        return False
+    conn = get_conn(db_path)
+    try:
+        return conn.execute("SELECT 1 FROM marketing_media WHERE token=? AND restaurant_id=?",
+                            (token, restaurant_id)).fetchone() is not None
+    finally:
+        conn.close()
+
+
 def list_media(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> list:
     """Recent uploads, so a photo can be reused without re-picking it."""
     conn = get_conn(db_path)
@@ -215,6 +228,25 @@ def _newsletter_sending_with(conn, media_id: int, restaurant_id: int) -> bool:
         return False
 
 
+def newsletter_sent_with(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Whether any newsletter of this restaurant's carries the photo, sent
+    or not. A guest's copy loads the image from /m/<token>.jpg when it is
+    opened, so deleting the photo broke the picture in every inbox it had
+    already reached (re-audit 10/8/26): such a photo is kept."""
+    conn = get_conn(db_path)
+    try:
+        return conn.execute(
+            "SELECT 1 FROM guest_newsletters WHERE restaurant_id=? AND design IS NOT NULL "
+            "AND CAST(json_extract(design, '$.image_media_id') AS INTEGER)=? LIMIT 1",
+            (restaurant_id, media_id)).fetchone() is not None
+    except Exception as e:
+        # No newsletter table at all is no newsletter; anything else
+        # unreadable is not "unused" — keep the photo.
+        return "no such table" not in str(e)
+    finally:
+        conn.close()
+
+
 def media_in_use(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
     """Whether a draft, a not-yet-published post or a newsletter still
     queued or sending of this restaurant's points at the photo."""
@@ -242,6 +274,10 @@ def remove_media(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> d
         return {"ok": False, "status": 409,
                 "error": "A scheduled post, a draft or an email still sending uses this photo. "
                          "Remove it there first (or let the email finish), then delete the photo."}
+    if newsletter_sent_with(media_id, restaurant_id, db_path=db_path):
+        return {"ok": False, "status": 409, "in_sent_email": True,
+                "error": "An email you sent shows this photo. Guests' copies load it when they open them, "
+                         "so it's kept rather than leave a broken image in their inboxes."}
     if delete_media(media_id, restaurant_id, db_path=db_path):
         return {"ok": True, "status": 200}
     if get_media_token(media_id, restaurant_id, db_path=db_path):

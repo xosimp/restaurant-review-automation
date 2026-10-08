@@ -772,9 +772,12 @@ def test_another_restaurants_photo_is_refused(app, db_path, monkeypatch):
     assert resp.status_code == 400 and fake.calls == []
 
 
-def test_a_relative_library_url_is_made_absolute(app):
+def test_a_relative_library_url_is_made_absolute(app, db_path):
+    rid = _restaurant(db_path)
+    _exec(db_path, "INSERT INTO marketing_media (restaurant_id, token, mime, data) VALUES (?,?,?,?)",
+          (rid, "abc", "image/jpeg", b"x"))
     with app.test_request_context("/api/post-to-instagram", base_url="https://dashboard.cavnar.ai"):
-        url, bad = social_routes.photo_url_from(1, {"image_url": "/m/abc.jpg"})
+        url, bad = social_routes.photo_url_from(rid, {"image_url": "/m/abc.jpg"})
     assert bad is None and url == "https://dashboard.cavnar.ai/m/abc.jpg"
 
 

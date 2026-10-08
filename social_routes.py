@@ -363,7 +363,8 @@ def photo_url_from(restaurant_id, data, base_url=None):
     Meta or Google can fetch. A library photo by `media_id` is checked
     against this restaurant and built on the public origin; an `image_url`
     that is the library's own relative "/m/<token>.jpg" (what a reopened
-    draft sent — Meta can't fetch a relative URL, SOC-7) is made absolute.
+    draft sent — Meta can't fetch a relative URL, SOC-7) is made absolute,
+    once its token is checked as this restaurant's photo.
     ("", None) when the post carries no photo."""
     data = data or {}
     root = (base_url or request.url_root or "").rstrip("/")
@@ -378,8 +379,23 @@ def photo_url_from(restaurant_id, data, base_url=None):
             return "", "That photo isn't in your library."
         return media_url(root, token), None
     url = (data.get("image_url") or "").strip()
-    if url.startswith("/m/"):
-        url = root + url
+    # The library's own URL, relative or on this origin, names a photo by
+    # its token: only this restaurant's (re-audit 10/8/26) — another's
+    # token was posted as if it were theirs.
+    own = url if url.startswith("/m/") else None
+    if own is None:
+        import config as _config
+        for origin in {root, (_config.base_url() or "").rstrip("/")}:
+            if origin and url.startswith(origin + "/m/"):
+                own = url[len(origin):]
+                break
+    if own is not None:
+        import re as _re
+        from marketing_media import token_belongs_to
+        m = _re.match(r"^/m/([A-Za-z0-9_-]+)\.jpg$", own)
+        if not (m and token_belongs_to(m.group(1), restaurant_id)):
+            return "", "That photo isn't in your library."
+        url = root + own
     return url, None
 
 

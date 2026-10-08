@@ -530,7 +530,11 @@ def test_a_photo_a_newsletter_is_still_sending_cannot_be_deleted(db, outbox):
     assert refused["status"] == 409 and "email still sending" in refused["error"]
     ge.run_newsletter_sends(db_path=db)
     assert marketing_media.media_in_use(mid, rid, db_path=db) is False
-    assert marketing_media.remove_media(mid, rid, db_path=db)["ok"] is True
+    # Sent is not done with it: guests' copies load the photo when opened,
+    # so it is kept for good (re-audit 10/8/26).
+    kept = marketing_media.remove_media(mid, rid, db_path=db)
+    assert kept["status"] == 409 and kept["in_sent_email"] is True
+    assert marketing_media.get_media_token(mid, rid, db_path=db) == "tokfixb"
 
 
 # ── CS-7: recorded, not "at least"; unsubscribe clicks are not clicks ───────

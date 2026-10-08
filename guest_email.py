@@ -616,6 +616,14 @@ NEWSLETTER_TICK_SECONDS = 120
 # The same subject and text pressed again inside this window is the same
 # newsletter: it resumes, and nobody already mailed is mailed again.
 NEWSLETTER_DEDUPE_HOURS = 24
+# "Send to the N new subscribers" is offered on that same-day refusal only
+# (the web's cpMailResult): a newsletter older than this is not sent on to
+# new subscribers — "this Friday's special" weeks later (re-audit 10/8/26).
+# One hour past the dedupe window, for an owner who reads the offer and
+# presses it a little later.
+NEWSLETTER_SEND_NEW_HOURS = NEWSLETTER_DEDUPE_HOURS + 1
+TOO_OLD_FOR_NEW = ("That email went out more than a day ago, so it isn't sent on to new subscribers. "
+                   "Send a new one from the Campaign Studio.")
 
 NEEDS_ADDRESS = ("Add your restaurant's mailing address before sending — the law (CAN-SPAM) "
                  "requires a physical address at the bottom of every newsletter.")
@@ -828,11 +836,24 @@ def retry_failed(restaurant_id, newsletter_id, db_path: str = DB_PATH) -> dict:
     return {"ok": True, "newsletter_id": newsletter_id, "retried": retried, **_counts(status)}
 
 
+def _recent_enough_for_new(newsletter_id, db_path: str = DB_PATH) -> bool:
+    """Whether the newsletter went out inside NEWSLETTER_SEND_NEW_HOURS."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT 1 FROM guest_newsletters WHERE id=? AND created_at >= datetime('now', ?)",
+                           (newsletter_id, f"-{NEWSLETTER_SEND_NEW_HOURS} hours")).fetchone()
+    finally:
+        conn.close()
+    return row is not None
+
+
 def send_to_new_subscribers(restaurant_id, newsletter_id, db_path: str = DB_PATH) -> dict:
     """The same newsletter to its audience's subscribers it never reached —
     the guests who joined (or joined that audience) since it went out
     (CS-15). They are added to it, so it stays one newsletter in history and
-    nobody it already mailed is mailed again; a second press adds nobody."""
+    nobody it already mailed is mailed again; a second press adds nobody.
+    Only for a newsletter sent inside NEWSLETTER_SEND_NEW_HOURS: the offer
+    rides the same-day "Already sent" refusal, never an old email."""
     from models import get_restaurant
     restaurant = get_restaurant(restaurant_id)
     conn = get_conn(db_path)
@@ -842,6 +863,8 @@ def send_to_new_subscribers(restaurant_id, newsletter_id, db_path: str = DB_PATH
         conn.close()
     if not (nl and restaurant):
         return {"ok": False, "status": 404, "error": "That email isn't in your history."}
+    if not _recent_enough_for_new(nl["id"], db_path=db_path):
+        return {"ok": False, "status": 409, "error": TOO_OLD_FOR_NEW, "too_old": True}
     if not (getattr(restaurant, "mailing_address", None) or "").strip():
         return {"ok": False, "status": 400, "error": NEEDS_ADDRESS, "needs_mailing_address": True}
     if not _sending_configured():
