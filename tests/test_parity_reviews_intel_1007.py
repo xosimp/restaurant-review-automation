@@ -218,3 +218,10 @@ def test_the_web_connect_card_has_read_now():
     sync = dash[dash.index("function waSync(btn){"):]
     sync = sync[:sync.index("\n}\n")]
     assert "fetch('/api/web-analytics/sync',{method:'POST'" in sync and "cbtnBusy(btn" in sync
+
+
+def test_read_now_is_owner_or_manager_only(rid):
+    """Read now calls Google; a teammate login (member) may not start it."""
+    member = dict(_user(rid), role="member")
+    payload, status = client_api._do_web_analytics_sync(member)
+    assert status == 403 and payload["ok"] is False

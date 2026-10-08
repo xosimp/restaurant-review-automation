@@ -13036,6 +13036,9 @@ def _do_web_analytics_disconnect(current_user):
 def _do_web_analytics_sync(current_user):
     """Read now (owner or manager): the same read as the 7am job."""
     import web_analytics as _wa
+    from permissions import has_permission, MARKETING_APPROVE
+    if not has_permission(current_user, MARKETING_APPROVE):
+        return {"ok": False, "error": "Only the owner or a manager can read website analytics now."}, 403
     rid = current_user["restaurant_id"]
     st = _web_analytics_status(rid)
     if not (st["ga4_property_id"] or st["gsc_site_url"]):
