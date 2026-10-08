@@ -1235,6 +1235,43 @@ _OFF_REQUEST = contextvars.ContextVar("cavnar_ai_off_request", default=False)
 
 _BUSY_MESSAGE = "Cavnar AI is busy with other requests right now — try again in a moment."
 
+# ── stored reads only (iOS parity audit 10/7/26 #37) ────────────────────────
+#
+# The module reads (Labor, Reviews, Marketing) are served stale-while-refresh:
+# the request thread renders the read from what is already stored, and the
+# model call a miss needs runs on the owner AI pool (insight_refresh). The
+# request thread finds out whether its render would call a model by running
+# it inside stored_reads_only(): the first model call — a workflow run
+# (ai_orchestrator.generate) or a bare create_with_retry — raises
+# StoredReadMiss before anything is recorded or sent.
+#
+# A BaseException, deliberately: every read body ends in a broad `except
+# Exception` that serves its stale or error copy, and a miss is neither — it
+# is "not here yet", which only the caller that asked for stored-only knows
+# what to do with. Never set on a pool thread: background_runner drops it,
+# and ai_async's pool starts from an empty context.
+_STORED_ONLY = contextvars.ContextVar("cavnar_ai_stored_only", default=False)
+
+
+class StoredReadMiss(BaseException):
+    """A render under stored_reads_only() reached a model call."""
+
+
+@contextlib.contextmanager
+def stored_reads_only():
+    """Run the block with model calls refused (StoredReadMiss)."""
+    token = _STORED_ONLY.set(True)
+    try:
+        yield
+    finally:
+        _STORED_ONLY.reset(token)
+
+
+def refuse_if_stored_only(what=None):
+    """Raise StoredReadMiss when the block runs under stored_reads_only()."""
+    if _STORED_ONLY.get():
+        raise StoredReadMiss(what or "a model call")
+
 
 class AIBusy(AIProviderDown):
     """No interactive slot came free in time (#4). An AIProviderDown, so
@@ -1461,7 +1498,7 @@ def background_runner(fn):
     context_runner."""
     snapshot = contextvars.copy_context()
     attr = {k: v for k, v in attribution_for_thread().items() if v is not None}
-    dropped = (_INTERACTIVE_HELD, _INTERACTIVE_LEASH, _SLOT_WAIT)
+    dropped = (_INTERACTIVE_HELD, _INTERACTIVE_LEASH, _SLOT_WAIT, _STORED_ONLY)
 
     def _body(*a, **k):
         _OFF_REQUEST.set(True)
@@ -1847,6 +1884,9 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
     and, unless the caller named them, INTERACTIVE_AI_TIMEOUT a try and
     INTERACTIVE_AI_RETRIES. Elsewhere `retries` defaults to
     DEFAULT_AI_RETRIES (2), as it always did."""
+    # A render that may only read what is stored stops here, before any
+    # ledger row (insight_refresh, parity #37).
+    refuse_if_stored_only(action)
     model = kwargs.get("model", "unknown")
     trigger, actor, corr = _attribution()
     attribution = {"trigger": trigger, "actor_user_id": actor, "correlation_id": corr}

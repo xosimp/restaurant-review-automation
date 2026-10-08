@@ -441,6 +441,11 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
     "ask:" id, a batched DSR night's id stamped on its batch item): the
     ledger rows written under it before the run (a batch answer) count
     toward the run's cost, and the turn and the run are one id."""
+    # A render that may only read what is stored (insight_refresh, parity
+    # #37) never starts a run: refused before the policy is read or a run
+    # recorded, so the probe leaves no trace in the ledger.
+    import ai_utils as _ai_stored
+    _ai_stored.refuse_if_stored_only(workflow)
     pol = wf.policy(workflow, db_path)
     parent = _RUN.get()
     depth = (parent or {}).get("depth", 0) + 1

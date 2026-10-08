@@ -1710,8 +1710,48 @@ def reviews_why_line_api(current_user):
 @client_bp.route("/api/review-insight")
 @login_required
 def review_insight_api(current_user):
-    insight, status = _do_review_insight(current_user["restaurant_id"], viewer=current_user)
+    insight, status = review_insight_answer(current_user["restaurant_id"], current_user)
     return jsonify(**insight), status
+
+
+def review_insight_answer(rid, viewer):
+    """The Reviews read for this request — shared by the web route and its
+    mobile twin. With `async` (parity #37), stale-while-refresh
+    (insight_refresh): a read not stored for this data is written on the
+    owner AI pool while the last stored one, with its age, or `pending`
+    answers. Without it, _do_review_insight as before."""
+    import insight_refresh
+    if not insight_refresh.wants_background():
+        return _do_review_insight(rid, viewer=viewer)
+
+    def _stale(note):
+        try:
+            import insight_store as _ist_sw
+            body, at = _ist_sw.latest(rid, "reviews")
+        except Exception:
+            body, at = None, None
+        if not (isinstance(body, dict) and body.get("insight")):
+            return None
+        from ai_guard import freshness as _fresh_sw
+        out = dict(body)
+        out.update(_fresh_sw(str(at).replace(" ", "T")[:19], stale_after_days=0))
+        out["stale"] = True
+        out["stale_note"] = note(out.get("as_of"))
+        return _review_insight_recs(rid, out), 200
+
+    return insight_refresh.serve(
+        "reviews", rid,
+        render=lambda: _do_review_insight(rid, viewer=viewer),
+        refresh=lambda: _do_review_insight(rid, viewer=viewer),
+        stale=_stale,
+        pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": []}, 200),
+        failed=lambda err, st: ({"insight": err or INSIGHT_UNAVAILABLE, "error": err or INSIGHT_UNAVAILABLE}, st),
+        key={"locations": bool(_review_sees_locations(rid, viewer))},
+        refresh_job=insight_refresh.refresh_job_arg())
+
+
+# What a read that could not be written says, when nothing better is known.
+INSIGHT_UNAVAILABLE = "Analysis unavailable — check back shortly."
 
 
 def _verify_named_entities(generated: str, context: str) -> list:
@@ -3605,8 +3645,43 @@ def ask_cavnar_record_action(current_user):
 @client_bp.route("/api/mkt-insight")
 @login_required
 def mkt_insight_api(current_user):
-    insight, status = _do_mkt_insight(current_user["restaurant_id"])
+    insight, status = mkt_insight_answer(current_user["restaurant_id"])
     return jsonify(**insight), status
+
+
+def mkt_insight_answer(rid, raw=False):
+    """The Marketing read for this request — shared by the web route and its
+    mobile twin (raw=True). With `async` (parity #37), stale-while-refresh
+    (insight_refresh), as review_insight_answer. Without it, _do_mkt_insight
+    as before."""
+    import insight_refresh
+    if not insight_refresh.wants_background():
+        return _do_mkt_insight(rid, raw=raw)
+
+    def _stale(note):
+        try:
+            import insight_store as _ist_sw
+            body, at = _ist_sw.latest(rid, "marketing")
+        except Exception:
+            body, at = None, None
+        if not (isinstance(body, dict) and body.get("insight")):
+            return None
+        from ai_guard import freshness as _fresh_sw
+        age = _fresh_sw(str(at).replace(" ", "T")[:19], stale_after_days=0)
+        extra = dict(_mkt_checks(body), stale=True, as_of=age.get("as_of"), as_of_iso=age.get("as_of_iso"),
+                     age_days=age.get("age_days"), stale_note=note(age.get("as_of")))
+        return _mkt_insight_out(rid, body["insight"], raw, extra), 200
+
+    return insight_refresh.serve(
+        "marketing", rid,
+        render=lambda: _do_mkt_insight(rid, raw=raw),
+        # The read is stored as text; how a client formats it is its own.
+        refresh=lambda: _do_mkt_insight(rid, raw=True),
+        stale=_stale,
+        pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": [], "validation": None}
+                             | ({"rec_items": []} if raw else {}), 200),
+        failed=lambda err, st: ({"insight": err or "Marketing brief unavailable — check back shortly."}, st),
+        refresh_job=insight_refresh.refresh_job_arg())
 
 
 def _mkt_insight_out(rid, text, raw, extra=None):
@@ -4563,14 +4638,30 @@ def labor_read_state(rid) -> dict:
     return _labor_read_age(_labor_note_entry(rid, _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))), False)
 
 
-def labor_stale_read(rid):
+def labor_stale_read(rid, note=None):
     """The last Labor read past its window, for the fallback when a new one
     can't be written: {"text", "state"} with state stale=True and its
-    stale_note (H15, CA1 L6), or None. One helper for both twins."""
+    stale_note (H15, CA1 L6), or None. One helper for both twins.
+
+    The process cache first, then the read stored in insight_store (parity
+    #37): the process cache is gone after every deploy, and the stored read
+    is what a stale-while-refresh answer serves while the new one is
+    written. `note(as_of)`, when given, is the stale_note instead."""
     entry = _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))
     if not entry:
+        try:
+            import insight_store as _ist_stale
+            text, at = _ist_stale.latest(rid, "labor")
+            if isinstance(text, str) and text.strip():
+                entry = (datetime.strptime(str(at)[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S"), text)
+        except Exception:
+            entry = None
+    if not entry:
         return None
-    return {"text": entry[1], "state": _labor_read_age(_labor_note_entry(rid, entry), True)}
+    state = _labor_read_age(_labor_note_entry(rid, entry), True)
+    if note is not None:
+        state["stale_note"] = note(state.get("as_of"))
+    return {"text": entry[1], "state": state}
 
 
 # The Labor read's cache key, shared by the web route and mobile_api.
@@ -4615,11 +4706,40 @@ def labor_cache_put(rid, analysis, text):
         _LABOR_READ_FP.pop(str(rid), None)
 
 
-@client_bp.route("/api/labor-insight")
-@login_required
-def labor_insight_api(current_user):
-    rid = current_user["restaurant_id"]
-    uid = current_user.get("id")
+def labor_read_text(rid, analysis=None):
+    """(the Labor read's text, the analysis it narrates): labor.labor_note
+    with the restaurant's names and staff notes, cached for both twins
+    (labor_cache_put). One body for the web route, its mobile twin and the
+    background refresh (parity #37); the model is called only when no
+    stored read matches the figures."""
+    from labor import analyse_shifts_for_restaurant, labor_note
+    from models import get_restaurant as _gr_labor, get_staff_notes as _gsn_labor
+    restaurant = _gr_labor(rid)
+    name = restaurant.name if restaurant else "your restaurant"
+    owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
+    if analysis is None:
+        analysis = analyse_shifts_for_restaurant(rid)
+    _staff_notes_labor = _gsn_labor(rid)
+    insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
+                         staff_notes=_staff_notes_labor if _staff_notes_labor else None)
+    labor_cache_put(rid, analysis, insight)
+    return insight, analysis
+
+
+def labor_refresh(rid):
+    """The Labor read written off the request (insight_refresh): ({"ok"},
+    200) once stored, else the route's error and its status."""
+    try:
+        labor_read_text(rid, labor_analysis_safe(rid))
+        return {"ok": True}, 200
+    except Exception as e:
+        from ai_utils import insight_error as _insight_err_lr
+        _msg_lr, _status_lr = _insight_err_lr(e, "Unable to load analysis — check back shortly.")
+        return {"ok": False, "error": _msg_lr}, _status_lr
+
+
+def _labor_insight_web(rid, uid):
+    """The web Labor read's (payload, status) — the synchronous answer."""
     # The cache holds the model's TEXT, not rendered HTML: the lines are
     # keyed and answered per request, so an answer given a minute ago drops
     # its line from the next load rather than after the cache expires.
@@ -4627,23 +4747,12 @@ def labor_insight_api(current_user):
     _an = labor_analysis_safe(rid)
     cached = labor_cached_read(rid, _an)
     if cached:
-        return jsonify(diagnosis=_labor_diagnosis_safe(rid, _an, user_id=uid), **labor_read_state(rid),
-                       **_labor_insight_out(rid, cached, uid, analysis=_an))
+        return dict(diagnosis=_labor_diagnosis_safe(rid, _an, user_id=uid), **labor_read_state(rid),
+                    **_labor_insight_out(rid, cached, uid, analysis=_an)), 200
     try:
-        from labor import analyse_shifts_for_restaurant, get_claude_insights
-        from models import get_restaurant
-        restaurant = get_restaurant(rid)
-        name  = restaurant.name if restaurant else "your restaurant"
-        owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
-        analysis = _an if _an is not None else analyse_shifts_for_restaurant(rid)
-        from models import get_staff_notes as _gsn_labor
-        _staff_notes_labor = _gsn_labor(rid)
-        from labor import labor_note
-        insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
-                             staff_notes=_staff_notes_labor if _staff_notes_labor else None)
-        labor_cache_put(rid, analysis, insight)
-        return jsonify(diagnosis=_labor_diagnosis_safe(rid, analysis, user_id=uid), **labor_read_state(rid),
-                       **_labor_insight_out(rid, insight, uid, analysis=analysis))
+        insight, analysis = labor_read_text(rid, _an)
+        return dict(diagnosis=_labor_diagnosis_safe(rid, analysis, user_id=uid), **labor_read_state(rid),
+                    **_labor_insight_out(rid, insight, uid, analysis=analysis)), 200
     except Exception as e:
         import traceback; traceback.print_exc()
         stale = labor_stale_read(rid)
@@ -4651,12 +4760,40 @@ def labor_insight_api(current_user):
             # Past its window by definition (the TTL is bypassed here), so it
             # says how old it is — the Reviews fallback's rule (H15, CA1 L6):
             # a read from hours ago read exactly like one from this minute.
-            return jsonify(**stale["state"], **_labor_insight_out(rid, stale["text"], uid, stale=True))
+            return dict(**stale["state"], **_labor_insight_out(rid, stale["text"], uid, stale=True)), 200
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
         # 200 as before for an ordinary failure; a pause or outage carries its
         # own status (AI-11).
-        return jsonify(insight=_msg_lab), (200 if _status_lab == 500 else _status_lab)
+        return dict(insight=_msg_lab), (200 if _status_lab == 500 else _status_lab)
+
+
+@client_bp.route("/api/labor-insight")
+@login_required
+def labor_insight_api(current_user):
+    rid = current_user["restaurant_id"]
+    uid = current_user.get("id")
+    import insight_refresh
+    render = lambda: _labor_insight_web(rid, uid)
+    if not insight_refresh.wants_background():
+        payload, status = render()
+        return jsonify(**payload), status
+
+    # Stale-while-refresh (parity #37): a miss is written on the owner AI
+    # pool while the last stored read, with its age, or `pending` answers.
+    def _stale(note):
+        s = labor_stale_read(rid, note=note)
+        if not s:
+            return None
+        return dict(**s["state"], **_labor_insight_out(rid, s["text"], uid, stale=True)), 200
+
+    payload, status = insight_refresh.serve(
+        "labor", rid, render=render, refresh=lambda: labor_refresh(rid), stale=_stale,
+        pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": [], "rec_items": []}, 200),
+        failed=lambda err, st: ({"insight": err or "Unable to load analysis — check back shortly."},
+                                200 if st == 500 else st),
+        refresh_job=insight_refresh.refresh_job_arg())
+    return jsonify(**payload), status
 
 @client_bp.route("/api/inv-insight")
 @login_required

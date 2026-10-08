@@ -104,12 +104,100 @@ def compress_response(response):
     return response
 
 
-def _add_vary(response):
+def _add_vary(response, value="Accept-Encoding"):
     vary = response.headers.get("Vary")
     if not vary:
-        response.headers["Vary"] = "Accept-Encoding"
-    elif "accept-encoding" not in vary.lower():
-        response.headers["Vary"] = f"{vary}, Accept-Encoding"
+        response.headers["Vary"] = value
+    elif value.lower() not in [v.strip().lower() for v in vary.split(",")]:
+        response.headers["Vary"] = f"{vary}, {value}"
+
+
+# ── conditional GETs (iOS parity audit 10/7/26 #56) ─────────────────────────
+#
+# The phone's heaviest reads — Home, Labor, the first page of the review
+# inbox and the Daily Report — are re-fetched on every tab switch and pull,
+# and most of the time nothing in them changed. Each answers with an ETag;
+# a client that sends it back as If-None-Match gets a bodiless 304 and
+# reuses the copy it holds. The app's URLSession is ephemeral on purpose (no
+# URLCache on disk — audit 1.5), so the app keeps the body itself, in its
+# encrypted SecureCache (APIClient), and the server never relies on any
+# shared cache: these stay Cache-Control: no-store.
+#
+# The tag is a hash of the login, the restaurant and the exact body, so one
+# login's tag can never match another's answer, nor one location's another
+# location's — and the work is still done: the saving is the transfer and
+# the phone's decode, not the server's render. Weak (W/), because the bytes
+# on the wire differ under gzip.
+_ETAG_PATHS = (
+    re.compile(r"^/mobile/api/home$"),
+    re.compile(r"^/mobile/api/labor$"),
+    re.compile(r"^/mobile/api/reviews$"),
+    re.compile(r"^/mobile/api/dsr(?:/[^/]+)?$"),
+)
+
+
+def _etag_eligible(path) -> bool:
+    if not any(p.match(path or "") for p in _ETAG_PATHS):
+        return False
+    if path == "/mobile/api/reviews":
+        # Page 1 only: a later page is read once, on a scroll.
+        try:
+            return int(request.args.get("offset") or 0) == 0
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def etag_for(user, body: bytes) -> str:
+    """The weak ETag for `body` as answered to `user` (a session dict)."""
+    import hashlib
+    u = user or {}
+    scope = f"{u.get('id')}|{u.get('restaurant_id')}|".encode()
+    return 'W/"' + hashlib.sha256(scope + (body or b"")).hexdigest()[:32] + '"'
+
+
+def _tags(header):
+    out = set()
+    for part in (header or "").split(","):
+        part = part.strip()
+        if part.startswith("W/"):
+            part = part[2:]
+        if part:
+            out.add(part)
+    return out
+
+
+def conditional_get(response):
+    """ETag the eligible reads, and answer a matching If-None-Match with a
+    bodiless 304. Runs before compression (register), so the tag is over
+    the JSON itself and a 304 is never compressed. Never touches a stream,
+    an error, a non-JSON body, or a request no login was resolved for."""
+    try:
+        if request.method != "GET" or response.status_code != 200:
+            return response
+        if response.direct_passthrough or response.mimetype != "application/json":
+            return response
+        if response.headers.get("Content-Encoding") or response.headers.get("ETag"):
+            return response
+        if not _etag_eligible(request.path):
+            return response
+        user = getattr(g, "cavnar_current_user", None)
+        if not isinstance(user, dict) or user.get("id") is None:
+            return response
+        tag = etag_for(user, response.get_data())
+        response.headers["ETag"] = tag
+        # The answer depends on who asked: no cache may serve one login's
+        # tag or body to another's request.
+        _add_vary(response, "Authorization")
+        if tag[2:] in _tags(request.headers.get("If-None-Match")):
+            response.set_data(b"")
+            response.status_code = 304
+            response.headers.pop("Content-Type", None)
+            response.headers.pop("Content-Length", None)
+    except Exception:
+        # A tag must never be the reason a read fails.
+        return response
+    return response
 
 
 def add_cache_headers(response):
@@ -604,11 +692,16 @@ def register(app):
     Compression still runs before cache headers so it sees the final
     headers. The timer is the first before_request the app has (register
     is called before any blueprint), so the request id is bound before any
-    other handler logs."""
+    other handler logs.
+
+    The conditional GET (ETag / 304, parity #56) is registered last so it
+    runs FIRST: the tag is over the uncompressed JSON, and a 304 reaches
+    compression already bodiless (compression skips any non-2xx)."""
     app.before_request(_start_timer)
     app.after_request(_record_request)
     app.after_request(add_cache_headers)
     app.after_request(compress_response)
+    app.after_request(conditional_get)
     app.teardown_request(_end_request)
     try:
         from flask import got_request_exception

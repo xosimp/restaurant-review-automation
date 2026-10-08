@@ -1796,7 +1796,8 @@ def mobile_sentiment_trend(current_user):
 @mobile_bp.route("/reviews/insight")
 @mobile_login_required
 def mobile_review_insight(current_user):
-    payload, status = _capi._do_review_insight(current_user["restaurant_id"], viewer=current_user)
+    # With `async`, stale-while-refresh (parity #37; client_api.review_insight_answer).
+    payload, status = _capi.review_insight_answer(current_user["restaurant_id"], current_user)
     # ok tracks the actual status. This hardcoded ok=True, so the error
     # payload ("Analysis unavailable — check back shortly") arrived at the
     # app labelled as a successful insight.
@@ -3157,11 +3158,48 @@ LABOR_INSIGHT_CACHE = _capi.LABOR_INSIGHT_CACHE
 def mobile_labor_insight(current_user):
     """Same AI insight the web Labor tab shows, structured into
     intro/recommendations/forecast fields so the app can render the same
-    numbered-circle layout the web dashboard uses."""
-    from labor import analyse_shifts_for_restaurant, get_claude_insights
-    from models import get_restaurant, get_staff_notes
+    numbered-circle layout the web dashboard uses.
+
+    With `async` (parity #37) a read that is not stored for these figures
+    is written on the owner AI pool (insight_refresh) while the last stored
+    read, with its age, or `pending` answers; the client polls with
+    `refresh_job`. Without it, the synchronous answer as before."""
     rid = current_user["restaurant_id"]
     uid = current_user.get("id")
+    import insight_refresh
+    render = lambda: _mobile_labor_insight_render(rid, uid)
+    if not insight_refresh.wants_background():
+        payload, status = render()
+        return jsonify(**payload), status
+
+    def _stale(note):
+        s = _capi.labor_stale_read(rid, note=note)
+        if not s:
+            return None
+        _an = _capi.labor_analysis_safe(rid)
+        _recs = _capi.labor_insight_items(rid, s["text"], user_id=uid, analysis=_an, stale=True)
+        return dict(ok=True, insight=s["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
+                    rec_items=_recs, validation=_rv_of(s["text"]),
+                    **s["state"], **_insight_json(s["text"], _recs)), 200
+
+    def _pending(job):
+        msg = insight_refresh.PENDING_MESSAGE
+        return dict(ok=True, insight=msg, diagnosis=None, rec_items=[], validation=None,
+                    **_insight_json(msg, [])), 200
+
+    def _failed(err, status):
+        msg = err or "Unable to load analysis — check back shortly."
+        return dict(ok=False, insight=msg, insight_intro=msg, insight_recommendations=[],
+                    insight_forecast=None, error=msg), status
+
+    payload, status = insight_refresh.serve(
+        "labor", rid, render=render, refresh=lambda: _capi.labor_refresh(rid), stale=_stale,
+        pending=_pending, failed=_failed, refresh_job=insight_refresh.refresh_job_arg())
+    return jsonify(**payload), status
+
+
+def _mobile_labor_insight_render(rid, uid):
+    """The phone's Labor read, (payload, status) — the synchronous answer."""
     # The read's lines are keyed and presented like Food's (#25):
     # insight_rec_keys runs beside insight_recommendations, an answered line
     # is left out, and rec_items carries the contract fields.
@@ -3178,23 +3216,16 @@ def mobile_labor_insight(current_user):
         _recs = _capi.labor_insight_items(rid, cached, user_id=uid, analysis=_an)
         # `validation`: the Response Validation verdict the read carries
         # (workstream A); None until labor.labor_note returns a Validated str.
-        return jsonify(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
-                       rec_items=_recs, validation=_rv_of(cached),
-                       **_capi.labor_read_state(rid), **_insight_json(cached, _recs))
+        return dict(ok=True, insight=cached, diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
+                    rec_items=_recs, validation=_rv_of(cached),
+                    **_capi.labor_read_state(rid), **_insight_json(cached, _recs)), 200
     try:
-        restaurant = get_restaurant(rid)
-        name = restaurant.name if restaurant else "your restaurant"
-        owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
-        analysis = _an if _an is not None else analyse_shifts_for_restaurant(rid)
-        staff_notes = get_staff_notes(rid)
-        from labor import labor_note
-        insight = labor_note(rid, analysis, restaurant_name=name, owner_name=owner,
-                             staff_notes=staff_notes if staff_notes else None)
-        _capi.labor_cache_put(rid, analysis, insight)
+        # One body with the web twin and the background refresh.
+        insight, analysis = _capi.labor_read_text(rid, _an)
         _recs = _capi.labor_insight_items(rid, insight, user_id=uid, analysis=analysis)
-        return jsonify(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
-                       rec_items=_recs, validation=_rv_of(insight),
-                       **_capi.labor_read_state(rid), **_insight_json(insight, _recs))
+        return dict(ok=True, insight=insight, diagnosis=_capi._labor_diagnosis_safe(rid, analysis, user_id=uid),
+                    rec_items=_recs, validation=_rv_of(insight),
+                    **_capi.labor_read_state(rid), **_insight_json(insight, _recs)), 200
     except Exception as e:
         # The web twin's stale fallback (H15, CA1 L6): serve the last read
         # with its age rather than an error, and say how old it is.
@@ -3202,14 +3233,14 @@ def mobile_labor_insight(current_user):
         if stale:
             _an = _capi.labor_analysis_safe(rid)
             _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an, stale=True)
-            return jsonify(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
-                           rec_items=_recs, validation=_rv_of(stale["text"]),
-                           **stale["state"], **_insight_json(stale["text"], _recs))
+            return dict(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
+                        rec_items=_recs, validation=_rv_of(stale["text"]),
+                        **stale["state"], **_insight_json(stale["text"], _recs)), 200
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e)
-        return jsonify(ok=False, insight=_msg_lab,
-                       insight_intro=_msg_lab,
-                       insight_recommendations=[], insight_forecast=None, error=_msg_lab), _status_lab
+        return dict(ok=False, insight=_msg_lab,
+                    insight_intro=_msg_lab,
+                    insight_recommendations=[], insight_forecast=None, error=_msg_lab), _status_lab
 
 
 def _schedule_wait(job_id, restaurant_id) -> int:
@@ -4657,7 +4688,8 @@ def mobile_marketing_preview(current_user):
 @mobile_bp.route("/marketing/insight")
 @mobile_login_required
 def mobile_marketing_insight(current_user):
-    payload, status = _capi._do_mkt_insight(current_user["restaurant_id"], raw=True)
+    # With `async`, stale-while-refresh (parity #37; client_api.mkt_insight_answer).
+    payload, status = _capi.mkt_insight_answer(current_user["restaurant_id"], raw=True)
     # rec_items stays in the payload (the contract fields, as on Labor's).
     _items = payload.get("rec_items")
     extra = _insight_json(payload.get("insight", ""), _items) if payload.get("insight") and status == 200 else {}
