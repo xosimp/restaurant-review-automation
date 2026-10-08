@@ -529,9 +529,13 @@ def test_build_constraints_reads_a_mid_week_expiry(db):
     rid = _restaurant()
     models.add_manual_team_member(rid, "Cook", role="Line Cook")
     ss.upsert(rid, "Cook", certifications=["food_handler"])
-    staff_knowledge.save_cert(rid, None, "Cook", "Food handler", expires_on=WEEK[2])
-    c = sr.build_constraints(rid, WEEK, DAYS)
-    assert c.cert_expiry.get("cook", {}).get("food_handler") == WEEK[2]
+    # A week still ahead: once a week has begun, a card is judged as of today
+    # (_expired_certs), so a fixed past week made this test expire with it.
+    start = date.today() + timedelta(days=7 - date.today().weekday() + 7)
+    week = [(start + timedelta(days=i)).isoformat() for i in range(7)]
+    staff_knowledge.save_cert(rid, None, "Cook", "Food handler", expires_on=week[2])
+    c = sr.build_constraints(rid, week, DAYS)
+    assert c.cert_expiry.get("cook", {}).get("food_handler") == week[2]
     assert "food_handler" in c.certifications.get("cook", set())
 
 

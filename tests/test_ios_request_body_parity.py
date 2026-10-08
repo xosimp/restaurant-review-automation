@@ -1903,6 +1903,9 @@ UNREADABLE_OK = {
     ("AskCavnarViewModel.swift", "confirm"): "a confirmed proposal posts the server's route and body (proposal.route.mobile)",
     ("StaffRequestsViews.swift", "commit"): "an undone withdraw/cancel: PendingUndo.path holds one of two literal "
                                             "/staff/api/time-off paths, body StaffEmptyBody",
+    ("ReviewsListViewModel.swift", "bulkApprove"): "each chunk is a BulkApproveBody from bulkApproveBodies "
+                                                   "(review_ids, limit, review_hashes) — pinned key by key in "
+                                                   "ReviewsIntelParityTests.testBulkApproveSendsReviewIdsInChunksOfTwentyFive",
     ("PendingWriteQueue.swift", "drain"): "the offline queue replays the path, method and body it was given",
     ("PendingWriteQueue.swift", "enqueue"): "the offline queue replays the path, method and body it was given",
     ("TaskSheetsScreen.swift", "add"): "the line's fields are TSLineForm.save()'s [String: String] literal "
@@ -2189,10 +2192,12 @@ def test_lock_screen_actions_are_read_where_they_are_built():
     assert got["/mobile/api/account/not-me"] == {"login_user_id"}
     assert got["/mobile/api/labor/time-off/{*}/decide"] == {"decision"}
     assert got["/mobile/api/labor/shift-requests/{*}/decide"] == {"decision"}
-    assert got["/mobile/api/reviews/{*}/approve"] == {"expected_draft"}
+    # The words the push showed, and their fingerprint when they were clipped
+    # (re-audit 10/8/26: draft_hash rides every review push).
+    assert got["/mobile/api/reviews/{*}/approve"] == {"expected_draft", "expected_draft_hash"}
     assert got["/mobile/api/reviews/{*}/save-draft"] == {"draft"}
     assert got["/mobile/api/issues/{*}/ask-cover"] == {"name"}
-    assert got["/mobile/api/staff-brief/approve"] == {"day", "text"}
+    assert got["/mobile/api/staff-brief/approve"] == {"day", "text", "expected_rev"}   # the brief the push showed (re-audit 10/8/26)
     assert not any(k[0] == "PushManager.swift" for k in UNREADABLE_OK)
 
 

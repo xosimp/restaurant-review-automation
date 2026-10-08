@@ -94,7 +94,7 @@ final class ReviewsIntelParityTests: XCTestCase {
     @MainActor
     func testBulkApproveSendsReviewIdsInChunksOfTwentyFive() throws {
         let reviews = try (1...30).map { id in
-            try decode(Review.self, #"{"id": \#(id), "platform": "google", "rating": 5, "text": "Great", "draft_response": "Thanks \#(id)!", "response_status": "drafted", "categories": []}"#)
+            try decode(Review.self, #"{"id": \#(id), "platform": "google", "author": "Ann", "urgency": "normal", "rating": 5, "text": "Great", "draft_response": "Thanks \#(id)!", "response_status": "drafted", "categories": []}"#)
         }
         let bodies = ReviewsListViewModel.bulkApproveBodies(reviews)
         XCTAssertEqual(bodies.count, 2)

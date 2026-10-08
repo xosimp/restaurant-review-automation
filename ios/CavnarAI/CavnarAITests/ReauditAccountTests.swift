@@ -155,8 +155,10 @@ final class ReauditAccountTests: XCTestCase {
     }
 
     func testAPasskeyCallbackOnlyAnswersItsOwnRequest() {
-        let current = ASAuthorizationController(authorizationRequests: [])
-        let stale = ASAuthorizationController(authorizationRequests: [])
+        // A controller needs at least one request (it throws on an empty list).
+        let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: "dashboard.cavnar.ai")
+        let current = ASAuthorizationController(authorizationRequests: [provider.createCredentialAssertionRequest(challenge: Data([1]))])
+        let stale = ASAuthorizationController(authorizationRequests: [provider.createCredentialAssertionRequest(challenge: Data([2]))])
         XCTAssertTrue(PasskeyCoordinator.isCurrent(current, current: current))
         XCTAssertFalse(PasskeyCoordinator.isCurrent(stale, current: current))
         XCTAssertFalse(PasskeyCoordinator.isCurrent(stale, current: nil))

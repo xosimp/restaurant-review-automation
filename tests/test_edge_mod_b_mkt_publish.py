@@ -126,6 +126,7 @@ class Session:
 
     def __init__(self, app, db_path, rid, role="client", username="owner"):
         self.client = app.test_client()
+        self.db_path = db_path
         uid = auth.create_user(rid, username, f"{username}@publish.test", "correct-horse-battery", db_path=db_path)
         auth.set_user_role(uid, role, db_path=db_path)
         self.token = auth.create_session(uid, restaurant_id=rid, db_path=db_path)
@@ -356,6 +357,14 @@ def _publish_request(s, path, rid):
     if path.endswith("/schedule"):
         return s.post(path, json=_schedule_body(rid))
     if "instagram" in path:
+        # The photo must be this restaurant's own library row (re-audit
+        # 10/8/26: photo_url_from refuses another restaurant's /m/ token).
+        import sqlite3
+        conn = sqlite3.connect(s.db_path)
+        conn.execute("INSERT OR IGNORE INTO marketing_media (restaurant_id, token, mime, data) VALUES (?,?,?,?)",
+                     (rid, "tok", "image/jpeg", b"\xff\xd8"))
+        conn.commit()
+        conn.close()
         return s.post(path, json={"caption": "Unapproved copy", "image_url": IMG})
     return s.post(path, json={"caption": "Unapproved copy"})
 

@@ -21,11 +21,11 @@ final class LaborReauditTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    private func check(_ extra: String) throws -> PublishCheck {
+    private func check(_ extra: String, canPublish: Bool = true) throws -> PublishCheck {
         try JSONDecoder.cavnar.decode(PublishCheck.self, from: Data("""
         {"ok": true, "schedule_id": 41, "week_start": "2026-10-12", "published_at": null, "blockers": [],
          "reach": {"total": 12, "reachable": 11, "by_app": 9, "by_text": 2, "by_email": 0, "unreachable": ["Al"]},
-         "can_publish": true \(extra)}
+         "can_publish": \(canPublish) \(extra)}
         """.utf8))
     }
 
@@ -62,7 +62,7 @@ final class LaborReauditTests: XCTestCase {
         XCTAssertTrue(try check(", \"one_tap_safe\": true").allowsOneTap(scheduleId: 41))
         XCTAssertTrue(PushManager.publishCheckAllowsOneTap(try check(", \"one_tap_safe\": true"), scheduleId: 41))
         XCTAssertFalse(try check(", \"one_tap_safe\": true").allowsOneTap(scheduleId: 42))
-        XCTAssertFalse(try check(", \"one_tap_safe\": true, \"can_publish\": false").allowsOneTap(scheduleId: 41))
+        XCTAssertFalse(try check(", \"one_tap_safe\": true", canPublish: false).allowsOneTap(scheduleId: 41))
     }
 
     func testAOneTapSendSaysOneTapAndAcknowledgesNothing() throws {

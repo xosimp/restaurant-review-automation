@@ -201,7 +201,7 @@ final class FoodCostReauditTests: XCTestCase {
     }
 
     func testAnOldDraftWithoutTheNewFieldsStillDecodes() throws {
-        let old = #"{"counts": [4, "6"], "savedAt": 781000000}"#
+        let old = #"{"counts": {"4": "6"}, "savedAt": 781000000}"#
         let d = try JSONDecoder().decode(CountSheetDraft.self, from: Data(old.utf8))
         XCTAssertEqual(d.counts[4], "6")
         XCTAssertNil(d.queuedWriteId)

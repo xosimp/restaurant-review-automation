@@ -9,8 +9,11 @@ import XCTest
 /// every current and future endpoint to catch it.
 final class PendingWriteQueueTests: XCTestCase {
 
+    /// A queue of its own: the app's `shared` one is also written by other
+    /// test classes (Food Cost parks counts on it), and their writes raced
+    /// these counts in a full run.
     private func freshQueue() async -> PendingWriteQueue {
-        let q = PendingWriteQueue.shared
+        let q = PendingWriteQueue()
         await q.clear()
         return q
     }
