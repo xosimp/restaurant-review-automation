@@ -394,7 +394,10 @@ final class IOSFixRoundTests: XCTestCase {
         XCTAssertEqual(account.pendingTab, .account)
         XCTAssertEqual(account.consumePendingAccountSection(), "security")
         XCTAssertEqual(AccountLinkSection("integrations"), .connections)
-        XCTAssertEqual(AccountLinkSection("people"), .team)
+        // account/people is the People screen (parity #62: house rules,
+        // docs, certifications, and the owner's access sheets from it).
+        XCTAssertEqual(AccountLinkSection("people"), .people)
+        XCTAssertEqual(AccountLinkSection("team"), .team)
         XCTAssertNil(AccountLinkSection("appearance"))
 
         XCTAssertEqual(DeepLinkRouter.dailyReportRoute(NavPath("dsr")!), .report(date: nil),

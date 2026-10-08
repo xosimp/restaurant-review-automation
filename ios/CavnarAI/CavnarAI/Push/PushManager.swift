@@ -94,12 +94,21 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     nonisolated private static let reviewDraftedCategory = "CAVNAR_REVIEW_DRAFTED"
     nonisolated private static let undoableCategory      = "CAVNAR_UNDOABLE"
     nonisolated private static let requestCategory       = "CAVNAR_REQUEST"
+    /// A message to this login — an employee's to the managers
+    /// (employee_message) or a teammate's (team_message): Reply is typed on
+    /// the lock screen and posted in the background (parity #10, #71).
+    nonisolated private static let messageCategory       = "CAVNAR_MESSAGE"
+    /// Tonight's lineup brief waiting for approval: Approve publishes the
+    /// draft as written; Open shows it first (parity #26).
+    nonisolated private static let lineupCategory        = "CAVNAR_LINEUP"
     nonisolated private static let openAction     = "CAVNAR_OPEN"
     nonisolated private static let askAction      = "CAVNAR_ASK"
     nonisolated static let approvePostAction      = "CAVNAR_APPROVE_POST"
     nonisolated static let undoAction             = "CAVNAR_UNDO"
     nonisolated static let approveRequestAction   = "CAVNAR_APPROVE_REQUEST"
     nonisolated static let denyRequestAction      = "CAVNAR_DENY_REQUEST"
+    nonisolated static let replyMessageAction     = "CAVNAR_REPLY_MESSAGE"
+    nonisolated static let approveLineupAction    = "CAVNAR_APPROVE_LINEUP"
 
     /// The system prompt used to fire within seconds of the first login,
     /// before the owner had seen a single number. Asking on the second open
@@ -243,6 +252,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                            options: [.authenticationRequired])
         let deny = UNNotificationAction(identifier: denyRequestAction, title: "Deny",
                                         options: [.destructive, .authenticationRequired])
+        let replyMessage = UNTextInputNotificationAction(identifier: replyMessageAction, title: "Reply",
+                                                         options: [.authenticationRequired],
+                                                         textInputButtonTitle: "Send",
+                                                         textInputPlaceholder: "Your reply")
+        let approveLineup = UNNotificationAction(identifier: approveLineupAction, title: "Approve",
+                                                 options: [.authenticationRequired])
+        let openLineup = UNNotificationAction(identifier: openAction, title: "Open", options: [.foreground])
         return [
             UNNotificationCategory(identifier: reviewCategory, actions: [reply],
                                    intentIdentifiers: [], options: []),
@@ -255,6 +271,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: briefCategory, actions: [ask],
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: issueCategory, actions: [],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: messageCategory, actions: [replyMessage],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: lineupCategory, actions: [approveLineup, openLineup],
                                    intentIdentifiers: [], options: []),
         ]
     }
@@ -272,6 +292,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         var cancelsActionId: Int? = nil
         /// An Approve & post: the answer says whether Google took it.
         var postsReply = false
+        /// The JSON body for an action that carries more than a decision —
+        /// a typed reply ({body}, or {recipient_id, body}) or the brief's
+        /// day ({day, text: null}: approve the draft as written).
+        var payload: PushActionBody? = nil
     }
 
     /// What an Approve & post answer means for the owner who pressed it from
@@ -288,8 +312,32 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// nil when the payload doesn't carry what it needs (then the action
     /// just opens, like a tap).
     nonisolated static func backgroundAction(for actionIdentifier: String,
-                                             cavnar: [String: Any]) -> BackgroundAction? {
+                                             cavnar: [String: Any],
+                                             typedText: String? = nil) -> BackgroundAction? {
         switch actionIdentifier {
+        case replyMessageAction:
+            // An empty reply sends nothing: the notification just opens.
+            let text = (typedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            let body = String(text.prefix(1000))
+            let type = alertType(cavnar)
+            if type == "team_message", let sender = reviewId(from: cavnar["sender_id"]) {
+                return BackgroundAction(path: "/mobile/api/team/messages", decision: nil,
+                                        failureTitle: "Couldn't send your reply",
+                                        payload: PushActionBody(["recipient_id": .int(sender), "body": .string(body)]))
+            }
+            if let thread = reviewId(from: cavnar["thread_id"]) {
+                return BackgroundAction(path: "/mobile/api/labor/inbox/threads/\(thread)/reply", decision: nil,
+                                        failureTitle: "Couldn't send your reply", payload: PushActionBody(["body": .string(body)]))
+            }
+            return nil
+        case approveLineupAction:
+            guard let day = (cavnar["day"] as? String).flatMap({ DSRFormat.isISODate($0) ? $0 : nil }) else {
+                return nil
+            }
+            return BackgroundAction(path: "/mobile/api/staff-brief/approve", decision: nil,
+                                    failureTitle: "Couldn't approve the brief",
+                                    payload: PushActionBody(["day": .string(day), "text": .null]))
         case approvePostAction:
             guard let id = reviewId(from: cavnar["review_id"]) else { return nil }
             return BackgroundAction(path: "/mobile/api/reviews/\(id)/approve", decision: nil,
@@ -348,7 +396,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         }
         do {
             let response: ReviewPostOutcome
-            if let decision = action.decision {
+            if let payload = action.payload {
+                response = try await APIClient.shared.sendWithBearer(
+                    action.path, method: .post, body: payload, bearer: token)
+            } else if let decision = action.decision {
                 response = try await APIClient.shared.sendWithBearer(
                     action.path, method: .post, body: DecisionBody(decision: decision), bearer: token)
             } else {
@@ -609,7 +660,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         guard actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         // Approve & post, Undo, Approve / Deny: done here, in the
         // background, and nothing opens (friction audit #22).
-        if let action = Self.backgroundAction(for: actionIdentifier, cavnar: cavnar) {
+        // A typed Reply's text (UNTextInputNotificationAction) — a String,
+        // read here before anything crosses to the main actor.
+        let typedText = (response as? UNTextInputNotificationResponse)?.userText
+        if let action = Self.backgroundAction(for: actionIdentifier, cavnar: cavnar, typedText: typedText) {
             await Self.perform(action, userInfo: userInfo, restaurantId: restaurantId)
             return
         }
@@ -741,5 +795,37 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         #if DEBUG
         print("[push] failed to register for remote notifications: \(error)")
         #endif
+    }
+}
+
+/// The JSON body a lock-screen action posts beyond a decision — a typed
+/// reply (`{body}` to a staff thread, `{recipient_id, body}` to a teammate)
+/// or the lineup brief's `{day, text: null}` (approve the draft as written).
+/// Sendable, so it crosses into the background task that posts it.
+struct PushActionBody: Encodable, Equatable, Sendable {
+    enum Value: Equatable, Sendable {
+        case string(String), int(Int), null
+    }
+
+    let fields: [String: Value]
+
+    init(_ fields: [String: Value]) { self.fields = fields }
+
+    private struct Key: CodingKey {
+        let stringValue: String
+        init(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int? { nil }
+        init?(intValue: Int) { nil }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        for (k, v) in fields {
+            switch v {
+            case .string(let s): try c.encode(s, forKey: Key(stringValue: k))
+            case .int(let n): try c.encode(n, forKey: Key(stringValue: k))
+            case .null: try c.encodeNil(forKey: Key(stringValue: k))
+            }
+        }
     }
 }

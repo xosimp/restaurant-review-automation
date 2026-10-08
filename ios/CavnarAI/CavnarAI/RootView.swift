@@ -660,6 +660,9 @@ struct RootView: View {
             // which every switch path reaches — not just this one.
             LocationSwitcherView {}
         }
+        // Team messages, opened by the button beside the bell or a
+        // teammate's push (messages/<id>), over whichever tab is up (#71).
+        .teamMessagesPresenter()
         // "Goes out at 11am — Undo from Home": the push, its notification
         // row and a card all open the queued send itself (friction #3).
         .sheet(item: Binding(get: { deepLinkRouter.pendingActionId },
@@ -680,6 +683,7 @@ struct RootView: View {
             Task {
                 await chrome.notificationsBadge.refresh()
                 await chrome.loadLocations(isOwner: sessionStore.currentUser?.isOwner == true)
+                await TeamMessagesCenter.shared.refresh(force: true)
             }
         }
         // Fallback only — the real trigger is HomeView's onHeroAppear
@@ -747,6 +751,8 @@ struct RootView: View {
         chrome.notificationsList.hasLoadedOnce = false
         chrome.notificationsList.errorMessage = nil
         ModuleAccess.shared.reset()
+        // Team messages belong to one login at one location (#71).
+        TeamMessagesCenter.shared.reset()
     }
 
     private func didSwitchLocation() {

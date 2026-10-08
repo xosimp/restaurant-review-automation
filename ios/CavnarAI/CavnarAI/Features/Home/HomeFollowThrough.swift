@@ -235,6 +235,8 @@ final class HomeFollowThroughViewModel {
     var whatWorked: WhatWorked?
     var closeOut: CloseOutEntry?
     var closeOutDate: String?
+    /// "Staff rated tonight 4.2 out of 5 (6 answers)." — only past the floor.
+    var closeOutStaffPulse: CloseOutStaffPulse?
     var caveat: String?
     var value: ValueSummary?
     var links: [CrossModule.Link] = []
@@ -319,9 +321,19 @@ final class HomeFollowThroughViewModel {
         let ok: Bool
         let closeout: CloseOutEntry?
         let businessDate: String?
+        /// How tonight felt to staff, once enough answered (parity #67).
+        var staffPulse: CloseOutStaffPulse? = nil
         enum CodingKeys: String, CodingKey {
             case ok, closeout
             case businessDate = "business_date"
+            case staffPulse = "staff_pulse"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            closeout = try c.decodeIfPresent(CloseOutEntry.self, forKey: .closeout)
+            businessDate = try c.decodeIfPresent(String.self, forKey: .businessDate)
+            staffPulse = (try? c.decodeIfPresent(CloseOutStaffPulse.self, forKey: .staffPulse)) ?? nil
         }
     }
     private typealias OKResponse = APIClient.OKResponse
@@ -807,6 +819,7 @@ final class HomeFollowThroughViewModel {
         let close = await c
         closeOut = close?.closeout
         closeOutDate = close?.businessDate
+        closeOutStaffPulse = close?.staffPulse
         value = await v
         let cross = await x
         fixFirst = cross?.fixFirst.flatMap { ($0.what ?? "").isEmpty ? nil : $0 }

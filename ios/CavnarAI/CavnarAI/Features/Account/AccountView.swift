@@ -109,6 +109,7 @@ struct AccountView: View {
         switch AccountLinkSection(section) {
         case .profile: showingProfile = true
         case .team: showingTeam = true
+        case .people: showingPeople = true
         case .billing: showingBilling = isOwner
         case .alerts: showingAlerts = true
         case .automation: showingAutomation = true
@@ -217,6 +218,8 @@ struct AccountView: View {
     @State private var showingChangelog = false
     @State private var showingTeam = false
     @State private var showingStaff = false
+    /// Account → People: house rules, staff docs, certifications (parity #62).
+    @State private var showingPeople = false
     @State private var showingExportData = false
     @State private var showingEmailHistory = false
     @State private var showingCloseAccount = false
@@ -366,6 +369,21 @@ struct AccountView: View {
                 .sheet(isPresented: $showingStaff) {
                     AccountStaffDetailView(viewModel: viewModel)
                 }
+            }
+
+            // What staff can look up in the app — house rules, docs by job,
+            // certifications with the expiry reminder — for every login the
+            // server answers for (parity #62); the owner's access sheets are
+            // reachable from it too, as on the web's People section.
+            group("People") {
+                settingsRow {
+                    row("House rules, docs & certificates", systemImage: "person.text.rectangle")
+                } action: {
+                    showingPeople = true
+                }
+            }
+            .sheet(isPresented: $showingPeople) {
+                AccountPeopleRulesView(accountViewModel: viewModel, isOwner: isOwner)
             }
 
             group("More") {
@@ -662,13 +680,17 @@ struct AccountView: View {
 /// Nil for a section the app shows on Account's page itself (appearance).
 enum AccountLinkSection: Equatable {
     case profile, team, billing, alerts, automation, connections, security, export, help, recommendations
+    /// Account → People: house rules, docs, certifications and, for the
+    /// owner, access (the certificate expiry email's link; parity #62).
+    case people
     /// Account → Memory (memory round 9/29/26).
     case memory
 
     init?(_ raw: String) {
         switch raw.lowercased() {
         case "restaurant", "profile": self = .profile
-        case "people", "team", "staff": self = .team
+        case "people": self = .people
+        case "team", "staff": self = .team
         case "billing": self = .billing
         case "notifications", "alerts": self = .alerts
         case "automation": self = .automation

@@ -46,7 +46,9 @@ struct ModuleRoute: Hashable {
         case "review":
             return route("reviews", filter: filter, item: nav.target)
         case "labor":
-            return route("labor", section: nav.target)
+            // "labor/inbox/7" or "labor/inbox?thread=7" names a Team inbox thread.
+            let item = nav.rest.count > 1 ? nav.rest[1] : nav.query["thread"]
+            return route("labor", section: nav.target, item: item)
         case "schedule":
             return route("labor", section: "schedule", item: nav.target)
         case "person":

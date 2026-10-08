@@ -70,6 +70,17 @@ struct CavnarBellButton: View {
 
     var body: some View {
         if let chrome {
+            // Team messages sit beside the bell, as on the web (parity
+            // audit 10/7/26 #71); hidden for a login that can't message.
+            HStack(spacing: 8) {
+                CavnarMessagesButton()
+                bell(chrome)
+            }
+        }
+    }
+
+    private func bell(_ chrome: AppChrome) -> some View {
+        Group {
             Button {
                 Haptic.light()
                 chrome.openNotifications()
