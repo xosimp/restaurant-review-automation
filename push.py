@@ -540,6 +540,9 @@ CATEGORY_REQUEST = "CAVNAR_REQUEST"                 # Approve · Deny
 # (no warnings, the login can publish, someone to reach — Waiting on you's
 # rule), and the publish route checks again when it is pressed.
 CATEGORY_SCHEDULE = "CAVNAR_SCHEDULE"               # Review · Send to staff
+# The same push when one tap is not safe: Review only (a category's buttons
+# are fixed on the phone, so the server picks the one without Send).
+CATEGORY_SCHEDULE_REVIEW = "CAVNAR_SCHEDULE_REVIEW"  # Review
 _BRIEF_TYPES = {"morning_brief", "intraday_pulse", "closing_summary",
                 "weekly_review", "monthly_review", "daily_briefing"}
 _ISSUE_TYPES = {"issue", "issue_escalated", "coverage", "critical_low"}
@@ -554,7 +557,7 @@ def _category(alert_type, data) -> str:
     if alert_type == "shift_request" and data.get("request_id") and data.get("request_kind"):
         return CATEGORY_REQUEST
     if alert_type == "schedule_drafted" and data.get("schedule_id"):
-        return CATEGORY_SCHEDULE
+        return CATEGORY_SCHEDULE if data.get("one_tap_safe") is True else CATEGORY_SCHEDULE_REVIEW
     if alert_type in _BRIEF_TYPES or data.get("ask_prompt"):
         return CATEGORY_BRIEF
     if alert_type in _ISSUE_TYPES:

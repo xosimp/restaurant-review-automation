@@ -80,7 +80,13 @@ def _finish(job_id, rid, **result):
 # ── push.py: the category and where it opens ─────────────────────────────
 
 def test_a_drafted_week_gets_review_and_send_and_opens_the_week():
-    assert push._category("schedule_drafted", {"schedule_id": 41}) == push.CATEGORY_SCHEDULE == "CAVNAR_SCHEDULE"
+    # Send to staff only rides a push the server marked one-tap safe; a
+    # category's buttons are fixed on the phone, so the other gets Review only.
+    assert push._category("schedule_drafted", {"schedule_id": 41, "one_tap_safe": True}) \
+        == push.CATEGORY_SCHEDULE == "CAVNAR_SCHEDULE"
+    assert push._category("schedule_drafted", {"schedule_id": 41, "one_tap_safe": False}) \
+        == push.CATEGORY_SCHEDULE_REVIEW == "CAVNAR_SCHEDULE_REVIEW"
+    assert push._category("schedule_drafted", {"schedule_id": 41}) == push.CATEGORY_SCHEDULE_REVIEW
     assert push._category("schedule_drafted", {}) == ""
     assert push.nav_for("schedule_drafted", {"schedule_id": 41}) == "schedule/41"
     assert push.nav_for("schedule_drafted", {}) == "labor/schedule"

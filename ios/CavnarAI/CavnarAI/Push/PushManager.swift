@@ -100,6 +100,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     nonisolated static let undoAction             = "CAVNAR_UNDO"
     nonisolated static let approveRequestAction   = "CAVNAR_APPROVE_REQUEST"
     nonisolated static let denyRequestAction      = "CAVNAR_DENY_REQUEST"
+    /// A drafted week (iOS parity #16): Review opens it in the editor; Send
+    /// to staff — on CAVNAR_SCHEDULE only, the push the server marked
+    /// one_tap_safe — checks and publishes in the background.
+    nonisolated private static let scheduleCategory       = "CAVNAR_SCHEDULE"
+    nonisolated private static let scheduleReviewCategory = "CAVNAR_SCHEDULE_REVIEW"
+    nonisolated static let sendScheduleAction             = "CAVNAR_SEND_SCHEDULE"
 
     /// The system prompt used to fire within seconds of the first login,
     /// before the owner had seen a single number. Asking on the second open
@@ -243,7 +249,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                            options: [.authenticationRequired])
         let deny = UNNotificationAction(identifier: denyRequestAction, title: "Deny",
                                         options: [.destructive, .authenticationRequired])
+        let sendSchedule = UNNotificationAction(identifier: sendScheduleAction, title: "Send to staff",
+                                                options: [.authenticationRequired])
         return [
+            UNNotificationCategory(identifier: scheduleCategory, actions: [review, sendSchedule],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: scheduleReviewCategory, actions: [review],
+                                   intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: reviewCategory, actions: [reply],
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: reviewDraftedCategory, actions: [approvePost, edit],
@@ -369,6 +381,92 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             await postFailure(action.failureTitle, error.message, userInfo: userInfo)
         } catch {
             await postFailure(action.failureTitle, "Tap to open it and try again.", userInfo: userInfo)
+        }
+    }
+
+    /// Whether "Send to staff" may run from this payload: a week named, and
+    /// the server's own one-tap verdict on it. The publish route checks again.
+    nonisolated static func scheduleSendAllowed(_ cavnar: [String: Any]) -> Int? {
+        guard let id = reviewId(from: cavnar["schedule_id"]) else { return nil }
+        let safe = (cavnar["one_tap_safe"] as? Bool) ?? ((cavnar["one_tap_safe"] as? NSNumber)?.boolValue ?? false)
+        return safe ? id : nil
+    }
+
+    /// Whether publish-check still finds the week safe for one tap — the
+    /// rule LaborWaitingOnYou applies: unsent, not replaced, this login may
+    /// send, nothing to read first, somebody to reach.
+    nonisolated static func publishCheckAllowsOneTap(_ check: PublishCheck, scheduleId: Int) -> Bool {
+        check.ok && check.scheduleId == scheduleId && check.publishedAt == nil && check.replacedReason == nil
+            && check.canPublish && check.shown.lines.isEmpty && (check.reach?.total ?? 0) > 0
+    }
+
+    private struct ScheduleSendAnswer: Decodable {
+        let ok: Bool
+        let error: String?
+        let queued: Bool?
+        let undoMinutes: Int?
+        let alreadyPublished: Bool?
+        enum CodingKeys: String, CodingKey {
+            case ok, error, queued
+            case undoMinutes = "undo_minutes"
+            case alreadyPublished = "already_published"
+        }
+    }
+
+    /// "Send to staff" from the drafted push: publish-check, then publish,
+    /// with the owner's stored session. Anything to read first, another
+    /// location, an app passcode or a failure posts a local notification
+    /// that opens the week instead — never a silent no.
+    nonisolated static func performScheduleSend(cavnar: [String: Any], userInfo: [AnyHashable: Any],
+                                                restaurantId: Int?) async {
+        let title = "The schedule wasn\u{2019}t sent"
+        guard let scheduleId = scheduleSendAllowed(cavnar) else {
+            await postFailure(title, "It has something to read first \u{2014} tap to open the week.", userInfo: userInfo)
+            return
+        }
+        guard let token = Keychain.get(Keychain.Key.sessionToken) else {
+            await postFailure(title, "Open Cavnar AI and sign in to do this.", userInfo: userInfo)
+            return
+        }
+        if AppPasscode.isSet {
+            await postFailure(title, "Open Cavnar AI to do this.", userInfo: userInfo)
+            return
+        }
+        let active = await MainActor.run { SessionScope.activeRestaurantId }
+        if let restaurantId, restaurantId > 0, active > 0, restaurantId != active {
+            await postFailure(title, "It's for another location \u{2014} tap to open it there.", userInfo: userInfo)
+            return
+        }
+        do {
+            let check: PublishCheck = try await APIClient.shared.sendWithBearer(
+                "/mobile/api/labor/publish-check", query: ["schedule_id": String(scheduleId)], bearer: token)
+            guard publishCheckAllowsOneTap(check, scheduleId: scheduleId) else {
+                await postFailure(title, "Something changed since \u{2014} tap to read it before it goes out.",
+                                  userInfo: userInfo)
+                return
+            }
+            let sent: ScheduleSendAnswer = try await APIClient.shared.sendWithBearer(
+                "/mobile/api/labor/publish-schedule", method: .post,
+                body: PublishScheduleViewModel.PublishBody(scheduleId: scheduleId, acknowledge: false), bearer: token)
+            guard sent.ok else {
+                await postFailure(title, sent.error ?? "Tap to open the week.", userInfo: userInfo)
+                return
+            }
+            let content = UNMutableNotificationContent()
+            content.title = sent.alreadyPublished == true ? "Already sent" : "Schedule sent"
+            content.body = sent.queued == true
+                ? "Goes to staff in \(sent.undoMinutes ?? 0) min \u{2014} undo from Home."
+                : (sent.alreadyPublished == true ? "Nothing went out twice." : "Your staff have the week.")
+            content.userInfo = userInfo
+            content.interruptionLevel = .passive
+            try? await UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: "cavnar-schedule-sent-\(scheduleId)", content: content, trigger: nil))
+        } catch let error as APIClient.APIError where error.status == 409 {
+            await postFailure(title, "There is something to read first \u{2014} tap to open the week.", userInfo: userInfo)
+        } catch let error as APIClient.APIError {
+            await postFailure(title, error.message, userInfo: userInfo)
+        } catch {
+            await postFailure(title, "Tap to open the week and try again.", userInfo: userInfo)
         }
     }
 
@@ -607,6 +705,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         let actionIdentifier = response.actionIdentifier
         // Dismissals are ignored rather than routed.
         guard actionIdentifier != UNNotificationDismissActionIdentifier else { return }
+        // Send a drafted week to staff (iOS parity #16): the server's own
+        // check, then its publish, in the background behind the unlock.
+        if actionIdentifier == Self.sendScheduleAction {
+            await Self.performScheduleSend(cavnar: cavnar, userInfo: userInfo, restaurantId: restaurantId)
+            return
+        }
         // Approve & post, Undo, Approve / Deny: done here, in the
         // background, and nothing opens (friction audit #22).
         if let action = Self.backgroundAction(for: actionIdentifier, cavnar: cavnar) {
