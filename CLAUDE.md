@@ -216,7 +216,11 @@ A deletion is only "verified" when the trace is written down alongside it.
   (`admin_ops._fleet_state`) and the bounded pools (`ASK_MAX_CONCURRENT`,
   the two admin pools — `ops.run_admin_task` and
   `admin_routes._submit_admin_job` — and the webhook and push delivery
-  pools); the inventory and order are in
+  pools), the schedule-generation watchers (`schedule_engine._GEN_WATCHERS`:
+  a Generate press remembered on one worker pushes nobody when the job
+  lands on another) and the schedule Studio's kept inputs
+  (`schedule_engine._studio_cache` / `_studio_live` — a cache, safe to keep
+  per worker); the inventory and order are in
   `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`. Each worker gets its own copy,
   so two workers silently double every limit. (Already durable: the login
   limiter — `security.login_throttled` on `login_attempts`,
