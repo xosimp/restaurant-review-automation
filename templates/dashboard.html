@@ -40039,6 +40039,8 @@ function rvSelApprove(btn) {
     done();
     var held = ok.length - tally.approved - tally.failed;
     var bits = [tally.approved + ' approved' + (tally.posted ? ' (' + tally.posted + ' posted to Google)' : '')];
+    if (tally.changed) bits.push(tally.changed + ' changed since you read ' + (tally.changed === 1 ? 'it' : 'them') + ' — not posted');
+    held -= tally.changed || 0;
     if (held > 0) bits.push(held + ' held for you to read');
     if (tally.failed) bits.push(tally.failed + ' didn’t go through' + (tally.lost ? ' — check before trying again' : ''));
     toast(bits.join(' · '), tally.failed ? 'error' : 'success');
@@ -40047,14 +40049,33 @@ function rvSelApprove(btn) {
   function next() {
     if (!chunks.length) { finish(); return; }
     var c = chunks.shift();
-    fetch('/api/reviews/approve-all', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({review_ids: c, limit: c.length})})
-      .then(apiJson).then(function (d) {
+    // Each reply goes out only as the words on its card (re-audit 10/8/26):
+    // the fingerprint of every shown draft rides with the ids, and one that
+    // changed since is held back and counted, never posted.
+    Promise.all(c.map(rvDraftHash)).then(function (hs) {
+      var body = {review_ids: c, limit: c.length}, map = {}, all = true, j;
+      for (j = 0; j < c.length; j++) { if (hs[j]) map[c[j]] = hs[j]; else all = false; }
+      if (all) body.review_hashes = map;
+      return fetch('/api/reviews/approve-all', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    }).then(apiJson).then(function (d) {
         if (!d || !d.ok) tally.failed += c.length;
-        else { tally.approved += +d.approved || 0; tally.posted += +d.posted || 0; tally.failed += +d.failed || 0; }
+        else { tally.approved += +d.approved || 0; tally.posted += +d.posted || 0; tally.failed += +d.failed || 0; tally.changed = (tally.changed || 0) + (+d.changed || 0); }
         next();
       }).catch(function () { tally.failed += c.length; tally.lost = true; next(); });
   }
   next();
+}
+// The fingerprint of the reply on a card, as the server takes it
+// (models.draft_hash: sha256 of the stripped text, hex); null where the
+// browser cannot hash or the card has no draft.
+function rvDraftHash(id) {
+  var el = document.getElementById('draft-txt-' + id);
+  if (!el || !window.crypto || !crypto.subtle || !window.TextEncoder) return Promise.resolve(null);
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(el.textContent.trim())).then(function (buf) {
+    var b = new Uint8Array(buf), h = '', i;
+    for (i = 0; i < b.length; i++) h += ('0' + b[i].toString(16)).slice(-2);
+    return h;
+  }, function () { return null; });
 }
 function rvSelSkip(btn) {
   var ids = rvSelChosen(), ok = [], i;

@@ -349,3 +349,13 @@ def test_the_intel_website_route_is_gated_as_intel_and_shares_the_body():
         assert "_do_marketing_website(current_user)" in body[:body.index("return jsonify")]
     vm = _read("ios/CavnarAI/CavnarAI/Features/Intel/WebsiteAnalyticsViewModel.swift")
     assert 'summaryPath = "/mobile/api/intel/website"' in vm and '"/mobile/api/marketing/website"' not in vm
+
+
+def test_the_web_multi_select_sends_each_cards_fingerprint():
+    """Re-audit 10/8/26 (final pass): the web inbox's select-and-approve binds
+    every reply to the words on its card, as the phone's sheet does."""
+    src = open("templates/dashboard.html", encoding="utf-8").read()
+    i = src.index("function rvDraftHash(id)")
+    fn = src[i:src.index("\n}\n", i)]
+    assert "crypto.subtle.digest('SHA-256'" in fn and ".trim()" in fn
+    assert "body.review_hashes = map" in src and "Promise.all(c.map(rvDraftHash))" in src
