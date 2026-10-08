@@ -308,24 +308,46 @@ def draft(restaurant_id, day=None, db_path=DB_PATH, items=None, announce=True) -
 WAITING_TYPE = "lineup_brief_waiting"
 
 
+def brief_rev(row) -> str:
+    """The brief's revision as one short token: the draft, what is approved
+    and when the row last changed. The waiting push carries it and its
+    lock-screen Approve sends it back (`expected_rev`), so a press on a
+    notification that is no longer true — the draft rewritten, a brief
+    approved or withdrawn since — approves nothing (re-audit 10/8/26)."""
+    row = row or {}
+    return hashlib.sha256(json.dumps([row.get("draft_text") or "", row.get("approved_text") or "",
+                                      row.get("updated_at") or ""]).encode()).hexdigest()[:16]
+
+
 def announce_waiting(restaurant_id, day, db_path=DB_PATH) -> int:
     """Tell the logins who approve the brief (SCHEDULE_PUBLISH — the
     route's own gate) that tonight's draft is waiting: a push with Approve
     on it (push.CATEGORY_LINEUP; the app posts /staff-brief/approve with
     this `day`). Push only (strategy_jobs._reach email=False): the web
     shows the brief's own card, and an approver without the app was emailed
-    on every draft. Never raises; returns how many were reached. The push
-    says only that a draft is waiting — the draft itself is read in the app."""
+    on every draft. Never raises; returns how many were reached.
+
+    The push carries the draft itself (`draft`, push.py adds
+    `draft_complete`) and its revision (`brief_rev`): the notification's
+    own view shows the words Approve sends to staff, and Approve posts
+    exactly those words with `expected_rev` — never a draft the approver
+    did not read (re-audit 10/8/26). A push whose draft did not fit whole
+    gets Open only (push.CATEGORY_LINEUP_REVIEW)."""
     try:
         import strategy_jobs
         from permissions import SCHEDULE_PUBLISH
         from time_utils import mdy
         day = _day(restaurant_id, day)
+        row = _row(restaurant_id, day, db_path) or {}
         body = (f"Cavnar AI drafted the brief your team reads before service on {mdy(day.isoformat())}. "
                 "Approve it or edit it first — until then staff read the plain lines.")
+        data = {"day": day.isoformat(), "kind": "lineup_brief"}
+        draft_text = (row.get("draft_text") or "").strip()
+        if draft_text and not (row.get("approved_text") or "").strip():
+            data.update({"draft": draft_text, "brief_rev": brief_rev(row)})
         return int(strategy_jobs._reach(
             restaurant_id, WAITING_TYPE, "Tonight's lineup brief is waiting", body,
-            {"day": day.isoformat(), "kind": "lineup_brief"}, db_path, lines=[body],
+            data, db_path, lines=[body],
             permissions=[SCHEDULE_PUBLISH], deciders=True, email=False) or 0)
     except Exception as e:
         try:
@@ -342,12 +364,18 @@ def _user_id(user):
     return (user or {}).get("id")
 
 
-def approve(restaurant_id, user, day=None, text=None, db_path=DB_PATH) -> dict:
+def approve(restaurant_id, user, day=None, text=None, db_path=DB_PATH, expected_rev=None) -> dict:
     """Approve today's brief for staff. `text` None approves the stored
     draft as written; a string is the manager's own (edited) brief. Either
-    is held to S1 first. Audited in change_log."""
+    is held to S1 first. Audited in change_log.
+
+    `expected_rev`: the brief_rev a waiting push carried (its lock-screen
+    Approve). Anything changed since — the draft, an approval, a withdraw —
+    refuses, and the brief is opened instead (re-audit 10/8/26)."""
     day = _day(restaurant_id, day)
     row = _row(restaurant_id, day, db_path) or {}
+    if expected_rev is not None and str(expected_rev) != brief_rev(row):
+        raise BriefError("Tonight's brief changed since that notification — open it to approve it.")
     edited = text is not None
     if edited:
         text = " ".join(str(text or "").split())

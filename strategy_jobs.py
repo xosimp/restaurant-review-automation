@@ -3317,7 +3317,10 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
                    else "Add a brief or a focus item: ")
             head = (f"Cavnar AI · tonight's lineup notes ({len(items)} point"
                     f"{'' if len(items) == 1 else 's'}): ")
-            tail = (f" {ask}{base}/?nav=account%2Fnotifications The team reads them in the Cavnar AI app: "
+            # The brief's own place (push.nav_for's labor/lineup): the web
+            # opens its card, the app its Lineup brief — account/notifications
+            # dead-ended the app on the alert settings (re-audit 10/8/26).
+            tail = (f" {ask}{base}/?nav=labor/lineup The team reads them in the Cavnar AI app: "
                     f"{base}/staff/r/{token}")
             room = max(0, 320 - len(head) - len(tail))
             if len(lead) > room:

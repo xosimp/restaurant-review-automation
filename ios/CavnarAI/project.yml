@@ -264,8 +264,9 @@ targets:
   # The expanded view of a notification (parity audit #36): long-press a
   # review push and the reply "Approve & post" publishes is there to read;
   # the nightly report's push shows its headline whole. Registered for the
-  # two categories that carry them (push.py CATEGORY_REVIEW_DRAFTED,
-  # CATEGORY_DSR). Reads the push payload only — never signs in, never calls
+  # categories that carry them (push.py CATEGORY_REVIEW_DRAFTED,
+  # CATEGORY_DSR, and the lineup brief's CATEGORY_LINEUP / _REVIEW — the
+  # brief Approve sends to staff, re-audit 10/8/26). Reads the push payload only — never signs in, never calls
   # the API, holds no token; the buttons under it are the app's
   # (PushManager). NotificationPreview (Shared/) is the one reading of the
   # payload, compiled into the app too so its tests cover it.
@@ -298,6 +299,8 @@ targets:
             UNNotificationExtensionCategory:
               - CAVNAR_REVIEW_DRAFTED
               - CAVNAR_DSR
+              - CAVNAR_LINEUP
+              - CAVNAR_LINEUP_REVIEW
             UNNotificationExtensionInitialContentSizeRatio: 0.6
             # The view draws the title and body itself, in the app's type.
             UNNotificationExtensionDefaultContentHidden: true

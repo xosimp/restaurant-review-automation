@@ -804,4 +804,4 @@ def test_the_nudge_drafts_once_and_asks_the_manager_to_approve(monkeypatch, db_p
     assert len(model.calls) == 1
     msg = sent[0]
     assert len(msg) <= 320 and "Approve the drafted brief" in msg and "/staff/r/" in msg \
-        and "nav=account%2Fnotifications" in msg
+        and "nav=labor/lineup" in msg   # the brief's own place (re-audit 10/8/26)

@@ -170,6 +170,9 @@ def test_the_lineup_nudge_texts_the_routed_manager_not_staff(db_path, monkeypatc
     monkeypatch.setattr("notify.send_sms", lambda to, msg, use_case="alert": sent.append((to, msg)) or True)
     assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 1
     assert sent[0][0] == "+15555550100" and "lineup notes" in sent[0][1] and "/staff/r/" in sent[0][1]
+    # The link opens the brief itself (re-audit 10/8/26) — push.nav_for's
+    # labor/lineup — never the alert settings, a dead end in the app.
+    assert "/?nav=labor/lineup " in sent[0][1] and "account%2Fnotifications" not in sent[0][1]
     assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 0, "once a day"
 
 
