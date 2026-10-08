@@ -48,7 +48,8 @@ struct AccountReportBugSheet: View {
 
                     Button {
                         Task {
-                            if await viewModel.reportBug(message: message, build: buildLine, device: deviceLine) {
+                            if await viewModel.reportBug(message: message, build: buildLine, device: deviceLine,
+                                                                iosVersion: UIDevice.current.systemVersion) {
                                 Haptic.success()
                                 postedLabel = "Sent — thank you"
                             }

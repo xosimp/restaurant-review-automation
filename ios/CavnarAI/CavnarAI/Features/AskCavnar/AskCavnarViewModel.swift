@@ -587,10 +587,16 @@ final class AskCavnarViewModel {
         }
     }
 
-    private struct ActionOutcomeBody: Encodable {
+    /// POST /ask-cavnar/action — the web's body key for key: `body` is the
+    /// proposal's own body, logged with the answer (client_api's
+    /// log_ask_action), which the phone never sent, so every answer given
+    /// on iOS was filed with no record of what was confirmed (parity audit
+    /// #24, the request-body parity test).
+    struct ActionOutcomeBody: Encodable {
         let action: String
         let outcome: String
         let summary: String
+        let body: [String: AnyCodableValue]?
         let conversation_id: Int?
         let proposal_id: Int?
         let reason: String?
@@ -987,7 +993,8 @@ final class AskCavnarViewModel {
         let _: PlainOK? = try? await client.send(
             "/mobile/api/ask-cavnar/action", method: .post,
             body: ActionOutcomeBody(action: proposal.action, outcome: outcome,
-                                    summary: proposal.summary, conversation_id: conversationId,
+                                    summary: proposal.summary, body: proposal.body,
+                                    conversation_id: conversationId,
                                     proposal_id: proposal.proposalId, reason: cleanReason,
                                     reason_code: outcome == "dismissed" ? reasonCode : nil))
         appendOutcomeLine(proposal, outcome: outcome, reason: cleanReason)
