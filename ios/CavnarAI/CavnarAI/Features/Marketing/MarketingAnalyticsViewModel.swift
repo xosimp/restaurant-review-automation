@@ -143,8 +143,11 @@ final class MarketingAnalyticsViewModel {
 
         async let performanceResult: (value: MarketingPerformance, body: Data)? = try? client.sendKeepingBody(
             "/mobile/api/marketing/performance")
-        async let insightResult: (value: AIInsight, body: Data)? = try? client.sendKeepingBody(
-            "/mobile/api/marketing/insight")
+        // Asked stale-while-refresh (parity #37): a brief the server has not
+        // written for these figures answers at once — pending, or the last
+        // brief with its age — and is followed below.
+        async let insightResult: (value: AIInsight, body: Data, refresh: APIClient.InsightRefreshState?)? =
+            try? client.sendInsight(Self.insightPath)
         async let topicsResult: (value: RecentTopicsResponse, body: Data)? = try? client.sendKeepingBody(
             "/mobile/api/marketing/recent-topics")
         let days = windowDays
@@ -155,7 +158,10 @@ final class MarketingAnalyticsViewModel {
         async let diagnosisResult: DiagnosisResponse? = try? client.send(
             "/mobile/api/marketing/diagnosis", hapticOnError: false)
 
-        let (p, i, t, w, a) = await (performanceResult, insightResult, topicsResult, windowResult, attributionResult)
+        let (p, t, w, a) = await (performanceResult, topicsResult, windowResult, attributionResult)
+        // A placeholder (pending) is never shown as the brief, nor cached.
+        let firstInsight = await insightResult
+        let i = firstInsight?.refresh?.isPending == true ? nil : firstInsight
         // A part that failed keeps what is on screen (cached or earlier)
         // rather than blanking a card that had numbers a moment ago.
         performance = p?.value ?? performance
@@ -164,14 +170,24 @@ final class MarketingAnalyticsViewModel {
         window = w?.value ?? window
         attribution = a?.value ?? attribution
         diagnosis = await diagnosisResult?.diagnosis ?? diagnosis
+        isLoadingInsight = firstInsight?.refresh?.isPending == true
+        if let p {
+            cachedAt = nil
+            let body = CacheEnvelope.make([("performance", p.body), ("insight", i?.body), ("topics", t?.body),
+                                           ("window", w?.body), ("attribution", a?.body)],
+                                          numbers: [("window_days", days)])
+            cache.save(body, generation: generation)
+        }
+        isLoading = false
+        if let state = firstInsight?.refresh, state.isWaiting {
+            await InsightRefresh.follow(Self.insightPath, from: state, client: client) {
+                (fresh: AIInsight) in insight = fresh
+            }
+        }
         isLoadingInsight = false
-        guard let p else { return }
-        cachedAt = nil
-        let body = CacheEnvelope.make([("performance", p.body), ("insight", i?.body), ("topics", t?.body),
-                                       ("window", w?.body), ("attribution", a?.body)],
-                                      numbers: [("window_days", days)])
-        cache.save(body, generation: generation)
     }
+
+    static let insightPath = "/mobile/api/marketing/insight"
 
     private struct RefreshResponse: Decodable {
         let ok: Bool

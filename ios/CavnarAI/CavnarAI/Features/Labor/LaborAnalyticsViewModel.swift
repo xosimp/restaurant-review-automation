@@ -218,21 +218,42 @@ final class LaborAnalyticsViewModel {
         // widgets side by side. The route itself is untouched — nothing
         // else currently depends on removing it too.
         async let trendResult: TrendResponse? = try? client.send("/mobile/api/labor/trend")
-        async let insightResult: LaborInsightPayload? = try? client.send("/mobile/api/labor/insight")
+        // Asked stale-while-refresh (parity #37): a read the server has not
+        // written for these figures answers at once — pending, or the last
+        // read with its age — and is followed below.
+        async let insightResult: (value: LaborInsightPayload, body: Data,
+                                  refresh: APIClient.InsightRefreshState?)? =
+            try? client.sendInsight(Self.insightPath)
         async let dailyResult: DailyResponse? = try? client.send("/mobile/api/labor/daily")
 
         trend = await trendResult?.weeks ?? []
         daily = await dailyResult?.days ?? []
-        if let fresh = await insightResult {
-            insight = fresh.insight
-            diagnosis = fresh.diagnosis
-            cacheInsight(fresh.insight)
-            insightCachedAt = nil
-            insightFetchFailed = false
-        } else {
+        let first = await insightResult
+        if let first, first.refresh?.isPending != true {
+            applyInsight(first.value)
+        } else if first == nil {
             // The cached read stays up; the note under it says how old it is.
             insightFetchFailed = true
         }
+        // Pending: the read card keeps its loading state while it is written.
+        isLoadingInsight = first?.refresh?.isPending == true
+        isLoading = false
+        if let state = first?.refresh, state.isWaiting {
+            let shown = await InsightRefresh.follow(Self.insightPath, from: state, client: client) {
+                (payload: LaborInsightPayload) in applyInsight(payload)
+            }
+            if !shown { insightFetchFailed = true }
+        }
         isLoadingInsight = false
+    }
+
+    static let insightPath = "/mobile/api/labor/insight"
+
+    private func applyInsight(_ fresh: LaborInsightPayload) {
+        insight = fresh.insight
+        diagnosis = fresh.diagnosis
+        cacheInsight(fresh.insight)
+        insightCachedAt = nil
+        insightFetchFailed = false
     }
 }

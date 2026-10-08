@@ -968,7 +968,11 @@ def request_too_large(e):
 def page_not_found(e):
     from flask import Response
     if request.path.startswith("/mobile/api/"):
-        return jsonify(ok=False, error="That endpoint doesn't exist. Please update the app."), 404
+        # `unknown_route`: no such route on this server — as against a
+        # route's own 404 for a thing it looked for and did not find (the
+        # app falls back only on this one; parity perf, ReviewById).
+        return jsonify(ok=False, unknown_route=True,
+                       error="That endpoint doesn't exist. Please update the app."), 404
     if _json_api_path():
         return jsonify(ok=False, error="That endpoint doesn't exist — refresh the page to load the latest version."), 404
     html = """<!DOCTYPE html>

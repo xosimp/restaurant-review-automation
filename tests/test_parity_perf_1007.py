@@ -411,3 +411,66 @@ def test_the_real_inbox_route_answers_304_to_its_own_tag(client, db):
     assert first.status_code == 200 and first.headers.get("ETag")
     again = client.get("/mobile/api/reviews", headers=_h(token, **{"If-None-Match": first.headers["ETag"]}))
     assert again.status_code == 304 and again.data == b""
+
+
+# ── every client asks (#37) ─────────────────────────────────────────────────
+
+DASH = open("templates/dashboard.html", encoding="utf-8").read()
+
+
+def _between(src, a, b):
+    i = src.index(a)
+    return src[i:src.index(b, i)]
+
+
+def test_the_web_asks_every_module_read_stale_while_refresh():
+    for route in ("/api/review-insight", "/api/labor-insight", "/api/mkt-insight"):
+        assert f"insightSwr('{route}', function(d, interim){{" in DASH, route
+        assert f"fetch('{route}')" not in DASH, route
+
+
+def test_the_web_poll_shows_the_older_read_then_the_new_one_in_node():
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    fn = _between(DASH, "function insightSwr(url, onAnswer, onFail){", "window.insightSwr = insightSwr;")
+    js = ("var AI_POLL_STEPS=[1500,3000,5000], calls = [], urls = [], window = {};\n"
+          "function setTimeout(f, ms) { f(); }\n"
+          "function apiJson(r) { return Promise.resolve(r); }\n"
+          "var answers = [{ok: true, pending: true, refreshing: true, refresh_job: 'j1', insight: 'placeholder'},\n"
+          "  {ok: true, stale: true, refreshing: true, refresh_job: 'j1', insight: 'Monday'},\n"
+          "  {ok: true, insight: 'Today'}];\n"
+          "function fetch(url) { urls.push(url); return Promise.resolve(answers.shift()); }\n"
+          + fn +
+          "\ninsightSwr('/api/labor-insight', function(d, interim) { calls.push([d.insight, interim]);"
+          " if (!interim) console.log(JSON.stringify({calls: calls, urls: urls})); });\n")
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip())
+    assert got["calls"] == [["Monday", True], ["Today", False]], "the placeholder is never shown"
+    assert got["urls"] == ["/api/labor-insight?async=1", "/api/labor-insight?async=1&refresh_job=j1",
+                           "/api/labor-insight?async=1&refresh_job=j1"]
+
+
+def test_the_phone_asks_every_module_read_stale_while_refresh_and_follows_it():
+    root = "ios/CavnarAI/CavnarAI/"
+    api = open(root + "Core/APIClient.swift", encoding="utf-8").read()
+    assert 'var query = ["async": "1"]' in api and 'query["refresh_job"] = refreshJob' in api
+    for f, path in (("Features/Labor/LaborAnalyticsViewModel.swift", "/mobile/api/labor/insight"),
+                    ("Features/Reviews/ReviewsAnalyticsViewModel.swift", "/mobile/api/reviews/insight"),
+                    ("Features/Marketing/MarketingAnalyticsViewModel.swift", "/mobile/api/marketing/insight")):
+        src = open(root + f, encoding="utf-8").read()
+        assert f'static let insightPath = "{path}"' in src, f
+        assert "client.sendInsight(Self.insightPath)" in src and "InsightRefresh.follow(Self.insightPath" in src, f
+
+
+def test_the_mobile_catch_all_404_says_the_route_is_missing():
+    """ReviewById falls back to paging the inbox only for a route the
+    server does not have — never for the route's own 'not found'."""
+    src = open("hosted_dashboard.py", encoding="utf-8").read()
+    handler = _between(src, "def page_not_found(e):", "if _json_api_path():")
+    assert "unknown_route=True" in handler
+    swift = open("ios/CavnarAI/CavnarAI/Features/Reviews/ReviewByIdView.swift", encoding="utf-8").read()
+    assert "where error.status == 404" in swift and "Self.isMissingRoute(error)" in swift
+    assert "try? await client.send(\"/mobile/api/reviews/\\(reviewID)\"" not in swift

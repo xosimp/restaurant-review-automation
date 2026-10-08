@@ -123,7 +123,7 @@ struct ReviewsAnalyticsSection: View {
                     if !viewModel.severityTiers.isEmpty || viewModel.unclassifiedCount > 0 {
                         severityStrip(viewModel.severityTiers)
                     }
-                } else if viewModel.isLoading {
+                } else if viewModel.isLoading || viewModel.insightPending {
                     insightSkeleton
                 }
 

@@ -5,11 +5,12 @@ import SwiftUI
 /// Finds one review by id so a diagnosis's "Reviews this rests on" can open
 /// the review it cites — the phone's version of the web's `jumpToReview`.
 ///
-/// Reads GET /mobile/api/reviews/<id>. An older backend without that route
-/// answers 404, so it falls back to the paged inbox the Reviews tab reads:
-/// first scoped to the diagnosis's topic, then the whole inbox a few pages
-/// deep, and says the review is further back rather than claiming it
-/// doesn't exist.
+/// Reads GET /mobile/api/reviews/<id>. The route's own 404 ("that review
+/// isn't in this inbox") is the answer. Only an older backend without the
+/// route at all (the app's catch-all 404) falls back to the paged inbox the
+/// Reviews tab reads: first scoped to the diagnosis's topic, then the whole
+/// inbox a few pages deep, saying the review is further back rather than
+/// claiming it doesn't exist. Offline or a server error is said as such.
 @Observable
 @MainActor
 final class ReviewByIdViewModel {
@@ -53,11 +54,36 @@ final class ReviewByIdViewModel {
         guard review == nil else { return }
         isLoading = true
         notFound = false
+        notFoundMessage = nil
         errorMessage = nil
         defer { isLoading = false }
-        if let one: OneResponse = try? await client.send("/mobile/api/reviews/\(reviewID)", hapticOnError: false),
-           let hit = one.review {
-            review = hit
+        do {
+            let one: OneResponse = try await client.send("/mobile/api/reviews/\(reviewID)", hapticOnError: false)
+            if let hit = one.review {
+                review = hit
+                return
+            }
+        } catch let error as APIClient.APIError where error.status == 404 {
+            // The route answered "not in this inbox": that is the answer —
+            // paging 800 reviews to look again cost four requests and
+            // ~200 KB for nothing (parity perf). Only an older server with
+            // no such route at all falls back to the inbox pages.
+            guard Self.isMissingRoute(error) else {
+                notFound = true
+                notFoundMessage = error.message
+                return
+            }
+        } catch is CancellationError {
+            return
+        } catch is APIClient.SessionExpiredError {
+            return
+        } catch let error as APIClient.APIError {
+            // Offline, a timeout, a 5xx: the inbox pages would fail the same
+            // way. Say so, with Try again.
+            errorMessage = error.message
+            return
+        } catch {
+            errorMessage = "Couldn\u{2019}t load that review."
             return
         }
         do {
@@ -84,6 +110,34 @@ final class ReviewByIdViewModel {
         } catch {
             errorMessage = "Couldn\u{2019}t load that review."
         }
+    }
+
+    /// The server's sentence for a review it looked for and did not find,
+    /// shown instead of "further back".
+    var notFoundMessage: String?
+
+    private struct RouteMissing: Decodable {
+        let unknownRoute: Bool?
+        let error: String?
+        enum CodingKeys: String, CodingKey {
+            case error
+            case unknownRoute = "unknown_route"
+        }
+    }
+
+    /// The app's catch-all 404 — the route does not exist on this server
+    /// (hosted_dashboard's handler: `unknown_route`, and on a server older
+    /// than that flag, its sentence) — as against the route's own "that
+    /// review isn't in this inbox".
+    nonisolated static func isMissingRoute(_ error: APIClient.APIError) -> Bool {
+        guard error.status == 404 else { return false }
+        guard let body = error.body,
+              let decoded = try? JSONDecoder.cavnar.decode(RouteMissing.self, from: body) else {
+            // Not our JSON at all (a proxy's HTML page): no route here.
+            return true
+        }
+        if decoded.unknownRoute == true { return true }
+        return decoded.error == "That endpoint doesn't exist. Please update the app."
     }
 
     private func page(offset: Int, category: String?) async throws -> PageResponse {
@@ -113,7 +167,8 @@ struct ReviewByIdView: View {
                     } else {
                         VStack(spacing: 10) {
                             Text(viewModel.notFound
-                                 ? "Review #\(viewModel.reviewID) is further back \u{2014} search for it in the inbox."
+                                 ? (viewModel.notFoundMessage
+                                    ?? "Review #\(viewModel.reviewID) is further back \u{2014} search for it in the inbox.")
                                  : (viewModel.errorMessage ?? "Couldn\u{2019}t load that review."))
                                 .font(.cavnarBody(15))
                                 .foregroundStyle(viewModel.notFound ? Color.cavnarInk3 : Color.cavnarRed)

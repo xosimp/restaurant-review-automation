@@ -57,6 +57,9 @@ final class ReviewsAnalyticsViewModel {
     /// answered never arrives — the server drops it from `insight` too.
     var insightRecs: [ReviewInsightRec] = []
     var isLoading = false
+    /// The server is writing the first read for this data (parity #37):
+    /// the read's skeleton stays up while the rest of the tab shows.
+    var insightPending = false
     var errorMessage: String?
     /// 30 / 90 / 180 — the same three windows as the web's analytics tab.
     /// Response performance and the topic grid take it; the 8-week
@@ -149,13 +152,32 @@ final class ReviewsAnalyticsViewModel {
             "/mobile/api/reviews/topic-heatmap", query: window
         )
         async let weeksResult: WeeksResponse? = try? client.send("/mobile/api/reviews/sentiment-trend")
-        async let insightResult: InsightResponse? = try? client.send("/mobile/api/reviews/insight")
+        // Asked stale-while-refresh (parity #37): a read the server has not
+        // written for this data answers at once — pending, or the last read
+        // with its age — and is followed below, after the rest is on screen.
+        async let insightResult: (value: InsightResponse, body: Data, refresh: APIClient.InsightRefreshState?)? =
+            try? client.sendInsight(Self.insightPath)
         async let topicWeeksResult: DataResponse<TopicWeeks>? = try? client.send("/mobile/api/reviews/topic-weeks")
 
         performance = await performanceResult?.data
         heatmap = await heatmapResult?.data ?? []
         sentimentWeeks = await weeksResult?.weeks ?? []
-        let insightPayload = await insightResult
+        topicWeeks = await topicWeeksResult?.data
+        let first = await insightResult
+        insightPending = first?.refresh?.isPending == true
+        if !insightPending { applyInsight(first?.value) }
+        isLoading = false
+        if let state = first?.refresh, state.isWaiting {
+            await InsightRefresh.follow(Self.insightPath, from: state, client: client) {
+                (payload: InsightResponse) in applyInsight(payload)
+            }
+        }
+        insightPending = false
+    }
+
+    static let insightPath = "/mobile/api/reviews/insight"
+
+    private func applyInsight(_ insightPayload: InsightResponse?) {
         insight = insightPayload?.insight
         unsupportedFigures = (insightPayload?.figuresVerified == false)
             ? (insightPayload?.unsupportedFigures ?? [])
@@ -181,7 +203,6 @@ final class ReviewsAnalyticsViewModel {
         insightIsStale = insightPayload?.stale ?? false
         insightAsOf = insightPayload?.asOf
         insightRecs = insightPayload?.recs ?? []
-        topicWeeks = await topicWeeksResult?.data
     }
 }
 
