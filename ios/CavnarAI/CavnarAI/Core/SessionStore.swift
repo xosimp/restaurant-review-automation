@@ -65,8 +65,8 @@ enum SessionScope {
         self.userId == userId && self.restaurantId == restaurantId
     }
 
-    static let persistedKey = "cavnar.session.restaurant_id"
-    static let persistedUserKey = "cavnar.session.user_id"
+    nonisolated static let persistedKey = "cavnar.session.restaurant_id"
+    nonisolated static let persistedUserKey = "cavnar.session.user_id"
 
     /// The location this phone's session is on: this process's own when a
     /// session has begun, else the last one any process recorded (a cold
@@ -572,7 +572,11 @@ final class SessionStore {
         // Cached labor/schedule data belongs to the old location — but the
         // offline queue was just trimmed to the new one, and purging its file
         // too meant those kept writes were lost on the next relaunch (CLIENT-5).
-        SecureCache.purgeAll(keeping: [PendingWriteQueue.storeKey])
+        // Count-sheet drafts are kept too: each is scoped to its user and
+        // location, and a walk-in count typed at the old location comes back
+        // when the owner switches back to it (re-audit 10/8/26 #3).
+        SecureCache.purgeAll(keeping: [PendingWriteQueue.storeKey],
+                             keepingPrefixes: [CountSheetDraft.keyPrefix])
         // hasShownHomeIntro is left alone: the landing intro is once per
         // sign-in, and replaying it on every store switch was an animation
         // standing between a multi-unit owner and the numbers (friction #50).
@@ -629,6 +633,8 @@ final class SessionStore {
         // shared back-office device inherited the previous account's data,
         // and configureCaching() would happily restore it (audit 1.2).
         SecureCache.purgeAll()
+        // The report switch, per login and location, goes with the session.
+        DSRAvailability.clearAll()
         SessionScope.begin(userId: nil, restaurantId: nil)
         // The Lock Screen widget, the icon's quick actions and any countdown
         // showed this restaurant's figures until the next activation — on a

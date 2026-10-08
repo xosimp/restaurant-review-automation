@@ -87,14 +87,36 @@ actor PendingWriteQueue {
 
     /// Stamped with whatever location is active right now — the queue owns
     /// that fact (setActiveRestaurant), so no call site has to remember to
-    /// pass it and none can forget.
-    func enqueue(path: String, method: String, bodyJSON: Data?, label: String) {
+    /// pass it and none can forget. Returns the write's id, which a screen
+    /// keeps to ask later whether it is still waiting (isPending) or to take
+    /// it back (cancel).
+    @discardableResult
+    func enqueue(path: String, method: String, bodyJSON: Data?, label: String) -> UUID {
+        let id = UUID()
         queue.append(PendingWrite(
-            id: UUID(), path: path, method: method,
+            id: id, path: path, method: method,
             bodyJSON: bodyJSON, createdAt: Date(), label: label,
             restaurantId: activeRestaurantId
         ))
         persist()
+        return id
+    }
+
+    /// Whether this write is still waiting to send.
+    func isPending(_ id: UUID) -> Bool { queue.contains { $0.id == id } }
+
+    /// The writes still waiting to a path, oldest first — what a screen
+    /// draws as "waiting to send" after a relaunch, when its own memory of
+    /// what it parked is gone (re-audit 10/8/26 #7). `prefix` matches a
+    /// family of paths (every order's receive).
+    func pending(path: String) -> [PendingWrite] { queue.filter { $0.path == path } }
+    func pending(pathPrefix: String) -> [PendingWrite] { queue.filter { $0.path.hasPrefix(pathPrefix) } }
+
+    /// Takes a parked write back before it sends — the owner discarded the
+    /// counts it carried, or replaced them with a newer save. A write
+    /// already in flight is not stopped; it is simply no longer in the queue.
+    func cancel(_ id: UUID) {
+        remove(id: id)
     }
 
     /// Called when the active location changes. Anything queued for the
@@ -157,6 +179,14 @@ actor PendingWriteQueue {
                 try await api.sendQueuedWrite(
                     path: next.path, method: next.method, bodyJSON: next.bodyJSON
                 )
+                // Settled before the removal is announced, so a screen that
+                // hears "no longer queued" finds its draft already cleared.
+                await Self.acknowledge(next)
+                remove(id: next.id)
+            } catch let error as APIClient.APIError where Self.isAlreadyDone(error, path: next.path) {
+                // A delivery parked at the back door, received another way
+                // before it replayed: the stock is in, which is what the
+                // write was for — done, not "couldn't be sent" (#7).
                 remove(id: next.id)
             } catch let error as APIClient.APIError where Self.isInFlight(error) {
                 // The first send of a keyed write is still being handled
@@ -234,6 +264,23 @@ actor PendingWriteQueue {
         return error.decodeBody(Body.self)?.inProgress == true
     }
 
+    /// A receive the server answers `already_received`
+    /// (client_api._do_receive_po): the order is in stock already.
+    static func isAlreadyDone(_ error: APIClient.APIError, path: String) -> Bool {
+        guard error.status == 404, path.hasPrefix(QueuedWrite.receivePathPrefix) else { return false }
+        struct Body: Decodable { let code: String? }
+        return error.decodeBody(Body.self)?.code == "already_received"
+    }
+
+    /// What a landed write settles on the phone: a count sheet's kept draft
+    /// is cleared only now, when its counts are on the server — never when
+    /// it was parked (re-audit 10/8/26 #2).
+    private static func acknowledge(_ write: PendingWrite) async {
+        if write.path == QueuedWrite.countSheetPath {
+            await CountSheetDraft.acknowledgeQueued(write.id)
+        }
+    }
+
     static func isRefusal(status: Int?) -> Bool {
         guard let status else { return false }
         if (200..<300).contains(status) { return true }
@@ -242,7 +289,8 @@ actor PendingWriteQueue {
     }
 
     /// Parks one of the app's queueable writes (QueuedWrite).
-    func enqueue(_ write: QueuedWrite) {
+    @discardableResult
+    func enqueue(_ write: QueuedWrite) -> UUID {
         enqueue(path: write.path, method: write.method, bodyJSON: write.bodyJSON, label: write.label)
     }
 
@@ -296,7 +344,14 @@ struct QueuedWrite: Equatable {
     static let countSheetPath = "/mobile/api/food-cost/count-sheet"
     static let wastePath = "/mobile/api/food-cost/waste"
 
-    static func receivePath(_ poId: Int) -> String { "/mobile/api/food-cost/purchase-orders/\(poId)/received" }
+    static let receivePathPrefix = "/mobile/api/food-cost/purchase-orders/"
+    static func receivePath(_ poId: Int) -> String { "\(receivePathPrefix)\(poId)/received" }
+
+    /// The order a parked receive is for, read back from its path.
+    static func receivePoId(_ path: String) -> Int? {
+        guard path.hasPrefix(receivePathPrefix), path.hasSuffix("/received") else { return nil }
+        return Int(path.dropFirst(receivePathPrefix.count).dropLast("/received".count))
+    }
 
     /// Writes no later write depends on — so one the server refuses can be
     /// dropped without breaking an order the queue exists to keep.
@@ -359,10 +414,13 @@ struct QueuedWrite: Equatable {
     }
 
     /// A count sheet's recounts (POST /mobile/api/food-cost/count-sheet).
-    /// A recount is an absolute figure, not a change: the same count landing
-    /// twice anchors the ledger at the same number, and the second finds no
-    /// gap to call waste. `body.date` pins it to the day it was taken, so a
-    /// replay after midnight is not filed under the next day.
+    /// A recount is an absolute figure, not a change. `body.date` pins it to
+    /// the day it was taken, so a replay after midnight is not filed under
+    /// the next day; `ledger_mark` and `counted_at` let the server apply
+    /// what was posted after the count was taken (a delivery, a waste line)
+    /// after it rather than erase it, ask about a delivery posted before it,
+    /// and skip a line someone has counted again since — so the same count
+    /// landing twice changes nothing (re-audit 10/8/26 #1).
     static func countSheet(_ body: CountSheetViewModel.SaveBody) -> QueuedWrite? {
         guard !body.items.isEmpty, let data = try? JSONEncoder().encode(body) else { return nil }
         let n = body.items.count

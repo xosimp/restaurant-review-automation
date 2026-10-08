@@ -81,6 +81,14 @@ struct DailyReportWeekView: View {
                         Text("Budget columns are the owner\u{2019}s.")
                             .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                     }
+                    if viewModel.canEditBudget, grid.kind != "period", !grid.days.isEmpty,
+                       grid.days.allSatisfy({ $0.lastYearNet == nil }) {
+                        // The import stays on the web (re-audit 10/8/26 #10):
+                        // say where, rather than leave the column empty.
+                        Text("No last year here yet. Import last year\u{2019}s nights from your old workbooks on the web: Daily report \u{2192} The week \u{2192} Import last year.")
+                            .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     weekActions(grid)
                 }
             }

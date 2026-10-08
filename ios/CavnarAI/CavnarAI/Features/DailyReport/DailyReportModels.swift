@@ -95,8 +95,21 @@ struct DSRListResponse: Decodable {
 /// read said (GET /dsr `enabled`). Kept in UserDefaults so the places that
 /// offer "Last night" without reading the list — the command sheet's chip
 /// and its built-in places — can ask synchronously. Unknown is on.
+///
+/// Keyed by login and location (the session scope SessionScope persists):
+/// one global flag carried location A's "off" to location B, and the last
+/// account's answer to the next sign-in (re-audit 10/8/26 #6). Sign-out
+/// clears every copy (clearAll).
 enum DSRAvailability {
-    static let key = "dsr.enabled"
+    /// Every key starts with this.
+    static let keyPrefix = "dsr.enabled"
+
+    /// This login's key at this location.
+    static var key: String {
+        let d = UserDefaults.standard
+        return "\(keyPrefix).u\(d.integer(forKey: SessionScope.persistedUserKey))"
+            + ".r\(d.integer(forKey: SessionScope.persistedKey))"
+    }
 
     static var isEnabled: Bool {
         (UserDefaults.standard.object(forKey: key) as? Bool) ?? true
@@ -106,6 +119,15 @@ enum DSRAvailability {
     static func record(_ enabled: Bool?) {
         guard let enabled else { return }
         UserDefaults.standard.set(enabled, forKey: key)
+    }
+
+    /// Sign-out: every login's and location's answer goes (and the old
+    /// global key, from before it was scoped).
+    static func clearAll() {
+        let d = UserDefaults.standard
+        for k in d.dictionaryRepresentation().keys where k.hasPrefix(keyPrefix) {
+            d.removeObject(forKey: k)
+        }
     }
 
     /// What the report screens say when it is off.
