@@ -276,6 +276,9 @@
     function mk(tag, attrs, parent) { var e = doc.createElementNS(SVGNS, tag); for (var a in attrs) e.setAttribute(a, attrs[a]); if (parent) parent.appendChild(e); return e; }
     function init() {
       svg = mk('svg', { id: 'core-streams', 'aria-hidden': 'true', focusable: 'false' });
+      // out of the page's flow on every page, not only where a stylesheet
+      // places it: in flow it sat under the sign-in card and pushed it up
+      svg.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;z-index:59;overflow:visible';
       var defs = mk('defs', {}, svg);
       var rg = mk('radialGradient', { id: 'cs-dot' }, defs);
       mk('stop', { offset: '0', 'stop-color': '#fff4e8', 'stop-opacity': '1' }, rg);
