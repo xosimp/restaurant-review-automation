@@ -1381,6 +1381,14 @@ def _do_review_stats(restaurant_id):
         # True when we hold every review Google says exists.
         stats["is_full_history"] = bool(
             official_count and stats.get("total", 0) >= int(official_count))
+        # What one bulk publish may post (models.BULK_PUBLISHABLE_SQL) and
+        # how many drafts it holds back for a read — the inbox's "Publish N
+        # ready" on the phone, the same count Home's publish card names
+        # (parity audit 10/7/26 #34).
+        from models import reply_queue_counts as _rqc
+        q = _rqc(restaurant_id)
+        stats["publishable"] = q["publishable"]
+        stats["publish_held"] = q["held"]
         return stats, 200
     except Exception as e:
         return {"error": str(e)}, 500
@@ -7202,11 +7210,34 @@ def ai_visibility(current_user):
     # with the old answers, verdicts and all (owner, 9/26/26). With no run
     # on record GET says "not measured yet" (state "not_measured") and never
     # runs one — AI cost audit 10/7/26 #9.
-    payload, status = _do_ai_visibility(current_user["restaurant_id"], force=request.method == "POST")
-    # The roadmap is built and presented here, where a person sees it — not
-    # in _do_ai_visibility, which Ask's read_ai_visibility tool calls too.
-    payload = present_ai_visibility_roadmap(current_user["restaurant_id"], payload, current_user.get("id"))
+    payload, status = ai_visibility_answer(current_user, force=request.method == "POST")
     return jsonify(**payload), status
+
+
+def _ai_visibility_presented(rid, user_id, force):
+    """The check (or the read) with the roadmap presented for this login —
+    built here, where a person sees it, not in _do_ai_visibility, which
+    Ask's read_ai_visibility tool calls too."""
+    payload, status = _do_ai_visibility(rid, force=force)
+    return present_ai_visibility_roadmap(rid, payload, user_id), status
+
+
+def ai_visibility_answer(current_user, force=False):
+    """(payload, status) for /api/ai-visibility and its mobile twin. A live
+    check (POST) runs eight Perplexity queries — about ten seconds paced —
+    and held one of the four request threads for all of it; when the client
+    asks (`async`, parity audit 10/7/26 #75) it runs on the owner AI job
+    pool and the client polls /ai-jobs/<id> (ai_async). The same login
+    pressing Check again while one runs joins it. A GET is a read and never
+    a job; an older client without the flag is answered as before."""
+    rid, uid = current_user["restaurant_id"], current_user.get("id")
+    if force:
+        import ai_async
+        if ai_async.wants_async():
+            job_id, joined = ai_async.start("ai_visibility", rid, {"force": True}, _ai_visibility_presented,
+                                            rid, uid, True, by_user=uid)
+            return ai_async.started_answer(job_id, joined, "ai_visibility"), 202
+    return _ai_visibility_presented(rid, uid, force)
 
 
 def _do_ai_visibility(rid, force=False):

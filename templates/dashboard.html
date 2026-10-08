@@ -17648,6 +17648,7 @@ function waRender(checks){
     + '<div class="ac-field"><label for="wa-gsc">Search Console property</label><input class="ac-input" id="wa-gsc" autocomplete="off" placeholder="sc-domain:yoursite.com" value="' + e(d.gsc_site_url || '') + '"><small>Your domain (yoursite.com), or exactly as Search Console shows it: sc-domain:yoursite.com or https://yoursite.com/.</small></div>'
     + '</div>'
     + '<div class="wa-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="wa-save" onclick="waSave(this)">Save and check</button>'
+    + ((d.ga4_property_id || d.gsc_site_url) ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="waSync(this)">Read now</button>' : '')
     + ((d.ga4_property_id || d.gsc_site_url) ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-sm" onclick="waDisconnect(this)">Disconnect</button>' : '')
     + '</div><div id="wa-checks">' + waChecksHtml(checks) + '</div>'
     + (d.synced_at && !checks ? '<div class="wa-check">Last read ' + e(typeof mdy === 'function' ? mdy(String(d.synced_at).slice(0, 10)) : String(d.synced_at).slice(0, 10)) + '. Cavnar AI reads it again every morning.</div>' : '')
@@ -17684,6 +17685,17 @@ function waSave(btn){
     if(line){ var parts = []; if(d.ga4_property_id) parts.push('Google Analytics'); if(d.gsc_site_url) parts.push('Search Console');
       line.textContent = parts.length ? parts.join(' · ') + (d.syncing ? ' — reading now' : '') : 'Not connected — visits, Google searches and booking clicks'; }
     toast(d.syncing ? 'Saved — reading your website analytics now' : 'Saved', d.syncing ? 'success' : 'warning');
+  }).catch(function(){ done(); toast('Couldn’t reach Cavnar AI — try again.','error'); });
+}
+// Read now (parity audit 10/7/26 #52): the same read as the 7am job, off
+// the request thread, once per ten minutes (/api/web-analytics/sync) - the
+// web never called it, so a fix in Google waited for the next morning.
+function waSync(btn){
+  var done = cbtnBusy(btn, 'Reading…');
+  fetch('/api/web-analytics/sync',{method:'POST',credentials:'same-origin'}).then(apiJson).then(function(d){
+    done();
+    if(!d || !d.ok){ toast((d && d.error) || 'Couldn’t start a read — try again.','error'); return; }
+    toast(d.message || 'Reading your website analytics now.', d.already_syncing ? 'warning' : 'success');
   }).catch(function(){ done(); toast('Couldn’t reach Cavnar AI — try again.','error'); });
 }
 function waDisconnect(btn){
@@ -29943,7 +29955,10 @@ function runAIVisibility(btn) {
   }, 2500);
   // A press runs every query live (POST). GET only ever served the
   // recorded run, so the check "finished" instantly with old answers.
-  fetch('/api/ai-visibility', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(apiJson).then(function(d) {
+  // The run is a job on the owner AI pool, polled to its end (aiJobAwait,
+  // parity audit 10/7/26 #75): it no longer holds a request thread for the
+  // ten seconds of paced queries.
+  fetch('/api/ai-visibility', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({async: 1})}).then(apiJson).then(function(d) { return aiJobAwait(d); }).then(function(d) {
     clearInterval(ticker);
     aivLoadingHide();
     if (!d.ok) {

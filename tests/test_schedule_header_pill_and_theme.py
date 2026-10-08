@@ -883,7 +883,9 @@ def test_approved_google_state_shows_retry_only_when_the_post_actually_failed():
     s = _src()
     i = s.index("{% elif r.response_status=='approved' %}")
     block = s[i:s.index("{% elif r.response_status=='skipped' %}", i)]
-    assert "restaurant.gmb_refresh_token" in block
+    # One rule, read from the row (models.review_post_failed, parity audit
+    # 10/7/26 #21): the phone reads the same post_failed field.
+    assert "{% if r.post_failed %}" in block
     assert "Couldn't post to Google" in block
     assert 'onclick="retryPostR({{ r.id }},this)"' in block
     assert "Will post to Google once connected" in block

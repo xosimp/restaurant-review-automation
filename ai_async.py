@@ -61,7 +61,11 @@ POOL_WORKERS = max(1, int(os.getenv("OWNER_AI_JOB_WORKERS", "3")))
 # taken — create_with_retry's attempts and backoff, the orchestrator's one
 # escalation where the policy has one — with room to spare.
 JOB_SECONDS = {"invoice_scan": 300, "recipe_scan": 240, "campaign_text": 180, "campaign_email": 180,
-               "campaign_post": 180}
+               "campaign_post": 180,
+               # A live AI-visibility check: eight paced Perplexity queries,
+               # bounded by client_api.AIVIS_RUN_MAX_SECS (75 s), plus the
+               # Places lookups around them (parity audit 10/7/26 #75).
+               "ai_visibility": 150}
 DEFAULT_JOB_SECONDS = 240
 
 # The job store's kind is "ai:<kind>:<hash of the request and the login>",

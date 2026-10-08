@@ -5730,6 +5730,12 @@ def mobile_remove_competitor(current_user):
     restaurant = get_restaurant(rid)
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found"), 404
+    # The same plan gate as add (parity audit 10/7/26): competitor tracking
+    # is a Full System feature, so a plan without it changes nothing here
+    # either. The web's /api/intel/remove-competitor runs this same body.
+    if not (restaurant.module_reviews and restaurant.module_labor
+            and restaurant.module_inventory and restaurant.module_marketing):
+        return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
     data = request.get_json(silent=True) or {}
     place_id = (data.get("place_id") or "").strip()
     if not place_id:
@@ -5759,9 +5765,9 @@ def mobile_ai_visibility(current_user):
     real, billable Perplexity queries."""
     # POST (Check / Re-run) runs live, as on the web; GET serves the recorded
     # run, or "not measured yet" (state "not_measured") — never a live run
-    # (AI cost audit 10/7/26 #9).
-    payload, status = _capi._do_ai_visibility(current_user["restaurant_id"], force=request.method == "POST")
-    payload = _capi.present_ai_visibility_roadmap(current_user["restaurant_id"], payload, current_user.get("id"))
+    # (AI cost audit 10/7/26 #9). A POST that sends `async` is a job the
+    # app polls (parity audit 10/7/26 #75) — one body with the web route.
+    payload, status = _capi.ai_visibility_answer(current_user, force=request.method == "POST")
     return jsonify(**payload), status
 
 

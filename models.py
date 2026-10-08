@@ -13689,6 +13689,34 @@ def is_urgent_review(r: dict, today=None) -> bool:
     return bool(when) and when >= (today - _td(days=int(REPLY_OWED_MAX_AGE_DAYS))).isoformat()
 
 
+def review_post_connected(restaurant_id, conn=None) -> bool:
+    """Whether this restaurant's Google Business Profile is connected for
+    posting replies — a refresh token on file, the same test the web card
+    made with `restaurant.gmb_refresh_token`."""
+    own = conn is None
+    conn = conn or get_conn()
+    try:
+        row = conn.execute("SELECT COALESCE(gmb_refresh_token, '') AS t FROM restaurants WHERE id=?",
+                           (restaurant_id,)).fetchone()
+    except Exception:
+        row = None
+    finally:
+        if own:
+            conn.close()
+    return bool(row and row["t"])
+
+
+def review_post_failed(r: dict, gbp_connected: bool) -> bool:
+    """"Couldn't post to Google" (parity audit 10/7/26 #21), the one rule
+    the web card and the phone both read: an approved Google reply on a
+    restaurant whose Business Profile is connected that never went live.
+    The post runs synchronously on approve (client_api._attempt_google_post),
+    so an approved Google reply with a connection is a finished failure, not
+    work in flight; without a connection it waits to post once connected."""
+    return bool(gbp_connected and (r.get("response_status") or "") == "approved"
+                and (r.get("platform") or "") == "google")
+
+
 def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, platform=None,
                      limit=None, offset=0, include_total=False, review_id=None):
     """Rows for the review inbox.
@@ -13763,6 +13791,7 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         sql += " LIMIT ? OFFSET ?"
         page_params += [int(limit), int(offset or 0)]
     rows = conn.execute(sql, page_params).fetchall()
+    gbp_connected = review_post_connected(restaurant_id, conn=conn) if rows else False
     conn.close()
     result = []
     for r in rows:
@@ -13800,6 +13829,12 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         d["specific_complaint"] = d.get("specific_complaint") or None
         d["severity_reason"] = severity_reason(d["severity"], d["specific_complaint"], d.get("summary"))
         d["urgent"] = is_urgent_review(d)
+        # The reply actually posted when it was answered elsewhere, who said
+        # so and when — always present, so a client never reads a missing
+        # key as "no reply" (parity audit 10/7/26 #9).
+        for k in ("external_reply", "external_reply_source", "external_reply_at", "posted_at"):
+            d.setdefault(k, None)
+        d["post_failed"] = review_post_failed(d, gbp_connected)
         result.append(d)
     if include_total:
         return result, total
