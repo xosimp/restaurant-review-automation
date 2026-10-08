@@ -4765,8 +4765,15 @@ def mobile_post_to_instagram(current_user):
     if not may_publish(current_user):
         return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
+    # The photo resolved as the web route resolves it (photo_url_from): a
+    # library photo by media_id checked against this restaurant, a relative
+    # "/m/<token>.jpg" made absolute — Meta can fetch neither otherwise.
+    from social_routes import photo_url_from
+    image_url, bad = photo_url_from(current_user["restaurant_id"], data)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
     payload, status = _do_post_to_instagram(
-        current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", ""),
+        current_user["restaurant_id"], data.get("caption", ""), image_url, data.get("topic", ""),
         content_log_id=_capi._content_log_id_of(data), user=current_user,
     )
     if payload.get("ok") and data.get("rec_key"):
@@ -4784,9 +4791,17 @@ def mobile_post_to_facebook(current_user):
     if not may_publish(current_user):
         return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
+    # The photo the preview showed goes with the post (CS-20), resolved as
+    # the web route resolves it — the phone's Facebook post dropped it.
+    from social_routes import photo_url_from
+    image_url, bad = photo_url_from(current_user["restaurant_id"], data)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
+    kw = {"content_log_id": _capi._content_log_id_of(data), "user": current_user}
+    if image_url:
+        kw["image_url"] = image_url
     payload, status = _do_post_to_facebook(
-        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", ""),
-        content_log_id=_capi._content_log_id_of(data), user=current_user,
+        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", ""), **kw,
     )
     if payload.get("ok") and data.get("rec_key"):
         import marketing_opportunities   # began on a feed card (OPP-10)

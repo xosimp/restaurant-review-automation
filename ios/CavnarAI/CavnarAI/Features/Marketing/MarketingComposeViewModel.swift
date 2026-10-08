@@ -110,6 +110,43 @@ final class MarketingComposeViewModel {
         preview = nil
     }
 
+    /// A photo already in the library, picked from the strip — no upload.
+    func select(_ item: MarketingMedia) {
+        media = item
+        preview = nil
+        mediaError = nil
+        Haptic.selection()
+    }
+
+    /// Deletes a photo from the library (DELETE /marketing/media/<id>),
+    /// after the caller confirmed. The server keeps a photo a scheduled
+    /// post, a draft or an email still sending needs, and says so — that
+    /// sentence is shown and the strip is left as it was.
+    @discardableResult
+    func deleteMedia(_ item: MarketingMedia) async -> Bool {
+        mediaError = nil
+        do {
+            let r: OKResponse = try await client.send("/mobile/api/marketing/media/\(item.id)", method: .delete,
+                                                      retryTransient: false)
+            guard r.ok else {
+                mediaError = r.error ?? "Couldn\u{2019}t delete that photo."
+                return false
+            }
+            recentMedia.removeAll { $0.id == item.id }
+            if media?.id == item.id { clearMedia() }
+            Haptic.success()
+            return true
+        } catch is CancellationError {
+            return false
+        } catch let error as APIClient.APIError {
+            mediaError = error.message
+            return false
+        } catch {
+            mediaError = "Couldn\u{2019}t delete that photo."
+            return false
+        }
+    }
+
     // MARK: - Preview
 
     private struct PreviewBody: Encodable {

@@ -5,7 +5,12 @@ private enum CampaignField: Hashable, CaseIterable {
 }
 
 struct GuestTextClubView: View {
+    @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel = GuestTextClubViewModel()
+    /// The Campaign Studio, opened on the email channel from here.
+    @State private var studioSeed: StudioSeed?
+    /// The campaign whose Stop sending was tapped, awaiting the confirm.
+    @State private var campaignToStop: GuestCampaign?
     @State private var showingAddContact = false
     @State private var copied = false
     @State private var confirmingSend = false
@@ -37,13 +42,28 @@ struct GuestTextClubView: View {
         .navigationTitle("Guest Text Club")
         .toolbar { cavnarTitleToolbar("Guest Text Club") }
         .keyboardNavToolbar($focusedField)
-        .task {
-            await viewModel.load()
-            await viewModel.loadJoinLink()
-            await viewModel.loadSegments()
-            await viewModel.loadHistory()
-            await viewModel.loadNewsletter()
-            await viewModel.loadWinback()
+        .task { await viewModel.loadAll() }
+        .cavnarEmberRefreshable { await viewModel.loadAll() }
+        // "Cavnar AI flagged this": what the send gate held back and why,
+        // with Edit or Discard (parity audit #74).
+        .sheet(item: $viewModel.gateFlag) { flag in
+            SendGateSheet(flag: flag, onEdit: { focusedField = .draftMessage },
+                          onDiscard: { viewModel.discardDraft() })
+        }
+        .sheet(item: $studioSeed) { seed in
+            CampaignStudioView(seed: seed, connected: nil, isOwner: sessionStore.currentUser?.isOwner ?? false) {
+                Task { await viewModel.loadHistory() }
+            }
+        }
+        .confirmationDialog(
+            campaignToStop.map { "Stop sending? \(mktPlural($0.pending, "text")) won\u{2019}t go out." } ?? "",
+            isPresented: Binding(get: { campaignToStop != nil }, set: { if !$0 { campaignToStop = nil } }),
+            titleVisibility: .visible, presenting: campaignToStop
+        ) { campaign in
+            Button("Stop sending", role: .destructive) { Task { await viewModel.stop(campaign) } }
+            Button("Keep sending", role: .cancel) {}
+        } message: { _ in
+            Text("Texts already handed to the carrier are not recalled.")
         }
         .onChange(of: viewModel.campaignType) { _, _ in viewModel.campaignTypeChanged() }
         .sheet(isPresented: $showingAddContact) {
@@ -217,7 +237,7 @@ struct GuestTextClubView: View {
                         if viewModel.isSendingWinback {
                             CavnarShimmerText(text: "Sending\u{2026}")
                         } else {
-                            Text("Send to these guests")
+                            Text(viewModel.sendingNow ? "Send to these guests" : "Queue for \(viewModel.opensAt)")
                         }
                     }
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSendWinback))
@@ -231,7 +251,7 @@ struct GuestTextClubView: View {
                         }
                         Button("Cancel", role: .cancel) {}
                     } message: {
-                        Text("Texts go out between \(draft.smsWindow ?? "8:00 AM and 9:00 PM"). A sent text can't be recalled.")
+                        Text(windowSentence(draft.smsWindow ?? viewModel.smsWindow))
                     }
 
                     // Not for us asks why first — the same reason picker as
@@ -289,7 +309,7 @@ struct GuestTextClubView: View {
             if !viewModel.segments.isEmpty {
                 Picker("Audience", selection: $viewModel.selectedSegment) {
                     ForEach(viewModel.segments) { segment in
-                        Text("\(segment.label) (\(segment.count))").tag(segment.key)
+                        Text("\(segment.label) (\(segment.reach))").tag(segment.key)
                     }
                 }
                 .pickerStyle(.menu)
@@ -328,12 +348,21 @@ struct GuestTextClubView: View {
                         .font(.cavnarBody(15, weight: 600))
                 }
             } else {
-                (Text("Goes to ")
-                    + Text("\(viewModel.selectedSegmentCount)").font(.cavnarNumber(15, weight: 700))
-                    + Text(" guest\(viewModel.selectedSegmentCount == 1 ? "" : "s"), between 8:00 AM and 9:00 PM. Nobody gets two campaigns inside three days."))
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
+                // Who a text reaches NOW (`eligible`): anyone texted inside
+                // the spacing is left out, and says so (CS-5).
+                let left = viewModel.selectedSegmentTotal - viewModel.selectedSegmentCount
+                let days = viewModel.ledger?.minDaysBetween ?? viewModel.overview?.minDaysBetween ?? 3
+                HomeMixedText.make("Goes to \(mktPlural(viewModel.selectedSegmentCount, "guest")) "
+                                   + SMSWindow.sentence(viewModel.smsWindow) + "."
+                                   + (left > 0 ? " \(left) texted in the last \(days) days left out." : "")
+                                   + " Nobody gets two campaigns inside \(days) days.",
+                                   size: 15, weight: 400, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+                if !viewModel.sendingNow {
+                    HomeMixedText.make("It\u{2019}s outside your sending hours: a text sent now is queued and goes at \(viewModel.opensAt).",
+                                       size: 14, weight: 600, color: .cavnarAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             TextField("Topic (optional)", text: $viewModel.campaignTopic)
@@ -380,18 +409,21 @@ struct GuestTextClubView: View {
                     if viewModel.isSending {
                         CavnarShimmerText(text: "Sending…")
                     } else {
-                        Text("Send to consented guests")
+                        Text(viewModel.sendingNow
+                             ? "Send to \(mktPlural(viewModel.selectedSegmentCount, "guest"))"
+                             : "Queue for \(viewModel.opensAt)")
                     }
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isSending || viewModel.audienceUnknown)
+                .disabled(viewModel.isSending || viewModel.audienceUnknown || viewModel.selectedSegmentCount == 0)
                 .confirmationDialog(sendConfirmationTitle, isPresented: $confirmingSend, titleVisibility: .visible) {
-                    Button("Send to \(viewModel.selectedSegmentCount) guest\(viewModel.selectedSegmentCount == 1 ? "" : "s")") {
+                    Button((viewModel.sendingNow ? "Send to " : "Queue for ")
+                           + "\(viewModel.selectedSegmentCount) guest\(viewModel.selectedSegmentCount == 1 ? "" : "s")") {
                         Task { await viewModel.sendCampaign() }
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("Texts go out between 8:00 AM and 9:00 PM. A sent text can't be recalled.")
+                    Text(windowSentence(viewModel.smsWindow))
                 }
 
                 if viewModel.didSend {
@@ -403,6 +435,10 @@ struct GuestTextClubView: View {
                     }
                     .padding(.top, 6)
                 }
+                if let line = viewModel.sendLine {
+                    HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if let error = viewModel.campaignError {
@@ -412,12 +448,16 @@ struct GuestTextClubView: View {
         .cavnarCard()
     }
 
-    /// `weekly_email` has generated newsletters since this product existed
-    /// with no list to send them to and no way to send one.
     private var sendConfirmationTitle: String {
         let count = viewModel.selectedSegmentCount
         let label = viewModel.segments.first { $0.key == viewModel.selectedSegment }?.label ?? "your guests"
         return "Text \(label) — \(count) guest\(count == 1 ? "" : "s")?"
+    }
+
+    /// The confirm's sentence, the window in the server's own words.
+    private func windowSentence(_ window: String?) -> String {
+        let when = viewModel.sendingNow ? "" : "It\u{2019}s queued and goes at \(viewModel.opensAt). "
+        return when + "Texts go out " + SMSWindow.sentence(window) + ". A sent text can\u{2019}t be recalled."
     }
 
     private var newsletterCard: some View {
@@ -448,41 +488,21 @@ struct GuestTextClubView: View {
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Paste in a Weekly email you generated on the Content tab. The subject line block gets stripped out — guests never see the scaffolding.")
+                // Written and sent in the Campaign Studio: Cavnar AI drafts it
+                // from a goal, the look and the audience are set there, and
+                // the email is previewed exactly as guests get it (parity
+                // audit #51, #17). Nothing is pasted in here any more.
+                Text("Cavnar AI drafts the email from what you want it to do; you pick the audience, see it as guests will, and send.")
                     .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
-
-                TextField("Subject (optional)", text: $viewModel.newsletterSubject)
-                    .cavnarTextFieldStyle()
-
-                TextEditor(text: $viewModel.newsletterBody)
-                    .font(.cavnarBody(16))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 110)
-                    .padding(8)
-                    .background(Color.cavnarPaper2)
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                    .focused($focusedField, equals: .newsletter)
-
                 Button {
-                    Task { await viewModel.sendNewsletter() }
+                    Haptic.light()
+                    studioSeed = StudioSeed(channels: [.email])
                 } label: {
-                    if viewModel.isSendingNewsletter {
-                        CavnarShimmerText(text: "Sending…")
-                    } else {
-                        Text("Send to subscribers").frame(maxWidth: .infinity)
-                    }
+                    Label("Write an email", systemImage: "envelope").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isSendingNewsletter || viewModel.newsletterBody.isEmpty)
-
-                if let result = viewModel.newsletterResult {
-                    Text(result).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarGreen)
-                }
-                if let error = viewModel.newsletterError {
-                    Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
             }
         }
         .cavnarCard()
@@ -512,14 +532,42 @@ struct GuestTextClubView: View {
                                 .font(.cavnarBody(15))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
-                        if let label = campaign.segmentLabel {
-                            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                        HStack(spacing: 8) {
+                            if let label = campaign.segmentLabel {
+                                Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                            }
+                            Spacer(minLength: 4)
+                            AccountChip(text: campaign.statusLabel,
+                                        tint: campaign.isOpen ? .cavnarAmber
+                                            : (campaign.status == "cancelled" ? .cavnarInk3 : .cavnarGreen))
                         }
                         Text(campaign.message)
                             .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
+                        if campaign.isOpen {
+                            Button(role: .destructive) {
+                                Haptic.light()
+                                campaignToStop = campaign
+                            } label: {
+                                if viewModel.stoppingID == campaign.id {
+                                    CavnarShimmerText(text: "Stopping\u{2026}", color: .cavnarRed)
+                                } else {
+                                    Text("Stop sending").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarRed)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .frame(minHeight: 32)
+                            .disabled(viewModel.stoppingID != nil)
+                        }
+                    }
+                    .contextMenu {
+                        if campaign.isOpen {
+                            Button(role: .destructive) { campaignToStop = campaign } label: {
+                                Label("Stop sending", systemImage: "stop.circle")
+                            }
+                        }
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -9,8 +9,95 @@ import SwiftUI
 struct MarketingPhotoPicker: View {
     let viewModel: MarketingComposeViewModel
     @State private var selection: PhotosPickerItem?
+    /// The camera — the phone's own advantage over the web's file input.
+    @State private var showingCamera = false
+    /// A library photo long-pressed for deletion, awaiting the confirm.
+    @State private var photoToDelete: MarketingMedia?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content
+            libraryStrip
+        }
+        .task { if viewModel.recentMedia.isEmpty { await viewModel.loadMedia() } }
+        .fullScreenCover(isPresented: $showingCamera) {
+            StaffCameraPicker { image in
+                showingCamera = false
+                guard let image else { return }
+                Task { await viewModel.upload(image) }
+            }
+            .ignoresSafeArea()
+        }
+        .confirmationDialog("Delete this photo from your library?",
+                            isPresented: Binding(get: { photoToDelete != nil }, set: { if !$0 { photoToDelete = nil } }),
+                            titleVisibility: .visible, presenting: photoToDelete) { item in
+            Button("Delete photo", role: .destructive) {
+                Task { await viewModel.deleteMedia(item) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("A scheduled post, a draft or an email still sending keeps the photo it uses.")
+        }
+    }
+
+    /// Recent uploads, newest first: tap to use one, long-press to delete it.
+    @ViewBuilder
+    private var libraryStrip: some View {
+        if !viewModel.recentMedia.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("YOUR PHOTOS")
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarEmber2)
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(viewModel.recentMedia.prefix(12)) { item in
+                            thumb(item)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+    }
+
+    private func thumb(_ item: MarketingMedia) -> some View {
+        let on = viewModel.media?.id == item.id
+        return Button {
+            viewModel.select(item)
+        } label: {
+            AsyncImage(url: URL(string: item.url)) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Color.cavnarPaper2
+            }
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
+                .strokeBorder(on ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: on ? 2 : 1))
+            .overlay(alignment: .topTrailing) {
+                if on {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.cavnarEmber)
+                        .padding(4)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(on ? "Photo in use" : "Use this photo")
+        .accessibilityHint("Touch and hold to delete it from your library")
+        .contextMenu {
+            Button { viewModel.select(item) } label: { Label("Use this photo", systemImage: "checkmark") }
+            Button(role: .destructive) {
+                photoToDelete = item
+            } label: { Label("Delete photo", systemImage: "trash") }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let media = viewModel.media {
                 HStack(spacing: 12) {
@@ -42,27 +129,29 @@ struct MarketingPhotoPicker: View {
                 }
             }
 
-            // A dashed drop zone rather than another outlined button — it
-            // reads as "a photo goes here", which is what it is, and stops
-            // competing with the four editing actions under it.
-            PhotosPicker(selection: $selection, matching: .images, photoLibrary: .shared()) {
-                Group {
-                    if viewModel.isUploading {
-                        CavnarShimmerText(text: "Uploading…")
-                    } else {
-                        Label(viewModel.media == nil ? "Add a photo" : "Change photo", systemImage: "plus")
-                            .font(.cavnarBody(15, weight: 700))
+            // Dashed drop zones rather than more outlined buttons — they
+            // read as "a photo goes here", which is what they are, and stop
+            // competing with the four editing actions under them. The camera
+            // first where there is one: the dish is in front of the owner.
+            HStack(spacing: 8) {
+                if StaffCameraPicker.isAvailable {
+                    Button {
+                        Haptic.light()
+                        showingCamera = true
+                    } label: {
+                        MarketingDropZone(text: viewModel.isUploading ? nil : "Take photo", systemImage: "camera")
                     }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isUploading)
                 }
-                .foregroundStyle(Color.cavnarEmber2)
-                .frame(maxWidth: .infinity)
-                .padding(12)
-                .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(Color.cavnarEmber2.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
-                .contentShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                let pickText: String? = viewModel.isUploading ? nil
+                    : (viewModel.media == nil ? "Add a photo" : "Change photo")
+                PhotosPicker(selection: $selection, matching: .images, photoLibrary: .shared()) {
+                    MarketingDropZone(text: pickText, systemImage: "photo.on.rectangle")
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isUploading)
             }
-            .buttonStyle(.plain)
-            .disabled(viewModel.isUploading)
 
             if let error = viewModel.mediaError {
                 Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
@@ -80,6 +169,33 @@ struct MarketingPhotoPicker: View {
                 selection = nil
             }
         }
+    }
+
+}
+
+/// One dashed photo zone; nil text is the upload in flight.
+struct MarketingDropZone: View {
+    let text: String?
+    let systemImage: String
+
+    var body: some View {
+        Group {
+            if let text {
+                Label(text, systemImage: systemImage)
+                    .font(.cavnarBody(15, weight: 700))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            } else {
+                CavnarShimmerText(text: "Uploading\u{2026}")
+            }
+        }
+        .foregroundStyle(Color.cavnarEmber2)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 44)
+        .padding(.horizontal, 10)
+        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
+            .strokeBorder(Color.cavnarEmber2.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+        .contentShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 }
 
@@ -272,6 +388,8 @@ struct MarketingScheduleSheet: View {
 /// The queue itself.
 struct MarketingQueueView: View {
     let viewModel: MarketingComposeViewModel
+    /// The post whose Cancel was tapped, awaiting the confirm.
+    @State private var postToCancel: ScheduledPost?
 
     var body: some View {
         ScrollView {
@@ -295,6 +413,16 @@ struct MarketingQueueView: View {
         .toolbar { cavnarTitleToolbar("Scheduled") }
         .cavnarEmberRefreshable { await viewModel.loadScheduled() }
         .task { await viewModel.loadScheduled() }
+        .confirmationDialog("Cancel this post?",
+                            isPresented: Binding(get: { postToCancel != nil }, set: { if !$0 { postToCancel = nil } }),
+                            titleVisibility: .visible, presenting: postToCancel) { post in
+            Button("Cancel the post", role: .destructive) {
+                Task { await viewModel.cancel(post) }
+            }
+            Button("Keep it", role: .cancel) {}
+        } message: { post in
+            Text("It won\u{2019}t go to \(post.platform.capitalized) at \(post.whenLabel).")
+        }
     }
 
     private func row(_ post: ScheduledPost) -> some View {
@@ -322,7 +450,7 @@ struct MarketingQueueView: View {
             if post.isPending {
                 Button(role: .destructive) {
                     Haptic.selection()
-                    Task { await viewModel.cancel(post) }
+                    postToCancel = post
                 } label: {
                     Text("Cancel this post")
                         .font(.cavnarBody(15, weight: 600))
@@ -353,6 +481,8 @@ struct MarketingQueueView: View {
 struct MarketingDraftsView: View {
     let viewModel: MarketingComposeViewModel
     var onUse: ((MarketingDraft) -> Void)?
+    /// The draft whose trash was tapped, awaiting the confirm.
+    @State private var draftToDelete: MarketingDraft?
 
     var body: some View {
         ScrollView {
@@ -379,6 +509,14 @@ struct MarketingDraftsView: View {
         .toolbar { cavnarTitleToolbar("Drafts") }
         .cavnarEmberRefreshable { await viewModel.loadDrafts() }
         .task { await viewModel.loadDrafts() }
+        .confirmationDialog("Delete this draft?",
+                            isPresented: Binding(get: { draftToDelete != nil }, set: { if !$0 { draftToDelete = nil } }),
+                            titleVisibility: .visible, presenting: draftToDelete) { draft in
+            Button("Delete draft", role: .destructive) {
+                Task { await viewModel.deleteDraft(draft) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     private func row(_ draft: MarketingDraft) -> some View {
@@ -437,7 +575,7 @@ struct MarketingDraftsView: View {
                 Spacer()
                 Button {
                     Haptic.selection()
-                    Task { await viewModel.deleteDraft(draft) }
+                    draftToDelete = draft
                 } label: {
                     Image(systemName: "trash").foregroundStyle(Color.cavnarEmber)
                 }

@@ -417,9 +417,39 @@ struct GuestSegment: Decodable, Identifiable, Hashable {
     let key: String
     let label: String
     let help: String
+    /// Everyone in the audience who joined by text.
     let count: Int
+    /// Who a text would reach NOW — the three-day spacing and any campaign
+    /// still sending taken out (CS-5). What "Send to N" promises. Nil from
+    /// an older server, which then promises `count`.
+    var eligible: Int? = nil
+    /// The same audience on the email list (Campaign Studio).
+    var emailCount: Int? = nil
 
     var id: String { key }
+
+    /// The number a text send promises.
+    var reach: Int { eligible ?? count }
+
+    init(key: String, label: String, help: String, count: Int, eligible: Int? = nil, emailCount: Int? = nil) {
+        self.key = key; self.label = label; self.help = help; self.count = count
+        self.eligible = eligible; self.emailCount = emailCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        label = c.mktText(.label) ?? key
+        help = c.mktText(.help) ?? ""
+        count = c.mktInt(.count) ?? 0
+        eligible = c.mktInt(.eligible)
+        emailCount = c.mktInt(.emailCount)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case key, label, help, count, eligible
+        case emailCount = "email_count"
+    }
 }
 
 /// One campaign that went out. guest_campaigns has recorded every send since
@@ -432,25 +462,74 @@ struct GuestCampaign: Decodable, Identifiable {
     let segmentLabel: String?
     let clicks: Int
     let createdAt: String?
+    /// Where the durable queue stands: sending, waiting (for the window to
+    /// open), done or cancelled. "done" from an older server.
+    var status: String = "done"
+    /// Texts still to go — what "Stop sending" stops.
+    var pending: Int = 0
+    var total: Int?
+    /// "8:00 AM" on a campaign held for the window.
+    var waitingUntil: String?
+    var segment: String?
+    var linkToken: String?
+    var visitsMatched: Int?
+    var attributionThrough: String?
+    var targetDay: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, message, clicks
+        case id, message, clicks, status, pending, total, segment
         case sentCount = "sent_count"
         case failedCount = "failed_count"
         case segmentLabel = "segment_label"
         case createdAt = "created_at"
+        case waitingUntil = "waiting_until"
+        case linkToken = "link_token"
+        case visitsMatched = "visits_matched"
+        case attributionThrough = "attribution_through"
+        case targetDay = "target_day"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        message = ((try? c.decodeIfPresent(String.self, forKey: .message)) ?? nil) ?? ""
+        sentCount = c.mktInt(.sentCount) ?? 0
+        failedCount = c.mktInt(.failedCount) ?? 0
+        segmentLabel = c.mktText(.segmentLabel)
+        clicks = c.mktInt(.clicks) ?? 0
+        createdAt = c.mktText(.createdAt)
+        status = c.mktText(.status) ?? "done"
+        pending = c.mktInt(.pending) ?? 0
+        total = c.mktInt(.total)
+        waitingUntil = c.mktText(.waitingUntil)
+        segment = c.mktText(.segment)
+        linkToken = c.mktText(.linkToken)
+        visitsMatched = c.mktInt(.visitsMatched)
+        attributionThrough = c.mktText(.attributionThrough)
+        targetDay = c.mktText(.targetDay)
     }
 
     /// created_at is UTC; the day it went out is the restaurant's day.
-    var whenLabel: String {
-        let parser = DateFormatter()
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        parser.timeZone = TimeZone(identifier: "UTC")
-        guard let raw = createdAt, let date = parser.date(from: String(raw.prefix(19))) else {
-            return createdAt ?? ""
+    /// Unreadable is "—", never the stored ISO stamp.
+    var whenLabel: String { CampaignDates.label(createdAt) }
+
+    /// Still sending, or waiting for the window, with texts left to go —
+    /// the only state "Stop sending" applies to.
+    var isOpen: Bool { (status == "sending" || status == "waiting") && pending > 0 }
+
+    /// The status pill: "12 texts wait until 8:00 AM" / "Sending · 12 of
+    /// 48" / "Stopped · 12 went out" / "Sent".
+    var statusLabel: String {
+        switch status {
+        case "waiting" where pending > 0:
+            return "\(mktPlural(pending, "text")) wait until \(waitingUntil ?? "the window opens")"
+        case "sending" where pending > 0:
+            return "Sending \u{00B7} \(sentCount) of \(total ?? sentCount + pending)"
+        case "cancelled":
+            return "Stopped \u{00B7} \(sentCount) went out"
+        default:
+            return "Sent"
         }
-        return CavnarDate.mdy(date, in: RestaurantClock.timeZone)
     }
 }
 
