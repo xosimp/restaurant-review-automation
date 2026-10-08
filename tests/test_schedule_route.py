@@ -148,8 +148,10 @@ def test_the_pre_router_reads_the_restaurant_first_draft_and_the_weeks_last_run(
     assert route.tier == "T3" and run["pre_route"] == []
     # A new draft of a week whose last run escalated starts where it ended.
     conn = models.get_conn(db)
-    conn.execute("INSERT INTO ai_runs (run_id, restaurant_id, workflow, subject, escalations, created_at) "
-                 "VALUES ('run:x', ?, 'labor_schedule', 'week:2026-10-05', 1, datetime('now', '+1 minute'))",
+    # A run that served a week (status ok) — the pre-router reads only those
+    # (core re-audit 10/7/26 #5: never a held, errored or shadow row).
+    conn.execute("INSERT INTO ai_runs (run_id, restaurant_id, workflow, subject, escalations, status, created_at) "
+                 "VALUES ('run:x', ?, 'labor_schedule', 'week:2026-10-05', 1, 'ok', datetime('now', '+1 minute'))",
                  (rid,))
     conn.commit()
     conn.close()
@@ -411,9 +413,12 @@ def test_a_gate_skipped_for_want_of_time_is_recorded_skipped_and_left_out_of_the
     assert json.loads(row["context_json"])["outcome"] == "skipped"
     # The learner's pass rate leaves it out: one ok run beside it is 100%.
     conn = sqlite3.connect(db)
+    # Under the same policy version (the learner groups by it — core re-audit
+    # 10/7/26 #9).
     conn.execute("INSERT INTO ai_runs (run_id, workflow, restaurant_id, final_tier, final_model, status, escalations, "
-                 "latency_ms, cost_usd, created_at) VALUES ('run:ok1', 'labor_schedule', ?, ?, ?, 'ok', 0, 1000, "
-                 "0.4, datetime('now'))", (rid, row["final_tier"], row["final_model"]))
+                 "latency_ms, cost_usd, created_at, policy_version, first_tier) VALUES ('run:ok1', 'labor_schedule', "
+                 "?, ?, ?, 'ok', 0, 1000, 0.4, datetime('now'), ?, ?)",
+                 (rid, row["final_tier"], row["final_model"], row["policy_version"], row["first_tier"]))
     conn.commit()
     conn.close()
     (stat,) = [s for s in ai_learning.route_stats(workflow="labor_schedule", db_path=db)

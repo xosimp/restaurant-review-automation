@@ -17841,7 +17841,7 @@ window.switchIntelTab = function(tab) {
   if(_aivData&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display==='none'){renderAIVisibility(_aivData);}
   // Then the recorded check from the server (re-audit P1): the weekly run
   // was stored and served by GET, and nothing on the page ever asked for
-  // it, so an owner saw "Check AI visibility" and paid for a live run.
+  // it, so an owner saw only the Check button and paid for a live run.
   aivLoadStored();
 };
 

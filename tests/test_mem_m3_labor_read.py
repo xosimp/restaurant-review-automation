@@ -81,6 +81,9 @@ def test_a_restart_serves_the_stored_read_with_its_words_and_its_time(monkeypatc
 
 
 def test_new_figures_write_a_new_read(monkeypatch):
+    # The T1 → T2 climb is the cheap rung's, which a canary restaurant takes
+    # (context re-audit 10/7/26 #3); this one is a canary.
+    monkeypatch.setenv("AI_CANARY_RESTAURANTS", "*")
     rid = _rid()
     seen = _stub(monkeypatch)
     labor.labor_note(rid, _analysis(), restaurant_name="R", owner_name="Sam")
