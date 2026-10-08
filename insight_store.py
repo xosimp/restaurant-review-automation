@@ -74,7 +74,9 @@ def init_insight_store(db_path: str = DB_PATH):
 # The ledger action each stored kind's model call logs under — so a read is
 # linked to the call that wrote it and not to an unrelated one.
 _KIND_ACTIONS = {"reviews": "review_insight", "food": "inventory_insight", "marketing": "marketing_insight",
-                 "labor": "labor_insight"}
+                 "labor": "labor_insight",
+                 # The Reviews read for a login shown its other locations (re-audit 10/8/26 #1).
+                 "reviews:locations": "review_insight"}
 
 
 def fingerprint(*parts) -> str:

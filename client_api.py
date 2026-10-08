@@ -1757,12 +1757,12 @@ def review_insight_answer(rid, viewer):
     if not insight_refresh.wants_background():
         return _do_review_insight(rid, viewer=viewer)
 
+    # The stored read this login may be served: the cross-location one only
+    # to a login shown its other locations (re-audit 10/8/26 #1).
+    sees = bool(_review_sees_locations(rid, viewer))
+
     def _stale(note):
-        try:
-            import insight_store as _ist_sw
-            body, at = _ist_sw.latest(rid, "reviews")
-        except Exception:
-            body, at = None, None
+        body, at = review_stored_latest(rid, sees)
         if not (isinstance(body, dict) and body.get("insight")):
             return None
         from ai_guard import freshness as _fresh_sw
@@ -1779,7 +1779,7 @@ def review_insight_answer(rid, viewer):
         stale=_stale,
         pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": []}, 200),
         failed=lambda err, st: ({"insight": err or INSIGHT_UNAVAILABLE, "error": err or INSIGHT_UNAVAILABLE}, st),
-        key={"locations": bool(_review_sees_locations(rid, viewer))},
+        key={"locations": sees},
         refresh_job=insight_refresh.refresh_job_arg())
 
 
@@ -2109,6 +2109,43 @@ def _review_sees_locations(rid, viewer):
         return False
 
 
+# The insight_store kinds the Reviews read is stored under (re-audit 10/8/26
+# #1). The read shown to a login that sees its other locations carries their
+# complaint themes (`locations`), so it is its own row: under one kind, the
+# owner's read was `latest` for a manager of one location — the
+# stale-while-refresh answer and the "a stale read beats no read" fallback
+# both served it. The process cache was already split (":locations").
+REVIEW_STORE_KIND = "reviews"
+REVIEW_LOCATIONS_STORE_KIND = "reviews:locations"
+
+
+def review_store_kind(sees_locations) -> str:
+    """The insight_store kind of the Reviews read for a login that does
+    (or does not) see its other locations."""
+    return REVIEW_LOCATIONS_STORE_KIND if sees_locations else REVIEW_STORE_KIND
+
+
+def review_body_shows_locations(body) -> bool:
+    """Whether a stored Reviews read carries other locations' themes."""
+    locs = body.get("locations") if isinstance(body, dict) else None
+    return bool(isinstance(locs, dict) and locs.get("available"))
+
+
+def review_stored_latest(rid, sees_locations):
+    """(payload, created_at) of the last stored Reviews read this login may
+    be served, else (None, None). The kind matches the login; a row under
+    the plain kind that still carries location themes (written before the
+    kinds were split) is never served to a login that may not see them."""
+    try:
+        import insight_store as _ist_rl
+        body, at = _ist_rl.latest(rid, review_store_kind(sees_locations))
+    except Exception:
+        return None, None
+    if not sees_locations and review_body_shows_locations(body):
+        return None, None
+    return body, at
+
+
 # The restaurant_context sections each module read renders (AI orchestration
 # design, Phase 2, 10/7/26 — a subset of its policy's context: the owner's
 # rules and the memory come through the read's own memory_context block,
@@ -2193,7 +2230,10 @@ def _do_review_insight(rid, viewer=None):
     # One cached read per restaurant — and a separate one for a login shown
     # its other locations' review themes, so a manager of one location never
     # reads a sibling aggregate generated for the owner (re-audit #42).
-    _ck = "review-insight:" + str(rid) + (":locations" if _review_sees_locations(rid, viewer) else "")
+    _sees_ri = bool(_review_sees_locations(rid, viewer))
+    _ck = "review-insight:" + str(rid) + (":locations" if _sees_ri else "")
+    # Its stored row likewise (re-audit 10/8/26 #1): review_store_kind.
+    _sk_ri = review_store_kind(_sees_ri)
     cached = _cache_get(_ck)
     if cached:
         return _review_insight_recs(rid, dict(cached) if isinstance(cached, dict) else {"insight": cached}), 200
@@ -2700,7 +2740,7 @@ def _do_review_insight(rid, viewer=None):
         _fp_ri = _ist_ri.read_fingerprint(prompt, readiness=_ready_ri, today=today_str,
                                           week=f"{_iso_ri[0]}-W{_iso_ri[1]:02d}",
                                           extra=((_packet_ri.fingerprint,) if _packet_ri is not None else ()))
-        _stored_ri = _ist_ri.get(rid, "reviews", _fp_ri, revalidate=_ri_payload)
+        _stored_ri = _ist_ri.get(rid, _sk_ri, _fp_ri, revalidate=_ri_payload)
         if isinstance(_stored_ri, dict) and _stored_ri.get("insight"):
             # The diagnoses' age, stale flag and "as of" are the current
             # ones, not those frozen when the read was stored (M-7): the
@@ -2759,7 +2799,7 @@ def _do_review_insight(rid, viewer=None):
                 detail=_why_ri or "refused whole by the response validation layer")
             if _why_ri == "the reply was empty":
                 _ai_q.mark_outcome(msg, "unparseable", reason="empty reply")
-            _prev_ri, _prev_at = _ist_ri.latest(rid, "reviews")
+            _prev_ri, _prev_at = review_stored_latest(rid, _sees_ri)
             if isinstance(_prev_ri, dict) and _prev_ri.get("insight"):
                 from ai_guard import freshness as _fresh_rf
                 held = dict(_prev_ri)
@@ -2793,7 +2833,7 @@ def _do_review_insight(rid, viewer=None):
         _cache_set(_ck, payload)
         # Stored with the model's own text, so a later engine version
         # re-validates it rather than serving this verdict (insight_store.get).
-        _ist_ri.put(rid, "reviews", _fp_ri, payload, raw=_raw_ri)
+        _ist_ri.put(rid, _sk_ri, _fp_ri, payload, raw=_raw_ri)
         return _review_insight_recs(rid, dict(payload)), 200
     except Exception as _re:
         import traceback
@@ -2807,8 +2847,7 @@ def _do_review_insight(rid, viewer=None):
         if not stale:
             # The stored read survives a deploy; the in-memory one does not.
             try:
-                import insight_store as _ist_st
-                _body_st, _at_st = _ist_st.latest(rid, "reviews")
+                _body_st, _at_st = review_stored_latest(rid, _sees_ri)
                 if isinstance(_body_st, dict) and _body_st.get("insight"):
                     stale = (datetime.strptime(str(_at_st)[:19], "%Y-%m-%d %H:%M:%S"), _body_st)
             except Exception:

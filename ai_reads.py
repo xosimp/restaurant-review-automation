@@ -86,6 +86,7 @@ MAX_SUMMARY_CHARS = 280
 SURFACE_LABELS = {
     "food_read": "the Food Cost read",
     "review_read": "the Reviews read",
+    "review_read_locations": "the Reviews read across your locations",
     "marketing_read": "the Marketing read",
     "labor_read": "the Labor read",
     "marketing_feed": "the Marketing feed",
@@ -111,6 +112,10 @@ SURFACE_MODULE = {
     "labor_read": "labor", "competitor_read": "intel",
     "monthly_review": OWNER_ONLY, "digest": OWNER_ONLY, "brief": OWNER_ONLY, "weekly_plan": OWNER_ONLY,
     "dsr_narrative": OWNER_ONLY,
+    # The Reviews read written for a login shown its other locations (kind
+    # "reviews:locations", re-audit 10/8/26 #1) carries their themes: it is
+    # the account holder's, never a teammate's.
+    "review_read_locations": OWNER_ONLY,
 }
 
 
@@ -128,7 +133,8 @@ def line_scope(surface) -> dict:
 
 # insight_cache kind -> the surface its read is filed under (insight_store.put).
 STORE_SURFACE = {"food": "food_read", "reviews": "review_read", "marketing": "marketing_read",
-                 "labor": "labor_read", "mkt_opps": "marketing_feed"}
+                 "labor": "labor_read", "mkt_opps": "marketing_feed",
+                 "reviews:locations": "review_read_locations"}
 # The recommendation-line prefix each stored read's numbered lines carry
 # (client_api.present_read_lines), for the read's rec_keys.
 STORE_LINE_PREFIX = {"food": "insight_food", "marketing": "insight_marketing", "labor": "insight_labor"}
@@ -441,6 +447,11 @@ def record_store_read(restaurant_id, kind, fingerprint, payload, raw=None, call_
     keys. Never raises."""
     try:
         surface = STORE_SURFACE.get(kind, f"{kind}_read")
+        if (kind == "reviews" and isinstance(payload, dict) and isinstance(payload.get("locations"), dict)
+                and payload["locations"].get("available")):
+            # A Reviews read that carries other locations' themes is the
+            # account holder's (re-audit 10/8/26 #1), whatever kind it came in on.
+            surface = STORE_SURFACE["reviews:locations"]
         shown = shown_text_of(payload)
         rec_keys = []
         try:
@@ -448,7 +459,7 @@ def record_store_read(restaurant_id, kind, fingerprint, payload, raw=None, call_
             prefix = STORE_LINE_PREFIX.get(kind)
             if prefix:
                 rec_keys = [insight_store.line_key(prefix, ln) for ln in insight_store.numbered_lines(shown)]
-            if kind == "reviews":
+            if kind in ("reviews", "reviews:locations"):
                 m = re.search(r"(?m)^.*Do today:\s*(.+)$", shown or "")
                 if m:
                     rec_keys.append(insight_store.signature_key("insight_review", m.group(1).strip()))
