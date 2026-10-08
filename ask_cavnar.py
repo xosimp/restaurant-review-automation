@@ -1609,8 +1609,8 @@ _MAX_HISTORY_TURN_LENGTH = 2400
 # The LAST assistant turn replays in full (memory audit 9/29/26,
 # conversations): it is the one a follow-up resolves against, and an
 # executive answer runs past 2,400 characters. Bounded all the same. The
-# figure check's hash reads the first _ANSWER_HASH_CHARS characters
-# (_answer_hash), so an uncut replay finds its record.
+# figure check's record is keyed on the whole answer and on its replayed
+# prefix (_answer_keys), so an uncut replay and a cut one both find it.
 _MAX_LAST_ANSWER_LENGTH = 16000
 # Every OLDER assistant turn replays at most this much (AI cost audit
 # 10/7/26 #66): each was resent on every call of every later question at
@@ -1618,10 +1618,17 @@ _MAX_LAST_ANSWER_LENGTH = 16000
 # newest answer, which keeps its full allowance above. The owner's own
 # turns keep _MAX_HISTORY_TURN_LENGTH.
 _MAX_OLDER_ANSWER_LENGTH = 800
-# What an answer's figure-check record is keyed on: the part of it every
-# replay carries — an older turn's 800 characters, and the start of the
-# newest one's full text.
+# What an answer's figure-check record is keyed on besides its whole text:
+# the prefix an older turn is replayed cut to (context re-audit 10/7/26 #9).
+# Keyed on that prefix alone, a client-sent turn could carry the real first
+# 800 characters and figures of its own after them, and the whole turn was
+# read as checked. Now a turn counts only as far as server text matches it:
+# the whole turn when the whole answer was recorded, else its first 800 (or,
+# for a record written before 10/7/26, its first 2,400) characters.
 _ANSWER_HASH_CHARS = _MAX_OLDER_ANSWER_LENGTH
+# Prefixes a record written before this may have been keyed on: the first
+# 2,400 characters (before #66) and the first 800 (#66, 10/7/26).
+_ANSWER_HASH_LEGACY = (_MAX_HISTORY_TURN_LENGTH, _MAX_OLDER_ANSWER_LENGTH)
 
 
 def _sanitize_history(history):
@@ -1676,14 +1683,21 @@ def _sanitize_history(history):
 ANSWER_CHECK_KEEP_DAYS = 30
 
 
-def _answer_hash(text) -> str:
-    """The key an answer is recorded under — the answer as every replay
-    carries it (stripped and cut to _ANSWER_HASH_CHARS: an older turn is
-    replayed cut to that, the newest one in full), so the turn the client
-    sends back finds its record however much of it was replayed."""
+def _answer_hash(text, limit=None) -> str:
+    """The key of `text` (stripped; cut to `limit` characters when given)."""
     import hashlib
-    body = str(text or "").strip()[:_ANSWER_HASH_CHARS]
+    body = str(text or "").strip()
+    if limit:
+        body = body[:limit]
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+
+
+def _answer_keys(answer) -> list:
+    """The keys one answer is recorded under: its whole text and the prefix
+    an older turn is replayed cut to (_ANSWER_HASH_CHARS) — both server text
+    only, so whichever a replay matches, it carries nothing the server did
+    not write."""
+    return list(dict.fromkeys((_answer_hash(answer), _answer_hash(answer, _ANSWER_HASH_CHARS))))
 
 
 def record_answer_check(restaurant_id, answer, unverified, db_path=None) -> None:
@@ -1696,9 +1710,10 @@ def record_answer_check(restaurant_id, answer, unverified, db_path=None) -> None
     try:
         conn = _m.get_conn(db_path) if db_path else _m.get_conn()
         try:
-            conn.execute("INSERT OR REPLACE INTO ask_answer_checks (restaurant_id, answer_hash, unverified, created_at) "
-                         "VALUES (?,?,?,datetime('now'))",
-                         (restaurant_id, _answer_hash(answer), json.dumps(list(unverified or []))))
+            for key in _answer_keys(answer):
+                conn.execute("INSERT OR REPLACE INTO ask_answer_checks (restaurant_id, answer_hash, unverified, "
+                             "created_at) VALUES (?,?,?,datetime('now'))",
+                             (restaurant_id, key, json.dumps(list(unverified or []))))
             conn.execute("DELETE FROM ask_answer_checks WHERE restaurant_id=? AND created_at < datetime('now', ?)",
                          (restaurant_id, f"-{ANSWER_CHECK_KEEP_DAYS} days"))
             conn.commit()
@@ -2122,19 +2137,31 @@ class _SentencePreview:
 
 def _verified_history(restaurant_id, messages, db_path=None) -> list:
     """The history turns the figure check may read: an assistant turn this
-    server recorded with nothing unverified in it. Never a user turn — the
-    owner's own figure is not their data — and never an answer with no
-    record (sent by a client, written before the record existed, or edited
-    on the way back)."""
-    turns = [m["content"] for m in (messages or [])
+    server recorded with nothing unverified in it — and only as much of it as
+    the server wrote: the whole turn when its whole text was recorded, else
+    the recorded prefix it starts with (an older turn replayed cut to 800
+    characters, or a record from before 10/7/26), never what a client added
+    after it (context re-audit 10/7/26 #9). Never a user turn — the owner's
+    own figure is not their data — and never an answer with no record (sent
+    by a client, written before the record existed, or edited on the way
+    back)."""
+    turns = [m["content"].strip() for m in (messages or [])
              if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()]
     if not turns or not restaurant_id:
         return []
+    # Per turn, longest first: the whole turn, then each recorded prefix.
+    candidates = []
+    for t in turns:
+        cands = [(t, _answer_hash(t))]
+        for n in _ANSWER_HASH_LEGACY:
+            if len(t) > n:
+                cands.append((t[:n], _answer_hash(t, n)))
+        candidates.append(cands)
     import models as _m
     try:
         conn = _m.get_conn(db_path) if db_path else _m.get_conn()
         try:
-            hashes = [_answer_hash(t) for t in turns]
+            hashes = list(dict.fromkeys(h for cands in candidates for _t, h in cands))
             rows = conn.execute(
                 f"SELECT answer_hash, unverified FROM ask_answer_checks WHERE restaurant_id=? "
                 f"AND answer_hash IN ({','.join('?' * len(hashes))})", (restaurant_id, *hashes)).fetchall()
@@ -2150,7 +2177,12 @@ def _verified_history(restaurant_id, messages, db_path=None) -> list:
                 clean.add(r["answer_hash"])
         except Exception:
             continue
-    return [t for t in turns if _answer_hash(t) in clean]
+    out = []
+    for cands in candidates:
+        hit = next((text for text, h in cands if h in clean), None)
+        if hit:
+            out.append(hit)
+    return out
 
 
 # ask() lived here: a no-tools, 320-token twin of ask_with_tools that nothing
