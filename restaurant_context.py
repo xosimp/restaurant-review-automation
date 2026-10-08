@@ -333,8 +333,10 @@ def invalidate(restaurant_id=None, sections=None):
 def forget(restaurant_id, sections=None, db_path=None):
     """Drop a restaurant's cached sections — L1 and the L2 rows — so the
     next read rebuilds them. For a caller whose own invalidation must reach
-    a section its markers cannot see move (Ask's invalidate_context: a
-    setting saved, an upload, a direct action Ask ran). Never raises."""
+    a section its markers cannot see move (Ask's invalidate_context: an
+    upload, a direct action Ask ran). A change the markers do see (a
+    restaurants-row update) needs only invalidate() — the L2 rows of every
+    other viewer stay good (context re-audit 10/7/26 #7). Never raises."""
     invalidate(restaurant_id, sections)
     try:
         conn = _conn(db_path)
@@ -690,7 +692,11 @@ def version_memory(req):
             _marker(req, "SELECT COUNT(*), MAX(id) FROM ai_claims WHERE restaurant_id=?", (rid,)),
             _marker(req, "SELECT COUNT(*), MAX(last_seen), MAX(resolved_at) FROM bi_links WHERE restaurant_id=?",
                     (rid,)),
-            req.today().isoformat(), req.params] + _surface_markers(req)
+            req.today().isoformat(), req.params,
+            # The few row fields a memory line can carry (its dates are the
+            # restaurant's clock, its labels the owner's name): a row change
+            # drops the section from L1 only (context re-audit 10/7/26 #7).
+            _restaurant_fields(req, ("name", "owner_name", "timezone"))] + _surface_markers(req)
 
 
 # The memory sections a caller-named surface may read beyond the owner
@@ -935,16 +941,19 @@ def build_kpis(req):
 # name from the Restaurant dataclass (a cache key — it judges nothing, so
 # it names no target column: tests/test_targets_published_figures.py).
 def _findings_fields():
+    """Every restaurants field: the brief reads the row through the modules'
+    own analyses (hours, targets, settings), and a row change drops the
+    section from L1 only (ask_cavnar._on_restaurant_row_change, context
+    re-audit 10/7/26 #7) — so the version must move with any field it could
+    read, or a stale L2 row would be served."""
     import dataclasses
     import models
-    names = [f.name for f in dataclasses.fields(models.Restaurant)
-             if f.name.startswith("module_") or "target" in f.name]
-    return tuple(names) + ("inventory_updated_at", "competitor_updated_at")
+    return tuple(f.name for f in dataclasses.fields(models.Restaurant))
 
 
 def version_findings(req):
-    """The sources' markers, the links and answers, the restaurants row's
-    targets and modules, and the day. The brief reads a dozen more tables
+    """The sources' markers, the links and answers, the restaurants row, and
+    the day. The brief reads a dozen more tables
     than these markers cover (reviews, diagnoses, stock, campaigns...), so a
     caller that must never read it older than its own cache asks for
     `fresh_seconds` (params): the version then also moves on that clock —

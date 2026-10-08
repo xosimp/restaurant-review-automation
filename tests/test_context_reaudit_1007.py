@@ -247,6 +247,50 @@ def test_an_ask_turn_overridden_to_a_thinking_tier_gets_the_thinking_minimum(mon
     assert deep["max_tokens"] >= wf.THINKING_MIN_MAX_TOKENS, "the thinking shares max_tokens with the answer"
 
 
+# ── #7 a proposal keeps the replay; a row change keeps the L2 rows ──────────
+
+def test_a_proposal_drops_the_snapshot_but_never_the_chats_replayed_reads():
+    import time
+    import ask_cavnar
+    import ask_conversations
+    rid = _rid()
+    ask_conversations.remember_reads(rid, 7, OWNER_ID, [("read_alerts", {}, '{"alerts": []}', time.time())])
+    ask_cavnar._context_cache_put((rid, "k"), "old snapshot")
+    _memory(rid, _owner(rid))
+    before = {r["viewer_scope"] for r in _l2(rid, "memory")}
+    ask_cavnar.record_proposals(rid, [{"action": "publish_schedule", "summary": "Publish next week"}], user_id=OWNER_ID)
+    assert (rid, "k") not in ask_cavnar._CONTEXT_CACHE, "the next question sees the proposal"
+    rep = ask_conversations.replay_reads(rid, 7, OWNER_ID)
+    assert rep and [r["name"] for r in rep[1]] == ["read_alerts"]
+    assert {r["viewer_scope"] for r in _l2(rid, "memory")} == before
+    ask_conversations.forget_reads(rid)
+
+
+def _l2(rid, section):
+    c = models.get_conn()
+    try:
+        return [dict(r) for r in c.execute("SELECT * FROM context_sections WHERE restaurant_id=? AND section=?",
+                                           (rid, section)).fetchall()]
+    finally:
+        c.close()
+
+
+def test_a_row_change_keeps_l2_and_the_version_still_moves_with_the_row():
+    import ask_cavnar
+    rid = _rid()
+    _memory(rid, _owner(rid))
+    assert _l2(rid, "memory")
+    v_find = rc._hash(rc.version_findings(rc.SectionRequest(restaurant_id=rid, section="findings")))
+    models.update_restaurant(rid, {"neighborhood": "Wicker Park"})        # every update_restaurant
+    assert _l2(rid, "memory"), "a row change no longer deletes every viewer's L2 rows"
+    assert _memory(rid, _owner(rid)).source == "l2"
+    # Any field the brief could read moves the findings' version.
+    assert rc._hash(rc.version_findings(rc.SectionRequest(restaurant_id=rid, section="findings"))) != v_find
+    # A write the markers cannot see still drops them.
+    ask_cavnar.invalidate_context(rid)
+    assert _l2(rid, "memory") == []
+
+
 def test_the_canary_is_documented():
     env = open("docs/ops/ENVIRONMENT.md", encoding="utf-8").read()
     lib = open("PROMPT_LIBRARY.md", encoding="utf-8").read()

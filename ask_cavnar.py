@@ -989,10 +989,30 @@ def _context_cache_put(key, context):
     _CONTEXT_CACHE[key] = (now, context)
 
 
-def invalidate_context(restaurant_id=None):
+def _drop_snapshots(restaurant_id=None):
+    """Drop the cached snapshots (and their benchmark facts) only — nothing
+    the sections or the replayed reads hold."""
+    if restaurant_id is None:
+        _CONTEXT_CACHE.clear()
+        _INTEL_FACTS.clear()
+        return
+    for key in [k for k in _CONTEXT_CACHE if k[0] == int(restaurant_id)]:
+        _CONTEXT_CACHE.pop(key, None)
+    for key in [k for k in _INTEL_FACTS if k[0] == int(restaurant_id)]:
+        _INTEL_FACTS.pop(key, None)
+
+
+def invalidate_context(restaurant_id=None, durable=True):
     """Drop a cached snapshot. Called after anything that changes the numbers
     underneath it — a confirmed action, a sync, an upload, a settings save
-    (models.on_restaurant_change)."""
+    (models.on_restaurant_change, through _on_restaurant_row_change).
+
+    `durable` False (a restaurants-row change): the context manager's
+    sections are dropped from L1 only — their versions read the row (the
+    findings' the whole row, the memory's the name, owner and timezone), so an L2 row a change
+    did not touch is still good for every other viewer (context re-audit
+    10/7/26 #7). True: a write their markers cannot see (an upload, an
+    action Ask ran), so their L2 rows go too."""
     # The open question's memo too (AI cost audit 10/7/26 #33): a direct
     # action inside a turn must not leave the next read on the old figures.
     try:
@@ -1006,22 +1026,25 @@ def invalidate_context(restaurant_id=None):
     # them older than its own last invalidation.
     try:
         import restaurant_context as _rc_inv
-        _rc_inv.forget(int(restaurant_id) if restaurant_id is not None else None, ("findings", "memory"))
+        _rid_inv = int(restaurant_id) if restaurant_id is not None else None
+        if durable:
+            _rc_inv.forget(_rid_inv, ("findings", "memory"))
+        else:
+            _rc_inv.invalidate(_rid_inv, ("findings", "memory"))
     except Exception:
         pass
     _forget_replays(restaurant_id)
-    if restaurant_id is None:
-        _CONTEXT_CACHE.clear()
-        _INTEL_FACTS.clear()
-    else:
-        for key in [k for k in _CONTEXT_CACHE if k[0] == int(restaurant_id)]:
-            _CONTEXT_CACHE.pop(key, None)
-        for key in [k for k in _INTEL_FACTS if k[0] == int(restaurant_id)]:
-            _INTEL_FACTS.pop(key, None)
+    _drop_snapshots(restaurant_id)
+
+
+def _on_restaurant_row_change(restaurant_id):
+    """models.on_restaurant_change: every update_restaurant. The row is in
+    the sections' versions, so their L2 rows stay (#7)."""
+    invalidate_context(restaurant_id, durable=False)
 
 
 import models as _models_listen
-_models_listen.on_restaurant_change(invalidate_context)
+_models_listen.on_restaurant_change(_on_restaurant_row_change)
 
 
 # ── proposals: one identity each (#23) ───────────────────────────────────────
@@ -1069,7 +1092,11 @@ def record_proposals(restaurant_id, proposals, user_id=None):
         # The snapshot's WHAT YOU HAVE ALREADY PROPOSED section reads these
         # rows, and the snapshot is held five minutes now (AI cost audit
         # 10/7/26 #30): a question in another chat must see this proposal.
-        invalidate_context(restaurant_id)
+        # Only the snapshot: a proposal changes no figure, so the reads this
+        # turn just kept for the chat's follow-up (_keep_reads) and the
+        # context sections stand — invalidate_context here wiped the replay
+        # on every turn that raised a card (context re-audit 10/7/26 #7).
+        _drop_snapshots(restaurant_id)
     return proposals
 
 
