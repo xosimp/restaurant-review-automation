@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#0b0907}
+.a{position:relative;margin:40px auto}.core-cv{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:none;pointer-events:none}</style>
+<script>
+// a driven clock: the engine draws only when we say, at the time we say
+var __now = 0, __cb = null;
+performance.now = function () { return __now; };
+window.requestAnimationFrame = function (cb) { __cb = cb; return 1; };
+window.cancelAnimationFrame = function () { __cb = null; };
+Object.defineProperty(document, 'hidden', { get: function () { return false; } });
+</script></head><body>
+<div class="a" id="anchor" data-core="mk" aria-hidden="true"></div>
+<script src="ember-core.js"></script><!-- copy public/static/ember-core.js beside this file first -->
+<script>
+window.renderJob = async function (job) {
+  var a = document.getElementById('anchor'); a.style.width = a.style.height = job.css + 'px';
+  if (window.EmberCore && EmberCore.scan) EmberCore.scan();
+  await new Promise(function (r) { setTimeout(r, 300); });
+  __now = 1000; var steps = 0, saved = 0;
+  for (var f = 0; f < job.frames; f++) {
+    for (var s = 0; s < job.sub; s++) { __now += 1000 / 60; var cb = __cb; __cb = null; if (cb) cb(__now); }
+    if (job.pulseAt != null && f === job.pulseAt && EmberCore.pulse) EmberCore.pulse('mk');
+    var cv = a.querySelector('.core-cv');
+    if (f < job.skip) continue;
+    var data = cv.toDataURL('image/png');
+    await fetch('http://127.0.0.1:8799/', { method: 'POST', body: JSON.stringify({ name: job.dir + '/f' + String(f - job.skip).padStart(4, '0') + '.png', data: data }) });
+    saved++;
+  }
+  return { saved: saved, w: a.querySelector('.core-cv').width };
+};
+</script></body></html>
