@@ -193,8 +193,12 @@ def test_the_draft_route_does_not_push_the_manager_who_asked(brief, db):
     r = client.post("/mobile/api/staff-brief/draft", json={"day": "2026-10-02"}, headers=h)
     assert r.status_code == 200 and r.get_json()["brief"]["draft_status"] == "drafted"
     assert brief == []
-    # Approve with only the day publishes the draft as written — the push's button.
+    # Re-audit 10/8/26: an approve that carries no text (the push's blind
+    # button) is refused — staff read only words the approver read.
     r = client.post("/mobile/api/staff-brief/approve", json={"day": "2026-10-02"}, headers=h)
+    assert r.status_code == 400 and "read it" in r.get_json()["error"]
+    draft = client.get("/mobile/api/staff-brief?day=2026-10-02", headers=h).get_json()["brief"]["draft_text"]
+    r = client.post("/mobile/api/staff-brief/approve", json={"day": "2026-10-02", "text": draft}, headers=h)
     assert r.status_code == 200 and r.get_json()["brief"]["approved_text"].startswith("Busy Friday")
 
 

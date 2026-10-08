@@ -276,6 +276,11 @@ def test_this_wasnt_me_signs_the_login_out_everywhere(db_path, mobile, monkeypat
     uid, h = _signed_in(db_path, rid)
     _, h_web = uid, {"Authorization": "Bearer " + create_session(uid, db_path=db_path)}
     report = auth.create_login_report(uid, None, db_path=db_path)
+    # A passkey added from the compromised session (re-audit 10/8/26).
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO user_passkeys (user_id, credential_id, public_key) VALUES (?, 'cred-x', x'00')", (uid,))
+    conn.commit()
+    conn.close()
     r = mobile.post("/mobile/api/account/not-me", json={"login_user_id": uid}, headers=h)
     assert r.status_code == 200, r.get_json()
     assert r.get_json()["signed_out"] is True and "ann@x.test" in r.get_json()["message"]
@@ -284,6 +289,7 @@ def test_this_wasnt_me_signs_the_login_out_everywhere(db_path, mobile, monkeypat
     try:
         assert conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id=?", (uid,)).fetchone()[0] == 0
         assert conn.execute("SELECT must_reset_password FROM users WHERE id=?", (uid,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM user_passkeys WHERE user_id=?", (uid,)).fetchone()[0] == 0
     finally:
         conn.close()
     # Every session is gone, this phone's and the other one's.

@@ -359,6 +359,10 @@ def approve(restaurant_id, user, day=None, text=None, db_path=DB_PATH) -> dict:
         text = (row.get("draft_text") or "").strip()
         if not text:
             raise BriefError("There's no draft to approve today — write the brief yourself.")
+        # The draft as written never replaces a brief already approved — an
+        # edited one would quietly become the model's words (re-audit 10/8/26).
+        if (row.get("approved_text") or "").strip() and (row.get("approved_text") or "").strip() != text:
+            raise BriefError("Tonight's brief is already approved — open it to change it.")
     problem = staff_safety_problem(restaurant_id, text, db_path=db_path)
     if problem:
         raise BriefError(problem)

@@ -186,6 +186,12 @@ def _do_brief_draft(u):
 def _do_brief_approve(u):
     def go(sb, day, b):
         text = b.get("text") if "text" in b and b.get("text") is not None else None
+        # What staff read is approved as the words the approver read (re-
+        # audit 10/8/26): both clients send the text on screen, so an approve
+        # that carries none — a lock-screen tap on a push without the draft —
+        # is refused and the brief is opened instead.
+        if text is None:
+            raise sb.BriefError("Open the brief and read it before it goes to staff.")
         return sb.approve(_rid(u), u, day=day, text=text)
     return _brief_write(u, go)
 

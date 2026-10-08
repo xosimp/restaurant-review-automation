@@ -6343,6 +6343,14 @@ def _sign_out_everywhere(conn, user_id):
     caller commits."""
     conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (user_id,))
+    # A passkey added from the compromised session would sign straight back
+    # in as a second factor after the reset (re-audit 10/8/26): every passkey
+    # goes with the sessions; the owner adds theirs again.
+    try:
+        conn.execute("DELETE FROM user_passkeys WHERE user_id=?", (user_id,))
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e):
+            raise
     user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     if user and user["restaurant_id"]:
         conn.execute("DELETE FROM trusted_devices WHERE restaurant_id=?", (user["restaurant_id"],))
