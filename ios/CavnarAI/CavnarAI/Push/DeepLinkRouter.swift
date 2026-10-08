@@ -197,6 +197,11 @@ final class DeepLinkRouter {
             // A staff app address (staff/<tab>[/<id>]) reaching the owner
             // app: Labor, not Home (see route).
             openLabor()
+        case "messages":
+            // A teammate's direct message ("team_message", push.nav_for):
+            // the Messages sheet over whatever is on screen, on the
+            // sender's thread (parity audit 10/7/26 #71).
+            TeamMessagesCenter.shared.open(with: nav.target.flatMap { Int($0) })
         case "account", "recs":
             pendingTab = .account
             pendingModuleKey = nil
@@ -265,6 +270,11 @@ final class DeepLinkRouter {
         // module's top. The mirror below is only for an older server.
         if let path = NavPath(nav) {
             apply(path, askAutoSend: askAutoSend, askPrompt: askPrompt)
+            return
+        }
+        // A direct message with no nav: the Messages inbox, never a module.
+        if alertType == "team_message" {
+            TeamMessagesCenter.shared.open(with: nil)
             return
         }
         // The nightly Daily Sales Report opens on Home's stack: that night
@@ -418,8 +428,14 @@ final class DeepLinkRouter {
              "schedule_publish_held", "shift_request", "labor_reminder",
              // An employee wrote to the manager on duty (B5 / fix_B2): the
              // Team inbox under Labor, `labor/inbox[/<thread_id>]`.
-             "employee_message":
+             "employee_message",
+             // Tonight's lineup brief waiting for approval (`labor/lineup`).
+             "lineup_brief_waiting":
             return "labor"
+        case "team_message":
+            // A teammate's direct message: its own sheet, from `nav`
+            // ("messages/<id>"); without one, Home under the sheet.
+            return "home"
         case "food_waste", "critical_low", "price_spike", "order_send_pending",
              "order_send_held", "order_send_voided":
             return "inventory"

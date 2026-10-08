@@ -501,6 +501,12 @@ struct HomeCloseOutCard: View {
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+                // How tonight felt to the staff who answered the post-shift
+                // pulse — context for the closer, never saved (parity #67).
+                if let pulse = viewModel.closeOutStaffPulse, !pulse.line.isEmpty {
+                    HomeMixedText.make(pulse.line, size: 14, weight: 600, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Button {
                     Haptic.light()
                     showingCloseOut = true

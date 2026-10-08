@@ -1530,6 +1530,30 @@ def own_availability(restaurant_id, employee_name, db_path=DB_PATH, today=None) 
     return _payload(row, windows, today or _today(restaurant_id))
 
 
+def own_conflicts(restaurant_id, employee_name, db_path=DB_PATH, today=None) -> list:
+    """This person's shifts on live published weeks from today that their
+    availability as stored now rules out — what save_own_availability
+    answers with, read again for a page that redirected after the save (the
+    schedule link, POST /s/<token>/availability). Never raises: []."""
+    from models import staff_availability_for
+    import time_off as _to
+    from datetime import timedelta
+    try:
+        today = today or _today(restaurant_id)
+        conn = _av_conn(db_path)
+        try:
+            row = staff_availability_for(restaurant_id, employee_name, conn=conn)
+            _, windows = _windows_for(restaurant_id, employee_name, conn)
+        finally:
+            conn.close()
+        shifts = _to.published_conflicts(restaurant_id, employee_name, today, today + timedelta(days=70),
+                                         db_path=None if db_path in (None, DB_PATH) else db_path)
+        return _conflicts(shifts, _state_of(row, windows))
+    except Exception as e:
+        print(f"[staff_settings] own conflicts unread rid={restaurant_id}: {e!r}")
+        return []
+
+
 def away_hint(notes):
     """A note that reads like dates away ("away Oct 3–6", "vacation
     12/20-12/27") belongs in a time-off request, where a manager answers

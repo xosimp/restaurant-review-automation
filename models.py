@@ -7472,7 +7472,54 @@ def send_team_message(restaurant_id: int, sender_id: int, recipient_id: int,
             "FROM team_messages WHERE id=?", (cur.lastrowid,)).fetchone()
     finally:
         conn.close()
+    _push_team_message(restaurant_id, sender_id, recipient_id, clean, row["id"], db_path=db_path)
     return dict(row)
+
+
+def _push_team_message(restaurant_id: int, sender_id: int, recipient_id: int, body: str,
+                       message_id: int, db_path: str = DB_PATH) -> int:
+    """The recipient's phone hears a direct message, whichever platform sent
+    it (parity audit 10/7/26 #71: neither did). Only their own logins'
+    devices (user_ids), only a login that can open the Messages inbox
+    (TEAM_MESSAGE), silent inside the location's quiet hours; the login's
+    own push choices apply in fire_push. The payload's sender_id is what the
+    lock screen's typed Reply answers (push.CATEGORY_MESSAGE). Never raises:
+    the message is saved either way. Returns the devices it was queued for."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rcpt = conn.execute("SELECT * FROM users WHERE id=? AND restaurant_id=? AND is_active=1",
+                                (recipient_id, restaurant_id)).fetchone()
+            sender = conn.execute("SELECT * FROM users WHERE id=?", (sender_id,)).fetchone()
+            named = conn.execute("SELECT employee_name FROM memberships WHERE user_id=? AND restaurant_id=? "
+                                 "AND COALESCE(is_active,1)=1", (sender_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if not rcpt:
+            return 0
+        from permissions import TEAM_MESSAGE, has_permission
+        keys = rcpt.keys()
+        who_can = {"role": rcpt["role"] if "role" in keys else None,
+                   "is_admin": bool(rcpt["is_admin"]) if "is_admin" in keys else False}
+        if not has_permission(who_can, TEAM_MESSAGE):
+            return 0
+        # The person's name, not the login's (the inbox's own rule).
+        name = (" ".join((named["employee_name"] or "").split()) if named else "") or \
+            (sender["username"] if sender else "") or "A teammate"
+        preview = " ".join(body.split())
+        data = {"sender_id": int(sender_id), "message_id": int(message_id)}
+        try:
+            if is_in_quiet_hours(restaurant_id, db_path=db_path):
+                data["quiet"] = True
+        except Exception:
+            pass
+        import push
+        return push.fire_push(restaurant_id, "team_message", name,
+                              preview[:180] + ("\u2026" if len(preview) > 180 else ""), data=data,
+                              db_path=db_path, user_ids=[int(recipient_id)])
+    except Exception as e:
+        print(f"[models] team message push failed rid={restaurant_id}: {e!r}")
+        return 0
 
 
 def get_team_conversation(restaurant_id: int, user_a: int, user_b: int,
@@ -14007,8 +14054,10 @@ NON_ALERT_TYPES = (
     # A manager's task notices (re-audit A-6): a staff drop/swap/time-off
     # request and what became of it, and the 9am "waiting on you in Labor".
     "shift_request", "labor_reminder",
-    # An employee's message to the manager on duty (staff_comms).
-    "employee_message",
+    # An employee's message to the manager on duty (staff_comms), a
+    # teammate's direct message, and tonight's lineup brief waiting for
+    # approval — tasks addressed to someone, never alerts against the cap.
+    "employee_message", "team_message", "lineup_brief_waiting",
     # Auto-publish's held notice and a milestone (re-audit A-18), and a
     # supplier order the trusted-order job held back (A-22).
     "schedule_publish_held", "milestone", "order_send_held",

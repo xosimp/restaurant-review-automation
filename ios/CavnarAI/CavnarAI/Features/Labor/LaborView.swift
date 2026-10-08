@@ -56,6 +56,8 @@ struct LaborView: View {
     @State private var showingMeasuredRatings = false
     /// A person a review line named (an unmatched name's suggestion).
     @State private var reviewPerson: PersonSheetTarget?
+    /// The Team inbox (parity #10), on a thread when a link named one.
+    @State private var inboxTarget: TeamInboxTarget?
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     /// What the next draft is built to, in the Generate card (iOS parity
     /// #46): the labor target, the build notes and their rules, the
@@ -139,6 +141,11 @@ struct LaborView: View {
                                 // notes, a person listed twice, a guest naming
                                 // someone — answered in Scheduling setup.
                                 TeamMemoryNudge(viewModel: teamMemory) { showingSetup = true }
+                                // Tonight's lineup brief, the Team inbox and
+                                // how shifts felt (parity #10, #26, #67).
+                                LaborTeamSection(openInbox: { inboxTarget = TeamInboxTarget(threadId: $0) },
+                                                 inboxOpen: inboxTarget != nil)
+                                    .id(Self.teamOpsID)
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                         .id(Self.scheduleID)
@@ -498,6 +505,7 @@ struct LaborView: View {
         .sheet(isPresented: $showingMemory) { ScheduleMemoryScreen() }
         .sheet(isPresented: $showingMeasuredRatings) { MeasuredRatingsScreen() }
         .sheet(item: $reviewPerson) { target in PersonSheet(target: target) }
+        .sheet(item: $inboxTarget) { target in TeamInboxView(initialThreadId: target.threadId) }
         .sheet(item: $explainingRow) { row in
             AssignmentExplanationSheet(row: row, explanation: viewModel.scheduleResult?.explanation(for: row))
         }
@@ -868,6 +876,7 @@ struct LaborView: View {
     private static let scheduleID = "labor-schedule"
     private static let reviewID = "labor-schedule-review"
     private static let setupID = "labor-setup"
+    private static let teamOpsID = "labor-team-ops"
 
     /// A group's small header on the Overview (density #28): three of
     /// them — Needs you, Why, Scheduling setup — so a decision never looks
@@ -935,7 +944,11 @@ struct LaborView: View {
         guard !focusSpent, let section = focusSection else { return }
         focusSpent = true
         subTab = .overview
-        switch LaborFocus(section: section) {
+        switch LaborFocus(section: section, item: focusItem) {
+        case .inbox(let threadId):
+            inboxTarget = TeamInboxTarget(threadId: threadId)
+        case .lineup:
+            scrollToReveal(Self.teamOpsID, proxy: proxy)
         case .waiting:
             viewModel.timeOffExpanded = true
             setupViewModel.requestsExpanded = true
@@ -2081,9 +2094,18 @@ enum LaborFocus: Equatable {
     // Scheduling notes, the closer cleanup and the task sheets (iOS parity
     // #49): action_queue's "labor/notes" and the web's own sections.
     case notes, closers, tasks
+    /// The Team inbox — on a thread when the link names one
+    /// ("labor/inbox?thread=7", an employee_message push; parity #10).
+    case inbox(threadId: Int?)
+    /// Tonight's lineup brief ("labor/lineup", a lineup_brief_waiting push; #26).
+    case lineup
 
-    init?(section: String) {
+    init?(section: String) { self.init(section: section, item: nil) }
+
+    init?(section: String, item: String?) {
         switch section.lowercased() {
+        case "inbox", "messages": self = .inbox(threadId: item.flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil })
+        case "lineup", "brief", "staff-brief": self = .lineup
         case "waiting", "request": self = .waiting
         case "requests", "shift_requests", "shifts": self = .requests
         case "timeoff", "time_off", "time-off": self = .timeOff

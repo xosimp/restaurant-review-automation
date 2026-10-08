@@ -6331,7 +6331,11 @@ svg:hover .hb-xh{opacity:1}
               ['co-why','Influence — what was going on','Cubs home game, Bears on TV, the World Cup, a private event',e.influence||sg.influence,(!e.influence&&sg.influence)?src.influence:'']];
     var moreHtml='',anyMore=false;
     for(var i=0;i<more.length;i++){moreHtml+=field(more[i][0],more[i][1],more[i][2],more[i][3],more[i][4]);if(more[i][3])anyMore=true;}
-    var form='<div class="co-grid">'
+    // How tonight felt to the staff who answered the post-shift pulse, once
+    // enough did that nobody is singled out (staff_insights.PULSE_MIN_N) -
+    // context for the closer, never saved into the close-out.
+    var pulse=(c.staff_pulse&&c.staff_pulse.line)?'<div class="sr-note co-pulse" style="margin:0 0 12px">'+num(c.staff_pulse.line)+'</div>':'';
+    var form=pulse+'<div class="co-grid">'
          + field('co-well','What went well','A section ran clean',e.went_well)
          + field('co-wrong','What went wrong','Ticket times over 20 min',e.went_wrong)
          + field('co-86','What we ran out of','Salmon, house red',e.eighty_sixed)
@@ -12067,6 +12071,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="ac-field" style="margin-top:10px"><label for="lb2-ann-body">Message</label><textarea class="ac-textarea" id="lb2-ann-body" rows="3" maxlength="2000" placeholder="What they need to know"></textarea></div>
     <div class="cbtn-row" style="margin-top:10px"><button type="button" class="cbtn cbtn-secondary" id="lb2-ann-send" onclick="lb2AnnSend(this)">Send to staff</button><span class="ac-status" id="lb2-ann-status"></span></div>
     <div id="lb2-ann-list" class="ac-rows" style="margin-top:14px"></div>
+    {# Staff pulse (parity audit 10/7/26 #67): how shifts felt to the staff
+       who answered the post-shift question in the app, last 14 days, in
+       aggregate only - below staff_insights.PULSE_MIN_N answers a count and
+       nothing else. /api/labor/staff-pulse. #}
+    <div class="hb-kicker" style="margin-top:26px">How shifts felt</div>
+    <div id="lb2-pulse" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
   </details>
   {# Team & rules (density round #28): the eight setup rows were the
      loudest thing on the page, each in a deeper ember. They are one quiet
@@ -33335,6 +33345,22 @@ document.addEventListener('click', function(e) {
     }
   });
 
+  /* "messages[/<user_id>]" - a teammate's direct message (push.nav_for,
+     parity audit 10/7/26 #71): the Messages panel, on that thread. */
+  if (window.cavNavRegister) cavNavRegister('messages', function (p) {
+    var panel = document.getElementById('team-msg-panel');
+    if (!panel) return false;
+    if (panel.style.display === 'none') { window._openHdrPanel(panel); _tmAnimate = true; }
+    var uid = parseInt(p.rest[0], 10);
+    if (!uid) { tmBackToInbox(); return true; }
+    fetch('/api/team/inbox').then(apiJson).then(function (d) {
+      var mates = (d && d.teammates) || [], name = '', i;
+      for (i = 0; i < mates.length; i++) if (+mates[i].user_id === uid) name = mates[i].name || mates[i].username;
+      if (name) window.tmOpenThread(uid, name); else tmBackToInbox();
+    }).catch(function () { tmBackToInbox(); });
+    return true;
+  });
+
   setTimeout(tmLoadInbox, 1700);
 })();
 
@@ -39081,6 +39107,14 @@ function memRetagBody(was, now) {
      "Review them"); "labor/people" lands on Waiting on you. Anything else
      under labor is the router's. */
   if (window.cavNavRegister) cavNavRegister('labor', function (p) {
+    // Tonight's lineup brief (a "lineup brief waiting" notification): the
+    // web keeps its card in Account, beside the lineup-notes text.
+    if (p.rest[0] === 'lineup') {
+      cavNavOpenModule('account');
+      if (window.acctGo) acctGo('notifications');
+      setTimeout(function () { var c = $id('sb-card'); if (c && !c.hidden) c.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 400);
+      return true;
+    }
     // The schedule is the Schedule tab now (10/1/26).
     if (p.rest[0] === 'schedule') { if (window.studioOpen) { studioOpen(); return true; } }
     if (p.rest[0] === 'notes') { cavNavOpenModule('labor'); setTimeout(openNotes, 60); return true; }
@@ -39960,7 +39994,35 @@ document.addEventListener('click', function (e) {
     for (i = 0; i < _roles.length; i++) h += '<option value="' + e(_roles[i]) + '">' + e(_roles[i]) + '</option>';
     sel.innerHTML = h || '<option value="">No roles yet</option>';
   }
+  function renderPulse(d) {
+    var el = $id('lb2-pulse'); if (!el) return;
+    if (!d.ok) { el.innerHTML = '<div class="hb-empty">' + e(d.error || 'Couldn\u2019t load how shifts felt.') + '</div>'; return; }
+    var win = (d.window && d.window.label) ? '<span class="hb-num">' + e(d.window.label) + '</span>' : 'the last 14 days';
+    if (!d.enough) {
+      el.innerHTML = '<div class="hb-empty">' + e(d.message || '') + '</div>';
+      return;
+    }
+    var h = '<div class="hb-stats">'
+      + '<div class="hb-stat"><div class="k">Average</div><div class="v hb-num">' + e(d.average) + '<small>of 5</small></div><div class="s">' + win + '</div></div>'
+      + '<div class="hb-stat"><div class="k">Answers</div><div class="v hb-num">' + (+d.responses) + '</div><div class="s">after their shifts, from the app</div></div>'
+      + '</div>', i;
+    var days = d.by_day || [];
+    if (days.length) {
+      h += '<div class="ac-rows" style="margin-top:12px">';
+      for (i = 0; i < days.length && i < 7; i++) {
+        h += '<div class="ac-row"><div class="l"><b><span class="hb-num">' + e(day(days[i].date)) + '</span></b><span><span class="hb-num">' + e(days[i].average) + '</span> of 5 \u00b7 <span class="hb-num">' + (+days[i].responses) + '</span> answers</span></div></div>';
+      }
+      h += '</div>';
+    }
+    if (d.other_days_responses) h += '<div class="sr-note" style="margin-top:8px"><span class="hb-num">' + (+d.other_days_responses) + '</span> more came on nights with too few answers to show on their own.</div>';
+    var notes = d.notes || [];
+    for (i = 0; i < notes.length && i < 5; i++) {
+      h += '<div class="sr-note" style="margin-top:8px">\u201c' + e(notes[i].text) + '\u201d' + (notes[i].date_label ? ' \u00b7 <span class="hb-num">' + e(notes[i].date_label) + '</span>' : '') + '</div>';
+    }
+    el.innerHTML = h;
+  }
   window.lb2InboxLoad = function () {
+    getJ('/api/labor/staff-pulse?days=14', renderPulse);
     getJ('/api/labor/inbox', function (d) {
       if (!d.ok) { var el = $id('lb2-inbox-threads'); if (el && typeof loadFailed === 'function') loadFailed(el, d); return; }
       renderLate(d.late_today || []);

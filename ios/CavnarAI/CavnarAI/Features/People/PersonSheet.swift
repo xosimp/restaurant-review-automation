@@ -50,6 +50,11 @@ struct PersonRecord: Decodable, Equatable {
     /// "pay_rate": true, …}`). Nil on an older server: role shown as a field,
     /// pay read only.
     let editable: [String: Bool]?
+    /// The account holder's (`_principal`): rename, merge, undo a merge and
+    /// erase (parity #87). False on an older server.
+    var canManageLogin = false
+    /// Whether they hold a staff login — erase waits until they don't.
+    var hasLogin = false
     /// What else is known about them (memory round, 9/29/26): roles held
     /// beyond the shifts worked, their record of taking covers, the guest
     /// mentions the owner confirmed, and attendance on the shifts somebody
@@ -78,7 +83,13 @@ struct PersonRecord: Decodable, Equatable {
         case payRate = "pay_rate"
         case payRateAmount = "pay_rate_amount"
         case canEdit = "can_edit"
+        case canManageLogin = "can_manage_login"
+        case hasLogin = "has_login"
     }
+
+    /// Erase is offered for someone off the roster with no staff login —
+    /// the server's own refusal (people.erase_person), said before asking.
+    var mayErase: Bool { canManageLogin && active == false && !hasLogin }
 
     /// Whether `field` may be changed here: the server's `editable` map when
     /// it sent one, else `fallback`.
@@ -138,6 +149,8 @@ struct PersonRecord: Decodable, Equatable {
             .items ?? []
         attendance = try? c.decodeIfPresent(PersonAttendance.self, forKey: .attendance)
         certificationLabels = ((try? c.decodeIfPresent(Choices.self, forKey: .choices)) ?? nil)?.certificationLabels ?? [:]
+        canManageLogin = ((try? c.decodeIfPresent(Bool.self, forKey: .canManageLogin)) ?? nil) ?? false
+        hasLogin = ((try? c.decodeIfPresent(Bool.self, forKey: .hasLogin)) ?? nil) ?? false
     }
 
     /// The certificates in the owner's words.
@@ -204,8 +217,17 @@ final class PersonSheetViewModel {
     private(set) var saveMessage: String?
     private(set) var saveError: String?
 
-    private let client: APIClient
+    let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
+
+    // Name and records (#87): the merges that touch this person, everyone
+    // they could be merged into, and the sheet's own status lines.
+    var merges: [PeopleMerge] = []
+    var canUndoMerges = false
+    var people: [PeopleListRow] = []
+    var recordsBusy = false
+    var recordsMessage: String?
+    var recordsError: String?
 
     private struct ListResponse: Decodable {
         struct Row: Decodable { let key: String; let name: String }
@@ -386,9 +408,137 @@ final class PersonSheetViewModel {
     }
 }
 
+// MARK: - Name and records (parity audit 10/7/26 #87)
+
+extension PersonSheetViewModel {
+    static func renamePath(for key: String) -> String { path(for: key) + "/rename" }
+    static func erasePath(for key: String) -> String { path(for: key) + "/erase" }
+    static let mergePath = "/mobile/api/people/merge"
+    static let mergesPath = "/mobile/api/people/merges"
+    static func undoPath(_ mergeId: Int) -> String { "/mobile/api/people/merges/\(mergeId)/undo" }
+
+    /// Whether `typed` names this person — the server's own comparison
+    /// (whitespace folded, case ignored).
+    nonisolated static func typedNameMatches(_ typed: String, _ name: String) -> Bool {
+        func fold(_ s: String) -> String { s.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() }
+        return !fold(name).isEmpty && fold(typed) == fold(name)
+    }
+
+    /// Re-reads one person by key (after a rename or a merge moved them).
+    func reload(key: String) async {
+        await load(PersonSheetTarget(key: key, name: ""))
+    }
+
+    /// The merges of the last 30 days that touch this person, and whether
+    /// this login may undo them.
+    func loadMerges(for name: String) async {
+        guard let r: PeopleMergesResponse = try? await client.send(Self.mergesPath, hapticOnError: false), r.ok else {
+            return
+        }
+        let n = name.lowercased()
+        merges = r.merges.filter { $0.from.lowercased() == n || $0.into.lowercased() == n }
+        canUndoMerges = r.canUndo
+    }
+
+    /// Everyone else on the list, for "the same person as…".
+    func loadPeople(excluding key: String) async {
+        guard let r: PeopleListResponse = try? await client.send("/mobile/api/people", hapticOnError: false), r.ok else {
+            return
+        }
+        people = r.people.filter { $0.key != key && !$0.key.isEmpty }
+    }
+
+    /// Returns the new key on success.
+    func rename(_ person: PersonRecord, to newName: String) async -> String? {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != person.name else { return nil }
+        recordsBusy = true
+        recordsError = nil
+        defer { recordsBusy = false }
+        do {
+            let r: PersonRenameResponse = try await client.send(Self.renamePath(for: person.key), method: .post,
+                                                                body: PersonRenameBody(name: name), retryTransient: false)
+            guard r.ok else { recordsError = r.error ?? "Couldn\u{2019}t rename them."; return nil }
+            Haptic.success()
+            recordsMessage = "Renamed to \(r.to ?? name)."
+            return r.key ?? person.key
+        } catch let e as APIClient.APIError {
+            recordsError = e.message
+        } catch {
+            recordsError = "Couldn\u{2019}t rename them."
+        }
+        return nil
+    }
+
+    /// `person`'s records all move onto `into`. Returns true when merged.
+    func merge(_ person: PersonRecord, into: PeopleListRow) async -> Bool {
+        recordsBusy = true
+        recordsError = nil
+        defer { recordsBusy = false }
+        do {
+            let r: PeopleMergeResponse = try await client.send(Self.mergePath, method: .post,
+                                                               body: PeopleMergeBody(from: person.key, into: into.key),
+                                                               retryTransient: false)
+            guard r.ok else { recordsError = r.error ?? "Couldn\u{2019}t merge them."; return false }
+            Haptic.success()
+            recordsMessage = "Merged into \(r.into ?? into.name). You can undo it for 30 days."
+            return true
+        } catch let e as APIClient.APIError {
+            recordsError = e.message
+        } catch {
+            recordsError = "Couldn\u{2019}t merge them."
+        }
+        return false
+    }
+
+    func undoMerge(_ m: PeopleMerge, name: String) async {
+        recordsBusy = true
+        recordsError = nil
+        defer { recordsBusy = false }
+        do {
+            let r: PeopleMergeResponse = try await client.send(Self.undoPath(m.mergeId), method: .post,
+                                                               body: TeamEmptyBody(), retryTransient: false)
+            guard r.ok else { recordsError = r.error ?? "Couldn\u{2019}t undo that merge."; return }
+            Haptic.success()
+            recordsMessage = "Two people again: \(r.from ?? m.from) and \(r.into ?? m.into) \u{2014} each has their own records back."
+            await loadMerges(for: name)
+            if case .loaded(let p) = state { await reload(key: p.key) }
+        } catch let e as APIClient.APIError {
+            recordsError = e.message
+        } catch {
+            recordsError = "Couldn\u{2019}t undo that merge."
+        }
+    }
+
+    /// Erases every record about them. True when it went.
+    func erase(_ person: PersonRecord, typed: String) async -> Bool {
+        recordsBusy = true
+        recordsError = nil
+        defer { recordsBusy = false }
+        do {
+            let r: APIClient.OKResponse = try await client.send(Self.erasePath(for: person.key), method: .post,
+                                                                body: PersonEraseBody(confirm: typed), retryTransient: false)
+            guard r.ok else { recordsError = r.error ?? "Couldn\u{2019}t erase their record."; return false }
+            Haptic.success()
+            return true
+        } catch let e as APIClient.APIError {
+            recordsError = e.message
+        } catch {
+            recordsError = "Couldn\u{2019}t erase their record."
+        }
+        return false
+    }
+}
+
 struct PersonSheet: View {
     let target: PersonSheetTarget
     @State private var viewModel = PersonSheetViewModel()
+    @Environment(\.dismiss) private var dismiss
+    @State private var renaming = false
+    @State private var mergePicking = false
+    @State private var mergeInto: PeopleListRow?
+    @State private var erasing = false
+    @State private var undoing: PeopleMerge?
 
     var body: some View {
         NavigationStack {
@@ -407,13 +557,174 @@ struct PersonSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     case .loaded(let person):
                         loaded(person)
+                        if person.canManageLogin { records(person) }
                     }
                 }
                 .padding(20)
             }
             .accountSheetChrome("Person")
+            .toolbar {
+                if case .loaded(let person) = viewModel.state, person.canManageLogin {
+                    cavnarToolbarItem(placement: .topBarTrailing) { overflowMenu(person) }
+                }
+            }
         }
-        .task { await viewModel.load(target) }
+        .task {
+            await viewModel.load(target)
+            if case .loaded(let p) = viewModel.state, p.canManageLogin { await viewModel.loadMerges(for: p.name) }
+        }
+        .sheet(isPresented: $renaming) {
+            if case .loaded(let person) = viewModel.state {
+                PersonRenameSheet(name: person.name) { newName in
+                    guard let key = await viewModel.rename(person, to: newName) else { return false }
+                    await viewModel.reload(key: key)
+                    return true
+                }
+                .presentationDetents([.medium])
+            }
+        }
+        .sheet(isPresented: $mergePicking) {
+            if case .loaded(let person) = viewModel.state {
+                PersonMergePicker(people: viewModel.people, name: person.name) { picked in
+                    mergePicking = false
+                    mergeInto = picked
+                }
+                .presentationDetents([.medium, .large])
+                .task { await viewModel.loadPeople(excluding: person.key) }
+            }
+        }
+        .sheet(isPresented: $erasing) {
+            if case .loaded(let person) = viewModel.state {
+                PersonEraseSheet(name: person.name, error: viewModel.recordsError) { typed in
+                    guard await viewModel.erase(person, typed: typed) else { return false }
+                    dismiss()
+                    return true
+                }
+                .presentationDetents([.medium])
+            }
+        }
+        .confirmationDialog(mergeConfirmTitle, isPresented: Binding(get: { mergeInto != nil },
+                                                                    set: { if !$0 { mergeInto = nil } }),
+                            titleVisibility: .visible) {
+            Button("Merge them") {
+                guard let into = mergeInto, case .loaded(let person) = viewModel.state else { return }
+                mergeInto = nil
+                Task {
+                    if await viewModel.merge(person, into: into) {
+                        await viewModel.reload(key: into.key)
+                        await viewModel.loadMerges(for: into.name)
+                    }
+                }
+            }
+            Button("Not yet", role: .cancel) { mergeInto = nil }
+        } message: {
+            Text(mergeConfirmMessage)
+        }
+        .confirmationDialog(undoing.map { "Make \($0.from) and \($0.into) two people again?" } ?? "",
+                            isPresented: Binding(get: { undoing != nil }, set: { if !$0 { undoing = nil } }),
+                            titleVisibility: .visible) {
+            Button("Undo the merge", role: .destructive) {
+                guard let m = undoing, case .loaded(let person) = viewModel.state else { return }
+                undoing = nil
+                Task { await viewModel.undoMerge(m, name: person.name) }
+            }
+            Button("Keep them merged", role: .cancel) { undoing = nil }
+        } message: {
+            Text("Each gets back the ratings, notes, roles and shifts they had before.")
+        }
+    }
+
+    private var mergeConfirmTitle: String {
+        guard let into = mergeInto, case .loaded(let p) = viewModel.state else { return "" }
+        return "Merge \(p.name) into \(into.name)?"
+    }
+
+    private var mergeConfirmMessage: String {
+        guard let into = mergeInto, case .loaded(let p) = viewModel.state else { return "" }
+        return "Every rating, note, role and shift of \(p.name) moves to \(into.name), and \(p.name) stays on as "
+            + "another name for them. You can undo it for 30 days."
+    }
+
+    /// Rename, "the same person as…" and — for someone who has left and
+    /// holds no staff login — erase. The account holder's alone.
+    private func overflowMenu(_ person: PersonRecord) -> some View {
+        Menu {
+            Button {
+                renaming = true
+            } label: { Label("Rename", systemImage: "pencil") }
+            Button {
+                mergePicking = true
+            } label: { Label("Same person as\u{2026}", systemImage: "person.2.badge.gearshape") }
+            if person.mayErase {
+                Button(role: .destructive) {
+                    viewModel.recordsError = nil
+                    erasing = true
+                } label: { Label("Erase their record", systemImage: "trash") }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Color.cavnarEmber)
+                .cavnarToolbarIconGlass()
+        }
+        .accessibilityLabel("Name and records")
+    }
+
+    /// The merges of the last 30 days that touch them, with Undo while it
+    /// can still be undone, and the status of the last change.
+    @ViewBuilder
+    private func records(_ person: PersonRecord) -> some View {
+        if let m = viewModel.recordsMessage {
+            Text(m).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let e = viewModel.recordsError, !erasing {
+            Text(e).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !viewModel.merges.isEmpty {
+            AccountSection(kicker: "Merged lately") {
+                ForEach(Array(viewModel.merges.enumerated()), id: \.element.id) { i, m in
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(alignment: .center, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(m.from) \u{2192} \(m.into)")
+                                    .font(.cavnarBody(CavnarType.body, weight: 700))
+                                    .foregroundStyle(m.undone ? Color.cavnarInk3 : Color.cavnarInk)
+                                HomeMixedText.make(Self.mergeLine(m), size: CavnarType.caption, color: .cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 6)
+                            if viewModel.canUndoMerges && m.undoable {
+                                Button {
+                                    Haptic.light()
+                                    undoing = m
+                                } label: {
+                                    Text("Undo")
+                                        .font(.cavnarBody(14, weight: 700))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .frame(minWidth: 44, minHeight: 44)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(viewModel.recordsBusy)
+                            }
+                        }
+                        .padding(.vertical, 9)
+                        if i < viewModel.merges.count - 1 { AccountRowDivider() }
+                    }
+                }
+            }
+        }
+    }
+
+    /// "Merged 10/2/26 · can be undone until 11/1/26", or why not.
+    static func mergeLine(_ m: PeopleMerge) -> String {
+        var bits: [String] = []
+        if let on = m.mergedOn, !on.isEmpty { bits.append("Merged \(on)") }
+        if m.undone { bits.append("undone") }
+        else if m.undoable, let until = m.undoUntil { bits.append("can be undone until \(until)") }
+        else if let why = m.whyNot, !why.isEmpty { bits.append(why) }
+        return bits.joined(separator: " \u{00B7} ")
     }
 
     @ViewBuilder
