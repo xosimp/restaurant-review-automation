@@ -628,6 +628,10 @@ final class RecOutcomeROITests: XCTestCase {
         // One landed result has no check-in; the other already has one.
         XCTAssertEqual(vm.checkInsDue.map(\.id), [7])
         XCTAssertEqual(vm.results.count, 2)
+        // What worked is a Results block, read when Results nears the
+        // screen since the parity round (#20) — not at launch.
+        XCTAssertNil(vm.whatWorked)
+        await vm.loadResults()
         XCTAssertEqual(vm.whatWorked?.isShown, false)
     }
 

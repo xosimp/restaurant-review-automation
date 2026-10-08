@@ -733,9 +733,14 @@ struct HomeView: View {
         f.timeZone = TimeZone(secondsFromGMT: 0)
         f.dateFormat = "yyyy-MM-dd"
         guard let d = f.date(from: iso) else { return nil }
-        f.locale = Locale(identifier: "en_US")
-        f.dateFormat = "EEEE"
-        return (iso, f.string(from: d))
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let symbols = DateFormatter()
+        symbols.locale = Locale(identifier: "en_US")
+        let names = symbols.weekdaySymbols ?? []
+        let i = cal.component(.weekday, from: d) - 1
+        guard names.indices.contains(i) else { return nil }
+        return (iso, names[i])
     }
 
     // MARK: - Sections

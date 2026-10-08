@@ -85,7 +85,7 @@ final class ReviewsIntelParityTests: XCTestCase {
         XCTAssertFalse(try review(rating: 1).isUrgent)
         // Answered is never urgent.
         XCTAssertFalse(try review(#", "urgent": true"#).withStatus("posted").isUrgent)
-        let sev = try review(#", "severity": "safety", "severity_label": "Safety", "severity_reason": "Safety: raw chicken. Guest health."#)
+        let sev = try review(#", "severity": "safety", "severity_label": "Safety", "severity_reason": "Safety: raw chicken. Guest health.""#)
         XCTAssertEqual(sev.severityReason, "Safety: raw chicken. Guest health.")
     }
 
