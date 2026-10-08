@@ -1270,25 +1270,82 @@ def _do_recipes_list(u):
     return {"ok": True, "recipes": out, "count": len(out), "source": source}, 200
 
 
-def _deliveries_since(rid, mark, ids, day):
+def _deliveries_since(rid, mark, ids, day, until=None):
     """{ingredient_id: {"qty", "name", "unit"}} — receiving posted after the
     sheet opened (event id > `mark`) for these ingredients, dated on or
-    before the count."""
+    before the count. `until` (a UTC created_at stamp, _count_taken_at)
+    keeps it to what was posted before the count was taken: anything later
+    is _after_count's, not a question."""
     from models import get_conn as _gc
     if not ids:
         return {}
     conn = _gc()
     try:
         marks = ",".join("?" * len(ids))
+        upto = " AND e.created_at<=?" if until else ""
         rows = conn.execute(
             "SELECT e.ingredient_id, SUM(e.qty) AS qty, i.name, i.unit FROM ingredient_stock_events e "
             "JOIN ingredients i ON i.id=e.ingredient_id AND i.restaurant_id=e.restaurant_id "
-            f"WHERE e.restaurant_id=? AND e.event_type='receiving' AND e.id>? AND e.event_date<=? "
+            f"WHERE e.restaurant_id=? AND e.event_type='receiving' AND e.id>? AND e.event_date<=?{upto} "
             f"AND e.ingredient_id IN ({marks}) GROUP BY e.ingredient_id",
-            (rid, int(mark), day, *ids)).fetchall()
+            (rid, int(mark), day, *((until,) if until else ()), *ids)).fetchall()
     finally:
         conn.close()
     return {r["ingredient_id"]: {"qty": float(r["qty"] or 0), "name": r["name"], "unit": r["unit"] or ""}
+            for r in rows}
+
+
+def _count_taken_at(v):
+    """`counted_at` (ISO 8601 with a zone, from the phone) as the ledger's
+    created_at form — UTC "YYYY-MM-DD HH:MM:SS" — or None when absent or
+    unreadable. A time without a zone is no time. Clamped to now: a phone
+    clock running ahead must not push real events into "before the count"."""
+    from datetime import datetime as _dt, timezone as _tz
+    s = str(v or "").strip()
+    if not s:
+        return None
+    try:
+        t = _dt.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        return None
+    return min(t.astimezone(_tz.utc), _dt.now(_tz.utc)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _after_count(rid, taken, ids, day):
+    """What the ledger heard about these ingredients AFTER the count was
+    taken (created_at > `taken`) — the events a count parked offline must
+    not erase when it lands late (re-audit 10/8/26 #1, the F2-7 class).
+
+    A count written at replay gets a higher row id than a delivery or a
+    waste line posted on the same day while it waited, so as the anchor it
+    erased them, and the delivery came back as inferred waste. Had the
+    count landed when it was taken, those events would have come after it.
+    So: {ingredient_id: {"net": receiving - logged waste - depletion dated
+    the count's day and posted after it, "superseded": a later count of the
+    same item (dated that day or after) is already on the ledger}}. Events
+    dated before the count's day are left alone: the count taken later
+    already holds them, which is what the ledger's date order says."""
+    from models import get_conn as _gc
+    if not ids or not taken:
+        return {}
+    conn = _gc()
+    try:
+        marks = ",".join("?" * len(ids))
+        rows = conn.execute(
+            "SELECT ingredient_id, "
+            "COALESCE(SUM(CASE WHEN event_type='receiving' AND event_date=? THEN qty END), 0) AS recv, "
+            "COALESCE(SUM(CASE WHEN event_type='waste' AND source<>'inferred' AND event_date=? THEN qty END), 0) AS waste, "
+            "COALESCE(SUM(CASE WHEN event_type='depletion' AND event_date=? THEN qty END), 0) AS dep, "
+            "SUM(CASE WHEN event_type='recount' AND event_date>=? THEN 1 ELSE 0 END) AS later "
+            "FROM ingredient_stock_events "
+            f"WHERE restaurant_id=? AND created_at>? AND ingredient_id IN ({marks}) GROUP BY ingredient_id",
+            (day, day, day, day, rid, taken, *ids)).fetchall()
+    finally:
+        conn.close()
+    return {r["ingredient_id"]: {"net": float(r["recv"] or 0) - float(r["waste"] or 0) - float(r["dep"] or 0),
+                                 "superseded": bool(r["later"])}
             for r in rows}
 
 
@@ -1302,6 +1359,20 @@ def _inventory_synced(rid):
     except Exception:
         return None
     return st if isinstance(st, dict) and st.get("synced") else None
+
+
+def _synced_refusal(rid, what):
+    """The 409 a hand-entry write gets once an inventory system has synced
+    this restaurant (inventory_sync), or None. `what` names the thing that
+    now comes from there ("Recipes"). The web hides these controls when
+    synced; the server refuses them too, or the next sync silently undoes
+    the edit (re-audit 10/8/26 #5)."""
+    synced = _inventory_synced(rid)
+    if not synced:
+        return None
+    label = synced.get("label") or "your inventory system"
+    return {"ok": False, "code": "inventory_synced", "source": synced,
+            "error": f"{what} come from {label} now. Change them there; Cavnar AI follows the next sync."}, 409
 
 
 def _do_count_sheet_save(u):
@@ -1347,25 +1418,38 @@ def _do_count_sheet_save(u):
     # (the count includes it) or "after" (it arrived after the count, so it
     # is added to what was counted). A client that does not send its
     # ledger_mark is not asked.
+    #
+    # `counted_at` is when the count was taken. A count parked offline sends
+    # it (and its ledger_mark), because it lands late: what was posted after
+    # it was taken is applied after it (_after_count), never erased by it,
+    # and only what was posted between opening the sheet and taking the
+    # count is asked about (re-audit 10/8/26 #1). Nobody is there to answer
+    # at replay, so the phone keeps the counts and asks when it next opens.
     try:
         mark = int(b.get("ledger_mark")) if b.get("ledger_mark") not in (None, "") else None
     except (TypeError, ValueError):
         mark = None
+    taken = _count_taken_at(b.get("counted_at"))
     choice = b.get("deliveries") if b.get("deliveries") in ("counted", "after") else None
+    count_day = day or _local_today(u).isoformat()
+    ids = []
+    for it in items:
+        try:
+            ids.append(int((it or {}).get("ingredient_id")))
+        except (TypeError, ValueError, AttributeError):
+            pass
+    ids = sorted(set(ids))
     arrived = {}
     if mark is not None:
-        ids = []
-        for it in items:
-            try:
-                ids.append(int((it or {}).get("ingredient_id")))
-            except (TypeError, ValueError, AttributeError):
-                pass
-        arrived = _deliveries_since(_rid(u), mark, sorted(set(ids)), day or _local_today(u).isoformat())
+        arrived = _deliveries_since(_rid(u), mark, ids, count_day, until=taken)
         if arrived and not choice:
             return {"ok": False, "needs_confirm": True,
                     "deliveries": [{"ingredient_id": k, **v} for k, v in sorted(arrived.items())],
-                    "error": "A delivery was received after you opened this sheet — does your count include it?"}, 409
-    written, skipped = 0, []
+                    "error": ("A delivery was received after this count was started — open the count sheet "
+                              "and say whether your count includes it." if taken else
+                              "A delivery was received after you opened this sheet — does your count include it?")}, 409
+    after = _after_count(_rid(u), taken, ids, count_day)
+    written, skipped, superseded = 0, [], 0
     for it in items:
         try:
             ing_id = int(it.get("ingredient_id"))
@@ -1376,8 +1460,17 @@ def _do_count_sheet_save(u):
         if qty < 0 or qty > 1e7:
             skipped.append(it)
             continue
+        late = after.get(ing_id)
+        if late and late["superseded"]:
+            # Someone counted this item again after this count was taken:
+            # theirs is the newer figure (and a replay of this same count,
+            # landing twice, finds its own first landing here).
+            superseded += 1
+            continue
         if choice == "after" and ing_id in arrived:
             qty = round(qty + arrived[ing_id]["qty"], 3)
+        if late and late["net"]:
+            qty = max(0.0, round(qty + late["net"], 3))
         try:
             inventory_ledger.record_recount(_rid(u), ing_id, qty, event_date=day, source="count_sheet")
             written += 1
@@ -1385,8 +1478,18 @@ def _do_count_sheet_save(u):
             skipped.append(it)
     if written:
         log_account_event(_rid(u), "inventory_counted", current_user=u, detail=f"{written} items")
-    return {"ok": written > 0, "written": written, "skipped": len(skipped),
-            "error": None if written else "No usable lines — each needs an ingredient and a number."}, (200 if written else 400)
+    ok = written > 0 or superseded > 0
+    # Which lines were not written, by id where one was given, so the phone
+    # keeps exactly those on the sheet and names them (re-audit 10/8/26 #9).
+    skipped_ids = []
+    for it in skipped:
+        try:
+            skipped_ids.append(int((it or {}).get("ingredient_id")))
+        except (TypeError, ValueError, AttributeError):
+            pass
+    return {"ok": ok, "written": written, "skipped": len(skipped), "skipped_ids": skipped_ids,
+            "superseded": superseded,
+            "error": None if ok else "No usable lines — each needs an ingredient and a number."}, (200 if ok else 400)
 
 
 def _do_recipe_drafts(u):
@@ -1415,6 +1518,9 @@ def _do_recipe_draft_now(u):
     reply says how many are left and the button offers the next batch."""
     if not _sees_food(u):
         return _forbidden("Only someone who can see food cost can draft recipes.")
+    refused = _synced_refusal(_rid(u), "Recipes")
+    if refused:
+        return refused
     import recipes
     from client_api import log_account_event
     if _limited(u, "recipe_draft", 6, 600):
@@ -1441,6 +1547,9 @@ def _do_recipe_draft_now(u):
 def _do_recipe_draft_accept(u, draft_id):
     if not _sees_food(u):
         return _forbidden("Only someone who can see food cost can review recipes.")
+    refused = _synced_refusal(_rid(u), "Recipes")
+    if refused:
+        return refused
     import recipes
     from client_api import log_account_event
     out = recipes.accept(_rid(u), int(draft_id), lines=_body().get("lines"), user_id=u.get("id"),
@@ -1461,6 +1570,9 @@ def _do_recipe_draft_reject(u, draft_id):
 def _do_recipes_import(u):
     if not _sees_food(u):
         return _forbidden("Only someone who can see food cost can import recipes.")
+    refused = _synced_refusal(_rid(u), "Recipes")
+    if refused:
+        return refused
     import recipes
     from client_api import log_account_event
     text = _body().get("csv") or ""
@@ -4598,6 +4710,9 @@ def _do_reservation_sync(u):
 def _do_recipe_scan(u):
     if not _sees_food(u):
         return _forbidden("Only someone who can see food cost can add recipes.")
+    refused = _synced_refusal(_rid(u), "Recipes")
+    if refused:
+        return refused
     import recipes
     f = request.files.get("file")
     if not f:

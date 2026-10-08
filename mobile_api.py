@@ -2284,6 +2284,15 @@ def mobile_set_ingredient_supplier(current_user):
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify(ok=False, error="Ingredient name is required"), 400
+    # Synced from an inventory system: its suppliers are the ledger's, and
+    # the web's supplier picker is disabled then — refused here too, or the
+    # next sync silently puts the old supplier back (re-audit 10/8/26 #5).
+    import strategy_routes as _sr_sync
+    synced = _sr_sync._inventory_synced(rid)
+    if synced:
+        label = synced.get("label") or "your inventory system"
+        return jsonify(ok=False, code="inventory_synced", source=synced,
+                       error=f"Suppliers come from {label} now. Change it there; this list follows the next sync."), 409
     supplier_name  = (data.get("supplier_name") or "").strip()
     supplier_email = (data.get("supplier_email") or "").strip()
     # Was `"@" in value`, with no length bound and no format check — on the

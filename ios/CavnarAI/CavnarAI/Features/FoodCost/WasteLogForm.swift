@@ -31,7 +31,7 @@ final class WasteLogViewModel {
     /// Every key /food-cost/waste reads, plus the `idempotency_key` that
     /// makes a resend (the offline queue's replay, a second tap after a lost
     /// answer) land once.
-    struct Body: Encodable, Equatable {
+    struct Body: Codable, Equatable {
         let ingredientId: Int
         let qty: Double
         let reason: String
@@ -44,8 +44,38 @@ final class WasteLogViewModel {
     }
 
     /// One key per line of waste, kept until it lands, so a retry of the
-    /// same line is the same write.
+    /// same line is the same write — and only the same line: the key is
+    /// tied to the body it was made for, so a different line after a
+    /// cancelled or failed send never reuses it (the server would answer it
+    /// with the first line's result, and it would never be logged —
+    /// re-audit 10/8/26 #8).
     private var pendingKey: String?
+    private var pendingKeyBody: Body?
+
+    /// The key for this line: the kept one when it was made for exactly
+    /// this line, else a new one.
+    func key(for line: Body) -> String {
+        if let k = pendingKey, pendingKeyBody == line { return k }
+        let k = UUID().uuidString
+        pendingKey = k
+        pendingKeyBody = line
+        return k
+    }
+
+    private func forgetKey() {
+        pendingKey = nil
+        pendingKeyBody = nil
+    }
+
+    /// Waste lines parked in the offline queue, read back from it — what
+    /// the form shows as waiting to send, so a relaunch does not invite the
+    /// same line logged twice (#7).
+    var parked: [Body] = []
+
+    func refreshParked() async {
+        let writes = await PendingWriteQueue.shared.pending(path: QueuedWrite.wastePath)
+        parked = writes.compactMap { w in w.bodyJSON.flatMap { try? JSONDecoder().decode(Body.self, from: $0) } }
+    }
     private struct Response: Decodable { let ok: Bool; let name: String?; let unit: String?; let error: String? }
 
     var quantity: Double? {
@@ -65,13 +95,12 @@ final class WasteLogViewModel {
         loggedLine = nil
         queuedLine = nil
         defer { isLogging = false }
-        let key = pendingKey ?? UUID().uuidString
-        pendingKey = key
-        let body = Body(ingredientId: ingredientId, qty: qty, reason: reason, idempotencyKey: "waste:" + key)
+        let line = Body(ingredientId: ingredientId, qty: qty, reason: reason)
+        let body = Body(ingredientId: ingredientId, qty: qty, reason: reason, idempotencyKey: "waste:" + key(for: line))
         do {
             let r: Response = try await client.send("/mobile/api/food-cost/waste", method: .post,
                                                     body: body, retryTransient: false)
-            pendingKey = nil
+            forgetKey()
             guard r.ok else {
                 errorMessage = r.error ?? "Couldn\u{2019}t log that."
                 return false
@@ -89,12 +118,13 @@ final class WasteLogViewModel {
                 return false
             }
             await PendingWriteQueue.shared.enqueue(write)
-            pendingKey = nil
+            forgetKey()
             queuedLine = "Kept on this phone. " + RecAnswer.queuedLine + "."
             qtyText = ""
+            await refreshParked()
             return false
         } catch let error as APIClient.APIError {
-            pendingKey = nil
+            forgetKey()
             errorMessage = error.message
         } catch is CancellationError {
         } catch {
@@ -161,6 +191,9 @@ struct WasteLogForm: View {
                     Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color.cavnarInk3)
                 }
             }
+            if !viewModel.parked.isEmpty {
+                parkedList
+            }
             Button {
                 Haptic.light()
                 qtyFocused = false
@@ -179,6 +212,31 @@ struct WasteLogForm: View {
             .disabled(!viewModel.canLog)
         }
         .cavnarCard()
+        .task { await viewModel.refreshParked() }
+        .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
+            Task { await viewModel.refreshParked() }
+        }
+    }
+
+    /// Lines kept on the phone, still waiting for a connection — already
+    /// logged as far as the owner is concerned.
+    private var parkedList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Waiting to send")
+                .font(.cavnarBody(12.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+            ForEach(Array(viewModel.parked.enumerated()), id: \.offset) { _, line in
+                HomeMixedText.make(Self.parkedLine(line, items: items), size: 13.5, weight: 500, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// "2 lb Salmon · Spoiled".
+    static func parkedLine(_ line: WasteLogViewModel.Body, items: [CountSheetItem]) -> String {
+        let item = items.first { $0.ingredientId == line.ingredientId }
+        let unit = (item?.unit ?? "").isEmpty ? "" : " \(item?.unit ?? "")"
+        let why = WasteLogViewModel.reasons.first { $0.key == line.reason }?.label ?? line.reason
+        return "\(CountSheetViewModel.expectedString(line.qty))\(unit) \(item?.name ?? "an ingredient") \u{00B7} \(why)"
     }
 }
 

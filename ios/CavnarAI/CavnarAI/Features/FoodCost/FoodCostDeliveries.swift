@@ -42,6 +42,8 @@ final class DeliveriesViewModel {
             let r: OrdersResponse = try await client.send("/mobile/api/food-cost/purchase-orders", hapticOnError: false)
             orders = r.orders
             loadError = nil
+            queued = Set(await PendingWriteQueue.shared.pending(pathPrefix: QueuedWrite.receivePathPrefix)
+                .compactMap { QueuedWrite.receivePoId($0.path) })
         } catch let error as APIClient.APIError {
             if orders.isEmpty { loadError = error.message }
         } catch is CancellationError {
@@ -84,8 +86,21 @@ final class DeliveriesViewModel {
 
     /// One key per order until its receive lands.
     private var receiveKeys: [Int: String] = [:]
-    /// Orders whose receive is parked in the offline queue.
+    /// Orders whose receive is parked in the offline queue — read back from
+    /// the queue (refreshQueued), not only remembered: after a relaunch the
+    /// order must still read "kept on this phone", or a second receive goes
+    /// out and the parked one replays onto a received order (re-audit
+    /// 10/8/26 #7).
     var queued: Set<Int> = []
+
+    func refreshQueued() async {
+        let writes = await PendingWriteQueue.shared.pending(pathPrefix: QueuedWrite.receivePathPrefix)
+        let now = Set(writes.compactMap { QueuedWrite.receivePoId($0.path) })
+        // A receive that left the queue landed (or was given up): re-read.
+        let landed = !queued.subtracting(now).isEmpty
+        queued = now
+        if landed { await load() }
+    }
 
     private struct ReceiveResponse: Decodable {
         struct Posted: Decodable { let item: String }
@@ -161,6 +176,14 @@ final class DeliveriesViewModel {
             }
         } catch let error as APIClient.APIError {
             receiveKeys[order.id] = nil
+            if PendingWriteQueue.isAlreadyDone(error, path: QueuedWrite.receivePath(order.id)) {
+                // Received another way meanwhile — the stock is in.
+                receivedLine = "\(order.poNumber) was already received."
+                shortOpen = nil
+                arrived[order.id] = nil
+                await load()
+                return
+            }
             errors[order.id] = error.message
         } catch is CancellationError {
         } catch {
@@ -203,6 +226,9 @@ struct DeliveriesSection: View {
             }
         }
         .cavnarCard()
+        .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
+            Task { await viewModel.refreshQueued() }
+        }
     }
 
     private func orderRow(_ order: PurchaseOrder) -> some View {
@@ -220,6 +246,10 @@ struct DeliveriesSection: View {
                     Text("Received")
                         .font(.cavnarBody(13.5, weight: 700))
                         .foregroundStyle(Color.cavnarGreen)
+                } else if viewModel.queued.contains(order.id) {
+                    Label("Waiting to send", systemImage: "clock.arrow.circlepath")
+                        .font(.cavnarBody(13, weight: 700))
+                        .foregroundStyle(Color.cavnarInk3)
                 }
             }
             if !order.isReceived {

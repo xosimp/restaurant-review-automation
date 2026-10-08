@@ -52,12 +52,17 @@ enum SecureCache {
     ///
     /// `keeping` spares named keys — a location switch keeps the offline
     /// queue, which it has already trimmed to the new location itself.
-    static func purgeAll(keeping kept: Set<String> = []) {
+    /// `keepingPrefixes` spares every key that starts with one of them — a
+    /// location switch keeps the count-sheet drafts, which are scoped to
+    /// their user and location already (re-audit 10/8/26 #3).
+    static func purgeAll(keeping kept: Set<String> = [], keepingPrefixes: [String] = []) {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil
         ) else { return }
         let keptNames = Set(kept.map { fileURL(for: $0).lastPathComponent })
-        for file in files where !keptNames.contains(file.lastPathComponent) {
+        let keptPrefixes = keepingPrefixes.map { fileURL(for: $0).lastPathComponent }
+        for file in files where !keptNames.contains(file.lastPathComponent)
+            && !keptPrefixes.contains(where: { file.lastPathComponent.hasPrefix($0) }) {
             try? FileManager.default.removeItem(at: file)
         }
     }

@@ -11498,7 +11498,12 @@ def _do_receive_po(current_user, po_id, data):
     finally:
         conn.close()
     if not row or row["status"] != "sent":
-        return {"ok": False, "error": "That order is already received, or isn't yours."}, 404
+        # `already_received` names the one case a replay can treat as done:
+        # a receive parked on the phone, landing after the order was
+        # received another way (re-audit 10/8/26 #7).
+        return {"ok": False, "error": "That order is already received, or isn't yours.",
+                **({"code": "already_received", "po_number": row["po_number"]}
+                   if row and row["status"] == "received" else {})}, 404
     try:
         items = [i for i in (_json_r.loads(row["items_json"] or "[]") or []) if isinstance(i, dict)]
     except Exception:
@@ -11516,7 +11521,8 @@ def _do_receive_po(current_user, po_id, data):
         overrides[_po_line_key(ln)] = q
     from models import mark_purchase_order_received
     if not mark_purchase_order_received(rid, po_id):
-        return {"ok": False, "error": "That order is already received, or isn't yours."}, 404
+        return {"ok": False, "error": "That order is already received, or isn't yours.",
+                "code": "already_received", "po_number": row["po_number"]}, 404
     # Each line's receiving event carries the PO number at the head of its
     # note, so a line already in stock is never posted twice. A failure
     # partway (a lock timeout) used to leave the order "received" with only
@@ -11628,7 +11634,13 @@ def _do_log_waste(current_user, data):
     log_account_event(rid, "waste_logged", current_user, detail=f"{out['name']}: {qty:g} ({reason})")
     # The week's waste as it stands now, so the page updates in place - the
     # figure, its verdict, the Biggest waste items list (owner, 9/26/26: a
-    # logged line only showed as a toast until a reload).
+    # logged line only showed as a toast until a reload). Dollars, so only
+    # for a login that may see them: a counts-only manager (FOOD_COST_ENTER
+    # without FOOD_COST_VIEW) logs waste and is told what was logged, never
+    # what the week's waste cost (permissions.FOOD_COST_ENTER; re-audit
+    # 10/8/26 #4).
+    if not _sees_food_money(current_user):
+        return out, 200
     try:
         import inventory as _inv_w
         _it_w, _live_w, _a_w = _inv_w.analysis_for(rid)
@@ -11657,10 +11669,24 @@ def _once(route, body, busy):
     return _sr_once._idempotent(body, route, busy=busy)
 
 
+def _sees_food_money(current_user) -> bool:
+    """Whether this login may see Food Cost's dollar figures (FOOD_COST_VIEW,
+    or an admin) — purchase_orders_for's test, for every FOOD_COST_ENTER
+    route's answer."""
+    from permissions import has_permission, FOOD_COST_VIEW
+    return bool(current_user.get("is_admin") or has_permission(current_user, FOOD_COST_VIEW))
+
+
 def _do_log_waste_once(current_user, data):
-    """_do_log_waste, deduplicated by its idempotency key (web and phone)."""
-    return _once("food_waste", lambda u: _do_log_waste(u, data),
-                 "That waste line is still being logged — check back in a moment.")(current_user)
+    """_do_log_waste, deduplicated by its idempotency key (web and phone).
+    The stored answer is the restaurant's, not the login's (_idempotent keys
+    on restaurant, route and key), so the dollar summary is taken off again
+    here for a login that may not see it."""
+    payload, status = _once("food_waste", lambda u: _do_log_waste(u, data),
+                            "That waste line is still being logged — check back in a moment.")(current_user)
+    if isinstance(payload, dict) and "waste" in payload and not _sees_food_money(current_user):
+        payload = {k: v for k, v in payload.items() if k != "waste"}
+    return payload, status
 
 
 def _do_receive_po_once(current_user, po_id, data):
