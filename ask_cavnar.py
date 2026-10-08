@@ -2799,8 +2799,12 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         if _prerun_payload is not None and '"error"' in str(_prerun_payload)[:400]:
             _prerun_payload = None           # the model calls it itself, as before
     # The snapshot's ACROSS THE BUSINESS section is the short form of that
-    # result; with the result in the turn it is left out rather than sent twice.
-    snapshot = _without_across(context) if _prerun_payload is not None else context
+    # result. It stays in: the snapshot is a cached system block, and cutting
+    # it on an executive turn made a different block — a cache write on every
+    # switch between a standard and an executive question, for a few hundred
+    # tokens saved (context re-audit 10/7/26 #5). The per-turn _PRERUN_NOTE
+    # says the result supersedes the section.
+    snapshot = context
 
     # The chat's own memory (memory audit 9/29/26, conversations): per chat
     # and per turn, so never inside the snapshot a viewer's other chats
@@ -2847,6 +2851,14 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # Where this turn starts: its messages carry the message cache
     # breakpoints (#16, _cached_messages); history never does.
     turn_start = len(messages) - 1
+    # Round one marks its messages only when the turn will likely go on to a
+    # second round that reads them (context re-audit 10/7/26 #6): a pre-read
+    # or replayed reads in the turn, or an executive question. A one-round
+    # answer — most standard and brief questions — paid the cache-write
+    # premium on the per-turn blocks, the history and the question for a
+    # prefix nothing read. Otherwise the first message breakpoints go on in
+    # round two, where the round after it reads them.
+    _mark_round_one = depth == "executive" or _prerun_payload is not None or bool(_replay)
 
     proposals = []
     truncated = False
@@ -3040,7 +3052,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             get_client(),
             **_on_route({"model": model, "max_tokens": max_tokens}),
             system=system_blocks,
-            messages=_cached_messages(messages, turn_start),
+            messages=_cached_messages(messages, turn_start, enabled=bool(_round) or _mark_round_one),
             tools=tool_specs,
             restaurant_id=restaurant.id,
             action=action,
@@ -3240,8 +3252,9 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
 # Told to the model on a turn that carries the pre-read, so the static rule
 # ("call read_business_snapshot first") is not followed a second time.
 _PRERUN_NOTE = ("read_business_snapshot has already run for this question: its result is the first tool result "
-                "in this turn, and the snapshot's ACROSS THE BUSINESS section is left out because that result "
-                "carries it in full. Do not call it again; call another tool only for detail it does not carry.")
+                "in this turn and supersedes the snapshot's ACROSS THE BUSINESS section, which is its short form — "
+                "where they differ, use the result. Do not call it again; call another tool only for detail it "
+                "does not carry.")
 # The synthetic call's id ("toolu_" is the API's own prefix; any [A-Za-z0-9_-] id is accepted).
 _PRERUN_TOOL_ID_PREFIX = "toolu_cavnar_pre_"
 
@@ -3315,7 +3328,9 @@ def _prerun_allowed(model) -> bool:
 
 def _without_across(context) -> str:
     """The snapshot without its ACROSS THE BUSINESS section (the short form
-    of read_business_snapshot), for a turn that carries the full result."""
+    of read_business_snapshot). No turn cuts it any more (context re-audit
+    10/7/26 #5: the snapshot block stays byte-identical so it stays cached);
+    candidate for future cleanup after additional verification."""
     import business_intelligence as _bi_sec
     head = _bi_sec.SNAPSHOT_HEADER
     i = (context or "").find(head)

@@ -167,8 +167,11 @@ def test_round_one_marks_the_question_and_later_rounds_the_newest_results(db_pat
     history = [{"role": "user", "content": "earlier"}, {"role": "assistant", "content": "earlier answer"}]
     ask_cavnar.ask_with_tools(r, "anything urgent?", history=history)
     assert len(calls) == 4
-    # round 1: the question (index 2), never the history before it
-    assert _marked(calls[0]["messages"]) == [(2, "user")]
+    # round 1 of a standard question with nothing replayed or pre-read: no
+    # message breakpoint (context re-audit 10/7/26 #6 — most such turns end
+    # in one round, and a write nothing reads is a 1.25x premium); round two
+    # is the first to mark, and never the history before the question.
+    assert _marked(calls[0]["messages"]) == []
     # round 2: the question and the first results
     assert _marked(calls[1]["messages"]) == [(2, "user"), (4, "user")]
     # round 3: the two newest results; the question's marker is gone
@@ -242,11 +245,43 @@ def test_an_executive_question_carries_the_business_snapshot_without_a_round(db_
     assert "reviews" in meta["modules_consulted"]
     assert {"name": "read_business_snapshot", "input": {}} in meta["tool_calls"]
     texts = [b["text"] for b in calls[0]["system"]]
-    assert bi.SNAPSHOT_HEADER not in texts[1]
-    assert ask_cavnar._PRERUN_NOTE in texts
+    # The snapshot block keeps its ACROSS THE BUSINESS section: it is the
+    # cached block a standard turn sends too (context re-audit 10/7/26 #5),
+    # and the per-turn note says the result supersedes it.
+    assert bi.SNAPSHOT_HEADER in texts[1]
+    assert ask_cavnar._PRERUN_NOTE in texts and "supersedes" in ask_cavnar._PRERUN_NOTE
     assert ask_cavnar._DEPTH_EXECUTIVE.strip() in texts
     # the newest user message — the result — and the question carry the breakpoints
     assert _marked(msgs) == [(0, "user"), (2, "user")]
+
+
+def test_the_snapshot_block_is_the_same_bytes_on_a_standard_and_an_executive_turn(db_path, monkeypatch):
+    """Context re-audit 10/7/26 #5: the pre-read no longer cuts the snapshot,
+    so switching depth never rewrites the cached block."""
+    r = _restaurant(db_path, module_reviews=1)
+    monkeypatch.setattr(bi, "_executive_brief", lambda *a, **k: {
+        "modules_consulted": ["reviews"], "reviews": {"fix_first": "Answer the 1-star reviews"},
+        "links": [], "money": {"ranked": []}, "modules_off": [], "degraded": [], "unanswered": []})
+    calls = _script(monkeypatch, [_Msg("end_turn", [_Text("4.5 stars.")])])
+    ask_cavnar.ask_with_tools(r, "what's my rating")
+    ask_cavnar.ask_with_tools(r, "what should I focus on this week?")
+    ask_cavnar.ask_with_tools(r, "what's my rating")
+    standard, executive, again = (c["system"][1] for c in calls)
+    assert len(calls[1]["messages"]) == 3, "the executive turn carried the pre-read"
+    assert standard == executive == again
+    assert standard.get("cache_control") == {"type": "ephemeral"}
+
+
+def test_a_one_round_answer_pays_no_message_breakpoint_but_an_executive_one_does(db_path, monkeypatch):
+    """Context re-audit 10/7/26 #6."""
+    r = _restaurant(db_path)
+    calls = _script(monkeypatch, [_Msg("end_turn", [_Text("You open at 11.")])])
+    ask_cavnar.ask_with_tools(r, "when do we open", history=[{"role": "user", "content": "hi"},
+                                                            {"role": "assistant", "content": "hello"}])
+    assert _marked(calls[-1]["messages"]) == []
+    ask_cavnar.ask_with_tools(r, "what should I focus on this quarter?")
+    assert ask_cavnar._depth_for("what should I focus on this quarter?") == "executive"
+    assert _marked(calls[-1]["messages"])[0] == (0, "user")
 
 
 def test_a_standard_question_gets_no_pre_read(db_path, monkeypatch):
