@@ -11503,7 +11503,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       ('ot', 'Overtime', 'Hours past 40 in a week, at the premium', _sb.overtime, 'No one went past 40 hours in this window.', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
     ] %}
     {% for key, title, sub, items, empty, icon in _lanes %}
-    <section class="sb-lane" data-tone="{{ key }}" aria-label="{{ title }}">
+    <section class="sb-lane" data-tone="{{ key }}"{% if key == 'ot' %} id="lb2-ot-lane"{% endif %} aria-label="{{ title }}">
       <div class="sb-lh"><span class="sb-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">{{ icon|safe }}</svg></span>
         <div class="sb-lt"><b>{{ title }}</b><small>{{ sub }}</small></div>
         <span class="sb-ln hb-num">{{ items|length }}</span></div>
@@ -21181,7 +21181,14 @@ function loadMktInsight(){
       return;
     }
   }catch(e){}
+  // One poll loop per read: switching back to Marketing while a read is
+  // still being written found the box still "loading" and started a
+  // second loop beside the first. The flag clears on the final answer or
+  // a failure, never on an interim one.
+  if(window._mktInsightPolling)return;
+  window._mktInsightPolling=true;
   insightSwr('/api/mkt-insight', function(d, interim){
+    if(!interim)window._mktInsightPolling=false;
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
     if(!interim){cavSet('mkt_brief',html);cavSet('mkt_brief_at',String(Date.now()));}
     if(!interim)cavSet('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[],stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||'',generated_at:d.generated_at||''}));
@@ -21191,6 +21198,7 @@ function loadMktInsight(){
     mktStaleCaveat(el,d);
     mktLoaded=true;
   }, function(){
+    window._mktInsightPolling=false;
     el.classList.remove('insight-loading');
     el.textContent='Marketing brief unavailable — check back shortly.';
     mktLoaded=false;
@@ -33058,7 +33066,9 @@ document.addEventListener('click', function(e) {
       // One inline action: a drafted reply is read here in full and
       // posted from the row - an outward send, so the text it sends is
       // on screen before the button that sends it (DS §10).
-      var act = (n.can_approve && !n.resolved && n.draft);
+      // A clipped reply (draft_complete false) is read on its review, not
+      // approved from here: the row would post words it never showed.
+      var act = (n.can_approve && !n.resolved && n.draft && n.draft_complete !== false);
       // Undo a queued send, Approve / Deny a staff request (web desk #4):
       // only where the server says this login may (can_undo / can_decide).
       var act2 = _rowActs(n);
@@ -33101,7 +33111,11 @@ document.addEventListener('click', function(e) {
     var n = _find(key);
     if (!n || !n.review_id) return;
     var done = (typeof cbtnBusy === 'function') ? cbtnBusy(btn, 'Posting…') : function() {};
-    fetch('/approve/' + n.review_id, {method: 'POST'}).then(apiJson).then(function(d) {
+    // The reply the row showed, by its fingerprint: edited or regenerated
+    // since, and nothing posts (409 draft_changed).
+    var body = n.draft_hash ? {expected_draft_hash: n.draft_hash} : {};
+    fetch('/approve/' + n.review_id, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                      body: JSON.stringify(body)}).then(apiJson).then(function(d) {
       done();
       if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'Couldn’t approve that reply', 'error'); return; }
       n.resolved = true; n.can_approve = false;
@@ -39245,6 +39259,28 @@ function memRetagBody(was, now) {
       cavNavOpenModule('account');
       if (window.acctGo) acctGo('notifications');
       setTimeout(function () { var c = $id('sb-card'); if (c && !c.hidden) c.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 400);
+      return true;
+    }
+    // Overtime and Waiting on you are Labor places of their own (the bell's
+    // and the push's labor/overtime and labor/waiting - nav._ALERT_NAV): the
+    // Staffing review's overtime lane, and the Waiting on you card, which is
+    // filled after a fetch, so it is waited for (about 3s). Nothing waiting
+    // (the card stays hidden): Labor's top, where it would be.
+    if (p.rest[0] === 'overtime' || p.rest[0] === 'waiting') {
+      cavNavOpenModule('labor');
+      if (window.lb2OnOpen) lb2OnOpen();
+      var lbWait = p.rest[0] === 'waiting', lbTries = 0;
+      (function land() {
+        var el = lbWait ? $id('lb2-wait') : ($id('lb2-ot-lane') || $id('lb2-money-all'));
+        if (!el) return;
+        if (el.tagName === 'DETAILS') el.open = true;
+        var d = el.parentNode && el.parentNode.closest ? el.parentNode.closest('details') : null;
+        while (d) { d.open = true; d = d.parentNode && d.parentNode.closest ? d.parentNode.closest('details') : null; }
+        if ((el.hidden || el.offsetParent === null) && lbTries++ < 15) { setTimeout(land, 200); return; }
+        if (el.hidden || el.offsetParent === null) return;
+        el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        if (window.cavFlash) cavFlash(el);
+      })();
       return true;
     }
     // The schedule is the Schedule tab now (10/1/26).

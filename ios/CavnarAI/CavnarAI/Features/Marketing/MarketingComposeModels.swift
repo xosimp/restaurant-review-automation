@@ -84,7 +84,17 @@ struct ScheduledPost: Decodable, Identifiable {
 
     /// "9/6/26 · 11:00am" — the restaurant's own wall clock, which is what
     /// the owner picked, so it is read as one rather than converted.
-    var whenLabel: String { CavnarDate.mdyTime(scheduledFor) }
+    var whenLabel: String { Self.whenLabel(scheduledFor) }
+
+    /// M/D/YY (with the time when there is one), or "—" for a stamp that
+    /// does not start with a real date: `CavnarDate.mdy` hands back what it
+    /// cannot read, so an unparseable stamp used to reach the owner as is.
+    static func whenLabel(_ raw: String) -> String {
+        let stamp = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard DSRFormat.isISODate(String(stamp.prefix(10))) else { return "\u{2014}" }
+        // A time part that is not HH:MM falls back to the date alone.
+        return CavnarDate.mdyTime(stamp)
+    }
 
     var statusLabel: String {
         switch status {
