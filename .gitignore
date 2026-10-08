@@ -29,3 +29,7 @@ ios/CavnarAI/.dev-url
 # wrangler
 .wrangler
 .dev.vars*
+
+# Ember Core render scratch (brand/ember-core/README.txt)
+brand/ember-core/render/frames/
+brand/ember-core/render/ember-core.js

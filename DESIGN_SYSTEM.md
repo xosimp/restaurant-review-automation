@@ -1680,9 +1680,24 @@ breath two incommensurate sines.
 - **Fallback.** Each anchor keeps its CSS `.ember` underneath; it hides only
   under `html.core-live` (WebGL compiled). Reduced motion: one still frame per
   scroll, no streams.
-- **Next surfaces** (not built): the dashboard's Ask orb, loading/thinking
-  states, notifications, the iOS app (a Metal port of the same shader) — the
-  same material and the same four states, so it is recognisable everywhere.
+- **Where it appears** (10/8/26) — only where the app means "this is Cavnar
+  AI", large and mostly at rest; working and loading stay with the dotted orb
+  (`CavnarOrb` / `cavnar-orb.js`), compact and error states with the Cold
+  Hearth. Web app (`static/ember-core.js`, a copy of the site's, held equal by
+  `tests/test_public_site.py`; it registers `[data-core]` elements as they
+  appear): sign-in (above the card), Ask Cavnar AI before anything is asked
+  (`ASK_CORE`), and the whole-screen empty states (`ecEmptyCore`: Intel with no
+  competitor data, the daily report not yet built or switched off,
+  Recommendations, Schedule History). iOS (`EmberCore.metal` — the web shader
+  line for line — and `EmberCoreView`): launch (the seal ring draws and its
+  ember ignites into the core), sign-in and the Face ID lock (above the
+  wordmark), Ask Cavnar AI before anything is asked, and every
+  `CavnarEmptyHearth`. A **resting** core (empty states: `data-core-energy=".3"`
+  / `energy: 0.3`) runs cooler and **wakes** while the screen's own action is
+  hovered or held (`data-core-wake` / `awake:`). Building iOS needs Xcode's
+  Metal Toolchain. Marketing stills and seamless loops, rendered by the same
+  shader: `brand/ember-core/`. No onboarding exists yet; when one is built the
+  core opens it.
 
 ## 13. Checklist before shipping a screen
 
