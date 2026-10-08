@@ -293,11 +293,20 @@ def mobile_passkeys_register_options(current_user):
 @mobile_bp.route("/passkeys", methods=["POST"])
 @mobile_login_required
 def mobile_passkeys_register(current_user):
+    """The passkey is named for the device the app says it runs on —
+    `device` "iPhone", "iPad" or "Mac" (re-audit 10/8/26, #11: an iPad's
+    was saved as "iPhone"); anything else reads as an iPhone."""
     import passkeys
     from auth_routes import _do_passkey_register
-    payload, status = _do_passkey_register(current_user, request.get_json(silent=True) or {},
-                                           passkeys.app_host(), "iPhone")
+    data = request.get_json(silent=True) or {}
+    device = _PASSKEY_DEVICES.get(str(data.get("device") or ""), "iPhone")
+    payload, status = _do_passkey_register(current_user, data, passkeys.app_host(), device)
     return jsonify(**payload), status
+
+
+# What the app may say it is -> the user-agent word passkeys._device_name
+# names the passkey from.
+_PASSKEY_DEVICES = {"iPhone": "iPhone", "iPad": "iPad", "Mac": "Macintosh"}
 
 
 @mobile_bp.route("/passkeys/<int:passkey_id>/remove", methods=["POST"])
@@ -6014,6 +6023,17 @@ def _session_label(session):
     return "Web browser"
 
 
+def _can_delete_own_login(current_user) -> bool:
+    if current_user.get("acting_admin") or current_user.get("acting_admin_id"):
+        return False
+    try:
+        from auth import own_login_deletion_refusal
+        return own_login_deletion_refusal(current_user) is None
+    except Exception as e:
+        print(f"[mobile account] delete-login rule unavailable: {e}")
+        return False
+
+
 def _do_mobile_account(current_user):
     from notify import get_alert_contacts
     rid = current_user["restaurant_id"]
@@ -6076,6 +6096,10 @@ def _do_mobile_account(current_user):
         "password_strength": current_user.get("password_strength"),
         # Staff sign-in notices (the web's switch; twin /account/staff-signin-notify).
         "staff_signin_notify": bool(getattr(restaurant, "staff_signin_notify", 0)),
+        # Account → Delete my login is offered by the delete route's own rule:
+        # a teammate, or a co-owner while another owner remains (re-audit
+        # 10/8/26, #7); never in view-as.
+        "can_delete_login": _can_delete_own_login(current_user),
     }
     # A credential-pair POS (Toast/Square/Clover) can have its id fields set
     # and still not be working: Toast's connect route saves the three fields
@@ -6111,8 +6135,12 @@ def _do_mobile_account(current_user):
             "source": _g_source,
             "label": _g_label,
         },
+        # Instagram & Facebook: one row, connected by the one rule the
+        # account's "N connected" count reads (account_health.connections —
+        # re-audit 10/8/26, #14; a Facebook Page alone counted there and
+        # read "Not connected" here).
         "instagram": {
-            "connected": bool(getattr(restaurant, "ig_token", None)),
+            "connected": bool(__import__("account_health").connections(restaurant)["rows"]["instagram"]),
         },
         "toast": _pos_row("toast", "toast_restaurant_guid"),
         "square": _pos_row("square", "square_location_id"),
@@ -6867,9 +6895,10 @@ def mobile_security_summary(current_user):
 @mobile_bp.route("/account/health")
 @mobile_login_required
 def mobile_account_health(current_user):
-    """Twin of /api/account/health (account_health.payload)."""
+    """Twin of /api/account/health (account_health.payload), worded for the
+    app: no "update your card" (re-audit 10/8/26, #15)."""
     import account_health
-    payload = account_health.payload(current_user)
+    payload = account_health.payload(current_user, surface="ios")
     return jsonify(**payload), (200 if payload.get("ok") else 404)
 
 

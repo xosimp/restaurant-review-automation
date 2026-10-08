@@ -16983,6 +16983,7 @@ EMAIL_TYPE_LABELS = {
     "send_password_reset_code_email": "Password reset code",
     "send_password_changed_email":    "Password changed",
     "send_email_changed_email":       "Sign-in email changed",
+    "send_passkey_added_email":       "Passkey added",
     "send_recovery_email_code":       "Recovery email code",
     "send_signup_welcome_email":      "Welcome",
     "send_welcome_email":             "Dashboard access",

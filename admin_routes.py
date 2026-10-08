@@ -407,6 +407,16 @@ def reactivate_client(user_id, current_user):
     row = _login_row(user_id)
     if not row or row["is_admin"]:
         return jsonify(ok=False, error="That login can't be reactivated here."), 404
+    # Deleted by the person who held it (auth.delete_own_login): never
+    # revived silently — they are invited again (re-audit 10/8/26, #5).
+    conn = get_conn()
+    try:
+        _ph = conn.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
+    finally:
+        conn.close()
+    if _auth_r.login_deleted_by_holder(_ph):
+        return jsonify(ok=False, deleted_by_holder=True,
+                       error="This login was deleted by its holder. Invite them again instead."), 409
     _auth_r.end_login_access(user_id)
     conn = get_conn()
     conn.execute("UPDATE users SET is_active=1 WHERE id=? AND is_admin=0", (user_id,))

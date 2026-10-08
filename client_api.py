@@ -6006,15 +6006,16 @@ def _do_delete_own_login(current_user):
     delete what they themselves signed up with. Only ever the caller's own
     login, never in view-as. Twin routes: POST /api/account/delete-login and
     /mobile/api/account/delete-login. Returns ({ok}, status)."""
-    from permissions import is_principal
     if not current_user:
         return {"ok": False, "error": "Sign in first."}, 401
     if current_user.get("acting_admin_id") or current_user.get("acting_admin"):
         return {"ok": False, "error": "A login is deleted by its own holder, not in view-as."}, 403
-    if is_principal(current_user):
-        return {"ok": False, "owner_only": True,
-                "error": "An owner's login closes with the account — use Close my account."}, 403
-    from auth import delete_own_login
+    # A co-owner may too, while another owner remains (re-audit 10/8/26, #7);
+    # the account holder closes the account instead.
+    from auth import delete_own_login, own_login_deletion_refusal
+    refusal = own_login_deletion_refusal(current_user)
+    if refusal:
+        return {"ok": False, "owner_only": True, "error": refusal}, 403
     rid = current_user["restaurant_id"]
     out = delete_own_login(current_user["id"], rid)
     if not out.get("ok"):

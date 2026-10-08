@@ -15922,11 +15922,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <div class="ac-status" id="acct-close-status" role="status" hidden></div>
           <div class="ac-note">Or write to Will: <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name|urlencode}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice.">will@cavnar.ai</a></div>
         </div>
-        {% else %}
-        {# A teammate's own login, deleted by its holder (POST
-           /api/account/delete-login, the app's shared body; iOS parity #13). #}
+        {% endif %}
+        {# A login deleted by its own holder (POST /api/account/delete-login,
+           the app's shared body; iOS parity #13): a teammate's, or a
+           co-owner's while another owner remains (auth.own_login_deletion_refusal,
+           re-audit 10/8/26 #7). It ends everywhere the login signs in (#5). #}
+        {% if (can_delete_login if can_delete_login is defined else not _principal) %}
         <div class="ac-card span" id="acct-delete-login-card">
-          <div class="ac-card-h"><div><h3>Delete my login</h3><p>Removes your own sign-in to {{ restaurant.name }}: you&rsquo;re signed out everywhere, and your email, phone and passkeys come off it. The restaurant&rsquo;s records stay theirs. The owner can invite you again any time.</p></div>
+          <div class="ac-card-h"><div><h3>Delete my login</h3><p>Deletes your sign-in everywhere it works &mdash; {{ restaurant.name }} and any other location you sign in to, your staff PIN included. You&rsquo;re signed out on every device, and your email, phone, passkeys and two-factor come off it. The restaurants&rsquo; records stay theirs. An owner can invite you again any time.</p></div>
             <div class="r"><button type="button" class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="acctDeleteLogin(this)">Delete my login</button></div></div>
         </div>
         {% endif %}
@@ -29647,7 +29650,7 @@ function acctRequestClose(btn){
 }
 // Delete my login (a teammate's own): confirmed, then the sign-in page.
 function acctDeleteLogin(btn){
-  if(!confirm('Delete your login? You’ll be signed out everywhere and can’t sign in again unless the owner invites you.'))return;
+  if(!confirm('Delete your login? It ends at every location you sign in to, your staff PIN included. You’ll be signed out everywhere and can’t sign in again unless an owner invites you.'))return;
   var done=cbtnBusy(btn,'Deleting…');
   fetch('/api/account/delete-login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(apiJson).then(function(d){done();

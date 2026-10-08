@@ -1676,7 +1676,37 @@ def _do_passkey_register(current_user, data, host, user_agent=""):
         log_account_event(current_user.get("restaurant_id"), "passkey_added", current_user, saved["name"])
     except Exception:
         pass
+    _notify_passkey_added(current_user, saved)
     return {"ok": True, "passkey": saved}, 200
+
+
+def _notify_passkey_added(current_user, saved):
+    """Says a new passkey to the login's own address (re-audit 10/8/26, #1)
+    — the restaurant owner's when the login has none — with the sign-in
+    notice's one-time "This wasn't me" link, which removes the login's
+    passkeys with its sessions. Always sent, like the password-changed
+    notice: it is the login flow's own security mail, not an alert a switch
+    turns off. Never blocks the save."""
+    try:
+        from auth import get_user_by_id
+        u = get_user_by_id(current_user["id"]) or {}
+        rid = u.get("restaurant_id") or current_user.get("restaurant_id")
+        restaurant = get_restaurant(rid) if rid else None
+        to = (u.get("email") or "").strip()
+        if not to or "@" not in to or to.endswith((".invalid",)):
+            to = (getattr(restaurant, "owner_email", "") or "").strip()
+        if not to:
+            return
+        import config
+        from auth import create_login_report
+        report_url = f"{config.base_url()}/auth/not-me/{create_login_report(current_user['id'], None)}"
+        from emails import send_passkey_added_email
+        send_passkey_added_email(to, getattr(restaurant, "name", None) or "your restaurant",
+                                 (saved or {}).get("name"), report_url=report_url,
+                                 tz=getattr(restaurant, "timezone", None),
+                                 restaurant_id=getattr(restaurant, "id", None))
+    except Exception as e:
+        print(f"[passkeys] added-passkey notice not sent for user {current_user.get('id')}: {e}")
 
 
 @auth_bp.route("/api/passkeys/<int:passkey_id>/remove", methods=["POST"])
@@ -1688,8 +1718,12 @@ def passkeys_remove(current_user, passkey_id):
 
 
 def _do_passkey_remove(current_user, passkey_id):
-    """One of this login's own passkeys removed — the web's and the app's."""
+    """One of this login's own passkeys removed — the web's and the app's.
+    Never in view-as (re-audit 10/8/26, #6): adding one is the account
+    holder's alone, and so is taking one away."""
     import passkeys
+    if current_user.get("acting_admin") or current_user.get("acting_admin_id"):
+        return {"ok": False, "error": "Passkeys are removed by the account holder, not in view-as."}, 403
     if not passkeys.remove_passkey(current_user["id"], passkey_id):
         return {"ok": False, "error": "That passkey isn't on this login."}, 404
     try:
