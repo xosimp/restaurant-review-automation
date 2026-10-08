@@ -210,10 +210,15 @@ def pending_send_state(execute_at, status="pending", note=None) -> dict:
 
 
 def pending_send_attributes(action) -> dict:
-    """PendingSendAttributes: {actionId, kind, title}."""
+    """PendingSendAttributes: {actionId, kind, title, restaurantId}. The
+    restaurant rides along so a tap opens the send at its own location
+    (`?loc=`, re-audit 10/8/26 #6)."""
     label = (action.get("label") or "").strip()
-    return {"actionId": int(action["id"]), "kind": action["kind"],
-            "title": label or plain_title(action["kind"])}
+    out = {"actionId": int(action["id"]), "kind": action["kind"],
+           "title": label or plain_title(action["kind"])}
+    if action.get("restaurant_id"):
+        out["restaurantId"] = int(action["restaurant_id"])
+    return out
 
 
 def pending_send_queued(action, db_path=None) -> int:
@@ -327,13 +332,17 @@ def job_progress(job_id, progress, db_path=None) -> int:
     try:
         if not push.native_push_allowed():
             return 0
-        tokens = push.live_activity_tokens("schedule_build", push.LA_KIND_UPDATE, activity_key=str(job_id),
-                                           db_path=db_path or DB_PATH)
+        # The job's own restaurant scopes the tokens (re-audit 10/8/26 #10):
+        # a job id alone matched any restaurant's token filed under it.
+        job = _job_row(job_id, db_path)
+        if not job or not job.get("restaurant_id"):
+            return 0
+        rid = int(job["restaurant_id"])
+        tokens = push.live_activity_tokens("schedule_build", push.LA_KIND_UPDATE, restaurant_id=rid,
+                                           activity_key=str(job_id), db_path=db_path or DB_PATH)
         if not tokens:
             return 0
-        job = _job_row(job_id, db_path)
         state = schedule_build_state(progress, _estimated_end(job, db_path))
-        rid = int((job or {}).get("restaurant_id") or tokens[0]["restaurant_id"])
         if not _state_changed(rid, "schedule_build", job_id, state, db_path):
             return 0
         return push.fire_live_activity(tokens, "schedule_build", "update", state, db_path=db_path or DB_PATH)
@@ -348,12 +357,14 @@ def job_finished(job_id, status, result=None, db_path=None) -> int:
     try:
         if not push.native_push_allowed():
             return 0
-        tokens = push.live_activity_tokens("schedule_build", push.LA_KIND_UPDATE, activity_key=str(job_id),
-                                           db_path=db_path or DB_PATH)
+        job = _job_row(job_id, db_path)
+        if not job or not job.get("restaurant_id"):
+            return 0
+        rid = int(job["restaurant_id"])
+        tokens = push.live_activity_tokens("schedule_build", push.LA_KIND_UPDATE, restaurant_id=rid,
+                                           activity_key=str(job_id), db_path=db_path or DB_PATH)
         if not tokens:
             return 0
-        job = _job_row(job_id, db_path)
-        rid = int((job or {}).get("restaurant_id") or tokens[0]["restaurant_id"])
         if not _claim_end(rid, "schedule_build", job_id, db_path):
             return 0
         ok = status == "done" and bool((result or {}).get("ok", True))
@@ -502,18 +513,38 @@ def _open_runs(restaurant_id, db_path=None) -> list:
         conn.close()
 
 
+def _split_service_watchers(tokens, restaurant_id, db_path=None):
+    """(may, may_not): the update tokens whose login may still read Labor
+    here, and those that lost it since the activity started. What hasn't
+    clocked in is names — only Labor's readers hear them (re-audit 10/8/26
+    #10)."""
+    may = _allowed_tokens(tokens, restaurant_id, may_watch_service, db_path)
+    kept = {int(t["id"]) for t in may}
+    return may, [t for t in tokens if int(t["id"]) not in kept]
+
+
+def _closed_state():
+    return {"status": "closed", "missing": [], "updatedAt": push.apple_date(datetime.now(timezone.utc))}
+
+
 def service_tick(restaurant, local=None, db_path=None) -> int:
     """The service slot's hook (strategy_jobs.run_intraday_capture, every
     pass, open or closed): start tonight's activity on opted-in phones at
-    open, update it when what it says changes, end it at close. One indexed
-    read for a restaurant nobody watches. Returns pushes queued."""
+    open, update it when what it says changes, end it at close. Two indexed
+    reads for a restaurant nobody watches. Returns pushes queued.
+
+    A night counts as running when the server started it OR a phone filed
+    a running activity's own token for it — an activity the app started
+    itself (iOS 17.0/17.1 has no push-to-start) never had a run claimed, so
+    it heard no update and no end (re-audit 10/8/26 #9)."""
     try:
         if not push.native_push_allowed():
             return 0
         rid = int(restaurant.id)
         db = db_path or DB_PATH
         starts = push.live_activity_tokens("service", push.LA_KIND_START, restaurant_id=rid, db_path=db)
-        running = _open_runs(rid, db_path)
+        followed = push.live_activity_tokens("service", push.LA_KIND_UPDATE, restaurant_id=rid, db_path=db)
+        running = list(dict.fromkeys(_open_runs(rid, db_path) + [t["activity_key"] for t in followed]))
         if not starts and not running:
             return 0
         content = service_content(restaurant, local, db_path)
@@ -524,13 +555,20 @@ def service_tick(restaurant, local=None, db_path=None) -> int:
         for key in running:
             if content["in_service"] and key == bday:
                 continue
+            tokens = [t for t in followed if t["activity_key"] == key]
             if not _claim_end(rid, "service", key, db_path):
+                # Already ended: a token still filed for it is a leftover.
+                push.remove_live_activity_tokens_for(tokens, db_path=db)
                 continue
-            tokens = push.live_activity_tokens("service", push.LA_KIND_UPDATE, restaurant_id=rid,
-                                               activity_key=key, db_path=db)
-            state = dict(content["content_state"], status="closed") if key == bday else \
-                {"status": "closed", "missing": [], "updatedAt": push.apple_date(datetime.now(timezone.utc))}
-            sent += push.fire_live_activity(tokens, "service", "end", state,
+            if key == bday:
+                may, may_not = _split_service_watchers(tokens, rid, db_path)
+                sent += push.fire_live_activity(may, "service", "end", dict(content["content_state"], status="closed"),
+                                                dismiss_at=_unix(datetime.now(timezone.utc) + timedelta(minutes=15)),
+                                                db_path=db)
+                tokens_plain = may_not
+            else:
+                tokens_plain = tokens
+            sent += push.fire_live_activity(tokens_plain, "service", "end", _closed_state(),
                                             dismiss_at=_unix(datetime.now(timezone.utc) + timedelta(minutes=15)),
                                             db_path=db)
             push.remove_live_activity_tokens_for(tokens, db_path=db)
@@ -538,13 +576,18 @@ def service_tick(restaurant, local=None, db_path=None) -> int:
             return sent
         state = content["content_state"]
         stale = content["closes_at_unix"] + 15 * 60 if content["closes_at_unix"] else None
-        updates = push.live_activity_tokens("service", push.LA_KIND_UPDATE, restaurant_id=rid, activity_key=bday,
-                                            db_path=db)
+        updates, lost = _split_service_watchers([t for t in followed if t["activity_key"] == bday], rid, db_path)
+        if lost:
+            # A login that can no longer read Labor here: its activity ends,
+            # with no names on it.
+            sent += push.fire_live_activity(lost, "service", "end", _closed_state(),
+                                            dismiss_at=_unix(datetime.now(timezone.utc)), db_path=db)
+            push.remove_live_activity_tokens_for(lost, db_path=db)
         changed = _state_changed(rid, "service", bday, state, db_path)
         if starts and _claim_start(rid, "service", bday, db_path):
             # Phones already running tonight's activity (started from the
             # app) are not started a second time.
-            have = {t["session_hash"] for t in updates}
+            have = {t["session_hash"] for t in followed if t["activity_key"] == bday}
             fresh = _allowed_tokens([t for t in starts if t["session_hash"] not in have], rid,
                                     may_watch_service, db_path)
             name = content["attributes"]["restaurantName"] or "Tonight"
@@ -553,7 +596,9 @@ def service_tick(restaurant, local=None, db_path=None) -> int:
                 alert={"title": f"{name}: service is open",
                        "body": state.get("pulseLine") or "Tonight's service, live on your Lock Screen."},
                 stale_at=stale, db_path=db)
-        elif changed and updates:
+        # Not `elif`: a phone that started tonight itself still hears the
+        # change that came with the server's start.
+        if changed and updates:
             sent += push.fire_live_activity(updates, "service", "update", state, stale_at=stale, db_path=db)
         return sent
     except Exception as e:
@@ -605,17 +650,100 @@ def note_waiting_count(restaurant_id, user_id, count, from_web=True, db_path=Non
 
 # ── the token routes (mobile only: a token is a phone's) ─────────────────────
 
+def _reaches(user, restaurant_id, db_path=None) -> bool:
+    """Whether this login may act at `restaurant_id` at all: the location
+    its session is on, one it holds an active membership at, or one of an
+    owner's group (the switcher's own rule, client_api._do_switch_location)."""
+    rid = int(restaurant_id)
+    if rid == int(user.get("restaurant_id") or 0):
+        return True
+    from auth import get_membership
+    if get_membership(int(user["id"]), rid, db_path or DB_PATH):
+        return True
+    try:
+        from permissions import has_permission, LOCATION_SWITCH
+        if not has_permission(user, LOCATION_SWITCH):
+            return False
+        from models import get_restaurant, get_location_group
+        base = get_restaurant(user.get("base_restaurant_id") or user["restaurant_id"])
+        if not base or not base.location_group:
+            return False
+        return any(int(r["id"]) == rid for r in get_location_group(base.location_group, owner_email=base.owner_email))
+    except Exception:
+        return False
+
+
+def _activity_scope(user, activity_type, key, body, db_path=None):
+    """What one running activity is about, read from the server's own rows
+    — never taken from the phone: (restaurant_id, the delayed kind or None),
+    or None when there is no such thing. A countdown's restaurant is its
+    delayed action's, a generation's its job's; tonight's service names its
+    restaurant in its attributes (ServiceAttributes.restaurantId), which the
+    phone sends back as `restaurant_id` — the session's location otherwise."""
+    if activity_type == "service":
+        try:
+            rid = int(body.get("restaurant_id") or user["restaurant_id"])
+        except (TypeError, ValueError):
+            return None
+        return (rid, None) if rid > 0 else None
+    conn = get_conn(db_path)
+    try:
+        if activity_type == "pending_send":
+            try:
+                aid = int(str(key))
+            except ValueError:
+                return None
+            r = conn.execute("SELECT restaurant_id, kind FROM delayed_actions WHERE id=?", (aid,)).fetchone()
+            return (int(r["restaurant_id"]), r["kind"]) if r else None
+        if activity_type == "schedule_build":
+            r = conn.execute("SELECT restaurant_id FROM async_jobs WHERE job_id=?", (str(key),)).fetchone()
+            return (int(r["restaurant_id"]), None) if r and r["restaurant_id"] else None
+        return None
+    finally:
+        conn.close()
+
+
+def _may_follow(viewer, activity_type) -> bool:
+    """Whether this login may hold a running activity's update token: what
+    the activity says is that module's. A countdown's status and send time
+    are on every login's pending list (strategy_routes._do_delayed_pending);
+    a generation is the schedule's drafters'; tonight's service, Labor's
+    readers."""
+    if activity_type == "pending_send":
+        return True
+    return may_watch(viewer, activity_type)
+
+
 def register_token(user, session_hash, body) -> tuple:
     """POST /mobile/api/live-activity-tokens {activity_type, kind, token,
-    environment, activity_key}. A push-to-start token is taken only from a
-    login that may watch that activity."""
+    environment, activity_key, restaurant_id?}. A push-to-start token is
+    taken only from a login that may watch that activity, at the session's
+    location. An update token is filed at the restaurant the activity is
+    about (its own row's), and only for a login that reaches that
+    restaurant and may see what the activity shows there (re-audit 10/8/26
+    #10): it used to be filed at whatever location the session was on,
+    with no check at all."""
     b = body or {}
     activity_type = b.get("activity_type")
     kind = b.get("kind")
+    rid = user["restaurant_id"]
     if kind == push.LA_KIND_START and activity_type in push.LIVE_ACTIVITY_TYPES and not may_watch(user, activity_type):
         return {"ok": False, "error": "Your login doesn't get this on the Lock Screen."}, 403
+    if kind == push.LA_KIND_UPDATE and activity_type in push.LIVE_ACTIVITY_TYPES and b.get("activity_key"):
+        scope = _activity_scope(user, activity_type, b.get("activity_key"), b)
+        if scope is None:
+            return {"ok": False, "error": "That isn't running here any more."}, 404
+        rid = scope[0]
+        if int(rid) == int(user["restaurant_id"]):
+            viewer = user
+        elif _reaches(user, rid):
+            viewer = _viewer(user["id"], rid)
+        else:
+            return {"ok": False, "error": "Your login doesn't get this on the Lock Screen."}, 403
+        if not _may_follow(viewer, activity_type):
+            return {"ok": False, "error": "Your login doesn't get this on the Lock Screen."}, 403
     try:
-        push.register_live_activity_token(user["id"], user["restaurant_id"], session_hash, activity_type, kind,
+        push.register_live_activity_token(user["id"], rid, session_hash, activity_type, kind,
                                           b.get("token"), environment=b.get("environment") or "production",
                                           activity_key=b.get("activity_key") or "")
     except ValueError as e:

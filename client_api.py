@@ -9481,6 +9481,17 @@ def _do_switch_location(current_user, target_id, token):
     from auth import switch_active_restaurant
     switch_active_restaurant(token, target_id)
     try:
+        # This session's Live Activity push-to-start tokens were filed at
+        # the location it is leaving; they go, and the phone files them
+        # again at the new one, where its login's permissions are checked
+        # afresh (re-audit 10/8/26 #4). A running activity's update token
+        # stays: it belongs to what that activity is about.
+        import push as _push
+        from auth import hash_session_token
+        _push.remove_live_activity_tokens(hash_session_token(token), kind=_push.LA_KIND_START)
+    except Exception as e:
+        print(f"[switch] live activity tokens not reset: {e}")
+    try:
         # This login's cached Homes only — not every tenant's (MOD-HOME-3).
         import home_brief; home_brief.invalidate_user(current_user.get("id"))
     except Exception:

@@ -189,10 +189,11 @@ def test_a_reply_that_must_be_read_first_carries_no_draft(db_path, monkeypatch):
 
 
 def test_the_payload_always_fits_apns(db_path):
-    # Non-ASCII is escaped (\\uXXXX, six bytes a character): the worst case.
+    # Four-byte characters (sent as UTF-8, unescaped — re-audit 10/8/26
+    # #13): the worst case.
     payload = {"aps": {"alert": {"title": "t" * 100, "body": "b" * 200}},
                "cavnar": {"alert_type": "no_response", "nav": "review/4",
-                          "draft": "é" * push.PUSH_DRAFT_MAX_CHARS, "draft_complete": True}}
+                          "draft": "\U0001F600" * (push.PUSH_DRAFT_MAX_CHARS + 200), "draft_complete": True}}
     out = push._fit_payload(payload)
     assert len(out) <= push.APNS_MAX_PAYLOAD_BYTES
     cav = json.loads(out)["cavnar"]

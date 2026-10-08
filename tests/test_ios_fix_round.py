@@ -213,7 +213,11 @@ def test_links_from_outside_never_act():
     # parity audit #1); still the link door, never the in-app one.
     assert "deepLinkRouter.openFromLink(nav, context:" in root
     entry = _read(APP, "Core", "SystemEntry.swift")
-    assert "open(fromLink(destination, context: linkContext(for: url)))" in entry
+    # Through `located` (re-audit 10/8/26 #6: a widget's `loc=` is honoured),
+    # which still hands every place to the link door.
+    assert "open(located(destination, context: context, activeRestaurantId:" in entry
+    assert "return fromLink(destination, context: context)" in entry
+    assert "let context = linkContext(for: url)" in entry
 
 
 def test_small_fixes_hold():
