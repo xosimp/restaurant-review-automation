@@ -69,9 +69,16 @@ def test_no_dishes_is_a_null_dash():
 
 
 def test_recipes_load_from_the_inventory_system_only():
-    blk = _between("function fc2LoadRecipeDrafts(){", "function fc2ConfidentDrafts(ds){")
+    # Recipes are the inventory system's once it has synced; until then the
+    # drafts waiting to be confirmed are confirmed on the web too (parity
+    # audit #92, 10/7/26: the accept handlers had lost their screen) — and
+    # only then: a synced restaurant is never offered a draft.
+    blk = _between("function fc2LoadRecipeDrafts(msg){", "function fc2LoadDraftList(msg){")
     assert "'/api/food-cost/recipes'" in blk and "synced" in blk
     assert "recipe-drafts" not in blk and "data-recipe-accept" not in blk
+    assert "if(!synced)fc2LoadDraftList(msg);" in blk
+    drafts = _between("function fc2LoadDraftList(msg){", "function fc2ConfidentDrafts(ds){")
+    assert "'/api/food-cost/recipe-drafts'" in drafts and "data-recipe-accept=" in drafts
     routes = open("strategy_routes.py", encoding="utf-8").read()
     assert '("/food-cost/recipes", ["GET"], _do_recipes_list, "recipes_list")' in routes
 

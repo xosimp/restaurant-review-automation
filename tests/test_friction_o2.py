@@ -385,11 +385,17 @@ def test_confident_recipes_accept_in_one_tap():
     s = _src()
     assert "var FC2_SURE_PCT=80;" in s and "function fc2ConfidentDrafts(ds){" in s
     fn = s[s.index("function fc2ConfidentDrafts(ds){"):s.index("document.addEventListener('click',function(e){\n  var t=e.target&&e.target.closest?e.target.closest('[data-recipe-accept-all]')")]
-    assert "ln.unit_ok===false" in fn and "dr.needs_yield" in fn and "ln.confidence_pct<FC2_SURE_PCT" in fn
-    # The web's Recipes block no longer drafts (owner, 9/26/26): recipes load
-    # from the inventory system. The phone's Recipe drafts sheet still does.
-    blk = s[s.index("function fc2LoadRecipeDrafts(){"):s.index("function fc2ConfidentDrafts(ds){")]
+    assert "ln.unit_ok===false" in fn and "dr.needs_yield" in fn and "fc2LineBand(ln)!=='high'" in fn
+    # A line is sure at FC2_SURE_PCT measured support, else by the band the
+    # draft was written with (recipes.py carries high / medium / low).
+    band = s[s.index("function fc2LineBand(ln){"):s.index("function fc2ConfidentDrafts(ds){")]
+    assert "ln.confidence_pct>=FC2_SURE_PCT" in band and "ln.confidence" in band
+    # The recipes block reads the inventory system; the drafts confirm
+    # screen (parity audit #92) offers the sure ones together.
+    blk = s[s.index("function fc2LoadRecipeDrafts(msg){"):s.index("function fc2LoadDraftList(msg){")]
     assert "data-recipe-accept-all=" not in blk and "'/api/food-cost/recipes'" in blk
+    lst = s[s.index("function fc2LoadDraftList(msg){"):s.index("function fc2LineBand(ln){")]
+    assert "data-recipe-accept-all=" in lst and "fc2ConfidentDrafts(ds)" in lst
 
 
 def test_waste_can_be_logged_in_one_line_and_invoice_lines_become_ingredients():

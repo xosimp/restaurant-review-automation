@@ -239,3 +239,35 @@ def test_an_unknown_range_resolves_to_one_the_history_fills(db, monkeypatch):
     monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda r: ([], False))
     out, status = client_api._do_waste_trend(rid, "26w")
     assert status == 200 and out["range"] == "8w"
+
+
+# ── #92 / #93: the web halves ───────────────────────────────────────────────
+
+def _html():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return open(os.path.join(root, "templates", "dashboard.html"), encoding="utf-8").read()
+
+
+def test_the_web_confirms_recipe_drafts_with_their_yield_and_unit_warnings():
+    s = _html()
+    blk = s[s.index("function fc2LoadDraftList(msg){"):s.index("function fc2LineBand(ln){")]
+    for needle in ("'/api/food-cost/recipe-drafts'", "data-recipe-accept=", "data-recipe-reject=",
+                   "data-recipe-yield=", "unit_warnings", "fc2DraftRecipes(this,true)"):
+        assert needle in blk, needle
+
+
+def test_the_inventory_upload_links_its_template_and_its_result_uses_tokens():
+    s = _html()
+    up = s.index("onchange=\"clientUpload('inventory', this)\"")
+    assert '/client/sample-template/inventory' in s[up:up + 600]
+    fn = s[s.index("function clientUpload(dataType, input) {"):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "#2d6a4f" not in fn and "#c84b2f" not in fn
+    assert "var(--hb-good)" in fn and "var(--hb-bad)" in fn
+
+
+def test_the_two_loading_labels_are_pulse_bars():
+    s = _html()
+    assert '<div id="ss-hist-list" class="ss-hist-list"><div class="dr-pulse"' in s
+    assert "cbtnBusy(b, 'Loading…')" not in s
