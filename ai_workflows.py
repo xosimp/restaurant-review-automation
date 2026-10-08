@@ -435,7 +435,7 @@ def canary_start(pol: Policy, restaurant_id, start: str | None = None):
     Any other restaurant is (start, False) with a start at the bottom rung
     moved one up — a pre-router's own higher start is kept."""
     ladder = list(pol.ladder)
-    if not pol.canary or len(ladder) < 2 or DEFAULT in ladder:
+    if not pol.canary or len(ladder) < 2 or DEFAULT in ladder or pinned_model(pol):
         return start, None
     try:
         rid = int(restaurant_id) if restaurant_id is not None else None
@@ -449,9 +449,38 @@ def canary_start(pol: Policy, restaurant_id, start: str | None = None):
     return start, False
 
 
+# ── a purpose's env var pins its model ─────────────────────────────────────
+#
+# Each call site's model env var (ai_utils.MODELS: ASK_CAVNAR_MODEL,
+# LABOR_INSIGHT_MODEL, CLAUDE_MODEL, ...) was silently ignored once its call
+# went through a ladder (context re-audit 10/7/26 #11). Set explicitly, it
+# pins the workflow the way SCHEDULE_MODEL pins the schedule: every run is one
+# rung, the call site's own route ("default", the env var's model through
+# ai_utils.model_for), no escalation and no canary. Unset: the ladder.
+# labor_schedule keeps its own pin (schedule_engine.schedule_pinned).
+
+def pinned_model(pol: Policy) -> str | None:
+    """The model the policy's purpose env var pins, when it is set (and not
+    blank); None otherwise, or for a policy with no purpose."""
+    if not pol.purpose:
+        return None
+    try:
+        import ai_utils as _ai
+        env = (_ai.MODELS.get(pol.purpose) or (None,))[0]
+    except Exception:
+        return None
+    value = str(os.environ.get(env) or "").strip() if env else ""
+    return value or None
+
+
 def route_for(pol: Policy, step: int = 0, start: str | None = None) -> Route:
     """The route of rung `step` on the policy's ladder, starting from
-    `start` (a tier the workflow's own pre-router chose) when given."""
+    `start` (a tier the workflow's own pre-router chose) when given — or,
+    when the purpose's env var pins a model (pinned_model), that model on
+    the call site's own route, whatever the step."""
+    pin = pinned_model(pol)
+    if pin:
+        return Route(tier=DEFAULT, model=pin)
     ladder = list(pol.ladder)
     if start and start in ladder:
         ladder = ladder[ladder.index(start):]
@@ -464,6 +493,8 @@ def route_for(pol: Policy, step: int = 0, start: str | None = None) -> Route:
 
 
 def rungs(pol: Policy, start: str | None = None) -> int:
+    if pinned_model(pol):
+        return 1
     ladder = list(pol.ladder)
     if start and start in ladder:
         ladder = ladder[ladder.index(start):]

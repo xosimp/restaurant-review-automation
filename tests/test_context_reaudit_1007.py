@@ -375,6 +375,44 @@ def test_the_dsr_memory_read_replaces_its_row_each_night_never_adds_a_scope():
     assert _l2(rid, "memory")[0]["version"] != v
 
 
+# ── #11 a purpose's env var pins its workflow ───────────────────────────────
+
+def test_a_set_purpose_env_var_pins_the_workflow_to_one_rung(orch_clean, monkeypatch):
+    import ai_workflows as wf
+    orch = orch_clean
+    monkeypatch.setenv("LABOR_INSIGHT_MODEL", "claude-opus-5-5")
+    seen = []
+
+    def attempt(route, notes):
+        seen.append((route.tier, route.model))
+        return "x"
+    rr = orch.generate("labor_insight", 4, attempt=attempt,
+                       check=lambda r: orch.Verdict.failed("validation_refuse", "an invented figure"))
+    assert seen == [("default", "claude-opus-5-5")] and rr.escalations == 0, "no ladder, no escalation"
+    assert _canary_runs("labor_insight")[-1]["canary"] is None
+    # The call site's own route: its kwargs (model_for, the env var) stand.
+    assert wf.route_for(wf.policy("labor_insight"), 1).apply({"model": "claude-opus-5-5"}) == \
+        {"model": "claude-opus-5-5"}
+    # Blank is unset: the ladder.
+    monkeypatch.setenv("LABOR_INSIGHT_MODEL", "  ")
+    assert wf.pinned_model(wf.policy("labor_insight")) is None
+    monkeypatch.delenv("LABOR_INSIGHT_MODEL")
+    assert wf.route_for(wf.policy("labor_insight"), 0).tier == "T1" and wf.rungs(wf.policy("labor_insight")) == 2
+
+
+def test_ask_cavnar_model_set_reaches_the_ask_call(monkeypatch, ask_env, orch_clean):
+    import ask_cavnar
+    r = _ask_rest()
+    calls = _script(monkeypatch, [_M("end_turn", [_T("You open at 11.")])])
+    monkeypatch.setenv("ASK_CAVNAR_MODEL", "claude-haiku-4-5-20251001")
+    ask_cavnar.ask_with_tools(r, "when do we open")
+    assert calls[-1]["model"] == "claude-haiku-4-5-20251001"
+    monkeypatch.delenv("ASK_CAVNAR_MODEL")
+    import ai_workflows as wf
+    ask_cavnar.ask_with_tools(r, "when do we close")
+    assert calls[-1]["model"] == wf.route_for(wf.POLICIES["ask_cavnar"], 0).model
+
+
 def test_the_canary_is_documented():
     env = open("docs/ops/ENVIRONMENT.md", encoding="utf-8").read()
     lib = open("PROMPT_LIBRARY.md", encoding="utf-8").read()
