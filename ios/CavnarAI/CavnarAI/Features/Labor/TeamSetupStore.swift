@@ -31,9 +31,15 @@ struct RulesSetupFields: Decodable {
     /// Each salaried person and the weekly cap code holds them to — the
     /// owner's alone (schedule_setup.salaried_caps, E-12/E-17).
     var salariedCaps: [SalariedCap] = []
+    /// The weekdays the restaurant does not trade (and its closed dates,
+    /// edited on Account), and the kitchen's stations — each saved on its
+    /// own from the rules sheet (iOS parity, 10/7/26).
+    var closures: RulesClosures? = nil
+    var kitchenStations: KitchenStations? = nil
 
     enum CodingKeys: String, CodingKey {
-        case managers, closers
+        case managers, closers, closures
+        case kitchenStations = "kitchen_stations"
         case salariedCaps = "salaried_caps"
         case managersLine = "managers_line"
         case ownerRules = "owner_rules"
@@ -78,6 +84,8 @@ struct RulesSetupFields: Decodable {
         crossTrainingDefaults = ((try? c.decodeIfPresent([String: Double].self, forKey: .crossTrainingDefaults)) ?? nil)?
             .compactMapValues { $0.isFinite ? Int($0.rounded()) : nil } ?? [:]
         salariedCaps = c.setupList(SalariedCap.self, .salariedCaps).filter { !$0.name.isEmpty }
+        closures = (try? c.decodeIfPresent(RulesClosures.self, forKey: .closures)) ?? nil
+        kitchenStations = (try? c.decodeIfPresent(KitchenStations.self, forKey: .kitchenStations)) ?? nil
     }
 }
 
@@ -107,7 +115,7 @@ struct SalariedCap: Decodable, Equatable, Identifiable {
 @Observable
 @MainActor
 final class TeamSetupStore {
-    private let client: APIClient
+    let client: APIClient
 
     init(client: APIClient = .shared) {
         self.client = client
@@ -134,6 +142,20 @@ final class TeamSetupStore {
     /// The roster's roles (the cross-training defaults are keyed by them).
     var rosterRoles: [String] = []
     var salariedCaps: [SalariedCap] = []
+    /// The weekdays the restaurant does not trade, as the server stored
+    /// them — the base each chip's save changes by one day.
+    var closedWeekdays: [String] = []
+    var kitchenStations = KitchenStations()
+    // The immediate saves on the rules sheet (ScheduleRulesQuickEdits).
+    var closedDayBusy: String?
+    var closedDaysError: String?
+    var sectionCountSaving = false
+    var sectionCountPending: Int?? = nil
+    var sectionCountNote: String?
+    var sectionCountError: String?
+    var stationBusy = false
+    var stationNote: String?
+    var stationError: String?
 
     func apply(_ f: RulesSetupFields) {
         managers = f.managers
@@ -156,6 +178,8 @@ final class TeamSetupStore {
         sectionCount = f.sectionCount
         rosterRoles = f.crossTrainingDefaults.keys.sorted()
         salariedCaps = f.salariedCaps
+        if let cl = f.closures { closedWeekdays = cl.closedWeekdays }
+        if let ks = f.kitchenStations { kitchenStations = ks }
     }
 
     // MARK: Who runs the floor (POST labor/managers)

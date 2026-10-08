@@ -860,6 +860,9 @@ struct ScheduleSections: Decodable {
     var assigned: [Assigned] = []
     var usual: [Usual] = []
     var fohRoles: [String] = []
+    /// Whether this login may name sections and put shifts in them (the
+    /// POST's SCHEDULE_DRAFT check). Nil on an older server.
+    var canEdit: Bool?
 
     struct Assigned: Codable, Hashable {
         var date: String?
@@ -894,6 +897,7 @@ struct ScheduleSections: Decodable {
     enum CodingKeys: String, CodingKey {
         case sections, assigned, usual
         case fohRoles = "foh_roles"
+        case canEdit = "can_edit"
     }
 
     init() {}
@@ -904,6 +908,7 @@ struct ScheduleSections: Decodable {
         assigned = c.sfList(Assigned.self, .assigned)
         usual = c.sfList(Usual.self, .usual)
         fohRoles = c.sfWords(.fohRoles).map { $0.lowercased() }
+        canEdit = (try? c.decodeIfPresent(Bool.self, forKey: .canEdit)) ?? nil
     }
 
     /// "HH:MM" from "4:00pm" — the key the section store uses for a shift's start.

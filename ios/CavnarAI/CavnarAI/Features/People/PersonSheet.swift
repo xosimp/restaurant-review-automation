@@ -333,36 +333,55 @@ final class PersonSheetViewModel {
     /// the roster (a promotion) rather than one they're trained on.
     var newRole = ""
     var newRolePrimary = false
+    /// The day they started in it ("trained on bar from 9/1"), an ISO day
+    /// from the date chip; empty is no start date (the web's "From").
+    var newRoleSince = ""
     private(set) var roleBusy = false
     private(set) var roleMessage: String?
     private(set) var roleError: String?
 
-    private struct RoleBody: Encodable {
+    /// POST /people/<key>/roles: `{role, since?, primary?}` adds a role,
+    /// `{role, remove: true}` takes one off (strategy_routes._do_person_roles).
+    struct RoleBody: Encodable {
         let role: String
+        var since: String? = nil
         let primary: Bool?
         let remove: Bool?
+    }
+
+    private struct RoleResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let sinceLabel: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, error
+            case sinceLabel = "since_label"
+        }
     }
 
     static func rolesPath(for key: String) -> String { path(for: key) + "/roles" }
 
     /// Adds (or with `remove`, takes off) one role, then re-reads the
     /// record so the roster's role and the list agree.
-    func changeRole(_ role: String, primary: Bool = false, remove: Bool = false) async {
+    func changeRole(_ role: String, primary: Bool = false, since: String? = nil, remove: Bool = false) async {
         guard case .loaded(let person) = state else { return }
         let name = role.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
+        let from = remove ? nil : since.flatMap { $0.isEmpty ? nil : String($0.prefix(10)) }
         roleBusy = true
         roleError = nil
         roleMessage = nil
         defer { roleBusy = false }
         do {
-            let r: APIClient.OKResponse = try await client.send(
+            let r: RoleResponse = try await client.send(
                 Self.rolesPath(for: person.key), method: .post,
-                body: RoleBody(role: name, primary: remove ? nil : primary, remove: remove ? true : nil),
+                body: RoleBody(role: name, since: from, primary: remove ? nil : primary, remove: remove ? true : nil),
                 retryTransient: false)
             guard r.ok else { roleError = r.error ?? "Couldn\u{2019}t save that role."; return }
-            if !remove { newRole = ""; newRolePrimary = false }
-            roleMessage = remove ? "Removed." : (primary ? "Promoted \u{2014} their role on the roster." : "Added.")
+            if !remove { newRole = ""; newRolePrimary = false; newRoleSince = "" }
+            let fromLine = from.map { " \u{2014} from " + (r.sinceLabel ?? CavnarDate.mdy($0)) } ?? ""
+            roleMessage = remove ? "Removed." : (primary ? "Promoted \u{2014} their role on the roster" + fromLine + "."
+                                                         : "Added" + fromLine + ".")
             Haptic.success()
             let refreshed: PersonResponse? = try? await client.send(Self.path(for: person.key), hapticOnError: false)
             if let updated = refreshed?.person { apply(updated) }
@@ -894,9 +913,39 @@ struct PersonSheet: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    // The day they started in it — "trained on bar from
+                    // 9/1": a candidate for that role's gaps from then.
+                    HStack(spacing: 10) {
+                        Text("From")
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarInk2)
+                        CavnarDateChip(iso: $viewModel.newRoleSince, accessibilityName: "The day they started in this role")
+                        if !viewModel.newRoleSince.isEmpty {
+                            Button {
+                                Haptic.light()
+                                viewModel.newRoleSince = ""
+                            } label: {
+                                Text("Clear")
+                                    .font(.cavnarBody(13, weight: 600))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Clear the start date")
+                        } else {
+                            Text("optional")
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        Spacer(minLength: 0)
+                    }
                     Button {
                         Haptic.light()
-                        Task { await viewModel.changeRole(viewModel.newRole, primary: viewModel.newRolePrimary) }
+                        Task {
+                            await viewModel.changeRole(viewModel.newRole, primary: viewModel.newRolePrimary,
+                                                       since: viewModel.newRoleSince)
+                        }
                     } label: {
                         Group {
                             if viewModel.roleBusy { CavnarShimmerText(text: "Saving\u{2026}") } else { Text("Add role") }

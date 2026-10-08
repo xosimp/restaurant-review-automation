@@ -569,6 +569,22 @@ private struct TSNewSheet: View {
     }
 }
 
+/// POST /task-sheets/<id>: a partial update — only the keys sent change
+/// (mobile_api.mobile_task_sheet_update). The settings save sends the job
+/// code with the rest, as the web's Save does.
+struct TSSheetSettingsBody: Encodable {
+    let job_code: String
+    let shift_kind: String
+    let days_of_week: [Int]
+    let requires_signoff: Bool
+}
+
+/// POST /task-sheets/<id> `{active: false}` — the whole sheet stops going
+/// out; every past day stays on record.
+struct TSSheetRemoveBody: Encodable {
+    var active = false
+}
+
 private struct TSSheetEditor: View {
     let sheetID: Int
     let canEdit: Bool
@@ -576,7 +592,11 @@ private struct TSSheetEditor: View {
     let codes: [String]
     let onChange: () async -> Void
 
+    @Environment(\.dismiss) private var dismiss
     @State private var sheet: TSSheet?
+    @State private var jobCode = ""
+    @State private var confirmingRemove = false
+    @State private var removingSheet = false
     @State private var editing: TSLine?
     @State private var adding = false
     @State private var note: String?
@@ -596,6 +616,25 @@ private struct TSSheetEditor: View {
                 if let note { Text(note).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarAmber) }
                 if canEdit {
                     Section("Settings") {
+                        // The job code the sheet goes to, as the schedule
+                        // spells it (the web's Job code field).
+                        HStack(spacing: 8) {
+                            TextField("Job code", text: $jobCode)
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                            if !codes.isEmpty {
+                                Menu {
+                                    ForEach(codes, id: \.self) { c in Button(c) { jobCode = c } }
+                                } label: {
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .accessibilityLabel("Pick a job code from your schedule")
+                            }
+                        }
                         Picker("Shift", selection: $kind) { ForEach(kinds, id: \.key) { Text($0.label).tag($0.key) } }
                         HStack(spacing: 6) {
                             ForEach(0..<7, id: \.self) { i in
@@ -613,6 +652,7 @@ private struct TSSheetEditor: View {
                         Text(days.isEmpty ? "Every day" : "Only the days picked").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                         Toggle("The manager on duty signs this shift off", isOn: $signoff).tint(Color.cavnarEmber)
                         Button("Save settings") { Task { await saveSettings() } }
+                            .disabled(jobCode.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
                 Section("Lines, in the order the work is done") {
@@ -632,6 +672,18 @@ private struct TSSheetEditor: View {
                             Label(drafting ? "Drafting…" : "Draft lines with Cavnar AI", systemImage: "sparkles")
                         }
                         .disabled(drafting)
+                    }
+                }
+                if canEdit {
+                    // The whole sheet, confirmed first (the web's "Remove
+                    // this sheet"): it stops going out; the past stays.
+                    Section {
+                        Button(role: .destructive) { confirmingRemove = true } label: {
+                            Label(removingSheet ? "Removing\u{2026}" : "Remove this sheet", systemImage: "trash")
+                        }
+                        .disabled(removingSheet)
+                    } footer: {
+                        Text("It stops going out from tomorrow. Every past day stays on record.")
                     }
                 }
                 if let drafts {
@@ -661,6 +713,13 @@ private struct TSSheetEditor: View {
         .sheet(isPresented: $adding) {
             TSLineForm(line: nil, kind: sheet?.shiftKind ?? "any") { fields in await add(fields) }
         }
+        .confirmationDialog(sheet.map { "Remove the \($0.shiftLabel.lowercased()) sheet for \($0.jobCode)?" } ?? "Remove this sheet?",
+                            isPresented: $confirmingRemove, titleVisibility: .visible) {
+            Button("Remove the sheet", role: .destructive) { Task { await removeSheet() } }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("It stops going out; every past day stays on record.")
+        }
     }
 
     private func meta(_ l: TSLine, kind: String) -> String {
@@ -675,6 +734,7 @@ private struct TSSheetEditor: View {
     private func apply(_ s: TSSheet?) {
         guard let s else { return }
         sheet = s
+        jobCode = s.jobCode
         kind = s.shiftKind
         days = Set(s.daysOfWeek)
         signoff = s.requiresSignoff
@@ -692,11 +752,33 @@ private struct TSSheetEditor: View {
     }
 
     private func saveSettings() async {
-        struct Body: Encodable { let shift_kind: String; let days_of_week: [Int]; let requires_signoff: Bool }
-        if let r: TSSheetResponse = try? await APIClient.shared.send("/mobile/api/task-sheets/\(sheetID)", method: .post,
-                                                                      body: Body(shift_kind: kind, days_of_week: days.sorted(), requires_signoff: signoff)) {
+        let code = jobCode.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !code.isEmpty else { note = "Pick the job code this sheet is for."; return }
+        do {
+            let r: TSSheetResponse = try await APIClient.shared.send(
+                "/mobile/api/task-sheets/\(sheetID)", method: .post,
+                body: TSSheetSettingsBody(job_code: code, shift_kind: kind, days_of_week: days.sorted(),
+                                          requires_signoff: signoff))
             if r.ok { apply(r.sheet); note = "Saved. Today's sheets keep what they went out with; the change applies from tomorrow."; await onChange() }
-            else { note = r.error }
+            else { note = r.error ?? "That didn't save." }
+        } catch {
+            note = (error as? APIClient.APIError)?.message ?? "That didn't save."
+        }
+    }
+
+    private func removeSheet() async {
+        removingSheet = true
+        defer { removingSheet = false }
+        do {
+            let r: TSSheetResponse = try await APIClient.shared.send(
+                "/mobile/api/task-sheets/\(sheetID)", method: .post, body: TSSheetRemoveBody(), retryTransient: false)
+            guard r.ok else { note = r.error ?? "That sheet wasn't removed."; Haptic.error(); return }
+            Haptic.success()
+            await onChange()
+            dismiss()
+        } catch {
+            note = (error as? APIClient.APIError)?.message ?? "That sheet wasn't removed."
+            Haptic.error()
         }
     }
 

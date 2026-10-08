@@ -10086,9 +10086,10 @@ def foh_sections(restaurant) -> list:
 
 def clean_foh_sections(names) -> list:
     """Trimmed, de-duplicated (case-blind), at most FOH_SECTIONS_MAX names
-    of 40 characters. Raises ValueError for anything but a list."""
+    of 40 characters. Raises SectionInputError (a ValueError) for anything
+    but a list, or for more than FOH_SECTIONS_MAX names."""
     if not isinstance(names, list):
-        raise ValueError("sections is a list of names")
+        raise SectionInputError("Send the sections as a list of names.")
     out, seen = [], set()
     for n in names:
         n = " ".join(str(n or "").split())[:40]
@@ -10096,7 +10097,9 @@ def clean_foh_sections(names) -> list:
             seen.add(n.casefold())
             out.append(n)
     if len(out) > FOH_SECTIONS_MAX:
-        raise ValueError(f"at most {FOH_SECTIONS_MAX} sections")
+        # The owner's sentence (a SectionInputError, still a ValueError):
+        # the route answers it as a 400, where a bare ValueError was a 500.
+        raise SectionInputError(f"You can name up to {FOH_SECTIONS_MAX} sections.")
     return out
 
 

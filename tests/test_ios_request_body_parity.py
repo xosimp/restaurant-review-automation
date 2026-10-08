@@ -1750,14 +1750,6 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/guest-winback/<int:draft_id>/dismiss", "reason"): _NOTE,
     ("/mobile/api/labor/schedule/recommendation", "reason"): _NOTE,
     ("/mobile/api/recs/event", "reason"): _NOTE,
-    # a web-only control
-    ("/mobile/api/labor/rules", "closed_weekdays"): _WEB_ONLY,
-    ("/mobile/api/labor/rules", "section_count"): _WEB_ONLY,
-    ("/mobile/api/labor/rules", "station_edit"): _WEB_ONLY,
-    ("/mobile/api/labor/schedule/sections", "sections"): _WEB_ONLY + " (the dining-section names list)",
-    ("/mobile/api/people/<key>/roles", "since"): _WEB_ONLY + " (the role's start date)",
-    ("/mobile/api/task-sheets/<int:sheet_id>", "active"): _WEB_ONLY + " (removing a whole sheet)",
-    ("/mobile/api/task-sheets/<int:sheet_id>", "job_code"): _WEB_ONLY + " (changing a sheet's job code)",
     # sent another way, or an older name for a key the phone sends
     ("/mobile/api/food-cost/invoices", "idempotency_key"): "a multipart upload: the key rides as the Idempotency-Key header (APIClient.upload)",
     ("/mobile/api/food-cost/recipes/scan", "idempotency_key"): "a multipart upload: the key rides as the Idempotency-Key header (APIClient.upload)",
