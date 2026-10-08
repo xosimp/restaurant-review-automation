@@ -128,6 +128,19 @@ struct LoginView: View {
 
     private var brand: some View {
         VStack(spacing: LoginMetrics.spaceM) {
+            // Cavnar AI itself, met first (the Ember Core, 10/8/26) — the
+            // web's sign-in does the same. Mounted with the wordmark so it
+            // never runs hidden under the launch splash.
+            Group {
+                if introReady {
+                    EmberCoreView(size: 72)
+                        .transition(.opacity.combined(with: .scale(scale: 0.86)))
+                } else {
+                    Color.clear.frame(width: 72, height: 72)
+                }
+            }
+            .padding(.bottom, 14)
+            .animation(.easeOut(duration: 0.6), value: introReady)
             // Wordmark only — the seal beside it was the same "two marks
             // side by side" call already made everywhere else a lockup
             // showed both. Same entrance LockedView uses. The glow is a

@@ -826,17 +826,22 @@ private struct LaunchSplashView: View {
                     .trim(from: 0, to: ringProgress)
                     .stroke(Color.cavnarInk, style: StrokeStyle(lineWidth: 128 * (19.0 / 120.0), lineCap: .butt))
                     .frame(width: 128, height: 128)
-                // Just the ember (ring hidden) — sits in the gap of the ring
-                // drawn above, flares via the mark's own emberIntensity.
-                CavnarSealMark(size: 128, ringOpacity: 0, emberIntensity: flare)
+                // The ember in the ring's gap ignites into the Ember Core —
+                // the app icon coming alive (10/8/26): it swells in from a
+                // spark and flares once. Same spot and size as the seal's
+                // own ember (99.5, 60 in its 120 box; 20 across).
+                EmberCoreView(size: 128 * 22.0 / 120.0, scale: 3.2, energy: 0.75,
+                              flare: Double(flare), interactive: false)
+                    .scaleEffect(emberOn ? 1 : 0.2)
                     .opacity(emberOn ? 1 : 0)
+                    .position(x: 128 * 99.5 / 120.0, y: 128 * 60.0 / 120.0)
             }
             .frame(width: 128, height: 128)
         }
         .task {
             withAnimation(.easeInOut(duration: 0.9)) { ringProgress = 1 }
             try? await Task.sleep(for: .seconds(0.85))
-            withAnimation(.easeOut(duration: 0.3)) { emberOn = true }
+            withAnimation(.easeOut(duration: 0.45)) { emberOn = true }
             try? await Task.sleep(for: .seconds(0.25))
             withAnimation(.easeInOut(duration: 0.4)) { flare = 1 }
             try? await Task.sleep(for: .seconds(0.4))
@@ -934,6 +939,20 @@ struct LockedView: View {
                 // the thumb zone, and it's the convention (Apple's own lock
                 // screen, Chase, Revolut) — the gap above them is by design.
                 Spacer(minLength: 40)
+
+                // Cavnar AI itself above the wordmark (the Ember Core,
+                // 10/8/26): on a cold launch the splash's ember ignites and
+                // fades out over this one. Mounted with the wordmark.
+                Group {
+                    if introReady {
+                        EmberCoreView(size: 72)
+                            .transition(.opacity.combined(with: .scale(scale: 0.86)))
+                    } else {
+                        Color.clear.frame(width: 72, height: 72)
+                    }
+                }
+                .padding(.bottom, 26)
+                .animation(.easeOut(duration: 0.6), value: introReady)
 
                 // Wordmark only — no seal beside it here (it read as a
                 // stray "C" off to the side of the word). Placeholder keeps
