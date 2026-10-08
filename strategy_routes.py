@@ -6345,7 +6345,11 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True) -> bool:
             conn.close()
         if not row or row["published_at"] or row["superseded_by"]:
             return False
-        if (publish_review(rid, row["id"]) or {}).get("blockers"):
+        # One tap is an unattended send: the soft flags automation is held
+        # by (schedule_rules.HOLD_UNATTENDED) stop it too, and so does any
+        # warning or quality note the owner has not read (re-audit 10/8/26).
+        review = publish_review(rid, row["id"], unattended=True) or {}
+        if review.get("blockers") or review.get("soft") or review.get("notes"):
             return False
         reach = people.reach_summary(people.reach(rid, employees_in_schedule(row["schedule_csv"] or "")))
         return int(reach.get("total") or 0) > 0

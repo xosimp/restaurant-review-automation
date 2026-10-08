@@ -467,6 +467,14 @@ def _send_now_keys(payload, out):
     held = out.get("new_blockers") or out.get("blockers") or []
     if not items or len(held) > 3:
         return None
+    # A hard rule — no manager on the floor first of all, a coverage gap,
+    # overtime past the cap, approved time off — is never acknowledged from
+    # the lock screen: the week is opened and read (re-audit 10/8/26).
+    from schedule_rules import HARD
+    for b in items:
+        parts = str(b.get("key") or "").split(":")
+        if len(parts) > 1 and parts[0] == "rule" and parts[1] in HARD:
+            return None
     keys = [str(b.get("key")) for b in items if b.get("key")]
     return keys if len(keys) == len(items) else None
 

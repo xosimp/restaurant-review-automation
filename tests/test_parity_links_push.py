@@ -219,6 +219,17 @@ def test_send_now_acknowledges_every_blocker_the_push_could_name():
     assert delayed._send_now_keys({}, {"new_blockers": ["x"]}) is None
 
 
+def test_send_now_is_never_offered_over_a_hard_rule():
+    """Re-audit 10/8/26: no manager on the floor (or any hard rule) is read
+    in the week, never acknowledged from the lock screen."""
+    out = {"blocker_items": [{"key": "rule:no_manager:2026-10-09:16:00", "text": "No manager Friday 4pm"}],
+           "new_blockers": ["No manager Friday 4pm"]}
+    assert delayed._send_now_keys({}, out) is None
+    soft = {"blocker_items": [{"key": "notice:short", "text": "Inside the notice window"}],
+            "new_blockers": ["Inside the notice window"]}
+    assert delayed._send_now_keys({}, soft) == ["notice:short"]
+
+
 def test_the_held_week_push_carries_its_keys(monkeypatch):
     import strategy_jobs
     told = []
