@@ -159,6 +159,60 @@ CREATE TABLE IF NOT EXISTS push_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_push_outbox_state ON push_outbox(state, created_at);
 CREATE INDEX IF NOT EXISTS idx_push_outbox_created ON push_outbox(created_at);
+-- Live Activity push tokens (iOS parity audit 10/7/26 #38, #61, #94). kind
+-- 'start' is a device's push-to-start token for one activity type (iOS
+-- 17.2+); 'update' is one running activity's own token, keyed by what the
+-- activity is about (activity_key: the delayed action, the generation job,
+-- the service's business date). session_hash is the sessions.token of the
+-- sign-in that registered it: a token is sent to only while that session is
+-- live, so signing out, an expired session or a revoked device stops every
+-- Live Activity push to the phone without a second clean-up path.
+CREATE TABLE IF NOT EXISTS live_activity_tokens (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL,
+    restaurant_id INTEGER NOT NULL,
+    session_hash  TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    activity_key  TEXT NOT NULL DEFAULT '',
+    apns_token    TEXT NOT NULL UNIQUE,
+    environment   TEXT NOT NULL DEFAULT 'production',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_la_tokens_lookup
+    ON live_activity_tokens(activity_type, kind, restaurant_id, activity_key);
+CREATE INDEX IF NOT EXISTS idx_la_tokens_session ON live_activity_tokens(session_hash);
+-- One row per thing a Live Activity is about — a pending send, a schedule
+-- generation, one night's service: when the server started it on the
+-- phones (push-to-start, claimed once), the last content it sent (an update
+-- goes out only when this changes) and when it ended. For a service the
+-- row also holds the coverage check's latest read, so the "Tonight" route
+-- and the push never call the POS themselves.
+CREATE TABLE IF NOT EXISTS live_activity_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id INTEGER NOT NULL,
+    activity_type TEXT NOT NULL,
+    activity_key  TEXT NOT NULL,
+    started_at    TEXT,
+    ended_at      TEXT,
+    state_json    TEXT,
+    coverage_json TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(restaurant_id, activity_type, activity_key)
+);
+CREATE INDEX IF NOT EXISTS idx_la_runs_created ON live_activity_runs(created_at);
+-- The waiting count each login last read (#31): when a read from the web
+-- finds it changed, that login's phones get a silent push so the widget's
+-- "3 things waiting" follows the queue. One row per login per location.
+CREATE TABLE IF NOT EXISTS widget_waiting_counts (
+    restaurant_id INTEGER NOT NULL,
+    user_id       INTEGER NOT NULL,
+    count         INTEGER NOT NULL,
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (restaurant_id, user_id)
+);
 """
 
 
@@ -1413,6 +1467,11 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
                     group.done(False)
     except Exception as e:
         print(f"[push] fire_push error ({alert_type}, rid={restaurant_id}): {e}")
+    if queued and alert_type in ACTIONABLE_TYPES and alert_type not in STAFF_ALERT_TYPES:
+        # Something new is waiting on the owner: the widget's count follows
+        # without the app being opened (iOS parity audit 10/7/26 #31). The
+        # same logins the alert went to; throttled inside fire_silent.
+        fire_silent(restaurant_id, "waiting", user_ids=user_ids, db_path=db_path)
     return queued
 
 
@@ -1498,3 +1557,396 @@ def outbox_counts(db_path=DB_PATH) -> dict:
     finally:
         conn.close()
     return {"by_state": by_state, "oldest_pending_at": oldest, "failed_24h": failed_24h}
+
+
+# ── Silent and Live Activity pushes (iOS parity audit 10/7/26 #31, #38, #61, #94) ──
+#
+# Two kinds of push that show nothing by themselves:
+#
+# - A SILENT push (apns-push-type background, priority 5, content-available
+#   and nothing else in aps): the phone wakes the app for a few seconds to
+#   re-read what its widgets draw — last night's report the moment it is
+#   delivered, the waiting count when it changes. Apple throttles these per
+#   device and drops a background push that carries an alert, a sound or a
+#   badge, so none of those are ever set, and one restaurant never sends
+#   more than one per reason and audience per SILENT_MIN_MINUTES.
+# - A LIVE ACTIVITY push (apns-push-type liveactivity, topic
+#   "<bundle>.push-type.liveactivity"): starts (push-to-start, iOS 17.2+),
+#   updates or ends a Live Activity on the Lock Screen and in the Dynamic
+#   Island. Updates go at priority 5 — they redraw a figure, nothing buzzes —
+#   and only a start or an end, which the owner should see at once, at 10.
+#
+# Neither goes through push_outbox or fire_push: there is no banner, no
+# notification row and no badge, and a lost one costs a refresh the app does
+# anyway the next time it opens. Both are sent only where the scheduler may
+# run (native_push_allowed): a local backend has production's APNs key and
+# its own copy of the tokens.
+
+LIVE_ACTIVITY_TYPES = ("pending_send", "schedule_build", "service")
+LA_KIND_START, LA_KIND_UPDATE = "start", "update"
+# The Swift ActivityAttributes type a push-to-start names (attributes-type).
+LIVE_ACTIVITY_ATTRIBUTES = {
+    "pending_send": "PendingSendAttributes",
+    "schedule_build": "ScheduleBuildAttributes",
+    "service": "ServiceAttributes",
+}
+SILENT_REASONS = ("dsr", "waiting")
+SILENT_MIN_MINUTES = 15
+# Seconds from the Unix epoch to 2001-01-01: ActivityKit decodes a Date in
+# content-state with JSONDecoder's default strategy, which counts from 2001.
+_APPLE_EPOCH = 978307200
+
+
+def apple_date(value):
+    """`value` as ActivityKit reads a Date inside content-state: seconds
+    since 2001-01-01 UTC. Takes an aware or naive-UTC datetime, a Unix
+    timestamp, or an ISO string ("2026-10-09T23:00:00Z", "… 23:00:00").
+    None for anything unreadable — the field is then left out, never 0."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            ts = float(value)
+        elif isinstance(value, datetime):
+            dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            ts = dt.timestamp()
+        else:
+            raw = str(value).strip().replace("Z", "+00:00").replace(" ", "T")
+            dt = datetime.fromisoformat(raw)
+            dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            ts = dt.timestamp()
+    except (TypeError, ValueError):
+        return None
+    return round(ts - _APPLE_EPOCH, 3)
+
+
+def native_push_allowed() -> bool:
+    """Silent and Live Activity pushes leave only where the scheduler may
+    run — never from a laptop holding production's APNs key."""
+    try:
+        import scheduler
+        return bool(scheduler.scheduling_allowed())
+    except Exception:
+        return False
+
+
+def _apns_post(apns_token, environment, payload, push_type, priority, topic, collapse_id=None,
+               expiry=None):
+    """One POST to APNs, with the one other-host retry a BadDeviceToken
+    earns (see _deliver). Returns (ok, status, reason, environment it
+    reached). Never raises."""
+    body = json.dumps(payload, separators=(",", ":")).encode()
+
+    def _post(env):
+        headers = {
+            "authorization": f"bearer {_provider_jwt()}",
+            "apns-topic": topic,
+            "apns-push-type": push_type,
+            "apns-priority": str(priority),
+            "content-type": "application/json",
+        }
+        if collapse_id:
+            headers["apns-collapse-id"] = collapse_id
+        if expiry is not None:
+            headers["apns-expiration"] = str(int(expiry))
+        resp = _client().post(f"https://{_apns_host(env)}/3/device/{apns_token}", content=body,
+                              headers=headers)
+        if resp.status_code == 200:
+            return True, 200, None
+        try:
+            reason = resp.json().get("reason", "")
+        except Exception:
+            reason = ""
+        if reason in _JWT_REMINT_REASONS:
+            invalidate_provider_jwt()
+        return False, resp.status_code, reason or f"HTTP {resp.status_code}"
+
+    try:
+        ok, status, reason = _post(environment)
+        if not ok and reason == "BadDeviceToken":
+            other = "sandbox" if environment == "production" else "production"
+            ok2, status2, _reason2 = _post(other)
+            if ok2:
+                return True, status2, None, other
+        return ok, status, reason, environment
+    except PushNotConfigured as e:
+        return False, 0, str(e)[:300], environment
+    except Exception as e:
+        return False, 0, str(e)[:300], environment
+
+
+def _submit_native(fn, *args) -> bool:
+    """Hand one silent or Live Activity delivery to the push pool, inside
+    the same queue ceiling as the alerts. Past the ceiling it is dropped:
+    it carries nothing the next refresh won't."""
+    global _queued
+    with _executor_lock:
+        if _queued >= _MAX_PUSH_QUEUED:
+            return False
+        _queued += 1
+
+    def _run():
+        global _queued
+        try:
+            fn(*args)
+        except Exception as e:
+            print(f"[push] native delivery raised: {e}")
+        finally:
+            with _executor_lock:
+                waiting = _overflow_queue()
+                nxt = waiting.popleft() if waiting else None
+                if nxt is None:
+                    _queued -= 1
+            if nxt is not None:
+                try:
+                    _push_executor().submit(_run_delivery, *nxt)
+                except Exception:
+                    with _executor_lock:
+                        _queued -= 1
+    try:
+        _push_executor().submit(_run)
+        return True
+    except Exception as e:
+        with _executor_lock:
+            _queued -= 1
+        print(f"[push] could not submit a native delivery: {e}")
+        return False
+
+
+def silent_payload(restaurant_id, reason) -> dict:
+    """What a silent push carries: content-available and nothing else in
+    aps (an alert, sound or badge would make Apple drop it as a background
+    push), and which location and which half of the widget it is about."""
+    return {"aps": {"content-available": 1},
+            "cavnar": {"silent": reason, "restaurant_id": int(restaurant_id)}}
+
+
+def fire_silent(restaurant_id, reason, user_ids=None, db_path=DB_PATH) -> int:
+    """Wake the owner app on this restaurant's phones to refresh its widgets
+    (#31): `reason` "dsr" (last night's report was delivered) or "waiting"
+    (the waiting count changed). Console (owner-tier) devices only — a staff
+    phone has no owner widget — narrowed to `user_ids` when given. At most
+    one per restaurant, reason and audience per SILENT_MIN_MINUTES. Returns
+    how many devices it was queued for."""
+    if reason not in SILENT_REASONS or not native_push_allowed():
+        return 0
+    try:
+        tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True)
+        if user_ids is not None:
+            allowed = {int(u) for u in user_ids}
+            tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
+        tokens = [t for t in tokens if t.get("tier") != TIER_STAFF]
+        if not tokens:
+            return 0
+        import ops
+        who = ",".join(str(u) for u in sorted({int(u) for u in user_ids})) if user_ids is not None else "all"
+        if not ops.claim_cooldown(f"silent:{int(restaurant_id)}:{reason}:{who}"[:180], SILENT_MIN_MINUTES):
+            return 0
+        n = 0
+        for t in tokens:
+            if _submit_native(_deliver_silent, t, int(restaurant_id), reason, db_path):
+                n += 1
+        return n
+    except Exception as e:
+        print(f"[push] fire_silent failed (rid={restaurant_id}, {reason}): {e}")
+        return 0
+
+
+def _deliver_silent(token_row, restaurant_id, reason, db_path=DB_PATH):
+    # An hour: a refresh that arrives later than that is one the app has
+    # already done on its own.
+    ok, status, error, env = _apns_post(
+        token_row["apns_token"], token_row.get("environment") or "production",
+        silent_payload(restaurant_id, reason), "background", 5, _bundle_id(),
+        expiry=int(time.time()) + 3600)
+    try:
+        conn = get_conn(db_path)
+        try:
+            conn.execute(
+                "INSERT INTO push_deliveries (device_token_id, restaurant_id, alert_type, status, ok, attempts, "
+                "error) VALUES (?,?,?,?,?,?,?)",
+                (token_row["id"], token_row["restaurant_id"], f"silent_{reason}", status, int(ok), 1, error))
+            if ok and env != token_row.get("environment"):
+                conn.execute("UPDATE device_tokens SET environment=? WHERE id=?", (env, token_row["id"]))
+            elif not ok and error in _PERMANENT_FAILURE_REASONS:
+                conn.execute("DELETE FROM device_tokens WHERE id=?", (token_row["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[push] silent delivery log failed: {e}")
+    if not ok and _classify(status, error or "") == "provider":
+        _alarm_provider_failure(error, db_path)
+    return ok
+
+
+def register_live_activity_token(user_id, restaurant_id, session_hash, activity_type, kind, apns_token,
+                                 environment="production", activity_key="", db_path=DB_PATH):
+    """Upsert one Live Activity token (by the token itself). A device holds
+    one push-to-start token per activity type and one update token per
+    running activity, so a newer one replaces the older one this session
+    registered for the same thing. Raises ValueError on a malformed request."""
+    if activity_type not in LIVE_ACTIVITY_TYPES:
+        raise ValueError("activity_type must be one of " + ", ".join(LIVE_ACTIVITY_TYPES))
+    if kind not in (LA_KIND_START, LA_KIND_UPDATE):
+        raise ValueError("kind must be 'start' or 'update'")
+    token = (apns_token or "").strip()
+    if not token or len(token) > 400 or any(c not in "0123456789abcdefABCDEF" for c in token):
+        raise ValueError("token must be the hex APNs token")
+    if environment not in ("sandbox", "production"):
+        raise ValueError("environment must be 'sandbox' or 'production'")
+    key = str(activity_key or "")[:80] if kind == LA_KIND_UPDATE else ""
+    if kind == LA_KIND_UPDATE and not key:
+        raise ValueError("activity_key is required for an update token")
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM live_activity_tokens WHERE session_hash=? AND activity_type=? AND kind=? "
+            "AND activity_key=? AND apns_token<>?", (session_hash, activity_type, kind, key, token))
+        conn.execute(
+            "INSERT INTO live_activity_tokens (user_id, restaurant_id, session_hash, activity_type, kind, "
+            "activity_key, apns_token, environment) VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(apns_token) DO UPDATE SET user_id=excluded.user_id, "
+            "restaurant_id=excluded.restaurant_id, session_hash=excluded.session_hash, "
+            "activity_type=excluded.activity_type, kind=excluded.kind, activity_key=excluded.activity_key, "
+            "environment=excluded.environment, updated_at=datetime('now')",
+            (int(user_id), int(restaurant_id), session_hash, activity_type, kind, key, token, environment))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_live_activity_tokens(session_hash, activity_type=None, kind=None, activity_key=None,
+                                db_path=DB_PATH) -> int:
+    """Forget this session's tokens — all of them, or one type (an owner
+    turning "Tonight's service" off), one kind, one activity. Returns how
+    many went."""
+    sql, args = "DELETE FROM live_activity_tokens WHERE session_hash=?", [session_hash]
+    if activity_type:
+        sql += " AND activity_type=?"
+        args.append(activity_type)
+    if kind:
+        sql += " AND kind=?"
+        args.append(kind)
+    if activity_key is not None:
+        sql += " AND activity_key=?"
+        args.append(str(activity_key))
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(sql, args).rowcount or 0
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
+def remove_live_activity_tokens_for(token_rows, db_path=DB_PATH) -> int:
+    """Forget these update tokens — their activity has just been ended, and
+    Apple would refuse them from here on."""
+    ids = [int(t["id"]) for t in (token_rows or []) if t.get("id") is not None]
+    if not ids:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(f"DELETE FROM live_activity_tokens WHERE id IN ({','.join('?' * len(ids))})",
+                         ids).rowcount or 0
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
+def live_activity_tokens(activity_type, kind, restaurant_id=None, activity_key=None, user_ids=None,
+                         db_path=DB_PATH) -> list:
+    """The tokens a Live Activity push may go to: only while the session
+    that registered each is live and its login active."""
+    sql = ("SELECT t.* FROM live_activity_tokens t "
+           "JOIN sessions s ON s.token = t.session_hash AND datetime(s.expires_at) > datetime('now') "
+           "JOIN users u ON u.id = t.user_id AND u.is_active = 1 "
+           "WHERE t.activity_type=? AND t.kind=?")
+    args = [activity_type, kind]
+    if restaurant_id is not None:
+        sql += " AND t.restaurant_id=?"
+        args.append(int(restaurant_id))
+    if activity_key is not None:
+        sql += " AND t.activity_key=?"
+        args.append(str(activity_key))
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(sql + " ORDER BY t.id", args).fetchall()]
+    finally:
+        conn.close()
+    if user_ids is not None:
+        allowed = {int(u) for u in user_ids}
+        rows = [r for r in rows if int(r["user_id"]) in allowed]
+    return rows
+
+
+def live_activity_payload(activity_type, event, content_state, attributes=None, alert=None,
+                          stale_at=None, dismiss_at=None, now=None) -> dict:
+    """The aps of a Live Activity push. `event` start | update | end;
+    `stale_at` / `dismiss_at` are Unix seconds (aps dates are Unix time —
+    only the Dates INSIDE content-state count from 2001, see apple_date)."""
+    if event not in ("start", "update", "end"):
+        raise ValueError("event must be start, update or end")
+    aps = {"timestamp": int(now if now is not None else time.time()), "event": event,
+           "content-state": content_state}
+    if event == "start":
+        # A push-to-start names the attributes type and its values, and must
+        # carry an alert; it is shown without a sound.
+        aps["attributes-type"] = LIVE_ACTIVITY_ATTRIBUTES[activity_type]
+        aps["attributes"] = attributes or {}
+        aps["alert"] = alert or {"title": "Cavnar AI", "body": ""}
+    elif alert:
+        aps["alert"] = alert
+    if stale_at is not None:
+        aps["stale-date"] = int(stale_at)
+    if dismiss_at is not None and event == "end":
+        aps["dismissal-date"] = int(dismiss_at)
+    return {"aps": aps}
+
+
+def fire_live_activity(token_rows, activity_type, event, content_state, attributes=None, alert=None,
+                       stale_at=None, dismiss_at=None, db_path=DB_PATH) -> int:
+    """Send one start, update or end to each token. Returns how many were
+    queued (0 where native pushes are not allowed)."""
+    if not token_rows or not native_push_allowed():
+        return 0
+    payload = live_activity_payload(activity_type, event, content_state, attributes=attributes, alert=alert,
+                                    stale_at=stale_at, dismiss_at=dismiss_at)
+    priority = 5 if event == "update" else 10
+    n = 0
+    for t in token_rows:
+        if _submit_native(_deliver_live_activity, t, payload, priority, db_path):
+            n += 1
+    return n
+
+
+def _deliver_live_activity(token_row, payload, priority, db_path=DB_PATH):
+    # A start or update older than ten minutes says something no longer true.
+    ok, status, error, env = _apns_post(
+        token_row["apns_token"], token_row.get("environment") or "production", payload, "liveactivity",
+        priority, _bundle_id() + ".push-type.liveactivity", expiry=int(time.time()) + 600)
+    try:
+        if not ok and (error in _PERMANENT_FAILURE_REASONS or status == 410):
+            # An ended activity's token, or a rotated push-to-start token:
+            # Apple will never take it again.
+            conn = get_conn(db_path)
+            try:
+                conn.execute("DELETE FROM live_activity_tokens WHERE id=?", (token_row["id"],))
+                conn.commit()
+            finally:
+                conn.close()
+        elif ok and env != token_row.get("environment"):
+            conn = get_conn(db_path)
+            try:
+                conn.execute("UPDATE live_activity_tokens SET environment=? WHERE id=?",
+                             (env, token_row["id"]))
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[push] live activity bookkeeping failed: {e}")
+    if not ok and _classify(status, error or "") == "provider":
+        _alarm_provider_failure(error, db_path)
+    return ok

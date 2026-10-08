@@ -2791,6 +2791,31 @@ def mobile_delete_device_token(apns_token, current_user):
     return jsonify(ok=True)
 
 
+# Live Activity tokens (iOS parity audit 10/7/26 #38, #61, #94): a phone's
+# push-to-start token per activity type and each running activity's own
+# token. Phone-only, like the device token above. Filed under this sign-in's
+# session, so they stop the moment it ends (push.live_activity_tokens).
+
+@mobile_bp.route("/live-activity-tokens", methods=["POST"])
+@mobile_login_required
+def mobile_register_live_activity_token(current_user):
+    import live_activities
+    from auth import hash_session_token
+    payload, status = live_activities.register_token(current_user, hash_session_token(_bearer_token()),
+                                                     request.get_json(silent=True) or {})
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/live-activity-tokens", methods=["DELETE"])
+@mobile_login_required
+def mobile_remove_live_activity_tokens(current_user):
+    import live_activities
+    from auth import hash_session_token
+    payload, status = live_activities.remove_tokens(hash_session_token(_bearer_token()),
+                                                    request.get_json(silent=True) or {})
+    return jsonify(**payload), status
+
+
 # ── Labor ─────────────────────────────────────────────────────────────────
 
 def _staff_constraints_index(restaurant_id):
