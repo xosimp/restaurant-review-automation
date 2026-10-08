@@ -3509,7 +3509,14 @@ def mobile_generate_schedule(current_user):
     # minutes, and the page says they can leave (iOS parity #16). Watched
     # before the job is queued, so a fast job never finishes unwatched.
     _se.watch_generation(job_id, current_user)
-    _se.submit_generation(job_id, rid, **_job_kw)
+    try:
+        _se.submit_generation(job_id, rid, **_job_kw)
+    except BaseException:
+        # Never queued: nothing will finish or announce it, so the watch is
+        # dropped and the job closed (re-audit 10/8/26 #14).
+        _se.take_generation_watchers(job_id)
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": "The schedule couldn't be started — try again."})
+        raise
     try:
         import schedule_versions as _sv_rej
         _chip = body.get("reason_chip") or body.get("reason")
@@ -3528,6 +3535,34 @@ def mobile_generate_schedule(current_user):
     # guessed 15 minutes; a poll while it is pending says what is left.
     return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates,
                    wait_seconds=_se.job_wait_seconds(), typical=_se.typical_generation_seconds(rid))
+
+
+@mobile_bp.route("/labor/generate-schedule/follow", methods=["POST"])
+@mobile_login_required
+def mobile_follow_generation(current_user):
+    """Follow the generation a press was refused for (409 busy, re-audit
+    10/8/26 #8): the owner now waits on that run, so it is treated as a
+    join — a queued auto-draft goes ahead as a press (promote_generation)
+    and this login is pushed when it lands (watch_generation). Nothing is
+    ever started here: a run that already finished is answered with its job
+    to poll, which reads its result. The ONE body; /api/generate-schedule/
+    follow is its web twin. Body: job_id."""
+    rid = current_user["restaurant_id"]
+    from permissions import has_permission, SCHEDULE_DRAFT
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
+        return jsonify(ok=False, error="Your login can view labor but not draft a schedule."), 403
+    import ops as _ops
+    import schedule_engine as _se
+    body = request.get_json(silent=True) or {}
+    job_id = str(body.get("job_id") or "").strip()[:64]
+    if not job_id or not _ops.read_async_job(job_id, restaurant_id=rid):
+        return jsonify(ok=False, error="That generation isn't running any more."), 404
+    _running, _ = _ops.running_job("schedule", rid)
+    if _running == job_id:
+        _se.promote_generation(job_id)
+        _se.watch_generation(job_id, current_user)
+    return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid),
+                   typical=_se.typical_generation_seconds(rid))
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")

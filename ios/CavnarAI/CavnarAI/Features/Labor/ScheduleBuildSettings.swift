@@ -362,18 +362,22 @@ struct GenerateBuildRows: View {
                     Text("Cavnar AI drafts every")
                         .font(.cavnarBody(14, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
-                    Menu {
-                        ForEach(Array(ScheduleBuildSettings.draftDays.enumerated()), id: \.offset) { i, day in
-                            Button(day) { Task { await settings.setAutoDraftDay(i) } }
+                    if draft.canEdit {
+                        Menu {
+                            ForEach(Array(ScheduleBuildSettings.draftDays.enumerated()), id: \.offset) { i, day in
+                                Button(day) { Task { await settings.setAutoDraftDay(i) } }
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(draft.day).font(.cavnarBody(14, weight: 700))
+                                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(Color.cavnarEmber2)
                         }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(draft.day).font(.cavnarBody(14, weight: 700))
-                            Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
-                        }
-                        .foregroundStyle(Color.cavnarEmber2)
+                        .disabled(settings.saving == "auto_draft_day")
+                    } else {
+                        Text(draft.day).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk)
                     }
-                    .disabled(settings.saving == "auto_draft_day")
                 }
                 Text("A draft only \u{2014} nothing goes to staff until you send it")
                     .font(.cavnarBody(12.5))
@@ -381,9 +385,15 @@ struct GenerateBuildRows: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
-            AccountStateSwitch(isOn: Binding(get: { draft.enabled },
-                                             set: { on in Task { await settings.setAutoDraft(on) } }),
-                               busy: settings.saving == "auto_draft")
+            // Only a login the save allows gets the switch (re-audit
+            // 10/8/26 #12); any other reads the state.
+            if draft.canEdit {
+                AccountStateSwitch(isOn: Binding(get: { draft.enabled },
+                                                 set: { on in Task { await settings.setAutoDraft(on) } }),
+                                   busy: settings.saving == "auto_draft")
+            } else {
+                stateText(draft.enabled)
+            }
         }
         .frame(minHeight: 56)
     }
@@ -400,11 +410,23 @@ struct GenerateBuildRows: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
-            AccountStateSwitch(isOn: Binding(get: { p.enabled }, set: { on in
-                if on { confirmingAutoPublish = true } else { Task { await settings.setAutoPublish(false) } }
-            }), busy: settings.saving == "auto_publish", optimistic: false)
+            if p.canEdit {
+                AccountStateSwitch(isOn: Binding(get: { p.enabled }, set: { on in
+                    if on { confirmingAutoPublish = true } else { Task { await settings.setAutoPublish(false) } }
+                }), busy: settings.saving == "auto_publish", optimistic: false)
+            } else {
+                stateText(p.enabled)
+            }
         }
         .frame(minHeight: 56)
+    }
+
+    /// "On" / "Off" for a login that may read the automation but not switch it.
+    private func stateText(_ on: Bool) -> some View {
+        Text(on ? "On" : "Off")
+            .font(.cavnarBody(14, weight: 700))
+            .foregroundStyle(on ? Color.cavnarGreen : Color.cavnarInk3)
+            .accessibilityLabel(on ? "On \u{2014} your login can\u{2019}t change it" : "Off \u{2014} your login can\u{2019}t change it")
     }
 }
 

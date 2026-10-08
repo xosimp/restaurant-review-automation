@@ -207,6 +207,10 @@ final class ScheduleHistoryDetailViewModel {
     var versions: [ScheduleVersion] = []
     var draftVsPublished: DraftVsPublished?
     var versionsError: String?
+    /// The publish gate on this week as it stands now — the History
+    /// scorecard's Warnings tile (re-audit 10/8/26 #4). Nil until read, or
+    /// when it could not be: the tile then reads "—".
+    var publishCheck: PublishCheck?
 
     private let client: APIClient
 
@@ -252,12 +256,26 @@ final class ScheduleHistoryDetailViewModel {
             // top-level Optional rather than the concrete type.
             let fetched: GeneratedSchedule = try await client.send("/mobile/api/labor/schedule-history/\(id)")
             detail = fetched
+            await loadPublishCheck(id: id)
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {
             // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load this schedule."
+        }
+    }
+
+    /// The gate's answer for this week now. A failure leaves it nil — the
+    /// Warnings tile says "—", never a count it did not read.
+    func loadPublishCheck(id: Int) async {
+        do {
+            let check: PublishCheck = try await client.send("/mobile/api/labor/publish-check",
+                                                            query: ["schedule_id": String(id)],
+                                                            hapticOnError: false)
+            publishCheck = check.scheduleId == id ? check : nil
+        } catch {
+            publishCheck = nil
         }
     }
 

@@ -109,6 +109,22 @@ enum RestaurantClock {
     static func reset() {
         lock.withLock { zone = nil }
     }
+
+    /// Before this hour "today" is still last night's service — the
+    /// server's time_utils.BUSINESS_DAY_START_HOUR.
+    static let businessDayStartHour = 5
+
+    /// The restaurant's business date (ISO) at `now`, on its own clock, not
+    /// the phone's: last night's before 5am. What covers and a posted open
+    /// shift default to (re-audit 10/8/26 #6); a server-sent
+    /// `business_date` (which also reads the restaurant's hours) wins.
+    static func businessDate(at now: Date = Date(), in timeZone: TimeZone = RestaurantClock.timeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let hour = calendar.component(.hour, from: now)
+        let day = hour < businessDayStartHour ? (calendar.date(byAdding: .day, value: -1, to: now) ?? now) : now
+        return CavnarDate.isoDay(day, in: timeZone)
+    }
 }
 
 @Observable

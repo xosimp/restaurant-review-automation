@@ -5799,6 +5799,14 @@ def generate_schedule_json(current_user):
     return _m("mobile_generate_schedule")(current_user)
 
 
+@client_bp.route("/api/generate-schedule/follow", methods=["POST"])
+@login_required
+def follow_generation_json(current_user):
+    """Web twin — the one body is mobile_api.mobile_follow_generation: follow
+    the run a press was refused for, promoted and watched like a join."""
+    return _m("mobile_follow_generation")(current_user)
+
+
 @client_bp.route("/api/schedule-status/<job_id>", methods=["GET"])
 @login_required
 def schedule_status(current_user, job_id):
@@ -12528,6 +12536,14 @@ def _publish_schedule_request(current_user):
         return jsonify(ok=False, error="Reload the schedule before sending — this copy doesn't say which week it is."), 400
     ack = data.get("acknowledge")
     acknowledge = [str(k) for k in ack] if isinstance(ack, (list, tuple)) else bool(ack)
+    # A send nobody read a sheet for — Waiting on you's Send, the drafted
+    # push's Send to staff (re-audit 10/8/26 #1). It acknowledges nothing,
+    # and goes only when the unattended gate (draft_one_tap_safe: no
+    # blocker, no soft flag automation is held by, no unread note, somebody
+    # it reaches) passes now; otherwise it is refused and the week opened.
+    one_tap = data.get("one_tap") is True
+    if one_tap:
+        acknowledge = []
     conn = get_conn()
     try:
         row = conn.execute("SELECT id, week_start, published_at, superseded_by FROM schedule_history "
@@ -12541,6 +12557,17 @@ def _publish_schedule_request(current_user):
     if _sv_rq.replaced_error(row):
         return jsonify(ok=False, replaced=True, superseded_by=row["superseded_by"], schedule_id=row["id"],
                        error=_sv_rq.replaced_error(row)), 409
+    if one_tap:
+        if row["published_at"]:
+            # Already with staff: an already-sent answer, never a resend or
+            # a changes send from one tap.
+            return jsonify(ok=True, already_published=True, schedule_id=row["id"], sent=[], unreachable=[],
+                           failed=[], error=None), 200
+        import strategy_routes as _sr_1t
+        if not _sr_1t.draft_one_tap_safe(rid, row["id"], can_publish=True):
+            return jsonify(ok=False, one_tap_refused=True, schedule_id=row["id"],
+                           error="This week has something to read before it goes to staff — open it to "
+                                 "review and send."), 409
     changes = None
     if row["published_at"]:
         import schedule_versions as _sv
@@ -12581,7 +12608,10 @@ def _publish_schedule_request(current_user):
                                          f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
         else:
             act = delayed.schedule(rid, "schedule_publish",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_by},
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
+                                    # The window's end runs the unattended
+                                    # gate again for a one-tap send (#1).
+                                    **({"one_tap": True} if one_tap else {}), **_by},
                                    delay, actor=current_user,
                                    label=f"Publishing the week of {_mdy_pub(row['week_start'])} to staff")
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],

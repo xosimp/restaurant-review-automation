@@ -2702,6 +2702,12 @@ final class LaborViewModel {
 
     /// Follow the run a press was refused for (409 busy): its job is polled
     /// like one this phone started, and its week lands here when it is done.
+    ///
+    /// The server is told first (`generate-schedule/follow`, re-audit
+    /// 10/8/26 #8): the run is then treated as a join — a queued auto-draft
+    /// goes ahead as a press, and this login is pushed when it lands. It
+    /// never starts anything. An older server without the route (404 on
+    /// the path) is simply polled, as before.
     func followBusyRun() async {
         guard let busy = busyRun, let jobId = busy.jobId, !isGeneratingSchedule else { return }
         busyRun = nil
@@ -2710,9 +2716,27 @@ final class LaborViewModel {
         joinedRunningGeneration = true
         generationProgress = nil
         regeneratingDates = busy.running?.dates ?? []
-        startGenerationClock(typical: busy.typical, waitSeconds: busy.waitSeconds)
-        rememberRunningGeneration(jobId, dates: regeneratingDates, waitSeconds: busy.waitSeconds, typical: busy.typical)
-        await pollSchedule(jobId: jobId, waitSeconds: busy.waitSeconds)
+        var waitSeconds = busy.waitSeconds
+        var typical = busy.typical
+        do {
+            let followed: GenerateResponse = try await client.send(
+                "/mobile/api/labor/generate-schedule/follow", method: .post,
+                body: FollowBody(jobId: jobId), hapticOnError: false)
+            if followed.ok {
+                waitSeconds = followed.waitSeconds ?? waitSeconds
+                typical = followed.typical ?? typical
+            }
+        } catch {
+            // Followed by polling alone: the status poll still reads it.
+        }
+        startGenerationClock(typical: typical, waitSeconds: waitSeconds)
+        rememberRunningGeneration(jobId, dates: regeneratingDates, waitSeconds: waitSeconds, typical: typical)
+        await pollSchedule(jobId: jobId, waitSeconds: waitSeconds)
+    }
+
+    struct FollowBody: Encodable {
+        let jobId: String
+        enum CodingKeys: String, CodingKey { case jobId = "job_id" }
     }
 
     /// Throw away the local edits and take the week as it is on file —
@@ -3151,7 +3175,7 @@ final class LaborViewModel {
         do {
             let r: DraftSendResponse = try await client.send(
                 "/mobile/api/labor/publish-schedule", method: .post,
-                body: PublishScheduleViewModel.PublishBody(scheduleId: scheduleId, acknowledge: false))
+                body: PublishScheduleViewModel.PublishBody(scheduleId: scheduleId, acknowledge: false, oneTap: true))
             if r.ok {
                 Haptic.success()
                 // What actually happened, in the web's words (F2-17).
@@ -3166,7 +3190,11 @@ final class LaborViewModel {
             draftSendError = r.error ?? "Nothing sent."
         } catch let error as APIClient.APIError {
             if error.status == 409, let gate = error.decodeBody(PublishScheduleViewModel.GateResponse.self),
-               gate.needsAck == true {
+               gate.needsAck == true || gate.oneTapRefused == true {
+                // Something to read first after all — the gate's blockers,
+                // or the unattended check's soft flags and notes: the send
+                // sheet opens on them (re-audit 10/8/26 #1).
+                await loadDraftCheck()
                 return true
             }
             draftSendError = error.message
@@ -3758,7 +3786,8 @@ final class LaborViewModel {
         guard let hours = Self.shiftHours(start, end) else { return "Times read like 4:00pm." }
         let was = rows[index]
         let moved = ScheduleRow(date: date, day: Self.weekdayName(date), employee: was.employee, role: was.role,
-                                shiftStart: start, shiftEnd: end, scheduledHours: hours, notes: was.notes,
+                                shiftStart: start, shiftEnd: end, scheduledHours: hours,
+                                notes: Self.movedNote(was.notes, employee: was.employee, from: was.date),
                                 needsReview: false, reviewReason: nil, rowId: was.rowId)
         if rows.contains(where: { $0.id == moved.id && $0.id != rowId }) {
             return "\(was.employee ?? "That person") already has a shift starting at \(start) that day."
@@ -3812,6 +3841,17 @@ final class LaborViewModel {
         await rescoreQuality()
         await refreshEditCost()
         return nil
+    }
+
+    /// The row's note after a move, as the web grid's drop writes it:
+    /// "(moved from Ana Mon)" after whatever it said — where the shift came
+    /// from stays on the row staff and the next editor read (re-audit
+    /// 10/8/26 #10). Same day (no move): the note as it was.
+    nonisolated static func movedNote(_ notes: String?, employee: String?, from date: String?) -> String? {
+        let day = String((weekdayName(date ?? "") ?? "").prefix(3))
+        let was = [employee ?? "", day].filter { !$0.isEmpty }.joined(separator: " ")
+        guard !was.isEmpty else { return notes }
+        return ((notes ?? "") + " (moved from \(was))").trimmingCharacters(in: .whitespaces)
     }
 
     /// "Monday" for an ISO date — the row's day, as the server derives it.
@@ -4415,20 +4455,10 @@ final class LaborViewModel {
         isGeneratingSchedule = true
         scheduleError = nil
         regeneratingDates = redo ?? []
-        // A partial redo keeps the week on screen until the new one lands.
-        if redo == nil { scheduleResult = nil }
         joinedRunningGeneration = false
         generationProgress = nil
         busyRun = nil
         startGenerationClock(typical: nil, waitSeconds: nil)
-        hasUnsavedFixes = false
-        overriddenRows = []
-        saveConflict = nil
-        saveNotice = nil
-        editCost = nil
-        selectedRedoDates = []
-        cavnarRemoved = []
-        whyQuestions = []
         do {
             let response: GenerateResponse = try await client.send(
                 "/mobile/api/labor/generate-schedule", method: .post,
@@ -4443,6 +4473,20 @@ final class LaborViewModel {
                 regeneratingDates = []
                 return
             }
+            // Only now that a run started (or was joined) does the week on
+            // screen and its unsaved edits go: a 409 busy, a 429 or a lost
+            // connection used to clear them before the request was answered
+            // (re-audit 10/8/26 #7). A partial redo keeps the week on screen
+            // until the new one lands.
+            if redo == nil { scheduleResult = nil }
+            hasUnsavedFixes = false
+            overriddenRows = []
+            saveConflict = nil
+            saveNotice = nil
+            editCost = nil
+            selectedRedoDates = []
+            cavnarRemoved = []
+            whyQuestions = []
             joinedRunningGeneration = response.joined ?? false
             generateInstruction = ""
             startGenerationClock(typical: response.typical, waitSeconds: response.waitSeconds)

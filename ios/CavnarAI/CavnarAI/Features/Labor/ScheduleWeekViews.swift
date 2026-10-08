@@ -524,7 +524,14 @@ struct ScheduleSummaryTiles {
     }
     enum Tone: Equatable { case good, warn, bad, neutral, hero }
 
-    static func tiles(_ r: GeneratedSchedule) -> [Tile] {
+    /// Where the Warnings tile reads from. A fresh draft's scorecard reads
+    /// the review saved with it (`.review`); a week reopened from History
+    /// reads the publish gate as it stands NOW (`.publishCheck`), because
+    /// time off approved or rules changed since the draft make the saved
+    /// review stale (re-audit 10/8/26 #4). Nil check: not read (yet).
+    enum WarningsSource { case review, publishCheck(PublishCheck?) }
+
+    static func tiles(_ r: GeneratedSchedule, warnings source: WarningsSource = .review) -> [Tile] {
         var out: [Tile] = []
         let q = r.quality
         let score = q?.checked == true ? q?.score : nil
@@ -553,20 +560,21 @@ struct ScheduleSummaryTiles {
         out.append(Tile(key: "coverage", label: "Coverage", value: cov.map(String.init), unit: cov == nil ? "" : "%",
                         sub: "of the people each shift needs, on it",
                         tone: cov.map { $0 >= 90 ? .good : ($0 >= 75 ? .warn : .bad) } ?? .neutral))
-        if let pc = r.projectedCost {
-            let ot = pc.overtimeHours ?? 0
+        // Overtime only from a figure the server priced: no projection, or
+        // one without overtime hours, is "—", never a green "Nobody past
+        // 40h" (re-audit 10/8/26 #5).
+        if let pc = r.projectedCost, let ot = pc.overtimeHours {
+            let premium = pc.overtimePremium.map { "\(money($0)) in premium pay" } ?? "Premium pay not priced"
             out.append(Tile(key: "overtime", label: "Overtime", value: ScheduleWeekMath.hoursText(ot), unit: "h",
-                            sub: ot > 0 ? "\(money(pc.overtimePremium ?? 0)) in premium pay" : "Nobody past 40h",
+                            sub: ot > 0 ? premium : "Nobody past 40h",
                             tone: ot > 0 ? .bad : .good))
         } else {
             out.append(Tile(key: "overtime", label: "Overtime", value: nil, unit: "",
-                            sub: "Priced once the draft is saved", tone: .neutral))
+                            sub: r.projectedCost == nil ? "Priced once the draft is saved"
+                                : "Overtime wasn\u{2019}t priced for this week",
+                            tone: .neutral))
         }
-        let hard = r.review?.hardCount ?? 0, soft = r.review?.softCount ?? 0
-        out.append(Tile(key: "warnings", label: "Warnings", value: String(hard + soft), unit: "",
-                        sub: hard > 0 ? "\(hard) break a hard rule \u{00B7} fix before sending"
-                            : (soft > 0 ? "Soft rules only \u{00B7} worth a look" : "Every rule kept"),
-                        tone: hard > 0 ? .bad : (soft > 0 ? .warn : .good)))
+        out.append(warningsTile(r, source))
         if let sav = lv?.savings, let rec = lv?.recentPct, let rev = r.forecastSales, rev > 0 {
             out.append(Tile(key: "savings", label: "Under your recent labor", value: money(sav), unit: "",
                             sub: "this week vs your last \(lv?.recentDays ?? 14) days at \(ScheduleBuildSettings.pct(rec))% labor (\(basis)), on \(money(rev)) forecast sales",
@@ -577,6 +585,38 @@ struct ScheduleSummaryTiles {
                             tone: .hero))
         }
         return out
+    }
+
+    /// The Warnings tile. A rules check that never came back is "—", never
+    /// a green "0 · Every rule kept" (re-audit 10/8/26 #4).
+    static func warningsTile(_ r: GeneratedSchedule, _ source: WarningsSource) -> Tile {
+        switch source {
+        case .review:
+            guard let review = r.review, review.hard != nil || review.soft != nil else {
+                return Tile(key: "warnings", label: "Warnings", value: nil, unit: "",
+                            sub: "The rules check didn\u{2019}t come back with this draft \u{2014} review it before sending",
+                            tone: .neutral)
+            }
+            let hard = review.hardCount, soft = review.softCount
+            return Tile(key: "warnings", label: "Warnings", value: String(hard + soft), unit: "",
+                        sub: hard > 0 ? "\(hard) break a hard rule \u{00B7} fix before sending"
+                            : (soft > 0 ? "Soft rules only \u{00B7} worth a look" : "Every rule kept"),
+                        tone: hard > 0 ? .bad : (soft > 0 ? .warn : .good))
+        case .publishCheck(let check):
+            guard let check, check.ok else {
+                return Tile(key: "warnings", label: "Warnings", value: nil, unit: "",
+                            sub: "Read from the publish check \u{2014} not read yet", tone: .neutral)
+            }
+            if check.replacedReason != nil {
+                return Tile(key: "warnings", label: "Warnings", value: nil, unit: "",
+                            sub: "A newer copy of this week replaced it", tone: .neutral)
+            }
+            let blockers = check.shown.lines.count, notes = check.notes.count
+            return Tile(key: "warnings", label: "Warnings", value: String(blockers + notes), unit: "",
+                        sub: blockers > 0 ? "\(blockers) to read before it goes to staff, as the rules stand now"
+                            : (notes > 0 ? "Notes only \u{00B7} worth a look" : "Nothing to read first, as the rules stand now"),
+                        tone: blockers > 0 ? .bad : (notes > 0 ? .warn : .good))
+        }
     }
 
     /// "Week of 10/12/26 – 10/18/26 · 84 shifts · 23 people · 612h"

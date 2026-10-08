@@ -1334,74 +1334,84 @@ def _draft_one(r, db_path, _se, _bump, period=None):
             ops.release_period(f"auto_draft:{r.id}", period)
         _bump("skipped")
         return
-    # Behind any owner's press (AI cost audit 10/7/26 #5): an owner who
-    # presses Generate takes the next free slot ahead of queued drafts.
-    try:
-        with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND):
-            _se._run_schedule_job(job_id, r.id)
-    except _se.GenerationSlotTimeout:
-        # Every slot stayed busy (owners' presses first): the job is closed,
-        # the day handed back, and the next hourly pass tries again.
-        ops.finish_async_job(job_id, "error", {"ok": False, "error": "No generation slot came free — "
-                                                                     "it will try again within the hour."})
-        if period:
-            ops.release_period(f"auto_draft:{r.id}", period)
-        _bump("skipped")
-        return
-    # _run_schedule_job reports its own failures into the job row rather
-    # than raising, so the push below must wait on that verdict — telling
-    # an owner a draft is waiting when none was saved is worse than silence.
-    state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
+    # An owner whose press joined this run is told once, however it ends —
+    # by the drafted push below when they were in its audience, else by
+    # their own (notify_generation_watchers pushes only a saved draft, and
+    # forgets the watchers either way). In a `finally` over the whole run:
+    # a slot timeout, a failed job or an exception out of the generation
+    # used to leave them in _GEN_WATCHERS for good (re-audit 10/8/26 #14).
     import schedule_engine as _watch
-    if state.get("status") != "done":
-        _watch.take_generation_watchers(job_id)
-        return
-    _bump("drafted")
     told = set()
     try:
-        import notify, push
-        # The owner's task, not the line cook's: a teammate with the app
-        # was told to review and publish a schedule they cannot publish.
-        # morning_brief.recipients is the same audience the brief uses.
-        # Only the ones who can publish it (SCHEDULE_PUBLISH).
-        import morning_brief
-        from permissions import has_permission, SCHEDULE_PUBLISH
-        audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)
-                    if has_permission(u, SCHEDULE_PUBLISH)}
-        if not notify.briefing_allowed(r.id, "schedule_drafted", db_path):
+        # Behind any owner's press (AI cost audit 10/7/26 #5): an owner who
+        # presses Generate takes the next free slot ahead of queued drafts.
+        try:
+            with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND):
+                _se._run_schedule_job(job_id, r.id)
+        except _se.GenerationSlotTimeout:
+            # Every slot stayed busy (owners' presses first): the job is closed,
+            # the day handed back, and the next hourly pass tries again.
+            ops.finish_async_job(job_id, "error", {"ok": False, "error": "No generation slot came free — "
+                                                                         "it will try again within the hour."})
+            if period:
+                ops.release_period(f"auto_draft:{r.id}", period)
+            _bump("skipped")
             return
-        notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
-        # An empty audience is nobody, not everyone: `user_ids=None` is
-        # every phone at the restaurant, members who cannot publish
-        # included — the case this audience exists to prevent (F2-11).
-        if not audience:
+        # _run_schedule_job reports its own failures into the job row rather
+        # than raising, so the push below must wait on that verdict — telling
+        # an owner a draft is waiting when none was saved is worse than silence.
+        state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
+        if state.get("status") != "done":
             return
-        # A week with days the generation could not write is saved with the
-        # rest kept (schedule audit 10/3/26 P-34) — said here too, never
-        # announced as a finished draft.
-        gaps = ((state.get("result") or {}).get("unwritten_dates") or []) if isinstance(state.get("result"), dict) else []
-        body = ("Review it and publish when it looks right — nothing has gone to your staff yet." if not gaps else
-                f"{len(gaps)} day{'s' if len(gaps) != 1 else ''} couldn't be written — redo "
-                f"{'it' if len(gaps) == 1 else 'them'} before you publish. Nothing has gone to your staff yet.")
-        # The week itself (iOS parity #5/#16): the push opens it in the
-        # editor, and offers Send to staff from the lock screen only when the
-        # week could go out in one tap — the audience can all publish.
-        _res = state.get("result") if isinstance(state.get("result"), dict) else {}
-        _sid = _res.get("history_id")
-        _data = {}
-        if _sid:
-            import strategy_routes as _sr_safe
-            _data = {"schedule_id": int(_sid),
-                     "one_tap_safe": bool(not gaps and _sr_safe.draft_one_tap_safe(r.id, int(_sid)))}
-        push.fire_push(r.id, "schedule_drafted",
-                       "Next week's schedule is drafted" if not gaps else "Next week's schedule is partly drafted",
-                       body, data=_data, db_path=db_path, user_ids=audience)
-        told = set(audience)
+        _bump("drafted")
+        try:
+            import notify, push
+            # The owner's task, not the line cook's: a teammate with the app
+            # was told to review and publish a schedule they cannot publish.
+            # morning_brief.recipients is the same audience the brief uses.
+            # Only the ones who can publish it (SCHEDULE_PUBLISH).
+            import morning_brief
+            from permissions import has_permission, SCHEDULE_PUBLISH
+            audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)
+                        if has_permission(u, SCHEDULE_PUBLISH)}
+            if not notify.briefing_allowed(r.id, "schedule_drafted", db_path):
+                return
+            notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
+            # An empty audience is nobody, not everyone: `user_ids=None` is
+            # every phone at the restaurant, members who cannot publish
+            # included — the case this audience exists to prevent (F2-11).
+            if not audience:
+                return
+            # A week with days the generation could not write is saved with the
+            # rest kept (schedule audit 10/3/26 P-34) — said here too, never
+            # announced as a finished draft.
+            gaps = ((state.get("result") or {}).get("unwritten_dates") or []) if isinstance(state.get("result"), dict) else []
+            body = ("Review it and publish when it looks right — nothing has gone to your staff yet." if not gaps else
+                    f"{len(gaps)} day{'s' if len(gaps) != 1 else ''} couldn't be written — redo "
+                    f"{'it' if len(gaps) == 1 else 'them'} before you publish. Nothing has gone to your staff yet.")
+            # The week itself (iOS parity #5/#16): the push opens it in the
+            # editor, and offers Send to staff from the lock screen only when the
+            # week could go out in one tap — the audience can all publish.
+            _res = state.get("result") if isinstance(state.get("result"), dict) else {}
+            _sid = _res.get("history_id")
+            _data = {}
+            if _sid:
+                import strategy_routes as _sr_safe
+                _data = {"schedule_id": int(_sid),
+                         "one_tap_safe": bool(not gaps and _sr_safe.draft_one_tap_safe(r.id, int(_sid)))}
+            push.fire_push(r.id, "schedule_drafted",
+                           "Next week's schedule is drafted" if not gaps else "Next week's schedule is partly drafted",
+                           body, data=_data, db_path=db_path, user_ids=audience)
+            told.update(audience)
+        except Exception as e:
+            ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
     except Exception as e:
-        ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
+        # Closed, so a joined owner's poll never waits on a job nothing
+        # will finish; a job already finished keeps its verdict.
+        from schedule_engine import generation_error_message
+        ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
+        raise
     finally:
-        # An owner whose press joined this run is told once — by the push
-        # above when they were in its audience, else by their own.
         _watch.notify_generation_watchers(job_id, r.id, exclude=told)
 
 

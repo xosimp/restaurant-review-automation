@@ -72,11 +72,14 @@ struct ScheduleHistoryDetailView: View {
                         }
                         // The same scorecard a fresh draft lands on (#47), from
                         // the same week model — what the week stored, priced
-                        // as it stands.
+                        // as it stands. Its warnings are the publish gate's
+                        // now, never the review saved when it was drafted
+                        // (re-audit 10/8/26 #4).
                         if detail.historyId != nil || !(detail.previewRows ?? []).isEmpty {
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
                                       spacing: 10) {
-                                ForEach(ScheduleSummaryTiles.tiles(detail), id: \.key) { tile in
+                                ForEach(ScheduleSummaryTiles.tiles(detail, warnings: .publishCheck(viewModel.publishCheck)),
+                                        id: \.key) { tile in
                                     ScheduleTileCard(tile: tile)
                                 }
                             }
@@ -276,7 +279,7 @@ struct ScheduleHistoryDetailView: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.cavnarGreen)
             HomeMixedText.make(
-                "Sent " + CavnarDate.mdyTime(publishedAt)
+                "Sent " + CavnarDate.mdyTimeLocal(publishedAt, in: RestaurantClock.timeZone)
                     + ((publishedBy ?? "").isEmpty ? "" : " by \(publishedBy ?? "")"),
                 size: 14, weight: 600, color: .cavnarGreen)
         }
@@ -310,7 +313,7 @@ struct ScheduleHistoryDetailView: View {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.cavnarBlue)
-            HomeMixedText.make("Updated " + CavnarDate.mdyTime(republishedAt) + " after sending",
+            HomeMixedText.make("Updated " + CavnarDate.mdyTimeLocal(republishedAt, in: RestaurantClock.timeZone) + " after sending",
                                size: 14, weight: 600, color: .cavnarBlue)
         }
         .padding(10)
@@ -442,7 +445,7 @@ struct ScheduleHistoryDetailView: View {
                     }
                 }
                 if let at = version.createdAt, !at.isEmpty {
-                    HomeMixedText.make(CavnarDate.mdyTime(at), size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(CavnarDate.mdyTimeLocal(at, in: RestaurantClock.timeZone), size: 12.5, color: .cavnarInk3)
                 }
                 ForEach(Array((version.lines ?? []).prefix(4).enumerated()), id: \.offset) { _, line in
                     HomeMixedText.make(line, size: 13.5, color: .cavnarInk2)

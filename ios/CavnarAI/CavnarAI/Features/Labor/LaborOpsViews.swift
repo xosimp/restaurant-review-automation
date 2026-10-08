@@ -14,7 +14,10 @@ import Observation
 struct OpenShiftPostSheet: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var date = CavnarDate.isoDay(Date())
+    // The restaurant's business date, not the phone's day (re-audit
+    // 10/8/26 #6): a phone in another zone, or a 1am post for last night's
+    // still-running shift, used to open on the wrong date.
+    @State private var date = RestaurantClock.businessDate()
     @State private var start = "5:00pm"
     @State private var end = "10:00pm"
     @State private var role = ""
@@ -25,6 +28,12 @@ struct OpenShiftPostSheet: View {
     @State private var posting = false
     @State private var confirming = false
 
+    /// The earliest postable day: the business date (a shift of last
+    /// night's service can still be running past midnight).
+    private static var earliest: Date {
+        CavnarDateChip.day(RestaurantClock.businessDate()) ?? Date()
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -34,7 +43,7 @@ struct OpenShiftPostSheet: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     AccountSection(kicker: "The shift") {
-                        AccountKVRow(label: "Date") { CavnarDateChip(iso: $date, earliest: Date(), accessibilityName: "Date") }
+                        AccountKVRow(label: "Date") { CavnarDateChip(iso: $date, earliest: Self.earliest, accessibilityName: "Date") }
                         AccountKVRow(label: "Starts") { CavnarTimeChip(time: $start, accessibilityName: "Starts") }
                         AccountKVRow(label: "Ends") { CavnarTimeChip(time: $end, accessibilityName: "Ends") }
                         AccountKVRow(label: "Role", showsDivider: false) {
@@ -236,8 +245,16 @@ final class CoversModel {
     private(set) var saving = false
     private(set) var error: String?
     private(set) var saved: String?
-    var date = CavnarDate.isoDay(Date())
+    /// The night the count is for: the restaurant's business date — last
+    /// night's before its day starts — never the phone's calendar day
+    /// (re-audit 10/8/26 #6). The server's `business_date` replaces the
+    /// local estimate until the owner picks a night themselves.
+    var date = RestaurantClock.businessDate() {
+        didSet { if date != oldValue && !settingDefault { datePicked = true } }
+    }
     var count = ""
+    private var datePicked = false
+    private var settingDefault = false
 
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
@@ -248,6 +265,11 @@ final class CoversModel {
     func load() async {
         if let r: CoversPayload = try? await client.send("/mobile/api/labor/covers", hapticOnError: false), r.ok {
             payload = r
+            if !datePicked, let day = r.businessDate, day.count == 10 {
+                settingDefault = true
+                date = day
+                settingDefault = false
+            }
         }
     }
 

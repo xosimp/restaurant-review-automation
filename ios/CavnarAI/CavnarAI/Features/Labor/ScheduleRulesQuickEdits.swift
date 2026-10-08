@@ -225,17 +225,53 @@ extension TeamSetupStore {
         return weekdays.filter { next.contains($0) }
     }
 
+    /// The server's closed weekdays with one day set closed (or open), in
+    /// week order — what the owner's tap meant, applied to the list as it
+    /// stands now rather than the copy on screen.
+    nonisolated static func closedWeekdays(_ base: [String], setting day: String, closed: Bool) -> [String] {
+        let next = closed ? base + [day] : base.filter { $0 != day }
+        return weekdays.filter { next.contains($0) }
+    }
+
+    /// GET labor/rules, read for its closures alone.
+    private struct ClosuresOnly: Decodable {
+        var closures: RulesClosures?
+        enum CodingKeys: String, CodingKey { case closures }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            closures = (try? c.decodeIfPresent(RulesClosures.self, forKey: .closures)) ?? nil
+        }
+    }
+
     /// Closed (or open again) on one weekday — saved at once, and the
-    /// server's list adopted.
+    /// server's list adopted. The list is read again first and the one day
+    /// switched on THAT (re-audit 10/8/26 #11): the save writes the whole
+    /// list, and toggling the copy loaded when the sheet opened undid a day
+    /// another login or the web closed since. No fresh list, no write.
     func toggleClosedWeekday(_ day: String) async {
         guard closedDayBusy == nil else { return }
+        // What the tap means, from the day as the owner saw it.
+        let wantClosed = !closedWeekdays.contains(day)
         closedDayBusy = day
         closedDaysError = nil
         defer { closedDayBusy = nil }
         do {
+            let fresh: ClosuresOnly = try await client.send("/mobile/api/labor/rules", hapticOnError: false)
+            guard let current = fresh.closures else {
+                closedDaysError = "Couldn\u{2019}t read the closed days just now \u{2014} nothing was changed."
+                Haptic.error()
+                return
+            }
+            closedWeekdays = current.closedWeekdays
+            if current.closedWeekdays.contains(day) == wantClosed {
+                // Somebody already made that change: nothing to write.
+                Haptic.success()
+                return
+            }
             let r: QuickRulesResponse = try await client.send(
                 "/mobile/api/labor/rules", method: .post,
-                body: ClosedWeekdaysBody(closedWeekdays: Self.closedWeekdays(closedWeekdays, toggling: day)),
+                body: ClosedWeekdaysBody(closedWeekdays: Self.closedWeekdays(current.closedWeekdays, setting: day,
+                                                                             closed: wantClosed)),
                 hapticOnError: false, retryTransient: false)
             guard r.ok, let cl = r.closures else {
                 closedDaysError = r.error ?? "Couldn\u{2019}t save the closed days."

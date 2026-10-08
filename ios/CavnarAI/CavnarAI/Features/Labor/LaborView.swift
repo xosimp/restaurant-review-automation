@@ -72,6 +72,9 @@ struct LaborView: View {
     /// A week asked to open while the one on screen holds unsaved edits —
     /// the screen asks before it is replaced (iOS parity #5).
     @State private var pendingOpenWeek: Int?
+    /// Generate pressed over a week with edits no save has stored — asked
+    /// first, as opening another week is (re-audit 10/8/26 #7).
+    @State private var confirmingGenerateOverEdits = false
     /// Where to scroll next (a week opened, the scorecard's View).
     @State private var scrollTarget: String?
     /// Scheduling setup opened on a section a link named (#49).
@@ -493,6 +496,16 @@ struct LaborView: View {
                     onOptimize: viewModel.weekReadOnlyReason == nil ? { Task { await viewModel.optimize() } } : nil)
             }
         }
+        .confirmationDialog("Generate a new week?",
+                            isPresented: $confirmingGenerateOverEdits, titleVisibility: .visible) {
+            Button("Generate \u{2014} drop my unsaved edits", role: .destructive) {
+                confirmingGenerateOverEdits = false
+                Task { await viewModel.generateSchedule() }
+            }
+            Button("Keep editing this week", role: .cancel) { confirmingGenerateOverEdits = false }
+        } message: {
+            Text("The week on screen has edits that haven\u{2019}t saved yet. They stay if the new week can\u{2019}t start.")
+        }
         .confirmationDialog("Open another week?",
                             isPresented: Binding(get: { pendingOpenWeek != nil }, set: { if !$0 { pendingOpenWeek = nil } }),
                             titleVisibility: .visible) {
@@ -633,7 +646,13 @@ struct LaborView: View {
                 ScheduleGenerateButton(
                     tone: tone,
                     isGenerating: viewModel.isGeneratingSchedule,
-                    action: { Task { await viewModel.generateSchedule() } }
+                    action: {
+                        if viewModel.hasLocalEdits {
+                            confirmingGenerateOverEdits = true
+                        } else {
+                            Task { await viewModel.generateSchedule() }
+                        }
+                    }
                 )
                 .padding(.top, 2)
                 // A week whose sales are too old is refused (D-33): the

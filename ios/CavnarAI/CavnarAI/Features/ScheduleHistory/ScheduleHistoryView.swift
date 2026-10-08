@@ -161,7 +161,7 @@ struct ScheduleHistoryView: View {
     /// "Sent 10/9/26 · 6:45pm" in green, "Draft" in ember, "Replaced" muted.
     private func statePill(_ entry: ScheduleHistoryEntry) -> some View {
         let tone: Color = entry.state == "Sent" ? .cavnarGreen : (entry.state == "Draft" ? .cavnarEmber2 : .cavnarInk3)
-        let text = entry.state == "Sent" ? "Sent " + CavnarDate.mdyTime(entry.publishedAt ?? "") : entry.state
+        let text = entry.state == "Sent" ? "Sent " + CavnarDate.mdyTimeLocal(entry.publishedAt ?? "", in: RestaurantClock.timeZone) : entry.state
         return HomeMixedText.make(text, size: 11.5, weight: 700, color: tone)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
