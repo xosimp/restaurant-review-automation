@@ -8452,7 +8452,12 @@ def mobile_schedule_sections(current_user):
             usual = [u for u in _smem.usual_sections(rid) if u["section"] in names]
         except Exception as _ux:
             print(f"[sections] usual sections unavailable rid={rid}: {_ux}")
-    return jsonify(ok=True, sections=names, assigned=assigned, usual=usual, foh_roles=foh or ["server"]), 200
+    # Whether this login may name sections or put a shift in one: the POST
+    # twin's own check, so the phone offers the editor only where it saves.
+    from permissions import has_permission, SCHEDULE_DRAFT
+    can_edit = bool(current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT))
+    return jsonify(ok=True, sections=names, assigned=assigned, usual=usual, foh_roles=foh or ["server"],
+                   can_edit=can_edit), 200
 
 
 @mobile_bp.route("/labor/schedule/sections", methods=["POST"])
