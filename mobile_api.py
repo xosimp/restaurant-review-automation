@@ -7923,6 +7923,14 @@ def mobile_score_schedule(current_user):
                 import ops as _ops_cap
                 _ops_cap.capture(_cx, job="schedule_save_capture", context=f"restaurant_id={rid} history={saved}")
                 _why = []
+            # A save of the draft before it went out is the owner's answer
+            # to the generated week so far, on the run that wrote it (the
+            # publish files the final one; re-audit 10/7/26 #4).
+            if not _was_published:
+                try:
+                    _sv.record_week_outcome(rid, saved, actor=current_user)
+                except Exception as _wox:
+                    print(f"[schedule] draft outcome not filed for {rid}: {_wox}")
             # A week staff were already sent: nobody is told from a save.
             # The save records the edit; the people whose shifts differ
             # from what they were last told come back as `unsent_changes`,

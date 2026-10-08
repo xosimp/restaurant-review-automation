@@ -262,12 +262,35 @@ def _scheduling_allowed():
     return scheduler.scheduling_allowed()
 
 
+# The ai_workflows policy whose `batch` flag governs a batch workflow named
+# otherwise (the rest are named after their policy); None: no policy (the
+# learner's own replays, platform spend that no console field governs).
+POLICY_OF = {"quiet_night_post": "marketing_content", "shadow_arms": None}
+
+
+def policy_allows(workflow):
+    """The workflow's policy in force says it may batch (Policy.batch — the
+    console can turn it off without a deploy; re-audit 10/7/26 #10). A
+    batch workflow with no policy is governed by the env list alone."""
+    name = POLICY_OF.get(workflow, workflow)
+    if not name:
+        return True
+    try:
+        import ai_workflows as wf
+        if name not in wf.POLICIES:
+            return True
+        return bool(wf.policy(name).batch)
+    except Exception:
+        return True
+
+
 def enabled(workflow):
     """Whether `workflow` may batch here, now: the kill switch on, the
-    workflow listed, and this the production scheduler's host — a local
-    backend never submits (it holds production's key and a copy of real
-    restaurants) and its callers take the synchronous path."""
-    return _switched_on() and workflow in workflows() and _scheduling_allowed()
+    workflow listed, its policy's `batch` flag on, and this the production
+    scheduler's host — a local backend never submits (it holds production's
+    key and a copy of real restaurants) and its callers take the
+    synchronous path."""
+    return _switched_on() and workflow in workflows() and policy_allows(workflow) and _scheduling_allowed()
 
 
 def _client():
@@ -397,7 +420,7 @@ def submit(workflow, items, client=None):
         _resolve(it.get("callback"))
     trigger, actor, corr = ai_utils._attribution()
     attribution = {"trigger": trigger, "actor_user_id": actor, "correlation_id": corr}
-    out, requests, blocked = {}, [], []
+    out, requests, blocked, keep = {}, [], [], {}
     conn = _conn()
     try:
         for it in items:
@@ -427,6 +450,7 @@ def submit(workflow, items, client=None):
                 blocked.append((cid, error))
                 continue
             requests.append({"custom_id": cid, "params": request})
+            keep[cid] = (item_corr, action, rid, request)
     finally:
         conn.close()
     for cid, error in blocked:
@@ -465,6 +489,16 @@ def submit(workflow, items, client=None):
         conn.close()
     for cid in ids:
         out[cid] = SUBMITTED
+        # A sample of the items that are a workflow run's first rung keep
+        # their request as that run's (seq 1, its tier): the answer lands
+        # with no create_with_retry call, so nothing else keeps it, and the
+        # learner's shadow replays need it (re-audit 10/7/26 #6).
+        corr_, action_, rid_, request_ = keep[cid]
+        try:
+            import ai_orchestrator
+            ai_orchestrator.keep_batch_request(corr_, action_, rid_, request_)
+        except Exception:
+            pass
     return out
 
 

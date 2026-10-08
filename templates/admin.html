@@ -4023,7 +4023,9 @@ function aiRow(w){
     + '<div class="tt"><b>' + esc(w.workflow) + (w.overridden.length ? ' <span class="chip warn">override</span>' : '') + (w.recommendations.length ? ' <span class="chip">' + w.recommendations.length + ' to decide</span>' : '') + '</b>'
     + '<span>' + aiLadder(w.effective.ladder) + ' · ' + esc(w.effective.reviewer) + ' · ' + figs + '</span></div><span class="chev">' + ico('chev','s') + '</span></div>'
     + '<div class="lx"><div class="box">' + invalid + aiPolicyTable(w) + aiStatsTable(w) + aiShadowLine(w) + meta
-    + '<span style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="cbtn btn s w" onclick="aiOverrideOpen(\'' + jsq(w.workflow) + '\')">Edit override</button>'
+    + (w.effective.context && w.effective.context.length ? '<span class="dim" style="font-size:12.5px">Reads (informational, set in code): ' + w.effective.context.map(esc).join(', ') + '</span>' : '')
+    + '<span style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + (w.overridable === false ? '<span class="dim">Not run through the orchestrator: an override would change nothing.</span>' : '<button class="cbtn btn s w" onclick="aiOverrideOpen(\'' + jsq(w.workflow) + '\')">Edit override</button>')
     + (o ? '<button class="cbtn btn s g w" onclick="aiRevert(\'' + jsq(w.workflow) + '\')">Revert</button>' : '')
     + '<span class="dim">' + esc(w.agent_label || '') + '</span></span></div></div>';
 }

@@ -1559,6 +1559,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # Suggested vs chosen (audit #41): the model's draft as it stood when
         # the owner first edited it — kept, never overwritten by the edit.
         ("reviews", "original_draft", "TEXT"),
+        # The ai_runs id of the draft_response run that wrote the stored
+        # draft: the owner's answer and the auto-approve gate's verdict are
+        # filed on it (re-audit 10/7/26 #5).
+        ("reviews", "draft_run_id", "TEXT"),
         # What the owner's edit did to that draft, measured at approval
         # (reply_edits.compare; ROI audit #40): a word edit distance, its
         # category and the closed-vocabulary signals. Read by the drafter's
@@ -6348,8 +6352,10 @@ def update_analysis(review_id: int, sentiment: str, categories: list,
 
 def update_draft(review_id: int, draft: str, db_path: str = DB_PATH,
                  needs_review: bool = False, review_reason: str = None,
-                 unedited_only: bool = False):
-    """Store a drafted reply.
+                 unedited_only: bool = False, run_id: str = None):
+    """Store a drafted reply. `run_id` is the ai_runs id of the run that
+    wrote it (reviews.draft_run_id), so what the owner does with it is filed
+    on that run (re-audit 10/7/26 #5).
 
     needs_review marks a draft that passed generation but states something
     the system cannot stand behind — see ai_guard.unsupported_commitments.
@@ -6368,10 +6374,10 @@ def update_draft(review_id: int, draft: str, db_path: str = DB_PATH,
     cur = conn.execute("""
         UPDATE reviews
            SET draft_response=?, response_status='drafted',
-               draft_needs_review=?, draft_review_reason=?
+               draft_needs_review=?, draft_review_reason=?, draft_run_id=?
          WHERE id=? AND COALESCE(response_status, '') NOT IN ('posted', 'approved')
     """ + (" AND COALESCE(draft_edited, 0) = 0" if unedited_only else ""),
-        (draft, 1 if needs_review else 0, review_reason, review_id))
+        (draft, 1 if needs_review else 0, review_reason, run_id, review_id))
     conn.commit()
     conn.close()
     return cur.rowcount == 1

@@ -1829,6 +1829,12 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
         text.run_id = run.run_id
     except AttributeError:
         pass
+    # The gate passed this exact text: a send of it unedited is not read
+    # again (ai_reviewer.gate_send, re-audit 10/7/26 #8).
+    if run.review_score is not None:
+        from ai_reviewer import remember_verdict
+        remember_verdict("guest_text", restaurant.id, str(text or "").strip(),
+                         _orch.Verdict(ok=True, score=run.review_score))
     return text
 
 
@@ -2426,7 +2432,21 @@ def prepare_campaign(restaurant_id, message, segment, with_link=False, db_path=D
     if seg is None:
         return None, _refusal("unknown_segment", "That audience isn't one Cavnar AI knows. Pick one of the audiences shown.")
     too = check_campaign_text(restaurant_id, message, with_link=with_link, db_path=db_path)
-    return seg, too
+    if too:
+        return seg, too
+    # The Haiku gate on the final text, unless this exact text already has
+    # a verdict (a gated draft left as it was, the phone's pre-check before
+    # its send): whoever or whatever wrote it, it reaches every guest in
+    # the audience and cannot be recalled (re-audit 10/7/26 #8).
+    import ai_reviewer
+    name = _restaurant_name(restaurant_id, db_path)
+    gate = ai_reviewer.gate_send(
+        "guest_text", restaurant_id, (message or "").strip(), db_path=db_path,
+        context=f"The restaurant: {name or 'this restaurant'}. The owner approved this exact text to send "
+                "to guests who opted in to texts.")
+    if not gate.ok:
+        return seg, _refusal("gate_flagged", ai_reviewer.send_refusal(gate), reasons=list(gate.reasons or []))
+    return seg, None
 
 
 def campaign_status(campaign_id, db_path=DB_PATH) -> dict:

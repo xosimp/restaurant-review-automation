@@ -1034,6 +1034,10 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH, y
             conn.commit()
         finally:
             conn.close()
+    kept_same = sum(1 for a in accepted_lines if not a["edited"])
+    _file_draft_outcome(restaurant_id, row, ("accepted" if not edited else "edited") if written else "rejected",
+                        quality=(round(kept_same / len(by_ing), 3) if by_ing and written else None),
+                        detail=f"{kept_same} of {len(by_ing)} drafted lines kept as drafted", db_path=db_path)
     return {"ok": written > 0, "written": written, "skipped": skipped + len(unit_skipped), "edited": edited,
             "unit_skipped": [n for n in unit_skipped if n],
             "error": None if written else "None of those lines could be written."}
@@ -1045,9 +1049,34 @@ def reject(restaurant_id, draft_id, user_id=None, db_path=DB_PATH):
         cur = conn.execute("UPDATE recipe_drafts SET status='rejected', answered_at=datetime('now'), answered_by=? "
                            "WHERE id=? AND restaurant_id=? AND status='pending'", (user_id, draft_id, restaurant_id))
         conn.commit()
-        return {"ok": cur.rowcount == 1}
+        row = conn.execute("SELECT * FROM recipe_drafts WHERE id=? AND restaurant_id=?",
+                           (draft_id, restaurant_id)).fetchone() if cur.rowcount == 1 else None
     finally:
         conn.close()
+    if row is not None:
+        _file_draft_outcome(restaurant_id, row, "rejected", detail="rejected", db_path=db_path)
+    return {"ok": row is not None}
+
+
+def _file_draft_outcome(restaurant_id, row, outcome, quality=None, detail=None, db_path=DB_PATH) -> bool:
+    """What the owner did with a model-written recipe draft, on the
+    recipe_draft run that wrote it (subject "recipe:<menu item>"; re-audit
+    10/7/26 #4): accepted with every line as drafted → accepted; with lines
+    changed, added or removed → edited, quality the share of drafted lines
+    kept as drafted; rejected, or nothing bindable → rejected. A photographed
+    card (image_sha) is the owner's own recipe read off a photo, not a
+    draft of one — nothing is filed for it. Never raises."""
+    try:
+        keys = row.keys() if hasattr(row, "keys") else []
+        if "image_sha" in keys and row["image_sha"]:
+            return False
+        import ai_orchestrator
+        return ai_orchestrator.record_outcome("recipe_draft", restaurant_id, f"recipe:{row['menu_item_id']}", outcome,
+                                              quality=quality, detail=detail,
+                                              db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[recipes] draft outcome not filed rid={restaurant_id}: {e}")
+        return False
 
 
 IMPORT_MAX_ROWS = 2000

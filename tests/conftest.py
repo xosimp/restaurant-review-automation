@@ -347,6 +347,19 @@ def _no_live_anthropic_calls(monkeypatch):
         pytest.fail(f"a live Anthropic call was attempted: {hits[:3]}", pytrace=False)
 
 
+@pytest.fixture(autouse=True)
+def _send_gate_reviewer_offline(monkeypatch):
+    """Every guest text and email send now passes the Haiku gate on its
+    final text (ai_reviewer.gate_send, re-audit 10/7/26 #8). In a test it
+    answers as a reviewer that could not run — which passes, as in
+    production — so no send test reaches the API with a checkout's real
+    key. The gate's own tests replace ai_reviewer._gate_review."""
+    import ai_reviewer
+    monkeypatch.setattr(ai_reviewer, "_gate_review",
+                        lambda kind, text, restaurant_id, context:
+                        ai_reviewer.orch.Verdict.passed(label="reviewer_unavailable"))
+
+
 _DB_TEMPLATE = None
 
 

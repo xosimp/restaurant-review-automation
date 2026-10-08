@@ -855,12 +855,19 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         if reason and reason != FIX_REVIEW_REASON:
             return _orch.Verdict.failed("validation_refuse", reason, label="refuse")
         return _orch.Verdict.passed()
+    # The rubric the policy's shadow sample scores (draft_response
+    # shadow_rate; re-audit 10/7/26 #12: no reviewer was passed, so replies
+    # never got the Haiku shadow score the policy names).
+    from ai_reviewer import reviewer_for as _reviewer_for
     run = _orch.generate("draft_response", restaurant_id, _attempt, _check,
+                         review=_reviewer_for("review_reply", restaurant_id,
+                                              context=f"The guest's review: {text or ''}"),
                          start=draft_start_tier(rating, text, urgency=urgency, sentiment=sentiment, **flags),
                          subject=f"review:{review_id}")
     draft, reason, checked = run.result
-    # Only when asked, so a caller's stand-in update_draft keeps its old signature.
-    _only = {"unedited_only": True} if unedited_only else {}
+    # The run that wrote the draft is stored with it, so the owner's answer
+    # and the auto-approve gate's verdict land on that run (re-audit 10/7/26 #5).
+    _only = {"unedited_only": True, "run_id": run.run_id} if unedited_only else {"run_id": run.run_id}
     if reason:
         # Kept as the model wrote it (the engine's text is "" on a refusal),
         # carrying the refusal verdict for the caller.
@@ -904,9 +911,29 @@ def record_reply_outcome(restaurant_id, review_id, outcome, quality=None, detail
     try:
         import ai_orchestrator
         return ai_orchestrator.record_outcome("draft_response", restaurant_id, reply_subject(review_id), outcome,
-                                              quality=quality, detail=detail, db_path=db_path)
+                                              quality=quality, detail=detail, db_path=db_path,
+                                              run_id=draft_run_id(restaurant_id, review_id, db_path))
     except Exception:
         return False
+
+
+def draft_run_id(restaurant_id, review_id, db_path=None):
+    """The ai_runs id of the run that wrote the reply now stored on the
+    review (reviews.draft_run_id), or None — then the outcome falls back to
+    the subject's newest served run. The newest run is not always the one
+    whose draft stands: a redraft that lost to an approval, or an unedited-
+    only redraft the owner's edit beat, runs and is dropped (re-audit
+    10/7/26 #5)."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT draft_run_id FROM reviews WHERE id=? AND restaurant_id=?",
+                               (review_id, restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        return row["draft_run_id"] if row and row["draft_run_id"] else None
+    except Exception:
+        return None
 
 
 def record_approval_outcome(restaurant_id, review_id, action, db_path=None) -> bool:
@@ -957,7 +984,7 @@ def gate_unattended_reply(restaurant_id, review_id, draft, review_text="", db_pa
         v = reviewer_for("review_reply", restaurant_id, context=f"The guest's review: {review_text or ''}")(
             draft, "haiku_gate")
         ai_orchestrator.record_review("draft_response", restaurant_id, reply_subject(review_id), v,
-                                      db_path=db_path)
+                                      db_path=db_path, run_id=draft_run_id(restaurant_id, review_id, db_path))
     except Exception as e:
         print(f"[drafter] reply gate did not run for review {review_id}: {e!r}")
         return None

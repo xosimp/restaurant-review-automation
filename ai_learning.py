@@ -69,14 +69,16 @@ def _accept(rows):
 
 
 def route_stats(days=WINDOW_DAYS, workflow=None, db_path=None) -> list:
-    """[{workflow, tier, model, runs, cost_per_run, p50_ms, p95_ms,
-    escalation_rate, pass_rate, acceptance, outcomes, quality, shadow_score}]
-    over production runs (never shadow replays)."""
+    """[{workflow, tier, model, policy_version, runs, cost_per_run, p50_ms,
+    p95_ms, escalation_rate, pass_rate, acceptance, outcomes, quality,
+    shadow_score}] over production runs (never shadow replays), one row per
+    route AND policy version: runs under an earlier version of the defaults
+    are never pooled with today's (re-audit 10/7/26 #9)."""
     conn = _conn(db_path)
     try:
         sql = ("SELECT workflow, final_tier, final_model, status, escalations, latency_ms, cost_usd, outcome, "
-               "outcome_quality, reviewer, reviewer_score, start_tier FROM ai_runs WHERE shadow_of IS NULL "
-               "AND created_at >= datetime('now', ?)")
+               "outcome_quality, reviewer, reviewer_score, start_tier, policy_version FROM ai_runs "
+               "WHERE shadow_of IS NULL AND created_at >= datetime('now', ?)")
         args = [f"-{int(days)} days"]
         if workflow:
             sql += " AND workflow=?"
@@ -86,14 +88,15 @@ def route_stats(days=WINDOW_DAYS, workflow=None, db_path=None) -> list:
         conn.close()
     groups = {}
     for r in rows:
-        groups.setdefault((r["workflow"], r["final_tier"], r["final_model"]), []).append(r)
+        groups.setdefault((r["workflow"], r["final_tier"], r["final_model"], r["policy_version"]), []).append(r)
     out = []
-    for (wfl, tier, model), rs in sorted(groups.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+    for (wfl, tier, model, version), rs in sorted(groups.items(),
+                                                  key=lambda kv: (kv[0][0], str(kv[0][1]), str(kv[0][3]))):
         acc, n_out = _accept(rs)
         q = [r["outcome_quality"] for r in rs if r["outcome_quality"] is not None]
         shadow = [r["reviewer_score"] for r in rs if r["reviewer_score"] is not None]
         out.append({
-            "workflow": wfl, "tier": tier, "model": model, "runs": len(rs),
+            "workflow": wfl, "tier": tier, "model": model, "policy_version": version, "runs": len(rs),
             "cost_per_run": round(sum(r["cost_usd"] or 0 for r in rs) / len(rs), 5),
             "p50_ms": _pct([r["latency_ms"] for r in rs], 0.5), "p95_ms": _pct([r["latency_ms"] for r in rs], 0.95),
             "escalation_rate": round(sum(1 for r in rs if (r["escalations"] or 0) > 0) / len(rs), 3),
@@ -106,32 +109,62 @@ def route_stats(days=WINDOW_DAYS, workflow=None, db_path=None) -> list:
 
 
 def _escalation_by_start(days, db_path):
-    """{workflow: (runs started on the first rung, of which escalated)}"""
+    """{workflow: (runs started on the first rung, of which escalated)} —
+    only runs whose first attempt ran on the FIRST rung of the ladder in
+    force (ai_runs.first_tier), under today's POLICY_VERSION, and since the
+    workflow's console override was applied: a run on an earlier ladder
+    says nothing about this one (re-audit 10/7/26 #9)."""
+    since = {}
+    for ov in orch.override_rows(db_path):
+        since[ov["workflow"]] = ov.get("updated_at") or ""
     conn = _conn(db_path)
     try:
-        rows = conn.execute("SELECT workflow, COUNT(*) n, SUM(CASE WHEN escalations>0 THEN 1 ELSE 0 END) e "
-                            "FROM ai_runs WHERE shadow_of IS NULL AND created_at >= datetime('now', ?) "
-                            "AND (start_tier IS NULL OR start_tier='') GROUP BY workflow",
-                            (f"-{int(days)} days",)).fetchall()
+        rows = conn.execute("SELECT workflow, first_tier, created_at, escalations FROM ai_runs "
+                            "WHERE shadow_of IS NULL AND created_at >= datetime('now', ?) "
+                            "AND (start_tier IS NULL OR start_tier='') AND policy_version=?",
+                            (f"-{int(days)} days", wf.POLICY_VERSION)).fetchall()
     finally:
         conn.close()
-    return {r["workflow"]: (int(r["n"] or 0), int(r["e"] or 0)) for r in rows}
+    first = {}
+    out = {}
+    for r in rows:
+        wfl = r["workflow"]
+        if wfl not in first:
+            pol = wf.policy(wfl, db_path)
+            first[wfl] = pol.ladder[0] if pol.ladder else None
+        if not r["first_tier"] or r["first_tier"] != first[wfl]:
+            continue
+        if since.get(wfl) and str(r["created_at"] or "") < since[wfl]:
+            continue
+        n, e = out.get(wfl, (0, 0))
+        out[wfl] = (n + 1, e + (1 if (r["escalations"] or 0) > 0 else 0))
+    return out
 
 
 def _shadow_pairs(days, db_path):
-    """{(workflow, candidate_tier): [(production_score, candidate_score, prod_cost, cand_cost)]}"""
+    """{(workflow, candidate_tier): [(production_score, candidate_score, prod_cost, cand_cost)]}
+
+    Both scores and both costs come from the SHADOW row (re-audit 10/7/26
+    #2): production's text re-scored by the same rubric with the same
+    context as the candidate's (context_json production_score), and
+    production's FIRST call's cost (production_first_cost) — a pair
+    recorded without either is not counted."""
     conn = _conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT s.workflow, s.final_tier tier, s.reviewer_score cs, s.cost_usd cc, p.reviewer_score ps, "
-            "p.cost_usd pc FROM ai_runs s JOIN ai_runs p ON p.run_id = s.shadow_of "
-            "WHERE s.shadow_of IS NOT NULL AND s.created_at >= datetime('now', ?) "
-            "AND s.reviewer_score IS NOT NULL AND p.reviewer_score IS NOT NULL", (f"-{int(days)} days",)).fetchall()
+            "SELECT workflow, final_tier tier, reviewer_score cs, cost_usd cc, "
+            "json_extract(context_json, '$.production_score') ps, "
+            "json_extract(context_json, '$.production_first_cost') pc FROM ai_runs "
+            "WHERE shadow_of IS NOT NULL AND created_at >= datetime('now', ?) AND reviewer_score IS NOT NULL "
+            "AND json_valid(context_json)", (f"-{int(days)} days",)).fetchall()
     finally:
         conn.close()
     out = {}
     for r in rows:
-        out.setdefault((r["workflow"], r["tier"]), []).append((r["ps"], r["cs"], r["pc"] or 0, r["cc"] or 0))
+        if r["ps"] is None or r["pc"] is None:
+            continue
+        out.setdefault((r["workflow"], r["tier"]), []).append((float(r["ps"]), r["cs"], float(r["pc"] or 0),
+                                                              r["cc"] or 0))
     return out
 
 
@@ -153,7 +186,8 @@ def _recommend(conn, workflow, kind, summary, proposed, evidence):
 def recommend(days=WINDOW_DAYS, db_path=None) -> list:
     """Write this week's recommendations; returns them."""
     made = []
-    stats = route_stats(days, db_path=db_path)
+    held = set()      # (workflow, kind) whose premise holds this pass
+    stats = [s for s in route_stats(days, db_path=db_path) if s.get("policy_version") == wf.POLICY_VERSION]
     esc = _escalation_by_start(days, db_path)
     pairs = _shadow_pairs(days, db_path)
     conn = _conn(db_path)
@@ -170,6 +204,7 @@ def recommend(days=WINDOW_DAYS, db_path=None) -> list:
                 _recommend(conn, wfl, "start_higher", summary, proposed,
                            {"runs": n, "escalated": e, "rate": round(rate, 3)})
                 made.append(summary)
+                held.add((wfl, "start_higher"))
         for s in stats:
             if s["acceptance"] is not None and s["outcomes"] >= MIN_OUTCOMES and s["acceptance"] < ACCEPT_LOW:
                 summary = (f"{s['workflow']} on {s['tier']} ({s['model']}): owners used "
@@ -177,14 +212,17 @@ def recommend(days=WINDOW_DAYS, db_path=None) -> list:
                            f"stronger route")
                 _recommend(conn, s["workflow"], "quality_low", summary, {}, s)
                 made.append(summary)
+                held.add((s["workflow"], "quality_low"))
         for (wfl, tier), ps in pairs.items():
             if len(ps) < MIN_RUNS:
                 continue
+            pol = wf.policy(wfl, db_path)
+            if candidate_tier(wfl, db_path) != tier:
+                continue          # replays of a tier the ladder in force no longer starts above
             prod = statistics.mean(p for p, _c, _pc, _cc in ps)
             cand = statistics.mean(c for _p, c, _pc, _cc in ps)
             pc = statistics.mean(x for _p, _c, x, _cc in ps)
             cc = statistics.mean(x for _p, _c, _pc, x in ps)
-            pol = wf.policy(wfl, db_path)
             if cand >= prod - SHADOW_TOLERANCE and cc < pc:
                 ladder = [tier] + [t for t in pol.ladder if t != tier]
                 summary = (f"{wfl}: {tier} scored {cand:.2f} against production's {prod:.2f} on {len(ps)} replays, "
@@ -193,6 +231,15 @@ def recommend(days=WINDOW_DAYS, db_path=None) -> list:
                            {"pairs": len(ps), "prod_score": round(prod, 3), "cand_score": round(cand, 3),
                             "prod_cost": round(pc, 5), "cand_cost": round(cc, 5)})
                 made.append(summary)
+                held.add((wfl, "start_lower"))
+        # An open recommendation whose premise no longer holds (the ladder
+        # it was about changed, the version moved on, the evidence faded)
+        # is closed, never left to be applied on stale evidence (#9).
+        for r in conn.execute("SELECT id, workflow, kind FROM ai_route_recommendations WHERE status='open' "
+                              "AND kind IN ('start_higher','start_lower','quality_low')").fetchall():
+            if (r["workflow"], r["kind"]) not in held:
+                conn.execute("UPDATE ai_route_recommendations SET status='expired', decided_by='system:ai_learning', "
+                             "decided_at=datetime('now') WHERE id=?", (r["id"],))
         conn.commit()
     finally:
         conn.close()
@@ -320,8 +367,11 @@ def run_learning(db_path=None) -> dict:
 # runs) — through Message Batches, at half price, never on anyone's request
 # path and never shown to anyone. When an answer lands (ai_batch_collect),
 # its run is recorded (ai_runs.shadow_of = the production run) and both texts
-# — production's, from its ai_calls trace, and the candidate's — are scored by
-# the same Haiku rubric with the same context, on one background thread. A
+# — production's, from its ai_calls trace, and the candidate's, cut and
+# redacted the same way — pass the same deterministic check and are scored by
+# the same Haiku rubric with the same context, on one background thread
+# (score_pair; re-audit 10/7/26 #2). Only first-rung requests of runs that
+# never escalated are replayed, and production's cost is its first call's. A
 # production text the trace no longer keeps (AI_TRACE_KEEP_PER_ACTION keeps
 # the newest ten per restaurant and action) is checked for before anything is
 # sent: no comparison, no replay, nothing paid.
@@ -353,10 +403,35 @@ SHADOW_RUBRICS = {
     "inventory_insight": "insight_read",
     "review_insight": "insight_read",
     "marketing_insight": "insight_read",
-    "review_diagnosis": "insight_read",
-    "food_cost_diagnosis": "insight_read",
+    # review_diagnosis and food_cost_diagnosis left out (re-audit 10/7/26
+    # #6): they call create_with_retry directly, outside generate(), so they
+    # keep no request to replay and an override would never reach them
+    # (ai_workflows.CONSOLE_READ_ONLY).
     "weekly_digest": "insight_read",
     "competitor_insight": "insight_read",
+}
+
+# The deterministic check both texts of a pair pass before either is scored
+# (re-audit 10/7/26 #2): the Response Validation Layer on the workflow's own
+# surface, with the kept request's text as the context the figures must come
+# from. Production passed its own, richer check when it ran; a candidate
+# never ran one, so a replay that invents a figure, a name or an offer used
+# to be scored on tone alone. A candidate the check refuses scores 0; a pair
+# whose production text the check refuses is not counted (the check is
+# blunter than production's own, and the pair would say nothing).
+SHADOW_SURFACES = {
+    "draft_response": "reply_public",
+    "marketing_content": "social_post",
+    "guest_campaign_draft": "guest_sms",
+    "guest_newsletter_draft": "guest_sms",
+    "staff_answer": "staff_answer",
+    "dsr_narrative": "dsr",
+    "labor_insight": "labor_insight",
+    "inventory_insight": "food_insight",
+    "review_insight": "review_insight",
+    "marketing_insight": "marketing_insight",
+    "weekly_digest": "digest",
+    "competitor_insight": "intel",
 }
 
 # The next cheaper tier than a ladder's first rung. "default" (the call
@@ -413,6 +488,48 @@ def _production_call(conn, run_id, workflow):
     return (row["call_id"], row["price_version"]) if row else (None, None)
 
 
+def _first_call_cost(conn, run_id, workflow):
+    """The ledger cost of the production run's FIRST call of the workflow
+    (its first rung), or None — what a candidate on a cheaper first rung
+    would replace. The run's whole cost carries its reviewer's calls and any
+    escalation, which a one-call replay never pays (re-audit 10/7/26 #2)."""
+    row = conn.execute("SELECT cost_usd FROM ai_usage WHERE correlation_id=? AND action=? ORDER BY id ASC LIMIT 1",
+                       (run_id, workflow)).fetchone()
+    return float(row["cost_usd"] or 0) if row and row["cost_usd"] is not None else None
+
+
+def _as_traced(workflow, text, request=None):
+    """`text` as the ai_calls trace keeps a production output: cut at the
+    workflow's output cap and redacted with the names the request carries —
+    so the candidate and production's traced text are read in the same form
+    (re-audit 10/7/26 #2: the candidate was scored raw)."""
+    import ai_utils
+    try:
+        names = ai_utils.guest_names_in(ai_utils._prompt_text(request or {}))
+    except Exception:
+        names = set()
+    cap = ai_utils._trace_caps(workflow)[1]
+    return ai_utils.redact_pii(str(text or "")[:cap], names)
+
+
+def shadow_check(workflow, text, restaurant_id=None, context=""):
+    """The deterministic check of one text of a pair (SHADOW_SURFACES): an
+    ai_orchestrator.Verdict — failed when the validation engine refuses or
+    withholds it. A workflow with no surface, or a check that cannot run,
+    passes (it decides nothing either way)."""
+    surface = SHADOW_SURFACES.get(workflow)
+    if not surface:
+        return orch.Verdict.passed(label="unchecked")
+    try:
+        import response_validation as rv
+        v = rv.validate(str(text or ""), rv.ValidationContext(restaurant_id=restaurant_id, surface=surface,
+                                                              context_text=str(context or "")))
+    except Exception as e:
+        log.info("shadow check did not run (%s): %s", workflow, e)
+        return orch.Verdict.passed(label="unchecked")
+    return orch.verdict_from_validation(v)
+
+
 def _call_output(call_id):
     """A traced call's output text while ai_calls still keeps it, else None."""
     if not call_id:
@@ -463,26 +580,34 @@ def shadow_arms(workflow, candidate_tier, sample=SHADOW_SAMPLE, budget_usd=None,
         return out
     t = wf._tier_table()[candidate_tier]
     route = wf.Route(tier=candidate_tier, model=t["model"], effort=t["effort"])
+    # Only requests kept on the FIRST rung of the ladder in force, from runs
+    # that started there and never escalated: the served text is then that
+    # rung's own, and the replay is compared with exactly what it would
+    # replace (re-audit 10/7/26 #2, #6).
+    first = wf.policy(workflow, db_path).ladder[0]
     items, est_total = [], 0.0
     conn = _conn(db_path)
     try:
-        for run_id, rid, request in orch.kept_requests(workflow, limit=max(1, int(sample)) * 3, db_path=db_path):
+        for run_id, rid, request in orch.kept_requests(workflow, limit=max(1, int(sample)) * 3, db_path=db_path,
+                                                       tier=first):
             if len(items) >= int(sample):
                 break
             if conn.execute("SELECT 1 FROM ai_runs WHERE shadow_of=? AND final_tier=?",
                             (run_id, candidate_tier)).fetchone():
                 out["skipped"] += 1
                 continue
-            prod = conn.execute("SELECT status, cost_usd, final_tier FROM ai_runs WHERE run_id=? "
-                                "AND shadow_of IS NULL", (run_id,)).fetchone()
-            if not prod or prod["status"] != "ok" or prod["final_tier"] == candidate_tier:
+            prod = conn.execute("SELECT status, cost_usd, final_tier, escalations, start_tier FROM ai_runs "
+                                "WHERE run_id=? AND shadow_of IS NULL", (run_id,)).fetchone()
+            if (not prod or prod["status"] != "ok" or prod["final_tier"] == candidate_tier
+                    or (prod["escalations"] or 0) > 0 or prod["start_tier"]):
                 out["skipped"] += 1
                 continue
             call_id, price_version = _production_call(conn, run_id, workflow)
-            if not _call_output(call_id):
+            first_cost = _first_call_cost(conn, run_id, workflow)
+            if not _call_output(call_id) or first_cost is None:
                 out["skipped"] += 1
                 continue
-            est = float(prod["cost_usd"] or 0) * ai_utils.BATCH_PRICE_MULTIPLIER + 2 * SHADOW_REVIEW_ESTIMATE_USD
+            est = first_cost * ai_utils.BATCH_PRICE_MULTIPLIER + 2 * SHADOW_REVIEW_ESTIMATE_USD
             if budget_usd is not None and est_total + est > float(budget_usd):
                 out["hit_bound"] = True
                 break
@@ -492,7 +617,7 @@ def shadow_arms(workflow, candidate_tier, sample=SHADOW_SAMPLE, budget_usd=None,
                 "request": route.apply(request), "callback": "ai_learning:shadow_landed",
                 "readiness": data_health.NOT_APPLICABLE,
                 "context": {"workflow": workflow, "run_id": run_id, "tier": candidate_tier, "rid": rid,
-                            "production_call_id": call_id,
+                            "production_call_id": call_id, "production_first_cost": round(first_cost, 6),
                             "production_batched": price_version == ai_utils.BATCH_PRICE_VERSION}})
     finally:
         conn.close()
@@ -560,41 +685,74 @@ def _score_async(fn):
     _SCORE_POOL.submit(ai_utils.context_runner(ai_utils.attributed(fn)))
 
 
+def _note_shadow(shadow_run_id, note, db_path=None):
+    conn = _conn(db_path)
+    try:
+        conn.execute("UPDATE ai_runs SET reviewer_notes=? WHERE run_id=?", (note, shadow_run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def score_pair(workflow, shadow_run_id, candidate_text, production_run_id, production_call_id, db_path=None):
-    """Score both texts of a pair with the workflow's rubric and the same
-    context, and store each score on its own run. A production run a Haiku
-    gate already scored keeps the gate's score (the same rubric, the same
-    text). Returns (production score, candidate score); a side the rubric
-    could not score is None, and that pair does not count."""
+    """Judge both texts of a pair the same way (re-audit 10/7/26 #2):
+
+      * the same form — production's text as the ai_calls trace keeps it,
+        the candidate's cut and redacted the same way (_as_traced);
+      * the same deterministic check first (shadow_check): a candidate it
+        refuses scores 0 without a rubric call; a production text it
+        refuses leaves the pair uncounted;
+      * the same rubric with the same context — production is always
+        re-scored here, never credited with a gate's score given another
+        context.
+
+    Both scores are stored on the SHADOW run (production's in context_json
+    production_score); the production run's own row is left as it ran.
+    Returns (production score, candidate score); a side the rubric could not
+    score is None, and that pair does not count."""
     import ai_reviewer
     kind = SHADOW_RUBRICS.get(workflow)
     prod_text = _call_output(production_call_id)
     if not kind or not prod_text:
-        note = "the production text is no longer kept" if kind else "no rubric for this workflow"
+        _note_shadow(shadow_run_id, "the production text is no longer kept" if kind else "no rubric for this workflow",
+                     db_path)
+        return None, None
+    request = orch.kept_request(production_run_id, db_path=db_path)
+    context = _request_context(request)
+    cand_text = _as_traced(workflow, candidate_text, request)
+    rid = None
+    try:
         conn = _conn(db_path)
         try:
-            conn.execute("UPDATE ai_runs SET reviewer_notes=? WHERE run_id=?", (note, shadow_run_id))
-            conn.commit()
+            row = conn.execute("SELECT restaurant_id FROM ai_runs WHERE run_id=?", (production_run_id,)).fetchone()
+            rid = row["restaurant_id"] if row else None
         finally:
             conn.close()
+    except Exception:
+        rid = None
+    pv = shadow_check(workflow, prod_text, rid, context)
+    if not pv.ok:
+        _note_shadow(shadow_run_id, ("production's text fails the replay check, so the pair is not counted: "
+                                     + "; ".join(pv.reasons))[:500], db_path)
         return None, None
-    request = next((req for rid_, _r, req in orch.kept_requests(workflow, limit=200, db_path=db_path)
-                    if rid_ == production_run_id), None)
-    context = _request_context(request)
-    vc = ai_reviewer.review_text(kind, candidate_text, restaurant_id=None, context=context, mode="haiku_shadow")
+    cv = shadow_check(workflow, cand_text, rid, context)
     vp = ai_reviewer.review_text(kind, prod_text, restaurant_id=None, context=context, mode="haiku_shadow")
-    cs, ps = getattr(vc, "score", None), getattr(vp, "score", None)
+    ps = getattr(vp, "score", None)
+    if cv.ok:
+        vc = ai_reviewer.review_text(kind, cand_text, restaurant_id=None, context=context, mode="haiku_shadow")
+        cs, notes = getattr(vc, "score", None), getattr(vc, "reasons", None) or []
+    else:
+        cs, notes = 0.0, ["refused by the check: " + ("; ".join(cv.reasons) or cv.label or "refuse")]
     conn = _conn(db_path)
     try:
         conn.execute("UPDATE ai_runs SET reviewer='haiku_shadow', reviewer_score=?, reviewer_notes=? WHERE run_id=?",
-                     (cs, ("; ".join(getattr(vc, "reasons", None) or []))[:500] or None, shadow_run_id))
-        if ps is not None:
-            conn.execute("UPDATE ai_runs SET reviewer_score=?, reviewer=COALESCE(reviewer, 'haiku_shadow') "
-                         "WHERE run_id=? AND (reviewer_score IS NULL OR COALESCE(reviewer,'') != 'haiku_gate')",
-                         (ps, production_run_id))
+                     (cs if ps is not None else None, ("; ".join(notes))[:500] or None, shadow_run_id))
         conn.commit()
     finally:
         conn.close()
+    if ps is not None:
+        orch.attach(shadow_run_id, context={"production_score": ps, "candidate_check": cv.label or "pass"},
+                    db_path=db_path)
     return ps, cs
 
 
@@ -631,7 +789,7 @@ def shadow_landed(item, message=None, error=None):
         ctx, status="ok" if ok else "failed", model=item.get("model"), cost=cost, tin=tin, tout=tout,
         latency=latency, note=None if ok else f"the replay came back {outcome}",
         detail={"batch_cost_usd": batch_cost, "priced_as": "batch" if ctx.get("production_batched") else "list",
-                "call_id": item.get("call_id")})
+                "call_id": item.get("call_id"), "production_first_cost": ctx.get("production_first_cost")})
     if not ok:
         return
     workflow, prod_run, prod_call = ctx.get("workflow"), ctx.get("run_id"), ctx.get("production_call_id")

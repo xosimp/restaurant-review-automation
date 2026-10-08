@@ -266,7 +266,7 @@ def test_only_judgeable_replayable_workflows_get_a_cheaper_candidate():
         ai_learning.shadow_arms("labor_schedule", "T3")
 
 
-def _production_run(db, monkeypatch, text="Labor ran 31% on Tuesday, two points over target."):
+def _production_run(db, monkeypatch, text="Ratings fell 0.2 this month; answer the low ones first."):
     monkeypatch.setattr(orch, "REPLAY_SAMPLE_RATE", 1.0)
     client = _Client(text)
 
@@ -297,8 +297,8 @@ def test_a_shadow_replay_runs_the_cheaper_tier_at_half_price_and_scores_both(db,
     ai_utils.log_ai_usage(None, "shadow_arms", item["request"]["model"], 1000, 100, call_id=call_id, batch=True,
                           correlation_id="shadow:review_insight:2026-10-04")
     batch_cost = _q(db, "SELECT cost_usd FROM ai_usage WHERE call_id=?", (call_id,))[0]["cost_usd"]
-    scores = {"Ratings dipped; reply to the two 2-star reviews.": 0.8,
-              "Labor ran 31% on Tuesday, two points over target.": 0.9}
+    scores = {"Ratings dipped this month; reply to the low ones.": 0.8,
+              "Ratings fell 0.2 this month; answer the low ones first.": 0.9}
     seen_context = []
 
     def review_text(kind, draft, restaurant_id=None, context="", mode="haiku_gate"):
@@ -310,15 +310,22 @@ def test_a_shadow_replay_runs_the_cheaper_tier_at_half_price_and_scores_both(db,
     view = {"workflow": "shadow_arms", "custom_id": item["custom_id"], "restaurant_id": None,
             "action": "shadow_arms", "model": item["request"]["model"], "context": item["context"],
             "call_id": call_id, "status": "collecting"}
-    ai_learning.shadow_landed(view, message=_Msg("Ratings dipped; reply to the two 2-star reviews."))
+    ai_learning.shadow_landed(view, message=_Msg("Ratings dipped this month; reply to the low ones."))
     (shadow,) = _q(db, "SELECT * FROM ai_runs WHERE shadow_of=?", (rr.run_id,))
     assert shadow["final_tier"] == "T1" and shadow["status"] == "ok" and shadow["reviewer_score"] == 0.8
     # Production ran synchronously: the candidate is compared at its synchronous price.
     assert shadow["cost_usd"] == pytest.approx(batch_cost / ai_utils.BATCH_PRICE_MULTIPLIER, rel=1e-4)
-    assert json.loads(shadow["context_json"])["batch_cost_usd"] == pytest.approx(batch_cost)
-    assert _q(db, "SELECT reviewer_score FROM ai_runs WHERE run_id=?", (rr.run_id,))[0]["reviewer_score"] == 0.9
+    ctx = json.loads(shadow["context_json"])
+    assert ctx["batch_cost_usd"] == pytest.approx(batch_cost)
+    # Production's re-score and its FIRST call's cost ride on the shadow row
+    # (re-audit 10/7/26 #2); the production run's own row is left as it ran.
+    first_cost = _q(db, "SELECT cost_usd FROM ai_usage WHERE correlation_id=? ORDER BY id LIMIT 1",
+                    (rr.run_id,))[0]["cost_usd"]
+    assert ctx["production_score"] == 0.9 and ctx["production_first_cost"] == pytest.approx(first_cost)
+    assert _q(db, "SELECT reviewer_score FROM ai_runs WHERE run_id=?", (rr.run_id,))[0]["reviewer_score"] is None
     assert len(seen_context) == 2 and seen_context[0] == seen_context[1] and "Ratings fell" in seen_context[0]
-    assert ai_learning._shadow_pairs(28, None)[("review_insight", "T1")]
+    ((ps, cs, pc, cc),) = ai_learning._shadow_pairs(28, None)[("review_insight", "T1")]
+    assert (ps, cs) == (0.9, 0.8) and pc == pytest.approx(first_cost)
     # A shadow row never counts as production in the stats or the outcomes.
     assert all(s["tier"] != "T1" for s in ai_learning.route_stats(workflow="review_insight"))
     # Replayed once on a tier: never again.

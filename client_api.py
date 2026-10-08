@@ -11679,6 +11679,14 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         _sv_obs.observe_publish(rid, schedule_id, authority=locals().get("_pub_auth"), editor=actor_name)
     except Exception as _obx:
         _ops.capture(_obx, job="schedule_publish_observe", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # What the restaurant did with the generated week, on the labor_schedule
+    # run that wrote it: the share of its shifts that went out untouched
+    # (re-audit 10/7/26 #4). Never blocks the publish.
+    try:
+        import schedule_versions as _sv_out
+        _sv_out.record_week_outcome(rid, schedule_id, actor=actor, published=True)
+    except Exception as _wox:
+        print(f"[publish] schedule outcome not filed for {rid}: {_wox}")
     # The reviews' and the nightly reports' "+1" asks this week carries,
     # recorded as implemented under it — the loop from a complaint to the
     # person added and what the complaints did next (re-audit CROSSMODULE-10).

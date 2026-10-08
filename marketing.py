@@ -918,6 +918,14 @@ def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
                               source_ref=f"calendar:{key}:{_date.today().isoformat()}")
         except Exception as e:
             print(f"[marketing] calendar acceptance not recorded rid={restaurant_id}: {e}")
+        # ...and on the content_calendar run that wrote the week (re-audit
+        # 10/7/26 #4): an idea written from is the week's ideas used.
+        try:
+            import ai_orchestrator
+            ai_orchestrator.record_latest_outcome("content_calendar", restaurant_id, "accepted",
+                                                  subject_prefix="calendar:", detail=f"wrote a {content_type}")
+        except Exception as e:
+            print(f"[marketing] calendar outcome not filed rid={restaurant_id}: {e}")
 
 
 def chosen_calendar_angles(restaurant_id: int, limit: int = 5) -> list:
@@ -1425,6 +1433,17 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
         just_made = get_cached_calendar(restaurant_id, max_age_seconds=RECENT_CALENDAR_SECONDS)
         if just_made:
             return just_made
+        # Asking for a different week turns down the one on screen — on the
+        # content_calendar run that wrote it, unless an idea from it was
+        # already written from (accepted stands; re-audit 10/7/26 #4).
+        if restaurant_id:
+            try:
+                import ai_orchestrator
+                ai_orchestrator.record_latest_outcome("content_calendar", restaurant_id, "rejected",
+                                                      subject_prefix="calendar:", detail="regenerated",
+                                                      only_unfiled=True)
+            except Exception as e:
+                print(f"[marketing] calendar outcome not filed rid={restaurant_id}: {e}")
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
     from time_utils import restaurant_now_by_id as _rnbi
