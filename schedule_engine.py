@@ -292,7 +292,11 @@ class GenerationSlots:
     announced when it is queued on the owner pool (submit_generation), so a
     slot freed while its pool thread is still on its way to the gate is held
     for it rather than taken by a waiting auto-draft. Never more holders than
-    slots: the bound is the same as the semaphore's (P-39)."""
+    slots: the bound is the same as the semaphore's (P-39).
+
+    A press that joins a queued auto-draft promotes it (promote): the owner is
+    now waiting on that job, so it takes press priority and loses the
+    background give-up (re-audit 10/7/26 #1)."""
 
     def __init__(self, slots: int):
         self.slots = max(1, int(slots))
@@ -301,6 +305,9 @@ class GenerationSlots:
         self._waiting = []          # heap of (priority, seq)
         self._seq = 0
         self._announced = {}        # job_id -> time it was announced
+        self._tickets = {}          # job_id -> its ticket while it waits at the gate
+        self._held = set()          # job_ids holding a slot
+        self._promoted = {}         # job_id -> time a press joined it before it reached the gate
 
     def announce(self, job_id, future=None) -> None:
         with self._cv:
@@ -319,43 +326,97 @@ class GenerationSlots:
             self._announced.pop(job_id, None)
             self._cv.notify_all()
 
+    def promote(self, job_id) -> str:
+        """An owner's press joined `job_id` (re-audit 10/7/26 #1): a queued
+        auto-draft goes on waiting as a press — press priority, its place in
+        line kept (its original sequence, so no press queued after it passes
+        it and it cannot be starved), and no give-up. The waiting acquire
+        re-reads its ticket on every wake. A job not yet at the gate is
+        promoted when it gets there. Returns "waiting", "pending" or
+        "running" (already holding a slot — nothing to do)."""
+        import heapq
+        with self._cv:
+            if job_id in self._held:
+                return "running"
+            ticket = self._tickets.get(job_id)
+            if ticket is None:
+                self._promoted[job_id] = time.time()
+                return "pending"
+            if ticket[0] > GEN_PRIORITY_PRESS:
+                self._waiting.remove(ticket)
+                promoted = (GEN_PRIORITY_PRESS, ticket[1])
+                self._tickets[job_id] = promoted
+                heapq.heappush(self._waiting, promoted)
+                heapq.heapify(self._waiting)
+                self._cv.notify_all()
+            return "waiting"
+
     def _presses_on_the_way(self) -> bool:
         cutoff = time.time() - GEN_ANNOUNCE_MAX_SECONDS
         for j, (t, fut) in list(self._announced.items()):
             if t < cutoff or (fut is not None and fut.done()):
                 self._announced.pop(j, None)
+        for j, t in list(self._promoted.items()):
+            if t < cutoff:
+                self._promoted.pop(j, None)
         return bool(self._announced)
 
     def acquire(self, priority=GEN_PRIORITY_PRESS, job_id=None, timeout=None) -> None:
         """Wait for a slot in priority order. `timeout` (seconds) bounds the
-        wait: past it, GenerationSlotTimeout and the ticket leaves the queue."""
+        wait: past it, GenerationSlotTimeout and the ticket leaves the queue.
+        A waiter promoted while it waits (promote) — or before it arrived —
+        waits as a press, with no bound."""
         import heapq
         with self._cv:
             self._announced.pop(job_id, None)
+            if job_id is not None and self._promoted.pop(job_id, None) is not None:
+                priority, timeout = GEN_PRIORITY_PRESS, None
             self._seq += 1
             ticket = (int(priority), self._seq)
             heapq.heappush(self._waiting, ticket)
+            if job_id is not None:
+                # Job ids are unique; a duplicate (tests) is simply not promotable.
+                self._tickets.setdefault(job_id, ticket)
             give_up = (time.time() + float(timeout)) if timeout else None
             try:
-                while not (self.busy < self.slots and self._waiting[0] == ticket
-                           and not (ticket[0] > GEN_PRIORITY_PRESS and self._presses_on_the_way())):
+                while True:
+                    mine = self._tickets.get(job_id) if job_id is not None else None
+                    if mine is not None and mine[1] == ticket[1]:
+                        ticket = mine
+                        if ticket[0] <= GEN_PRIORITY_PRESS:
+                            give_up = None            # promoted: an owner is waiting on it now
+                    if (self.busy < self.slots and self._waiting[0] == ticket
+                            and not (ticket[0] > GEN_PRIORITY_PRESS and self._presses_on_the_way())):
+                        break
                     if give_up is not None and time.time() >= give_up:
                         raise GenerationSlotTimeout(f"no generation slot free in {int(timeout)}s")
                     # A timed wait, so an announcement that expires is noticed.
                     self._cv.wait(30 if give_up is None else max(0.05, min(30, give_up - time.time())))
             except BaseException:
+                mine = self._tickets.get(job_id) if job_id is not None else None
+                if mine is not None and mine[1] == ticket[1]:
+                    ticket = mine                     # promoted during the wait that raised
                 self._waiting.remove(ticket)
                 heapq.heapify(self._waiting)
+                self._forget_ticket(job_id, ticket)
                 self._cv.notify_all()
                 raise
             heapq.heappop(self._waiting)
+            self._forget_ticket(job_id, ticket)
+            if job_id is not None:
+                self._held.add(job_id)
             self.busy += 1
             # The next in line may fit a second free slot.
             self._cv.notify_all()
 
-    def release(self) -> None:
+    def _forget_ticket(self, job_id, ticket) -> None:
+        if job_id is not None and (self._tickets.get(job_id) or (None, None))[1] == ticket[1]:
+            self._tickets.pop(job_id, None)
+
+    def release(self, job_id=None) -> None:
         with self._cv:
             self.busy = max(0, self.busy - 1)
+            self._held.discard(job_id)
             self._cv.notify_all()
 
     def waiting(self) -> int:
@@ -386,7 +447,16 @@ def generation_scope(job_id, priority=GEN_PRIORITY_PRESS):
         finally:
             _CLOCK.reset(token)
     finally:
-        _GEN_SLOTS.release()
+        _GEN_SLOTS.release(job_id)
+
+
+def promote_generation(job_id) -> str:
+    """An owner's press joined a running or queued generation (re-audit
+    10/7/26 #1): a queued auto-draft it joined now waits as a press — ahead of
+    other drafts, with no 30-minute give-up — rather than failing the owner
+    with "No generation slot came free". Called from the shared generate
+    body's joined branches (mobile_api.mobile_generate_schedule)."""
+    return _GEN_SLOTS.promote(job_id)
 
 
 def submit_generation(job_id, restaurant_id, **job_kwargs):
@@ -832,7 +902,12 @@ def _run_verdict(run):
     v = _orch.Verdict(ok=ok, trigger="rule_breach", reasons=_gate_reasons(gate), label=f"gate_{outcome or 'open'}")
     if ok:
         return v, "ok"
-    return v, ("capped" if run.get("capped") else "failed")
+    if run.get("capped"):
+        return v, "capped"
+    # A gate skipped for want of the job's time is no verdict on the week's
+    # quality: its own status, which the learner's pass rate leaves out
+    # (re-audit 10/7/26 #7 - it was "failed", so time-outs read as failures).
+    return v, ("skipped" if outcome == "skipped" else "failed")
 
 
 def _record_schedule_run(run) -> None:
@@ -6596,9 +6671,9 @@ def _pattern_likely_edits(restaurant_id, rows: list, patterns: list = None) -> l
 # after the repair loop has its weakest days written again, once, with what
 # was wrong named in the prompt (schedule audit 10/3/26 P-43, SQ-20). It used
 # to fire only on coverage caps of busy shifts — never on a manager gap or a
-# leftover breach — and to keep the rewrite on the score alone. A rule broken
-# or a leader or strength cap qualifies only when somebody who could put it
-# right is free that day (on the roster, not on that day's rows, able to work
+# leftover breach — and to keep the rewrite on the score alone. A rule broken,
+# a staffing hole (re-audit 10/7/26 #4) or a leader or strength cap qualifies
+# only when somebody who could put it right is free that day (on the roster, not on that day's rows, able to work
 # it and whom code may choose): a missing leader nobody qualified could fill
 # is the roster's limit, and a rewrite cannot fix it. The rewrite is kept only
 # when it has no more hard breaches and no more unmanaged minutes than the
@@ -6639,9 +6714,14 @@ def _quality_gate(result: dict):
                 note(v["date"], 0, "manager" if v.get("kind") == "no_manager" else "rules",
                      f"{v.get('day') or _weekday_name(v['date'])} {v['date']}: a hard rule is broken — "
                      f"{_rules.breach_text(v)}")
-    # 2. A busy shift capped by a staffing hole (coverage); 3. capped by its
-    #    leader rule or its strength target when a qualified person is free
-    #    that day (SQ-20 — Erik's "Monday dinner 25 / 70" never qualified).
+    # 2. A busy shift capped by a staffing hole (coverage) somebody free who
+    #    holds a short role could fill; 3. capped by its leader rule or its
+    #    strength target when a qualified person is free that day (SQ-20 —
+    #    Erik's "Monday dinner 25 / 70" never qualified). A hole nobody free
+    #    could fill is the roster's limit, not a rule the model broke: it
+    #    used to escalate the week to the next rung, mark it escalated (so
+    #    the next draft started higher) and teach the learner start_higher
+    #    (re-audit 10/7/26 #4).
     if q.get("checked"):
         people = _gate_people(result) if (c is not None and rows) else None
         for s in q.get("shifts") or []:
@@ -6649,7 +6729,8 @@ def _quality_gate(result: dict):
                 continue
             cap = s.get("capped_by")
             dims = {d["key"]: d for d in s.get("dimensions") or []}
-            if cap in ("coverage", "coverage_curve"):
+            if cap in ("coverage", "coverage_curve") and people is not None \
+                    and _gate_qualified_free(cap, dims.get(cap) or {}, s["date"], rows, c, people):
                 rank = 1
             elif cap in ("leadership", "operational_strength") and people is not None \
                     and _gate_qualified_free(cap, dims.get(cap) or {}, s["date"], rows, c, people):
@@ -6761,11 +6842,14 @@ def _gate_people(result) -> dict:
 
 
 def _gate_qualified_free(cap, dim, d, rows, c, people) -> bool:
-    """Whether somebody free on `d` would answer the leader or strength gap
-    that caps a shift: for a leader rule, somebody of its role with the flag
-    or the score it asks for (anybody of the role for a plain headcount);
-    for the profile's "somebody able to run it", a manager or a flagged or
-    strong person; for strength, somebody of the role rated at its bar."""
+    """Whether somebody free on `d` would answer the gap that caps a
+    shift: for a staffing hole (coverage, coverage_curve), somebody who
+    holds one of the short roles (re-audit 10/7/26 #4; anybody free when the
+    dimension names none); for a leader rule, somebody of its role with the
+    flag or the score it asks for (anybody of the role for a plain
+    headcount); for the profile's "somebody able to run it", a manager or a
+    flagged or strong person; for strength, somebody of the role rated at
+    its bar."""
     free = _gate_free(c, rows, d)
     if not free:
         return False
@@ -6774,6 +6858,12 @@ def _gate_qualified_free(cap, dim, d, rows, c, people) -> bool:
 
     def low(n):
         return str(n).strip().lower()
+    if cap in ("coverage", "coverage_curve"):
+        short = facts.get("short") if cap == "coverage" else facts.get("gaps")
+        roles = [r for r in (short or {}) if r]
+        if not roles:
+            return True
+        return any(_gate_holds(c, n, role, d) for role in roles for n in free)
     if cap == "leadership":
         for miss in facts.get("misses") or []:
             role = miss.get("role") or ""
@@ -6910,6 +7000,38 @@ def _record_gate_path(restaurant_id, path, dates) -> None:
             + ", ".join(sorted(dates or [])))
     except Exception as e:
         print(f"[schedule] gate path not recorded: {e!r}")
+
+
+# The gate's fill in code re-runs its days through everything after the
+# model (parse, repair, score, save): it is expected to take as long as the
+# first pass's did, and never less than this (re-audit 10/7/26 #3).
+GATE_FILL_MIN_SECONDS = 30
+
+
+def _gate_fill_seconds(result) -> float:
+    """How long the fill is expected to take: the first pass's seconds
+    outside the model (stage_seconds' total less its model seconds)."""
+    st = result.get("stage_seconds") or {}
+    try:
+        post = float(st.get("total") or 0) - float(st.get("model") or 0)
+    except (TypeError, ValueError):
+        post = 0.0
+    return max(float(GATE_FILL_MIN_SECONDS), post)
+
+
+def _gate_fill_skip(result, clock):
+    """Why the gate's fill in code is not worth starting, else None
+    (re-audit 10/7/26 #3): "converged" — the first repair loop settled (a
+    whole cycle changed nothing) and skipped no search for want of time, so
+    running it again over the same days finds nothing new; "time" — the fill
+    and the model's rewrite after it (GATE_MIN_MODEL_SECONDS) do not both fit
+    the job's model time left. Either way the rewrite goes first."""
+    rep = result.get("repair") or {}
+    if rep.get("converged") and not rep.get("skipped"):
+        return "converged"
+    if clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS + _gate_fill_seconds(result):
+        return "time"
+    return None
 
 
 def _gate_model_rewrite(job_id, restaurant_id, week_start, gate, fallback, instruction, clock):
@@ -9244,7 +9366,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _run_gate(_gate)
             try:
                 import inspect as _insp
-                _fill_answer = _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"])
+                # The fill only when it can change something and still leave
+                # the rewrite its time (re-audit 10/7/26 #3): it always ran,
+                # usually changed nothing, and ate the minutes the escalated
+                # rewrite then found missing (GATE_MIN_MODEL_SECONDS).
+                _no_fill = _gate_fill_skip(result, clock)
+                _fill_answer = None if _no_fill else \
+                    _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"])
+                if _no_fill:
+                    print(f"[schedule] quality gate: no fill in code ({_no_fill}) — straight to the rewrite")
+                    _gate = dict(_gate, fill={"tried": False, "skipped": _no_fill})
                 if _fill_answer is not None:
                     # Code first (AI cost audit 10/7/26 #21): every trigger
                     # needs somebody free who could fix it, so the repair

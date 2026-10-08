@@ -392,3 +392,79 @@ def test_the_evaluated_roster_does_not_start_on_opus():
     assert se.HARD_WEEK_ROSTER >= 67 * 1.5
     assert not any("roster" in r for r in se.hard_week_reasons(WEEK, roster_size=67, owner_rules=0,
                                                                 prior_generations=2))
+
+
+# ── re-audit 10/7/26 #7: a gate skipped for time is no failure ───────────
+
+def test_a_gate_skipped_for_want_of_time_is_recorded_skipped_and_left_out_of_the_pass_rate(db, monkeypatch):
+    import time
+    import ai_learning
+    calls = []
+    rid, finished = _gate_harness(monkeypatch, db, [[_line(d, "Ana") for d in WEEK]], calls)
+    with se.generation_scope("gate-late-run") as clock:
+        clock.deadline = time.time() + se.SCHEDULE_POST_MODEL_SECONDS + se.GATE_MIN_MODEL_SECONDS - 30
+        clock.started = clock.deadline - se.SCHEDULE_JOB_MAX_SECONDS
+        se._run_schedule_job("gate-late-run", rid)
+    assert len(calls) == 1 and finished["status"] == "done"
+    (row,) = _runs(db)
+    assert row["status"] == "skipped"                                    # it was "failed"
+    assert json.loads(row["context_json"])["outcome"] == "skipped"
+    # The learner's pass rate leaves it out: one ok run beside it is 100%.
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO ai_runs (run_id, workflow, restaurant_id, final_tier, final_model, status, escalations, "
+                 "latency_ms, cost_usd, created_at) VALUES ('run:ok1', 'labor_schedule', ?, ?, ?, 'ok', 0, 1000, "
+                 "0.4, datetime('now'))", (rid, row["final_tier"], row["final_model"]))
+    conn.commit()
+    conn.close()
+    (stat,) = [s for s in ai_learning.route_stats(workflow="labor_schedule", db_path=db)
+               if s["tier"] == row["final_tier"]]
+    assert stat["runs"] == 2 and stat["pass_rate"] == 1.0
+    # A capped gate and a rewrite that was not kept still count against it.
+    v, status = se._run_verdict({"run_id": "r", "gate": {"reason": "x"}, "outcome": "original"})
+    assert status == "failed"
+    v, status = se._run_verdict({"run_id": "r", "gate": {"reason": "x"}, "outcome": "skipped",
+                                 "capped": {"calls": 16}})
+    assert status == "capped"
+
+
+def test_a_tier_whose_every_run_was_skipped_has_no_pass_rate(db):
+    import ai_learning
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO ai_runs (run_id, workflow, restaurant_id, final_tier, final_model, status, escalations, "
+                 "latency_ms, cost_usd, created_at) VALUES ('run:s1', 'labor_schedule', 1, 'T3', 'm', 'skipped', 0, "
+                 "1000, 0.4, datetime('now'))")
+    conn.commit()
+    conn.close()
+    (stat,) = ai_learning.route_stats(workflow="labor_schedule", db_path=db)
+    assert stat["runs"] == 1 and stat["pass_rate"] is None
+
+
+# ── re-audit 10/7/26 #8: the ladder's evidence by tier ───────────────────
+
+def test_the_eval_reports_manager_minutes_and_unmet_items_by_tier(monkeypatch):
+    from scripts import schedule_model_eval as sme
+    weeks = [({"generation_id": "g1", "restaurant_id": 5, "week_start": "2026-10-05", "history_id": 1},
+              [{"tier": "T3"}]),
+             ({"generation_id": "g2", "restaurant_id": 5, "week_start": "2026-10-12", "history_id": 2},
+              [{"tier": "T4"}])]
+    scores = iter([{"manager_minutes_before": 90, "manager_minutes_after": 30, "unmet": 4},
+                   {"manager_minutes_before": 10, "manager_minutes_after": 0, "unmet": 1}])
+    monkeypatch.setattr(sme, "week_context", lambda g, calls, db_path=None: {"trading": []})
+    monkeypatch.setattr(sme, "production_result", lambda calls: [{"rows": [], "complete": True, "usage": {},
+                                                                  "cost": 0.5, "seconds": 1.0}])
+    monkeypatch.setattr(sme, "_merge_rows", lambda calls, results: [])
+    monkeypatch.setattr(sme, "assign_open_slots", lambda ctx, rows: (rows, 0))
+    monkeypatch.setattr(sme, "score_week", lambda ctx, rows, repair=None: dict(
+        next(scores), rows=0, hard_before=0, hard_after=0, full_time_under_min=0, rows_repaired=0, quality=80,
+        days_missing=[]))
+    report = sme.run(weeks, [])
+    assert set(report["by_tier"]) == {"T3", "T4"}
+    t3, t4 = report["by_tier"]["T3"], report["by_tier"]["T4"]
+    assert (t3["manager_minutes_after"], t3["unmet"]) == (30, 4)
+    assert (t4["manager_minutes_after"], t4["unmet"]) == (0, 1)
+    import io, contextlib
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sme._print(report)
+    text = out.getvalue()
+    assert "by tier" in text and "mgr_fix" in text and "unmet" in text

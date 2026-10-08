@@ -636,45 +636,104 @@ def _auto(db, rid):
         conn.close()
 
 
-def test_a_new_restaurant_with_labor_starts_with_auto_draft_on_and_a_demo_never_does(db):
-    on = models.create_restaurant(models.Restaurant(name="New Labor", owner_email="a@x.test"), db_path=db)
-    off = models.create_restaurant(models.Restaurant(name="Reviews Only", owner_email="b@x.test", module_labor=0),
-                                   db_path=db)
-    demo = models.create_restaurant(models.Restaurant(name="Demo", owner_email="c@x.test", is_demo=1), db_path=db)
-    assert (_auto(db, on), _auto(db, off), _auto(db, demo)) == (1, 0, 0)
+def test_a_new_restaurant_starts_with_auto_draft_on_only_when_it_pays_for_labor(db):
+    # Re-audit 10/7/26 #2 (the owner's direction): the dataclass has
+    # module_labor=1 and billing 'trial', so every self-signup, admin-made
+    # client and trial used to start drafting - a paid weekly draft for
+    # nobody, the first on Opus. Only a paying Labor row starts on.
+    trial = models.create_restaurant(models.Restaurant(name="Trial Grill", owner_email="a@x.test"), db_path=db)
+    paid = models.create_restaurant(models.Restaurant(name="Paid Labor", owner_email="p@x.test",
+                                                      billing_status="active"), db_path=db)
+    past_due = models.create_restaurant(models.Restaurant(name="Card Retry", owner_email="q@x.test",
+                                                          billing_status="past_due"), db_path=db)
+    off = models.create_restaurant(models.Restaurant(name="Reviews Only", owner_email="b@x.test", module_labor=0,
+                                                     billing_status="active"), db_path=db)
+    demo = models.create_restaurant(models.Restaurant(name="Demo", owner_email="c@x.test", is_demo=1,
+                                                      billing_status="active"), db_path=db)
+    internal = models.create_restaurant(models.Restaurant(name="Ours", owner_email="i@x.test",
+                                                          billing_status="internal"), db_path=db)
+    assert [_auto(db, r) for r in (trial, paid, past_due, off, demo, internal)] == [0, 1, 1, 0, 0, 0]
     # The draft day is the spread default until the owner picks one.
-    r = models.get_restaurant(on, db_path=db)
-    assert models.auto_draft_weekday(r) == models.default_auto_draft_weekday(on)
+    r = models.get_restaurant(paid, db_path=db)
+    assert models.auto_draft_weekday(r) == models.default_auto_draft_weekday(paid)
 
 
-def test_switching_labor_on_turns_auto_draft_on_only_for_a_restaurant_made_since_and_never_a_choice(db):
-    new = models.create_restaurant(models.Restaurant(name="Upgrader", owner_email="d@x.test", module_labor=0),
-                                   db_path=db)
-    models.update_restaurant(new, {"module_labor": 1}, db_path=db)
-    assert _auto(db, new) == 1
+def test_a_labor_grant_turns_auto_draft_on_only_for_a_paying_restaurant_and_never_a_choice(db):
+    # A trial (Labor on by the dataclass default) granted Labor stays off.
+    trial = models.create_restaurant(models.Restaurant(name="Trial", owner_email="d@x.test"), db_path=db)
+    models.update_restaurant(trial, {"module_labor": 1}, db_path=db)
+    assert _auto(db, trial) == 0
+    # Its checkout converts it (billing first, then the paid modules - the
+    # webhook's order): the conversion alone is no Labor purchase...
+    models.update_restaurant(trial, {"billing_status": "active"}, db_path=db)
+    assert _auto(db, trial) == 0
+    # ...the Labor entitlement it paid for is.
+    models.update_restaurant(trial, {"module_labor": 1, "module_reviews": 1}, db_path=db)
+    assert _auto(db, trial) == 1
+    # One write that both makes it paying and grants Labor (provisioning).
+    both_at_once = models.create_restaurant(models.Restaurant(name="Checkout", owner_email="h@x.test"), db_path=db)
+    models.update_restaurant(both_at_once, {"module_labor": 1, "billing_status": "active"}, db_path=db)
+    assert _auto(db, both_at_once) == 1
+    # A checkout without Labor never turns it on.
+    reviews = models.create_restaurant(models.Restaurant(name="Reviews", owner_email="j@x.test"), db_path=db)
+    models.update_restaurant(reviews, {"module_labor": 0, "module_reviews": 1, "billing_status": "active"},
+                             db_path=db)
+    assert _auto(db, reviews) == 0
     # An existing restaurant (made before the default) keeps its setting.
     old = models.create_restaurant(models.Restaurant(name="Old Grill", owner_email="e@x.test", module_labor=0,
+                                                     billing_status="active",
                                                      created_at="2026-09-01T09:00:00"), db_path=db)
     models.update_restaurant(old, {"module_labor": 1}, db_path=db)
     assert _auto(db, old) == 0
     # Somebody who already chose: their choice stands.
-    chose = models.create_restaurant(models.Restaurant(name="Chooser", owner_email="f@x.test", module_labor=0),
-                                     db_path=db)
+    chose = models.create_restaurant(models.Restaurant(name="Chooser", owner_email="f@x.test", module_labor=0,
+                                                       billing_status="active"), db_path=db)
     models.update_restaurant(chose, {"auto_draft_schedule": 1}, db_path=db)
     models.update_restaurant(chose, {"auto_draft_schedule": 0}, db_path=db)
     models.update_restaurant(chose, {"module_labor": 1}, db_path=db)
     assert _auto(db, chose) == 0
-    # A write that names auto-draft itself is never overridden, and turning
-    # Labor off changes nothing.
-    both = models.create_restaurant(models.Restaurant(name="Both", owner_email="g@x.test", module_labor=0),
-                                    db_path=db)
-    models.update_restaurant(both, {"module_labor": 1, "auto_draft_schedule": 0}, db_path=db)
-    assert _auto(db, both) == 0
-    models.update_restaurant(new, {"module_labor": 0}, db_path=db)
-    assert _auto(db, new) == 1
+    # A demo never does; a write that names auto-draft itself is never
+    # overridden; and turning Labor off changes nothing.
+    demo = models.create_restaurant(models.Restaurant(name="Demo", owner_email="k@x.test", is_demo=1), db_path=db)
+    models.update_restaurant(demo, {"module_labor": 1, "billing_status": "active"}, db_path=db)
+    assert _auto(db, demo) == 0
+    named = models.create_restaurant(models.Restaurant(name="Both", owner_email="g@x.test", module_labor=0,
+                                                       billing_status="active"), db_path=db)
+    models.update_restaurant(named, {"module_labor": 1, "auto_draft_schedule": 0}, db_path=db)
+    assert _auto(db, named) == 0
+    models.update_restaurant(trial, {"module_labor": 0}, db_path=db)
+    assert _auto(db, trial) == 1
+
+
+def test_a_checkout_with_labor_drafts_and_a_self_signup_or_admin_client_does_not(db, monkeypatch):
+    # The real creation paths (re-audit 10/7/26 #2): Stripe provisioning
+    # with and without the Labor key, the phone's self-signup and the admin's
+    # New client - each by its own code, not by create_restaurant alone.
+    import provisioning, billing_jobs, auth
+    monkeypatch.setattr(billing_jobs, "enqueue", lambda *a, **k: None)
+    monkeypatch.setattr(auth, "get_conn", lambda *a, **k: models.get_conn(db), raising=False)
+    auth.init_auth(db_path=db)
+
+    def checkout(email, keys):
+        return provisioning.provision_from_checkout(
+            {"id": f"cs_{email}", "customer": f"cus_{email}", "customer_details": {"email": email, "name": "O"},
+             "metadata": {"restaurant": f"Place {email}", "module_keys": keys}}, db_path=db)
+    with_labor, without = checkout("lab@x.test", "reviews,labor"), checkout("rev@x.test", "reviews")
+    assert (_auto(db, with_labor), _auto(db, without)) == (1, 0)
+    assert models.get_restaurant(without, db_path=db).module_labor == 0
+    import inspect, mobile_api, admin_routes
+    # Self-signup and the admin's New client build the bare dataclass: Labor
+    # on, billing 'trial' - which create_restaurant now leaves off.
+    for fn in (mobile_api.mobile_register, admin_routes.create_client):
+        src = inspect.getsource(fn)
+        assert "create_restaurant(Restaurant(" in src and "billing_status" not in src.split(
+            "create_restaurant(Restaurant(", 1)[1].split("))", 1)[0], fn.__name__
+    assert models.Restaurant(name="x", owner_email="y").billing_status == "trial"
 
 
 def test_the_default_is_said_where_the_owner_switches_it():
-    assert "On by default once Labor is turned on" in _src("templates/dashboard.html")
-    assert "On by default once Labor is turned on" in \
-        _src("ios/CavnarAI/CavnarAI/Features/Account/AccountAutomationView.swift")
+    # Re-audit 10/7/26 #2: on by default for a paid Labor plan, not for any
+    # restaurant that turns Labor on.
+    for path in ("templates/dashboard.html", "ios/CavnarAI/CavnarAI/Features/Account/AccountAutomationView.swift"):
+        assert "On by default with a paid Labor plan" in _src(path), path
+        assert "On by default once Labor is turned on" not in _src(path), path

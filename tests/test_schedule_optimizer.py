@@ -128,7 +128,18 @@ def _shift(date, day, score, capped, demand="peak", lines=("Server short 3 of 7.
 
 def test_the_gate_regenerates_a_busy_night_left_with_a_staffing_hole():
     import schedule_engine as se
-    g = se._quality_gate(_q([_shift(SAT, "Saturday", 7, "coverage_curve"), _shift(FRI, "Friday", 80, None)]))
+    import schedule_rules as sr
+    # Somebody free who could fill it (re-audit 10/7/26 #4: a hole with
+    # nobody free to fill it is the roster's limit and no longer trips the
+    # gate - this test used to pass no rules or rows at all).
+    week = ["2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", FRI, SAT, SUN]
+    c = sr.Constraints(restaurant_id=1, week_dates=week,
+                       week_days=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+    c.compliance = dict(sr.DEFAULTS)
+    c.roster_names, c.active = ["Ana", "Bo"], {"ana", "bo"}
+    rows = [row(SAT, "Ana", "Server", start="4:00pm", end="10:00pm", hours=6)]
+    q = _q([_shift(SAT, "Saturday", 7, "coverage_curve"), _shift(FRI, "Friday", 80, None)])
+    g = se._quality_gate(dict(q, rule_violations=[], rows=rows, constraints=c))
     assert g["dates"] == [SAT]
     assert any("Saturday" in f and "Server short 3 of 7" in f for f in g["focus"])
 

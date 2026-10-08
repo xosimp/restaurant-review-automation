@@ -90,6 +90,10 @@ def route_stats(days=WINDOW_DAYS, workflow=None, db_path=None) -> list:
     out = []
     for (wfl, tier, model), rs in sorted(groups.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
         acc, n_out = _accept(rs)
+        # A run whose check was skipped for want of time (status 'skipped' -
+        # the schedule's quality gate) is no pass and no failure: left out of
+        # the pass rate (re-audit 10/7/26 #7). None when every run was.
+        judged = [r for r in rs if r["status"] != "skipped"]
         q = [r["outcome_quality"] for r in rs if r["outcome_quality"] is not None]
         shadow = [r["reviewer_score"] for r in rs if r["reviewer_score"] is not None]
         out.append({
@@ -97,7 +101,8 @@ def route_stats(days=WINDOW_DAYS, workflow=None, db_path=None) -> list:
             "cost_per_run": round(sum(r["cost_usd"] or 0 for r in rs) / len(rs), 5),
             "p50_ms": _pct([r["latency_ms"] for r in rs], 0.5), "p95_ms": _pct([r["latency_ms"] for r in rs], 0.95),
             "escalation_rate": round(sum(1 for r in rs if (r["escalations"] or 0) > 0) / len(rs), 3),
-            "pass_rate": round(sum(1 for r in rs if r["status"] == "ok") / len(rs), 3),
+            "pass_rate": (round(sum(1 for r in judged if r["status"] == "ok") / len(judged), 3)
+                          if judged else None),
             "acceptance": round(acc, 3) if acc is not None else None, "outcomes": n_out,
             "quality": round(statistics.mean(q), 3) if q else None,
             "shadow_score": round(statistics.mean(shadow), 3) if shadow else None,

@@ -561,6 +561,44 @@ def test_a_leader_or_strength_cap_triggers_the_gate_only_when_a_qualified_person
     assert se._quality_gate(dict(result, quality={"checked": True, "shifts": [strength]}))["dates"] == [SAT]
 
 
+def _hole(cap, roles=("Bartender",)):
+    """A peak Saturday night capped by a staffing hole, its facts as
+    shift_quality writes them: coverage's `short` {role: missing},
+    coverage_curve's `gaps` {role: {...}}."""
+    facts = ({"short": {r: 1 for r in roles}, "gaps": [f"{r} short 1 of 2" for r in roles]} if cap == "coverage"
+             else {"gaps": {r: {"need": 2, "on_at_worst": 1, "minutes_short": 60} for r in roles}})
+    dim = {"key": cap, "weaknesses": [f"{roles[0]} short 1 of 2."], "facts": facts}
+    return {"date": SAT, "day": "Saturday", "daypart": "night", "scored": True, "score": 30, "capped_by": cap,
+            "profile": {"demand": "peak"}, "dimensions": [dim]}
+
+
+@pytest.mark.parametrize("cap", ["coverage", "coverage_curve"])
+def test_a_staffing_hole_trips_the_gate_only_when_somebody_free_holds_the_short_role(cap):
+    # Re-audit 10/7/26 #4: a hole nobody free could fill is the roster's
+    # limit, not a rule the model broke - it escalated the week to Opus,
+    # marked it escalated (the next draft started there too) and taught the
+    # learner start_higher.
+    c = _c(roster_names=["Bea", "Cy", "Ana"], active={"bea", "cy", "ana"},
+           known_roles={"bea": {"bartender"}, "cy": {"server"}, "ana": {"server"}})
+    rows = [_row(SAT, "Ana")]
+    result = {"quality": {"checked": True, "shifts": [_hole(cap)]}, "rule_violations": [], "rows": rows,
+              "constraints": c}
+    gate = se._quality_gate(result)
+    assert gate and gate["dates"] == [SAT] and gate["triggers"][SAT] == [cap]       # Bea is free and tends bar
+    # The only bartender already works Saturday: Cy is free, but no bartender.
+    assert se._quality_gate(dict(result, rows=rows + [_row(SAT, "Bea", role="Bartender")])) is None
+    # The only bartender is off that day.
+    c.blocked_dates = {"bea": {SAT: "on approved time off"}}
+    assert se._quality_gate(result) is None
+    c.blocked_dates = {}
+    # A hole the dimension names no role for: anybody free answers it.
+    anon = _hole(cap)
+    anon["dimensions"][0]["facts"] = {}
+    assert se._quality_gate(dict(result, quality={"checked": True, "shifts": [anon]}))["dates"] == [SAT]
+    # Without the week's rules and rows nobody can be shown free: no gate.
+    assert se._quality_gate({"quality": {"checked": True, "shifts": [_hole(cap)]}}) is None
+
+
 def test_a_rewrite_with_more_unmanaged_minutes_is_never_kept(db, monkeypatch):
     rid = _restaurant(db, [("Max", "General Manager"), ("Ana", "Server")])
     _no_search(monkeypatch)

@@ -827,6 +827,97 @@ def test_a_press_on_its_way_to_the_gate_holds_a_freed_slot_from_the_drafts(monke
     assert order == ["press-1", "press-late", "draft-1", "draft-2"]
 
 
+def test_a_press_joining_a_queued_auto_draft_promotes_it_and_an_unjoined_draft_still_gives_up(monkeypatch):
+    # Re-audit 10/7/26 #1: the owner who joined auto-A waits on it - it goes
+    # on as a press (its place in line kept, no give-up); auto-B, which
+    # nobody joined, still gives up after the background wait.
+    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
+    monkeypatch.setattr(se, "GEN_BACKGROUND_WAIT_SECONDS", 0.4)
+    gate = se.GenerationSlots(1)
+    monkeypatch.setattr(se, "_GEN_SLOTS", gate)
+    order, gave_up, lock, release = [], [], threading.Lock(), threading.Event()
+
+    def hold():
+        with se.generation_scope("holder"):
+            release.wait(10)
+
+    def wait(name, prio):
+        try:
+            with se.generation_scope(name, priority=prio):
+                with lock:
+                    order.append(name)
+        except se.GenerationSlotTimeout:
+            gave_up.append(name)
+    holder = threading.Thread(target=hold)
+    holder.start()
+    deadline = time.time() + 5
+    while gate.busy < 1 and time.time() < deadline:
+        time.sleep(0.01)
+    threads = []
+    for name in ("auto-A", "auto-B"):
+        t = threading.Thread(target=wait, args=(name, se.GEN_PRIORITY_BACKGROUND))
+        t.start()
+        threads.append(t)
+        while gate.waiting() < len(threads) and time.time() < deadline:
+            time.sleep(0.01)
+    assert se.promote_generation("auto-A") == "waiting"
+    press = threading.Thread(target=wait, args=("press-1", se.GEN_PRIORITY_PRESS))
+    press.start()
+    threads.append(press)
+    time.sleep(1.5)                                   # well past the background wait
+    assert gave_up == ["auto-B"]                      # nobody joined it: it gave up
+    release.set()
+    [t.join(10) for t in [holder] + threads]
+    # The promoted draft kept its place ahead of the press queued after it.
+    assert order == ["auto-A", "press-1"] and gave_up == ["auto-B"]
+    assert gate.busy == 0 and gate.waiting() == 0
+
+
+def test_a_press_that_joins_before_the_draft_reaches_the_gate_is_kept_for_it(monkeypatch):
+    gate = se.GenerationSlots(1)
+    gate.acquire(se.GEN_PRIORITY_PRESS, job_id="holder")
+    assert gate.promote("holder") == "running"        # already holding a slot: nothing to do
+    assert gate.promote("auto-C") == "pending"        # claimed, not at the gate yet
+    got = []
+
+    def draft():
+        gate.acquire(se.GEN_PRIORITY_BACKGROUND, job_id="auto-C", timeout=0.1)
+        got.append("auto-C")
+    t = threading.Thread(target=draft)
+    t.start()
+    time.sleep(0.4)
+    assert t.is_alive() and got == []                  # promoted on arrival: no 0.1s give-up
+    gate.release("holder")
+    t.join(5)
+    assert got == ["auto-C"] and gate.busy == 1
+    gate.release("auto-C")
+    assert gate.busy == 0 and gate.promote("auto-C") == "pending"
+
+
+def test_promotions_never_take_more_slots_than_there_are(monkeypatch):
+    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
+    gate = se.GenerationSlots(2)
+    monkeypatch.setattr(se, "_GEN_SLOTS", gate)
+    inside, peak, lock, done = [0], [0], threading.Lock(), []
+
+    def job(n):
+        with se.generation_scope(f"auto-{n}", priority=se.GEN_PRIORITY_BACKGROUND):
+            with lock:
+                inside[0] += 1
+                peak[0] = max(peak[0], inside[0])
+            time.sleep(0.05)
+            with lock:
+                inside[0] -= 1
+                done.append(n)
+    threads = [threading.Thread(target=job, args=(i,)) for i in range(8)]
+    [t.start() for t in threads]
+    for i in range(0, 8, 2):
+        se.promote_generation(f"auto-{i}")
+    [t.join(10) for t in threads]
+    assert peak[0] == 2 and sorted(done) == list(range(8))
+    assert gate.busy == 0 and gate.waiting() == 0
+
+
 def test_the_auto_draft_takes_its_slot_behind_presses():
     import inspect
     import strategy_jobs
@@ -1171,9 +1262,17 @@ def _rid_of(job_rows, db):
         conn.close()
 
 
+def _searches_skipped_for_time(monkeypatch):
+    """The first repair loop skipped its searches for want of time, as a big
+    week's does - the case the fill exists for (re-audit 10/7/26 #3: after a
+    loop that converged with every search run, the fill is not started)."""
+    monkeypatch.setattr(se, "REPAIR_MIN_SEARCH_SECONDS", 10 ** 6)
+
+
 def test_a_gate_the_fill_settles_makes_no_second_model_call(db, monkeypatch):
     calls = []
     rid = _build_harness(monkeypatch, db)
+    _searches_skipped_for_time(monkeypatch)
     monkeypatch.setattr(labor, "generate_optimized_schedule", _gen([[_line(d, "Ana") for d in WEEK]], calls))
     gates = [_sat_gate()]                       # the draft trips it; the filled week does not
     monkeypatch.setattr(se, "_quality_gate", lambda result: gates.pop(0) if gates else None)
@@ -1197,6 +1296,7 @@ def test_a_gate_the_fill_settles_makes_no_second_model_call(db, monkeypatch):
 def test_a_fill_that_is_no_better_goes_to_the_model_from_the_draft(db, monkeypatch):
     calls = []
     rid, finished = _gate_harness(monkeypatch, db, [[_line(d, "Ana") for d in WEEK], [_line(WEEK[5], "Bo")]], calls)
+    _searches_skipped_for_time(monkeypatch)
     monkeypatch.setattr(se, "_gate_local", lambda quality, dates: 50.0 if "Bo" in json.dumps(quality) else 10.0)
     events = _gate_events(monkeypatch)
     se._run_schedule_job("gate-fill-model", rid)
@@ -1212,6 +1312,7 @@ def test_a_fill_that_is_no_better_goes_to_the_model_from_the_draft(db, monkeypat
 def test_a_fill_that_helps_but_leaves_the_breach_is_rewritten_from_the_fill(db, monkeypatch):
     calls = []
     rid = _build_harness(monkeypatch, db)
+    _searches_skipped_for_time(monkeypatch)
     monkeypatch.setattr(labor, "generate_optimized_schedule",
                         _gen([[_line(d, "Ana") for d in WEEK], [_line(WEEK[5], "Bo")]], calls))
     gates = [_sat_gate(), _sat_gate()]          # the filled week still trips it on Saturday
@@ -1225,6 +1326,54 @@ def test_a_fill_that_helps_but_leaves_the_breach_is_rewritten_from_the_fill(db, 
     assert len(ids) == 3
     # The model's rewrite read the filled draft, not the first one.
     assert finished["result"]["redo"]["base_history_id"] == ids[1]
+
+
+# ── re-audit 10/7/26 #3: the fill only when it can help, and never at the rewrite's cost ──
+
+def test_after_a_repair_that_converged_the_gate_goes_straight_to_the_rewrite(db, monkeypatch):
+    # The real repair loop on the real week: it settles in one cycle with
+    # every search run, so the fill would re-run it over the same days for
+    # nothing. The rewrite is the next step, with the job's time intact.
+    calls = []
+    rid = _build_harness(monkeypatch, db)
+    monkeypatch.setattr(labor, "generate_optimized_schedule",
+                        _gen([[_line(d, "Ana") for d in WEEK], [_line(WEEK[5], "Bo")]], calls))
+    gates = [_sat_gate()]
+    seen = []
+
+    def gate(result):
+        seen.append(dict(result.get("repair") or {}))
+        return gates.pop(0) if gates else None
+    monkeypatch.setattr(se, "_quality_gate", gate)
+    finished = {}
+    monkeypatch.setattr(se._ops, "finish_async_job", lambda j, st, r: finished.update(status=st, result=r))
+    events = _gate_events(monkeypatch)
+    se._run_schedule_job("gate-converged", rid)
+    assert seen[0]["converged"] is True and seen[0]["skipped"] == []        # the real loop's verdict
+    assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
+    assert events == [("gate_model_rewrite", 1)]                             # no fill in code was run
+    ids = _rid_of(None, db)
+    assert len(ids) == 2                                                     # the draft and the rewrite only
+    assert finished["status"] == "done"
+
+
+def test_the_fill_starts_only_when_it_and_the_rewrite_both_fit_the_time_left(monkeypatch):
+    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
+    open_loop = {"repair": {"converged": False, "skipped": []}, "stage_seconds": {"total": 150.0, "model": 60.0}}
+    searches_cut = {"repair": {"converged": True, "skipped": [{"stage": "solver", "why": "time"}]},
+                    "stage_seconds": {"total": 70.0, "model": 60.0}}
+    settled = {"repair": {"converged": True, "skipped": []}, "stage_seconds": {"total": 150.0, "model": 60.0}}
+    assert se._gate_fill_seconds(open_loop) == 90.0
+    assert se._gate_fill_seconds(searches_cut) == se.GATE_FILL_MIN_SECONDS      # never less than the floor
+    assert se._gate_fill_skip(settled, None) == "converged"
+    assert se._gate_fill_skip(open_loop, None) is None and se._gate_fill_skip(searches_cut, None) is None
+    clock = se.GenerationClock(None)
+    # Room for the rewrite but not for the fill before it: the rewrite goes first.
+    clock.deadline = time.time() + se.SCHEDULE_POST_MODEL_SECONDS + se.GATE_MIN_MODEL_SECONDS + 60
+    assert se._gate_fill_skip(open_loop, clock) == "time"
+    assert se._gate_fill_skip(searches_cut, clock) is None                    # 30s of fill fits in 60
+    clock.deadline = time.time() + se.SCHEDULE_POST_MODEL_SECONDS + se.GATE_MIN_MODEL_SECONDS + 600
+    assert se._gate_fill_skip(open_loop, clock) is None
 
 
 def test_whether_the_gate_survives_reads_its_own_dates_and_reasons():

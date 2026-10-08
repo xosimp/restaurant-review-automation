@@ -4556,6 +4556,9 @@ def init_db(db_path: str = DB_PATH):
     stamp_seed_provenance(db_path=db_path)
     # The draft days already in force kept (AI cost audit 10/7/26 #5), once.
     mark_chosen_draft_days(db_path=db_path)
+    # And every restaurant made before the spread keeps the day it had
+    # (re-audit 10/7/26 #6), once — after the first, which already ran.
+    keep_preexisting_draft_days(db_path=db_path)
     # Labor period history as payroll weeks, the legacy rolling windows
     # marked unread (memory audit 9/29/26, labor_periods) — after
     # ensure_columns() has added labor_history.kind, and after the seed's
@@ -4648,10 +4651,12 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
           r.timezone or "America/Chicago") + alert_vals)
     rid = cur.lastrowid
     if labor_auto_draft_default(r):
-        # A restaurant made with Labor on drafts next week's schedule by
+        # A restaurant made paying for Labor drafts next week's schedule by
         # itself from the start (AI cost audit 10/7/26 #73) — on its spread
         # draft day (auto_draft_weekday), nothing sent to staff until the
-        # owner publishes, and off in one tap. Every restaurant made before
+        # owner publishes, and off in one tap. Never a trial, a self-signup,
+        # a demo or an admin-made row: the dataclass has module_labor on and
+        # billing 'trial' (re-audit 10/7/26 #2). Every restaurant made before
         # keeps its own setting: this is the new row's default only.
         conn.execute("UPDATE restaurants SET auto_draft_schedule=1 WHERE id=?", (rid,))
     conn.commit()
@@ -4958,15 +4963,18 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         # default again (auto_draft_weekday; AI cost audit 10/7/26 #5).
         updates["auto_draft_weekday_chosen"] = 1
     if "module_labor" in updates and "auto_draft_schedule" not in updates:
-        # Labor switched on for a restaurant made since the default began:
+        # Labor granted to a paying restaurant made since the default began
+        # (a checkout's module entitlement, provisioning, an admin's grant):
         # auto-draft comes on with it, unless somebody already chose (AI cost
-        # audit 10/7/26 #73 — _auto_draft_on_labor_switch). Recorded in the
-        # change_log with the switch, like any other change.
+        # audit 10/7/26 #73; re-audit 10/7/26 #2 — _auto_draft_on_labor_switch).
+        # A trial's Labor never does. Recorded in the change_log with the
+        # switch, like any other change.
         try:
             _labor_on = bool(int(updates["module_labor"] or 0))
         except (TypeError, ValueError):
             _labor_on = False
-        if _labor_on and _auto_draft_on_labor_switch(restaurant_id, db_path):
+        if _labor_on and _auto_draft_on_labor_switch(restaurant_id, db_path,
+                                                     billing_status=updates.get("billing_status")):
             updates["auto_draft_schedule"] = 1
     # A phone number is kept the way an owner reads it, "(334) 568-9292"
     # (Will, 9/29/26); every reader of owner_phone takes its digits.
@@ -12424,6 +12432,48 @@ def mark_chosen_draft_days(db_path=None) -> int:
         conn.close()
 
 
+AUTO_DRAFT_DAY_KEPT_MIGRATION = "auto_draft_weekday_chosen_v2"
+
+
+def keep_preexisting_draft_days(db_path=None) -> int:
+    """Once (data_migrations): every restaurant made before
+    AUTO_DRAFT_DEFAULT_SINCE keeps the draft day it had — its stored day
+    (Thursday unless somebody changed it) marked chosen (re-audit 10/7/26
+    #6, the owner's decision). The first migration (mark_chosen_draft_days)
+    kept only restaurants opted in or with a non-default day, so a
+    restaurant with the auto-draft off — Simple EJ's — silently read a
+    spread Tuesday/Wednesday in Account → Automation where it had read
+    Thursday/Friday. The spread is for restaurants made after the change.
+    That migration already ran in production, so this is a second one.
+    Returns rows marked."""
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM data_migrations WHERE name=?",
+                        (AUTO_DRAFT_DAY_KEPT_MIGRATION,)).fetchone():
+            conn.rollback()
+            return 0
+        n = conn.execute(
+            "UPDATE restaurants SET auto_draft_weekday_chosen=1, auto_draft_weekday=COALESCE(auto_draft_weekday, ?) "
+            "WHERE COALESCE(auto_draft_weekday_chosen, 0)=0 AND SUBSTR(COALESCE(created_at, ''), 1, 10) < ?",
+            (AUTO_DRAFT_WEEKDAY_DEFAULT, AUTO_DRAFT_DEFAULT_SINCE)).rowcount
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)",
+                     (AUTO_DRAFT_DAY_KEPT_MIGRATION,
+                      f"{n} restaurants made before {AUTO_DRAFT_DEFAULT_SINCE} keep their stored draft day"))
+        conn.commit()
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        # Retried on the next boot: the marker is written only with the rows.
+        print(f"auto-draft day keep migration failed (will retry at next boot): {e}")
+        return 0
+    finally:
+        conn.close()
+
+
 SEED_PROVENANCE_MIGRATION = "labor_seed_provenance_v1"
 
 
@@ -15338,39 +15388,51 @@ def effective_auto_draft_weekday(restaurant_id, stored, chosen) -> int:
     return default_auto_draft_weekday(restaurant_id)
 
 
-# Auto-draft on by default for Labor (AI cost audit 10/7/26 #73): a
-# restaurant that turns the Labor module on from this date — created with it,
-# or switching it on later — drafts next week's schedule by itself on its
-# draft day (auto_draft_weekday: the spread default until the owner picks
-# one). Nothing reaches staff until the owner publishes, and the owner turns
-# it off in Labor settings. Never a restaurant made before this date, never
-# a setting somebody has already changed (change_log holds every change of
-# auto_draft_schedule), never a demo.
+# Auto-draft on by default for a paid Labor purchase (AI cost audit 10/7/26
+# #73, narrowed by the owner in re-audit 10/7/26 #2): a restaurant that pays
+# for the Labor module from this date — provisioned from a checkout with
+# Labor, or granted Labor while paying (a trial converting with Labor, an
+# admin's grant) — drafts next week's schedule by itself on its draft day
+# (auto_draft_weekday: the spread default until the owner picks one).
+# Nothing reaches staff until the owner publishes, and the owner turns it off
+# in Labor settings. Never a trial, a self-signup, a demo, or a row that only
+# has Labor by the dataclass default (module_labor=1) — each of those bought a
+# paid weekly draft for nobody, the first on Opus. Never a restaurant made
+# before this date, never a setting somebody has already changed (change_log
+# holds every change of auto_draft_schedule).
 AUTO_DRAFT_DEFAULT_SINCE = "2026-10-07"
 
 
 def labor_auto_draft_default(restaurant) -> bool:
-    """Whether a NEW restaurant row starts with auto-draft on: Labor on and
-    not a demo (a demo would buy a draft every week for nobody)."""
+    """Whether a NEW restaurant row starts with auto-draft on: Labor on, a
+    paying billing status (is_paying — never 'trial', the dataclass default)
+    and not a demo."""
     try:
-        return bool(int(getattr(restaurant, "module_labor", 0) or 0)) and not int(getattr(restaurant, "is_demo", 0) or 0)
+        return (bool(int(getattr(restaurant, "module_labor", 0) or 0)) and is_paying(restaurant)
+                and not int(getattr(restaurant, "is_demo", 0) or 0))
     except (TypeError, ValueError):
         return False
 
 
-def _auto_draft_on_labor_switch(restaurant_id, db_path=None) -> bool:
-    """Whether switching Labor on for this restaurant turns auto-draft on
-    with it (#73): Labor is off now, auto-draft is off and nobody ever
-    changed it, the restaurant is no demo and was made on or after
-    AUTO_DRAFT_DEFAULT_SINCE. False whenever any of it cannot be read — an
-    existing restaurant's setting is never flipped on a guess."""
+def _auto_draft_on_labor_switch(restaurant_id, db_path=None, billing_status=None) -> bool:
+    """Whether a write granting Labor (module_labor on) turns auto-draft on
+    with it (#73, re-audit #2): the restaurant is paying once the write lands
+    (`billing_status`, when the same write sets it, else the row's),
+    auto-draft is off and nobody ever changed it, the restaurant is no demo
+    and was made on or after AUTO_DRAFT_DEFAULT_SINCE. Labor may already be on
+    — every trial has it by the dataclass default, and its checkout grants it
+    again — so the grant, not a switch from off, is the purchase. False
+    whenever any of it cannot be read — an existing restaurant's setting is
+    never flipped on a guess."""
     try:
         conn = get_conn(db_path or DB_PATH)
         try:
-            row = conn.execute("SELECT module_labor, auto_draft_schedule, is_demo, created_at FROM restaurants "
+            row = conn.execute("SELECT billing_status, auto_draft_schedule, is_demo, created_at FROM restaurants "
                                "WHERE id=?", (restaurant_id,)).fetchone()
-            if not row or int(row["module_labor"] or 0) or int(row["auto_draft_schedule"] or 0) \
-                    or int(row["is_demo"] or 0):
+            if not row or int(row["auto_draft_schedule"] or 0) or int(row["is_demo"] or 0):
+                return False
+            if not is_paying({"billing_status": billing_status if billing_status is not None
+                              else row["billing_status"]}):
                 return False
             if str(row["created_at"] or "")[:10] < AUTO_DRAFT_DEFAULT_SINCE:
                 return False
@@ -15579,7 +15641,12 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "auto_draft_schedule", "auto_draft_weekday", "auto_order_weekday",
         "auto_approve_paused", "data_retention_months", "two_fa_enabled", "two_fa_method",
     ]
-    return _json.dumps({k: getattr(r, k, None) for k in keep}, indent=2, default=str)
+    out = {k: getattr(r, k, None) for k in keep}
+    # The day the draft is actually made — the stored column is only the
+    # day when somebody chose it, else the spread default rules (re-audit
+    # 10/7/26 #6), so the export says what every other reader goes by.
+    out["auto_draft_weekday"] = auto_draft_weekday(r)
+    return _json.dumps(out, indent=2, default=str)
 
 
 # ═══════════════════════════════════════════════════════════════════════

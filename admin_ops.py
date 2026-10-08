@@ -7056,7 +7056,10 @@ def ai_routes_view(days=28):
             if n:
                 agg["cost_per_run"] = round(sum(r["cost_per_run"] * r["runs"] for r in rows) / n, 5)
                 agg["escalation_rate"] = round(sum(r["escalation_rate"] * r["runs"] for r in rows) / n, 3)
-                agg["pass_rate"] = round(sum(r["pass_rate"] * r["runs"] for r in rows) / n, 3)
+                # A tier whose every run was skipped has no pass rate (re-audit 10/7/26 #7).
+                judged = [r for r in rows if r["pass_rate"] is not None]
+                jn = sum(r["runs"] for r in judged)
+                agg["pass_rate"] = round(sum(r["pass_rate"] * r["runs"] for r in judged) / jn, 3) if jn else None
         pair_rows = []
         for (wfl, tier), ps in (pairs or {}).items():
             if wfl != name or not ps:

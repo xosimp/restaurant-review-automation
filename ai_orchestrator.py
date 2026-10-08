@@ -274,7 +274,7 @@ class RunResult:
     model: str | None = None
     attempts: int = 0
     escalations: int = 0
-    status: str = "ok"          # ok | failed | held | capped | error | refused
+    status: str = "ok"          # ok | failed | held | capped | error | refused | skipped (a check not run for time)
 
     @property
     def ok(self):

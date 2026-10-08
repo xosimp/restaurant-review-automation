@@ -444,11 +444,16 @@ def production_result(calls) -> list:
 
 
 def run(weeks, arms, call_model=None, repair=None, live=False, db_path=None) -> dict:
-    """{"arms": {name: summary}, "weeks": [per-week detail]}. The production
-    arm is always scored; the other arms only when `live` (or with an
-    injected `call_model`, which is what tests pass)."""
+    """{"arms": {name: summary}, "by_tier": {tier: summary}, "weeks": [per-week
+    detail]}. The production arm is always scored; the other arms only when
+    `live` (or with an injected `call_model`, which is what tests pass).
+    `by_tier` rolls every week up by the ladder tier that wrote it — a tier
+    arm's replays, and production's weeks written on one tier — so the
+    ladder's decision reads hard breaches, manager minutes and unmet items
+    beside quality and cost (re-audit 10/7/26 #8: the first decision rested
+    on one week and on quality and cost alone)."""
     call_model = call_model or default_call_model
-    detail, per_arm = [], {}
+    detail, per_arm, per_tier = [], {}, {}
     for generation, calls in weeks:
         ctx = week_context(generation, calls, db_path=db_path)
         row = {"generation_id": generation["generation_id"], "restaurant_id": generation["restaurant_id"],
@@ -477,8 +482,13 @@ def run(weeks, arms, call_model=None, repair=None, live=False, db_path=None) -> 
                               and not s["days_missing"])
             row["arms"][arm["name"]] = s
             per_arm.setdefault(arm["name"], []).append(s)
+            tier = arm.get("tier") if arm["name"] != PRODUCTION else \
+                (row["tiers"][0] if len(row["tiers"]) == 1 else None)
+            if tier:
+                per_tier.setdefault(tier, []).append(s)
         detail.append(row)
-    return {"arms": {name: summarize(scores) for name, scores in per_arm.items()}, "weeks": detail}
+    return {"arms": {name: summarize(scores) for name, scores in per_arm.items()},
+            "by_tier": {t: summarize(scores) for t, scores in sorted(per_tier.items())}, "weeks": detail}
 
 
 def summarize(scores) -> dict:
@@ -523,6 +533,16 @@ def _print(report):
     print(f"{'arm':<{width}}  " + "  ".join(f"{h:>9}" for h in heads))
     for name, s in report["arms"].items():
         print(f"{name:<{width}}  " + "  ".join(f"{'-' if s.get(k) is None else s.get(k):>9}" for k in cols))
+    if report.get("by_tier"):
+        # The ladder's evidence by tier (re-audit 10/7/26 #8): manager
+        # minutes and unmet items sit beside quality and cost.
+        tcols = ("weeks", "completed", "hard_after", "manager_minutes_before", "manager_minutes_after", "unmet",
+                 "quality", "cost_per_completed_week")
+        theads = ("weeks", "done", "hard_fix", "mgr_min", "mgr_fix", "unmet", "quality", "$/week")
+        print("\nby tier")
+        print(f"{'tier':<{width}}  " + "  ".join(f"{h:>9}" for h in theads))
+        for tier, s in report["by_tier"].items():
+            print(f"{tier:<{width}}  " + "  ".join(f"{'-' if s.get(k) is None else s.get(k):>9}" for k in tcols))
 
 
 def main(argv=None):

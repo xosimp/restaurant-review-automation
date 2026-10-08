@@ -102,3 +102,48 @@ def test_a_claim_joins_only_the_same_request(db_path):
     except ops.JobBusy as e:
         assert e.job_id == "a1" and e.request == req
     assert "the week of 10/12/26 is being built" in se.busy_message(req)
+
+
+# ── re-audit 10/7/26 #1: a press that joins a queued auto-draft ───────────
+
+def test_a_press_that_joins_a_queued_auto_draft_promotes_it_at_the_gate(client, db_path, monkeypatch):
+    # The weekly auto-draft claimed next week and is queued for a slot at
+    # background priority; the owner presses Generate for the same week and
+    # joins it. It must not then fail them after the background wait with
+    # "No generation slot came free": the join promotes it to a press.
+    import inspect
+    import time
+    import mobile_api
+    rid = _restaurant(db_path)
+    token = _token(client, db_path, rid)
+    h = {"Authorization": f"Bearer {token}"}
+    monkeypatch.setattr(se, "GEN_BACKGROUND_WAIT_SECONDS", 0.3)
+    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
+    job_id, joined = ops.claim_async_job("auto-join1", "schedule", rid, request=se.generation_request(rid))
+    assert not joined
+    gate = se._GEN_SLOTS
+    for n in range(gate.slots):
+        gate.acquire(se.GEN_PRIORITY_PRESS, job_id=f"busy-{n}")        # every slot taken
+    got, gave_up = [], []
+
+    def draft():
+        try:
+            with se.generation_scope(job_id, priority=se.GEN_PRIORITY_BACKGROUND):
+                got.append(job_id)
+        except se.GenerationSlotTimeout:
+            gave_up.append(job_id)
+    t = threading.Thread(target=draft)
+    t.start()
+    deadline = time.time() + 5
+    while gate.waiting() < 1 and time.time() < deadline:
+        time.sleep(0.01)
+    body = client.post("/mobile/api/labor/generate-schedule", headers=h, json={}).get_json()
+    assert body["ok"] and body["joined"] is True and body["job_id"] == job_id
+    time.sleep(1.0)                                    # well past the background wait
+    assert gave_up == [] and t.is_alive()              # promoted: it waits on, as the owner's press
+    for n in range(gate.slots):
+        gate.release(f"busy-{n}")
+    t.join(5)
+    assert got == [job_id] and gate.busy == 0
+    # Both joined branches of the one generate body (the web route calls it).
+    assert inspect.getsource(mobile_api.mobile_generate_schedule).count("promote_generation(") == 2

@@ -109,6 +109,48 @@ def test_the_draft_days_already_in_force_are_kept_once(db):
     assert models.get_restaurant(never).auto_draft_weekday_chosen == 0
 
 
+def test_every_restaurant_made_before_the_spread_keeps_its_day_once(db):
+    # Re-audit 10/7/26 #6 (the owner's decision): the first migration kept
+    # only opted-in or non-default days, so Simple EJ's - auto-draft off -
+    # read a spread Tuesday/Wednesday where it had read Thursday/Friday. The
+    # second marks every restaurant made before the change at its stored day.
+    import sqlite3
+    old_off = _rid(db, name="Old, auto-draft off", created_at="2026-09-01T09:00:00")
+    old_wed = _rid(db, name="Old, picked Wednesday", created_at="2026-08-15 10:00:00")
+    undated = _rid(db, name="Blank created_at")
+    new = _rid(db, name="Made after the change", created_at="2026-10-07T10:00:00")
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE restaurants SET auto_draft_weekday=2 WHERE id=?", (old_wed,))
+    conn.execute("UPDATE restaurants SET created_at='' WHERE id=?", (undated,))
+    conn.execute("UPDATE restaurants SET auto_draft_weekday_chosen=0")
+    conn.execute("DELETE FROM data_migrations WHERE name=?", (models.AUTO_DRAFT_DAY_KEPT_MIGRATION,))
+    conn.commit()
+    conn.close()
+    # Its id spreads it off Thursday, as Simple EJ's was.
+    assert models.default_auto_draft_weekday(old_off) != 3 or models.default_auto_draft_weekday(new) != 3
+    assert models.keep_preexisting_draft_days(db_path=db) >= 3
+    days = {rid: models.auto_draft_weekday(models.get_restaurant(rid)) for rid in (old_off, old_wed, undated, new)}
+    assert days[old_off] == 3 and days[old_wed] == 2 and days[undated] == 3      # the day each had
+    assert days[new] == models.default_auto_draft_weekday(new)                  # the spread is for the new
+    assert models.auto_publish_weekday(models.get_restaurant(old_off)) == 4     # Thursday draft, Friday publish
+    # Once: a later run marks nothing, and it is a migration of its own (the
+    # first already ran in production).
+    assert models.keep_preexisting_draft_days(db_path=db) == 0
+    assert models.AUTO_DRAFT_DAY_KEPT_MIGRATION != models.AUTO_DRAFT_DAY_CHOSEN_MIGRATION
+    import inspect
+    assert "keep_preexisting_draft_days(db_path=db_path)" in inspect.getsource(models.init_db)
+
+
+def test_the_settings_export_says_the_day_the_draft_is_made(db):
+    import json
+    rid = _rid(db, name="Export Co")
+    spread = models.default_auto_draft_weekday(rid)
+    got = json.loads(models.build_settings_export_json(rid, db_path=db))
+    assert got["auto_draft_weekday"] == spread                  # the effective day, not the stored 3
+    models.update_restaurant(rid, {"auto_draft_weekday": 5})
+    assert json.loads(models.build_settings_export_json(rid, db_path=db))["auto_draft_weekday"] == 5
+
+
 def test_the_chosen_flag_is_whitelisted_untracked_and_migrated():
     import inspect
     import change_log
@@ -147,8 +189,9 @@ def test_the_draft_day_is_set_through_the_auto_draft_route(client, db, monkeypat
         spread, models.WEEKDAY_NAMES[spread], models.WEEKDAY_NAMES[spread + 1])
     got = client.post("/api/labor/auto-draft", json={"weekday": 1}).get_json()
     assert got["ok"], got
-    # A new Labor restaurant drafts by default (AI cost audit 10/7/26 #73).
-    assert (got["day"], got["publish_day"], got["enabled"]) == ("Tuesday", "Wednesday", True)
+    # A trial does not draft by default: only a paid Labor plan does
+    # (re-audit 10/7/26 #2, which narrowed AI cost audit 10/7/26 #73).
+    assert (got["day"], got["publish_day"], got["enabled"]) == ("Tuesday", "Wednesday", False)
     pub = client.get("/api/labor/auto-publish").get_json()
     assert (pub["day"], pub["draft_day"]) == ("Wednesday", "Tuesday")
     # Sunday, a bool and a word are refused, and the day stays.

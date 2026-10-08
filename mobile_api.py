@@ -3277,6 +3277,9 @@ def mobile_generate_schedule(current_user):
     _running, _running_req = _ops.running_job("schedule", rid)
     if _running:
         if _running_req == _req:
+            # The owner now waits on it: a queued auto-draft goes ahead as a
+            # press, never timing out on them (re-audit 10/7/26 #1).
+            _se.promote_generation(_running)
             return jsonify(ok=True, job_id=_running, joined=True, wait_seconds=_schedule_wait(_running, rid),
                            typical=_se.typical_generation_seconds(rid))
         return jsonify(ok=False, busy=True, running=_running_req,
@@ -3290,6 +3293,7 @@ def mobile_generate_schedule(current_user):
     except _ops.JobBusy as _busy:
         return jsonify(ok=False, busy=True, running=_busy.request, error=_se.busy_message(_busy.request)), 409
     if joined:
+        _se.promote_generation(job_id)
         return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid),
                        typical=_se.typical_generation_seconds(rid))
     # The owner throwing a draft away is the strongest "no" there is, and it
