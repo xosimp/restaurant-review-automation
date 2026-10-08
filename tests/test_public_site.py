@@ -109,3 +109,34 @@ def test_ask_cavnar_ai_is_shown_as_the_restaurants_cfo_with_labelled_figures():
     assert "var QA = [" in js and "smash burger" not in js and "fried rice" not in js
     css = open(os.path.join(PUBLIC, "static", "site.css"), encoding="utf-8").read()
     assert "clip-path:circle(50% at 50% 50%)" in css, "Safari showed the sphere's swirl as a square"
+
+
+def test_the_ember_core_is_one_renderer_with_a_fallback_and_a_still_frame():
+    """The Ember Core (10/7/26): one WebGL script draws the AI at every
+    data-core anchor on the homepage; the CSS sphere under each anchor hides
+    only once WebGL is live, reduced motion gets a still frame and no
+    streams, and the canvas never takes a click."""
+    html = open(os.path.join(PUBLIC, "index.html"), encoding="utf-8").read()
+    assert re.search(r'<script src="/static/ember-core\.js\?v=[\w.-]+" defer></script>', html)
+    for name in ("hero", "prob", "sched", "platform", "ask", "demo"):
+        assert f'data-core="{name}"' in html, name
+    css = open(os.path.join(PUBLIC, "static", "site.css"), encoding="utf-8").read()
+    assert ".core-live [data-core].ember,.core-live [data-core] .ember{visibility:hidden" in css
+    # each core paints on its own anchor and scrolls with the page: a canvas
+    # fixed over the page trailed iOS's momentum scroll and bounced (10/7/26)
+    assert ".core-cv{position:absolute;" in css and "pointer-events:none" in css
+    assert "#core-gl" not in css and "position:fixed" not in css.split("#core-streams")[1].split("}")[0]
+    js = open(os.path.join(PUBLIC, "static", "ember-core.js"), encoding="utf-8").read()
+    assert "prefers-reduced-motion" in js and "root.classList.add('core-live')" in js
+    assert "now - lastDraw < 15" in js, "at most 60 frames a second"
+    assert "webglcontextlost" in js and "root.classList.remove('core-live')" in js
+    assert "=>" not in js and "let " not in js and "const " not in js.replace("const vec", "").replace("const int", ""), "ES5, like site.js"
+
+
+def test_the_app_and_the_site_run_the_same_ember_core():
+    """The dashboard (static/) and cavnar.ai (public/static/) each serve their
+    own copy of the Ember Core engine, like the fonts: one AI, one renderer.
+    Change one, copy it to the other."""
+    a = open(os.path.join(ROOT, "static", "ember-core.js"), encoding="utf-8").read()
+    b = open(os.path.join(PUBLIC, "static", "ember-core.js"), encoding="utf-8").read()
+    assert a == b, "static/ember-core.js and public/static/ember-core.js have drifted"

@@ -1497,6 +1497,15 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-av{display:block;width:28px;height:28px;flex-shrink:0;margin-top:2px}
 .ask-av-lg{display:block;width:64px;height:64px}
 .ask-empty h3{font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink);margin:16px 0 6px}
+/* The Ember Core (static/ember-core.js): a canvas on each [data-core] anchor;
+   without WebGL the soft ember under it shows instead. */
+.core-cv{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:none;max-height:none;pointer-events:none;visibility:visible;z-index:1}
+.ec-anchor{position:relative;flex:none}
+.ec-anchor::before,.ask-core::before{content:'';position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 46% 44%,var(--ember3,#f6c39b) 0%,var(--ember2) 24%,var(--ember) 55%,var(--paper) 100%);box-shadow:0 0 50px 8px rgba(212,88,58,.3)}
+.core-live .ec-anchor::before,.core-live .ask-core::before{visibility:hidden}
+.ask-core{position:relative;width:104px;height:104px;margin:22px auto 26px;flex:none}
+.dr-rest{text-align:center}.dr-rest .hb-empty{text-align:center}.dr-rest .dr-bud-ft{justify-content:center}
+.ask-empty .ask-core + .ask-brief{margin-top:0}
 .ask-empty p{font-size:13.5px;line-height:1.55;color:var(--ink3);margin:0 12px 14px;max-width:36ch}
 .ask-brief{width:100%;text-align:left;margin:0 0 16px}
 .ask-brief .hl{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink);margin:0 0 3px;line-height:1.25}
@@ -2136,6 +2145,7 @@ function loadFailed(el, d){
 })();
 </script>
 <script src="/static/cavnar-orb.js"></script>
+<script src="/static/ember-core.js" defer></script>
 <script src="/static/cavnar-phone.js"></script>
 
 <!-- Branded upload loading overlay -->
@@ -7675,10 +7685,10 @@ svg:hover .hb-xh{opacity:1}
       +'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="close" data-date="'+esc(date)+'">Run this night</button></div><div class="dr-err" hidden></div></section>';
   }
   function noneYet(d){
-    if(d&&d.enabled===false)return '<div class="dr-head"><div><div class="hb-kicker">Daily report</div><h1 class="hb-h1">Switched off</h1></div></div><section class="hb-card dr-prog"><div class="hb-empty">The daily report is off for this location. The owner can switch it on in Account → Restaurant.</div></section>';
+    if(d&&d.enabled===false)return '<div class="dr-head"><div><div class="hb-kicker">Daily report</div><h1 class="hb-h1">Switched off</h1></div></div><section class="hb-card dr-prog dr-rest">'+ecEmptyCore(64)+'<div class="hb-empty">The daily report is off for this location. The owner can switch it on in Account → Restaurant.</div></section>';
     return '<div class="dr-head"><div><div class="hb-kicker">Daily report</div><h1 class="hb-h1">No report yet</h1></div></div>'
-      +'<section class="hb-card dr-prog"><div class="hb-empty">The first daily report builds itself after tonight’s close. Closing early? Start it now.</div>'
-      +'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="close">Close day</button></div><div class="dr-err" hidden></div></section>';
+      +'<section class="hb-card dr-prog dr-rest"><div class="dr-rest-in">'+ecEmptyCore(64,'.cbtn-primary')+'<div class="hb-empty">The first daily report builds itself after tonight’s close. Closing early? Start it now.</div>'
+      +'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-dr="close">Close day</button></div></div><div class="dr-err" hidden></div></section>';
   }
 
   function renderNight(p){
@@ -9357,7 +9367,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function renderTimeline(){
     var box=el('rh-tl');if(!box)return;
-    if(!st.items.length){box.innerHTML='<div class="hb-empty">Nothing yet. Every recommendation Cavnar AI shows you — on Home, in the brief, in a module — lands here with what you did with it.</div>';return;}
+    if(!st.items.length){box.innerHTML=ecEmptyCore(64)+'<div class="hb-empty" style="text-align:center">Nothing yet. Every recommendation Cavnar AI shows you — on Home, in the brief, in a module — lands here with what you did with it.</div>';return;}
     var h='<div class="rh-tl">';for(var i=0;i<st.items.length;i++)h+=item(st.items[i]);h+='</div>';
     if(st.next)h+='<div class="rh-more"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-rh="more">Show older</button></div>';
     else if(st.caveat)h+='<div class="hb-empty" style="font-size:12px;margin-top:10px">'+esc(st.caveat)+'</div>';
@@ -14389,7 +14399,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   </div>
   {% else %}
   <div class="in2-empty">
-    <svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true" style="width:72px;height:72px"><path class="cm-hring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>
+    <div class="ec-anchor" data-core="empty" data-core-energy=".3" data-core-wake=".cbtn-primary" aria-hidden="true" style="width:72px;height:72px;margin:0 auto 6px"></div>
     <h2>No competitor data yet</h2>
     <p>See how your ratings, review volume and reputation stack up against the restaurants around you.</p>
     <button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary cbtn-lg">Fetch competitor data</button>
@@ -16002,6 +16012,10 @@ var _askFabOrb = null;
 // cavnarMountOrbs when it enters the DOM), not the obsidian spark tile.
 var ASK_ORB_SM = '<canvas class="hb-orb ask-av" data-orb-state="working" width="28" height="28" aria-hidden="true"></canvas>';
 var ASK_ORB_LG = '<canvas class="hb-orb ask-av-lg" data-orb-state="searching" width="64" height="64" aria-hidden="true"></canvas>';
+// Before anything is asked the panel shows Cavnar AI itself: the Ember Core,
+// large, breathing, leaning toward the cursor (static/ember-core.js; owner
+// 10/7/26). The dotted orb stays for working and loading states.
+var ASK_CORE = '<div class="ask-core" data-core="ask-panel" data-core-scale="2.4" aria-hidden="true"></div>';
 var ASK_SPARK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14zM5 15l.7 2 2 .7-2 .7L5 20.4l-.7-2-2-.7 2-.7L5 15z"/></svg>';
 function _askEsc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 // An answer's structure, kept (density audit #12): the prompt asks the
@@ -16064,7 +16078,7 @@ window._askEmptyHtml = function() {
     : ['What should I focus on today?', 'How are my reviews doing?', 'How do I get my labor cost down?'];
   var html = '<div class="ask-empty">';
   if (o && o.headline) {
-    html += '<div class="ask-brief"><div class="hl">' + _askEsc(o.headline) + '</div>';
+    html += ASK_CORE + '<div class="ask-brief"><div class="hl">' + _askEsc(o.headline) + '</div>';
     var sub = [];
     if (o.restaurant) sub.push(o.restaurant);
     if (o.since_label) sub.push(o.since_label);
@@ -16073,7 +16087,7 @@ window._askEmptyHtml = function() {
     // panel is for asking. The questions below come from the same signals.
     html += '</div>';
   } else {
-    html += ASK_ORB_LG + '<h3>Ask me anything</h3>'
+    html += ASK_CORE + '<h3>Ask me anything</h3>'
          + '<p>Your numbers, or general advice on running the place — I\'ll pull in your real data whenever it\'s relevant.</p>';
   }
   html += '<div class="lbl" style="width:100%;text-align:left">Start here</div><div class="ask-sugg">'
@@ -30906,6 +30920,14 @@ function applyFigureCaveat(el, d){
   el.insertBefore(aiCaveat('Unverified numbers', detail), el.firstChild);
 }
 
+/* A whole-screen empty state shows Cavnar AI itself, resting: the Ember Core
+   at low energy, waking when the screen's own action is hovered (owner,
+   10/7/26). Compact and error states keep the Cold Hearth below. */
+function ecEmptyCore(size, wake){
+  size = size || 64;
+  return '<div class="ec-anchor" data-core="empty" data-core-energy=".3"' + (wake ? ' data-core-wake="' + wake + '"' : '')
+    + ' aria-hidden="true" style="width:' + size + 'px;height:' + size + 'px;margin:6px auto 20px"></div>';
+}
 function emptyStateHtml(title, sub, onDark){
   /* Shared compact empty/error state — replaces the scattered bare-text
      "No data yet" / "Analysis unavailable" strings with one consistent look. */
@@ -34588,7 +34610,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       _schedHistAll=(d.ok&&d.history)||[];
       _schedHistShown=0;
       var cnt=document.getElementById('sched-history-count');if(cnt)cnt.textContent=_schedHistAll.length?_schedHistAll.length+' generated':'';
-      if(!_schedHistAll.length){el.innerHTML='<div class="hb-empty">No schedules generated yet — the first one you generate is kept here.</div>';return;}
+      if(!_schedHistAll.length){el.innerHTML=ecEmptyCore(64)+'<div class="hb-empty" style="text-align:center">No schedules generated yet — the first one you generate is kept here.</div>';return;}
       el.innerHTML='';
       _schedHistRenderMore();
     });

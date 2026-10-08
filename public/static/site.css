@@ -86,7 +86,8 @@ p{margin:0}
 .hero .in{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;width:100%}
 /* the reveal state is .shown, never .in: .in is a wrapper class here, and a
    revealed element once took the hero wrapper's column layout */
-.orb{position:relative;width:140px;height:140px;margin-bottom:46px}
+.orb{position:relative;width:168px;height:168px;margin-bottom:40px}
+@media (max-width:560px){.orb{width:132px;height:132px;margin-bottom:30px}}
 .orb .c{position:absolute;inset:0;box-shadow:0 0 110px 26px rgba(200,75,47,.34)}
 .orb .r{position:absolute;border-radius:50%;border:1px solid rgba(240,235,224,.075)}
 .orb .r1{inset:-48px}
@@ -401,3 +402,25 @@ p{margin:0}
 .chat .foot2 .caret{width:2px;height:16px;background:var(--ember2);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 .chat .top .mini .ember{position:absolute;inset:0;box-shadow:0 0 14px 2px rgba(200,75,47,.45),inset -3px -4px 8px rgba(24,4,1,.55)}
+
+/* ── The Ember Core (ember-core.js, 10/7/26): Cavnar AI's intelligence,
+   drawn by one WebGL renderer wherever an element carries data-core — the
+   hero, the problem's join, the schedule's drafter, the platform's centre,
+   Ask Cavnar AI and the demo — into a canvas on that anchor. The canvases
+   and the data streams scroll with the page and never take a click. Each anchor keeps its CSS .ember under it:
+   hidden only once WebGL is live (html.core-live), so no WebGL, a lost
+   context or a failed compile still shows the old sphere. ── */
+/* each core's canvas sits on its anchor and scrolls with the page */
+.core-cv{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:none;max-height:none;pointer-events:none;visibility:visible;z-index:1}
+#core-streams{position:absolute;left:0;top:0;pointer-events:none;z-index:59;overflow:visible}
+.core-live [data-core].ember,.core-live [data-core] .ember{visibility:hidden;animation:none}
+.core-live .orb .r{display:none}
+.pcore{position:relative;width:72px;height:72px;margin:58px auto 0}
+.pcore .ember,.dcore .ember,.lcore .ember{position:absolute;inset:0}
+.dcore{position:relative;width:84px;height:84px;margin:0 0 30px}
+.board .bt .live .lcore{position:relative;display:inline-block;width:16px;height:16px;flex:none;font-style:normal}
+.board .bt .live.has-core::before{display:none}
+.stage .spoke{transition:stroke .5s ease}
+.stage .spoke.feed{stroke:rgba(232,149,106,.55);stroke-width:1.6;filter:drop-shadow(0 0 5px rgba(232,149,106,.6))}
+.stage .feeddot{fill:#fff1e4;filter:drop-shadow(0 0 6px #e8956a)}
+@media (prefers-reduced-motion:reduce){#core-streams{display:none}}
