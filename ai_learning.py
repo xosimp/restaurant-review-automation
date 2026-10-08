@@ -562,7 +562,8 @@ def _score_async(fn):
         if _SCORE_POOL is None:
             from concurrent.futures import ThreadPoolExecutor
             _SCORE_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-shadow-arms")
-    _SCORE_POOL.submit(ai_utils.context_runner(ai_utils.attributed(fn)))
+    # Never "on a request" in the pool (platform re-audit 10/7/26 #3).
+    _SCORE_POOL.submit(ai_utils.background_runner(fn))
 
 
 def score_pair(workflow, shadow_run_id, candidate_text, production_run_id, production_call_id, db_path=None):

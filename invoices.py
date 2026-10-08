@@ -130,6 +130,16 @@ def check_upload(data, media_type):
                            f"try a smaller photo or a single-invoice PDF.")
 
 
+# The read's own leash (platform re-audit 10/7/26 #4). An Opus read of a
+# long invoice (up to 8000 output tokens, not streamed) can take well past
+# the request thread's INTERACTIVE_AI_TIMEOUT (40s): an iOS build that still
+# scans synchronously failed where it used to succeed. Named here, so the
+# shorter default never applies; one retry keeps the worst case (~4 min)
+# inside the async job's own limit (ai_async.JOB_SECONDS["invoice_scan"]).
+EXTRACT_TIMEOUT_SECONDS = 120.0
+EXTRACT_RETRIES = 1
+
+
 def extract(restaurant_id, data, media_type, client=None):
     """The model's transcription of the invoice, as a dict matching _SCHEMA."""
     from ai_utils import create_with_retry, get_client
@@ -143,7 +153,7 @@ def extract(restaurant_id, data, media_type, client=None):
     msg = ai_orchestrator.generate("invoice_extract", restaurant_id, lambda route, notes: create_with_retry(
         client, restaurant_id=restaurant_id, action="invoice_extract",
         # Rests on no data source: invoice OCR the owner confirms line by line.
-        readiness=data_health.NOT_APPLICABLE,
+        readiness=data_health.NOT_APPLICABLE, timeout=EXTRACT_TIMEOUT_SECONDS, retries=EXTRACT_RETRIES,
         **route.apply(dict(
             model=MODEL, max_tokens=8000,
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},

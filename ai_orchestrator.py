@@ -409,7 +409,9 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
     notes = []
     error = None
     try:
-        with ai_utils.ai_context(correlation_id=run_id, restaurant_id=restaurant_id):
+        # On a request thread the run holds ONE interactive slot for its
+        # attempts and the reviewer gate (platform re-audit 10/7/26 #6).
+        with ai_utils.ai_context(correlation_id=run_id, restaurant_id=restaurant_id), ai_utils.interactive_run():
             for step in range(max_steps):
                 if step:
                     cost, _i, _o, calls = _spent(run_id, db_path)
@@ -599,7 +601,9 @@ def _shadow_review(run_id, result, review, db_path):
         except Exception as e:
             log.info("shadow score not stored (%s): %s", run_id, e)
     try:
-        _SHADOW_POOL.submit(ai_utils.context_runner(ai_utils.attributed(_run)))
+        # Off the request path: never "on a request" in the pool, so it
+        # takes no interactive slot (platform re-audit 10/7/26 #3).
+        _SHADOW_POOL.submit(ai_utils.background_runner(_run))
     except Exception as e:
         log.info("shadow review not queued: %s", e)
 

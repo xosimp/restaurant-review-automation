@@ -703,6 +703,13 @@ class RecipePhotoError(ValueError):
     pass
 
 
+# The card read's own leash (platform re-audit 10/7/26 #4): the timeout it
+# had before the request thread's shorter default, one retry — worst case
+# ~3 minutes, inside ai_async.JOB_SECONDS["recipe_scan"].
+PHOTO_TIMEOUT_SECONDS = 90.0
+PHOTO_RETRIES = 1
+
+
 def _card_line(ing, qty, card_unit, confidence, card_yield=None):
     """One transcribed card line as a draft line: the card's own quantity
     and unit kept (card_qty / card_unit), the quantity converted to the
@@ -770,7 +777,10 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     msg = ai_orchestrator.generate("recipe_photo", restaurant_id, lambda route, notes: create_with_retry(
         client, restaurant_id=restaurant_id, action="recipe_photo",
         # Rests on no data source: OCR of a recipe photo the owner confirms.
-        readiness=data_health.NOT_APPLICABLE,
+        # Its own leash, never the request thread's 40s default (platform
+        # re-audit 10/7/26 #4): the card read as it did before, inside the
+        # async job's limit (ai_async.JOB_SECONDS["recipe_scan"]).
+        readiness=data_health.NOT_APPLICABLE, timeout=PHOTO_TIMEOUT_SECONDS, retries=PHOTO_RETRIES,
         **route.apply(dict(
             model=MODEL, max_tokens=2000,
             output_config={"format": {"type": "json_schema", "schema": _PHOTO_SCHEMA}},

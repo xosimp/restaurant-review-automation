@@ -13,8 +13,9 @@ small pool of their own:
 
   start(kind, rid, request_key, fn, *a)   (job_id, joined) — fn runs on the
                                           pool; the same request pressed
-                                          again joins the job already
-                                          running (claim_async_job)
+                                          again by the same login joins
+                                          the job already running
+                                          (claim_async_job)
   result(job_id, rid, user)               (payload, http status) for a poll:
                                           pending, or exactly what the
                                           synchronous route would have
@@ -63,8 +64,9 @@ JOB_SECONDS = {"invoice_scan": 300, "recipe_scan": 240, "campaign_text": 180, "c
                "campaign_post": 180}
 DEFAULT_JOB_SECONDS = 240
 
-# The job store's kind is "ai:<kind>:<request hash>", so the same request
-# pressed twice joins one job while two different invoices run side by side.
+# The job store's kind is "ai:<kind>:<hash of the request and the login>",
+# so the same request pressed twice joins one job while two different
+# invoices — or two logins' — run side by side.
 KIND_PREFIX = "ai:"
 
 # A job the job store itself failed (swept at boot after a deploy, or read
@@ -99,8 +101,14 @@ def wants_async(req=None) -> bool:
     return False
 
 
-def job_kind(kind, request_key) -> str:
-    key = hashlib.sha256(json.dumps(request_key, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+def job_kind(kind, request_key, user_id=None) -> str:
+    """The job store's kind for this request BY THIS LOGIN (platform
+    re-audit 10/7/26 #5): a result is readable only by the login that
+    started it (result()), so a second login pressing the same request
+    joined a job it could not read — a 404, then a second paid call. Each
+    login gets its own job; the same login pressing twice still joins."""
+    raw = json.dumps({"key": request_key, "user": user_id}, sort_keys=True, default=str)
+    key = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
     return f"{KIND_PREFIX}{kind}:{key}"
 
 
@@ -143,14 +151,14 @@ def _run(job_id, kind, restaurant_id, user_id, fn, args, kwargs):
 def start(kind, restaurant_id, request_key, fn, *args, by_user=None, **kwargs):
     """(job_id, joined): run fn(*args, **kwargs) — which returns (payload,
     http status), the synchronous route's answer — on the pool as a job the
-    client polls. The same `request_key` for this restaurant while that job
-    is pending joins it. Who asked rides with the work (ai_utils.attributed);
+    client polls. The same `request_key` for this restaurant, by the same
+    login, while that job is pending joins it. Who asked rides with the work (ai_utils.attributed);
     `by_user` is the login whose job it is (result() answers only them, or
     an admin)."""
     user_id = by_user
     import ops
     import ai_utils
-    job_id, joined = ops.claim_async_job(uuid.uuid4().hex, job_kind(kind, request_key), restaurant_id)
+    job_id, joined = ops.claim_async_job(uuid.uuid4().hex, job_kind(kind, request_key, user_id), restaurant_id)
     if joined:
         return job_id, True
     try:

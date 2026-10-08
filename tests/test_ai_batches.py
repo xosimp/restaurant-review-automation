@@ -313,7 +313,9 @@ def test_a_callback_that_raises_does_not_stop_the_others(batches, db, monkeypatc
     batches.answers["msgbatch_1"] = [NS(custom_id=c, result=NS(type="succeeded", message=_msg()))
                                      for c in ("p1", "p2")]
     ai_batches.run_collector()
-    assert calls == ["p1", "p2"]
+    # Callbacks run on the collector's pool of two (platform re-audit
+    # 10/7/26 #1), so the two may run in either order.
+    assert sorted(calls) == ["p1", "p2"]
     assert "caller bug" in ai_batches.item(WF, "p1")["callback_error"]
     assert ai_batches.item(WF, "p2")["callback_error"] is None
 
