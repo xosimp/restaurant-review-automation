@@ -1263,6 +1263,18 @@ def _deliveries_since(rid, mark, ids, day):
             for r in rows}
 
 
+def _inventory_synced(rid):
+    """inventory_sync.status when an inventory system has synced this
+    restaurant's counts, else None. Best-effort: an unreadable status is
+    "not synced", so hand counts are never blocked by a lookup failure."""
+    try:
+        import inventory_sync
+        st = inventory_sync.status(rid)
+    except Exception:
+        return None
+    return st if isinstance(st, dict) and st.get("synced") else None
+
+
 def _do_count_sheet_save(u):
     if not _enters_food(u):
         return _forbidden("Only someone who can count stock can count.")
@@ -1274,6 +1286,16 @@ def _do_count_sheet_save(u):
         return {"ok": False, "error": "Nothing counted."}, 400
     if len(items) > 500:
         return {"ok": False, "error": "That is more items than one count holds."}, 400
+    # Once an inventory system has synced, its counts ARE the ledger's
+    # (inventory_sync): the web sheet goes read-only, and a recount from any
+    # client — the phone's, an older build's, a queued one replayed — is
+    # refused here too, or it would overwrite the synced figure until the
+    # next sync put it back (parity audit #8).
+    synced = _inventory_synced(_rid(u))
+    if synced:
+        label = synced.get("label") or "your inventory system"
+        return {"ok": False, "code": "inventory_synced", "source": synced,
+                "error": f"Counts come from {label} now. Count there; this sheet follows the next sync."}, 409
     # The date is the count's place in the ledger, so it has to be one.
     # It went straight to record_recount unchecked: "9/21/26" — the
     # product's own display format — sorts after every ISO date and sat
@@ -5515,18 +5537,28 @@ def _do_morning_brief_settings(u):
 
 # ── registration: every body on both blueprints ───────────────────────────────
 
-def _idempotent(body, route):
+def _idempotent(body, route, busy=None):
     """Answer a repeated request (same restaurant, route and Idempotency-Key)
     from the first one's result. The key is derived from the uploaded file
     on iOS, so tapping Scan again after a timeout no longer pays for a
     second model read of the same invoice (CLIENT-21). A request still in
     flight is answered 409 rather than started twice; a failure (5xx) is
     not remembered, so a real retry runs; nor is a job started for the
-    client to poll (ai_async)."""
+    client to poll (ai_async).
+
+    The key may also ride in a JSON body as `idempotency_key` (the header
+    wins): the phone's offline queue persists a write as its body alone, so
+    a waste line or a delivery parked in the walk-in carries its key with
+    it and its replay is answered from the first send (parity audit #23).
+    `busy`: the sentence for a request still in flight."""
     import json as _json
 
     def wrapped(u, **kw):
         key = (request.headers.get("Idempotency-Key") or "").strip()[:128]
+        if not key:
+            raw = (request.get_json(silent=True) or {}) if request.is_json else {}
+            bk = raw.get("idempotency_key") if isinstance(raw, dict) else None
+            key = bk.strip()[:128] if isinstance(bk, str) else ""
         if not key:
             return body(u, **kw)
         rid = _rid(u)
@@ -5543,7 +5575,7 @@ def _idempotent(body, route):
             if row and row["fresh"]:
                 conn.commit()
                 return {"ok": False, "in_progress": True,
-                        "error": "That scan is still being read — check back in a moment."}, 409
+                        "error": busy or "That scan is still being read — check back in a moment."}, 409
             conn.execute("INSERT OR REPLACE INTO idempotent_responses (restaurant_id, route, idem_key) VALUES (?,?,?)",
                          (rid, route, key))
             conn.commit()

@@ -435,10 +435,15 @@ def test_the_phone_trend_draws_the_same_live_target_as_the_web_card(client, db_p
 def test_both_trend_routes_share_one_target_source():
     import inspect
     import mobile_api
-    src = inspect.getsource(mobile_api.mobile_food_cost_trend)
-    assert "waste_trend_analysis(" in src
-    assert "implied_target_weekly(None" not in src
-    assert "waste_trend_analysis(" in inspect.getsource(client_api.food_cost_waste_trend)
+    # One body (parity audit #77): the web card, the phone's waste-trend
+    # route and its older 8-week route all read client_api._do_waste_trend,
+    # which takes the live analysis exactly once.
+    for fn in (mobile_api.mobile_food_cost_trend, mobile_api.mobile_food_cost_waste_trend,
+               client_api.food_cost_waste_trend):
+        src = inspect.getsource(fn)
+        assert "_do_waste_trend(" in src
+        assert "implied_target_weekly(None" not in src
+    assert "waste_trend_analysis(" in inspect.getsource(client_api._do_waste_trend)
 
 
 # ── The page reads the engine, once ───────────────────────────────────────
