@@ -193,14 +193,59 @@ def _logout_page():
 #   * a request carrying "Authorization: Bearer" — the app. A cross-site
 #     page cannot add that header without a CORS preflight this server never
 #     grants, so it is never the forged one;
-#   * the routes that run BEFORE a session: PIN sign-in (its one-shot nonce
-#     comes from a same-origin read a cross-site page cannot make), sign-up
-#     and forgot PIN — a stale cookie in the jar must not block them.
+#   * the routes that run BEFORE a session: PIN sign-in, sign-up and forgot
+#     PIN — a stale cookie in the jar must not block them, and there is no
+#     session token yet to double-submit.
+#
+# What guards those instead (re-audit 10/8/26 — this comment used to credit
+# the sign-in nonce, which guards nothing here: /staff/api/roster/<code>
+# hands one to anyone, a server-side fetch included). Two things:
+#   * they read the body with request.get_json() and nothing else — never
+#     request.form or a forced parse — so they act only on an
+#     application/json body. A cross-site page can send JSON only through
+#     fetch, which preflights a non-simple Content-Type, and this server
+#     grants no CORS preflight; the form posts, text/plain beacons and
+#     no-cors fetches a forger CAN send arrive as an empty body and are
+#     refused (tests/test_reaudit_team_1008.py pins it);
+#   * a browser names the page a POST came from (Origin), and one from
+#     another site is refused outright (_foreign_origin). No Origin at all —
+#     the app's URLSession — is left to the JSON rule.
 STAFF_CSRF_BLUEPRINTS = frozenset({"staff", "staff_knowledge"})
 STAFF_CSRF_EXEMPT_ENDPOINTS = frozenset({
     "staff.portal_authenticate", "staff.signup_start", "staff.signup_verify", "staff.signup_claim",
     "staff.api_pin_forgot_start", "staff.api_pin_forgot_verify", "staff.api_pin_forgot_set",
 })
+
+
+def _foreign_origin() -> bool:
+    """True when a browser says this request came from another site: an
+    Origin header that is neither this request's own host (ProxyFix has
+    already applied the trusted proxy's host) nor the configured public
+    origin. "null" (a sandboxed frame, a file) is foreign. No header at all
+    is not — the iPhone app sends none."""
+    origin = (request.headers.get("Origin") or "").strip()
+    if not origin:
+        return False
+    if origin.lower() == "null":
+        return True
+    from urllib.parse import urlsplit
+    try:
+        got = urlsplit(origin)
+    except ValueError:
+        return True
+    host = (got.netloc or "").lower()
+    if not host:
+        return True
+    if host == (request.host or "").lower():
+        return False
+    try:
+        import config
+        public = urlsplit(config.base_url())
+        if host == (public.netloc or "").lower():
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def staff_csrf_check():
@@ -210,6 +255,10 @@ def staff_csrf_check():
         return None
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return None
+    # The pre-session routes: a POST another site's page made is refused
+    # whatever cookies ride with it (see above).
+    if request.endpoint in STAFF_CSRF_EXEMPT_ENDPOINTS and _foreign_origin():
+        return jsonify(ok=False, error="Request blocked. Open this page from Cavnar AI and try again."), 403
     if not request.cookies.get("staff_session"):
         return None
     if request.headers.get("Authorization", "").startswith("Bearer "):

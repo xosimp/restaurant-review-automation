@@ -27,6 +27,11 @@ final class PeopleRulesViewModel {
     private(set) var remindDays: Int?
     private(set) var canEditCerts = false
     private(set) var certsLoaded = false
+    /// A read that failed, in a sentence: the section shows it with Try
+    /// again instead of a skeleton that never resolves (re-audit 10/8/26).
+    private(set) var rulesError: String?
+    private(set) var docsError: String?
+    private(set) var certsError: String?
     var busy = false
     var message: String?
     var error: String?
@@ -47,28 +52,54 @@ final class PeopleRulesViewModel {
         _ = await (r, d, c)
     }
 
+    /// The sentence a failed read shows: the server's own, else a plain
+    /// "couldn't reach".
+    nonisolated static func loadFailure(_ error: Error?, refused: String? = nil) -> String {
+        if let refused, !refused.isEmpty { return refused }
+        if let e = error as? APIClient.APIError, !e.message.isEmpty { return e.message }
+        return "Couldn\u{2019}t reach Cavnar AI."
+    }
+
     func loadRules() async {
-        guard let r: HouseRulesResponse = try? await client.send(Self.rulesPath, hapticOnError: false), r.ok else { return }
-        houseRules = r.houseRules
-        canEditRules = r.canEdit
-        rulesLoaded = true
+        do {
+            let r: HouseRulesResponse = try await client.send(Self.rulesPath, hapticOnError: false)
+            guard r.ok else { rulesError = Self.loadFailure(nil, refused: r.error); return }
+            houseRules = r.houseRules
+            canEditRules = r.canEdit
+            rulesLoaded = true
+            rulesError = nil
+        } catch {
+            rulesError = Self.loadFailure(error)
+        }
     }
 
     func loadDocs() async {
-        guard let r: StaffDocsResponse = try? await client.send(Self.docsPath, hapticOnError: false), r.ok else { return }
-        docs = r.docs
-        docKinds = r.kinds
-        canEditDocs = r.canEdit
-        docsLoaded = true
+        do {
+            let r: StaffDocsResponse = try await client.send(Self.docsPath, hapticOnError: false)
+            guard r.ok else { docsError = Self.loadFailure(nil, refused: r.error); return }
+            docs = r.docs
+            docKinds = r.kinds
+            canEditDocs = r.canEdit
+            docsLoaded = true
+            docsError = nil
+        } catch {
+            docsError = Self.loadFailure(error)
+        }
     }
 
     func loadCerts() async {
-        guard let r: StaffCertsResponse = try? await client.send(Self.certsPath, hapticOnError: false), r.ok else { return }
-        certs = r.certs
-        roster = r.roster
-        remindDays = r.remindDays
-        canEditCerts = r.canEdit
-        certsLoaded = true
+        do {
+            let r: StaffCertsResponse = try await client.send(Self.certsPath, hapticOnError: false)
+            guard r.ok else { certsError = Self.loadFailure(nil, refused: r.error); return }
+            certs = r.certs
+            roster = r.roster
+            remindDays = r.remindDays
+            canEditCerts = r.canEdit
+            certsLoaded = true
+            certsError = nil
+        } catch {
+            certsError = Self.loadFailure(error)
+        }
     }
 
     /// One write; `then` re-reads what it changed. Returns whether it saved.
@@ -241,8 +272,20 @@ struct AccountPeopleRulesView: View {
                 }
                 .padding(.vertical, 10)
             }
+        } else if let e = model.rulesError {
+            loadFailed("House rules", what: "the house rules", message: e) { await model.loadRules() }
         } else {
             CavnarSkeletonLines(widths: [0.4, 1.0, 0.8])
+        }
+    }
+
+    /// A section whose read failed: its kicker, the sentence, Try again —
+    /// never a skeleton that never resolves (re-audit 10/8/26).
+    private func loadFailed(_ kicker: String, what: String, message: String,
+                            retry: @escaping () async -> Void) -> some View {
+        AccountSection(kicker: kicker) {
+            StaffLoadFailed(what: what, message: message, retry: retry)
+                .padding(.vertical, 10)
         }
     }
 
@@ -281,6 +324,10 @@ struct AccountPeopleRulesView: View {
                 }
                 .accountCard()
             }
+        } else if let e = model.docsError {
+            loadFailed("Staff docs", what: "the staff docs", message: e) { await model.loadDocs() }
+        } else {
+            CavnarSkeletonLines(widths: [0.3, 0.9])
         }
     }
 
@@ -346,6 +393,10 @@ struct AccountPeopleRulesView: View {
                 }
                 .accountCard()
             }
+        } else if let e = model.certsError {
+            loadFailed("Certifications", what: "the certifications", message: e) { await model.loadCerts() }
+        } else {
+            CavnarSkeletonLines(widths: [0.3, 0.9])
         }
     }
 

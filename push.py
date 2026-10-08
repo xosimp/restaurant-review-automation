@@ -640,8 +640,12 @@ CATEGORY_SCHEDULE_REVIEW = "CAVNAR_SCHEDULE_REVIEW"  # Review
 # a sender): a text-input Reply that answers from the lock screen.
 CATEGORY_MESSAGE = "CAVNAR_MESSAGE"                 # Reply (typed in place)
 # Tonight's lineup brief waiting for approval: Approve publishes the draft
-# as written (POST /mobile/api/staff-brief/approve with its day) · Open.
+# the push carried whole — the notification's own view shows it — as the
+# text approved, with its brief_rev (POST /mobile/api/staff-brief/approve
+# {day, text, expected_rev}) · Open. A push without the whole draft gets
+# Open only: approving words nobody read is never one tap (re-audit 10/8/26).
 CATEGORY_LINEUP = "CAVNAR_LINEUP"                   # Approve · Open
+CATEGORY_LINEUP_REVIEW = "CAVNAR_LINEUP_REVIEW"     # Open
 # Parity audit 10/7/26 (#35, #55): a recommendation answered from the lock
 # screen, and the types that used to arrive with no button at all.
 CATEGORY_REC = "CAVNAR_REC"                   # Done · Pass (background)
@@ -685,7 +689,8 @@ def _category(alert_type, data) -> str:
             (alert_type == "team_message" and data.get("sender_id")):
         return CATEGORY_MESSAGE
     if alert_type == "lineup_brief_waiting" and data.get("day"):
-        return CATEGORY_LINEUP
+        whole = data.get("draft_complete") is True and data.get("draft") and data.get("brief_rev")
+        return CATEGORY_LINEUP if whole else CATEGORY_LINEUP_REVIEW
     # A reply that already went out is news: no Reply button on it.
     if alert_type == "resp_approved":
         return ""
@@ -788,6 +793,12 @@ def _fit_payload(payload) -> bytes:
     cav = payload.get("cavnar") or {}
     if len(out) <= APNS_MAX_PAYLOAD_BYTES or not cav.get("draft"):
         return out
+    # A lineup brief cut to fit is no longer the words Approve would send:
+    # the push keeps Open only (re-audit 10/8/26) — set before the fit, so
+    # the longer category name is inside the 4 KB.
+    aps = payload.get("aps") or {}
+    if aps.get("category") == CATEGORY_LINEUP:
+        aps["category"] = CATEGORY_LINEUP_REVIEW
     text = str(cav["draft"])
     if text.endswith(_ELLIPSIS):
         text = text[:-1]
@@ -1599,6 +1610,11 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
         # (parity audit #36).
         if draft is not None:
             data.update(_draft_fields(draft))
+    # Tonight's lineup brief rides its waiting push the same way: the draft
+    # (staff_brief.announce_waiting), clipped to fit and marked whole or not
+    # (re-audit 10/8/26).
+    if alert_type == "lineup_brief_waiting" and "draft" in data and "draft_complete" not in data:
+        data.update(_draft_fields(data.pop("draft")))
     try:
         data.setdefault("nav", nav_for(alert_type, data))
     except Exception as e:

@@ -166,6 +166,7 @@
       </div>
       <button type="button" id="pin-go" class="cbtn cbtn-primary pin-go" onclick="submitPin()" disabled>Sign in</button>
       <div class="err" id="err" role="status" aria-live="polite"></div>
+      <div style="text-align:center;margin-top:6px"><button type="button" class="linkish" onclick="startForgot()">Forgot your PIN?</button></div>
     </div>
     <p class="noiphone">Signing in here keeps you signed in on this browser for your shift. Prefer the app?
       {% if app_url %}<a href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}The Cavnar AI app is on iPhone, in testing &mdash; ask your manager for the invite{% endif %}{% if join_code %}; your restaurant code is <b class="hb-num">{{ join_code }}</b>{% endif %}.</p>
@@ -202,7 +203,50 @@
 
   <div class="newhere">
     <button type="button" class="linkish" onclick="startSignup()">First time here? Create your account</button>
+    <br><button type="button" class="linkish" onclick="startForgot()">Forgot your PIN?</button>
   </div>
+ </div>
+
+ <!-- Forgot PIN (re-audit 10/8/26 — the app's StaffForgotPinView, in the
+      browser): a code texted to the number on file, then a new PIN typed
+      twice, then signed in with it. /staff/api/pin/forgot/{start,verify,set};
+      the first step answers the same whether or not the number is on file. -->
+ <div id="forgot-root" style="display:none">
+   <img class="wordmark" src="/static/brand/wordmark-light.svg" alt="Cavnar AI">
+   <div class="backrow">
+     <button type="button" onclick="forgotBack()" aria-label="Back">&larr;</button>
+     <span class="nm" id="fp-title">Reset your PIN</span>
+   </div>
+
+   <div class="sustep on" id="fp-phone">
+     <h1>Reset your PIN</h1>
+     <p class="hint">We&rsquo;ll text a code to the mobile number on file for you &mdash; the one you signed up with, or the one your manager has.</p>
+     <div id="fp-code-wrap" hidden>
+       <input id="fp-join-in" class="fld code" maxlength="40" autocapitalize="characters" autocomplete="off" placeholder="ABC123" aria-label="Restaurant code">
+     </div>
+     <input id="fp-phone-in" class="fld" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 014-2233" aria-label="Mobile number">
+     <p class="hint" style="margin-top:-4px">One text with a code, because you asked for it. Message and data rates may apply.</p>
+     <button type="button" id="fp-send" class="cbtn cbtn-primary" style="width:100%" onclick="fpSend(this)">Text me a code</button>
+   </div>
+
+   <div class="sustep" id="fp-verify">
+     <h1>Enter the code</h1>
+     <p class="hint" id="fp-sent">If that number is on file here, we&rsquo;ve texted it a code.</p>
+     <div id="fp-devcode"></div>
+     <input id="fp-otp-in" class="fld code" type="tel" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000" aria-label="Six-digit code" oninput="fpCodeTyped(this)">
+     <button type="button" id="fp-verify-btn" class="cbtn cbtn-primary" style="width:100%" onclick="fpVerify(this)">Continue</button>
+     <button type="button" class="linkish" style="width:100%;margin-top:12px" onclick="fpSend(this)">Send it again</button>
+   </div>
+
+   <div class="sustep" id="fp-pin">
+     <h1 id="fp-pin-h">Choose a new PIN</h1>
+     <p class="hint">4 to 8 digits. Not one people would guess, like 1234 or a year.</p>
+     <input id="fp-pin1" class="fld code hb-num" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" aria-label="New PIN">
+     <input id="fp-pin2" class="fld code hb-num" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" aria-label="New PIN again">
+     <button type="button" id="fp-set" class="cbtn cbtn-primary" style="width:100%" onclick="fpSet(this)">Set PIN and sign in</button>
+   </div>
+
+   <div class="err" id="fp-err" role="status" aria-live="polite"></div>
  </div>
 
  <!-- Self-signup. Five steps, one screen each: phone, texted code, the
@@ -655,6 +699,110 @@
     });
   }
   window.suSetPin = suClaim;
+
+  /* ── Forgot PIN ───────────────────────────────────────────────────────
+     number -> texted code -> new PIN twice -> signed in. The restaurant is
+     the one this page is for (its code), else the person types it. */
+  var FP_STEPS = ['fp-phone', 'fp-verify', 'fp-pin'];
+  var fpStep = 0, fpPhone = "", fpToken = "", fpBusy = false;
+  function fpCode(){ return PORTAL || JOIN_CODE || ($('fp-join-in').value || '').replace(/\s+/g, ''); }
+  function fpShow(i){
+    fpStep = i;
+    for (var s = 0; s < FP_STEPS.length; s++) {
+      $(FP_STEPS[s]).className = 'sustep' + (s === i ? ' on' : '');
+    }
+    $('fp-err').textContent = "";
+  }
+  function fpFail(msg){ fpBusy = false; $('fp-err').textContent = msg; }
+  function fpBusyBtn(btn, label){ if (btn) { btn.setAttribute('data-label', btn.textContent); btn.textContent = label; } }
+  function fpDone(btn){ if (btn && btn.getAttribute('data-label')) btn.textContent = btn.getAttribute('data-label'); }
+
+  window.startForgot = function(){
+    $('signin-root').style.display = 'none';
+    $('signup-root').style.display = 'none';
+    $('forgot-root').style.display = 'block';
+    $('fp-code-wrap').hidden = !!(PORTAL || JOIN_CODE);
+    fpShow(0);
+    try { $('fp-phone-in').focus(); } catch (e) {}
+  };
+  window.forgotBack = function(){
+    if (fpStep === 0) {
+      $('forgot-root').style.display = 'none';
+      $('signin-root').style.display = 'block';
+      return;
+    }
+    fpShow(fpStep - 1);
+  };
+  window.fpSend = function(btn){
+    if (fpBusy) return;
+    var val = ($('fp-phone-in').value || '').replace(/^\s+|\s+$/g, '');
+    if (!fpCode()) { fpFail('Enter your restaurant code.'); return; }
+    if (val.replace(/[^0-9]/g, '').length < 10) { fpFail('Enter your full mobile number.'); return; }
+    fpBusy = true;
+    fpBusyBtn(btn, 'Sending…');
+    suPost('/staff/api/pin/forgot/start', {join_code: fpCode(), phone: val}, function(d){
+      fpBusy = false;
+      fpDone(btn);
+      if (!d.ok) { fpFail(d.error || 'Couldn’t send a code.'); return; }
+      fpPhone = val;
+      $('fp-sent').textContent = d.message || 'If that number is on file here, we’ve texted it a code.';
+      $('fp-devcode').innerHTML = d.dev_code
+        ? '<div class="devcode">Texting isn’t set up on this server, so here’s your code: <b>' + esc(d.dev_code) + '</b></div>'
+        : '';
+      $('fp-otp-in').value = '';
+      fpShow(1);
+      try { $('fp-otp-in').focus(); } catch (e) {}
+    });
+  };
+  window.fpCodeTyped = function(input){
+    var digits = (input.value || '').replace(/[^0-9]/g, '');
+    if (digits !== input.value) { input.value = digits; }
+    $('fp-err').textContent = "";
+    if (digits.length === 6 && !fpBusy) { input.blur(); window.fpVerify($('fp-verify-btn')); }
+  };
+  window.fpVerify = function(btn){
+    if (fpBusy) return;
+    var code = ($('fp-otp-in').value || '').replace(/[^0-9]/g, '');
+    if (code.length < 6) { fpFail('Enter the 6-digit code.'); return; }
+    fpBusy = true;
+    fpBusyBtn(btn, 'Checking…');
+    suPost('/staff/api/pin/forgot/verify', {phone: fpPhone, code: code}, function(d){
+      fpBusy = false;
+      fpDone(btn);
+      if (!d.ok) { $('fp-otp-in').value = ''; fpFail(d.error || 'That code didn’t match.'); return; }
+      fpToken = d.reset_token || '';
+      $('fp-pin-h').textContent = d.employee_name ? 'A new PIN for ' + d.employee_name : 'Choose a new PIN';
+      if (d.restaurant) $('fp-title').textContent = d.restaurant;
+      $('fp-pin1').value = ''; $('fp-pin2').value = '';
+      fpShow(2);
+      try { $('fp-pin1').focus(); } catch (e) {}
+    });
+  };
+  window.fpSet = function(btn){
+    if (fpBusy) return;
+    var a = ($('fp-pin1').value || ''), b = ($('fp-pin2').value || '');
+    if (!/^[0-9]{4,8}$/.test(a)) { fpFail('Your PIN is 4 to 8 digits.'); return; }
+    if (a !== b) { $('fp-pin2').value = ''; fpFail('Those didn’t match — type it again.'); return; }
+    fpBusy = true;
+    fpBusyBtn(btn, 'Setting…');
+    suPost('/staff/api/pin/forgot/set', {reset_token: fpToken, pin: a}, function(d){
+      fpBusy = false;
+      fpDone(btn);
+      if (d.ok) { window.location = d.redirect || '/staff/home'; return; }
+      $('fp-pin1').value = ''; $('fp-pin2').value = '';
+      if (d.reset_expired) { fpShow(0); }
+      fpFail(d.error || 'Couldn’t set that PIN.');
+    });
+  };
+
+  /* Another location's PIN pad, opened from the portal's Switch location
+     with this person's name already chosen (#m=<membership id>). */
+  (function(){
+    var m = /^#m=(\d+)$/.exec(window.location.hash || '');
+    if (!m || !$('pinstep')) return;
+    var btn = document.querySelector('.who button[data-id="' + m[1] + '"]');
+    if (btn) btn.click();
+  })();
   {% if open_signup %}
   /* /staff/signup: the phone step, open on arrival (the A2P opt-in URL). */
   window.startSignup();

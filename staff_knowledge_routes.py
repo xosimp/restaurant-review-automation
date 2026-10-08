@@ -192,7 +192,11 @@ def _do_brief_approve(u):
         # is refused and the brief is opened instead.
         if text is None:
             raise sb.BriefError("Open the brief and read it before it goes to staff.")
-        return sb.approve(_rid(u), u, day=day, text=text)
+        # The lock-screen Approve also sends the revision its push carried
+        # (staff_brief.brief_rev): a stale notification approves nothing.
+        rev = b.get("expected_rev")
+        return sb.approve(_rid(u), u, day=day, text=text,
+                          expected_rev=str(rev)[:32] if rev not in (None, "") else None)
     return _brief_write(u, go)
 
 

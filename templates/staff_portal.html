@@ -187,6 +187,14 @@
   .disc-body{padding-top:12px}
   .src{border-top:1px solid var(--line);padding:8px 0;font-size:14px}
   .src b{display:block;font-size:12px;color:var(--ink3)}
+  /* Hours and tips (the app's StaffStatsTiles): two figures side by side. */
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .tile .l{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+  .tile .v{font-size:28px;font-weight:700;margin-top:4px;letter-spacing:-.01em}
+  .tile .d{font-size:12.5px;color:var(--ink3);margin-top:2px;line-height:1.4}
+  .kv{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:44px;border-top:1px solid var(--line)}
+  .kv:first-child{border-top:0}
 
   /* The bottom sheet: forms and confirms (DS 10 tier 2). */
   .sheet-wrap{position:fixed;inset:0;z-index:40;display:flex;align-items:flex-end;justify-content:center}
@@ -455,12 +463,20 @@
     if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.hidden = false; }
     else { b.hidden = true; }
   }
+  /* The Inbox badge's one count (re-audit 10/8/26), the app's
+     StaffInboxBadge.total: announcements not yet read plus manager replies
+     not yet read. Every place the badge changes paints it through here. */
+  function inboxCount(d){
+    if (!d || !d.ok) return 0;
+    return Math.max(0, +d.unread || 0) + Math.max(0, +d.unread_messages || 0);
+  }
+  function paintInboxBadge(){ if (S.inbox && S.inbox.ok) setBadge('badge-inbox', inboxCount(S.inbox)); }
   function reloadBadges(){
     api('/staff/api/shift-requests').then(function(d){
       if (d.ok) { S.board = d; setBadge('badge-requests', (d.asks || []).length + (d.offers || []).length); }
     });
     api('/staff/api/inbox').then(function(d){
-      if (d.ok) { S.inbox = d; setBadge('badge-inbox', (d.unread || 0) + (d.unread_messages || 0)); }
+      if (d.ok) { S.inbox = d; paintInboxBadge(); }
     });
   }
 
@@ -542,6 +558,7 @@
   LOADERS.today = function(){
     S.loadedAt.today = new Date().getTime();
     S.shifts = S.brief = S.late = S.pulse = S.coworkers = undefined;
+    S.stats = S.earnings = S.recognition = undefined;
     renderToday();
     loadShifts().then(function(d){
       renderToday();
@@ -552,6 +569,11 @@
     });
     api('/staff/api/preshift').then(function(d){ S.brief = d; renderToday(); });
     api('/staff/api/running-late').then(function(d){ S.late = d; renderToday(); });
+    /* My own figures (the app's Today, B6): hours this week, the last
+       shift's tips as the POS reported them, a guest who named me. */
+    api('/staff/api/stats').then(function(d){ S.stats = d; renderToday(); });
+    api('/staff/api/earnings?days=14').then(function(d){ S.earnings = d; renderToday(); });
+    api('/staff/api/recognition').then(function(d){ S.recognition = d; renderToday(); });
     loadPulse().then(renderToday);
     reloadBadges();
   };
@@ -577,10 +599,67 @@
       html += heroCard(h, d);
       html += pulseCard();
       html += waitingStrip();
+      html += statsTiles(d);
       html += briefCard();
       if (h) html += coworkersCard(h);
+      html += recognitionCard();
     }
     el.innerHTML = html;
+  }
+
+  /* Hours and tips (the app's StaffStatsTiles, V2/H11): hours this week —
+     scheduled, and worked through the POS's last day — the overtime
+     heads-up in hours only, and the last shift's tips with its "as of".
+     Nothing is shown for what isn't known; never a 0 standing in. */
+  function hoursFigure(h){ var r = Math.round(h * 10) / 10; return String(r); }
+  function money(v){
+    var c = Math.round(v * 100) / 100;
+    return '$' + (c === Math.round(c) ? String(c) : c.toFixed(2));
+  }
+  function tile(label, value, detail){
+    return '<div class="tile"><div class="l">' + esc(label) + '</div><div class="v num">' + esc(value) + '</div>' +
+      (detail ? '<div class="d">' + nums(detail) + '</div>' : '') + '</div>';
+  }
+  function lastTips(ea){
+    if (!ea || !ea.ok || !ea.available) return null;
+    var list = ea.shifts || [];
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i].still_open && list[i].tips_total !== null && list[i].tips_total !== undefined) return list[i];
+    }
+    return null;
+  }
+  function statsTiles(shifts){
+    var st = S.stats, ea = S.earnings, hours = null, label = '', worked = '', tiles = '', html = '';
+    if (st && st.ok && st.scheduled && st.scheduled.hours !== null && st.scheduled.hours !== undefined) {
+      hours = +st.scheduled.hours; label = 'Hours this week';
+    } else if (shifts && shifts.week_hours !== null && shifts.week_hours !== undefined) {
+      hours = +shifts.week_hours; label = 'Hours, next 7 days';
+    }
+    if (st && st.ok && st.actual && st.actual.available && st.actual.hours !== null && st.actual.hours !== undefined) {
+      worked = hoursFigure(+st.actual.hours) + ' worked' + (st.actual.as_of_label ? ' through ' + st.actual.as_of_label : '');
+    }
+    var tip = lastTips(ea);
+    if (hours !== null) tiles += tile(label, hoursFigure(hours), worked || 'scheduled');
+    if (tip) {
+      var day = tip.weekday ? String(tip.weekday).slice(0, 3) : (tip.date_label || mdy(tip.business_date));
+      tiles += tile('Tips · ' + day, money(+tip.tips_total), ea.as_of_label ? 'POS as of ' + ea.as_of_label : '');
+    }
+    if (tiles) html += '<div class="tiles">' + tiles + '</div>';
+    var ot = st && st.ok && st.overtime && st.overtime.applies ? st.overtime.message : null;
+    if (ot) html += '<p class="note ' + (st.overtime.over ? 'amber' : 'ink2') + '" style="margin:-4px 0 12px">' + nums(ot) + '</p>';
+    if (tip && ea.lag_note) html += '<p class="note" style="margin:-4px 0 12px">' + esc(ea.lag_note) + '</p>';
+    if (st && !st.ok && hours === null) html += failedBox('Couldn’t load your hours. ' + errText(st, ''), 'reload-today');
+    return html;
+  }
+  /* A guest named you (V5): the newest mention, its safe excerpt and date —
+     never who the guest was. Nothing at all when there is none. */
+  function recognitionCard(){
+    var r = S.recognition;
+    if (!r || !r.ok || !(r.items || []).length) return '';
+    var first = r.items[0], count = r.count || r.items.length, when = first.date_label || mdy(first.date);
+    return '<div class="sechead">A guest named you</div><div class="card">' +
+      (first.excerpt ? '<p style="margin:0">“' + nums(first.excerpt) + '”</p>' : '<p style="margin:0">A guest named you in a review.</p>') +
+      '<p class="note num">' + esc(when) + (count > 1 ? ' · ' + count + ' mentions this year' : '') + '</p></div>';
   }
   function heroCard(h, d){
     if (!h) {
@@ -1157,12 +1236,16 @@
     S.loadedAt.inbox = new Date().getTime();
     S.inbox = S.thread = undefined;
     renderInbox();
-    api('/staff/api/inbox').then(function(d){
+    /* The thread first: reading it marks the manager's replies read, so
+       the inbox counted after it is the badge's true count. */
+    api('/staff/api/messages').then(function(d){
+      S.thread = d; renderInbox(); scrollThread();
+      return api('/staff/api/inbox');
+    }).then(function(d){
       S.inbox = d;
-      renderInbox();
-      if (d.ok) setBadge('badge-inbox', (d.unread || 0));
+      renderInbox(); scrollThread();
+      paintInboxBadge();
     });
-    api('/staff/api/messages').then(function(d){ S.thread = d; renderInbox(); scrollThread(); });
     loadPulse().then(renderInbox);
   };
   function scrollThread(){ var t = $('thread'); if (t) t.scrollTop = t.scrollHeight; }
@@ -1228,8 +1311,12 @@
     S.loadedAt.me = new Date().getTime();
     S.me = S.prefs = S.lang = undefined;
     S.prefDraft = null;
+    S.emailDraft = null;
     renderMe();
     api('/staff/api/me').then(function(d){ S.me = d; renderMe(); });
+    /* Your attendance reads the week's stats; Me opened before Today
+       still shows it. */
+    if (!S.stats || !S.stats.ok) api('/staff/api/stats').then(function(d){ S.stats = d; renderMe(); });
     api('/staff/api/preferences').then(function(d){ S.prefs = d; renderMe(); });
     api('/staff/api/language').then(function(d){ S.lang = d; renderMe(); });
   };
@@ -1247,6 +1334,7 @@
     html += '<div class="sechead">Your week</div>';
     html += '<div class="card">' + disclosure('avail', 'My availability', '', availBody) + '<div style="height:10px"></div>' +
       disclosure('prefs', 'What I’d like', '', prefsBody) + '</div>';
+    html += attendanceCard();
     html += '<div class="sechead">Notices</div><div class="card">';
     var p = S.prefs;
     if (p === undefined) html += pulse('Loading your notices');
@@ -1269,12 +1357,63 @@
       html += '</select><div class="errline" id="lang-err" role="status" aria-live="polite"></div>';
     }
     html += '</div>';
+    html += accountCard(m);
     html += '<div class="sechead">More</div><div class="card">' + disclosure('cal', 'Calendar feed', '', calBody) + '<div style="height:10px"></div>' +
       disclosure('docs', 'Docs & house rules', '', docsBody) + '<div style="height:10px"></div>' +
       disclosure('pin', 'Change PIN', '', pinBody) + '</div>';
-    html += '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="message" data-label="">Message your manager</button></div>' +
-      '<div class="acts"><a class="cbtn cbtn-danger cbtn-ghost cbtn-block tall" href="/staff/logout">Sign out</a></div>';
+    html += '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="message" data-label="">Message your manager</button></div>';
+    /* Leaving (App Store 5.1.1(v) in the app; the same right here). */
+    html += '<div class="sechead">Leaving</div><div class="card"><p class="note" style="margin:0">Delete my account removes your login here. Your manager is told; you stay on the schedule until they change it.</p>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-danger cbtn-block" data-act="delete-account">Delete my account</button></div></div>';
+    html += '<div class="acts"><a class="cbtn cbtn-danger cbtn-ghost cbtn-block tall" href="/staff/logout">Sign out</a></div>';
     el.innerHTML = html;
+  }
+
+  /* Your attendance (the app's StaffAttendanceSection): my own checked
+     shifts, each in the restaurant's words. Never a score. */
+  var MISSES = {late: 1, no_show: 1, called_out: 1};
+  function attendanceCard(){
+    var st = S.stats, a = st && st.ok ? st.attendance : null;
+    if (!a) return '';
+    var html = '<div class="sechead">Your attendance</div><div class="card">', recent = a.recent || [];
+    if (a.message && !recent.length) return html + '<p class="note" style="margin:0">' + nums(a.message) + '</p></div>';
+    html += '<p class="note" style="margin:0 0 6px">' + nums((a.shifts_checked || 0) + ' shift' + (a.shifts_checked === 1 ? '' : 's') +
+      ' checked in the last ' + (a.days || 30) + ' days') + '</p>';
+    for (var i = 0; i < recent.length && i < 10; i++) {
+      var e = recent[i], what = (e.label || e.outcome || '') + (e.minutes_late > 0 ? ', ' + e.minutes_late + ' min' : '');
+      html += '<div class="kv"><span class="strong num">' + esc(e.date_label || mdy(e.date)) + '</span><span class="strong ' +
+        (MISSES[e.outcome] ? 'note amber' : 'muted') + '" style="margin:0">' + nums(what) + '</span></div>';
+    }
+    return html + '<p class="note">From the shifts your restaurant checked. A drop your manager approved isn’t a miss.</p></div>';
+  }
+
+  /* Account (the app's Me → Account): the email notices fall back to,
+     the phone on file, and the other locations this person works at. */
+  function accountCard(m){
+    var e = m && m.ok ? m.employee : null, html = '<div class="sechead">Account</div><div class="card">';
+    if (!m) return html + pulse('Loading your account') + '</div>';
+    if (!e) return '';
+    var email = S.emailDraft !== null && S.emailDraft !== undefined ? S.emailDraft : (e.email || '');
+    html += '<label class="lbl" for="me-email" style="margin-top:0">Email</label>' +
+      '<input class="fld" id="me-email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="' + esc(email) + '">' +
+      '<p class="note">If a notice can’t reach you in the app or by text, it comes here. Your manager sees the same address.</p>' +
+      '<div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="email-save">Save</button>' +
+      (e.email ? '<button type="button" class="cbtn cbtn-text tall" data-act="email-remove">Remove my email</button>' : '') + '</div>' +
+      '<div class="errline" id="email-err" role="status" aria-live="polite"></div>';
+    html += '<div class="kv" style="margin-top:12px"><span>Phone</span><span class="' + (e.has_phone ? 'num' : 'muted') + '">' +
+      esc(e.has_phone ? e.phone_masked : 'Not on file') + '</span></div>';
+    var locs = e.locations || [];
+    if (locs.length > 1) {
+      html += '<label class="lbl">Your locations</label>';
+      for (var i = 0; i < locs.length; i++) {
+        var l = locs[i];
+        html += '<div class="kv"><span><span class="strong">' + esc(l.restaurant) + '</span><br><span class="muted" style="font-size:13px">' +
+          (l.current ? 'You’re here' : 'Sign in with your PIN there') + '</span></span>' +
+          (l.current ? '' : '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-act="switch-loc" data-rid="' + esc(l.restaurant_id) + '">Open</button>') + '</div>';
+      }
+      html += '<div class="errline" id="loc-err" role="status" aria-live="polite"></div>';
+    }
+    return html + '</div>';
   }
 
   /* My availability: each weekday any time, can't work, or some hours,
@@ -1593,9 +1732,32 @@
         if (!d.ok) { S.rowErr['ann' + id] = errText(d); renderInbox(); return; }
         var a = findIn(S.inbox.announcements, id); if (a) a.acked_at = d.acked_at || new Date().toISOString();
         S.inbox.unread = Math.max(0, (S.inbox.unread || 0) - 1);
-        setBadge('badge-inbox', S.inbox.unread || 0);
+        paintInboxBadge();
         renderInbox();
       });
+    },
+    'email-save': function(btn){ saveEmail(btn, ($('me-email').value || '').replace(/^\s+|\s+$/g, '')); },
+    'email-remove': function(btn){ saveEmail(btn, ''); },
+    'switch-loc': function(btn){
+      busyBtn(btn, 'Opening');
+      postJson('/staff/api/switch', {restaurant_id: +btn.getAttribute('data-rid')}).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('loc-err').textContent = errText(d, 'Couldn’t open that location.'); return; }
+        if (d.current) { toast('You’re already here'); return; }
+        /* That location's own PIN pad, this person's name already chosen:
+           each location's PIN is its own credential. */
+        window.location = '/staff/r/' + encodeURIComponent(d.portal_token) + '#m=' + encodeURIComponent(d.membership_id);
+      });
+    },
+    'delete-account': function(){
+      var where = (S.me && S.me.ok && S.me.employee && S.me.employee.restaurant) || 'this restaurant';
+      askConfirm('Delete your account?', 'This deletes your login at ' + where + ': your PIN, your consent to schedule texts and the number you signed up with, and the schedule links we’ve sent you. You stay on the schedule — your manager is told. You can’t undo this.',
+        'Delete my account', function(btn){
+          postJson('/staff/api/account/delete', {confirm: true}).then(function(d){
+            if (!d.ok) { unbusyBtn(btn); $('confirm-err').textContent = errText(d, 'Couldn’t delete your account.'); return; }
+            window.location = '/staff/';
+          });
+        }, true);
     },
     'ann-orig': function(el){ S.showOriginal = S.showOriginal || {}; var id = el.getAttribute('data-id'); S.showOriginal[id] = !S.showOriginal[id]; renderInbox(); },
     'msg-ctx-clear': function(){ S.msgDraft = $('msg-body') ? $('msg-body').value : ''; S.msgContext = null; renderInbox(); },
@@ -1779,7 +1941,19 @@
       });
     }
   });
+  function saveEmail(btn, email){
+    busyBtn(btn, 'Saving');
+    postJson('/staff/api/me/email', {email: email}).then(function(d){
+      unbusyBtn(btn);
+      if (!d.ok) { $('email-err').textContent = errText(d, 'Couldn’t save that.'); return; }
+      S.emailDraft = null;
+      if (S.me && S.me.ok && S.me.employee) S.me.employee.email = d.email || '';
+      toast(d.email ? 'Email saved' : 'Email removed');
+      renderMe();
+    });
+  }
   document.addEventListener('input', function(e){
+    if (e.target.id === 'me-email') S.emailDraft = e.target.value;
     if (e.target.id === 'msg-body') S.msgDraft = e.target.value;
     if (e.target.id === 'pulse-note') S.pulseNote = e.target.value;
   });

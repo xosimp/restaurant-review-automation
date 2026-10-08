@@ -106,13 +106,17 @@ def test_the_message_and_lineup_categories_and_where_they_open():
     assert push._category("employee_message", {"thread_id": 7}) == push.CATEGORY_MESSAGE
     assert push._category("employee_message", {}) == "", "no thread, nothing to reply to"
     assert push._category("team_message", {"sender_id": 3}) == push.CATEGORY_MESSAGE
-    assert push._category("lineup_brief_waiting", {"day": "2026-10-02"}) == push.CATEGORY_LINEUP
+    # Approve only when the push carries the whole draft and its revision
+    # (re-audit 10/8/26); anything less is Open only.
+    assert push._category("lineup_brief_waiting", {"day": "2026-10-02", "draft": "Big night.",
+                                                   "draft_complete": True, "brief_rev": "r1"}) == push.CATEGORY_LINEUP
+    assert push._category("lineup_brief_waiting", {"day": "2026-10-02"}) == push.CATEGORY_LINEUP_REVIEW
     assert push._category("lineup_brief_waiting", {}) == ""
     assert push.nav_for("team_message", {"sender_id": 3}) == "messages/3"
     assert push.nav_for("lineup_brief_waiting", {"day": "2026-10-02"}) == "labor/lineup"
     # The categories the app registers (PushManager.swift) carry the same ids.
     swift = _read("ios", "CavnarAI", "CavnarAI", "Push", "PushManager.swift")
-    for cat in (push.CATEGORY_MESSAGE, push.CATEGORY_LINEUP):
+    for cat in (push.CATEGORY_MESSAGE, push.CATEGORY_LINEUP, push.CATEGORY_LINEUP_REVIEW):
         assert f'"{cat}"' in swift, cat
     assert "UNTextInputNotificationAction" in swift, "Reply is typed in place on the lock screen"
 

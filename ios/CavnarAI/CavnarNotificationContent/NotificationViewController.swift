@@ -9,7 +9,9 @@ import UserNotificationsUI
 /// shown. Long-pressing the notification now shows the reply itself (push.py
 /// sends it as `draft`), and for the nightly report its headline in full.
 ///
-/// Registered for CAVNAR_REVIEW_DRAFTED and CAVNAR_DSR (project.yml). Reads
+/// Registered for CAVNAR_REVIEW_DRAFTED, CAVNAR_DSR and the lineup brief's
+/// CAVNAR_LINEUP / CAVNAR_LINEUP_REVIEW (project.yml) — the brief Approve
+/// sends to staff, read before it is (re-audit 10/8/26). Reads
 /// the payload only — the extension never signs in and never calls the API;
 /// the buttons under it are the app's own (PushManager). Dark only, like the
 /// app.
@@ -84,9 +86,9 @@ struct NotificationPreviewView: View {
                     .foregroundStyle(preview.kind == .report ? Color.cavnarInk : Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if preview.kind == .reply {
+            if let draftKicker = preview.draftKicker {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("THE REPLY")
+                    Text(draftKicker.uppercased())
                         .font(.cavnarBody(CavnarType.kicker, weight: 700))
                         .tracking(1.1)
                         .foregroundStyle(Color.cavnarEmber)

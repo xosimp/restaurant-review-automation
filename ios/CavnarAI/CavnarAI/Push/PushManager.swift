@@ -105,9 +105,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// (employee_message) or a teammate's (team_message): Reply is typed on
     /// the lock screen and posted in the background (parity #10, #71).
     nonisolated private static let messageCategory       = "CAVNAR_MESSAGE"
-    /// Tonight's lineup brief waiting for approval: Approve publishes the
-    /// draft as written; Open shows it first (parity #26).
+    /// Tonight's lineup brief waiting for approval (parity #26): Approve
+    /// sends the draft the push carried whole — the notification's own view
+    /// shows it (CavnarNotificationContent) — as the text approved, with its
+    /// revision; Open shows it in the app. A push without the whole draft
+    /// is CAVNAR_LINEUP_REVIEW, Open only (re-audit 10/8/26).
     nonisolated private static let lineupCategory        = "CAVNAR_LINEUP"
+    nonisolated private static let lineupReviewCategory  = "CAVNAR_LINEUP_REVIEW"
     /// Parity audit 10/7/26 (#35, #55): push.py's CATEGORY_REC … CATEGORY_DSR.
     nonisolated static let recCategory            = "CAVNAR_REC"
     nonisolated static let recAskCategory         = "CAVNAR_REC_ASK"
@@ -362,6 +366,8 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: lineupCategory, actions: [approveLineup, openLineup],
                                    intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: lineupReviewCategory, actions: [openLineup],
+                                   intentIdentifiers: [], options: []),
         ]
     }
 
@@ -396,7 +402,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         var postsReply = false
         /// The JSON body for an action that carries more than a decision —
         /// a typed reply ({body}, or {recipient_id, body}) or the brief's
-        /// day ({day, text: null}: approve the draft as written).
+        /// draft the push showed ({day, text, expected_rev}).
         var payload: PushActionBody? = nil
         /// What the call sends when it is more than `{}` or `{decision}` —
         /// every key the route reads (parity round rule).
@@ -498,12 +504,23 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             }
             return nil
         case approveLineupAction:
-            guard let day = (cavnar["day"] as? String).flatMap({ DSRFormat.isISODate($0) ? $0 : nil }) else {
+            // The words the notification showed, whole (push.py `draft` +
+            // `draft_complete`), approved as exactly those words, with the
+            // brief's revision (`brief_rev` → `expected_rev`): a brief
+            // rewritten, approved or withdrawn since is refused, never
+            // overwritten (re-audit 10/8/26). Anything less carries nothing
+            // to approve — the server refuses a text-less approve — so the
+            // button only opens.
+            guard let day = (cavnar["day"] as? String).flatMap({ DSRFormat.isISODate($0) ? $0 : nil }),
+                  let shown = shownDraft(cavnar),
+                  let rev = (cavnar["brief_rev"] as? String)?.trimmingCharacters(in: .whitespaces), !rev.isEmpty
+            else {
                 return nil
             }
             return BackgroundAction(path: "/mobile/api/staff-brief/approve", decision: nil,
                                     failureTitle: "Couldn't approve the brief",
-                                    payload: PushActionBody(["day": .string(day), "text": .null]))
+                                    payload: PushActionBody(["day": .string(day), "text": .string(shown),
+                                                             "expected_rev": .string(String(rev.prefix(32)))]))
         case approvePostAction:
             guard let id = reviewId(from: cavnar["review_id"]) else { return nil }
             // The reply the notification showed (push.py `draft`, #36), sent
@@ -1277,7 +1294,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 /// The JSON body a lock-screen action posts beyond a decision — a typed
 /// reply (`{body}` to a staff thread, `{recipient_id, body}` to a teammate)
-/// or the lineup brief's `{day, text: null}` (approve the draft as written).
+/// or the lineup brief's `{day, text, expected_rev}` (the draft the push showed).
 /// Sendable, so it crosses into the background task that posts it.
 struct PushActionBody: Encodable, Equatable, Sendable {
     enum Value: Equatable, Sendable {
