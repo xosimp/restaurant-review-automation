@@ -434,7 +434,8 @@ def test_the_web_poll_shows_the_older_read_then_the_new_one_in_node():
     import subprocess
     if not shutil.which("node"):
         pytest.skip("node is not installed")
-    fn = _between(DASH, "function insightSwr(url, onAnswer, onFail){", "window.insightSwr = insightSwr;")
+    # From its limits (re-audit 10/8/26 #6) through the function.
+    fn = _between(DASH, "var INSIGHT_SWR_LIMIT_MS", "window.insightSwr = insightSwr;")
     js = ("var AI_POLL_STEPS=[1500,3000,5000], calls = [], urls = [], window = {};\n"
           "function setTimeout(f, ms) { f(); }\n"
           "function apiJson(r) { return Promise.resolve(r); }\n"

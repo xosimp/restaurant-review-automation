@@ -75,6 +75,12 @@ struct MarketingAnalyticsSection: View {
     /// (Line 1, then "1." "2."); this just stops flattening it back out.
     private var briefCard: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // A brief the server could not write, in its own words
+            // (InsightRefresh.follow, re-audit 10/8/26 #3).
+            if let message = viewModel.insightError {
+                CavnarCaveat.readUnavailable(message)
+                    .padding(.bottom, 10)
+            }
             if viewModel.isLoadingInsight && viewModel.insight == nil {
                 CavnarWorkingOrb(state: .solving, label: "Reading your numbers…")
                     .padding(.vertical, 8)

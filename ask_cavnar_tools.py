@@ -1927,6 +1927,12 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
                     or (want and want not in (kind, perm_module))):
                 continue
             payload, at = insight_store.latest(restaurant_id, kind)
+            if (kind == "reviews" and isinstance(payload, dict) and isinstance(payload.get("locations"), dict)
+                    and payload["locations"].get("available")):
+                # A Reviews row written before the cross-location read got its
+                # own kind (re-audit 10/8/26 #1) carries other locations'
+                # themes: never served as the team's read.
+                continue
             text = _read_text(payload)
             if text.strip():
                 # Past the age the page stops serving it at, the read is

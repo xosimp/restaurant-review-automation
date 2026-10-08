@@ -726,6 +726,12 @@ struct LaborView: View {
                 CavnarCaveat.olderRead(note)
                     .padding(.top, 6)
             }
+            // A read the server could not write, in its own words
+            // (InsightRefresh.follow, re-audit 10/8/26 #3).
+            if let message = analyticsViewModel.insightError {
+                CavnarCaveat.readUnavailable(message)
+                    .padding(.top, 6)
+            }
             // The forecast ribbon straddles this card's bottom edge (see
             // cavnarRibbonHeroAnchor below) — cavnarGlassCard's own 16pt
             // padding alone left the ribbon's ~34pt-tall pill touching the
