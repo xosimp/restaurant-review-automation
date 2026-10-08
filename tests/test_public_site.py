@@ -131,3 +131,12 @@ def test_the_ember_core_is_one_renderer_with_a_fallback_and_a_still_frame():
     assert "now - lastDraw < 15" in js, "at most 60 frames a second"
     assert "webglcontextlost" in js and "root.classList.remove('core-live')" in js
     assert "=>" not in js and "let " not in js and "const " not in js.replace("const vec", "").replace("const int", ""), "ES5, like site.js"
+
+
+def test_the_app_and_the_site_run_the_same_ember_core():
+    """The dashboard (static/) and cavnar.ai (public/static/) each serve their
+    own copy of the Ember Core engine, like the fonts: one AI, one renderer.
+    Change one, copy it to the other."""
+    a = open(os.path.join(ROOT, "static", "ember-core.js"), encoding="utf-8").read()
+    b = open(os.path.join(PUBLIC, "static", "ember-core.js"), encoding="utf-8").read()
+    assert a == b, "static/ember-core.js and public/static/ember-core.js have drifted"
