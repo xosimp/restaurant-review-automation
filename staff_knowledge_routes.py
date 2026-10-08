@@ -177,7 +177,8 @@ def _do_brief_draft(u):
         return {"ok": False, "error": "Give it a moment."}, 429
 
     def go(sb, day, _b):
-        sb.draft(_rid(u), day=day)
+        # The manager asked and is reading it: no "waiting" push to them.
+        sb.draft(_rid(u), day=day, announce=False)
         return sb.state(_rid(u), u, day=day, with_suggestions=True)
     return _brief_write(u, go)
 

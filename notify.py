@@ -774,6 +774,7 @@ ALERT_TAB = {
     "no_response": "reviews", "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor", "schedule_publish_pending": "labor",
     "schedule_publish_held": "labor", "shift_request": "labor", "labor_reminder": "labor",
+    "lineup_brief_waiting": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory", "order_send_pending": "inventory",
     "order_send_held": "inventory",
     "order_send_voided": "inventory",
@@ -814,7 +815,11 @@ BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "
                              # An employee wrote to the manager on duty
                              # (staff_comms, employee audit): the same kind
                              # of task, never held by a level or budget.
-                             "employee_message"})
+                             "employee_message",
+                             # Tonight's lineup brief waits on a manager
+                             # before service: unheard, staff read the
+                             # plain lines and the draft goes to waste.
+                             "lineup_brief_waiting"})
 BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending", "order_send_pending"}
 BRIEFING_NORMAL_PER_DAY = 4
 

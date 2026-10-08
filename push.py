@@ -64,7 +64,11 @@ _UNCOLLAPSIBLE_TYPES = {"login", "staff_signin", "issue", "issue_escalated", "co
                         "staff_schedule", "staff_request", "staff_notice", "staff_reminder",
                         "staff_announcement", "staff_urgent", "staff_message",
                         # each message an employee sends the managers
-                        "employee_message"}
+                        "employee_message",
+                        # each direct message between two console logins
+                        # (models.send_team_message): one sender's second
+                        # message must not replace their first
+                        "team_message"}
 
 # ── The staff tier (employee audit C4, 10/1/26) ─────────────────────────────
 #
@@ -421,6 +425,10 @@ PRIORITY = {
     # The other direction, to the console: an employee wrote to the manager
     # on duty (staff_comms). A task like a staff request, never a Focus break.
     "employee_message": P2_OPPORTUNITY,
+    # Tonight's lineup brief drafted and waiting for a manager's approval
+    # before staff read it (staff_brief.draft, at the pre-shift nudge), and a
+    # teammate's direct message (models.send_team_message). Worth today.
+    "lineup_brief_waiting": P2_OPPORTUNITY, "team_message": P2_OPPORTUNITY,
 }
 # Which module a notification opens — the web tab ids (?tab=). The ONE map:
 # client_api._NOTIFICATION_MODULE is this dict (the bell's rows carry it),
@@ -436,6 +444,7 @@ NOTIFICATION_MODULE = {
     "labor_over": "labor", "schedule_drafted": "labor", "coverage": "labor",
     "schedule_publish_pending": "labor", "schedule_publish_held": "labor",
     "shift_request": "labor", "labor_reminder": "labor", "employee_message": "labor",
+    "lineup_brief_waiting": "labor",
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
     "order_send_pending": "inventory", "order_send_held": "inventory", "order_send_voided": "inventory",
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
@@ -457,6 +466,9 @@ NOTIFICATION_MODULE = {
     "login": "account", "staff_signin": "account", "connection_lost": "account",
     "data_source_down": "account", "data_source_restored": "account",
     "platform_alert": "home",
+    # A teammate's direct message opens the Messages inbox (its payload's
+    # nav, "messages/<sender_id>"), which sits beside the bell on every screen.
+    "team_message": "home",
     # The staff app, not a console module: the payload's `tab` and `nav`
     # ("staff/requests/12") say where in it. A console phone that gets one
     # (a manager on the schedule) degrades an unknown module to Home.
@@ -490,7 +502,7 @@ ACTIONABLE_TYPES = frozenset({
     "health", "1star", "2star", "3star", "neg_spike", "edit_downgrade", "no_response",
     "unresponded", "negative_trend", "rating_threshold",
     "labor_over", "coverage", "shift_request", "labor_reminder", "schedule_publish_held", "employee_message",
-    "schedule_drafted",
+    "schedule_drafted", "lineup_brief_waiting",
     "food_waste", "critical_low", "price_spike", "order_send_held", "order_send_voided",
     "ai_visibility_drop", "issue", "issue_escalated", "connection_lost", "data_source_down",
     "platform_alert",
@@ -535,6 +547,13 @@ CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # no extra button: the tap opens it
 CATEGORY_REVIEW_DRAFTED = "CAVNAR_REVIEW_DRAFTED"   # Approve & post · Edit
 CATEGORY_UNDOABLE = "CAVNAR_UNDOABLE"               # Undo · Review
 CATEGORY_REQUEST = "CAVNAR_REQUEST"                 # Approve · Deny
+# A message someone wrote to this login — an employee to the manager on duty
+# (employee_message, a thread) or a teammate's direct message (team_message,
+# a sender): a text-input Reply that answers from the lock screen.
+CATEGORY_MESSAGE = "CAVNAR_MESSAGE"                 # Reply (typed in place)
+# Tonight's lineup brief waiting for approval: Approve publishes the draft
+# as written (POST /mobile/api/staff-brief/approve with its day) · Open.
+CATEGORY_LINEUP = "CAVNAR_LINEUP"                   # Approve · Open
 _BRIEF_TYPES = {"morning_brief", "intraday_pulse", "closing_summary",
                 "weekly_review", "monthly_review", "daily_briefing"}
 _ISSUE_TYPES = {"issue", "issue_escalated", "coverage", "critical_low"}
@@ -548,6 +567,11 @@ def _category(alert_type, data) -> str:
         return CATEGORY_UNDOABLE
     if alert_type == "shift_request" and data.get("request_id") and data.get("request_kind"):
         return CATEGORY_REQUEST
+    if (alert_type == "employee_message" and data.get("thread_id")) or \
+            (alert_type == "team_message" and data.get("sender_id")):
+        return CATEGORY_MESSAGE
+    if alert_type == "lineup_brief_waiting" and data.get("day"):
+        return CATEGORY_LINEUP
     if alert_type in _BRIEF_TYPES or data.get("ask_prompt"):
         return CATEGORY_BRIEF
     if alert_type in _ISSUE_TYPES:
@@ -611,6 +635,11 @@ def nav_for(alert_type, data=None) -> str:
     if alert_type == "employee_message":
         # The console's Team inbox, on the thread when the payload names it.
         return nav.path("labor", "inbox", data.get("thread_id"))
+    if alert_type == "team_message":
+        # The Messages inbox, on the sender's thread.
+        return nav.path("messages", data.get("sender_id"))
+    if alert_type == "lineup_brief_waiting":
+        return nav.path("labor", "lineup")
     if alert_type in _UNDOABLE_TYPES and data.get("delayed_action_id"):
         return nav.path("action", data["delayed_action_id"])
     if data.get("review_id"):

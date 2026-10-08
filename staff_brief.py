@@ -222,11 +222,16 @@ def _validation_context(restaurant_id, items_text, data_state=None, db_path=None
                 "people_denied": roster_names(restaurant_id, db_path=db_path)})
 
 
-def draft(restaurant_id, day=None, db_path=DB_PATH, items=None) -> dict:
+def draft(restaurant_id, day=None, db_path=DB_PATH, items=None, announce=True) -> dict:
     """The day's one small-model rewrite of the lineup items, stored as a
     DRAFT for the manager (never shown to staff until approved). Returns the
     row. At most one model call per restaurant per day, whoever asks
     (_claim_model_call); a second call returns what the first stored.
+
+    `announce`: a draft that passed is announced to the logins who approve
+    the brief — a "lineup brief waiting" push with Approve on it
+    (announce_waiting). The pre-shift nudge drafts with it on; a manager
+    who pressed "Draft it for me" is looking at it already (False).
 
     Readiness over the POS and the forecast (data_health.readiness, module
     "demand", sources pos and weather, unattended): anything but "proceed"
@@ -294,7 +299,40 @@ def draft(restaurant_id, day=None, db_path=DB_PATH, items=None) -> dict:
                      db_path=db_path)
         return _row(restaurant_id, day, db_path) or {}
     _store_draft(restaurant_id, day, items, "drafted", text=v.text.strip(), db_path=db_path)
-    return _row(restaurant_id, day, db_path) or {}
+    row = _row(restaurant_id, day, db_path) or {}
+    if announce and not row.get("approved_text"):
+        announce_waiting(restaurant_id, day, db_path=db_path)
+    return row
+
+
+WAITING_TYPE = "lineup_brief_waiting"
+
+
+def announce_waiting(restaurant_id, day, db_path=DB_PATH) -> int:
+    """Tell the logins who approve the brief (SCHEDULE_PUBLISH — the
+    route's own gate) that tonight's draft is waiting: a push with Approve
+    on it (push.CATEGORY_LINEUP; the app posts /staff-brief/approve with
+    this `day`), email for anyone without the app (strategy_jobs._reach).
+    Never raises; returns how many were reached. The push says only that a
+    draft is waiting — the draft itself is read in the app."""
+    try:
+        import strategy_jobs
+        from permissions import SCHEDULE_PUBLISH
+        from time_utils import mdy
+        day = _day(restaurant_id, day)
+        body = (f"Cavnar AI drafted the brief your team reads before service on {mdy(day.isoformat())}. "
+                "Approve it or edit it first — until then staff read the plain lines.")
+        return int(strategy_jobs._reach(
+            restaurant_id, WAITING_TYPE, "Tonight's lineup brief is waiting", body,
+            {"day": day.isoformat(), "kind": "lineup_brief"}, db_path, lines=[body],
+            permissions=[SCHEDULE_PUBLISH], deciders=True) or 0)
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="staff_brief_draft", context=f"restaurant_id={restaurant_id} waiting notice")
+        except Exception:
+            pass
+        return 0
 
 
 # ── the manager's word ──────────────────────────────────────────────────────

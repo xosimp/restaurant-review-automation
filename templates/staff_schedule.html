@@ -60,6 +60,7 @@
         background:var(--paper);color:var(--ink);font-size:16px;font-family:inherit;margin-bottom:12px}
   .refused{margin:0 0 12px;font-size:13.5px;color:var(--red);font-weight:700}
   .saved{margin-top:10px;font-size:13.5px;color:var(--green);font-weight:700;text-align:center}
+  .conflicts{margin-top:10px;font-size:13.5px;color:var(--ember2);font-weight:700;text-align:center;line-height:1.45}
   footer{margin-top:32px;color:var(--ink3);font-size:12px;line-height:1.6;text-align:center}
 </style>
 </head>
@@ -116,6 +117,9 @@
     {% if throttled %}<div class="refused" role="alert">Too many updates from this device just now — try again in a few minutes.</div>{% endif %}
     <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block">Save my availability</button>
     {% if saved %}<div class="saved" role="status">Saved — thanks, your manager has it.</div>{% endif %}
+    {# Shifts already published that this availability rules out — the
+       same sentence the app shows after its save (conflicts_text). #}
+    {% if saved and saved_conflicts %}<div class="conflicts" role="status">{{ saved_conflicts }}</div>{% endif %}
   </form>
 
   <footer>

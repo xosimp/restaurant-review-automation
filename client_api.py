@@ -9254,6 +9254,8 @@ _NOTIFICATION_LABELS = {
     # that described something else, or none at all.
     "shift_request":    "A staff request needs you",
     "employee_message": "A message from your team",
+    "lineup_brief_waiting": "Tonight's lineup brief is waiting",
+    "team_message":     "A message from a teammate",
     "labor_reminder":   "Waiting on you in Labor",
     "schedule_publish_pending": "Next week's schedule going out",
     "schedule_publish_held": "Next week's schedule was held",
@@ -9835,6 +9837,15 @@ def staff_schedule_page(token):
                 break
     from time_utils import mdy as _mdy
 
+    # After a save, the shifts on published weeks that the availability now
+    # rules out — the app shows them from the save's answer
+    # (conflicts_text); this page redirected, so it reads them again.
+    saved_conflicts = ""
+    if request.args.get("saved") == "1":
+        oc = getattr(_ss_av, "own_conflicts", None)
+        if oc is not None:
+            saved_conflicts = _ss_av.conflicts_text(oc(share["restaurant_id"], share["employee_name"]))
+
     # The availability form below is a plain HTML POST, not a fetch, so it
     # can't use the dashboard's fetch wrapper to supply the CSRF header —
     # it echoes the same csrf_js cookie back as a hidden field instead
@@ -9862,6 +9873,7 @@ def staff_schedule_page(token):
         unavailable_days=unavailable,
         note=saved_note,
         saved=request.args.get("saved") == "1",
+        saved_conflicts=saved_conflicts,
         all_days_blocked=request.args.get("error") == "all_days",
         throttled=request.args.get("error") == "throttled",
         stale=request.args.get("error") == "stale",
