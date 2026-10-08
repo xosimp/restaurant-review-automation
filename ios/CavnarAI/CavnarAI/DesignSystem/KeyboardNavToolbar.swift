@@ -30,25 +30,47 @@ private struct KeyboardNavToolbarModifier<Field: Hashable & CaseIterable>: ViewM
 
     func body(content: Content) -> some View {
         content.toolbar {
-            cavnarToolbarItemGroup(placement: .keyboard) {
+            if #available(iOS 26.0, *) {
+                // iOS 26 sizes every keyboard item to its content and centres
+                // the lot, so a Spacer inside one HStack had no width to take
+                // and the chevrons and checkmark sat together mid-screen.
+                // Separate items with Apple's ToolbarSpacer between them put
+                // the chevrons at the leading edge and the checkmark at the
+                // trailing one, as every system app does.
+                ToolbarItem(placement: .keyboard) { chevrons }
+                    .sharedBackgroundVisibility(.hidden)
+                ToolbarSpacer(.flexible, placement: .keyboard)
+                ToolbarItem(placement: .keyboard) { done }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
                 // One HStack, not separate top-level items — a bare
                 // Spacer() as its own sibling item inside a .keyboard
-                // ToolbarItemGroup independently triggers the same iOS 26
-                // layout bug cavnarToolbarItemGroup works around at the
-                // group level (see FoodCostQuickEntryView's identical fix).
-                HStack(spacing: 8) {
-                    keyboardIconButton(systemName: "chevron.up", enabled: canGoPrevious) {
-                        if let i = currentIndex, i > 0 { focus.wrappedValue = all[i - 1] }
-                    }
-                    keyboardIconButton(systemName: "chevron.down", enabled: canGoNext) {
-                        if let i = currentIndex, i < all.count - 1 { focus.wrappedValue = all[i + 1] }
-                    }
-                    Spacer()
-                    keyboardIconButton(systemName: "checkmark", enabled: true) {
-                        focus.wrappedValue = nil
+                // ToolbarItemGroup misbehaves below iOS 26.
+                ToolbarItemGroup(placement: .keyboard) {
+                    HStack(spacing: 8) {
+                        chevrons
+                        Spacer()
+                        done
                     }
                 }
             }
+        }
+    }
+
+    private var chevrons: some View {
+        HStack(spacing: 8) {
+            keyboardIconButton(systemName: "chevron.up", enabled: canGoPrevious) {
+                if let i = currentIndex, i > 0 { focus.wrappedValue = all[i - 1] }
+            }
+            keyboardIconButton(systemName: "chevron.down", enabled: canGoNext) {
+                if let i = currentIndex, i < all.count - 1 { focus.wrappedValue = all[i + 1] }
+            }
+        }
+    }
+
+    private var done: some View {
+        keyboardIconButton(systemName: "checkmark", enabled: true) {
+            focus.wrappedValue = nil
         }
     }
 }
@@ -63,11 +85,8 @@ private struct KeyboardDoneToolbarModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.toolbar {
-            cavnarToolbarItemGroup(placement: .keyboard) {
-                HStack {
-                    Spacer()
-                    keyboardIconButton(systemName: "checkmark", enabled: true, action: onDone)
-                }
+            cavnarKeyboardTrailing {
+                keyboardIconButton(systemName: "checkmark", enabled: true, action: onDone)
             }
         }
     }
@@ -112,6 +131,26 @@ func keyboardIconButton(systemName: String, enabled: Bool, action: @escaping @Ma
     .fixedSize()
     .buttonStyle(.plain)
     .tint(nil)
+}
+
+/// A keyboard bar whose one control sits at the trailing edge, as in every
+/// system app: on iOS 26+ a ToolbarSpacer and its own item (a Spacer inside
+/// one item has no width to take there, so the control landed mid-screen);
+/// below, the classic Spacer in the group.
+@ToolbarContentBuilder
+func cavnarKeyboardTrailing<Content: View>(@ViewBuilder _ content: () -> Content) -> some ToolbarContent {
+    if #available(iOS 26.0, *) {
+        ToolbarSpacer(.flexible, placement: .keyboard)
+        ToolbarItem(placement: .keyboard, content: content)
+            .sharedBackgroundVisibility(.hidden)
+    } else {
+        ToolbarItemGroup(placement: .keyboard) {
+            HStack {
+                Spacer()
+                content()
+            }
+        }
+    }
 }
 
 extension View {

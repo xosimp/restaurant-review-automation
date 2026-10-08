@@ -57,29 +57,21 @@ struct HomeDayCard: View {
                     CavnarWorkingLine().padding(.vertical, 10)
                 } else if lines.isEmpty {
                     Text("Your brief fills in as your numbers come in.")
-                        .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnarBody(HomeType.body)).foregroundStyle(Color.cavnarInk3)
                         .padding(.vertical, 8)
                 } else {
                     ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
                         VStack(spacing: 0) {
                             HStack(alignment: .top, spacing: 12) {
-                                Circle().fill(line.toneColor).frame(width: 8, height: 8).padding(.top, 6)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HomeMixedText.make(line.text, size: 14.5, weight: 500, color: .cavnarInk2)
-                                    ClaimKindTag(kind: line.claimKind)
-                                    // How today's kind of forecast has held
-                                    // up here (K8), under the forecast line.
-                                    if line.key == "today", let record = viewModel.demandAccuracy?.sentence {
-                                        HomeMixedText.make(record + ".", size: 12.5, weight: 500, color: .cavnarInk3)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                    // Last night's report's own calls for
-                                    // today, with how often its range held
-                                    // (memory round 9/29/26, M5).
-                                    if !line.reportCalls.isEmpty {
-                                        HomeReportCalls(calls: line.reportCalls, confidencePct: line.confidencePct)
-                                            .padding(.top, 2)
-                                    }
+                                Circle().fill(line.toneColor).frame(width: 10, height: 10).padding(.top, 7)
+                                VStack(alignment: .leading, spacing: 6) {
+                                    // The line itself at reading size, three
+                                    // lines then More (10/8/26). Its claim
+                                    // tag, the forecast's track record and
+                                    // the report's calls are the Daily
+                                    // report's and the web's; a phone brief
+                                    // is the sentence and what to do.
+                                    HomeClampedText(text: line.text, size: HomeType.line, color: .cavnarInk, lines: 3)
                                     // The line's direct action first — send,
                                     // open the order, answer the replies —
                                     // and Ask as the secondary (web #46).
@@ -89,9 +81,10 @@ struct HomeDayCard: View {
                                                 Haptic.light()
                                                 onOpenNav(act.nav)
                                             } label: {
-                                                HStack(spacing: 3) {
-                                                    Text(act.label).font(.cavnarBody(13, weight: 700))
-                                                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
+                                                HStack(spacing: 4) {
+                                                    Text(act.label).font(.cavnarBody(HomeType.action, weight: 700))
+                                                        .lineLimit(1).minimumScaleFactor(0.85)
+                                                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
                                                 }
                                                 .foregroundStyle(Color.cavnarEmber2)
                                                 .frame(minHeight: 44)
@@ -120,7 +113,7 @@ struct HomeDayCard: View {
                                 }
                                 Spacer(minLength: 0)
                             }
-                            .padding(.vertical, 9)
+                            .padding(.vertical, 12)
                             if index < lines.count - 1 { AccountRowDivider() }
                         }
                     }
@@ -173,10 +166,10 @@ struct HomeDayCard: View {
         let limit = showAllIssues ? shown.count : min(shown.count, HomeDayViewModel.issuesShown)
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("OPEN ISSUES").font(.cavnarBody(12, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarEmber2)
+                Text("OPEN ISSUES").font(.cavnarBody(HomeType.meta, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarEmber2)
                 Spacer()
                 if !shown.isEmpty {
-                    Text("\(shown.count)").font(.cavnarNumber(12, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                    Text("\(shown.count)").font(.cavnarNumber(HomeType.meta + 1, weight: 700)).foregroundStyle(Color.cavnarEmber2)
                 }
             }
             .padding(.bottom, 6)
@@ -187,14 +180,14 @@ struct HomeDayCard: View {
                 .padding(.vertical, 6)
             }
             if let error = viewModel.issueError {
-                Text(error).font(.cavnarBody(12.5, weight: 600)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(HomeType.meta + 0.5, weight: 600)).foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 4)
             }
             if shown.isEmpty && viewModel.pendingResolve == nil {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Color.cavnarGreen)
-                    Text("Nothing open.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    Image(systemName: "checkmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Color.cavnarGreen)
+                    Text("Nothing open.").font(.cavnarBody(HomeType.body)).foregroundStyle(Color.cavnarInk3)
                 }
                 .padding(.vertical, 6)
             } else {
@@ -208,7 +201,7 @@ struct HomeDayCard: View {
                         withAnimation(.easeOut(duration: 0.2)) { showAllIssues.toggle() }
                     } label: {
                         Text(showAllIssues ? "Show fewer" : "+\(shown.count - HomeDayViewModel.issuesShown) more")
-                            .font(.cavnarBody(13, weight: 700))
+                            .font(.cavnarBody(HomeType.action, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
@@ -223,11 +216,12 @@ struct HomeDayCard: View {
     private func issueRow(_ issue: HomeDayViewModel.Issue, showsDivider: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                Circle().fill(issue.tone).frame(width: 8, height: 8).padding(.top, 6)
-                VStack(alignment: .leading, spacing: 2) {
-                    HomeMixedText.make(issue.title, size: 14.5, weight: 600, color: .cavnarInk)
+                Circle().fill(issue.tone).frame(width: 10, height: 10).padding(.top, 7)
+                VStack(alignment: .leading, spacing: 4) {
+                    HomeMixedText.make(issue.title, size: HomeType.body + 0.5, weight: 600, color: .cavnarInk)
+                        .lineLimit(3)
                     Text(issue.statusLine)
-                        .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnarBody(HomeType.meta + 0.5)).foregroundStyle(Color.cavnarInk3)
                     // A call-off of several people is one issue per role
                     // (schedule audit 10/3/26 E-31): each gap with where it
                     // stands, and one cover button per gap still open.
@@ -248,9 +242,9 @@ struct HomeDayCard: View {
                                     askingCover = HomeDayViewModel.CoverAsk(issue: issue, name: name)
                                 } label: {
                                     Text("Ask \(HomeDayViewModel.firstName(name)) to cover")
-                                        .font(.cavnarBody(12.5, weight: 700))
+                                        .font(.cavnarBody(15, weight: 700))
                                         .foregroundStyle(Color.cavnarEmber2)
-                                        .frame(minHeight: 32)
+                                        .frame(minHeight: 44)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -258,7 +252,7 @@ struct HomeDayCard: View {
                         .padding(.top, 4)
                     }
                     if let note = viewModel.coverNote[issue.id] {
-                        Text(note).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                        Text(note).font(.cavnarBody(HomeType.meta + 0.5, weight: 600)).foregroundStyle(Color.cavnarGreen)
                     }
                     // Whoever was asked: "Did Zed take it?" — the manager's
                     // word counts on their record of covers (memory round).
@@ -268,11 +262,11 @@ struct HomeDayCard: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Color.cavnarInk3)
-                    .padding(.top, 5)
+                    .padding(.top, 6)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 12)
             .contentShape(Rectangle())
             .onTapGesture {
                 Haptic.light()
@@ -816,15 +810,16 @@ struct HomeCloseOutCard: View {
                               trailing: viewModel.closeOut == nil ? nil : "filed")
             VStack(alignment: .leading, spacing: 10) {
                 Text(viewModel.closeOut == nil
-                     ? "Four lines from whoever closes. They lead tomorrow morning's brief."
+                     ? "A few lines from whoever closes lead tomorrow's brief."
                      : filedSummary)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnarBody(HomeType.body))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineLimit(viewModel.closeOut == nil ? nil : 4)
                     .fixedSize(horizontal: false, vertical: true)
                 // How tonight felt to the staff who answered the post-shift
                 // pulse — context for the closer, never saved (parity #67).
                 if let pulse = viewModel.closeOutStaffPulse, !pulse.line.isEmpty {
-                    HomeMixedText.make(pulse.line, size: 14, weight: 600, color: .cavnarInk2)
+                    HomeMixedText.make(pulse.line, size: HomeType.body, weight: 600, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button {

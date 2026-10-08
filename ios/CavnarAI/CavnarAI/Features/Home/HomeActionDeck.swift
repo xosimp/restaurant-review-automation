@@ -29,16 +29,15 @@ struct HomeActionDeck: View {
 
     @State private var showingAll = false
 
-    // 156, not 150: the buttons along the bottom are 44pt targets now.
-    static let cardHeight: CGFloat = 156
+    // 172: phone-size type (10/8/26) over 44pt buttons along the bottom.
+    static let cardHeight: CGFloat = 172
 
     /// One height for the lead card: the base, plus room for the evidence
     /// line and the confidence line when the item carries them (K4).
     static func cardHeight(for items: [NeedsAttentionItem]) -> CGFloat {
         cardHeight
-            + (items.contains { $0.evidenceLine != nil } ? 36 : 0)
-            + (items.contains { $0.confidence != nil } ? 26 : 0)
-            + CGFloat(items.map { memoryLines($0) }.max() ?? 0) * 18
+            + (items.contains { $0.evidenceLine != nil } ? 40 : 0)
+            + CGFloat(items.map { memoryLines($0) }.max() ?? 0) * 20
     }
 
     /// How many history lines an item carries (the owner's earlier answer,
@@ -101,7 +100,7 @@ struct HomeActionDeck: View {
                     withAnimation(.easeOut(duration: 0.25)) { showingAll = true }
                 } label: {
                     Text("+\(split.hidden) more")
-                        .font(.cavnarNumber(13.5, weight: 700))
+                        .font(.cavnarNumber(16, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(Rectangle())
@@ -131,10 +130,10 @@ private struct ActionDeckRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                HomeMixedText.make(item.title, size: 14.5, weight: 700, color: .cavnarInk)
-                    .lineLimit(1)
-                HomeMixedText.make(item.detail, size: 12.5, weight: 500, color: .cavnarInk3)
-                    .lineLimit(1)
+                HomeMixedText.make(item.title, size: HomeType.body, weight: 700, color: .cavnarInk)
+                    .lineLimit(2)
+                HomeMixedText.make(item.detail, size: HomeType.meta + 0.5, weight: 500, color: .cavnarInk3)
+                    .lineLimit(2)
                 RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer, compact: true)
                 if let conflict = item.conflict {
                     RecConflictPanel(conflict: conflict, onSettled: onChanged)
@@ -149,10 +148,12 @@ private struct ActionDeckRow: View {
                             CavnarShimmerText(text: "Working…")
                         } else {
                             HStack(spacing: 3) {
-                                HomeMixedText.make(cta, size: 13, weight: 800, color: .cavnarEmber2,
+                                HomeMixedText.make(cta, size: 15, weight: 800, color: .cavnarEmber2,
                                                    numberWeight: 700, numberColor: .cavnarEmber2)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.trailing)
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: 11, weight: .bold))
                                     .foregroundStyle(Color.cavnarEmber2)
                             }
                         }
@@ -164,7 +165,7 @@ private struct ActionDeckRow: View {
                 .disabled(busy)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .contextMenu {
             if item.dismissable == true, let onDismiss {
                 Button("Not today") { onDismiss("snooze") }
@@ -194,21 +195,17 @@ private struct ActionDeckCard: View {
             HStack(alignment: .top, spacing: 12) {
                 GlowBadge(systemImage: iconName, size: 38)
                 VStack(alignment: .leading, spacing: 4) {
-                    HomeMixedText.make(item.title, size: 15.5, weight: 700, color: .cavnarInk)
+                    HomeMixedText.make(item.title, size: HomeType.title - 1, weight: 700, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
-                    HomeMixedText.make(item.detail, size: 13, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(item.detail, size: HomeType.body, weight: 500, color: .cavnarInk2)
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
-                    // What it rests on, inline (K4) — and how sure, with
-                    // "Why?" behind it. Compact: the reason and any
-                    // caution are in the sheet, so the deck keeps one
-                    // height.
+                    // What it rests on, inline (K4), at a size a phone can
+                    // read. How sure lives on the item's own screen and on
+                    // the one-thing card's Details (10/8/26).
                     if let evidence = item.evidenceLine {
-                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(evidence, size: HomeType.meta, weight: 500, color: .cavnarInk3)
                             .lineLimit(2)
-                    }
-                    if let c = item.confidence {
-                        ConfidenceLine(confidence: c, recKey: item.recKey, surface: "home",
-                                       module: "home", compact: true)
                     }
                     // What was said before about it (memory round 9/29/26).
                     RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer)
@@ -239,8 +236,8 @@ private struct ActionDeckCard: View {
                 if let secondary = item.secondary {
                     Button(action: onSecondary) {
                         HStack(spacing: 3) {
-                            Text(secondary).font(.cavnarBody(12, weight: 700))
-                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
+                            Text(secondary).font(.cavnarBody(15, weight: 700))
+                            Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
                         }
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(minHeight: 44)
@@ -254,7 +251,7 @@ private struct ActionDeckCard: View {
                         if busy {
                             CavnarShimmerText(text: "Working…")
                         } else {
-                            HomeMixedText.make(cta, size: 13, weight: 800, color: .white, numberWeight: 700, numberColor: .white)
+                            HomeMixedText.make(cta, size: 15.5, weight: 800, color: .white, numberWeight: 700, numberColor: .white)
                         }
                     }
                     .buttonStyle(DeckPrimaryButtonStyle())

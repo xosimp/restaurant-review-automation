@@ -64,7 +64,7 @@ struct HomeSignals: View {
                 }
                 chart()
                 Text(caption)
-                    .font(.cavnarBody(12, weight: 500))
+                    .font(.cavnarBody(14, weight: 500))
                     .foregroundStyle(Color.cavnarInk3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -105,8 +105,9 @@ private struct HomeSignalLine: View {
 }
 
 /// Bars rising in, labelled underneath, a dashed target rule when there is
-/// one (web `bars`). A bar over its target turns amber — a status, never
-/// ember (§9).
+/// one (web `bars`). Against a target each bar is a status, as on the web:
+/// red over it, green at or under it (10/8/26 — was amber over, ember
+/// under, which read as two shades of "fine"). With no target, ember.
 private struct HomeSignalBars: View {
     let values: [Double]
     let labels: [String]
@@ -114,11 +115,11 @@ private struct HomeSignalBars: View {
     let format: (Double) -> String
 
     var body: some View {
-        CavnarAnimatedCanvas(duration: 0.9, height: 96, replayKey: values) { ctx, size, t, _ in
+        CavnarAnimatedCanvas(duration: 0.9, height: 104, replayKey: values) { ctx, size, t, _ in
             guard !values.isEmpty else { return }
             let top = max(values.max() ?? 0, target ?? 0) * 1.12
             guard top > 0 else { return }
-            let plot = CGRect(x: 4, y: 6, width: size.width - 8, height: size.height - 24)
+            let plot = CGRect(x: 4, y: 6, width: size.width - 8, height: size.height - 28)
             let slot = plot.width / CGFloat(values.count)
             let barW = min(26, slot * 0.6)
             let e = CavnarChart.easeOut(t)
@@ -126,13 +127,12 @@ private struct HomeSignalBars: View {
                 let h = plot.height * CGFloat(v / top) * CGFloat(e)
                 let x = plot.minX + slot * CGFloat(i) + (slot - barW) / 2
                 let rect = CGRect(x: x, y: plot.maxY - h, width: barW, height: h)
-                let over = target.map { v > $0 } ?? false
+                let tone: Color = target.map { v > $0 ? .cavnarRed : .cavnarGreen } ?? .cavnarEmber2
                 CavnarChart.glowFill(&ctx, CavnarChart.roundedRect(rect, radius: 4),
-                                     color: over ? .cavnarAmber : .cavnarEmber2,
-                                     glow: over ? .cavnarAmber.opacity(0.4) : .cavnarEmber.opacity(0.4), blur: 6)
+                                     color: tone, glow: tone.opacity(0.4), blur: 6)
                 if i < labels.count {
-                    CavnarChart.text(&ctx, CavnarChart.label(String(labels[i].prefix(6)), size: 9.5),
-                                     at: CGPoint(x: x + barW / 2, y: plot.maxY + 9))
+                    CavnarChart.text(&ctx, CavnarChart.label(String(labels[i].prefix(target == nil ? 6 : 3)), size: 12),
+                                     at: CGPoint(x: x + barW / 2, y: plot.maxY + 12))
                 }
             }
             if let target {

@@ -15,30 +15,29 @@ struct ReviewsStatStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    pill(value: String(format: "%.1f", stats.avgRating), unit: "★",
-                         label: "rating", tone: ratingTone,
-                         spoken: "\(String(format: "%.1f", stats.avgRating)) star average rating")
-                    pill(value: "\(Int(stats.responseRate))", unit: "%",
-                         label: "answered", tone: stats.responseRate >= 70 ? .good : (stats.responseRate >= 40 ? .warning : .bad),
-                         spoken: "\(Int(stats.responseRate)) percent of reviews answered")
-                    pill(value: "\(stats.awaitingApproval + stats.needsResponse)", unit: nil,
-                         label: "to approve",
-                         tone: (stats.awaitingApproval + stats.needsResponse) == 0 ? .good
-                               : ((stats.awaitingApproval + stats.needsResponse) > 2 ? .bad : .warning),
-                         spoken: "\(stats.awaitingApproval + stats.needsResponse) replies waiting for you")
-                    pill(value: "\(stats.urgent)", unit: nil, label: "urgent",
-                         tone: stats.urgent > 0 ? .bad : .good,
-                         spoken: "\(stats.urgent) urgent reviews")
-                }
-                .padding(.vertical, 2)
+            // Four equal tiles across the width — they used to scroll and
+            // the fourth was cut off the right edge (10/8/26).
+            HStack(spacing: 8) {
+                pill(value: String(format: "%.1f", stats.avgRating), unit: "★",
+                     label: "rating", tone: ratingTone,
+                     spoken: "\(String(format: "%.1f", stats.avgRating)) star average rating")
+                pill(value: "\(Int(stats.responseRate))", unit: "%",
+                     label: "answered", tone: stats.responseRate >= 70 ? .good : (stats.responseRate >= 40 ? .warning : .bad),
+                     spoken: "\(Int(stats.responseRate)) percent of reviews answered")
+                pill(value: "\(stats.awaitingApproval + stats.needsResponse)", unit: nil,
+                     label: "to approve",
+                     tone: (stats.awaitingApproval + stats.needsResponse) == 0 ? .good
+                           : ((stats.awaitingApproval + stats.needsResponse) > 2 ? .bad : .warning),
+                     spoken: "\(stats.awaitingApproval + stats.needsResponse) replies waiting for you")
+                pill(value: "\(stats.urgent)", unit: nil, label: "urgent",
+                     tone: stats.urgent > 0 ? .bad : .good,
+                     spoken: "\(stats.urgent) urgent reviews")
             }
-            .scrollIndicators(.hidden)
+            .padding(.vertical, 2)
 
             if let caveat = coverageCaveat {
                 Text(caveat)
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -63,29 +62,38 @@ struct ReviewsStatStrip: View {
 
     private func pill(value: String, unit: String?, label: String,
                       tone: CavnarTone, spoken: String) -> some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(tone.foreground)
-                .frame(width: 7, height: 7)
-            HStack(alignment: .firstTextBaseline, spacing: 1) {
-                Text(value)
-                    .font(.cavnarNumber(17, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                if let unit {
-                    Text(unit)
-                        .font(.cavnarNumber(12, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+        // The figure over its label, so four fit side by side: a status
+        // dot and the number on top, the word under it.
+        VStack(spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Circle()
+                    .fill(tone.foreground)
+                    .frame(width: 7, height: 7)
+                    .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 1 }
+                HStack(alignment: .firstTextBaseline, spacing: 1) {
+                    Text(value)
+                        .font(.cavnarNumber(19, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                    if let unit {
+                        Text(unit)
+                            .font(.cavnarNumber(13, weight: 600))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
                 }
             }
             Text(label)
-                .font(.cavnarBody(12.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnarBody(13.5, weight: 500))
+                .foregroundStyle(Color.cavnarInk2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
         .background(Color.cavnarPaper2.opacity(0.75))
-        .overlay(Capsule().strokeBorder(Color.cavnarPaper3.opacity(0.6), lineWidth: 1))
-        .clipShape(Capsule())
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(Color.cavnarPaper3.opacity(0.6), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spoken)
     }

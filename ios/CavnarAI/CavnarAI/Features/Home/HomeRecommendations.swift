@@ -57,7 +57,7 @@ struct HomeRecommendations: View {
                 let shown = recommendations.filter { !answered.contains($0.key) }.prefix(3)
                 if shown.isEmpty {
                     Text("Nothing to recommend yet \u{2014} that changes as your data grows.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnarBody(HomeType.body))
                         .foregroundStyle(Color.cavnarInk3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
@@ -76,7 +76,7 @@ struct HomeRecommendations: View {
             }
             if let toast {
                 Text(toast)
-                    .font(.cavnarBody(12.5, weight: 600))
+                    .font(.cavnarBody(15, weight: 600))
                     .foregroundStyle(Color.cavnarGreen)
                     .transition(.opacity)
             }
@@ -129,26 +129,26 @@ struct HomeRecommendations: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "arrow.uturn.backward").font(.system(size: 11, weight: .bold))
-                Text("Restore hidden").font(.cavnarBody(12.5, weight: 700))
+                Image(systemName: "arrow.uturn.backward").font(.system(size: 13, weight: .bold))
+                Text("Restore hidden").font(.cavnarBody(15, weight: 700))
             }
             .foregroundStyle(Color.cavnarEmber2)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HomeTextButtonStyle())
         .accessibilityLabel("Restore hidden: \(hidden.title)")
     }
 
     private var quieterLine: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Quieter: \(quieter.map(\.label).joined(separator: ", ")) — the last four went by unanswered.")
-                .font(.cavnarBody(12.5, weight: 500))
+                .font(.cavnarBody(15, weight: 500))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(quieter) { q in
                 if let back = RecMemoryLines.reviewOn(q.reviewOn) {
-                    HomeMixedText.make("\(q.label): \(back)", size: CavnarType.caption, weight: 500,
+                    HomeMixedText.make("\(q.label): \(back)", size: HomeType.meta, weight: 500,
                                        color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -162,10 +162,10 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text("Show \(q.label.lowercased()) again")
-                        .font(.cavnarBody(12.5, weight: 700))
+                        .font(.cavnarBody(15, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HomeTextButtonStyle())
             }
         }
     }
@@ -207,20 +207,21 @@ struct HomeRecommendations: View {
     }
 
     /// A shortlist row, not a report (density #23): the verb-first title,
-    /// the dollars at stake, ONE confidence (a percentage with "Why?") and
-    /// one answer — then "Details" opens why, what it rests on, what
-    /// happens if it is ignored, "Could also be…", Assign, Not for us and
-    /// Hide in place. Every answer is still one tap from the row.
+    /// the dollars at stake and one answer, at phone reading size — then
+    /// "Details" opens how sure (a percentage with "Why?", moved there
+    /// 10/8/26), why, what it rests on, what happens if it is ignored,
+    /// "Could also be…", Assign, Not for us and Hide in place. Every answer
+    /// is still one tap from the row.
     private func row(_ rec: HomeRecommendation, number: Int, showsDivider: Bool) -> some View {
         let open = expanded.contains(rec.key)
         return VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Text(String(format: "%02d", number))
-                    .font(.cavnarNumber(17, weight: 600))
+                    .font(.cavnarNumber(19, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
-                    .frame(width: 26, alignment: .leading)
+                    .frame(width: 30, alignment: .leading)
                 VStack(alignment: .leading, spacing: 6) {
-                    HomeMixedText.make(rec.title, size: CavnarType.body, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(rec.title, size: HomeType.line + 0.5, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     // What another module knows against it (M3's trim
                     // guard) and what was said before about it (memory
@@ -232,20 +233,16 @@ struct HomeRecommendations: View {
                     RecMemoryNote(previous: rec.previousAnswer, delegate: rec.delegateAnswer,
                                   retest: rec.retest == true)
                     if let stake = Self.stake(rec) {
-                        HomeMixedText.make(stake, size: CavnarType.secondary, weight: 700,
+                        HomeMixedText.make(stake, size: HomeType.action, weight: 700,
                                            color: .cavnarInk2, numberColor: .cavnarInk)
                             .lineLimit(2)
-                    }
-                    if let c = rec.confidence {
-                        ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home",
-                                       compact: true)
                     }
                     // Advice that pulls against other advice: a decision,
                     // so it stays on the row (DS §12).
                     if let conflict = rec.conflict {
                         RecConflictPanel(conflict: conflict, onSettled: onChanged)
                     }
-                    HStack(spacing: 16) {
+                    HStack(spacing: 22) {
                         primaryButton(rec)
                         Button {
                             Haptic.light()
@@ -256,13 +253,13 @@ struct HomeRecommendations: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Text(open ? "Less" : "Details")
-                                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
+                                    .font(.cavnarBody(HomeType.action, weight: 600))
                                 Image(systemName: open ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 10, weight: .bold))
+                                    .font(.system(size: 12, weight: .bold))
                             }
                             .foregroundStyle(Color.cavnarInk3)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(HomeTextButtonStyle())
                         .accessibilityHint(open ? "Hides the detail" : "Shows why, what it rests on and the other answers")
                         Spacer(minLength: 0)
                     }
@@ -284,26 +281,31 @@ struct HomeRecommendations: View {
     /// Everything the row used to carry open, now behind Details.
     @ViewBuilder
     private func details(_ rec: HomeRecommendation) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            // How sure, with "Why?" — in Details on a phone (10/8/26).
+            if let c = rec.confidence {
+                ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home",
+                               compact: true)
+            }
             if rec.modelWritten == true {
                 ClaimKindTag(kind: nil, modelWritten: true)
             }
             if let why = rec.why {
-                HomeMixedText.make(why, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make(why, size: HomeType.action, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             let meta = Array(Self.chips(rec).dropFirst(Self.stake(rec) == nil ? 0 : 1))
             if !meta.isEmpty {
-                HomeMixedText.make(meta.joined(separator: " · "), size: 11.5, weight: 600, color: .cavnarInk3)
+                HomeMixedText.make(meta.joined(separator: " · "), size: HomeType.meta, weight: 600, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let evidence = rec.evidence {
-                HomeMixedText.make(evidence, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(evidence, size: HomeType.meta, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let ignored = rec.ifIgnored {
-                (Text(OwnerCopy.ifIgnoredLabel).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundColor(.cavnarInk2)
-                 + Text(ignored).font(.cavnarBody(CavnarType.caption, weight: 500)).foregroundColor(.cavnarInk3))
+                (Text(OwnerCopy.ifIgnoredLabel).font(.cavnarBody(HomeType.meta, weight: 700)).foregroundColor(.cavnarInk2)
+                 + Text(ignored).font(.cavnarBody(HomeType.meta, weight: 500)).foregroundColor(.cavnarInk3))
                     .fixedSize(horizontal: false, vertical: true)
             }
             actions(rec, excluding: Self.primaryAnswer(rec))
@@ -326,10 +328,10 @@ struct HomeRecommendations: View {
                 }
             } label: {
                 Text(rec.action?.label ?? "Reprice")
-                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .font(.cavnarBody(HomeType.action, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HomeTextButtonStyle())
         case .track:
             Button {
                 Haptic.light()
@@ -340,11 +342,11 @@ struct HomeRecommendations: View {
                 }
             } label: {
                 Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
-                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .font(.cavnarBody(HomeType.action, weight: 700))
                     .foregroundStyle(viewModel.tracked.contains(rec.key)
                                      ? Color.cavnarGreen : Color.cavnarEmber2)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HomeTextButtonStyle())
             .disabled(viewModel.tracked.contains(rec.key))
             .accessibilityHint("Takes a baseline now and measures the result in a few weeks")
         case .done:
@@ -353,10 +355,10 @@ struct HomeRecommendations: View {
                 submit(rec, kind: "done")
             } label: {
                 Text("Done")
-                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .font(.cavnarBody(HomeType.action, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HomeTextButtonStyle())
         }
     }
 
@@ -373,10 +375,10 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text(a.label ?? "Reprice")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnarBody(15.5, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HomeTextButtonStyle())
             }
             if primary != .track, rec.metric != nil {
                 Button {
@@ -388,11 +390,11 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnarBody(15.5, weight: 700))
                         .foregroundStyle(viewModel.tracked.contains(rec.key)
                                          ? Color.cavnarGreen : Color.cavnarEmber2)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HomeTextButtonStyle())
                 .disabled(viewModel.tracked.contains(rec.key))
                 .accessibilityHint("Takes a baseline now and measures the result in a few weeks")
             }
@@ -402,10 +404,10 @@ struct HomeRecommendations: View {
                     onOpenModule(module)
                 } label: {
                     Text("Open \(module == "inventory" ? "Food Cost" : module.capitalized)")
-                        .font(.cavnarBody(13, weight: 600))
+                        .font(.cavnarBody(15.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HomeTextButtonStyle())
             }
             if rec.alternative != nil {
                 Button {
@@ -415,10 +417,10 @@ struct HomeRecommendations: View {
                     RecEvidenceLog.viewed(key: rec.key, surface: "home", module: "home")
                 } label: {
                     Text("Could also be…")
-                        .font(.cavnarBody(13, weight: 600))
+                        .font(.cavnarBody(15.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HomeTextButtonStyle())
             }
             Spacer(minLength: 0)
         }
@@ -441,7 +443,7 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text("Assign")
-                        .font(.cavnarBody(12.5, weight: 600))
+                        .font(.cavnarBody(15, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -456,10 +458,10 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text(kind == "done" ? "Done" : RecAnswer.notForUs.label)
-                        .font(.cavnarBody(12.5, weight: 600))
+                        .font(.cavnarBody(15, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HomeTextButtonStyle())
             }
             Button {
                 Haptic.light()
@@ -470,10 +472,10 @@ struct HomeRecommendations: View {
                 }
             } label: {
                 Text("Hide")
-                    .font(.cavnarBody(12.5, weight: 600))
+                    .font(.cavnarBody(15, weight: 600))
                     .foregroundStyle(Color.cavnarInk3)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HomeTextButtonStyle())
             .accessibilityHint("Hides it for two weeks, everywhere Cavnar AI would say it")
         }
     }

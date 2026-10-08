@@ -214,9 +214,11 @@ struct ReviewsListView: View {
                     // had both and the phone had neither.
                     Section {
                         // How current the inbox is — the real fetch state,
-                        // not the reviews_live flag (DH4-6). Amber when a
-                        // check has been missed.
-                        if let fetch = viewModel.fetchLine {
+                        // not the reviews_live flag (DH4-6) — only when it
+                        // is news: a missed check (amber) or a stopped one.
+                        // On schedule it said nothing an owner acts on and
+                        // pushed the figures down (10/8/26).
+                        if let fetch = viewModel.fetchLine, fetch.tone == "warn" || fetch.tone == "bad" {
                             ServerStatusCaption(status: fetch)
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)

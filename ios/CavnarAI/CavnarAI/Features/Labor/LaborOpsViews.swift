@@ -362,9 +362,8 @@ struct CoversTile: View {
         }
         .cavnarCard()
         .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                if focused {
-                    Spacer()
+            if focused {
+                cavnarKeyboardTrailing {
                     Button("Done") { focused = false }
                         .foregroundStyle(Color.cavnarEmber2)
                 }

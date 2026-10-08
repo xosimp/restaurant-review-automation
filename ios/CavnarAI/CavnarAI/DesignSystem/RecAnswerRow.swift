@@ -264,11 +264,11 @@ struct RecAnswerRow: View {
                     // Queued offline: a clock, and the sentence says it has
                     // not gone yet — never the checkmark of a saved answer.
                     Image(systemName: answered.queued ? "clock.arrow.circlepath" : "checkmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .accessibilityHidden(true)
                     HomeMixedText.make(answered.queued ? RecAnswer.queuedLine
                                                        : (answered.message ?? answered.answer.confirmation),
-                                       size: 12.5, weight: 500, color: .cavnarInk3)
+                                       size: 15, weight: 500, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(Color.cavnarInk3)
@@ -279,7 +279,11 @@ struct RecAnswerRow: View {
                         .transition(.opacity)
                 }
             } else {
-                HStack(spacing: 16) {
+                // Real buttons (10/8/26): 16pt in a 44pt capsule a thumb
+                // can find in a dim room — they were 12.5pt words with a
+                // 20pt target. Measure it leads in ember; Done and Pass are
+                // outlined.
+                HStack(spacing: 10) {
                     ForEach(shownAnswers, id: \.self) { answer in
                         Button {
                             Haptic.light()
@@ -290,20 +294,31 @@ struct RecAnswerRow: View {
                             }
                         } label: {
                             Text(labels[answer] ?? answer.label)
-                                .font(.cavnarBody(12.5, weight: answer == .accepted ? 700 : 600))
-                                .foregroundStyle(answer == .accepted ? Color.cavnarEmber2 : Color.cavnarInk3)
-                                .padding(.vertical, 4)
-                                .contentShape(Rectangle())
+                                .font(.cavnarBody(16, weight: 700))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                                .foregroundStyle(answer == .accepted ? Color.cavnarEmber2 : Color.cavnarInk)
+                                .padding(.horizontal, 18)
+                                .frame(minHeight: 44)
+                                .background(
+                                    Capsule().fill(answer == .accepted ? Color.cavnarEmber.opacity(0.16)
+                                                                       : Color.cavnarPaper3.opacity(0.55)))
+                                .overlay(
+                                    Capsule().strokeBorder(answer == .accepted ? Color.cavnarEmber.opacity(0.55)
+                                                                               : Color.cavnarInk3.opacity(0.35),
+                                                           lineWidth: 1))
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
                         .disabled(busy)
                         .accessibilityHint(answer.accessibilityHint)
                     }
                 }
+                .padding(.top, 4)
                 .opacity(busy ? 0.45 : 1)
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.cavnarBody(12))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }

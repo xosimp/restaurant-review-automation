@@ -863,8 +863,7 @@ struct WalkInCountView: View {
                     .buttonStyle(.plain)
                     .accessibilityHint("Your counts stay on the sheet")
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
+                cavnarKeyboardTrailing {
                     Button(nextId == nil ? "Done" : "Next") {
                         Haptic.selection()
                         focused = nextId

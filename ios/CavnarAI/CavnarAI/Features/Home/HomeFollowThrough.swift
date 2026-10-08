@@ -1714,10 +1714,10 @@ struct HomeFollowThrough: View {
             showingRecord = true
         } label: {
             Text("What you followed \u{2192}")
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(HomeType.action, weight: 700))
                 .foregroundStyle(Color.cavnarEmber2)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HomeTextButtonStyle())
         .accessibilityHint("Opens every recommendation, what you did about it, and what it did")
     }
 
@@ -1726,18 +1726,18 @@ struct HomeFollowThrough: View {
     private func resultRow(_ r: RecOutcome, showsDivider: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                Circle().fill(r.tone).frame(width: 8, height: 8).padding(.top, 6)
+                Circle().fill(r.tone).frame(width: 10, height: 10).padding(.top, 7)
                 VStack(alignment: .leading, spacing: 3) {
-                    HomeMixedText.make(r.summary ?? r.resultLine ?? "", size: 14.5, weight: 500, color: .cavnarInk2)
+                    HomeMixedText.make(r.summary ?? r.resultLine ?? "", size: 17, weight: 500, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let label = r.attributionLabel, !label.isEmpty {
-                        HomeMixedText.make(label, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(label, size: 14.5, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     // Shown, never counted, when its baseline overlapped
                     // the trigger; the grade; the band's false-alarm rate.
                     ForEach(r.measurementNotes, id: \.self) { note in
-                        HomeMixedText.make(note + ".", size: 12.5, weight: 500,
+                        HomeMixedText.make(note + ".", size: 14.5, weight: 500,
                                            color: note.hasPrefix("Not counted") ? .cavnarAmber : .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1774,10 +1774,10 @@ struct HomeFollowThrough: View {
                             Circle().fill(Color.cavnarGreen).frame(width: 8, height: 8)
                                 .padding(.top, 6)
                             VStack(alignment: .leading, spacing: 3) {
-                                HomeMixedText.make(item.headline, size: 14.5, weight: 700,
+                                HomeMixedText.make(item.headline, size: 17, weight: 700,
                                                    color: .cavnarInk)
                                 if let summary = item.summary {
-                                    HomeMixedText.make(summary, size: 12.5, weight: 500,
+                                    HomeMixedText.make(summary, size: 14.5, weight: 500,
                                                        color: .cavnarInk3)
                                 }
                                 HomeAskLink(question: item.ask ?? "What's behind this: \(item.headline)",
@@ -1819,22 +1819,23 @@ struct HomeFollowThrough: View {
                 ForEach(Array(viewModel.lossFlags.enumerated()), id: \.element.id) { index, flag in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .top, spacing: 12) {
-                            Circle().fill(Color.cavnarAmber).frame(width: 8, height: 8)
-                                .padding(.top, 6)
-                            HomeMixedText.make(flag.headline, size: 14.5, weight: 600,
+                            Circle().fill(Color.cavnarAmber).frame(width: 10, height: 10)
+                                .padding(.top, 7)
+                            HomeMixedText.make(flag.headline, size: 17, weight: 600,
                                                color: .cavnarInk)
                             Spacer(minLength: 0)
                         }
                         if let alt = flag.alternative {
-                            HomeMixedText.make("Could also be: " + alt, size: 12.5, weight: 500,
-                                               color: .cavnarInk3)
-                                .padding(.leading, 20)
+                            HomeMixedText.make("Could also be: " + alt, size: 15, weight: 500,
+                                               color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.leading, 22)
                         }
                         // Done / Not for us — the key the concentration
                         // issue is filed under, presented on Home.
                         if flag.answerable == true, let key = flag.recKey ?? flag.key {
                             RecAnswerRow(key: key, surface: "home", module: "ops")
-                                .padding(.leading, 20)
+                                .padding(.leading, 22)
                         }
                         if index < viewModel.lossFlags.count - 1 {
                             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
@@ -1915,12 +1916,12 @@ struct HomeFollowThrough: View {
                 if let lines = v.ledger?.lines, !lines.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("SINCE YOU STARTED")
-                            .font(.cavnarBody(11, weight: 700))
+                            .font(.cavnarBody(13, weight: 700))
                             .tracking(1.4)
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, 10)
                         ForEach(lines.prefix(6), id: \.self) { line in
-                            HomeMixedText.make(line, size: 13.5, weight: 500, color: .cavnarInk2)
+                            HomeMixedText.make(line, size: 16, weight: 500, color: .cavnarInk2)
                         }
                     }
                 }
@@ -1955,7 +1956,7 @@ struct HomeFollowThrough: View {
                     if !rates.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(rates.enumerated()), id: \.offset) { _, line in
-                                HomeMixedText.make(line, size: 12.5, weight: 500, color: .cavnarInk3)
+                                HomeMixedText.make(line, size: 14.5, weight: 500, color: .cavnarInk3)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -2005,23 +2006,23 @@ struct HomeFollowThrough: View {
                     .padding(.vertical, 6)
                 // The audit estimated; it promised nothing (NS3 M12).
                 Text("WHAT THE AUDIT ESTIMATED")
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(13, weight: 700))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarEmber2)
                 HomeMixedText.make(
                     // audit_date arrives ISO; an owner reads M/D/YY (CA1 O16).
                     "At your audit on \(p.auditDate.map { CavnarDate.mdy($0) } ?? "sign-up") we estimated "
                     + "\(Self.money(low))–\(Self.money(annual.high ?? low)) a year was available.",
-                    size: 14, weight: 600, color: .cavnarInk)
+                    size: 16, weight: 600, color: .cavnarInk)
                 ForEach(Array((p.categories ?? []).enumerated()), id: \.offset) { _, c in
                     if let note = c.note {
                         HomeMixedText.make("\(c.label ?? c.metricLabel ?? ""): \(note)",
-                                           size: 12.5, weight: 500, color: .cavnarInk3)
+                                           size: 14.5, weight: 500, color: .cavnarInk3)
                     } else if let then = c.then, let now = c.now {
                         HomeMixedText.make(
                             "\(c.metricLabel ?? c.label ?? ""): \(Self.trim(then))\(c.unit ?? "") "
                             + "at the audit, \(Self.trim(now))\(c.unit ?? "") now",
-                            size: 12.5, weight: 500, color: .cavnarInk3)
+                            size: 14.5, weight: 500, color: .cavnarInk3)
                     }
                 }
                 if let caveat = p.caveat {
@@ -2089,11 +2090,11 @@ struct HomeFollowThrough: View {
         let alt = item.action?.alt
         return VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                Circle().fill(item.tone).frame(width: 8, height: 8).padding(.top, 6)
+                Circle().fill(item.tone).frame(width: 10, height: 10).padding(.top, 7)
                 VStack(alignment: .leading, spacing: 3) {
-                    HomeMixedText.make(item.title, size: 15, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(item.title, size: 17, weight: 600, color: .cavnarInk)
                     if let detail = item.detail {
-                        HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(detail, size: 14.5, weight: 500, color: .cavnarInk3)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2112,9 +2113,9 @@ struct HomeFollowThrough: View {
                             perform(action.step, on: item)
                         } label: {
                             Text(action.label)
-                                .font(.cavnarBody(13, weight: 700))
+                                .font(.cavnarBody(15.5, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
-                                .frame(minHeight: 32)
+                                .frame(minHeight: 44)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -2126,9 +2127,9 @@ struct HomeFollowThrough: View {
                             perform(alt, on: item)
                         } label: {
                             Text(alt.label)
-                                .font(.cavnarBody(12.5, weight: 600))
+                                .font(.cavnarBody(14.5, weight: 600))
                                 .foregroundStyle(Color.cavnarInk2)
-                                .frame(minHeight: 28)
+                                .frame(minHeight: 40)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -2139,9 +2140,9 @@ struct HomeFollowThrough: View {
                         Task { await viewModel.snooze(item) }
                     } label: {
                         Text("Not today")
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk3)
-                            .frame(minHeight: 28)
+                            .frame(minHeight: 40)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -2224,7 +2225,7 @@ struct HomeFollowThrough: View {
         let color: Color = note.tone == .good ? .cavnarGreen : (note.tone == .warn ? .cavnarAmber : .cavnarRed)
         VStack(alignment: .leading, spacing: 6) {
             if note.blockers.isEmpty {
-                HomeMixedText.make(note.text, size: 12.5, weight: 600, color: color)
+                HomeMixedText.make(note.text, size: 14.5, weight: 600, color: color)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(note.text.uppercased())
@@ -2234,7 +2235,7 @@ struct HomeFollowThrough: View {
                 ForEach(Array(note.blockers.enumerated()), id: \.offset) { _, b in
                     HStack(alignment: .top, spacing: 8) {
                         Circle().fill(Color.cavnarRed).frame(width: 6, height: 6).padding(.top, 6)
-                        HomeMixedText.make(b, size: 13, weight: 500, color: .cavnarInk2)
+                        HomeMixedText.make(b, size: 15.5, weight: 500, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -2260,8 +2261,8 @@ struct HomeFollowThrough: View {
     private func lineRow(_ text: String, tone: Color, showsDivider: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                Circle().fill(tone).frame(width: 8, height: 8).padding(.top, 6)
-                HomeMixedText.make(text, size: 14.5, weight: 500, color: .cavnarInk2)
+                Circle().fill(tone).frame(width: 10, height: 10).padding(.top, 7)
+                HomeMixedText.make(text, size: 17, weight: 500, color: .cavnarInk2)
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 11)

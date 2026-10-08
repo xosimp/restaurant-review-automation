@@ -29,8 +29,10 @@ struct HomeAskLink: View {
             router.pendingAskPrompt = question
         } label: {
             Text(label + " →")
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(HomeType.action, weight: 700))
                 .foregroundStyle(Color.cavnarEmber2)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityHint("Asks Cavnar AI this question")

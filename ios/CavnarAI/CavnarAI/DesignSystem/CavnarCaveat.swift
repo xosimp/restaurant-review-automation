@@ -13,22 +13,22 @@ struct CavnarCaveat: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.cavnarAmber)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.cavnarBody(12.5, weight: 700))
+                    .font(.cavnarBody(15, weight: 700))
                     .foregroundStyle(Color.cavnarAmber)
                 Text(detail)
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnarBody(14.5))
                     .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
         .background(Color.cavnarAmber.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
         .overlay(
             RoundedRectangle(cornerRadius: 9)

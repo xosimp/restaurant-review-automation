@@ -297,8 +297,8 @@ final class ConfidenceDisplayTests: XCTestCase {
         XCTAssertNil(old.confidence)
     }
 
-    /// The deck grows to fit the evidence and confidence lines, the same
-    /// height for every card so the ghosts line up.
+    /// The deck grows to fit the evidence line, the same height for every
+    /// card so the ghosts line up.
     @MainActor
     func testActionDeckHeightMakesRoomForTheNewLines() throws {
         let plain = try decode(NeedsAttentionItem.self, #"{"type": "a", "module": "m", "title": "t", "detail": "d"}"#)
@@ -307,8 +307,8 @@ final class ConfidenceDisplayTests: XCTestCase {
             """)
         let base = HomeActionDeck.cardHeight(for: [plain])
         let grown = HomeActionDeck.cardHeight(for: [plain, rich])
-        // 156 since the deck's buttons became 44pt targets (friction #50).
-        XCTAssertEqual(base, 156)
+        // 172 since Home's phone-size type (10/8/26) over 44pt buttons.
+        XCTAssertEqual(base, 172)
         XCTAssertGreaterThan(grown, base)
     }
 

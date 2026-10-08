@@ -691,18 +691,14 @@ private struct IngredientCarousel: View {
         //    well-understood layout child rather than two separate
         //    top-level toolbar items.
         .toolbar {
-            cavnarToolbarItemGroup(placement: .keyboard) {
-                // Checkmark, not chevrons — CarouselField's cases carry a
-                // per-card UUID (.name(UUID), not a fixed CaseIterable
-                // set), so it doesn't fit keyboardNavToolbar's up/down
-                // stepping the way a static form's fields do. Still routes
-                // through the same keyboardIconButton every other keyboard
-                // toolbar in the app uses, so the dismiss glyph itself
-                // matches everywhere.
-                HStack {
-                    Spacer()
-                    keyboardIconButton(systemName: "checkmark", enabled: true) { focusedField = nil }
-                }
+            // Checkmark, not chevrons — CarouselField's cases carry a
+            // per-card UUID (.name(UUID), not a fixed CaseIterable set), so
+            // it doesn't fit keyboardNavToolbar's up/down stepping the way a
+            // static form's fields do. Still the same keyboardIconButton
+            // every other keyboard toolbar in the app uses, at the trailing
+            // edge (cavnarKeyboardTrailing).
+            cavnarKeyboardTrailing {
+                keyboardIconButton(systemName: "checkmark", enabled: true) { focusedField = nil }
             }
         }
     }

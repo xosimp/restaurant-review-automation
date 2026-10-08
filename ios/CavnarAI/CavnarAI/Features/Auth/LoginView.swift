@@ -62,7 +62,14 @@ struct LoginView: View {
                 GeometryReader { geo in
                     ScrollView {
                         VStack(spacing: 0) {
-                            Spacer(minLength: 0)
+                            // The Ember Core in the open space above the
+                            // wordmark, centred between the top of the
+                            // screen and the wordmark (10/8/26): this region
+                            // and the Spacer at the bottom share what the
+                            // block leaves, so the form stays centred.
+                            ember
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .padding(.vertical, LoginMetrics.spaceL)
 
                             brand
                                 .padding(.bottom, LoginMetrics.spaceXXL)
@@ -130,21 +137,23 @@ struct LoginView: View {
 
     // MARK: - Brand
 
+    /// Cavnar AI itself, met first (the Ember Core, 10/8/26) — the web's
+    /// sign-in does the same. Mounted with the wordmark so it never runs
+    /// hidden under the launch splash.
+    private var ember: some View {
+        Group {
+            if introReady {
+                EmberCoreView(size: 72)
+                    .transition(.opacity.combined(with: .scale(scale: 0.86)))
+            } else {
+                Color.clear.frame(width: 72, height: 72)
+            }
+        }
+        .animation(.easeOut(duration: 0.6), value: introReady)
+    }
+
     private var brand: some View {
         VStack(spacing: LoginMetrics.spaceM) {
-            // Cavnar AI itself, met first (the Ember Core, 10/8/26) — the
-            // web's sign-in does the same. Mounted with the wordmark so it
-            // never runs hidden under the launch splash.
-            Group {
-                if introReady {
-                    EmberCoreView(size: 72)
-                        .transition(.opacity.combined(with: .scale(scale: 0.86)))
-                } else {
-                    Color.clear.frame(width: 72, height: 72)
-                }
-            }
-            .padding(.bottom, 14)
-            .animation(.easeOut(duration: 0.6), value: introReady)
             // Wordmark only — the seal beside it was the same "two marks
             // side by side" call already made everywhere else a lockup
             // showed both. Same entrance LockedView uses. The glow is a

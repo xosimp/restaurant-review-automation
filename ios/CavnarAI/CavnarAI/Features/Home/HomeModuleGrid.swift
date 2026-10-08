@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// One tile in Home's KPI grid — mirrors the web dashboard's stat-tile
-/// pattern (big Space Grotesk number, small ember eyebrow label). Purely
+/// pattern (big Space Grotesk number, the module's name under it). Purely
 /// data-driven off a ModuleSummary, so a 6th module needs zero layout code
 /// here — it just becomes one more grid item.
 struct KPITile: View {
@@ -23,18 +23,10 @@ struct KPITile: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            // No status dot on the icon (10/8/26): the pill under the
+            // figures says it in words, and the dot was a second, smaller
+            // signal for the same thing.
             GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 40)
-                .overlay(alignment: .topTrailing) {
-                    if tone != nil {
-                        Circle()
-                            .fill(HomePulseStrip.toneColor(tone))
-                            .frame(width: 10, height: 10)
-                            .overlay(Circle().strokeBorder(Color.cavnarPaper, lineWidth: 2))
-                            .shadow(color: HomePulseStrip.toneColor(tone).opacity(0.8), radius: 4)
-                            .offset(x: 3, y: -3)
-                            .accessibilityHidden(true)
-                    }
-                }
             Text(module.kpi?.value ?? "—")
                 .font(.cavnarNumber(26, weight: 500))
                 .foregroundStyle(Color.cavnarInk)
@@ -47,21 +39,32 @@ struct KPITile: View {
             // eyebrow caption but reads oddly on a real headline face —
             // this sits under the number as this tile's own name, not a
             // kicker label above something else.
+            // Cream, not ember, at 18 (10/8/26): ember on the tile's own
+            // ember glass all but disappeared in a dim room.
             Text(module.label)
-                .font(.cavnarHeadline(14))
-                .foregroundStyle(Color.cavnarEmber)
+                .font(.cavnarHeadline(18))
+                .foregroundStyle(Color.cavnarInk)
+                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
                 .multilineTextAlignment(.center)
             if let sublabel = module.kpi?.sublabel {
                 Text(OwnerCopy.displayLabel(sublabel))
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnarBody(15, weight: 500))
+                    .foregroundStyle(Color.cavnarInk.opacity(0.82))
                     .multilineTextAlignment(.center)
             }
+            // The status in words on a dark pill, so red or amber reads on
+            // the ember tile (10/8/26).
             if let why = Self.why(module) {
-                HomeMixedText.make(why, size: CavnarType.caption, weight: 700,
+                HomeMixedText.make(why, size: 13.5, weight: 700,
                                    color: HomePulseStrip.toneColor(tone))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.black.opacity(0.55)))
+                    .overlay(Capsule().strokeBorder(HomePulseStrip.toneColor(tone).opacity(0.45), lineWidth: 1))
+                    .padding(.horizontal, 6)
             }
         }
         .frame(maxWidth: .infinity)
