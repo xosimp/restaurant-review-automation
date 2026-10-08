@@ -130,8 +130,9 @@ targets:
         com.apple.developer.usernotifications.time-sensitive: true
         com.apple.developer.applesignin:
           - Default
-        # Universal links (F3-16): dashboard.cavnar.ai/dashboard opens the
-        # app. The server half is hosted_dashboard.py's
+        # Universal links (F3-16, parity audit #1): the dashboard's own links
+        # (/?nav=, ?review=, ?ask=, ?tab=, /#path) open the app. The server
+        # half is hosted_dashboard.py's
         # /.well-known/apple-app-site-association (app id
         # 8DW8XL63K6.ai.cavnar.CavnarAI). Automatic signing adds the
         # capability to the App ID on the next device build.
@@ -143,6 +144,8 @@ targets:
           - group.ai.cavnar.CavnarAI
     dependencies:
       - target: CavnarWidgets
+      # The notification's own expanded view (parity audit #36).
+      - target: CavnarNotificationContent
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.cavnar.CavnarAI
@@ -212,6 +215,61 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_STRICT_CONCURRENCY: complete
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CAVNAR_WIDGET_EXTENSION"
+        APPLICATION_EXTENSION_API_ONLY: YES
+
+  # The expanded view of a notification (parity audit #36): long-press a
+  # review push and the reply "Approve & post" publishes is there to read;
+  # the nightly report's push shows its headline whole. Registered for the
+  # two categories that carry them (push.py CATEGORY_REVIEW_DRAFTED,
+  # CATEGORY_DSR). Reads the push payload only — never signs in, never calls
+  # the API, holds no token; the buttons under it are the app's
+  # (PushManager). NotificationPreview (Shared/) is the one reading of the
+  # payload, compiled into the app too so its tests cover it.
+  CavnarNotificationContent:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: CavnarNotificationContent
+      - path: Shared/NotificationPreview.swift
+      - path: CavnarAI/DesignSystem/Color+Cavnar.swift
+      - path: CavnarAI/DesignSystem/Font+Cavnar.swift
+      - path: CavnarAI/Assets.xcassets
+      - path: CavnarAI/Fonts
+    info:
+      path: Generated/CavnarNotificationContent-Info.plist
+      properties:
+        CFBundleDisplayName: Cavnar AI
+        UIAppFonts:
+          - ApfelGrotezk-Regular.ttf
+          - ApfelGrotezk-Fett.ttf
+          - ClashDisplay-Regular.ttf
+          - ClashDisplay-Medium.ttf
+          - ClashDisplay-Semibold.ttf
+          - ClashDisplay-Bold.ttf
+          - SpaceGrotesk.ttf
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationViewController
+          NSExtensionAttributes:
+            UNNotificationExtensionCategory:
+              - CAVNAR_REVIEW_DRAFTED
+              - CAVNAR_DSR
+            UNNotificationExtensionInitialContentSizeRatio: 0.6
+            # The view draws the title and body itself, in the app's type.
+            UNNotificationExtensionDefaultContentHidden: true
+            UNNotificationExtensionUserInteractionEnabled: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cavnar.CavnarAI.NotificationContent
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 8DW8XL63K6
+        CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
+        CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_STRICT_CONCURRENCY: complete
         APPLICATION_EXTENSION_API_ONLY: YES
 
   CavnarAITests:

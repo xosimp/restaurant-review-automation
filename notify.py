@@ -2157,7 +2157,10 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
             restaurant_id, "login",
             "New sign-in",
             f"{restaurant_name} — signed in from {ip}",
-            data={"alert_type": "login"},
+            # The login it was, so "This wasn't me" on the push signs THAT
+            # login out everywhere — offered only on its own notice
+            # (push.CATEGORY_LOGIN, parity audit #55).
+            data={"alert_type": "login", **({"login_user_id": int(user_id)} if user_id is not None else {})},
             db_path=db_path,
             user_ids=[user_id] if user_id is not None else console_user_ids(restaurant_id, db_path=db_path),
         )

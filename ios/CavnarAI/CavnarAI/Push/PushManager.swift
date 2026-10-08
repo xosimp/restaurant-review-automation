@@ -101,6 +101,14 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// Tonight's lineup brief waiting for approval: Approve publishes the
     /// draft as written; Open shows it first (parity #26).
     nonisolated private static let lineupCategory        = "CAVNAR_LINEUP"
+    /// Parity audit 10/7/26 (#35, #55): push.py's CATEGORY_REC … CATEGORY_DSR.
+    nonisolated static let recCategory            = "CAVNAR_REC"
+    nonisolated static let recAskCategory         = "CAVNAR_REC_ASK"
+    nonisolated static let publishHeldCategory    = "CAVNAR_PUBLISH_HELD"
+    nonisolated static let stockCategory          = "CAVNAR_STOCK"
+    nonisolated static let loginCategory          = "CAVNAR_LOGIN"
+    nonisolated static let connectionCategory     = "CAVNAR_CONNECTION"
+    nonisolated static let dsrCategory            = "CAVNAR_DSR"
     nonisolated private static let openAction     = "CAVNAR_OPEN"
     nonisolated private static let askAction      = "CAVNAR_ASK"
     nonisolated static let approvePostAction      = "CAVNAR_APPROVE_POST"
@@ -115,6 +123,21 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     nonisolated static let sendScheduleAction             = "CAVNAR_SEND_SCHEDULE"
     nonisolated static let replyMessageAction     = "CAVNAR_REPLY_MESSAGE"
     nonisolated static let approveLineupAction    = "CAVNAR_APPROVE_LINEUP"
+    /// A reply typed on the lock screen: saved as the draft, then approved
+    /// with that exact text as `expected_draft` (#54).
+    nonisolated static let replyTextAction        = "CAVNAR_REPLY_TEXT"
+    nonisolated static let recDoneAction          = "CAVNAR_REC_DONE"
+    nonisolated static let recNotForUsAction      = "CAVNAR_REC_NOT_FOR_US"
+    nonisolated static let sendNowAction          = "CAVNAR_SEND_NOW"
+    nonisolated static let notMeAction            = "CAVNAR_NOT_ME"
+    /// Foreground buttons that open a named place (not the push's own nav).
+    nonisolated static let draftOrderAction       = "CAVNAR_DRAFT_ORDER"
+    nonisolated static let reconnectAction        = "CAVNAR_RECONNECT"
+    nonisolated static let askLastNightAction     = "CAVNAR_ASK_LAST_NIGHT"
+
+    /// Set by RootView: a push that arrives while the app is open re-reads
+    /// the bell's count (parity audit #81).
+    var onForegroundPush: (@MainActor () -> Void)?
 
     /// The system prompt used to fire within seconds of the first login,
     /// before the owner had seen a single number. Asking on the second open
@@ -241,12 +264,21 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// "Open" on an issue did exactly what tapping the notification does, so
-    /// the issue category has no button of its own now; "Respond" on a
-    /// review only opened the app, so it says "Reply". The actionable ones
-    /// act: no `.foreground`, and `.authenticationRequired` so a locked
-    /// phone asks for Face ID before a reply posts or a send is stopped.
+    /// the issue category has no button of its own now. "Reply" on a review
+    /// takes the reply right there (parity audit #54): typed on the lock
+    /// screen, saved as the draft and posted — it used to only open the app.
+    /// The actionable ones act: no `.foreground`, and
+    /// `.authenticationRequired` so a locked phone asks for Face ID before a
+    /// reply posts or a send is stopped.
     private static var categories: Set<UNNotificationCategory> {
-        let reply = UNNotificationAction(identifier: openAction, title: "Reply", options: [.foreground])
+        let reply = UNTextInputNotificationAction(identifier: replyTextAction, title: "Reply",
+                                                  options: [.authenticationRequired],
+                                                  textInputButtonTitle: "Post", textInputPlaceholder: "Your reply")
+        let writeOwn = UNTextInputNotificationAction(identifier: replyTextAction, title: "Write my own",
+                                                     options: [.authenticationRequired],
+                                                     textInputButtonTitle: "Post",
+                                                     textInputPlaceholder: "Your reply")
+        let openReview = UNNotificationAction(identifier: openAction, title: "Open", options: [.foreground])
         let ask = UNNotificationAction(identifier: askAction, title: "Ask about this", options: [.foreground])
         let approvePost = UNNotificationAction(identifier: approvePostAction, title: "Approve & post",
                                                options: [.authenticationRequired])
@@ -267,14 +299,42 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         let approveLineup = UNNotificationAction(identifier: approveLineupAction, title: "Approve",
                                                  options: [.authenticationRequired])
         let openLineup = UNNotificationAction(identifier: openAction, title: "Open", options: [.foreground])
+        // Parity audit #35 / #55.
+        let done = UNNotificationAction(identifier: recDoneAction, title: "Done", options: [.authenticationRequired])
+        let notForUs = UNNotificationAction(identifier: recNotForUsAction, title: "Not for us",
+                                            options: [.authenticationRequired])
+        let sendNow = UNNotificationAction(identifier: sendNowAction, title: "Send now",
+                                           options: [.authenticationRequired])
+        let reviewWeek = UNNotificationAction(identifier: openAction, title: "Review", options: [.foreground])
+        let draftOrder = UNNotificationAction(identifier: draftOrderAction, title: "Draft order",
+                                              options: [.foreground])
+        let notMe = UNNotificationAction(identifier: notMeAction, title: "This wasn\u{2019}t me",
+                                         options: [.destructive, .authenticationRequired])
+        let reconnect = UNNotificationAction(identifier: reconnectAction, title: "Reconnect", options: [.foreground])
+        let askLastNight = UNNotificationAction(identifier: askLastNightAction, title: "Ask about last night",
+                                                options: [.foreground])
         return [
             UNNotificationCategory(identifier: scheduleCategory, actions: [review, sendSchedule],
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: scheduleReviewCategory, actions: [review],
                                    intentIdentifiers: [], options: []),
-            UNNotificationCategory(identifier: reviewCategory, actions: [reply],
+            UNNotificationCategory(identifier: reviewCategory, actions: [reply, openReview],
                                    intentIdentifiers: [], options: []),
-            UNNotificationCategory(identifier: reviewDraftedCategory, actions: [approvePost, edit],
+            UNNotificationCategory(identifier: reviewDraftedCategory, actions: [approvePost, writeOwn, edit],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: recCategory, actions: [done, notForUs],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: recAskCategory, actions: [done, notForUs, ask],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: publishHeldCategory, actions: [sendNow, reviewWeek],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: stockCategory, actions: [draftOrder],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: loginCategory, actions: [notMe],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: connectionCategory, actions: [reconnect],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: dsrCategory, actions: [askLastNight],
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: undoableCategory, actions: [undo, review],
                                    intentIdentifiers: [], options: []),
@@ -308,6 +368,63 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         /// a typed reply ({body}, or {recipient_id, body}) or the brief's
         /// day ({day, text: null}: approve the draft as written).
         var payload: PushActionBody? = nil
+        /// What the call sends when it is more than `{}` or `{decision}` —
+        /// every key the route reads (parity round rule).
+        var body: ActionBody? = nil
+        /// The typed reply, saved as the review's draft before the approve
+        /// (`/reviews/<id>/save-draft`, #54).
+        var savesDraft: SavedDraft? = nil
+        /// Whether the action reaches someone outside the app (a reply, a
+        /// staff decision, a send, signing a login out everywhere). An app
+        /// passcode keeps those in the app (F3-13); an Undo or an answer to a
+        /// recommendation is not one.
+        var outward = true
+        /// Said on a local notification when it worked — only where the
+        /// owner needs to know what happened next ("check your email").
+        var successTitle: String? = nil
+    }
+
+    struct SavedDraft: Equatable {
+        let path: String
+        let text: String
+    }
+
+    /// The JSON body of a lock-screen action, by route.
+    enum ActionBody: Encodable, Equatable {
+        /// `/reviews/<id>/approve` — the reply the owner saw (`expected_draft`):
+        /// changed since, and nothing posts (409 draft_changed).
+        case approve(expectedDraft: String)
+        /// `/labor/publish-schedule` — the week and the blocker keys the push
+        /// named (client_api._publish_schedule_request).
+        case publish(scheduleId: Int, acknowledge: [String])
+        /// `/recs/event` — Done or Not for us.
+        case recAnswer(APIClient.RecEventBody)
+        /// `/account/not-me` — the login the sign-in was.
+        case notMe(loginUserId: Int)
+
+        private enum Keys: String, CodingKey {
+            case expectedDraft = "expected_draft"
+            case scheduleId = "schedule_id"
+            case acknowledge
+            case loginUserId = "login_user_id"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            switch self {
+            case .approve(let text):
+                var c = encoder.container(keyedBy: Keys.self)
+                try c.encode(text, forKey: .expectedDraft)
+            case .publish(let id, let keys):
+                var c = encoder.container(keyedBy: Keys.self)
+                try c.encode(id, forKey: .scheduleId)
+                try c.encode(keys, forKey: .acknowledge)
+            case .recAnswer(let body):
+                try body.encode(to: encoder)
+            case .notMe(let id):
+                var c = encoder.container(keyedBy: Keys.self)
+                try c.encode(id, forKey: .loginUserId)
+            }
+        }
     }
 
     /// What an Approve & post answer means for the owner who pressed it from
@@ -325,11 +442,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// just opens, like a tap).
     nonisolated static func backgroundAction(for actionIdentifier: String,
                                              cavnar: [String: Any],
-                                             typedText: String? = nil) -> BackgroundAction? {
+                                             userText: String? = nil) -> BackgroundAction? {
         switch actionIdentifier {
         case replyMessageAction:
             // An empty reply sends nothing: the notification just opens.
-            let text = (typedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = (userText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             let body = String(text.prefix(1000))
             let type = alertType(cavnar)
@@ -352,12 +469,58 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                     payload: PushActionBody(["day": .string(day), "text": .null]))
         case approvePostAction:
             guard let id = reviewId(from: cavnar["review_id"]) else { return nil }
+            // The reply the notification showed (push.py `draft`, #36), sent
+            // back so a draft changed since is not posted unread — only when
+            // the push carried it whole (`draft_complete`).
+            var action = BackgroundAction(path: "/mobile/api/reviews/\(id)/approve", decision: nil,
+                                          failureTitle: "Couldn't post that reply", postsReply: true)
+            if let shown = shownDraft(cavnar) { action.body = .approve(expectedDraft: shown) }
+            return action
+        case replyTextAction:
+            // A typed reply (#54): saved as the draft, then approved with
+            // exactly that text — the web's save-then-approve, never a reply
+            // the owner did not write. An empty reply does nothing but open.
+            guard let id = reviewId(from: cavnar["review_id"]),
+                  let text = userText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
+            else { return nil }
+            let reply = String(text.prefix(4000))
             return BackgroundAction(path: "/mobile/api/reviews/\(id)/approve", decision: nil,
-                                    failureTitle: "Couldn't post that reply", postsReply: true)
+                                    failureTitle: "Couldn't post your reply", postsReply: true,
+                                    body: .approve(expectedDraft: reply),
+                                    savesDraft: SavedDraft(path: "/mobile/api/reviews/\(id)/save-draft", text: reply))
+        case recDoneAction, recNotForUsAction:
+            // Done / Not for us on a recommendation the app may answer
+            // (push.py `answerable` + `rec_key`, #35) — POST /recs/event,
+            // the cards' own body.
+            guard cavnar["answerable"] as? Bool == true || (cavnar["answerable"] as? NSNumber)?.boolValue == true,
+                  let key = (cavnar["rec_key"] as? String)?.trimmingCharacters(in: .whitespaces), !key.isEmpty
+            else { return nil }
+            let answer: RecAnswer = actionIdentifier == recDoneAction ? .completed : .notForUs
+            let body = APIClient.recEventBody(key: String(key.prefix(160)), answer: answer,
+                                              surface: surface(cavnar) ?? "alert_push",
+                                              module: recModule(cavnar))
+            return BackgroundAction(path: "/mobile/api/recs/event", decision: nil,
+                                    failureTitle: answer == .completed ? "Couldn't mark that done"
+                                                                       : "Couldn't pass on that",
+                                    body: .recAnswer(body), outward: false)
+        case sendNowAction:
+            // The held week, sent now (#55): the blocker keys the push named
+            // are what the owner acknowledged by reading it
+            // (delayed._tell_owner_schedule_held).
+            guard let id = reviewId(from: cavnar["schedule_id"]),
+                  let keys = cavnar["blocker_keys"] as? [Any] else { return nil }
+            let ack = keys.compactMap { ($0 as? String) ?? ($0 as? NSNumber)?.stringValue }
+            return BackgroundAction(path: "/mobile/api/labor/publish-schedule", decision: nil,
+                                    failureTitle: "Couldn't send the week", body: .publish(scheduleId: id, acknowledge: ack))
+        case notMeAction:
+            guard let uid = reviewId(from: cavnar["login_user_id"]) else { return nil }
+            return BackgroundAction(path: "/mobile/api/account/not-me", decision: nil,
+                                    failureTitle: "Couldn't sign that login out", body: .notMe(loginUserId: uid),
+                                    successTitle: "Signed out everywhere")
         case undoAction:
             guard let id = reviewId(from: cavnar["delayed_action_id"]) else { return nil }
             return BackgroundAction(path: "/mobile/api/actions/\(id)/cancel", decision: nil,
-                                    failureTitle: "Couldn't undo that", cancelsActionId: id)
+                                    failureTitle: "Couldn't undo that", cancelsActionId: id, outward: false)
         case approveRequestAction, denyRequestAction:
             guard let id = reviewId(from: cavnar["request_id"]) else { return nil }
             let kind = (cavnar["request_kind"] as? String ?? "shift").lowercased()
@@ -371,8 +534,54 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// The drafted reply a push carried whole (push.py `draft` with
+    /// `draft_complete`), or nil — a clipped one is never sent back as the
+    /// text approved.
+    nonisolated static func shownDraft(_ cavnar: [String: Any]) -> String? {
+        let complete = (cavnar["draft_complete"] as? Bool) ?? (cavnar["draft_complete"] as? NSNumber)?.boolValue
+        guard complete == true, let text = cavnar["draft"] as? String,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+
+    /// The ledger module a recommendation answer is filed under: the push's
+    /// `module` in the ledger's own names (Food Cost is "food", Intel
+    /// "intel"), as the module screens send it.
+    nonisolated static func recModule(_ cavnar: [String: Any]) -> String {
+        let raw = ((cavnar["module"] as? String) ?? "").lowercased()
+        switch raw {
+        case "inventory": return "food"
+        case "competitor": return "intel"
+        case "": return "home"
+        default: return String(raw.prefix(20))
+        }
+    }
+
+    /// The question "Ask about last night" sends — the night the report is
+    /// for, in the owner's date form (M/D/YY).
+    nonisolated static func lastNightQuestion(_ cavnar: [String: Any]) -> String {
+        if let date = businessDate(cavnar) {
+            return "Walk me through the daily report for \(CavnarDate.mdy(date))."
+        }
+        return "How did last night go?"
+    }
+
+    /// Where a foreground button opens when it is not the notification's own
+    /// place (#55): Draft order the supplier order, Reconnect the
+    /// integrations, Ask about last night Ask. Nil: the push's own `nav`.
+    nonisolated static func foregroundNav(for actionIdentifier: String) -> String? {
+        switch actionIdentifier {
+        case draftOrderAction: return "inventory/order"
+        case reconnectAction: return "account/integrations"
+        case askLastNightAction: return "ask"
+        default: return nil
+        }
+    }
+
     private struct DecisionBody: Encodable { let decision: String }
     private struct EmptyBody: Encodable {}
+    private struct SaveDraftBody: Encodable { let draft: String }
+    private struct SaveDraftResponse: Decodable { let ok: Bool; let error: String? }
 
     /// Runs a background action with the stored owner session. The app may
     /// have been launched just for this — no view has set up APIClient yet —
@@ -407,10 +616,22 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         do {
+            // A typed reply is the draft first; the approve below names it.
+            if let save = action.savesDraft {
+                let saved: SaveDraftResponse = try await APIClient.shared.sendWithBearer(
+                    save.path, method: .post, body: SaveDraftBody(draft: save.text), bearer: token)
+                guard saved.ok else {
+                    await postFailure(action.failureTitle, saved.error ?? "Tap to open it.", userInfo: userInfo)
+                    return
+                }
+            }
             let response: ReviewPostOutcome
             if let payload = action.payload {
                 response = try await APIClient.shared.sendWithBearer(
                     action.path, method: .post, body: payload, bearer: token)
+            } else if let body = action.body {
+                response = try await APIClient.shared.sendWithBearer(
+                    action.path, method: .post, body: body, bearer: token)
             } else if let decision = action.decision {
                 response = try await APIClient.shared.sendWithBearer(
                     action.path, method: .post, body: DecisionBody(decision: decision), bearer: token)
@@ -427,6 +648,9 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                 await MainActor.run {
                     PendingSendActivities.finish(actionId: id, status: "stopped", note: nil)
                 }
+            } else if let title = action.successTitle {
+                await postNotice(title, "Nobody can sign in until the password is reset \u{2014} "
+                                 + "check your email for the link.")
             }
         } catch let error as APIClient.APIError {
             await postFailure(action.failureTitle, error.message, userInfo: userInfo)
@@ -525,7 +749,18 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// anything outward (post a reply, decide a request) while an app
     /// passcode is set. Undo stops a send and is always allowed.
     nonisolated static func needsAppUnlock(_ action: BackgroundAction, passcodeSet: Bool) -> Bool {
-        passcodeSet && action.cancelsActionId == nil
+        passcodeSet && action.outward && action.cancelsActionId == nil
+    }
+
+    /// A plain notice after an action that worked and has a next step —
+    /// carries no payload, so tapping it just opens the app.
+    nonisolated private static func postNotice(_ title: String, _ body: String) async {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(identifier: "cavnar-action-done-\(UUID().uuidString)",
+                                            content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(request)
     }
 
     nonisolated private static func postFailure(_ title: String, _ body: String,
@@ -539,11 +774,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
-    /// Clear the app icon badge. The backend now sends the unread count on
-    /// every push (push.py `_badge_for`); nothing cleared it, and a number
-    /// that only ever goes up is a number people stop reading.
-    func clearBadge() {
-        UNUserNotificationCenter.current().setBadgeCount(0)
+    /// The app icon's number: what is still unread on the bell. The backend
+    /// sends the unread count on every push (push.py `_badge_for`), and the
+    /// bell sets it whenever it re-reads (NotificationsBadgeViewModel). It
+    /// used to be zeroed whenever the list was read, while rows in it were
+    /// still unread (parity audit #81).
+    func setBadge(_ count: Int) {
+        UNUserNotificationCenter.current().setBadgeCount(max(0, count))
     }
 
     func didRegister(deviceToken: Data) {
@@ -713,7 +950,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound, .list]
+        // The bell's count moves with the banner, not at the next launch
+        // (parity audit #81). Only Cavnar AI's own pushes; a local notice
+        // this class posted carries no "cavnar" payload.
+        if Self.cavnarPayload(notification.request.content.userInfo) != nil {
+            await MainActor.run { self.onForegroundPush?() }
+        }
+        return [.banner, .sound, .list]
     }
 
     nonisolated func userNotificationCenter(
@@ -752,8 +995,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // server sends neither and the router falls back to its mirror.
         let module = (cavnar["module"] as? String).map { String($0.prefix(32)) }
         let restaurantId = Self.reviewId(from: cavnar["restaurant_id"])
-        let nav = Self.nav(cavnar)
         let actionIdentifier = response.actionIdentifier
+        // Draft order, Reconnect, Ask about last night open their own place
+        // rather than the notification's (#55).
+        let nav = Self.foregroundNav(for: actionIdentifier) ?? Self.nav(cavnar)
+        let userText = (response as? UNTextInputNotificationResponse)?.userText
         // Dismissals are ignored rather than routed.
         guard actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         // Send a drafted week to staff (iOS parity #16): the server's own
@@ -762,12 +1008,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             await Self.performScheduleSend(cavnar: cavnar, userInfo: userInfo, restaurantId: restaurantId)
             return
         }
-        // Approve & post, Undo, Approve / Deny: done here, in the
-        // background, and nothing opens (friction audit #22).
-        // A typed Reply's text (UNTextInputNotificationAction) — a String,
-        // read here before anything crosses to the main actor.
-        let typedText = (response as? UNTextInputNotificationResponse)?.userText
-        if let action = Self.backgroundAction(for: actionIdentifier, cavnar: cavnar, typedText: typedText) {
+        // Approve & post, a typed Reply, Undo, Approve / Deny, Done / Not for
+        // us, Send now, This wasn't me: done here, in the background, and
+        // nothing opens (friction audit #22, parity audit #35 #54 #55).
+        if let action = Self.backgroundAction(for: actionIdentifier, cavnar: cavnar, userText: userText) {
             await Self.perform(action, userInfo: userInfo, restaurantId: restaurantId)
             return
         }
@@ -785,13 +1029,15 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             }
             if handled { return }
         }
-        // Every other button (Reply, Edit, Review, Ask about this) and the
+        // Every other button (Open, Edit, Review, Ask about this) and the
         // tap itself open the notification's own place; "Ask about this"
-        // also sends the question.
-        let tap = Tap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt, alertId: alertId,
+        // and "Ask about last night" also send the question.
+        let lastNight = actionIdentifier == Self.askLastNightAction
+        let tap = Tap(alertType: alertType, reviewId: reviewId,
+                      askPrompt: lastNight ? Self.lastNightQuestion(cavnar) : askPrompt, alertId: alertId,
                       recKey: recKey, module: module, restaurantId: restaurantId,
                       businessDate: businessDate, surface: surface, nav: nav,
-                      askAutoSend: actionIdentifier == Self.askAction)
+                      askAutoSend: actionIdentifier == Self.askAction || lastNight)
         await MainActor.run {
             guard let router else {
                 heldTap = tap

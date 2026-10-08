@@ -113,7 +113,7 @@ print("AASA " + json.dumps({"aasa": aasa, "status": r.status_code, "mimetype": r
 '''
 
 
-def test_the_apple_app_site_association_names_the_app_and_only_the_dashboard():
+def test_the_apple_app_site_association_names_the_app_and_the_dashboards_links():
     """Runs the real app in a subprocess, as test_home_page_renders does.
     Importing hosted_dashboard into the test process wires CSRF onto
     client_bp for every later test in that worker (csrf_protect runs at
@@ -127,7 +127,23 @@ def test_the_apple_app_site_association_names_the_app_and_only_the_dashboard():
     aasa = got["aasa"]
     detail = aasa["applinks"]["details"][0]
     assert detail["appIDs"] == ["8DW8XL63K6.ai.cavnar.CavnarAI"]
-    assert [c["/"] for c in detail["components"]] == ["/dashboard"]
+    # Parity audit #1: the links are /?nav=, /?review=, /?ask=, /?tab= and
+    # /#path — "/dashboard" was claimed and no link (or route) uses it. The
+    # pages that are not the dashboard are excluded, and listed first:
+    # Apple stops at the first component that matches.
+    comps = detail["components"]
+    excluded = [c["/"] for c in comps if c.get("exclude")]
+    claimed = [c for c in comps if not c.get("exclude")]
+    assert comps[:len(excluded)] == [c for c in comps if c.get("exclude")]
+    for page in ("/login*", "/admin*", "/pay*", "/reset-password*", "/auth/*", "/api/*",
+                 "/u/*", "/i/*", "/e/*", "/g/*", "/s/*", "/staff*"):
+        assert page in excluded, page
+    assert all(c["/"] == "/" for c in claimed)
+    assert sorted(k for c in claimed for k in (c.get("?") or {})) == ["ask", "nav", "review", "tab"]
+    assert any(c.get("#") == "?*" and not c.get("?") for c in claimed)
+    # A bare "/" (no query, no fragment) is not claimed: it stays web.
+    assert not any(not c.get("?") and not c.get("#") for c in claimed)
+    assert "/dashboard" not in [c["/"] for c in comps]
     assert got["status"] == 200 and got["mimetype"] == "application/json"
     assert got["served"] == aasa
     yml = _read(IOS, "project.yml")
@@ -193,9 +209,11 @@ def test_every_in_app_undo_ends_its_countdown():
 
 def test_links_from_outside_never_act():
     root = _read(APP, "RootView.swift")
-    assert "deepLinkRouter.openFromLink(nav)" in root
+    # With what the link said beside the place (loc=/rid=, rec=/src= —
+    # parity audit #1); still the link door, never the in-app one.
+    assert "deepLinkRouter.openFromLink(nav, context:" in root
     entry = _read(APP, "Core", "SystemEntry.swift")
-    assert "open(fromLink(destination))" in entry
+    assert "open(fromLink(destination, context: linkContext(for: url)))" in entry
 
 
 def test_small_fixes_hold():

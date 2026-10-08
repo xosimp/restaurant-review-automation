@@ -553,7 +553,10 @@ def test_the_quiet_night_push_opens_marketing_and_promises_no_approvable_text(db
     assert strategy_jobs.run_demand_opportunity(db_path=db)["sent"] == 1
     (args, kw), = fired
     body, data = args[3], kw["data"]
-    assert data["nav"] == "marketing" and "ask_prompt" not in data and "sms_draft_id" not in data
+    # The Fill card for the night, on the drafted post (parity audit #22).
+    assert "ask_prompt" not in data and "sms_draft_id" not in data
+    assert push.nav_for("demand_opportunity", data) == \
+        "marketing/opportunities?card=slow_day%3AThursday&post_draft_id=3"
     assert "approve" not in body.lower() and "guest text" in body and "Fill Thursday" in body
 
 

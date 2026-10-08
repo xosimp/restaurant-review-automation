@@ -73,8 +73,19 @@ def _capture(monkeypatch):
     ("dsr", {}, "dsr"),
     ("morning_brief", {"ask_prompt": "Why was Friday slow?"}, "ask"),
     ("competitor_move", {}, "intel"),
-    ("labor_over", {}, "labor"),
+    # The bell's own places (nav._ALERT_NAV; parity audit #49).
+    ("labor_over", {}, "labor/overtime"),
+    ("labor_reminder", {"tab": "labor"}, "labor/waiting"),
+    ("price_spike", {}, "inventory/invoices"),
+    ("staff_signin", {}, "account/people"),
+    ("connection_lost", {}, "account/integrations"),
+    ("data_source_down", {}, "account/integrations"),
+    ("data_source_restored", {}, "account/integrations"),
     ("login", {}, "account/security"),
+    # The quiet night's Fill card, on the drafted post (parity audit #22).
+    ("demand_opportunity", {"card": "slow_day:Tuesday", "post_draft_id": 12},
+     "marketing/opportunities?card=slow_day%3ATuesday&post_draft_id=12"),
+    ("demand_opportunity", {}, "marketing/opportunities"),
 ])
 def test_nav_names_the_thing_the_notification_is_about(alert_type, data, expected):
     assert push.nav_for(alert_type, data) == expected
@@ -90,7 +101,7 @@ def test_every_push_carries_a_nav(db_path, monkeypatch):
     push.fire_push(rid, "schedule_publish_pending", "t", "b", data={"delayed_action_id": 4}, db_path=db_path)
     push.fire_push(rid, "price_spike", "t", "b", db_path=db_path)
     assert got[0][1]["nav"] == "action/4"
-    assert got[1][1]["nav"] == "inventory"
+    assert got[1][1]["nav"] == "inventory/invoices"
 
 
 # ── categories ─────────────────────────────────────────────────────────────

@@ -2885,9 +2885,12 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
             queued = push.fire_push(
                 r.id, "demand_opportunity",
                 f"{out['weekday']} is usually your quietest night", body,
-                # It opens Marketing, where the post and the night's card are
-                # (it used to open Ask on "What could fill …?").
-                data={"nav": "marketing", **{k: v for k, v in drafted.items() if k == "post_draft_id"},
+                # It opens Marketing's opportunity feed on the night's Fill
+                # card (its key, mo.slow_nights), with the drafted post
+                # (push.nav_for — parity audit #22; it used to open
+                # Marketing's top and the draft id went unread).
+                data={"card": f"slow_day:{out['weekday']}",
+                      **{k: v for k, v in drafted.items() if k == "post_draft_id"},
                       "alert_id": alert_id, "surface": "alert_push", "answerable": ans,
                       **({"rec_key": rec["key"]} if ans else {})},
                 db_path=db_path, user_ids=audience,

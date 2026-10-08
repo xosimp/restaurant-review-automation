@@ -422,22 +422,40 @@ def sitemap():
     return Response(xml, mimetype="application/xml")
 
 
-# Universal links (F3-16): dashboard.cavnar.ai/dashboard links in emails and
-# texts open the iOS app (SystemEntry.destination reads ?nav=, ?review= and
-# the #fragment) instead of Safari. Only the exact /dashboard path — the login,
-# billing and admin pages stay web. The app id is the Apple team
-# (project.yml DEVELOPMENT_TEAM) + the bundle id; the app side is the
+# Universal links (F3-16; parity audit #1, 10/7/26): the dashboard links in
+# emails and texts open the iOS app instead of Safari. Every one of them is
+# the root with a query or a fragment — `/?nav=<path>` (notify.alert_url,
+# morning_brief, reporter), `/?review=<id>`, `/?ask=<question>`
+# (rec_delivery.ask_url), `/?tab=<module>` from older senders, `/#<path>` —
+# and SystemEntry.destination reads each, plus `loc=`/`rid=` (the location)
+# and `rec=`/`src=` (the open is recorded). The F3-16 version claimed only
+# `/dashboard`, a path no link uses and no route serves, so not one link
+# opened the app. A bare `/` stays web, and so does every page that is not
+# the dashboard: sign-in, admin, billing, password reset, the auth
+# callbacks, the API, and the public pages staff and guests open (/u/ /i/
+# /e/ /g/ /s/ /staff). The excludes come first because Apple stops at the
+# first component that matches. The app id is the Apple team (project.yml
+# DEVELOPMENT_TEAM) + the bundle id; the app side is the
 # com.apple.developer.associated-domains entitlement. Apple's CDN fetches
 # this without cookies or redirects, so it must be served public, as JSON.
 APPLE_APP_ID = "8DW8XL63K6.ai.cavnar.CavnarAI"
+
+# Paths that never open the app, matched before anything is claimed.
+AASA_EXCLUDED = ("/login*", "/admin*", "/pay*", "/reset-password*", "/auth/*", "/api/*",
+                 "/u/*", "/i/*", "/e/*", "/g/*", "/s/*", "/staff*")
+# The dashboard's own link parameters (dashboard.html checkTabParam / cavNav).
+AASA_QUERIES = ("nav", "review", "ask", "tab")
 
 
 def apple_app_site_association():
     # webcredentials: the app may use this site's passkeys (passkeys.py)
     # once it carries webcredentials:dashboard.cavnar.ai (9/30/26).
+    components = [{"/": p, "exclude": True, "comment": "stays on the web"} for p in AASA_EXCLUDED]
+    components += [{"/": "/", "?": {q: "?*"}, "comment": f"the dashboard with ?{q}="} for q in AASA_QUERIES]
+    components.append({"/": "/", "#": "?*", "comment": "the dashboard with a #path"})
     return {"applinks": {"details": [{
         "appIDs": [APPLE_APP_ID],
-        "components": [{"/": "/dashboard", "comment": "The dashboard, with ?nav=, ?review= or a #path"}],
+        "components": components,
     }]}, "webcredentials": {"apps": [APPLE_APP_ID]}}
 
 
