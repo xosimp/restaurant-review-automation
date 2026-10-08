@@ -185,7 +185,9 @@ def _auto(db, rid):
     import scheduler
     calls = []
     real = client_api._do_approve
-    client_api._do_approve = lambda review_id, r, auto=False: (calls.append(review_id) or ({"ok": True}, 200))
+    # **kw: the rule now passes the text its checks read (expected_draft,
+    # re-audit #2).
+    client_api._do_approve = lambda review_id, r, auto=False, **kw: (calls.append(review_id) or ({"ok": True}, 200))
     try:
         scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db))
     finally:
@@ -470,13 +472,46 @@ def test_the_same_question_about_the_same_rules_is_answered_from_the_cache(db, m
     assert len(seen) == 2
 
 
-def test_a_staff_answer_not_found_on_t1_is_read_again_on_t2(db, monkeypatch, staff_rules, reviewer):
+def test_a_staff_answer_not_covered_on_t1_is_final_and_kept_for_an_hour(db, monkeypatch, staff_rules, reviewer):
+    """AI cost audit 10/7/26 re-audit #3 — deliberately changed: it used to
+    be read again on T2. "The lines don't cover it" is missing data, not a
+    weak model: Sonnet reading the same lines cannot add the rule that is
+    not there, so every uncovered question cost Haiku and Sonnet."""
     import staff_knowledge as sk
     seen = _model(monkeypatch, NOT_FOUND, FOUND)
+    d = sk.answer(staff_rules, None, "Priya Shah", ["Server"], "Where do I park?", db_path=db)
+    assert d["answered"] is False and d["reason"] == "not_found" and d["answer"] == sk.ASK_REFUSAL
+    assert [k["model"] for k in seen] == [_tier("staff_answer")]
+    # The same question about the same lines is answered from the cache...
+    again = sk.answer(staff_rules, None, "Jake Moss", ["Server"], "where do i park", db_path=db)
+    assert again == d and len(seen) == 1
+    # ...for REFUSAL_CACHE_SECONDS, not the day a shown answer is kept.
+    key = next(iter(sk._ANSWER_CACHE))
+    at, payload, ttl = sk._ANSWER_CACHE[key]
+    assert ttl == sk.REFUSAL_CACHE_SECONDS == 3600
+    sk._ANSWER_CACHE[key] = (at - ttl - 1, payload, ttl)
+    assert sk.answer(staff_rules, None, "Priya Shah", ["Server"], "Where do I park?", db_path=db)["answered"] is True
+    assert len(seen) == 2
+
+
+def test_a_staff_answer_that_cites_no_line_is_read_again_on_t2(db, monkeypatch, staff_rules, reviewer):
+    import staff_knowledge as sk
+    uncited = json.dumps({"found": True, "answer": "Phones stay in the locker.", "sources": []})
+    seen = _model(monkeypatch, uncited, FOUND)
     d = sk.answer(staff_rules, None, "Priya Shah", ["Server"], "Phone rules?", db_path=db)
     assert d["answered"] is True
     assert [k["model"] for k in seen] == [_tier("staff_answer"), _tier("staff_answer", 1)]
-    assert "was not used: it found no line" in seen[1]["messages"][0]["content"][1]["text"]
+    assert "was not used: it cited no line" in seen[1]["messages"][0]["content"][1]["text"]
+
+
+def test_the_staff_answer_policy_never_escalates_on_missing_coverage():
+    import ai_workflows as wf
+    pol = wf.POLICIES["staff_answer"]
+    assert "uncited" in pol.escalate_on and "not_covered" not in pol.escalate_on
+    assert "not_covered" in wf.NEVER_TRIGGERS and "not_found" not in wf.TRIGGERS
+    # A console override stored under the trigger's old name means the citation check.
+    assert wf.apply_override(pol, {"escalate_on": ["not_found", "reviewer_flag"]}).escalate_on == \
+        ("uncited", "reviewer_flag")
 
 
 def test_a_staff_answer_the_reviewer_flags_twice_says_ask_your_manager(db, monkeypatch, staff_rules, reviewer):
@@ -569,3 +604,206 @@ def test_every_migrated_call_takes_its_model_from_the_route(module):
         assert "route.apply(" in call, f"{module}: a create_with_retry call does not take its route"
     for workflow in MIGRATED[module]:
         assert re.search(r"generate\(\s*\"" + workflow + "\"", src), f"{module}: {workflow} is not orchestrated"
+
+
+# ── AI cost audit 10/7/26, the blind re-audit of these workflows ────────────
+
+def _rubric_answers(monkeypatch, answer=None, raises=None):
+    """The real ai_reviewer.review_text on a stubbed model: `answer` is its
+    JSON reply, `raises` an exception the call raises instead."""
+    import ai_utils
+    calls = []
+
+    def create(client, **k):
+        calls.append(k)
+        if raises is not None:
+            raise raises
+        return _msg(json.dumps(answer))
+    monkeypatch.setattr(ai_utils, "create_with_retry", create)
+    monkeypatch.setattr(ai_utils, "get_client", lambda *a, **k: object())
+    return calls
+
+
+def test_the_gate_fails_a_low_score_with_no_flags_and_shadow_only_scores(db, monkeypatch):
+    """#1: a 0.15 with no flags passed every gate — the reviewer saying the
+    text is bad without saying why. In gate mode it now fails with a
+    generic reason; in shadow mode it is only a score."""
+    import ai_reviewer
+    _rubric_answers(monkeypatch, {"score": 0.15, "flags": []})
+    gate = ai_reviewer.review_text("review_reply", "Thanks!", restaurant_id=1, mode="haiku_gate")
+    assert gate.ok is False and gate.trigger == "reviewer_flag" and gate.reasons == [ai_reviewer.LOW_SCORE_REASON]
+    shadow = ai_reviewer.review_text("review_reply", "Thanks!", restaurant_id=1, mode="haiku_shadow")
+    assert shadow.ok is True and shadow.score == 0.15
+    # A good score passes in both; a flag with a low score fails in both, as before.
+    _rubric_answers(monkeypatch, {"score": 0.9, "flags": []})
+    assert ai_reviewer.review_text("guest_text", "x", mode="haiku_gate").ok is True
+    _rubric_answers(monkeypatch, {"score": 0.3, "flags": ["reads like an ad"]})
+    assert ai_reviewer.review_text("guest_text", "x", mode="haiku_shadow").ok is False
+
+
+def test_an_unattended_reply_scored_low_with_no_flags_is_held(db, monkeypatch):
+    rid = _restaurant(db, auto_approve_5star=1, auto_approve_daily_cap=5)
+    rev = _review(db, rid, "q1", 5, "Great night", "Thanks so much, Sam! See you soon.")
+    _rubric_answers(monkeypatch, {"score": 0.2, "flags": []})
+    assert _auto(db, rid) == []
+    row = _conn(db).execute("SELECT draft_needs_review, draft_review_reason FROM reviews WHERE id=?", (rev,)).fetchone()
+    assert row["draft_needs_review"] == 1 and row["draft_review_reason"].startswith("needs a read before it posts")
+
+
+def test_an_unattended_reply_the_gate_could_not_read_is_held_not_posted(db, monkeypatch):
+    """#1: a reviewer that cannot run (budget spent) passed, so the AI budget
+    running out meant public replies went out with no gate. Nobody waits on
+    this reply: it is held for the owner instead."""
+    import ai_utils
+    rid = _restaurant(db, auto_approve_5star=1, auto_approve_daily_cap=5)
+    rev = _review(db, rid, "q2", 5, "Great night", "Thanks so much, Sam! See you soon.")
+    calls = _rubric_answers(monkeypatch, raises=ai_utils.AIBudgetExceeded("paused"))
+    assert _auto(db, rid) == [] and len(calls) == 1
+    row = _conn(db).execute("SELECT draft_needs_review, draft_review_reason FROM reviews WHERE id=?", (rev,)).fetchone()
+    assert row["draft_needs_review"] == 1
+    assert row["draft_review_reason"] == "needs a read before it posts: the automatic check couldn't read it"
+    import drafter
+    assert drafter.owner_reason(row["draft_review_reason"]).startswith("needs a read before it posts")
+
+
+def test_the_rule_posts_only_the_text_its_checks_read(db, monkeypatch):
+    """#2: the gate read one text and the approve posted whatever was stored.
+    A draft rewritten after the checks read it is a 409, never posted."""
+    import ai_reviewer
+    import scheduler
+    rid = _restaurant(db, auto_approve_5star=1, auto_approve_daily_cap=5)
+    rev = _review(db, rid, "q3", 5, "Great night", "Thanks so much, Sam! See you soon.")
+
+    def review_text(kind, draft, restaurant_id=None, context="", mode="haiku_gate"):
+        # A regenerate lands between the gate reading the draft and the approve.
+        c = _conn(db)
+        c.execute("UPDATE reviews SET draft_response='Thanks Sam! Next round is on us.' WHERE id=?", (rev,))
+        c.commit()
+        c.close()
+        return orch.Verdict(ok=True, score=0.9)
+    monkeypatch.setattr(ai_reviewer, "review_text", review_text)
+    assert scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db)) == 0
+    row = _conn(db).execute("SELECT response_status, draft_response FROM reviews WHERE id=?", (rev,)).fetchone()
+    assert row["response_status"] == "drafted" and "Next round" in row["draft_response"]
+    assert "expected_draft=draft_text" in inspect.getsource(scheduler.auto_approve_five_stars)
+
+
+VIEW_AS = {"id": 3, "restaurant_id": None, "role": "client", "acting_admin_id": 99, "acting_admin": "will"}
+
+
+def test_supports_skip_and_ask_rewrite_through_view_as_file_nothing_off_the_request(db):
+    """#7a/#7b: Ask's tools run on the stream's worker thread, where there is
+    no request to read view-as from — the login says who is acting."""
+    import ask_cavnar_tools
+    import client_api
+    rid = _restaurant(db)
+    who = dict(VIEW_AS, restaurant_id=rid)
+    a = _review(db, rid, "v1", 5, "Great", "Thanks so much, Sam! See you soon.")
+    b = _review(db, rid, "v2", 5, "Great", "Thanks so much, Sam! See you soon.")
+    c = _review(db, rid, "v3", 5, "Great", "Thanks so much, Sam! See you soon.")
+    for rev in (a, b, c):
+        _drafted_run(db, rid, rev)
+    viewer = types.SimpleNamespace(_ask_dsr_user=who)
+    assert ask_cavnar_tools._skip_review(rid, review_id=a, _viewer=viewer)["ok"] is True
+    assert ask_cavnar_tools._BY_NAME["skip_review"].get("wants_viewer") is True
+    row = _conn(db).execute("SELECT response_action FROM reviews WHERE id=?", (a,)).fetchone()
+    assert row["response_action"] == "support_skipped"
+    assert orch.subject_run("draft_response", rid, f"review:{a}", db_path=db)["outcome"] is None
+    payload, status = client_api._do_save_draft(b, rid, "Thank you, Sam! We loved having you.", by_model=True,
+                                                user=who)
+    assert status == 200 and payload["ok"], payload
+    assert orch.subject_run("draft_response", rid, f"review:{b}", db_path=db)["outcome"] is None
+    # The owner's own rewrite through Ask is still the owner turning it down.
+    owner = {"id": 1, "restaurant_id": rid, "role": "client"}
+    client_api._do_save_draft(c, rid, "Thank you, Sam! We loved having you.", by_model=True, user=owner)
+    assert orch.subject_run("draft_response", rid, f"review:{c}", db_path=db)["outcome"] == "rejected"
+
+
+def test_an_approval_of_a_reply_support_edited_is_ignored(db):
+    """#7d: support's words through view-as approved later are not the
+    owner's verdict on the model's draft."""
+    import client_api
+    rid = _restaurant(db)
+    rev = _review(db, rid, "v4", 5, "Great", "Thanks so much, Sam! See you soon, and bring friends.",
+                  original_draft="Thanks so much, Sam! See you soon.", draft_edited=1, draft_edited_via="view_as")
+    _drafted_run(db, rid, rev)
+    payload, status = client_api._do_approve(rev, rid, auto=False)
+    assert status == 200 and payload["ok"], payload
+    run = orch.subject_run("draft_response", rid, f"review:{rev}", db_path=db)
+    assert run["outcome"] == "ignored" and run["outcome_quality"] is None
+
+
+def test_a_starter_line_support_adds_through_view_as_files_nothing(db):
+    """#7c: starter_outcome ran on every add_line, whoever added it."""
+    import task_sheets as ts
+    rid = _restaurant(db)
+    s = ts.create_sheet(rid, "Bartender", "opening", db_path=db)
+    subject = ts.starter_subject("Bartender", "opening")
+    run_id = orch.generate("task_sheet_starter", rid, lambda r, n: {"lines": []}, subject=subject, db_path=db).run_id
+    orch.attach(run_id, context={"offered": [ts._key("Stock the ice well")[:40], ts._key("Cut fruit")[:40]]},
+                db_path=db)
+    ts.add_line(rid, s["id"], {"label": "Stock the ice well"}, db_path=db, user=dict(VIEW_AS, restaurant_id=rid))
+    assert orch.subject_run("task_sheet_starter", rid, subject, db_path=db)["outcome"] is None
+    ts.add_line(rid, s["id"], {"label": "Cut fruit"}, db_path=db,
+                user={"id": 1, "restaurant_id": rid, "role": "client"})
+    assert orch.subject_run("task_sheet_starter", rid, subject, db_path=db)["outcome"] == "accepted"
+    import mobile_api
+    assert "user=current_user" in inspect.getsource(mobile_api.mobile_task_sheet_add_line)
+
+
+def test_a_view_as_draft_on_the_job_pool_carries_no_person(db):
+    """#4: the Studio drafts on the owner AI job pool, where flask.g says
+    nothing — the login captured on the request thread does."""
+    import marketing_voice as mv
+    rid = _restaurant(db)
+    d = mv.record_draft(rid, "text", "Pasta night is Thursday.", "campaign_draft", user_id=3,
+                        user=dict(VIEW_AS, restaurant_id=rid), db_path=db)
+    mine = mv.record_draft(rid, "text", "Trivia is Tuesday.", "campaign_draft", user_id=1,
+                           user={"id": 1, "restaurant_id": rid, "role": "client"}, db_path=db)
+    rows = {r["id"]: r["user_id"] for r in _conn(db).execute("SELECT id, user_id FROM marketing_model_drafts")}
+    assert rows[d] is None and rows[mine] == 1
+    # Every async caller hands the login down (read from the source: the
+    # body runs on a pool thread).
+    import client_api
+    import mobile_api
+    assert "user=dict(current_user)" in inspect.getsource(client_api.generate_content_answer)
+    assert "user=current_user" in inspect.getsource(mobile_api.guest_campaign_draft_result)
+    assert "user=current_user" in inspect.getsource(mobile_api.guest_newsletter_draft_result)
+
+
+def test_an_approved_saved_draft_files_its_outcome(db):
+    """#8: approve always passed the original, which skipped finding the
+    model draft — no outcome was ever filed for a saved draft."""
+    import marketing_drafts
+    import marketing_voice as mv
+    rid = _restaurant(db)
+    run_id = orch.generate("marketing_content", rid, lambda r, n: "a", db_path=db).run_id
+    ref = mv.record_draft(rid, "social", "Meatballs all week! #GiaMia", "job", db_path=db, run_id=run_id,
+                          workflow="marketing_content")
+    saved = marketing_drafts.save_draft(rid, "Meatballs all week, every night! #GiaMia",
+                                        content_type="instagram_post", topic="Tuesday", draft_ref=ref, db_path=db)
+    assert saved["ok"]
+    out = marketing_drafts.approve_draft(saved["id"], rid, user={"id": 1, "role": "client", "restaurant_id": rid},
+                                         db_path=db)
+    assert out["ok"], out
+    run = orch.subject_run("marketing_content", rid, mv.draft_subject(ref), db_path=db)
+    assert run["outcome"] == "edited" and 0 < run["outcome_quality"] < 1
+    import strategy_jobs
+    assert inspect.getsource(strategy_jobs._quiet_night_post_now).count("draft_ref=getattr(body") == 1
+    assert inspect.getsource(strategy_jobs.on_quiet_night_post).count("draft_ref=getattr(body") == 1
+
+
+def test_a_content_tab_email_files_under_the_run_that_wrote_it(db):
+    """#9: a weekly email from the Content tab is a marketing_content run on
+    the email channel; its outcome went to guest_newsletter_draft."""
+    import marketing_voice as mv
+    rid = _restaurant(db)
+    run_id = orch.generate("marketing_content", rid, lambda r, n: "a", db_path=db).run_id
+    d = mv.record_draft(rid, "email", "Our fall menu is here. Come taste it.", "post", user_id=1, db_path=db,
+                        run_id=run_id, workflow="marketing_content")
+    mv.record_final(rid, "email", "Our fall menu is here. Come taste it.", "newsletter", ref_id=5,
+                    user={"id": 1, "role": "client"}, draft_id=d, db_path=db)
+    assert orch.subject_run("marketing_content", rid, mv.draft_subject(d), db_path=db)["outcome"] == "accepted"
+    assert orch.subject_run("guest_newsletter_draft", rid, mv.draft_subject(d), db_path=db) is None
+    import marketing
+    assert 'workflow="marketing_content"' in inspect.getsource(marketing.generate_content)

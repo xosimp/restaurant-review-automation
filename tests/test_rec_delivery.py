@@ -206,9 +206,11 @@ def _digest_setup(db_path, monkeypatch, ok):
     import scheduler, reporter, weekly_review
     rid = _rid(db_path, module_labor=0, module_inventory=0, module_marketing=0)
     c = _conn(db_path)
+    # Two days ago: inside the digest's week of whole local days ending
+    # yesterday (reporter.digest_window, re-audit #6).
     c.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, review_date, "
               "fetched_at, processed) VALUES (?, 'google', 'w1', 'A', 5, 'Great', ?, ?, 1)",
-              (rid, datetime.now().strftime("%Y-%m-%d"), datetime.now().isoformat()))
+              (rid, (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"), datetime.now().isoformat()))
     c.commit(); c.close()
     monkeypatch.setattr(weekly_review, "build", lambda *a, **k: {
         "week": "w", "compared_with": "c", "metrics": [], "results": [], "priorities": [],

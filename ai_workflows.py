@@ -49,7 +49,7 @@ from dataclasses import dataclass, field, replace
 # Bumped when any default below changes: every ai_runs row records the policy
 # version it ran under, so the learner never compares runs across a change it
 # cannot see.
-POLICY_VERSION = "2026-10-07.3"
+POLICY_VERSION = "2026-10-07.4"
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
@@ -75,12 +75,19 @@ TRIGGERS = {
     "validation_withhold": "the validation engine withheld the answer",
     "rule_breach": "a hard business rule was still broken after the code's repair",
     "reviewer_flag": "the reviewer flagged the answer",
-    "not_found": "the answer could not cite a source it was given",
+    "uncited": "the answer cited no source line it was given",
 }
+# The trigger "uncited" was named "not_found" before 10/7/26 (re-audit #3),
+# when it also covered a reading that found nothing; a console override
+# stored under the old name meant the citation check and is read as it.
+LEGACY_TRIGGERS = {"not_found": "uncited"}
 # Never a trigger, by design (they are listed so a policy naming one fails
 # its test instead of quietly escalating): missing data holds, a cut answer
-# is split, thin evidence is caveated.
-NEVER_TRIGGERS = ("data_missing", "truncated", "low_evidence", "model_confidence")
+# is split, thin evidence is caveated, and sources that do not cover the
+# question ("not_covered" — a staff answer's found:false) are missing data
+# too: a stronger model reading the same lines cannot add the rule that is
+# not there (AI cost audit 10/7/26 re-audit #3).
+NEVER_TRIGGERS = ("data_missing", "truncated", "low_evidence", "model_confidence", "not_covered")
 
 REVIEWERS = ("none", "rules", "owner", "haiku_gate", "haiku_shadow")
 
@@ -246,10 +253,16 @@ POLICIES = {p.workflow: p for p in (
        caps=Caps(calls=1, usd=0.01, seconds=60), delivery="background"),
     _p("staff_translation", "staff", "staff_translation", ladder=("T1",), reviewer="rules",
        caps=Caps(calls=1, usd=0.01, seconds=60)),
+    # T2 reads again only on evidence the first reading was wrong: an answer
+    # that cited no line it was given, unparseable JSON, the staff check's
+    # refusal, the reviewer's flag. "The lines don't cover it" (found:false)
+    # is final — the same lines read by a stronger model still do not hold
+    # the rule (re-audit #3: every uncovered question cost Haiku + Sonnet).
     _p("staff_answer", "staff", "staff_answer", ladder=("T1", "T2"),
-       escalate_on=_ESC_COPY + ("not_found", "reviewer_flag"), max_escalations=1, reviewer="haiku_gate",
+       escalate_on=_ESC_COPY + ("uncited", "reviewer_flag"), max_escalations=1, reviewer="haiku_gate",
        caps=Caps(calls=4, usd=0.06, seconds=45), context=("profile", "owner_rules"),
-       note="read by staff with no manager between; 'ask your manager' is the safe fallback"),
+       note="read by staff with no manager between; 'ask your manager' is the safe fallback; "
+            "not covered by the lines is final, never escalated"),
     # ── reviewer ────────────────────────────────────────────────────────
     # The Haiku rubric itself (ai_reviewer). It never escalates and is never
     # reviewed: a reviewer that cannot run passes (the rules engine already did).
@@ -273,6 +286,8 @@ OVERRIDABLE = ("ladder", "escalate_on", "max_escalations", "reviewer", "reviewer
 def _coerce(name, value, base):
     if name in ("ladder", "escalate_on"):
         vals = tuple(str(v) for v in (value or ()))
+        if name == "escalate_on":
+            vals = tuple(dict.fromkeys(LEGACY_TRIGGERS.get(v, v) for v in vals))
         if name == "ladder":
             if not vals or any(v not in TIERS and v != DEFAULT for v in vals):
                 raise ValueError(f"ladder must name tiers {TIERS} or '{DEFAULT}'")

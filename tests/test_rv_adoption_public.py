@@ -134,12 +134,15 @@ def _auto(db, monkeypatch, rid):
     import client_api, scheduler
     calls = []
     monkeypatch.setattr(client_api, "_do_approve",
-                        lambda review_id, r, auto=False: (calls.append(review_id) or ({"ok": True}, 200)))
+                        lambda review_id, r, auto=False, **kw: (calls.append(review_id) or ({"ok": True}, 200)))
     scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db))
     return calls
 
 
-def test_auto_approve_holds_an_award_claim(db, monkeypatch):
+def test_auto_approve_holds_an_award_claim(db, monkeypatch, reviewer_passes):
+    # The reviewer gate ran and passed (conftest.reviewer_passes): since the
+    # 10/7/26 re-audit (#1) a gate that cannot run holds the reply, and this
+    # test is about the rule, not its gate.
     rid = _restaurant(db, auto_approve_5star=1, auto_approve_daily_cap=5)
     bad = _review(db, rid, "a1", 5, "Great night", "Thanks Sam! Voted #1 pizza in town three years running.")
     good = _review(db, rid, "a2", 5, "Great night", "Thanks so much, Sam! See you soon.")

@@ -12,9 +12,18 @@ did not (same restaurant, same viewer scope), never rewrites, and returns a
 Verdict: pass, or a flag with short reasons the next rung is given as notes.
 
 A reviewer that cannot run (budget, breaker, timeout, unparseable answer)
-PASSES with no score: the rules engine already passed the text, and a
-reviewer outage must never stop a send the owner asked for. That is logged
-as a quality event so a silent reviewer is visible on the AI page.
+PASSES with no score, labelled "reviewer_unavailable": the rules engine
+already passed the text, and a reviewer outage must never stop a send the
+owner asked for. That is logged as a quality event so a silent reviewer is
+visible on the AI page. A caller where nobody is waiting and nobody reads
+the text first (the unattended review reply, drafter.gate_unattended_reply)
+reads that label and holds the text instead (AI cost audit 10/7/26 re-audit
+#1).
+
+In gate mode ("haiku_gate") a score under FLAG_BELOW fails whether or not
+the rubric named a reason — a 0.15 with no flags is the reviewer saying the
+text is bad without saying why, never a pass (re-audit #1). Shadow mode
+("haiku_shadow") only scores: its verdict is never acted on.
 """
 import json
 import logging
@@ -26,6 +35,8 @@ log = logging.getLogger("ai_reviewer")
 
 ACTION = "ai_review"
 FLAG_BELOW = 0.6
+# The reason a gate gives for a low score the rubric named no flag for.
+LOW_SCORE_REASON = "the review check scored it low"
 
 RUBRICS = {
     "guest_text": (
@@ -106,9 +117,11 @@ def _schema():
 
 
 def review_text(kind, draft, restaurant_id=None, context="", mode="haiku_gate"):
-    """Score `draft` against RUBRICS[kind]. Returns an ai_orchestrator.Verdict:
-    ok unless the score is under FLAG_BELOW with at least one flag. Never
-    raises (see the module docstring)."""
+    """Score `draft` against RUBRICS[kind]. Returns an ai_orchestrator.Verdict.
+    In gate mode it fails on any score under FLAG_BELOW (its flags as the
+    reasons, else LOW_SCORE_REASON); in shadow mode it only scores, ok
+    unless the score is low with a flag (the verdict is never acted on).
+    Never raises (see the module docstring)."""
     import ai_utils
     import ai_workflows as wf
     import data_health
@@ -146,8 +159,12 @@ def review_text(kind, draft, restaurant_id=None, context="", mode="haiku_gate"):
         except Exception:
             pass
         return orch.Verdict.passed(label="reviewer_unavailable")
-    if score < FLAG_BELOW and flags:
-        return orch.Verdict(ok=False, trigger="reviewer_flag", reasons=flags, score=score, label="flag")
+    # Gate mode: a low score is a flag whether or not the rubric named a
+    # reason (re-audit #1: 0.15 with no flags used to pass, and that was the
+    # gate in front of a public reply nobody reads first).
+    if score < FLAG_BELOW and (flags or mode == "haiku_gate"):
+        return orch.Verdict(ok=False, trigger="reviewer_flag", reasons=flags or [LOW_SCORE_REASON], score=score,
+                            label="flag")
     return orch.Verdict(ok=True, score=score, reasons=flags, label="pass")
 
 

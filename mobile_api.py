@@ -1686,7 +1686,7 @@ def mobile_approve_all_reviews(current_user):
 @mobile_bp.route("/reviews/<int:review_id>/skip", methods=["POST"])
 @mobile_login_required
 def mobile_skip_review(review_id, current_user):
-    payload, status = _capi._do_skip(review_id, current_user["restaurant_id"])
+    payload, status = _capi._do_skip(review_id, current_user["restaurant_id"], user=current_user)
     return jsonify(**payload), status
 
 
@@ -3963,9 +3963,13 @@ def guest_campaign_draft_result(current_user, data):
         # send route takes `draft_ref` back.
         import marketing_voice as _mv
         out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype,
+                   # user: the login captured on the request thread — this
+                   # body runs on the owner AI job pool too, where flask.g
+                   # cannot say it was view-as (re-audit #4).
                    draft_ref=_mv.record_draft(rid, "text", str(message), "campaign_draft",
-                                              user_id=current_user.get("id"),
-                                              run_id=getattr(message, "run_id", None)),
+                                              user_id=current_user.get("id"), user=current_user,
+                                              run_id=getattr(message, "run_id", None),
+                                              workflow="guest_campaign_draft"),
                    # What past texts did here per audience (mkt_results): the
                    # Studio shows it beside the audience it suggests.
                    returns_by_segment=_gm_returns(rid))
@@ -4572,9 +4576,11 @@ def guest_newsletter_draft_result(current_user, prompt, topic):
         # (marketing_voice; mkt_edits): the send takes `draft_ref` back. The
         # run that wrote it is named after it (its outcome lands there).
         import marketing_voice as _mv
+        # user: captured on the request thread (re-audit #4; see the text twin).
         draft["draft_ref"] = _mv.record_draft(rid, "email", draft.get("body") or "", "newsletter_draft",
-                                              user_id=current_user.get("id"),
-                                              run_id=getattr(draft, "run_id", None))
+                                              user_id=current_user.get("id"), user=current_user,
+                                              run_id=getattr(draft, "run_id", None),
+                                              workflow="guest_newsletter_draft")
     except ValueError as e:
         if str(e).startswith("newsletter copy rejected: "):
             return {"ok": False, "error": "Cavnar AI didn't use that draft — "
@@ -5431,7 +5437,8 @@ def mobile_task_sheet_add_line(sheet_id, current_user):
     import task_sheets as ts
     d = request.get_json(silent=True) or {}
     try:
-        return jsonify(ok=True, **ts.add_line(current_user["restaurant_id"], sheet_id, d, who=_ts_who(current_user))), 200
+        return jsonify(ok=True, **ts.add_line(current_user["restaurant_id"], sheet_id, d, who=_ts_who(current_user),
+                                              user=current_user)), 200
     except Exception as e:
         return _ts_error(e)
 

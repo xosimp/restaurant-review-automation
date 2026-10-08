@@ -1618,6 +1618,16 @@ def ensure_columns(db_path: str = DB_PATH):
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
         ("marketing_drafts", "original_body", "TEXT"),
+        # The model draft (marketing_model_drafts.id) a saved draft began as,
+        # so approving it files the outcome on the run that wrote it (AI cost
+        # audit 10/7/26 re-audit #8: the approval passed the original and
+        # never found the draft).
+        ("marketing_drafts", "model_draft_id", "INTEGER"),
+        # The orchestrator workflow that wrote a model draft (re-audit #9):
+        # the Content tab's weekly email and loyalty nudge are
+        # marketing_content runs on the email and text channels, whose
+        # outcomes were filed on the Studio's workflows. NULL = the channel's.
+        ("marketing_model_drafts", "workflow", "TEXT"),
         # The review a review request produced, matched by the guest's name
         # (review_signals.match_review_requests; memory audit 9/29/26,
         # uncaptured): requests were counted and never matched to a review.
@@ -6294,7 +6304,7 @@ def reset_stalled_reviews(restaurant_id: int, kinds=("analysis", "draft"), db_pa
 
 
 def get_reviews_since(restaurant_id: int, since: str,
-                       db_path: str = DB_PATH) -> list[Review]:
+                       db_path: str = DB_PATH, until: str = None) -> list[Review]:
     """Reviews a guest wrote since `since` — the weekly digest's whole input.
 
     Two things were wrong. It windowed on `fetched_at`, so on a first connect
@@ -6308,14 +6318,21 @@ def get_reviews_since(restaurant_id: int, since: str,
     had not got to yet — a budget pause, a failed call — was missing from the
     week's count and average. A guest's rating is a fact before any model
     reads it; callers that need the analysis check `processed` themselves.
+
+    `until` (exclusive) closes the window: the digest's week is whole local
+    days ending the day before the send (reporter.digest_window), so the
+    night's precompute and the morning's send read the same reviews (AI cost
+    audit 10/7/26 re-audit #6).
     """
+    upper = "" if until is None else f"AND {REVIEW_TIME_AXIS_BARE} < ?"
     conn = get_conn(db_path)
     rows = conn.execute(f"""
         SELECT * FROM reviews
         WHERE restaurant_id=? AND deleted_at IS NULL
           AND {REVIEW_TIME_AXIS_BARE} >= ?
+          {upper}
         ORDER BY {REVIEW_TIME_AXIS_BARE} DESC
-    """, (restaurant_id, since)).fetchall()
+    """, (restaurant_id, since) + (() if until is None else (until,))).fetchall()
     conn.close()
     return [_row_to_review(r) for r in rows]
 

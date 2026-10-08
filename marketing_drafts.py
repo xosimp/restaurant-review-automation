@@ -83,19 +83,27 @@ def save_draft(restaurant_id, body, *, content_type=None, topic=None, media_id=N
                 return {"ok": False, "code": "draft_gone", "error": "That draft no longer exists."}
             return {"ok": True, "id": draft_id, "status": "draft"}
 
-        if original_body is None and (draft_ref or content_log_id):
+        # The model draft this one began as, kept by id (model_draft_id) so
+        # its approval files the outcome on the run that wrote it (AI cost
+        # audit 10/7/26 re-audit #8). By reference only.
+        model_draft_id = None
+        if draft_ref or content_log_id:
             try:
                 import marketing_voice
-                m = marketing_voice._match_draft(conn, restaurant_id, "social", body, draft_id=draft_ref,
-                                                 content_log_id=content_log_id)
-                original_body = m["body"] if m else None
+                m = marketing_voice._draft_by_reference(conn, restaurant_id, "social", draft_ref, content_log_id)
+                if m is None and original_body is None:
+                    m = marketing_voice._match_draft(conn, restaurant_id, "social", body, draft_id=draft_ref,
+                                                     content_log_id=content_log_id)
+                model_draft_id = m["id"] if m else None
+                if original_body is None:
+                    original_body = m["body"] if m else None
             except Exception:
-                original_body = None
+                pass
         cur = conn.execute(
             "INSERT INTO marketing_drafts (restaurant_id, content_type, topic, body, media_id, created_by, "
-            "original_body) VALUES (?,?,?,?,?,?,?)",
+            "original_body, model_draft_id) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, content_type, topic, body, media_id or None, user_id,
-             (original_body or body).strip()[:MAX_BODY]),
+             (original_body or body).strip()[:MAX_BODY], model_draft_id),
         )
         conn.commit()
         return {"ok": True, "id": cur.lastrowid, "status": "draft"}
@@ -200,14 +208,17 @@ def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
     try:
         conn = get_conn(db_path)
         try:
-            d = conn.execute("SELECT body, original_body FROM marketing_drafts WHERE id=? AND restaurant_id=?",
-                             (draft_id, restaurant_id)).fetchone()
+            d = conn.execute("SELECT body, original_body, model_draft_id FROM marketing_drafts "
+                             "WHERE id=? AND restaurant_id=?", (draft_id, restaurant_id)).fetchone()
         finally:
             conn.close()
         if d:
             import marketing_voice
+            # draft_id: the model draft it began as, so its run gets the
+            # outcome (re-audit #8) — the original alone never found it.
             marketing_voice.record_final(restaurant_id, "social", d["body"], "draft_approved", ref_id=draft_id,
                                          user=user or {"id": user_id, "role": role},
+                                         draft_id=d["model_draft_id"],
                                          original_body=d["original_body"] or d["body"], db_path=db_path)
     except Exception as e:
         log.warning("marketing draft %s edit not recorded: %s", draft_id, e)

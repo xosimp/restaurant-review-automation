@@ -752,7 +752,8 @@ def test_an_uncited_or_unchecked_answer_says_ask_your_manager(client, monkeypatc
     _roster(monkeypatch)
     _rules(rid)
     # The same reply on both rungs: a first reading that fails escalates once
-    # (AI orchestration, 10/7/26), and the reason is the last rung's.
+    # (AI orchestration, 10/7/26), and the reason is the last rung's — except
+    # found: false, which is final on the first (re-audit #3).
     monkeypatch.setattr(ai_utils, "create_with_retry", _Model(json.dumps(reply), json.dumps(reply)))
     uid, _mid = _staff(rid)
     _as_staff(client, rid, uid)

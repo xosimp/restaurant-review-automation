@@ -174,8 +174,11 @@ def test_the_digest_holds_a_module_whose_data_is_past_its_horizon(db_path, monke
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda *a, **k: {
         "is_live": True, "overall_labor_pct": 31.0, "overtime_risk": [],
         "date_range": {"end": _ago(21), "days": 14}})
+    # Two days ago: inside the digest's week of whole local days ending
+    # yesterday (reporter.digest_window, re-audit #6).
     save_reviews([Review(restaurant_id=rid, platform="google", external_id="d1", author="Dana Ray", rating=5,
-                         text="Lovely dinner.", review_date=date.today().isoformat())], db_path=db_path)
+                         text="Lovely dinner.", review_date=(date.today() - timedelta(days=2)).isoformat())],
+                 db_path=db_path)
     report = reporter.build_report_from_db(rid, "Probe Bistro", days=7, db_path=db_path)
     seen = {}
     monkeypatch.setattr(ai_utils, "get_client", lambda *a, **k: object())

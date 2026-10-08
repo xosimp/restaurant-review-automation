@@ -492,6 +492,9 @@ def _templated_lines(keys, report, pos, neg, urgent, facts, rating_move) -> dict
 # that arrived, or a reply posted, in between is a new fingerprint — and the
 # send writes the summary itself, as it always did (the synchronous
 # fallback). The send is the batch's cutoff: an item still out is cancelled.
+# Both build their week on the same fixed edges (digest_window: whole local
+# days ending yesterday — re-audit #6), so the morning's fetch of today's
+# reviews no longer makes every night's answer a stranger.
 DIGEST_KEEP_HOURS = 24
 DIGEST_KEEP_PRUNE_DAYS = 3
 DIGEST_PRECOMPUTE_FROM_HOUR = 2
@@ -1081,9 +1084,20 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             from datetime import timedelta
             from models import get_reviews_since, get_conn as _gc_r, REVIEW_TIME_AXIS_BARE as _AX_RPT
             from time_utils import restaurant_now_by_id
-            now_chi = restaurant_now_by_id(restaurant_id or report.restaurant_id)
-            last_week_start = (now_chi - timedelta(days=14)).isoformat()
-            last_week_end = (now_chi - timedelta(days=7)).isoformat()
+            _win = getattr(report, "_window", None)
+            if _win:
+                # The week before the report's own fixed week (digest_window):
+                # the same edges at 2am and at 9am, so the precompute and the
+                # send see the same comparison (re-audit #6).
+                from datetime import date as _date_w
+                _ws = _date_w.fromisoformat(_win[0])
+                _days_w = (_date_w.fromisoformat(_win[1]) - _ws).days or 7
+                last_week_start = (_ws - timedelta(days=_days_w)).isoformat()
+                last_week_end = _ws.isoformat()
+            else:
+                now_chi = restaurant_now_by_id(restaurant_id or report.restaurant_id)
+                last_week_start = (now_chi - timedelta(days=14)).isoformat()
+                last_week_end = (now_chi - timedelta(days=7)).isoformat()
             _conn_r = _gc_r()
             last_week = _conn_r.execute(
                 f"""SELECT COUNT(*) as cnt, AVG(rating) as avg_r FROM reviews
@@ -1146,13 +1160,20 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         _bl_cnt = None
         try:
             from models import get_conn as _gc_bl
+            from models import REVIEW_TIME_AXIS_BARE as _AX_BL
             _conn_bl = _gc_bl()
+            # Reviews written before the report's week closed (digest_window):
+            # the morning fetch drafts replies to today's reviews, and those
+            # are next week's — counting them made the 2am prompt and the 9am
+            # prompt differ (re-audit #6).
+            _win_bl = getattr(report, "_window", None)
+            _upper_bl = (" AND " + _AX_BL + " < ?") if _win_bl else ""
             _backlog = _conn_bl.execute(
                 """SELECT COUNT(*) as cnt FROM reviews
                    WHERE restaurant_id=? AND deleted_at IS NULL
                    AND response_status IN ('pending','drafted')
-                   AND draft_response IS NOT NULL AND draft_response != ''""",
-                (report.restaurant_id,)
+                   AND draft_response IS NOT NULL AND draft_response != ''""" + _upper_bl,
+                (report.restaurant_id,) + ((_win_bl[1],) if _win_bl else ())
             ).fetchone()
             _conn_bl.close()
             _bl_cnt = _backlog["cnt"] if _backlog else 0
@@ -2235,24 +2256,42 @@ def send_digest(report: WeeklyReport, restaurant_name: str, to_email: str):
 
 
 # Patch for test/demo: allow custom db_path passthrough
+def digest_window(restaurant_id, days: int = 7):
+    """The digest's week: (first day, day after the last), restaurant-local
+    dates — the `days` whole days ending yesterday, local. Fixed for the
+    whole day, so run_digest_precompute (from 2am) and the 9am send build
+    the same report, and so the same prompt, on the same data (AI cost
+    audit 10/7/26 re-audit #6). It was now-minus-7-days to now: the start
+    moved every hour and the morning's fetch added today's reviews, so the
+    night's batch answer was usually a different fingerprint and the send
+    paid for the narrative again, synchronously."""
+    import time_utils
+    today = time_utils.restaurant_now_by_id(restaurant_id, naive=True).date()
+    return today - timedelta(days=days), today
+
+
 def build_report_from_db(restaurant_id: int, restaurant_name: str,
                           days: int = 7, db_path: str = None) -> WeeklyReport:
-    """Like build_report but accepts an explicit db_path for testing."""
+    """The digest's report for its week (digest_window): reviews a guest
+    wrote in the `days` whole local days ending yesterday. Accepts an
+    explicit db_path for testing."""
     from models import get_reviews_since as _grs
+    start, end = digest_window(restaurant_id, days)
     if db_path:
-        reviews = _grs(restaurant_id,
-                       (datetime.now() - timedelta(days=days)).isoformat(),
-                       db_path=db_path)
+        reviews = _grs(restaurant_id, start.isoformat(), db_path=db_path, until=end.isoformat())
     else:
-        reviews = _grs(restaurant_id,
-                       (datetime.now() - timedelta(days=days)).isoformat())
+        reviews = _grs(restaurant_id, start.isoformat(), until=end.isoformat())
 
     report = WeeklyReport(
         restaurant_id=restaurant_id,
-        # M/D/YY, the one date format an owner reads (MOD-REV-17).
-        period_start=_mdy(datetime.now() - timedelta(days=days)),
-        period_end=_mdy(datetime.now()),
+        # M/D/YY, the one date format an owner reads (MOD-REV-17): the
+        # first and the last day the week covers — yesterday, not today.
+        period_start=_mdy(start),
+        period_end=_mdy(end - timedelta(days=1)),
     )
+    # The window itself, for the prompt's week-on-week line (the week before
+    # this one, on the same fixed edges).
+    report._window = (start.isoformat(), end.isoformat())
     if not reviews:
         return report
 

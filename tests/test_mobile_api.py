@@ -2786,7 +2786,10 @@ def test_alert_settings_persist_new_fields_and_clean_extra_emails(client, db_pat
     assert health_bypasses_quiet_hours(rid, db_path=db_path) is True
 
 
-def test_auto_approve_route_and_scheduler_rule(client, db_path, monkeypatch):
+def test_auto_approve_route_and_scheduler_rule(client, db_path, monkeypatch, reviewer_passes):
+    # The reviewer gate ran and passed (conftest.reviewer_passes): since the
+    # 10/7/26 re-audit (#1) a gate that cannot run holds the reply, and this
+    # test is about the rule, not its gate.
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     resp = client.post("/mobile/api/account/auto-approve", headers=_auth_headers(token),
