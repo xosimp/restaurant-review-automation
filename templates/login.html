@@ -74,12 +74,11 @@ body{
 .stage{position:relative;z-index:1;width:100%;max-width:440px;margin:auto;padding-top:46px;perspective:1400px}
 .stage-in{position:relative;transform-style:preserve-3d;will-change:transform;animation:cardFloat 7s ease-in-out 1s infinite alternate}
 @keyframes cardFloat{from{translate:0 0}to{translate:0 -5px}}
-.card-back{position:absolute;left:18px;right:18px;top:22px;bottom:-16px;border-radius:30px;pointer-events:none;
-  background:linear-gradient(160deg,rgba(212,88,58,.2),rgba(232,149,106,.05) 42%,rgba(212,88,58,.14));
-  border:1px solid rgba(212,88,58,.22);box-shadow:0 0 70px -18px var(--glow),inset 0 1px 0 rgba(255,236,220,.06);
+.card-back{position:absolute;inset:46px 0 0;border-radius:28px;pointer-events:none;
+  box-shadow:0 0 70px -14px rgba(212,88,58,.34);
   opacity:0;animation:fadeUp .7s ease .25s forwards;transition:transform .5s cubic-bezier(.2,.8,.2,1)}
-.card-back::after{content:'';position:absolute;inset:-30px -20px -40px;border-radius:50px;z-index:-1;
-  background:radial-gradient(60% 55% at 50% 60%,rgba(212,88,58,.22),transparent 70%);filter:blur(18px)}
+.card-back::after{content:'';position:absolute;inset:-34px;border-radius:60px;z-index:-1;
+  background:radial-gradient(closest-side,rgba(212,88,58,.16),transparent);filter:blur(16px)}
 .card{
   position:relative;
   width:100%;
@@ -201,9 +200,9 @@ body{
   transition:transform .22s cubic-bezier(.2,.8,.2,1),border-color .25s ease,background-color .25s ease,box-shadow .3s ease,color .2s ease}
 .card .sso .ic{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:rgba(255,236,220,.06);box-shadow:inset 0 0 0 1px rgba(255,236,220,.07);transition:background-color .25s ease,box-shadow .3s ease}
 .card .sso svg{flex:none}
-.card .sso:hover{transform:translateY(-2px);color:var(--ink);border-color:rgba(232,149,106,.38);background:linear-gradient(180deg,rgba(255,236,220,.08),rgba(255,236,220,.03));
-  box-shadow:inset 0 1px 0 rgba(255,236,220,.09),0 14px 28px -14px rgba(212,88,58,.6)}
-.card .sso:hover .ic{background:rgba(212,88,58,.14);box-shadow:inset 0 0 0 1px rgba(232,149,106,.3),0 0 18px -4px rgba(212,88,58,.6)}
+.card .sso:hover{transform:translateY(-2px);color:var(--ink);border-color:rgba(232,149,106,.3);background:linear-gradient(180deg,rgba(255,236,220,.075),rgba(255,236,220,.03));
+  box-shadow:inset 0 1px 0 rgba(255,236,220,.08),0 0 16px -4px rgba(212,88,58,.26)}
+.card .sso:hover .ic{background:rgba(212,88,58,.1);box-shadow:inset 0 0 0 1px rgba(232,149,106,.22)}
 .card .sso:active{transform:translateY(0) scale(.97)}
 .card .sso[disabled]{opacity:.55;cursor:default;transform:none}
 .card .sso[hidden]{display:none}
@@ -227,7 +226,7 @@ body{
 .cf-layer{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
 .card{z-index:1}
 body{flex-direction:column}
-@media (max-width:480px){.stage{padding-top:44px}.card{padding:58px 22px 26px;border-radius:26px}.card-back{left:12px;right:12px}.ssos{gap:8px}}
+@media (max-width:480px){.stage{padding-top:44px}.card{padding:58px 22px 26px;border-radius:26px}.card-back{top:44px;border-radius:26px}.ssos{gap:8px}}
 </style>
 
 </head>
@@ -461,7 +460,7 @@ body{flex-direction:column}
   function step() {
     x += (tx - x) * 0.08; y += (ty - y) * 0.08;
     inner.style.transform = 'rotateX(' + (-y * 2.2).toFixed(3) + 'deg) rotateY(' + (x * 2.6).toFixed(3) + 'deg)';
-    if (back) back.style.transform = 'translate(' + (-x * 7).toFixed(2) + 'px,' + (-y * 6).toFixed(2) + 'px)';
+    if (back) back.style.transform = 'translate(' + (-x * 3).toFixed(2) + 'px,' + (-y * 3).toFixed(2) + 'px)';
     if (Math.abs(tx - x) > 0.001 || Math.abs(ty - y) > 0.001) raf = requestAnimationFrame(step); else raf = 0;
   }
   window.addEventListener('pointermove', function (e) {

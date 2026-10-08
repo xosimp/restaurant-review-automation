@@ -1781,8 +1781,9 @@ connections, then the demo form. Rules:
 
 `templates/login.html`, over the unchanged living ground (cavnar-field.js,
 which paints the card's wide soft shadow, dithered, from `.card`'s rect each
-frame). A layered composition, not a rectangle: a glowing ember sheet set
-behind and below (`.card-back`, drifting opposite the pointer), the glass
+frame). A layered composition, not a rectangle: a an even ember glow
+behind the whole panel (`.card-back`, no edge of its own — an offset sheet
+read as a stray card, owner 10/8/26), the glass
 panel (`.card`: 28px radius, blurred and saturated backdrop, a lit top
 hairline, the core's light cast down from the top edge), and the Ember Core
 (92px, `data-core-energy=".5"`) riding the top edge with a few motes rising
