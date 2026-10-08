@@ -462,6 +462,8 @@
   window.EmberCore = {
     pulse: function (n) { var c = find(n); if (c) { c.pulse = 0; c.flare = 1; kick(); } },
     think: function (n, on) { var c = find(n); if (c) { c.thinkTo = on ? 1 : 0; kick(); } },
+    // wake a core from script, 0 to 1 (the sign-in card's fields, 10/8/26)
+    wake: function (n, on) { var c = find(n); if (c) { c.wake = typeof on === 'number' ? Math.max(0, Math.min(1, on)) : (on ? 1 : 0); kick(); } },
     scan: scan
   };
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start); else start();

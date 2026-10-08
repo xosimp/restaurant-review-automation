@@ -1777,6 +1777,33 @@ connections, then the demo form. Rules:
   stays verbatim (`tests/test_a2p_staff_verification_optin.py`).
 - **Integrations** list only what is live; anything else is "on request".
 
+### The sign-in card (10/8/26)
+
+`templates/login.html`, over the unchanged living ground (cavnar-field.js,
+which paints the card's wide soft shadow, dithered, from `.card`'s rect each
+frame). A layered composition, not a rectangle: a glowing ember sheet set
+behind and below (`.card-back`, drifting opposite the pointer), the glass
+panel (`.card`: 28px radius, blurred and saturated backdrop, a lit top
+hairline, the core's light cast down from the top edge), and the Ember Core
+(92px, `data-core-energy=".5"`) riding the top edge with a few motes rising
+from it. The whole card floats (5px, 7s) and leans up to ~2.5° toward a
+fine pointer.
+
+- **Fields**: recessed wells 58px high, 15px radius, inner shadow; the label
+  floats up into an uppercase caption on focus or when filled (autofill
+  too); focus draws an ember edge with a soft outer glow and warms the core
+  (`EmberCore.wake('login', 0.4)`). The password's eye draws or undraws its
+  slash as it reveals.
+- **Sign in**: ember glass (a lit top edge, a soft reflection, a light that
+  sweeps across on hover); it lifts on hover and compresses on press; while
+  signing in its label lifts away and a light runs along a track, the
+  panel's halo brightens and the core quickens, brightens and pulses.
+- **Google, Apple, passkey**: one row of action cards (icon tile, short
+  name, the full "Sign in with …" as the accessible name); they lift and
+  warm on hover.
+- Reduce Motion: no float, lean, motes or running lights; the reveal and
+  the loading state stay.
+
 ### Restaurant DNA — the restaurant's personality, revealed (10/8/26)
 
 A signature screen, not a table (owner, 10/8/26: "make it feel like an AI is
@@ -1859,7 +1886,7 @@ breath two incommensurate sines.
   (`CavnarOrb` / `cavnar-orb.js`), compact and error states with the Cold
   Hearth. Web app (`static/ember-core.js`, a copy of the site's, held equal by
   `tests/test_public_site.py`; it registers `[data-core]` elements as they
-  appear): sign-in (a 56px core in the card's head, beside the wordmark, so the form stays in the first screen), Ask Cavnar AI before anything is asked
+  appear): sign-in (a 92px core riding the card's top edge — the sign-in card, below), Ask Cavnar AI before anything is asked
   (`ASK_CORE`), and the whole-screen empty states (`ecEmptyCore`: Intel with no
   competitor data, the daily report not yet built or switched off,
   Recommendations, Schedule History). iOS (`EmberCore.metal` — the web shader
