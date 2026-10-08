@@ -296,14 +296,20 @@ def test_a_sampled_run_keeps_its_request_redacted(db, monkeypatch):
 # ── the learner ────────────────────────────────────────────────────────────
 
 def _fake_run(db, workflow, *, tier="T1", escalations=0, outcome=None, quality=None, days_ago=1, shadow_of=None,
-              score=None, cost=0.01, run_id=None):
+              score=None, cost=0.01, run_id=None, first_tier=None, policy_version=None, context=None):
+    # A production run records the policy version it ran under and the tier
+    # its first attempt ran on (re-audit 10/7/26 #9): by default today's
+    # version and the first rung of the workflow's default ladder.
     conn = sqlite3.connect(db)
     try:
         conn.execute("INSERT INTO ai_runs (run_id, workflow, restaurant_id, final_tier, final_model, status, "
                      "escalations, latency_ms, cost_usd, outcome, outcome_quality, created_at, shadow_of, "
-                     "reviewer_score) VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now', ?),?,?)",
+                     "reviewer_score, first_tier, policy_version, context_json) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now', ?),?,?,?,?,?)",
                      (run_id or orch.new_run_id(workflow), workflow, 7, tier, "m", "ok", escalations, 1000, cost,
-                      outcome, quality, f"-{days_ago} days", shadow_of, score))
+                      outcome, quality, f"-{days_ago} days", shadow_of, score,
+                      first_tier or wf.POLICIES[workflow].ladder[0], policy_version or wf.POLICY_VERSION,
+                      json.dumps(context) if context else None))
         conn.commit()
     finally:
         conn.close()
@@ -327,12 +333,58 @@ def test_a_ladder_that_mostly_escalates_is_recommended_to_start_higher(db):
 
 
 def test_a_cheaper_tier_that_scores_as_well_in_shadow_is_recommended(db):
+    # Both scores and both costs of a pair live on the shadow row since the
+    # re-audit (10/7/26 #2): production re-scored with the candidate's
+    # context, and production's FIRST call's cost.
     for i in range(25):
         pid = f"run:p{i}"
-        _fake_run(db, "review_insight", tier="T2", score=0.86, cost=0.010, run_id=pid)
-        _fake_run(db, "review_insight", tier="T1", score=0.84, cost=0.004, shadow_of=pid)
+        _fake_run(db, "review_insight", tier="T2", score=0.99, cost=0.050, run_id=pid)
+        _fake_run(db, "review_insight", tier="T1", score=0.84, cost=0.004, shadow_of=pid,
+                  context={"production_score": 0.86, "production_first_cost": 0.010})
     made = ai_learning.recommend(db_path=db)
     assert any("review_insight" in m and "start on T1" in m for m in made)
+    (rec,) = [r for r in ai_learning.recommendations(db_path=db) if r["kind"] == "start_lower"]
+    ev = json.loads(rec["evidence_json"])
+    assert ev["prod_score"] == 0.86 and ev["prod_cost"] == 0.01, "the shadow row's figures, not the run's"
+    # A pair recorded without production's re-score or first-call cost
+    # (the old shape) is not counted.
+    _fake_run(db, "review_insight", tier="T1", score=0.84, cost=0.004, shadow_of="run:p0")
+    assert len(ai_learning._shadow_pairs(28, db)[("review_insight", "T1")]) == 25
+
+
+def test_the_learner_reads_only_runs_on_the_ladder_in_force(db):
+    # 30 escalated runs, but under an older policy version, or started on a
+    # rung the ladder no longer starts on: no start_higher (re-audit #9).
+    for _ in range(15):
+        _fake_run(db, "labor_insight", tier="T2", escalations=1, policy_version="2026-01-01.1")
+        _fake_run(db, "labor_insight", tier="T2", escalations=1, first_tier="T2")
+    assert not any("labor_insight" in m for m in ai_learning.recommend(db_path=db))
+    # Runs before a console override was applied do not count against it.
+    for _ in range(25):
+        _fake_run(db, "marketing_insight", tier="T2", escalations=1, days_ago=6)
+    orch.set_override("marketing_insight", {"caps": {"calls": 3}}, actor="will", db_path=db)
+    assert not any("marketing_insight" in m for m in ai_learning.recommend(db_path=db))
+    # An open recommendation whose premise no longer holds is closed.
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO ai_route_recommendations (workflow, kind, summary, proposed_json) "
+                 "VALUES ('labor_insight','start_higher','old','{\"ladder\": [\"T2\"]}')")
+    conn.commit()
+    conn.close()
+    ai_learning.recommend(db_path=db)
+    assert not ai_learning.recommendations("open", db_path=db)
+    assert [r["kind"] for r in ai_learning.recommendations("expired", db_path=db)] == ["start_higher"]
+    # Stats are kept apart by policy version.
+    vs = {s["policy_version"] for s in ai_learning.route_stats(workflow="labor_insight", db_path=db)}
+    assert vs == {"2026-01-01.1", wf.POLICY_VERSION}
+
+
+def test_a_run_records_the_tier_its_first_attempt_ran_on(db):
+    rr = orch.generate("labor_insight", 7, attempt=lambda r, n: r.tier,
+                       check=lambda r: orch.Verdict.passed() if r == "T2" else orch.Verdict.failed("validation_refuse"),
+                       db_path=db)
+    assert rr.tier == "T2"
+    row = _runs(db)[0]
+    assert row["first_tier"] == "T1" and row["final_tier"] == "T2"
 
 
 def test_an_override_that_hurts_acceptance_is_reverted(db):

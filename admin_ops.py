@@ -7001,7 +7001,10 @@ def _policy_dict(p):
     return {"ladder": list(p.ladder), "escalate_on": list(p.escalate_on), "max_escalations": p.max_escalations,
             "reviewer": p.reviewer, "reviewer_unattended": p.reviewer_unattended, "shadow_rate": p.shadow_rate,
             "batch": bool(p.batch), "caps": {"calls": p.caps.calls, "usd": p.caps.usd, "seconds": p.caps.seconds},
-            "canary": bool(p.canary), "delivery": p.delivery, "context": list(p.context), "note": p.note}
+            # Informational (re-audit 10/7/26 #10): what the prompt reads, as
+            # the code documents it — nothing reads these, and no override
+            # changes them; the console labels them so.
+            "canary": bool(p.canary), "delivery": p.delivery, "context": list(p.context), "context_informational": True, "note": p.note}
 
 
 def _json_or(raw, default=None):
@@ -7079,12 +7082,15 @@ def ai_routes_view(days=28):
             "stats": rows, "totals": agg, "shadow": pair_rows,
             "shadow_candidate": shadow_ok.get(name),
             "replayable": name not in orch.NOT_REPLAYABLE,
+            # A workflow whose calls never run through generate(): its
+            # override would change nothing, so the console offers none (#6).
+            "overridable": wf.overridable(name),
             "recommendations": [dict(r, proposed=_json_or(r.get("proposed_json"), {}),
                                      evidence=_json_or(r.get("evidence_json"), {})) for r in recs
                                 if r["workflow"] == name],
         })
     return {"ok": True, "days": days, "policy_version": wf.POLICY_VERSION, "workflows": out,
-            "tiers": tiers, "triggers": wf.TRIGGERS, "reviewers": list(wf.REVIEWERS), "tier_names": list(wf.TIERS),
+            "tiers": tiers, "triggers": wf.TRIGGERS, "reviewers": list(wf.REVIEWERS), "tier_names": list(wf.LADDER_TIERS),
             "overridable": list(wf.OVERRIDABLE),
             "decided": [dict(r, proposed=_json_or(r.get("proposed_json"), {})) for r in decided],
             "open_recommendations": len(recs), "errors": errors, "query_errors": errors}
@@ -7126,6 +7132,9 @@ def ai_route_set_override(workflow, override, actor="admin", reason=None):
         return {"ok": False, "error": "override must be an object of fields.", "status": 400}
     try:
         minimal = _minimal_override(base, override)
+        if minimal and not wf.overridable(workflow):
+            return {"ok": False, "status": 409,
+                    "error": f"{workflow} does not run through the orchestrator, so an override would change nothing."}
         change = orch.set_override(workflow, minimal or None, actor=actor, reason=(reason or "")[:300] or None)
     except (ValueError, TypeError) as e:
         return {"ok": False, "error": f"{workflow}: {e}", "status": 400}

@@ -53,6 +53,10 @@ POLICY_VERSION = "2026-10-07.4"
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
+# The tiers a ladder may name. T0 is deterministic code, never a model call:
+# a ladder naming it would hand route_for a tier with no model (re-audit
+# 10/7/26 #7: an override "T0,T1" failed every call of the workflow).
+LADDER_TIERS = ("T1", "T2", "T3", "T4")
 
 
 def _tier_table():
@@ -112,13 +116,17 @@ class Policy:
     # auto-approved review reply): unset means the same as `reviewer`.
     reviewer_unattended: str = ""
     shadow_rate: float = 0.0     # share of runs a haiku_shadow reviewer scores
-    # The restaurant_context sections it is meant to read, and their budget.
-    # Declarative today (context re-audit 10/7/26 #10): no caller assembles
-    # its prompt from these; each read renders the sections it names itself.
+    # Informational (re-audit 10/7/26 #10): the restaurant_context sections
+    # the workflow's prompt reads and their budget, as documentation — the
+    # call site builds its own prompt, nothing here reads these, and the
+    # console cannot override them.
     context: tuple = ()
     context_tokens: int = 0
     caps: Caps = field(default_factory=Caps)
-    batch: bool = False          # may run through Message Batches (unattended)
+    # May run through Message Batches (unattended). ai_batches.enabled reads
+    # it, AND-ed with AI_BATCHES_WORKFLOWS, so the console can stop one
+    # workflow batching without a deploy (re-audit 10/7/26 #10).
+    batch: bool = False
     delivery: str = "interactive"   # interactive | background | batch
     # A cheaper first rung than the call site ran on before this registry
     # ships to the canary restaurants first (AI_CANARY_RESTAURANTS): every
@@ -298,8 +306,16 @@ def _coerce(name, value, base):
         if name == "escalate_on":
             vals = tuple(dict.fromkeys(LEGACY_TRIGGERS.get(v, v) for v in vals))
         if name == "ladder":
-            if not vals or any(v not in TIERS and v != DEFAULT for v in vals):
-                raise ValueError(f"ladder must name tiers {TIERS} or '{DEFAULT}'")
+            if not vals or any(v not in LADDER_TIERS and v != DEFAULT for v in vals):
+                raise ValueError(f"ladder must name tiers {LADDER_TIERS} or '{DEFAULT}'")
+            # "default" is the call site's own model (ai_utils.model_for of the
+            # purpose); a workflow with no purpose has none, and its route
+            # would carry an empty model (re-audit 10/7/26 #7: ai_review on
+            # "default" failed every gate open).
+            if DEFAULT in vals and not base.purpose:
+                raise ValueError(f"{base.workflow} has no call-site model, so its ladder cannot use '{DEFAULT}'")
+            if len(set(vals)) != len(vals):
+                raise ValueError("a ladder names each tier once")
         elif any(v not in TRIGGERS for v in vals):
             raise ValueError(f"escalation triggers must be among {tuple(TRIGGERS)}")
         return vals
@@ -328,6 +344,20 @@ def _coerce(name, value, base):
             raise ValueError("caps: 1-20 calls, $0-20, seconds > 0")
         return caps
     raise ValueError(f"{name} cannot be overridden")
+
+
+# Workflows whose model calls never run through ai_orchestrator.generate():
+# the console shows their policy and their runs, but an override would
+# change nothing, so it refuses one (re-audit 10/7/26 #6). The weekly plan
+# and Ask's summary are the cfo agent's own loop, the audit read is an admin
+# tool, and the two diagnoses call create_with_retry directly (sync and
+# batch) on their own model.
+CONSOLE_READ_ONLY = ("weekly_plan", "ask_summary", "audit_notes_read", "review_diagnosis", "food_cost_diagnosis")
+
+
+def overridable(workflow) -> bool:
+    """Whether a console override reaches `workflow`'s calls."""
+    return workflow in POLICIES and workflow not in CONSOLE_READ_ONLY
 
 
 def apply_override(base: Policy, override: dict) -> Policy:
@@ -501,9 +531,13 @@ def route_for(pol: Policy, step: int = 0, start: str | None = None) -> Route:
         ladder = ladder[ladder.index(start):]
     tier = ladder[min(step, len(ladder) - 1)]
     if tier == DEFAULT:
+        if not pol.purpose:
+            raise ValueError(f"{pol.workflow}: '{DEFAULT}' has no call-site model to run on")
         import ai_utils as _ai
-        return Route(tier=DEFAULT, model=_ai.model_for(pol.purpose) if pol.purpose else "")
-    t = _tier_table()[tier]
+        return Route(tier=DEFAULT, model=_ai.model_for(pol.purpose))
+    t = _tier_table().get(tier)
+    if t is None:
+        raise ValueError(f"{pol.workflow}: tier {tier!r} has no model")
     return Route(tier=tier, model=t["model"], effort=t["effort"])
 
 

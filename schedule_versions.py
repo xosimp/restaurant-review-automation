@@ -802,6 +802,64 @@ def draft_vs_published(restaurant_id, history_id, db_path=DB_PATH) -> dict:
     return {"available": True, **d, "lines": diff_lines(d, unchanged="No edits since the draft.")}
 
 
+def record_week_outcome(restaurant_id, history_id, actor=None, published=False, db_path=DB_PATH) -> bool:
+    """What the restaurant did with a generated week, filed on the
+    labor_schedule run that wrote it (ai_orchestrator.record_outcome on
+    subject "week:<Monday>"; re-audit 10/7/26 #4 — without it the learner's
+    quality_low could never read the schedule's Sonnet-first route).
+
+    Quality is the share of the generated draft's shifts still there,
+    untouched (same date, person, start, end and role), in the newest
+    version: 1.0 → "accepted", less → "edited". Called on a save of the
+    draft (the save route; the first owner edit files it, each later save
+    refines it) and on its publish (the final answer). Nobody's answer is
+    filed as one: a publish by automation of a week no person of the
+    restaurant edited, and support's hand (view-as, an admin) are
+    "ignored". A week that was not generated (an upload, a copy) files
+    nothing. Never raises; True when an outcome was filed."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            hist = conn.execute("SELECT week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                                (history_id, restaurant_id)).fetchone()
+            first = conn.execute("SELECT reason, schedule_csv FROM schedule_versions WHERE history_id=? "
+                                 "AND restaurant_id=? ORDER BY version ASC LIMIT 1",
+                                 (history_id, restaurant_id)).fetchone()
+            people = conn.execute("SELECT COUNT(*) FROM schedule_versions WHERE history_id=? AND restaurant_id=? "
+                                  "AND reason='edited' AND COALESCE(saved_authority, '') NOT IN ('admin')",
+                                  (history_id, restaurant_id)).fetchone()[0]
+            now_rows = latest_rows(conn, history_id)
+        finally:
+            conn.close()
+        if not hist or not first or first["reason"] != "generated":
+            return False
+        drafted = rows_from_csv(first["schedule_csv"])
+        if not drafted:
+            return False
+        quality = round(_same_rows(drafted, now_rows) / len(drafted), 3)
+        auth = authority_of(actor)
+        automated = auth == SYSTEM           # the unattended auto-publish (L-7)
+        support = auth == "admin"
+        try:
+            from permissions import acting_via
+            support = support or bool(acting_via())
+        except Exception:
+            pass
+        if support or (published and automated and not people):
+            outcome = "ignored"
+        else:
+            outcome = "accepted" if quality >= 1.0 else "edited"
+        import ai_orchestrator
+        return ai_orchestrator.record_outcome(
+            "labor_schedule", restaurant_id, f"week:{str(hist['week_start'])[:10]}", outcome,
+            quality=None if outcome == "ignored" else quality,
+            detail=("published" if published else "saved") + f": {quality:.0%} of the draft's shifts kept",
+            db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        log.info("schedule outcome not filed rid=%s history=%s: %s", restaurant_id, history_id, e)
+        return False
+
+
 def _same_rows(a_rows: list, b_rows: list) -> int:
     """Rows of a_rows that survive untouched in b_rows: same date, person,
     start, end and role."""

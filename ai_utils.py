@@ -2753,12 +2753,21 @@ def mark_outcome(message_or_call_id, outcome, reason=None, db_path=None):
             except sqlite3.OperationalError:
                 pass
             conn.commit()
-            return cur.rowcount > 0
+            marked = cur.rowcount > 0
         finally:
             conn.close()
     except Exception as e:
         log.warning("mark_outcome(%s, %s) failed: %s", call_id, outcome, e)
         return False
+    if outcome != "ok":
+        # An answer the caller could not use: the workflow run that passed
+        # it is re-filed as a fallback (re-audit 10/7/26 #11). Never raises.
+        try:
+            import ai_orchestrator as _orch
+            _orch.mark_fallback(call_id, reason=f"{outcome}: {reason or ''}".strip(": "), db_path=db_path)
+        except Exception:
+            pass
+    return marked
 
 
 class AIOutputRejected(ValueError):
@@ -3758,10 +3767,26 @@ def record_quality_event(surface, kind, restaurant_id=None, detail=None, codes=N
             conn.commit()
         finally:
             conn.close()
-        return True
     except Exception as e:
         log.warning("AI quality event not recorded (%s/%s): %s", surface, kind, e)
         return False
+    if kind in FALLBACK_EVENT_KINDS and call_id:
+        # The caller served its fixed copy in place of an answer a workflow
+        # run passed: that run is re-filed as a fallback (re-audit 10/7/26
+        # #11; ai_orchestrator.mark_fallback matches the call's own action
+        # to the run's workflow). Never raises.
+        try:
+            import ai_orchestrator as _orch
+            _orch.mark_fallback(call_id, reason=f"{kind}: {redact_pii(str(detail or ''))[:150]}".strip(": "),
+                                db_path=db_path)
+        except Exception:
+            pass
+    return True
+
+
+# Quality events that mean the model's answer was not what went out.
+FALLBACK_EVENT_KINDS = ("fallback", "output_rejected", "validation_refused", "unparseable", "truncated",
+                        "model_refused")
 
 
 def quality_counts(days=1, surface=None, kind=None, db_path=None):

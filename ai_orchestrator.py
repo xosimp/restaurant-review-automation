@@ -104,7 +104,8 @@ CREATE TABLE IF NOT EXISTS ai_runs (
     outcome_detail TEXT,
     outcome_at TEXT,
     shadow_of TEXT,
-    canary INTEGER
+    canary INTEGER,
+    first_tier TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ai_runs_wf_created ON ai_runs(workflow, created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_runs_subject ON ai_runs(workflow, restaurant_id, subject);
@@ -132,6 +133,7 @@ CREATE TABLE IF NOT EXISTS ai_run_requests (
     workflow TEXT,
     restaurant_id INTEGER,
     request_z BLOB,
+    tier TEXT,
     PRIMARY KEY (run_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_run_requests_wf ON ai_run_requests(workflow, created_at);
@@ -145,18 +147,38 @@ CREATE TABLE IF NOT EXISTS ai_route_overrides (
     updated_at TEXT DEFAULT (datetime('now')),
     reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS ai_gate_verdicts (
+    text_hash TEXT PRIMARY KEY,
+    created_at TEXT DEFAULT (datetime('now')),
+    restaurant_id INTEGER,
+    kind TEXT,
+    ok INTEGER NOT NULL,
+    score REAL,
+    reasons TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ai_gate_verdicts_created ON ai_gate_verdicts(created_at);
 """
+
+# Columns added after the tables shipped (boot only, like the tables):
+# first_tier - the tier the run's first attempt ran on, so the learner reads
+# only runs that started on the ladder in force (re-audit 10/7/26 #9); tier -
+# the rung a kept request was sent on, so a shadow replay is compared with
+# the first rung and never an escalation (#6).
+_COLUMNS_AFTER = (("ai_runs", "first_tier", "TEXT"), ("ai_run_requests", "tier", "TEXT"),
+                  # 1 a canary run on the cheap first rung, 0 held back a rung, NULL a
+                  # workflow not canaried (context re-audit 10/7/26 #3).
+                  ("ai_runs", "canary", "INTEGER"))
 
 
 def init_ai_orchestration(db_path=None):
     conn = _conn(db_path)
     try:
         conn.executescript(_SCHEMA)
-        # ai_runs.canary (context re-audit 10/7/26 #3): 1 a canary run on the
-        # cheap first rung, 0 held back a rung, NULL a workflow not canaried.
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_runs)").fetchall()}
-        if "canary" not in cols:
-            conn.execute("ALTER TABLE ai_runs ADD COLUMN canary INTEGER")
+        for table, col, decl in _COLUMNS_AFTER:
+            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         # Run cost is read from the ledger by correlation id (one run, one
         # id). ai_usage is created by ai_utils at boot just before this; on
         # a database where it is not there yet the index waits for the next boot.
@@ -211,6 +233,8 @@ def set_override(workflow, override, actor=None, reason=None, db_path=None) -> d
     base = wf.POLICIES.get(workflow)
     if base is None:
         raise ValueError(f"unknown workflow {workflow!r}")
+    if override and not wf.overridable(workflow):
+        raise ValueError(f"{workflow} does not run through the orchestrator, so an override would change nothing")
     if override:
         wf.apply_override(base, override)       # raises on anything invalid
     conn = _conn(db_path)
@@ -280,7 +304,11 @@ class RunResult:
     model: str | None = None
     attempts: int = 0
     escalations: int = 0
-    status: str = "ok"          # ok | failed | held | capped | error | refused | skipped (a check not run for time)
+    status: str = "ok"          # ok | failed | held | capped | error | refused | off | skipped (a check not run for time)
+    # The Haiku gate's score on the returned attempt, when a gate ran and
+    # scored it (None: no gate, or a reviewer that could not run) — a send
+    # path remembers a gated text by it (ai_reviewer.gate_send).
+    review_score: float | None = None
 
     @property
     def ok(self):
@@ -289,6 +317,40 @@ class RunResult:
 
 class RunRefused(RuntimeError):
     """A workflow started deeper than MAX_DEPTH inside other workflows."""
+
+
+# The statuses of a run whose result a caller served (its own text, or the
+# best attempt with its failing verdict, which the caller turns into its
+# fallback): what an owner's outcome or a later reviewer verdict can be
+# about (re-audit 10/7/26 #5). A held, errored, refused or switched-off run
+# served nothing.
+SERVED = ("ok", "failed", "capped")
+
+
+class WorkflowOff(RuntimeError):
+    """The workflow is switched off (AI_WORKFLOW_OFF): no model was called.
+    What generate() raises is also an ai_utils.AIRefused (workflow_off_error),
+    so every caller that already serves its fallback on a refusal does here."""
+
+
+_WorkflowOffRefused = None
+
+
+def workflow_off_error(workflow):
+    """A WorkflowOff that is also an ai_utils.AIRefused - the class is built
+    on first use, so this module never imports ai_utils at import time."""
+    global _WorkflowOffRefused
+    if _WorkflowOffRefused is None:
+        import ai_utils
+        _WorkflowOffRefused = type("WorkflowOffRefused", (WorkflowOff, ai_utils.AIRefused), {})
+    return _WorkflowOffRefused(f"{workflow} is switched off (AI_WORKFLOW_OFF)")
+
+
+def workflows_off() -> set:
+    """AI_WORKFLOW_OFF: a comma-separated list of workflows that make no
+    model call - a per-workflow kill switch (re-audit 10/7/26 #10). Read at
+    every run, so a restart with the variable changed is all it takes."""
+    return {w.strip() for w in os.getenv("AI_WORKFLOW_OFF", "").split(",") if w.strip()}
 
 
 def current_run() -> dict | None:
@@ -317,6 +379,14 @@ def _spent(run_id, db_path=None):
         return 0.0, 0, 0, 0
 
 
+def _first_tier(steps):
+    """The tier the run's first attempt ran on (the first step naming one)."""
+    for st in steps or ():
+        if isinstance(st, dict) and st.get("tier"):
+            return st["tier"]
+    return None
+
+
 def _record(rr: RunResult, pol, *, restaurant_id, subject, unattended, start_tier, steps, started,
             reviewer, reviewer_score, reviewer_notes, context, parent, trigger, db_path, shadow_of=None,
             canary=None):
@@ -329,7 +399,8 @@ def _record(rr: RunResult, pol, *, restaurant_id, subject, unattended, start_tie
                 "policy_version, overridden, subject, \"trigger\", unattended, start_tier, final_tier, final_model, "
                 "attempts, escalations, steps_json, status, verdict, reasons, reviewer, reviewer_score, "
                 "reviewer_notes, latency_ms, cost_usd, input_tokens, output_tokens, context_json, finished_at, "
-                "shadow_of, canary) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?)",
+                "shadow_of, canary, first_tier) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?,?)",
                 (rr.run_id, parent, restaurant_id, rr.workflow, pol.agent, wf.POLICY_VERSION,
                  1 if rr.workflow in overrides(db_path) else 0, (str(subject)[:120] if subject else None),
                  trigger, 1 if unattended else 0, start_tier, rr.tier, rr.model, rr.attempts, rr.escalations,
@@ -338,7 +409,7 @@ def _record(rr: RunResult, pol, *, restaurant_id, subject, unattended, start_tie
                  reviewer, reviewer_score, (reviewer_notes or "")[:500] or None,
                  int((time.time() - started) * 1000), round(cost, 6), tin, tout,
                  json.dumps(context)[:2000] if context else None, shadow_of,
-                 None if canary is None else (1 if canary else 0)))
+                 None if canary is None else (1 if canary else 0), _first_tier(steps)))
             conn.commit()
         finally:
             conn.close()
@@ -393,6 +464,16 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                 reviewer_score=None, reviewer_notes=None, context=context,
                 parent=(parent or {}).get("run_id"), trigger=trigger, db_path=db_path)
         raise RunRefused(f"{workflow} would run {depth} workflows deep (max {MAX_DEPTH})")
+    if workflow in workflows_off():
+        # Switched off: no call, a row that says so, and the caller's own
+        # fallback (an AIRefused, which every caller already handles).
+        rr.status = "off"
+        rr.verdict = Verdict.failed(None, "switched off (AI_WORKFLOW_OFF)", label="off")
+        _record(rr, pol, restaurant_id=restaurant_id, subject=subject, unattended=unattended, start_tier=start,
+                steps=[{"off": "AI_WORKFLOW_OFF"}], started=started, reviewer=None, reviewer_score=None,
+                reviewer_notes=None, context=context, parent=(parent or {}).get("run_id"), trigger=trigger,
+                db_path=db_path)
+        raise workflow_off_error(workflow)
     # A canaried workflow starts one rung up outside the canary restaurants
     # (ai_workflows.canary_start, context re-audit 10/7/26 #3).
     start, canary = wf.canary_start(pol, restaurant_id, start)
@@ -403,7 +484,7 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
     max_steps = max(1, min(n_rungs, 1 + int(pol.max_escalations)))
     token = _RUN.set({"run_id": run_id, "workflow": workflow, "depth": depth,
                       "restaurant_id": restaurant_id, "keep_request": _sampled_for_replay(workflow),
-                      "seq": 0})
+                      "step": 0, "tier": None})
     import ai_utils
     best = None
     notes = []
@@ -420,7 +501,20 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                         steps.append({"capped": {"calls": calls, "usd": round(cost, 4),
                                                  "late": time.time() >= deadline}})
                         break
-                route = wf.route_for(pol, step, start)
+                try:
+                    route = wf.route_for(pol, step, start)
+                except Exception as e:
+                    # A rung with no model to run on (a stored ladder the
+                    # validator would now refuse): the run is recorded as an
+                    # error, never left with no row (re-audit 10/7/26 #7).
+                    steps.append({"route_error": f"{type(e).__name__}: {e}"[:200]})
+                    error = e
+                    break
+                # The rung the next model call is sent on: keep_request tags
+                # the kept request with it (#6).
+                cur_run = _RUN.get()
+                if cur_run is not None:
+                    cur_run["step"], cur_run["tier"] = step, route.tier
                 t0 = time.time()
                 try:
                     result = attempt(route, list(notes))
@@ -437,6 +531,7 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                 if not isinstance(v, Verdict):
                     v = Verdict.passed() if v in (True, None) else Verdict.failed("validation_refuse", str(v))
                 # The reviewer reads only what the rules engine passed.
+                gate_score = None
                 if v.ok and reviewer_mode == "haiku_gate" and review is not None:
                     try:
                         rv = review(result, "haiku_gate")
@@ -445,6 +540,7 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                         rv = None
                     if isinstance(rv, Verdict):
                         reviewer_score, reviewer_notes = rv.score, "; ".join(rv.reasons)[:500] or None
+                        gate_score = rv.score
                         if not rv.ok:
                             v = Verdict.failed("reviewer_flag", *rv.reasons, label="reviewer_flag")
                 steps.append({"tier": route.tier, "model": route.model, "ok": bool(v.ok),
@@ -452,6 +548,7 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                 # The newest attempt is the one returned: it carries the
                 # notes of every rung before it.
                 best = (result, v)
+                rr.review_score = gate_score if v.ok else None
                 if v.ok:
                     break
                 escalate = (v.trigger in pol.escalate_on and v.trigger not in wf.NEVER_TRIGGERS
@@ -505,13 +602,23 @@ def _sampled_for_replay(workflow):
 
 
 def _redacted_request(kwargs):
+    """The request as it is kept: redacted the way the ai_calls trace is
+    (ai_utils._record_trace_safe) - the guest names the request carries
+    (labelled lines, name fields, a name fenced on its own) are collected
+    from ALL of its text first, then every string is scrubbed with them, so
+    "Ann Smith said..." in a review body goes as "[name] said..." like the
+    trace (re-audit 10/7/26 #1: it was kept in the clear)."""
     import ai_utils
     keep = {k: kwargs[k] for k in ("model", "max_tokens", "system", "messages", "output_config", "tools",
                                    "tool_choice") if k in kwargs}
+    try:
+        names = ai_utils.guest_names_in(ai_utils._prompt_text(keep))
+    except Exception:
+        names = set()
 
     def scrub(v):
         if isinstance(v, str):
-            return ai_utils.redact_pii(v)
+            return ai_utils.redact_pii(v, names)
         if isinstance(v, list):
             return [scrub(x) for x in v]
         if isinstance(v, dict):
@@ -524,35 +631,72 @@ def _redacted_request(kwargs):
     return keep
 
 
+def _store_request(run_id, seq, workflow, restaurant_id, tier, kwargs, db_path=None):
+    """One kept request: the first call of its rung only (INSERT OR IGNORE
+    on (run_id, seq), seq = the rung's step + 1), tagged with the tier it
+    was sent on."""
+    import zlib
+    blob = zlib.compress(json.dumps(_redacted_request(kwargs), default=str).encode("utf-8", "replace"))
+    conn = _conn(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO ai_run_requests (run_id, seq, workflow, restaurant_id, request_z, tier) "
+                     "VALUES (?,?,?,?,?,?)", (run_id, int(seq), workflow, restaurant_id, blob, tier))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def keep_request(kwargs, db_path=None):
     """Called by ai_utils.create_with_retry before a call is sent: when the
-    run in force was sampled for replay, store the request. Never raises."""
+    run in force was sampled for replay, store the request — the first call
+    of each rung, under seq = its step + 1 and tagged with its tier, so seq
+    1 is always the first rung (an escalation's request, which carries the
+    check's notes, is seq 2; re-audit 10/7/26 #6). Never raises."""
     cur = _RUN.get()
     if not cur or not cur.get("keep_request"):
         return
     try:
-        import zlib
-        cur["seq"] = int(cur.get("seq") or 0) + 1
-        blob = zlib.compress(json.dumps(_redacted_request(kwargs), default=str).encode("utf-8", "replace"))
-        conn = _conn(db_path)
-        try:
-            conn.execute("INSERT OR REPLACE INTO ai_run_requests (run_id, seq, workflow, restaurant_id, request_z) "
-                         "VALUES (?,?,?,?,?)", (cur["run_id"], cur["seq"], cur["workflow"],
-                                               cur.get("restaurant_id"), blob))
-            conn.commit()
-        finally:
-            conn.close()
+        _store_request(cur["run_id"], int(cur.get("step") or 0) + 1, cur["workflow"], cur.get("restaurant_id"),
+                       cur.get("tier"), kwargs, db_path)
     except Exception as e:
         log.debug("request not kept (%s): %s", cur.get("workflow"), e)
 
 
-def kept_requests(workflow, limit=20, db_path=None) -> list:
-    """[(run_id, request dict)] — the newest kept first-attempt requests."""
+def keep_batch_request(run_id, workflow, restaurant_id, request, db_path=None) -> bool:
+    """A batch item's request, kept at submit (ai_batches.submit) as its
+    run's first rung: a run whose first rung is a batch answer makes no
+    create_with_retry call for it, so nothing used to be kept and its
+    escalation's request was taken for the first (re-audit 10/7/26 #6).
+    Sampled at the same rate as a synchronous run; the tier is the first
+    rung of the policy in force (what the submit sent). Never raises."""
+    try:
+        if not run_id or not str(run_id).startswith("run:") or workflow not in wf.POLICIES:
+            return False
+        if not _sampled_for_replay(workflow):
+            return False
+        tier = wf.route_for(wf.policy(workflow, db_path), 0).tier
+        _store_request(run_id, 1, workflow, restaurant_id, tier, request, db_path)
+        return True
+    except Exception as e:
+        log.debug("batch request not kept (%s): %s", workflow, e)
+        return False
+
+
+def kept_requests(workflow, limit=20, db_path=None, tier=None) -> list:
+    """[(run_id, restaurant_id, request dict)] — the newest kept FIRST-RUNG
+    requests (seq 1), on `tier` when given. A row kept before requests were
+    tagged with their tier (NULL) is never returned: its seq 1 may have been
+    an escalation's (#6)."""
     import zlib
     conn = _conn(db_path)
     try:
-        rows = conn.execute("SELECT run_id, restaurant_id, request_z FROM ai_run_requests WHERE workflow=? AND seq=1 "
-                            "ORDER BY created_at DESC LIMIT ?", (workflow, int(limit))).fetchall()
+        sql = ("SELECT run_id, restaurant_id, request_z FROM ai_run_requests WHERE workflow=? AND seq=1 "
+               "AND tier IS NOT NULL")
+        args = [workflow]
+        if tier:
+            sql += " AND tier=?"
+            args.append(tier)
+        rows = conn.execute(sql + " ORDER BY created_at DESC LIMIT ?", args + [int(limit)]).fetchall()
     except Exception:
         return []
     finally:
@@ -564,6 +708,20 @@ def kept_requests(workflow, limit=20, db_path=None) -> list:
         except Exception:
             continue
     return out
+
+
+def kept_request(run_id, db_path=None):
+    """The first-rung request one run kept, or None."""
+    import zlib
+    try:
+        conn = _conn(db_path)
+        try:
+            row = conn.execute("SELECT request_z FROM ai_run_requests WHERE run_id=? AND seq=1", (run_id,)).fetchone()
+        finally:
+            conn.close()
+        return json.loads(zlib.decompress(row["request_z"]).decode("utf-8")) if row else None
+    except Exception:
+        return None
 
 
 _SHADOW_POOL = None
@@ -629,11 +787,18 @@ def edit_quality(before: str, after: str) -> float:
     return round(difflib.SequenceMatcher(None, a, b).ratio(), 3)
 
 
+def _served_filter():
+    return "AND status IN (" + ",".join("'" + s_ + "'" for s_ in SERVED) + ") AND shadow_of IS NULL "
+
+
 def record_outcome(workflow, restaurant_id, subject, outcome, quality=None, detail=None, run_id=None,
-                   db_path=None) -> bool:
+                   db_path=None, only_unfiled=False) -> bool:
     """File what the owner did with a workflow's output against the run that
-    wrote it — the newest run for (workflow, restaurant, subject) when no
-    run id is given. Never raises; False when no run matched."""
+    wrote it — `run_id` when the caller knows it (a reply's draft_run_id),
+    else the newest production run for (workflow, restaurant, subject) that
+    served something (SERVED: never a held or errored run, nor a shadow
+    replay; re-audit 10/7/26 #5). `only_unfiled` leaves a run that already
+    has an outcome as it is. Never raises; False when no run matched."""
     if outcome not in OUTCOMES:
         log.debug("unknown outcome %r", outcome)
         return False
@@ -643,13 +808,14 @@ def record_outcome(workflow, restaurant_id, subject, outcome, quality=None, deta
         try:
             if not run_id:
                 row = conn.execute("SELECT run_id FROM ai_runs WHERE workflow=? AND restaurant_id IS ? AND subject=? "
-                                   "AND shadow_of IS NULL ORDER BY created_at DESC LIMIT 1",
+                                   + _served_filter() + "ORDER BY created_at DESC, rowid DESC LIMIT 1",
                                    (workflow, restaurant_id, str(subject)[:120])).fetchone()
                 run_id = row["run_id"] if row else None
             if not run_id:
                 return False
             cur = conn.execute("UPDATE ai_runs SET outcome=?, outcome_quality=?, outcome_detail=?, "
-                               "outcome_at=datetime('now') WHERE run_id=?",
+                               "outcome_at=datetime('now') WHERE run_id=?"
+                               + (" AND outcome IS NULL" if only_unfiled else ""),
                                (outcome, q, (str(detail)[:300] if detail else None), run_id))
             conn.commit()
             return cur.rowcount > 0
@@ -660,13 +826,52 @@ def record_outcome(workflow, restaurant_id, subject, outcome, quality=None, deta
         return False
 
 
+def mark_fallback(call_id, reason=None, db_path=None) -> bool:
+    """The caller threw away the answer a run passed and served its own
+    fixed copy (or nothing): the run is re-filed failed, verdict "fallback".
+    A workflow run with no `check` of its own (the digest, the competitor
+    read, the onboarding email's paragraph, the staff brief, a recipe
+    draft) validates after generate() returns, so its row said "ok"
+    whatever the caller then did (re-audit 10/7/26 #11).
+
+    Reached from the two places every such caller already reports the
+    swap: ai_utils.mark_outcome (the answer did not parse, came back empty
+    or cut off) and ai_utils.record_quality_event (a served fallback, a
+    refused or truncated output). `call_id` names the answer; its ledger
+    row's correlation id is the run and its action must be the run's
+    workflow, so a call of another kind can never re-file a run. Only a run
+    still "ok" changes (a run in flight has no row yet, and its own check
+    decides). Never raises."""
+    if not call_id:
+        return False
+    try:
+        conn = _conn(db_path)
+        try:
+            row = conn.execute("SELECT correlation_id, action FROM ai_usage WHERE call_id=? "
+                               "AND correlation_id IS NOT NULL ORDER BY id DESC LIMIT 1", (call_id,)).fetchone()
+            if not row:
+                return False
+            cur = conn.execute("UPDATE ai_runs SET status='failed', verdict='fallback', reasons=? "
+                               "WHERE run_id=? AND workflow=? AND status='ok' AND shadow_of IS NULL",
+                               (json.dumps([str(reason or "the caller served its fallback")[:200]]),
+                                row["correlation_id"], row["action"]))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+    except Exception as e:
+        log.debug("fallback not filed (%s): %s", call_id, e)
+        return False
+
+
 def subject_run(workflow, restaurant_id, subject, db_path=None):
-    """The newest run for a subject, as a dict, or None."""
+    """The newest production run for a subject that served something
+    (SERVED, never a shadow replay — re-audit 10/7/26 #5), as a dict, or None."""
     try:
         conn = _conn(db_path)
         try:
             row = conn.execute("SELECT * FROM ai_runs WHERE workflow=? AND restaurant_id IS ? AND subject=? "
-                               "ORDER BY created_at DESC LIMIT 1",
+                               + _served_filter() + "ORDER BY created_at DESC, rowid DESC LIMIT 1",
                                (workflow, restaurant_id, str(subject)[:120])).fetchone()
             return dict(row) if row else None
         finally:
@@ -714,13 +919,15 @@ def run_context(workflow, restaurant_id, subject, db_path=None) -> dict:
     return out if isinstance(out, dict) else {}
 
 
-def record_review(workflow, restaurant_id, subject, verdict, mode="haiku_gate", db_path=None) -> bool:
-    """File a reviewer's verdict given AFTER the run, on the subject's newest
-    run — the auto-approve gate reads a reply drafted hours earlier, just
-    before it would post it unread. Never raises; False when no run matched."""
+def record_review(workflow, restaurant_id, subject, verdict, mode="haiku_gate", db_path=None, run_id=None) -> bool:
+    """File a reviewer's verdict given AFTER the run, on `run_id` when the
+    caller knows the run that wrote the text (a reply's draft_run_id), else
+    the subject's newest served run — the auto-approve gate reads a reply
+    drafted hours earlier, just before it would post it unread. Never
+    raises; False when no run matched."""
     if not isinstance(verdict, Verdict):
         return False
-    row = subject_run(workflow, restaurant_id, subject, db_path=db_path)
+    row = {"run_id": run_id} if run_id else subject_run(workflow, restaurant_id, subject, db_path=db_path)
     if not row:
         return False
     try:
@@ -827,7 +1034,7 @@ OUTCOME_LOOKBACK_DAYS = 14
 
 
 def record_latest_outcome(workflow, restaurant_id, outcome, subject_prefix=None, detail=None, db_path=None,
-                          within_days=OUTCOME_LOOKBACK_DAYS) -> bool:
+                          within_days=OUTCOME_LOOKBACK_DAYS, quality=None, only_unfiled=False) -> bool:
     """record_outcome against the newest finished run of `workflow` for the
     restaurant (whose subject starts with `subject_prefix`), within
     `within_days`: an owner answers a read's line days after the run that
@@ -849,5 +1056,5 @@ def record_latest_outcome(workflow, restaurant_id, outcome, subject_prefix=None,
         return False
     if not row:
         return False
-    return record_outcome(workflow, restaurant_id, None, outcome, detail=detail, run_id=row["run_id"],
-                          db_path=db_path)
+    return record_outcome(workflow, restaurant_id, None, outcome, quality=quality, detail=detail,
+                          run_id=row["run_id"], db_path=db_path, only_unfiled=only_unfiled)

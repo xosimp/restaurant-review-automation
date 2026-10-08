@@ -398,7 +398,7 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
         "7. No phone numbers or links."
     )
     import ai_orchestrator as _orch
-    from ai_reviewer import reviewer_for
+    from ai_reviewer import reviewer_for, remember_verdict as reviewer_remember
     # The draft's one call, on the orchestrator's rung (guest_newsletter_draft:
     # T2, then T3 — AI cost audit 10/7/26, orchestration Phase 3).
     _send = lambda route, note: create_with_retry(  # noqa: E731 — keeps the call in this function (readiness scan)
@@ -505,6 +505,10 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
     # The route keeps the draft (marketing_voice.record_draft): the run is
     # named after it, so the send or the rewrite lands on this run.
     out.run_id = run.run_id
+    # The gate passed this exact email: a send of it unedited is not read
+    # again (ai_reviewer.gate_send, re-audit 10/7/26 #8).
+    if run.review_score is not None:
+        reviewer_remember("guest_email", restaurant.id, dict(out), _orch.Verdict(ok=True, score=run.review_score))
     return out
 
 
@@ -654,6 +658,21 @@ def _add_recipients(conn, newsletter_id, people) -> int:
     return added
 
 
+def send_parts(subject, body_text, design) -> dict:
+    """Every field of a newsletter a guest reads, as the send gate keys it
+    (ai_reviewer.SEND_FIELDS) — the same shape draft_newsletter's _Draft
+    has, so a draft the gate passed and the owner left alone is known."""
+    d = design or {}
+    return {"subject": subject or "", "preheader": d.get("preheader") or "", "headline": d.get("headline") or "",
+            "body": body_text or "", "button_label": d.get("button_label") or ""}
+
+
+def _gate_context(restaurant) -> str:
+    """What the send gate is told about a text the owner is sending."""
+    return (f"The restaurant: {getattr(restaurant, 'name', '') or 'this restaurant'}. "
+            "The owner approved this exact text to send to guests who opted in.")
+
+
 def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
                     mailing_address=None, design=None, segment=None) -> dict:
     """Send a generated newsletter to this restaurant's consented subscribers.
@@ -708,6 +727,15 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
         return {"ok": False, "error": NEEDS_ADDRESS, "needs_mailing_address": True}
     if not _sending_configured():
         return {"ok": False, "error": NOT_CONFIGURED, "not_configured": True}
+    # The Haiku gate on the final email, every field a guest reads, unless
+    # this exact text already passed it (a gated draft left as it was, a
+    # resend) — wherever its words came from (re-audit 10/7/26 #8).
+    import ai_reviewer
+    gate = ai_reviewer.gate_send("guest_email", restaurant_id, send_parts(subject, body_text, d),
+                                 context=_gate_context(restaurant), db_path=db_path)
+    if not gate.ok:
+        return {"ok": False, "gate_flagged": True, "reasons": list(gate.reasons or []),
+                "error": ai_reviewer.send_refusal(gate)}
     if address:
         update_restaurant(restaurant_id, {"mailing_address": address})
 

@@ -174,10 +174,131 @@ def reviewer_for(kind, restaurant_id=None, context=""):
     "text" (and optional "subject") key."""
     def review(result, mode):
         if isinstance(result, dict):
-            text = "\n\n".join(str(result.get(k) or "") for k in ("subject", "text", "body") if result.get(k))
+            # Every field a guest reads (re-audit 10/7/26 #8: an email's
+            # headline and preheader went out unread by the gate).
+            text = "\n\n".join(str(result.get(k) or "") for k in SEND_FIELDS if result.get(k))
         else:
             text = str(result or "")
         if not text.strip():
             return orch.Verdict.passed(label="empty")
         return review_text(kind, text, restaurant_id=restaurant_id, context=context, mode=mode)
     return review
+
+
+# ── the gate where guest text is SENT (re-audit 10/7/26 #8) ────────────────
+#
+# The guest_text / guest_email gate ran only where the guest workflows'
+# drafts were written. A model-written text reached guests by other doors —
+# marketing's weekly_email and loyalty_nudge (marketing_content, the owner's
+# reviewer), Ask's content tool, /api/generate-content with any type, a saved
+# email draft opened in the Campaign Studio — and an owner's edit of a gated
+# draft was never read again. So the gate runs on the FINAL text at the send
+# itself (guest_email.send_newsletter, guest_marketing.prepare_campaign —
+# every text campaign, the win-back and the phone's pre-check included):
+# every field a guest reads, unless that exact text already has a verdict
+# (ai_gate_verdicts, by hash — a draft the gate passed and the owner left as
+# it was, or a resend of the same newsletter). A flag refuses the send with
+# the reviewer's reasons. A reviewer that cannot run passes, as everywhere
+# (the rules engine already ran), and leaves no verdict, so the next send
+# asks again. The workflow's own policy decides whether the gate runs: the
+# console turning guest_campaign_draft / guest_newsletter_draft off the
+# Haiku gate turns it off here too.
+
+# The fields of a guest text or email, in the order the reviewer reads them.
+SEND_FIELDS = ("subject", "preheader", "headline", "text", "body", "button_label")
+# The workflow whose policy governs each kind's send gate.
+SEND_GATE_WORKFLOW = {"guest_text": "guest_campaign_draft", "guest_email": "guest_newsletter_draft"}
+# How long a verdict on one exact text stands (a resend inside it is not
+# reviewed again).
+GATE_VERDICT_DAYS = 30
+
+
+def _send_text(parts) -> str:
+    """The text the reviewer reads: every field a guest reads, in order."""
+    if isinstance(parts, dict):
+        return "\n\n".join(str(parts.get(k) or "").strip() for k in SEND_FIELDS if str(parts.get(k) or "").strip())
+    return str(parts or "").strip()
+
+
+def send_hash(kind, restaurant_id, parts) -> str:
+    """The key of one exact text a guest would read (whitespace-insensitive)."""
+    import hashlib
+    flat = " ".join(_send_text(parts).split())
+    return hashlib.sha256(f"{kind}\n{restaurant_id}\n{flat}".encode("utf-8", "replace")).hexdigest()
+
+
+def remember_verdict(kind, restaurant_id, parts, verdict, db_path=None) -> None:
+    """Keep the gate's verdict on this exact text. Only a verdict a reviewer
+    actually gave (a score) is kept. Never raises."""
+    if not isinstance(verdict, orch.Verdict) or verdict.score is None:
+        return
+    try:
+        conn = orch._conn(db_path)
+        try:
+            conn.execute("INSERT OR REPLACE INTO ai_gate_verdicts (text_hash, created_at, restaurant_id, kind, ok, "
+                         "score, reasons) VALUES (?, datetime('now'), ?, ?, ?, ?, ?)",
+                         (send_hash(kind, restaurant_id, parts), restaurant_id, kind, 1 if verdict.ok else 0,
+                          verdict.score, json.dumps([str(r) for r in (verdict.reasons or [])][:3])))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.info("gate verdict not kept (%s): %s", kind, e)
+
+
+def _known_verdict(kind, restaurant_id, parts, db_path=None):
+    try:
+        conn = orch._conn(db_path)
+        try:
+            row = conn.execute("SELECT ok, score, reasons FROM ai_gate_verdicts WHERE text_hash=? "
+                               "AND created_at >= datetime('now', ?)",
+                               (send_hash(kind, restaurant_id, parts), f"-{int(GATE_VERDICT_DAYS)} days")).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    try:
+        reasons = json.loads(row["reasons"] or "[]")
+    except (TypeError, ValueError):
+        reasons = []
+    return orch.Verdict(ok=bool(row["ok"]), score=row["score"], reasons=reasons,
+                        trigger=None if row["ok"] else "reviewer_flag", label="pass" if row["ok"] else "flag")
+
+
+def gate_send(kind, restaurant_id, parts, context="", db_path=None):
+    """The gate on a guest text (`parts` a str, kind "guest_text") or email
+    (`parts` a dict of SEND_FIELDS, kind "guest_email") about to be sent:
+    an ai_orchestrator.Verdict — ok, or a flag with reasons. Never raises."""
+    text = _send_text(parts)
+    if not text:
+        return orch.Verdict.passed(label="empty")
+    try:
+        import ai_workflows as wf
+        if wf.policy(SEND_GATE_WORKFLOW.get(kind, ""), db_path).reviewer != "haiku_gate":
+            return orch.Verdict.passed(label="not_gated")
+    except Exception:
+        pass
+    known = _known_verdict(kind, restaurant_id, parts, db_path)
+    if known is not None:
+        return known
+    v = _gate_review(kind, text, restaurant_id, context)
+    remember_verdict(kind, restaurant_id, parts, v, db_path)
+    return v
+
+
+def _send_review(kind, text, restaurant_id, context):
+    """The send gate's one rubric call (the seam tests/conftest.py stubs, so
+    no send test reaches the API with a checkout's real key)."""
+    return review_text(kind, text, restaurant_id=restaurant_id, context=context, mode="haiku_gate")
+
+
+_gate_review = _send_review
+
+
+def send_refusal(verdict) -> str:
+    """The owner's sentence for a send the gate held."""
+    why = "; ".join(str(r) for r in (getattr(verdict, "reasons", None) or [])[:3])
+    return ("Not sent: Cavnar AI reads every guest message before it goes out, and flagged this one"
+            + (f" ({why})" if why else "") + ". Edit it and send again.")
