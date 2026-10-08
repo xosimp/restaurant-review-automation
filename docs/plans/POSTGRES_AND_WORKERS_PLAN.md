@@ -3,7 +3,9 @@
 Plan, 9/29/26 (admin-console fix round, finding #96). Nothing here is built.
 Updated 10/7/26 (AI cost audit #56) with the process-local state that round
 added — the interactive AI slots, the AI background pools, the route-override
-cache — and where each goes in the order of work.
+cache — and where each goes in the order of work; and again 10/7/26 (iOS
+parity round) with the generation watchers, the Studio cache and the push
+pool's provider alarms and native deliveries.
 It is grounded in the code at `fixround-0929`; re-derive every number with the
 command beside it before acting on it.
 
@@ -48,8 +50,21 @@ Process-local state a second worker would duplicate (the inventory:
 | The interactive AI slots (AI cost audit 10/7/26) | `ai_utils._INTERACTIVE_SLOTS` (`INTERACTIVE_AI_SLOTS`, default 2) | the "at most two owner-facing model calls in flight" bound becomes 2 × N, and the slot a waiting request is promised exists only on its own worker | a count of claimed rows (the job queue below), or `ai_rate_events`-style rows with a lease stamp |
 | The AI background pools (10/7/26) | Ask's read pool (`ask_cavnar._READ_POOL`, `ASK_READ_WORKERS`), Ask's summary pool (`client_api._SUMMARY_POOL`, one thread), the orchestrator's shadow-review pool (`ai_orchestrator._SHADOW_POOL`, one thread), the learner's scoring pool (`ai_learning._SCORE_POOL`, one thread) | each one-thread pool becomes N threads; the shadow review's sampling rate is per worker, so the share of runs reviewed holds but the spend bound is N × | the job queue (kinds `ask_summary`, `shadow_review`, `shadow_score`) |
 | The route-override cache (10/7/26) | `ai_orchestrator._OVERRIDES` (`OVERRIDE_CACHE_SECONDS`, 60) | an override applied or reverted in the console reaches the other workers up to 60 s later — the same window one worker already has | keep, or a generation stamp in `ai_route_overrides` the cache checks |
+| The generation watchers (iOS parity round 10/7/26) | `schedule_engine._GEN_WATCHERS` (`watch_generation` / `take_generation_watchers`, under `_GEN_WATCHERS_LOCK`) — who pressed Generate for each running job, pushed `schedule_drafted` when it lands | a press on worker A is remembered only on A; the job runs on whichever worker's pool took it, so a press joined on worker B (or a job that runs on A for a press made on B) pushes nobody. With one worker the job and its watchers die together on a restart | a `generation_watchers` table keyed on the `async_jobs` job id, taken with a `DELETE … RETURNING` when the job finishes |
+| The Studio's kept inputs (10/2/26) | `schedule_engine._studio_cache`, `_studio_live` (`STUDIO_CACHE_SECONDS` 120, `STUDIO_CACHE_SIZE` 8) | each worker re-sweeps on its own first drag; a save always rebuilds from the database, so nothing is stored stale | keep (a cache) |
+| Push provider alarms and the delivery ceiling | `push._provider_alarms` (one capture per APNs failure reason an hour), `push._queued` / the overflow queue (`_MAX_PUSH_QUEUED`) — the alerts, and since 10/7/26 the silent widget pushes and Live Activity updates too (`push._submit_native`) | N × one capture an hour per reason; N × the queue ceiling | the push outbox already holds every alert (`push_outbox`); the ceiling becomes a count of claimed rows with the job queue |
 
-Not on the list, on purpose: the Places Details cache (`places_details_cache`,
+Not on the list, on purpose (iOS parity round, 10/7/26): the silent
+widget push's throttle (`push.fire_silent`, one per restaurant, reason and
+audience per `SILENT_MIN_MINUTES`) is an `ops.claim_cooldown` row, so it
+holds across workers; `live_activities` keeps no process state — every
+activity's token and state are rows (`live_activity_tokens`), and its
+deliveries ride the push pool above; `insight_refresh` starts its reads on
+the owner AI pool (`ai_async`, already listed) and joins a running read by
+its `async_jobs` row (`ops.claim_async_job`), so a second worker joins the
+same job rather than starting another.
+
+Also not on the list, on purpose: the Places Details cache (`places_details_cache`,
 AI cost audit 10/7/26 #13) and the context packets (`context_sections`,
 `restaurant_context`) are rows in the database, so every worker reads the
 same ones; the Message Batches queue (`ai_batch_jobs`, `ai_batch_items`) is a
