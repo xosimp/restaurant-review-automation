@@ -15,12 +15,15 @@ import pytest
 import models
 from event_intel import store
 
-TODAY = "2026-10-08"   # the files as refreshed 10/8/26 (scripts/refresh_seasons.py)
-FILES = sorted(fn for fn in os.listdir(store.SEASONS_DIR) if fn.endswith(".json"))
+# The LIVE season files, which the daily refresh rewrites (the rest of the
+# suite reads its frozen copy): this file checks what production will load,
+# and the refresh workflow runs it before it commits.
+LIVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "event_intel", "seasons")
+FILES = sorted(fn for fn in os.listdir(LIVE) if fn.endswith(".json"))
 
 
 def _data(fn):
-    with open(os.path.join(store.SEASONS_DIR, fn), encoding="utf-8") as fh:
+    with open(os.path.join(LIVE, fn), encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -40,7 +43,7 @@ def loaded(db_path):
         c.commit()
     finally:
         c.close()
-    got = {fn: store.load_season(os.path.join(store.SEASONS_DIR, fn), db_path=db_path) for fn in FILES}
+    got = {fn: store.load_season(os.path.join(LIVE, fn), db_path=db_path) for fn in FILES}
     return db_path, got
 
 
@@ -92,12 +95,14 @@ def test_home_games_are_at_the_home_venue_unless_alt_venue():
 
 def test_no_past_game_is_left_scheduled_and_completed_games_have_results():
     for fn in FILES:
-        for e in _data(fn)["events"]:
+        data = _data(fn)
+        today = data["fetched"]          # each file as of its own refresh
+        for e in data["events"]:
             if e["status"] == "completed":
                 assert e.get("result"), (fn, e)
-            if e["date"] and e["date"] < TODAY and e["status"] == "scheduled":
+            if e["date"] and e["date"] < today and e["status"] == "scheduled":
                 assert (e.get("attributes") or {}).get("if_necessary"), (fn, e)
-            if e["date"] and e["date"] >= TODAY:
+            if e["date"] and e["date"] >= today:
                 assert e["status"] != "completed", (fn, e)
 
 

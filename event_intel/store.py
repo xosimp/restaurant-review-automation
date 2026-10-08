@@ -27,7 +27,11 @@ from datetime import datetime
 import models as _models_mod
 from models import DB_PATH
 
-SEASONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seasons")
+# The bundled season files. CAVNAR_SEASONS_DIR points the test suite at its
+# frozen copy (tests/fixtures/seasons): the live files are refreshed every
+# day by a GitHub workflow (refresh-seasons.yml), and a test pinned to them
+# broke with the calendar (10/8/26).
+SEASONS_DIR = os.environ.get("CAVNAR_SEASONS_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "seasons")
 CATEGORIES = ("sports", "holiday", "concert", "festival", "local", "venue", "school", "civic")
 SEASON_TYPES = ("preseason", "regular", "postseason", "special")
 STATUSES = ("scheduled", "completed", "postponed", "cancelled")

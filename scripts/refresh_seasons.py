@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Refresh the bundled season files (event_intel/seasons/*.json) from each
-team's published schedule — run by hand on a developer's Mac, never by the
-app or the scheduler (owner, 10/1/26: no new event APIs in the product; a
-season file stays a file).
+team's published schedule. It runs every day on GitHub Actions
+(.github/workflows/refresh-seasons.yml), which commits a changed file and
+so deploys it (owner, 10/8/26: "nothing should have to be ran by hand") —
+never in the app or its scheduler (owner, 10/1/26: no new event APIs in the
+product; a season file stays a file). It still runs by hand the same way.
 
     python3 scripts/refresh_seasons.py            # dry run: what would change
     python3 scripts/refresh_seasons.py --write    # write the files
@@ -283,7 +285,7 @@ def main(argv=None):
     ap.add_argument("--write", action="store_true", help="write the merged files (default: dry run)")
     ap.add_argument("--only", help="one series slug")
     args = ap.parse_args(argv)
-    total = 0
+    total, unread = 0, []
     for fn in sorted(os.listdir(SEASONS)):
         if not fn.endswith(".json"):
             continue
@@ -300,6 +302,7 @@ def main(argv=None):
             fetched = FETCH[src["kind"]](src, data, int(data.get("season")))
         except Exception as e:
             print(f"{fn}: could not read the source ({e}) — unchanged")
+            unread.append(fn)
             continue
         events, changes = merge(data["events"], fetched)
         print(f"{fn}: {len(changes)} change(s)")
@@ -316,6 +319,11 @@ def main(argv=None):
                 fh.write("\n")
     if not args.write and total:
         print("\nDry run. Run again with --write to save, then commit and push; the deploy loads them.")
+    # A source that could not be read fails the run (the daily workflow goes
+    # red and says so), after every file that could be read was written.
+    if unread:
+        print(f"\nNot refreshed: {', '.join(unread)}")
+        return 1
     return 0
 
 

@@ -27,6 +27,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 |---|---|---|---|
 | `PORT` | `5000` | The port `hosted_dashboard.py` binds when run directly (default 5000; run locally as `PORT=5050`, which the iOS debug build expects). | hosted_dashboard.py |
 | `RUN_SCHEDULER_IN_WEB` | `"1"` | 1 (default): the web process runs the scheduler thread. `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. | hosted_dashboard.py |
+| `CAVNAR_SEASONS_DIR` | `event_intel/seasons` | Where the bundled season files load from. Unset in production; the test suite points it at its frozen copy, `tests/fixtures/seasons`, because the live files are refreshed daily (`.github/workflows/refresh-seasons.yml`). | event_intel/store.py |
 | `ALLOW_LOCAL_SCHEDULER` | `""` | 1 lets a non-Railway backend run the scheduler and live sends. Never set it on a machine with production keys (CLAUDE.md). | scheduler.py |
 | `RESTORE_FROM` | — | Boot-time database restore source (`db_restore.py`, `docs/ops/RECOVERY.md`). While set, the scheduler and live sends stay off. | admin_routes.py, db_restore.py, scheduler.py |
 | `ALLOW_EMPTY_DATABASE` | — | 1 lets the app boot on an empty database where the volume's marker says client data existed (a deliberate fresh start); otherwise that boot is refused and `/health` fails (`status_manager.platform_emptied`). | status_manager.py |

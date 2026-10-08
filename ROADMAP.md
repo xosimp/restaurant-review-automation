@@ -231,8 +231,9 @@ restaurant 5; restaurant 4 is Will's demo copy.
     each league's own published schedule, as season files. Since the second
     re-audit: the Fire's cup matches (U.S. Open Cup, Leagues Cup), the Bulls'
     local TV (CHSN), the White Sox 2026 regular season and a Cubs 2026 file.
-    Still by hand in the admin's Event calendar: the Sox ALDS games 4 and 5
-    (if necessary) need a result or a cancellation once the series ends.
+    Refreshed daily since 10/8/26 (`.github/workflows/refresh-seasons.yml`):
+    start times, results, a cancelled if-necessary game and new playoff
+    rounds arrive without anyone running the script.
   - A frequent series (40-odd home games) stays context until this restaurant
     measures it to matter: its nights stay in the usual-night baselines, and
     it earns no alert, games-ahead item or game-night line until then. A

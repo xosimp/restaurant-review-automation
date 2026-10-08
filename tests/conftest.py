@@ -23,6 +23,12 @@ _dotenv.load_dotenv = lambda *a, **k: False
 # a pepper so staff PINs can be set, no live breach lookups, and the admin
 # 2FA gate off except in the test that turns it on.
 os.environ.setdefault("CAVNAR_PIN_PEPPER", "test-pepper")
+# The suite's season files are a frozen copy (as refreshed 10/8/26): the live
+# event_intel/seasons files are refreshed every day by a workflow, and a test
+# that pinned a game's time or result broke with the calendar. Only
+# tests/test_event_fix2_w5.py reads the live files, to check them. Refresh the
+# copy by hand when a test needs newer data.
+os.environ.setdefault("CAVNAR_SEASONS_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "seasons"))
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("HIBP_DISABLED", "1")
 os.environ.setdefault("ADMIN_REQUIRE_2FA", "0")

@@ -1,0 +1,91 @@
+name: Refresh season files
+
+# The bundled season files (event_intel/seasons/*.json) refreshed from each
+# team's published schedule every day: game times the leagues set or move,
+# results, playoff games added (owner, 10/8/26: "nothing should have to be
+# ran by hand"). A changed file is checked, committed and pushed to main,
+# and the Railway deploy that push starts loads it at boot
+# (event_intel.store.load_bundled). The app itself never calls these
+# sources (owner, 10/1/26). A source that can't be read fails the run, so
+# it shows red here, after the others were saved.
+
+on:
+  schedule:
+    # 19:30 UTC = 2:30pm Chicago in daylight time (1:30pm in winter): between
+    # the morning jobs and dinner, so the deploy lands in a quiet hour and a
+    # time set for tonight is in before service.
+    - cron: "30 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-seasons
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Refresh the season files
+        id: refresh
+        # Writes every file it could read; exits 1 if any source could not
+        # be read (checked again at the end, after the commit).
+        run: |
+          set +e
+          python scripts/refresh_seasons.py --write | tee refresh.log
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          if git diff --quiet -- event_intel/seasons; then
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo '### Season refresh'
+            echo '```'
+            cat refresh.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install the locked dependencies
+        if: steps.refresh.outputs.changed == '1'
+        run: pip install --no-deps -r requirements-dev.txt
+
+      - name: Check the refreshed files
+        # What production will load: every file through the real loader, no
+        # past game left scheduled, no stray whitespace (the live-file
+        # checks), and the merge rules.
+        if: steps.refresh.outputs.changed == '1'
+        run: pytest -q -p no:warnings tests/test_event_fix2_w5.py tests/test_refresh_seasons.py
+        env:
+          ANTHROPIC_API_KEY: ""
+          RESEND_API_KEY: ""
+
+      - name: Commit and push
+        if: steps.refresh.outputs.changed == '1'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add event_intel/seasons
+          git commit -m "Season files refreshed $(date -u +%-m/%-d/%y) (daily, scripts/refresh_seasons.py)" \
+                     -m "$(grep -E '^(  [~+?]|[a-z].*change)' refresh.log | head -40)"
+          # main may have moved while this ran
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: Fail if a source could not be read
+        if: steps.refresh.outputs.status != '0'
+        run: |
+          grep -E 'could not read|Not refreshed' refresh.log || true
+          exit 1
