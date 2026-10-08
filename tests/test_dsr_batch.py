@@ -108,6 +108,12 @@ def batched(world, monkeypatch):
     return world
 
 
+# A night is batched only inside the alert quiet hours, when its push is
+# held anyway (context re-audit 10/7/26 #2): these restaurants are quiet
+# 10pm-7am Chicago (03:00-12:00 UTC), so the sweep's nights batch as before.
+QUIET = {"alert_quiet_start": "22:00", "alert_quiet_end": "07:00"}
+
+
 def _rows(db, sql, args=()):
     c = sqlite3.connect(db)
     c.row_factory = sqlite3.Row
@@ -124,7 +130,7 @@ def _cid(r, v=1):
 # ── the sweep sends it, the version waits ───────────────────────────────────
 
 def test_a_sweep_night_goes_out_as_a_batch_item_and_waits_in_writing(db, batched, fake, allowed):
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     out = _run(r, U(4, 10), db)
     assert out["action"] == "narrative_batched"
@@ -144,7 +150,7 @@ def test_a_sweep_night_goes_out_as_a_batch_item_and_waits_in_writing(db, batched
 
 
 def test_the_answer_is_stored_once_and_the_next_sweep_finishes_the_night(db, batched, fake, allowed):
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     _run(r, U(4, 10), db)
     fake.answer("msgbatch_1", _cid(r), NS(type="succeeded", message=_msg("From the batch.")))
@@ -169,7 +175,7 @@ def test_the_answer_is_stored_once_and_the_next_sweep_finishes_the_night(db, bat
 
 
 def test_past_the_cutoff_the_sweep_writes_it_and_the_late_answer_is_dropped(db, batched, fake, allowed):
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     _run(r, U(4, 10), db)
     out = _run(r, U(4, 55), db)                            # the cutoff
@@ -195,7 +201,7 @@ def test_past_the_cutoff_the_sweep_writes_it_and_the_late_answer_is_dropped(db, 
 
 
 def test_an_errored_item_falls_back_on_the_next_sweep(db, batched, fake, allowed):
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     _run(r, U(4, 10), db)
     err = NS(type="errored", error=NS(type="error", error=NS(type="api_error", message="overloaded")))
@@ -209,12 +215,12 @@ def test_an_errored_item_falls_back_on_the_next_sweep(db, batched, fake, allowed
 
 
 def test_close_day_never_batches_and_writes_through_a_pending_item(db, batched, fake, allowed):
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     out = _run(r, U(4, 10), db, trigger=pipeline.TRIGGER_MANUAL)
     assert out["action"] == "final" and fake.created == [] and len(batched["narratives"]) == 1
 
-    r2 = _restaurant(db, name="Pipe Two")
+    r2 = _restaurant(db, name="Pipe Two", **QUIET)
     _labor_in(db, r2.id)
     assert _run(r2, U(4, 10), db)["action"] == "narrative_batched"
     out = _run(r2, U(4, 12), db, trigger=pipeline.TRIGGER_MANUAL)      # someone is watching
@@ -225,7 +231,7 @@ def test_close_day_never_batches_and_writes_through_a_pending_item(db, batched, 
 
 def test_a_local_backend_never_submits(db, batched, fake, monkeypatch):
     monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: False)
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     out = _run(r, U(4, 10), db)
     assert out["action"] == "final" and len(batched["narratives"]) == 1
@@ -235,7 +241,7 @@ def test_a_local_backend_never_submits(db, batched, fake, monkeypatch):
 
 def test_a_gate_refusal_is_stored_as_the_synchronous_path_stores_it(db, batched, fake, allowed, monkeypatch):
     monkeypatch.setattr(ai_utils, "ai_budget_exceeded", lambda *a, **k: "daily budget")
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     out = _run(r, U(4, 10), db)
     assert out["action"] == "final", "the refusal is known at once: the night does not wait"
@@ -249,7 +255,7 @@ def test_a_failed_submit_is_written_now(db, batched, fake, allowed, monkeypatch)
     def boom(requests):
         raise RuntimeError("network down")
     monkeypatch.setattr(fake, "create", boom)
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     out = _run(r, U(4, 10), db)
     assert out["action"] == "final" and len(batched["narratives"]) == 1
@@ -258,7 +264,7 @@ def test_a_failed_submit_is_written_now(db, batched, fake, allowed, monkeypatch)
 
 
 def test_a_late_data_version_batches_and_its_night_is_not_reported_missing(db, batched, fake, allowed):
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     _labor_in(db, r.id)
     batched["closed"] = False
     assert _run(r, U(9, 5), db)["action"] == "provisional"
@@ -277,7 +283,7 @@ def test_a_late_data_version_batches_and_its_night_is_not_reported_missing(db, b
 # ── the cutoff ──────────────────────────────────────────────────────────────
 
 def test_the_cutoff_never_passes_quiet_hours_end_or_the_missing_check(db, allowed):
-    r = _restaurant(db)
+    r = _restaurant(db, **QUIET)
     rep = store.create_report(r.id, DAY, db_path=db)
     cut = pipeline._batch_cutoff
     assert cut(r, rep, pipeline.TRIGGER_SWEEP, U(4, 10), db) == U(4, 55)
@@ -294,8 +300,25 @@ def test_the_cutoff_never_passes_quiet_hours_end_or_the_missing_check(db, allowe
     assert cut(get_restaurant(r.id, db_path=db), rep, pipeline.TRIGGER_SWEEP, U(4, 10), db) is None
 
 
+def test_outside_quiet_hours_the_night_is_written_now_never_batched(db, batched, fake, allowed):
+    """The owner may be awake and waiting for the report: no batch, no wait
+    for the cutoff - the synchronous call, as before batching (#2)."""
+    r = _restaurant(db)                                    # no quiet hours at all
+    rep = store.create_report(r.id, DAY, db_path=db)
+    assert pipeline._batch_cutoff(r, rep, pipeline.TRIGGER_SWEEP, U(4, 10), db) is None
+    _labor_in(db, r.id)
+    out = _run(r, U(4, 10), db)
+    assert out["action"] == "final" and len(batched["narratives"]) == 1
+    assert fake.created == []
+    # Quiet hours set, but this moment is outside them: the same.
+    r2 = _restaurant(db, name="Pipe Day", alert_quiet_start="01:00", alert_quiet_end="05:00")
+    rep2 = store.create_report(r2.id, DAY, db_path=db)
+    assert pipeline._batch_cutoff(r2, rep2, pipeline.TRIGGER_SWEEP, U(4, 10), db) is None
+
+
 def test_a_late_version_is_not_held_to_the_first_versions_deadline(db, allowed):
-    r = _restaurant(db)
+    # Quiet 8am-2pm Chicago (13:00-19:00 UTC), so 16:00 UTC is inside them.
+    r = _restaurant(db, alert_quiet_start="08:00", alert_quiet_end="14:00")
     v1 = store.create_report(r.id, DAY, db_path=db)
     store.set_stage(v1["id"], "provisional", db_path=db)
     v2 = store.create_report(r.id, DAY, db_path=db)

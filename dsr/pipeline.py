@@ -137,7 +137,9 @@ NO_SUMMARY_FAILED = "The summary couldn't be written for this night"
 # The narrative through Message Batches (AI cost audit 10/7/26 #20): half
 # the price, answered within the hour as a rule. Only the sweep's own runs
 # (a night finishing, a provisional night's late version) batch — never
-# Close day, which someone is watching. The version waits in "writing" until
+# Close day, which someone is watching — and only inside the restaurant's
+# alert quiet hours, when the push is held anyway (context re-audit 10/7/26
+# #2): outside them the owner may be awake and waiting, so it is written now. The version waits in "writing" until
 # the answer lands or the cutoff passes; then the sweep writes it
 # synchronously and the batch's answer, if it ever comes, is discarded.
 # The cutoff is the earliest of: BATCH_CUTOFF_MINUTES after submission; the
@@ -776,8 +778,9 @@ def _batch_cutoff(restaurant, report, trigger, now_utc, db):
     """When the sweep stops waiting for a batched narrative (naive UTC), or
     None when this one is written now: not the sweep's own run, batches off
     or not allowed here (ai_batches.enabled — never on a local backend), no
-    batch path in the narrative module, or too little time before the
-    cutoff (see BATCH_CUTOFF_MINUTES)."""
+    batch path in the narrative module, outside the alert quiet hours (the
+    push would go now), or too little time before the cutoff (see
+    BATCH_CUTOFF_MINUTES)."""
     if trigger not in (TRIGGER_SWEEP, TRIGGER_LATE):
         return None
     mod = _import("dsr.narrative")
@@ -791,8 +794,14 @@ def _batch_cutoff(restaurant, report, trigger, now_utc, db):
         cutoff = now_utc + timedelta(minutes=BATCH_CUTOFF_MINUTES)
         from dsr.deliver import quiet_until
         quiet_end = quiet_until(restaurant, now_utc)
-        if quiet_end is not None:
-            cutoff = min(cutoff, quiet_end - margin)
+        if quiet_end is None:
+            # Outside quiet hours the push goes the moment the version is
+            # final, and someone may be waiting for it: a batch would hold
+            # the report up to the cutoff for half the price of one call
+            # (context re-audit 10/7/26 #2). Only a night whose push would
+            # be held anyway is batched.
+            return None
+        cutoff = min(cutoff, quiet_end - margin)
         day = _as_date(report["business_date"])
         if store.get_finished_report(restaurant.id, day, db_path=db) is None:
             missing_at = to_utc(restaurant, deadline_at(restaurant, day)) + MISSING_AFTER_DEADLINE
