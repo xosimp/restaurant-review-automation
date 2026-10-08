@@ -2,24 +2,33 @@ import SwiftUI
 
 /// What the generator is actually doing, while it does it.
 ///
-/// A spinner for sixty seconds tells a restaurant owner that something is
-/// slow. These lines tell them something intelligent is happening, and
-/// every one of them names a real stage: the prompt genuinely carries
-/// availability, labor targets, operational scores and leadership rules,
-/// and the deterministic passes afterwards genuinely repair rows, check
-/// strength and score quality.
+/// A spinner for minutes tells a restaurant owner that something is slow.
+/// These lines tell them something intelligent is happening, and every one
+/// of them names a real stage: the prompt genuinely carries availability,
+/// labor targets, operational scores and leadership rules, and the
+/// deterministic passes afterwards genuinely repair rows, check strength
+/// and score quality.
 ///
-/// The timings are estimates, not progress. Generation is a single model
-/// call and the server cannot report a percentage, so this never claims
-/// one — the steps advance on their own clock and the last one holds until
-/// the schedule actually arrives. Claiming "87%" would be inventing a
-/// number, which is the one thing this product does not do.
+/// The timings are estimates, not progress. A week is several model calls
+/// and runs for minutes, so the step clock is a 75-second sketch stretched
+/// to the draft time measured here (`typical`, schedule_engine.
+/// typical_generation_seconds) — or three times over when nothing is
+/// measured yet — exactly as the web's scheduleTiming stretches it (iOS
+/// parity #15). It runs from when the job started, not from when this view
+/// appeared, so coming back to Labor mid-run picks up where it was. The one
+/// real measure is the days drafted (`progress`), shown under it; the server
+/// reports no percentage, and this never invents one.
 struct ScheduleProgressSteps: View {
     /// Whether last year's same days are an input to this draft (the
     /// labor payload's `last_year_available`, read tolerantly). A progress
     /// line is a claim about the inputs, and most restaurants have no year
     /// of history (NS1 #21).
     var lastYearAvailable: Bool = false
+    /// When the job started (LaborViewModel.generationStartedAt).
+    var startedAt: Date? = nil
+    /// How long a full week usually takes here, measured; nil until two
+    /// have run.
+    var typical: GenerationTypical? = nil
 
     private var steps: [(text: String, after: Double)] { Self.steps(lastYearAvailable: lastYearAvailable) }
 
@@ -34,12 +43,13 @@ struct ScheduleProgressSteps: View {
         ("Scoring every shift for quality", 62),
     ] }
 
-    @State private var started = Date()
+    @State private var appeared = Date()
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { timeline in
-            let elapsed = timeline.date.timeIntervalSince(started)
-            let current = steps.lastIndex(where: { elapsed >= $0.after }) ?? 0
+            let elapsed = timeline.date.timeIntervalSince(startedAt ?? appeared)
+            let scale = GenerationCopy.stepScale(typical: typical)
+            let current = steps.lastIndex(where: { elapsed >= $0.after * scale }) ?? 0
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(visible(around: current), id: \.self) { index in
                     row(index: index, current: current)

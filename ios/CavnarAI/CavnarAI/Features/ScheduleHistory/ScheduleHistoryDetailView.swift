@@ -8,7 +8,12 @@ import SwiftUI
 struct ScheduleHistoryDetailView: View {
     let historyId: Int
     let weekLabel: String
+    /// Opens this week in Labor's editor (iOS parity #5).
+    var onOpenWeek: ((Int) -> Void)? = nil
     @State private var viewModel: ScheduleHistoryDetailViewModel
+    /// The day the week's pager shows (#48), and the PDF drawn for it.
+    @State private var pagerDay: String?
+    @State private var pdfURL: URL?
 
     // Custom init so the view model can be constructed with historyId
     // already known — see ScheduleHistoryDetailViewModel.init's own
@@ -20,9 +25,10 @@ struct ScheduleHistoryDetailView: View {
     // regenerating a perfectly good schedule just to send it.
     @State private var showingPublish = false
 
-    init(historyId: Int, weekLabel: String) {
+    init(historyId: Int, weekLabel: String, onOpenWeek: ((Int) -> Void)? = nil) {
         self.historyId = historyId
         self.weekLabel = weekLabel
+        self.onOpenWeek = onOpenWeek
         _viewModel = State(initialValue: ScheduleHistoryDetailViewModel(id: historyId))
     }
 
@@ -34,7 +40,24 @@ struct ScheduleHistoryDetailView: View {
                         // A copy a newer one replaced is never sent: no Send,
                         // and the line below says it was replaced (schedule
                         // re-audit 10/4/26 UI-3; the server refuses it too).
-                        if (detail.supersededBy ?? 0) <= 0 && (detail.replacedReason ?? "").isEmpty {
+                        let replaced = (detail.supersededBy ?? 0) > 0 || !(detail.replacedReason ?? "").isEmpty
+                        // Open it in Labor's editor — change a shift, redo a
+                        // day, send it (iOS parity #5). A replaced copy opens
+                        // read-only there.
+                        if let onOpenWeek {
+                            Button {
+                                Haptic.light()
+                                onOpenWeek(historyId)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: replaced ? "eye" : "pencil").font(.system(size: 13, weight: .semibold))
+                                    Text(replaced ? "View it in Labor" : "Open the week")
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
+                        }
+                        if !replaced {
                             Button {
                                 Haptic.light()
                                 showingPublish = true
@@ -45,7 +68,18 @@ struct ScheduleHistoryDetailView: View {
                                 }
                                 .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                        }
+                        // The same scorecard a fresh draft lands on (#47), from
+                        // the same week model — what the week stored, priced
+                        // as it stands.
+                        if detail.historyId != nil || !(detail.previewRows ?? []).isEmpty {
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                                      spacing: 10) {
+                                ForEach(ScheduleSummaryTiles.tiles(detail), id: \.key) { tile in
+                                    ScheduleTileCard(tile: tile)
+                                }
+                            }
                         }
 
                         // A draft replaced by a newer draft of the same
@@ -203,7 +237,18 @@ struct ScheduleHistoryDetailView: View {
             // loading finishes; only the icon's opacity and function do.
             cavnarToolbarItem(placement: .topBarTrailing) {
                 if let csv = viewModel.detail?.scheduleCsv {
-                    ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv", image: Image("LaunchSeal"))) {
+                    // The CSV for the office, and the PDF to post or print.
+                    Menu {
+                        ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv", image: Image("LaunchSeal"))) {
+                            Label("Share the CSV", systemImage: "tablecells")
+                        }
+                        if let pdfURL {
+                            ShareLink(item: pdfURL, preview: SharePreview("Schedule — \(weekLabel).pdf",
+                                                                          image: Image("LaunchSeal"))) {
+                                Label("Share or print the PDF", systemImage: "printer")
+                            }
+                        }
+                    } label: {
                         shareGlyph(opacity: 1)
                     }
                     .tint(nil)
@@ -218,6 +263,10 @@ struct ScheduleHistoryDetailView: View {
         }
         .task { await viewModel.load(id: historyId) }
         .task { await viewModel.loadVersions(id: historyId) }
+        .task(id: viewModel.detail?.previewRows?.count ?? -1) {
+            guard let detail = viewModel.detail else { return }
+            pdfURL = SchedulePDF.file(for: detail)
+        }
     }
 
     /// "Sent 9/21/26 · 6:45pm by will" — when the week went to staff.
@@ -500,13 +549,16 @@ struct ScheduleHistoryDetailView: View {
         }
     }
 
+    /// The week a day at a time, or by person — the same pager as Labor's
+    /// editor (#48), with this screen's read-only rows.
     @ViewBuilder
     private func scheduleByDay(_ rows: [ScheduleRow]) -> some View {
         let grouped = Dictionary(grouping: rows) { $0.day ?? "" }
-        VStack(alignment: .leading, spacing: 16) {
-            ForEach(Self.dayOrder.filter { grouped[$0] != nil }, id: \.self) { day in
-                scheduleDayGroup(day: day, rows: grouped[day] ?? [])
-            }
+        let days = Self.dayOrder.filter { grouped[$0] != nil }.map {
+            ScheduleDayPage(day: $0, date: grouped[$0]?.first?.date, count: grouped[$0]?.count ?? 0)
+        }
+        ScheduleWeekPager(days: days, rows: rows, selectedDay: $pagerDay) { page in
+            scheduleDayGroup(day: page.day, rows: grouped[page.day] ?? [])
         }
     }
 

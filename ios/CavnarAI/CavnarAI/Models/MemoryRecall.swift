@@ -86,10 +86,14 @@ struct StaffNotePart: Codable, Hashable, Identifiable {
     let expiresOn: String?
     let ended: Bool
     let stale: Bool
+    /// How Cavnar AI reads it, and the hold made from it (person_note_holds
+    /// — iOS parity #68): a part it can hold offers "Hold it". Lenient.
+    var reading: StaffNoteReading? = nil
+    var held: StaffNoteHeld? = nil
     var id: Int { index }
 
     enum CodingKeys: String, CodingKey {
-        case index, text, noted, expires, ended, stale
+        case index, text, noted, expires, ended, stale, reading, held
         case notedOn = "noted_on"
         case expiresOn = "expires_on"
     }
@@ -113,6 +117,8 @@ struct StaffNotePart: Codable, Hashable, Identifiable {
         expiresOn = c.mrText(.expiresOn)
         ended = c.mrBool(.ended) ?? false
         stale = c.mrBool(.stale) ?? false
+        reading = try? c.decodeIfPresent(StaffNoteReading.self, forKey: .reading)
+        held = try? c.decodeIfPresent(StaffNoteHeld.self, forKey: .held)
     }
 
     /// "noted 9/2/26 · ends 10/1/26" — the server's M/D/YY labels, else its
@@ -123,6 +129,27 @@ struct StaffNotePart: Codable, Hashable, Identifiable {
         if let e = expires ?? expiresOn.map(CavnarDate.mdy) { bits.append((ended ? "ended " : "ends ") + e) }
         return bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} ")
     }
+}
+
+/// A scheduling note part as Cavnar AI reads it: "hold" (it can keep the
+/// person off then, like availability) or "unchecked" (why it can't).
+struct StaffNoteReading: Codable, Hashable {
+    struct Hold: Codable, Hashable {
+        var days: [String]? = nil
+        var dayparts: [String]? = nil
+        var start: String? = nil
+        var end: String? = nil
+        var words: String? = nil
+    }
+    var kind: String? = nil
+    var why: String? = nil
+    var hold: Hold? = nil
+}
+
+/// The hold made from a note part: the person can't be scheduled then.
+struct StaffNoteHeld: Codable, Hashable {
+    let id: Int
+    var words: String? = nil
 }
 
 struct StaffNote: Codable, Hashable, Identifiable {

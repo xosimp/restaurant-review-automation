@@ -2319,6 +2319,12 @@ final class ScheduleSetupViewModel {
 
     var shiftRequests: [ShiftRequest] = []
     var openShifts: [ShiftRequest] = []
+    /// Open shifts offered to one named person, still waiting on them (H2).
+    var shiftOffers: [ShiftOffer] = []
+    /// What the last open-shift move did, in the web's words.
+    var openShiftNotice: String?
+    /// A swap the owner approved that waits on the colleague (LG-12).
+    var swapsWaiting: [ShiftRequest] { shiftRequests.filter { $0.isSwap && $0.status == "approved" } }
     var isLoadingRequests = false
     var requestBusyId: Int?
     var requestError: String?
@@ -2331,6 +2337,7 @@ final class ScheduleSetupViewModel {
         let ok: Bool
         let requests: [ShiftRequest]?
         let open: [ShiftRequest]?
+        var offers: [ShiftOffer]? = nil
         let error: String?
     }
 
@@ -2354,6 +2361,7 @@ final class ScheduleSetupViewModel {
             guard r.ok else { requestError = r.error; return }
             shiftRequests = r.requests ?? []
             openShifts = r.open ?? []
+            shiftOffers = r.offers ?? []
             requestError = nil
             if !pendingRequests.isEmpty { requestsExpanded = true }
         } catch is CancellationError {
@@ -2387,5 +2395,164 @@ final class ScheduleSetupViewModel {
         } catch {
             requestError = "Couldn't decide that."
         }
+    }
+
+    // MARK: Open shifts — post, offer, take off, agreed in person (iOS parity #25)
+
+    private struct OpenShiftResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let offer: ShiftOffer?
+        let request: ShiftRequest?
+    }
+    private struct OfferBody: Encodable { let name: String }
+
+    /// Put a shift on the open board — somebody's on the published week, or
+    /// an extra one — or offer it to one person. Nil when posted, else why.
+    func postOpenShift(_ body: OpenShiftPostBody) async -> String? {
+        requestError = nil
+        openShiftNotice = nil
+        do {
+            let r: OpenShiftResponse = try await client.send("/mobile/api/labor/open-shifts", method: .post, body: body)
+            guard r.ok else { return r.error ?? "Couldn't post that shift." }
+            openShiftNotice = r.offer.map { "Offered to \($0.name) in the Cavnar AI app" }
+                ?? "Posted \u{2014} the team can pick it up in the app"
+            Haptic.success()
+            await loadShiftRequests()
+            return nil
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "Couldn't post that shift."
+        }
+    }
+
+    /// Offer an open shift to one named person.
+    func offerOpenShift(_ id: Int, to name: String) async -> String? {
+        requestBusyId = id
+        requestError = nil
+        defer { requestBusyId = nil }
+        do {
+            let r: OpenShiftResponse = try await client.send("/mobile/api/labor/shift-requests/\(id)/offer",
+                                                             method: .post, body: OfferBody(name: name))
+            guard r.ok else { return r.error ?? "Couldn't offer that shift." }
+            openShiftNotice = "Offered to \(r.offer?.name ?? name) in the Cavnar AI app"
+            Haptic.success()
+            await loadShiftRequests()
+            return nil
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "Couldn't offer that shift."
+        }
+    }
+
+    /// Take an open shift off the board; whoever it was offered to hears it's gone.
+    func cancelOpenShift(_ id: Int) async {
+        requestBusyId = id
+        requestError = nil
+        defer { requestBusyId = nil }
+        do {
+            let r: OpenShiftResponse = try await client.send("/mobile/api/labor/shift-requests/\(id)/cancel",
+                                                             method: .post, body: [String: String]())
+            guard r.ok else { requestError = r.error ?? "Couldn't take it off."; return }
+            openShiftNotice = "Taken off the open board"
+            Haptic.success()
+            await loadShiftRequests()
+        } catch let error as APIClient.APIError {
+            requestError = error.message
+        } catch {
+            requestError = "Couldn't take it off."
+        }
+    }
+
+    /// The colleague in a swap said yes in person — recorded for someone who
+    /// isn't on the app; an approved swap then goes ahead.
+    func colleagueAgreed(_ id: Int) async {
+        requestBusyId = id
+        requestError = nil
+        defer { requestBusyId = nil }
+        do {
+            let r: OpenShiftResponse = try await client.send("/mobile/api/labor/shift-requests/\(id)/colleague-agreed",
+                                                             method: .post, body: [String: String]())
+            guard r.ok else { requestError = r.error ?? "Couldn't record that."; return }
+            openShiftNotice = r.request?.status == "covered" ? "Swapped \u{2014} both shifts moved"
+                                                              : "Noted \u{2014} waiting on your approval"
+            Haptic.success()
+            await loadShiftRequests()
+        } catch let error as APIClient.APIError {
+            requestError = error.message
+        } catch {
+            requestError = "Couldn't record that."
+        }
+    }
+
+    // MARK: Add or remove a hand-entered person (iOS parity #45)
+
+    var teamBusy: String?
+    var teamError: String?
+    private struct TeamAddBody: Encodable {
+        let employeeName: String
+        let role: String
+        enum CodingKeys: String, CodingKey {
+            case role
+            case employeeName = "employee_name"
+        }
+    }
+    private struct TeamRemoveBody: Encodable {
+        let employeeName: String
+        enum CodingKeys: String, CodingKey { case employeeName = "employee_name" }
+    }
+
+    /// Put someone on the roster by hand, before they have shift history —
+    /// POST /labor/team/add {employee_name, role}. Nil when added.
+    func addTeamMember(name: String, role: String) async -> String? {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return "Enter a name first." }
+        teamBusy = "add"
+        defer { teamBusy = nil }
+        do {
+            let r: APIClient.OKResponse = try await client.send(
+                "/mobile/api/labor/team/add", method: .post,
+                body: TeamAddBody(employeeName: n, role: role.trimmingCharacters(in: .whitespacesAndNewlines)))
+            guard r.ok else { return r.error ?? "Couldn't add that person." }
+            Haptic.success()
+            await loadRoster()
+            return nil
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "Couldn't add that person."
+        }
+    }
+
+    /// Take a hand-entered name off the roster. Someone with shift history
+    /// stays: the server refuses and says so.
+    func removeTeamMember(_ name: String) async {
+        teamBusy = "remove:\(name)"
+        teamError = nil
+        defer { teamBusy = nil }
+        do {
+            let r: APIClient.OKResponse = try await client.send(
+                "/mobile/api/labor/team/remove", method: .post, body: TeamRemoveBody(employeeName: name))
+            guard r.ok else { teamError = r.error ?? "Couldn't remove \(name)."; return }
+            Haptic.success()
+            await loadRoster()
+        } catch let error as APIClient.APIError {
+            teamError = error.message
+        } catch {
+            teamError = "Couldn't remove \(name)."
+        }
+    }
+
+    /// Every role on the roster, for the add-a-person and post-a-shift pickers.
+    var rosterRoles: [String] {
+        var out: [String] = []
+        for m in roster {
+            for r in [m.role ?? ""] + (m.recentRoles ?? []) where !r.isEmpty {
+                if !out.contains(where: { $0.caseInsensitiveCompare(r) == .orderedSame }) { out.append(r) }
+            }
+        }
+        return out.sorted { $0.lowercased() < $1.lowercased() }
     }
 }

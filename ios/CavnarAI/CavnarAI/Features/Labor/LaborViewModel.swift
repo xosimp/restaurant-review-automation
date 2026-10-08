@@ -1893,8 +1893,18 @@ struct GeneratedSchedule: Codable {
     var unstaffableDates: HomeLenientList<UnstaffableDate>? = nil
     var startingPoint: StartingPoint? = nil
     var requirements: HomeLenientList<RequirementRow>? = nil
+    /// The forecast's sales for the week — top level on a generation,
+    /// `economics.projected_revenue` on a reopened week — what the summary
+    /// tiles' savings projection is worked on (iOS parity #47). Lenient.
+    var projectedRevenue: LenientDouble? = nil
+    var economics: ScheduleEconomicsLite? = nil
+
+    /// The week's forecast sales, wherever the payload carried them.
+    var forecastSales: Double? { projectedRevenue?.value ?? economics?.projectedRevenue }
 
     enum CodingKeys: String, CodingKey {
+        case projectedRevenue = "projected_revenue"
+        case economics
         case detailThinnedAt = "detail_thinned_at"
         case softRequirements = "soft_requirements"
         case patternConflicts = "pattern_conflicts"
@@ -2275,14 +2285,18 @@ final class LaborViewModel {
         let dates: [String]
         /// The server's `wait_seconds` when the job started (P-22).
         var waitSeconds: Int? = nil
+        /// How long a week usually takes here, for the copy on a return (#15).
+        var typical: GenerationTypical? = nil
     }
 
     private static var runningGenerationKey: String { SessionScope.key("labor.runningGeneration") }
     /// Past the poll's own 15-minute budget, a remembered job is stale.
     private static let runningGenerationMaxAge: TimeInterval = 20 * 60
 
-    private func rememberRunningGeneration(_ jobId: String, dates: [String], waitSeconds: Int? = nil) {
-        let entry = RunningGeneration(jobId: jobId, startedAt: Date(), dates: dates, waitSeconds: waitSeconds)
+    private func rememberRunningGeneration(_ jobId: String, dates: [String], waitSeconds: Int? = nil,
+                                           typical: GenerationTypical? = nil) {
+        let entry = RunningGeneration(jobId: jobId, startedAt: generationStartedAt ?? Date(), dates: dates,
+                                      waitSeconds: waitSeconds, typical: typical)
         if let data = try? JSONEncoder().encode(entry) {
             SecureCache.write(data, key: Self.runningGenerationKey)
         }
@@ -2306,6 +2320,7 @@ final class LaborViewModel {
         }
         isGeneratingSchedule = true
         regeneratingDates = entry.dates
+        startGenerationClock(at: entry.startedAt, typical: entry.typical, waitSeconds: entry.waitSeconds)
         let left = entry.waitSeconds.map { max(60, $0 - Int(Date().timeIntervalSince(entry.startedAt))) }
         await pollSchedule(jobId: entry.jobId, firstCheckWithoutWaiting: true, waitSeconds: left)
     }
@@ -2637,6 +2652,67 @@ final class LaborViewModel {
         } catch {
             // Offline: the rows keep their version, which still guards a save.
         }
+    }
+
+    // MARK: Open any week in the editor (iOS parity #5)
+
+    /// The week being fetched to open, and why it could not be.
+    var openingWeekId: Int?
+    var openWeekError: String?
+
+    /// The rows on screen hold an edit no save has stored — opening another
+    /// week would lose it, so the screen asks first.
+    var hasLocalEdits: Bool { rowsUnsaved || hasUnsavedFixes || optimizerUnsaved }
+
+    /// Open a drafted, auto-drafted or published week in the editor — from
+    /// History, Waiting on you or the schedule_drafted push: the server's
+    /// copy of it, its version and fresh rule flags (adoptWeek). A copy a
+    /// newer one replaced opens too, read-only (weekReadOnlyReason). True
+    /// when the week is on screen.
+    @discardableResult
+    func openWeek(_ id: Int) async -> Bool {
+        guard openingWeekId == nil else { return false }
+        if scheduleResult?.historyId == id {
+            scheduleResultExpanded = true
+            if !hasLocalEdits { await revalidateWeek() }
+            return true
+        }
+        openingWeekId = id
+        openWeekError = nil
+        defer { openingWeekId = nil }
+        do {
+            let fresh: GeneratedSchedule = try await client.send(
+                "/mobile/api/labor/schedule-history/\(id)", hapticOnError: false)
+            await adoptWeek(fresh)
+            weekNotice = nil
+            selectedRedoDates = []
+            scheduleResultExpanded = true
+            Haptic.success()
+            return true
+        } catch let error as APIClient.APIError where error.status == 404 {
+            openWeekError = "That week isn\u{2019}t on file any more \u{2014} it was deleted."
+        } catch let error as APIClient.APIError {
+            openWeekError = error.message
+        } catch is CancellationError {
+        } catch {
+            openWeekError = "Couldn\u{2019}t open that week."
+        }
+        return false
+    }
+
+    /// Follow the run a press was refused for (409 busy): its job is polled
+    /// like one this phone started, and its week lands here when it is done.
+    func followBusyRun() async {
+        guard let busy = busyRun, let jobId = busy.jobId, !isGeneratingSchedule else { return }
+        busyRun = nil
+        scheduleError = nil
+        isGeneratingSchedule = true
+        joinedRunningGeneration = true
+        generationProgress = nil
+        regeneratingDates = busy.running?.dates ?? []
+        startGenerationClock(typical: busy.typical, waitSeconds: busy.waitSeconds)
+        rememberRunningGeneration(jobId, dates: regeneratingDates, waitSeconds: busy.waitSeconds, typical: busy.typical)
+        await pollSchedule(jobId: jobId, waitSeconds: busy.waitSeconds)
     }
 
     /// Throw away the local edits and take the week as it is on file —
@@ -3653,6 +3729,35 @@ final class LaborViewModel {
         return nil
     }
 
+    /// Move a shift to another day of the week, with its times — the phone's
+    /// twin of the web grid's drag (a Day picker, not a drag). The same
+    /// re-score and save as every edit; refused, with why, when that person
+    /// already starts a shift then on the new day. Nil when it moved.
+    @discardableResult
+    func moveShift(rowId: String, to date: String, start: String, end: String) async -> String? {
+        if let why = weekReadOnlyReason { return why }
+        guard var result = scheduleResult, var rows = result.previewRows,
+              let index = rows.firstIndex(where: { $0.id == rowId }) else { return "That shift is no longer on the week." }
+        guard let hours = Self.shiftHours(start, end) else { return "Times read like 4:00pm." }
+        let was = rows[index]
+        let moved = ScheduleRow(date: date, day: Self.weekdayName(date), employee: was.employee, role: was.role,
+                                shiftStart: start, shiftEnd: end, scheduledHours: hours, notes: was.notes,
+                                needsReview: false, reviewReason: nil, rowId: was.rowId)
+        if rows.contains(where: { $0.id == moved.id && $0.id != rowId }) {
+            return "\(was.employee ?? "That person") already has a shift starting at \(start) that day."
+        }
+        rows[index] = moved
+        overriddenRows.remove(rowId)
+        overriddenRows.insert(moved.id)
+        result.previewRows = rows
+        scheduleResult = result
+        rowsUnsaved = true
+        Haptic.light()
+        await rescoreQuality()
+        await refreshEditCost()
+        return nil
+    }
+
     /// Take one shift off the week.
     func removeShift(rowId: String) async {
         guard !refuseReadOnly() else { return }
@@ -4173,9 +4278,11 @@ final class LaborViewModel {
         /// How long the job can run (P-22) — the poll waits this long, not
         /// a guessed 15 minutes.
         var waitSeconds: Int? = nil
+        /// How long a full week usually takes here, measured (#15).
+        var typical: GenerationTypical? = nil
 
         enum CodingKeys: String, CodingKey {
-            case ok, error, joined
+            case ok, error, joined, typical
             case jobId = "job_id"
             case waitSeconds = "wait_seconds"
         }
@@ -4259,6 +4366,23 @@ final class LaborViewModel {
     /// The days the running generation has drafted so far (#36), from each
     /// pending poll; nil before the first day is finished.
     var generationProgress: GenerationProgress? = nil
+    /// When the running generation started, how long a week usually takes
+    /// here and the time it stops by at the latest — the measured copy under
+    /// the steps (iOS parity #15), never a fixed 62-second model.
+    var generationStartedAt: Date? = nil
+    var generationTypical: GenerationTypical? = nil
+    var generationUntil: Date? = nil
+    /// A press refused because another week is being built (409): that run,
+    /// shown with its week and followed on a tap.
+    var busyRun: GenerationBusy? = nil
+    /// The scorecard a freshly landed draft opens on (iOS parity #47).
+    var showingDraftSummary = false
+
+    private func startGenerationClock(at start: Date = Date(), typical: GenerationTypical?, waitSeconds: Int?) {
+        generationStartedAt = start
+        generationTypical = typical
+        generationUntil = waitSeconds.map { start.addingTimeInterval(TimeInterval($0)) }
+    }
 
     /// Starts the same async AI schedule generation the web Labor tab uses,
     /// then polls until it completes — matches the backend's existing
@@ -4278,6 +4402,8 @@ final class LaborViewModel {
         if redo == nil { scheduleResult = nil }
         joinedRunningGeneration = false
         generationProgress = nil
+        busyRun = nil
+        startGenerationClock(typical: nil, waitSeconds: nil)
         hasUnsavedFixes = false
         overriddenRows = []
         saveConflict = nil
@@ -4302,11 +4428,21 @@ final class LaborViewModel {
             }
             joinedRunningGeneration = response.joined ?? false
             generateInstruction = ""
-            rememberRunningGeneration(jobId, dates: redo ?? [], waitSeconds: response.waitSeconds)
+            startGenerationClock(typical: response.typical, waitSeconds: response.waitSeconds)
+            rememberRunningGeneration(jobId, dates: redo ?? [], waitSeconds: response.waitSeconds,
+                                      typical: response.typical)
             await pollSchedule(jobId: jobId, waitSeconds: response.waitSeconds)
         } catch is CancellationError {
             isGeneratingSchedule = false
             regeneratingDates = []
+        } catch let error as APIClient.APIError where error.status == 409
+                    && error.decodeBody(GenerationBusy.self)?.busy == true {
+            // Another week is being built: that run, with its week, and a
+            // way to follow it — never only a refusal (iOS parity, 10/7/26).
+            busyRun = error.decodeBody(GenerationBusy.self)
+            isGeneratingSchedule = false
+            regeneratingDates = []
+            generationStartedAt = nil
         } catch let error as APIClient.APIError {
             scheduleError = error.message
             isGeneratingSchedule = false
@@ -4346,6 +4482,7 @@ final class LaborViewModel {
             joinedRunningGeneration = false
             generationProgress = nil
             regeneratingDates = []
+            generationStartedAt = nil
             forgetRunningGeneration()
         }
         var attempt = 0
@@ -4397,6 +4534,8 @@ final class LaborViewModel {
                     optimizerUnsaved = false
                     ratedInPrompt = [:]
                     suppressedRecommendationKinds = result.quality?.suppressedRecommendationKinds ?? []
+                    // The draft lands on its scorecard (iOS parity #47).
+                    showingDraftSummary = result.historyId != nil
                     await refreshOvertimeMoves()
                     await loadSections()
                 }

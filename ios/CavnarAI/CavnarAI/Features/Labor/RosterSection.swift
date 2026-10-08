@@ -7,6 +7,12 @@ import SwiftUI
 struct RosterSection: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     var onExpand: (() -> Void)? = nil
+    /// A labor/closers link opens the closer cleanup straight away
+    /// (iOS parity #49); spent once used.
+    var openClosers: Binding<Bool>? = nil
+    /// Add a hand-entered person; remove one (iOS parity #45).
+    @State private var addingPerson = false
+    @State private var removingPerson: RosterMember?
 
     @State private var selected: RosterMember?
     @State private var showingPairEditor = false
@@ -51,7 +57,7 @@ struct RosterSection: View {
                 } else if let error = viewModel.rosterError, viewModel.roster.isEmpty {
                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                 } else if viewModel.roster.isEmpty {
-                    Text("The roster fills from your shift history — upload shifts under Account and everyone appears here.")
+                    Text("The roster fills from your shift history \u{2014} upload a shifts CSV on the web (Labor \u{2192} Schedule Studio) or connect your POS, and everyone appears here. Add someone new by hand below.")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -68,11 +74,39 @@ struct RosterSection: View {
                     VStack(spacing: 0) {
                         ForEach(viewModel.roster) { member in
                             memberRow(member)
+                                .contextMenu {
+                                    // Only a hand-entered name comes off here;
+                                    // shift history keeps everyone else on.
+                                    if member.isManual == true && viewModel.canEditRoster {
+                                        Button(role: .destructive) {
+                                            removingPerson = member
+                                        } label: { Label("Remove from the roster", systemImage: "person.badge.minus") }
+                                    }
+                                }
                             if member.id != viewModel.roster.last?.id {
                                 Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                             }
                         }
                     }
+                }
+                if viewModel.canEditRoster {
+                    Button {
+                        Haptic.light()
+                        addingPerson = true
+                    } label: {
+                        Label("Add a person", systemImage: "person.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    if viewModel.roster.contains(where: { $0.isManual == true }) {
+                        Text("Someone you added by hand comes off with a long press on their row.")
+                            .font(.cavnarBody(12.5))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                }
+                if let error = viewModel.teamError {
+                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 rulesLink
@@ -134,6 +168,23 @@ struct RosterSection: View {
         }
         .sheet(isPresented: $showingFamilies) {
             RoleFamiliesSheet(store: viewModel.teamSetup)
+        }
+        .sheet(isPresented: $addingPerson) { AddTeamMemberSheet(viewModel: viewModel) }
+        .confirmationDialog(removingPerson.map { "Remove \($0.name) from your team?" } ?? "",
+                            isPresented: Binding(get: { removingPerson != nil }, set: { if !$0 { removingPerson = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove", role: .destructive) {
+                if let m = removingPerson { Task { await viewModel.removeTeamMember(m.name) } }
+                removingPerson = nil
+            }
+            Button("Cancel", role: .cancel) { removingPerson = nil }
+        } message: {
+            Text("This only removes the hand-entered name \u{2014} their staff app access ends with it. Anyone with real shift history stays on the roster.")
+        }
+        .onAppear {
+            guard let open = openClosers, open.wrappedValue else { return }
+            open.wrappedValue = false
+            showingClosers = true
         }
     }
 

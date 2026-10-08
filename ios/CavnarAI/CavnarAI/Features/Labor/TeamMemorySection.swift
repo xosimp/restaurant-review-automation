@@ -151,6 +151,52 @@ final class TeamMemoryViewModel {
         }
     }
 
+    // MARK: Hold a note as a constraint (iOS parity #68)
+
+    private struct HoldResponse: Decodable { let ok: Bool; let error: String? }
+
+    /// Hold one note part the way availability holds: the person can't be
+    /// scheduled on the days and at the dayparts confirmed (POST
+    /// /labor/staff-note-holds — the reading's own dates ride along).
+    func hold(_ note: StaffNote, part: StaffNotePart, days: [String], dayparts: [String]) async {
+        let key = "hold:\(note.id):\(part.index)"
+        busyKey = key
+        errorMessage = nil
+        defer { busyKey = nil }
+        let reading = part.reading?.hold
+        let body = StaffNoteHoldBody(employeeName: note.employeeName, partText: part.text,
+                                     days: days, dayparts: dayparts, start: reading?.start, end: reading?.end)
+        do {
+            let r: HoldResponse = try await client.send("/mobile/api/labor/staff-note-holds", method: .post, body: body)
+            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t hold that note."; return }
+            message = "Held \u{2014} the draft can\u{2019}t schedule them then"
+            Haptic.success()
+            await load()
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = "Couldn\u{2019}t hold that note."
+        }
+    }
+
+    func unhold(_ held: StaffNoteHeld) async {
+        busyKey = "unhold:\(held.id)"
+        errorMessage = nil
+        defer { busyKey = nil }
+        do {
+            let r: HoldResponse = try await client.send("/mobile/api/labor/staff-note-holds/\(held.id)/remove",
+                                                        method: .post, body: [String: String]())
+            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t stop holding it."; return }
+            message = "No longer held \u{2014} the draft only aims for it"
+            Haptic.success()
+            await load()
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = "Couldn\u{2019}t stop holding it."
+        }
+    }
+
     private struct NoteAddBody: Encodable {
         let employeeName: String
         let notes: String
@@ -383,6 +429,8 @@ struct TeamMemorySection: View {
                 HomeMixedText.make(line, size: 12.5, weight: 500, color: .cavnarInk3)
                     .padding(.leading, 14)
             }
+            // Held as a constraint, or offered to be (#68).
+            StaffNoteHoldRow(viewModel: viewModel, note: note, part: part)
             if asking {
                 HStack(spacing: 8) {
                     Text("Still true?")
@@ -781,5 +829,110 @@ struct CoverAnswerRow: View {
                 self.error = "Couldn\u{2019}t save that."
             }
         }
+    }
+}
+
+
+/// "Cavnar AI can hold this" with day and daypart chips, or "Held — …" with
+/// Stop holding (iOS parity #68; the web's mem-hold row). The chips start
+/// as the reading has them; the owner can narrow or widen before Hold it.
+private struct StaffNoteHoldRow: View {
+    let viewModel: TeamMemoryViewModel
+    let note: StaffNote
+    let part: StaffNotePart
+    @State private var days: Set<String> = []
+    @State private var parts: Set<String> = []
+    @State private var seeded = false
+    @State private var stopping = false
+
+    private static let week = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    var body: some View {
+        Group {
+            if let held = part.held {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "lock.fill").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.cavnarGreen)
+                        HomeMixedText.make("Held \u{2014} \(held.words ?? "") The draft can\u{2019}t schedule them then.",
+                                           size: 13, weight: 600, color: .cavnarGreen)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if viewModel.canEditNotes {
+                        Button {
+                            stopping = true
+                        } label: {
+                            Text("Stop holding").font(.cavnarBody(12.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                                .frame(minHeight: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(viewModel.busyKey != nil)
+                    }
+                }
+                .padding(.leading, 14)
+                .confirmationDialog("Stop holding this note?", isPresented: $stopping, titleVisibility: .visible) {
+                    Button("Stop holding", role: .destructive) { Task { await viewModel.unhold(held) } }
+                    Button("Cancel", role: .cancel) {}
+                } message: { Text("The note stays; the draft only aims for it again.") }
+            } else if !part.ended, part.reading?.kind == "hold", let hold = part.reading?.hold {
+                VStack(alignment: .leading, spacing: 7) {
+                    HomeMixedText.make("Cavnar AI can hold this \u{2014} \(hold.words ?? ""). Until you do, the draft only aims for it.",
+                                       size: 13, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if viewModel.canEditNotes {
+                        AccountFlowLayout(spacing: 5) {
+                            ForEach(Self.week, id: \.self) { d in
+                                chip(String(d.prefix(3)), on: days.contains(d)) { toggle(&days, d) }
+                            }
+                            chip("Lunch", on: parts.contains("morning")) { toggle(&parts, "morning") }
+                            chip("Dinner", on: parts.contains("night")) { toggle(&parts, "night") }
+                        }
+                        Button {
+                            Haptic.light()
+                            Task {
+                                await viewModel.hold(note, part: part,
+                                                     days: Self.week.filter { days.contains($0) },
+                                                     dayparts: ["morning", "night"].filter { parts.contains($0) })
+                            }
+                        } label: {
+                            Group {
+                                if viewModel.busyKey == "hold:\(note.id):\(part.index)" { CavnarShimmerText(text: "Saving\u{2026}") }
+                                else { Text("Hold it") }
+                            }
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.busyKey != nil || !canHold(hold)))
+                        .disabled(viewModel.busyKey != nil || !canHold(hold))
+                    }
+                }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.cavnarEmber.opacity(0.07)))
+                .padding(.leading, 14)
+                .onAppear {
+                    guard !seeded else { return }
+                    seeded = true
+                    days = Set(hold.days ?? [])
+                    parts = Set(hold.dayparts ?? [])
+                }
+            } else if !part.ended, part.reading?.kind == "unchecked", let why = part.reading?.why, !why.isEmpty {
+                HomeMixedText.make("Not held. \(why)", size: 12.5, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 14)
+            }
+        }
+    }
+
+    /// A hold needs a day, a daypart or the reading's own dates.
+    private func canHold(_ hold: StaffNoteReading.Hold) -> Bool {
+        !days.isEmpty || !parts.isEmpty || hold.start != nil || hold.end != nil
+    }
+
+    private func toggle(_ set: inout Set<String>, _ v: String) {
+        Haptic.selection()
+        if set.contains(v) { set.remove(v) } else { set.insert(v) }
+    }
+
+    private func chip(_ text: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) { AccountChip(text: text, muted: !on) }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

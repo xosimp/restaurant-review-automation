@@ -499,7 +499,10 @@ def test_ios_replaced_copy_is_read_only():
     view = _swift("Features/Labor/LaborView.swift")
     assert "result.historyId != nil, viewModel.weekReadOnlyReason == nil" in view   # no Send bar
     hist = _swift("Features/ScheduleHistory/ScheduleHistoryDetailView.swift")
-    assert "(detail.supersededBy ?? 0) <= 0 && (detail.replacedReason ?? \"\").isEmpty" in hist
+    # A replaced copy offers no Send (it may still be viewed in Labor,
+    # read-only there — iOS parity #5, 10/7/26).
+    assert "let replaced = (detail.supersededBy ?? 0) > 0 || !(detail.replacedReason ?? \"\").isEmpty" in hist
+    assert "if !replaced {" in hist and "showingPublish = true" in hist.split("if !replaced {", 1)[1][:400]
     sheet = _swift("Features/Labor/PublishScheduleSheet.swift")
     assert "case replacedReason = \"replaced_reason\"" in sheet and "|| viewModel.replacedReason != nil" in sheet
 
