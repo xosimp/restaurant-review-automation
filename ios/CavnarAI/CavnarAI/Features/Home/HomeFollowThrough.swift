@@ -999,31 +999,34 @@ final class HomeFollowThroughViewModel {
     /// Renew a missed goal for another month (the same target, a new date)
     /// or close it for good — POST /mobile/api/goals/<id>/renew | close, the
     /// web Goals card's two buttons (parity audit #66). Returns the line to
-    /// show, or nil (errorMessage says why).
+    /// show, or nil (`missedGoalError` says why).
     func answerMissed(_ goal: ProposedGoal, renew: Bool) async -> String? {
         struct RenewBody: Encodable { let days: Int }
         guard answeringGoal == nil else { return nil }
         answeringGoal = goal.id
         defer { answeringGoal = nil }
-        errorMessage = nil
+        missedGoalError = nil
         do {
             let path = "/mobile/api/goals/\(goal.id)/\(renew ? "renew" : "close")"
             let r: OKResponse = renew
                 ? try await client.send(path, method: .post, body: RenewBody(days: 30), retryTransient: false)
                 : try await client.send(path, method: .post, body: [String: String](), retryTransient: false)
-            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
+            guard r.ok else { missedGoalError = r.error ?? "Couldn\u{2019}t save that."; return nil }
             await Haptic.success()
             missedGoals.removeAll { $0.id == goal.id }
             await load()
             return renew ? "Renewed for another month \u{2014} it\u{2019}s the target again" : "Closed"
         } catch let error as APIClient.APIError {
-            errorMessage = error.message
+            missedGoalError = error.message
             return nil
         } catch {
-            errorMessage = "Couldn\u{2019}t save that."
+            missedGoalError = "Couldn\u{2019}t save that."
             return nil
         }
     }
+
+    /// Why the last renew / close of a missed goal did not save.
+    var missedGoalError: String?
 
     private struct TrackBody: Encodable {
         let source: String
@@ -2468,7 +2471,7 @@ struct HomeMissedGoals: View {
                     .font(.cavnarBody(12.5, weight: 600))
                     .foregroundStyle(Color.cavnarGreen)
                     .transition(.opacity)
-            } else if let error = viewModel.errorMessage, viewModel.answeringGoal == nil, closing == nil {
+            } else if let error = viewModel.missedGoalError {
                 Text(error)
                     .font(.cavnarBody(12.5, weight: 600))
                     .foregroundStyle(Color.cavnarRed)

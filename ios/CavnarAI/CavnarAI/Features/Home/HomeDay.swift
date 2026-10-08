@@ -22,7 +22,8 @@ struct HomeDayCard: View {
     /// An issue a push or a row opened (`issue/<id>`, parity audit #11):
     /// the list opens far enough to show it, Home scrolls to it
     /// (`onFocus`, with the row's scroll id) and it pulses once.
-    var focusIssueId: Int? = nil
+    var focusIssue: HomeIssueFocus? = nil
+    private var focusIssueId: Int? { focusIssue?.id }
     var onFocus: (Int) -> Void = { _ in }
 
     /// Every open issue is on Home — the first four, then "+N more" in
@@ -138,7 +139,9 @@ struct HomeDayCard: View {
     /// on its own.
     private func issueChrome<Content: View>(_ content: Content) -> some View {
         content
-            .task(id: focusIssueId) { await focus() }
+            // Keyed on the request, not the id: the same issue pushed twice
+            // focuses twice, and nothing clears it mid-pulse.
+            .task(id: focusIssue) { await focus() }
             .onDisappear { viewModel.keepPendingResolve() }
             .sheet(item: $openIssue, onDismiss: { Task { await viewModel.load() } }) { issue in
                 HomeIssueSheet(issue: issue, viewModel: viewModel) { resolved in
@@ -320,6 +323,12 @@ struct HomeDayCard: View {
         try? await Task.sleep(for: .seconds(1.4))
         withAnimation(.easeOut(duration: 0.6)) { pulsing = nil }
     }
+}
+
+/// One request to show an issue on Home (an `issue/<id>` push or row).
+struct HomeIssueFocus: Equatable {
+    let id: Int
+    let token = UUID()
 }
 
 @Observable

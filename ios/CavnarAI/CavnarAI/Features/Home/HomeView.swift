@@ -55,7 +55,7 @@ struct HomeView: View {
     @State private var showingAttentionWhy = false
     /// The issue an issue push named (DeepLinkRouter.pendingIssueId), handed
     /// to the day card to scroll to and pulse (parity audit #11).
-    @State private var issueFocus: Int?
+    @State private var issueFocus: HomeIssueFocus?
     /// Restaurant DNA, opened from Results (parity audit #98).
     @State private var showingDNA = false
     // Drives the hero's one-time landing reveal (opacity + upward offset),
@@ -261,12 +261,11 @@ struct HomeView: View {
                                             attention: summary.needsAttention + followThrough.linkItems,
                                             focusKey: followThrough.fixFirst?.answerKey ?? lead?.key),
                                         onOpenNav: { nav in open(nav: nav, module: "home", in: summary) },
-                                        focusIssueId: issueFocus,
+                                        focusIssue: issueFocus,
                                         onFocus: { id in
                                             withAnimation(.easeInOut(duration: 0.35)) {
                                                 scrollProxy.scrollTo(HomeDayCard.issueAnchor(id), anchor: .center)
                                             }
-                                            issueFocus = nil
                                         })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
@@ -1255,7 +1254,7 @@ struct HomeView: View {
         guard let id = deepLinkRouter.pendingIssueId else { return }
         deepLinkRouter.pendingIssueId = nil
         if !path.isEmpty { path = NavigationPath() }
-        issueFocus = id
+        issueFocus = HomeIssueFocus(id: id)
     }
 
     private func openPendingDailyReport() {
