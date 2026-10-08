@@ -66,6 +66,19 @@ targets:
           - SpaceGrotesk.ttf
         UIBackgroundModes:
           - remote-notification
+          # The widgets refresh with the app closed (parity audit #31): a
+          # BGAppRefreshTask (BackgroundRefresh.swift) and the server's
+          # silent pushes (content-available, push.fire_silent).
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - ai.cavnar.CavnarAI.refresh
+        # Handoff (parity audit #97): each module screen offers its
+        # dashboard.cavnar.ai page to the owner's Mac or iPad (Handoff.swift).
+        NSUserActivityTypes:
+          - ai.cavnar.CavnarAI.browsing
+        # The keychain group the Share extension reads the session from
+        # (#95, Keychain.mirrorSessionForExtensions).
+        CavnarKeychainGroup: $(AppIdentifierPrefix)ai.cavnar.CavnarAI.shared
         NSFaceIDUsageDescription: "Cavnar AI uses Face ID to keep your restaurant's data secure when you return to the app."
         # Scan invoice opens the VisionKit document camera (Friction #28);
         # the staff app's task sheets take a proof photo (UX-24).
@@ -146,10 +159,18 @@ targets:
         # snapshot here (Shared/WidgetSnapshot.swift). No token is shared.
         com.apple.security.application-groups:
           - group.ai.cavnar.CavnarAI
+        # The app's own group first, so every item it already holds stays its
+        # default; the second is shared with the CavnarShare extension only —
+        # never the widgets — and holds one item: the owner session's copy
+        # for "Send to Cavnar AI" (#95).
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)ai.cavnar.CavnarAI
+          - $(AppIdentifierPrefix)ai.cavnar.CavnarAI.shared
     dependencies:
       - target: CavnarWidgets
       # The notification's own expanded view (parity audit #36).
       - target: CavnarNotificationContent
+      - target: CavnarShare
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.cavnar.CavnarAI
@@ -274,6 +295,71 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_STRICT_CONCURRENCY: complete
+        APPLICATION_EXTENSION_API_ONLY: YES
+
+  # "Send to Cavnar AI" from Mail, Files or Photos (parity audit #95): a
+  # shared invoice PDF or photo goes to Food Cost → Invoices, waiting for the
+  # owner to check and apply it. Reads the owner session from the shared
+  # keychain group the app copies it into; holds nothing else.
+  CavnarShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: CavnarShare
+      # The app's own tokens, button styles and pinning — one source.
+      - path: CavnarAI/DesignSystem/Color+Cavnar.swift
+      - path: CavnarAI/DesignSystem/Font+Cavnar.swift
+      - path: CavnarAI/DesignSystem/ViewModifiers.swift
+      - path: CavnarAI/DesignSystem/Haptics.swift
+      - path: CavnarAI/Core/AppPreferences.swift
+      - path: CavnarAI/Core/AppTab.swift
+      - path: CavnarAI/Core/PinnedSessionDelegate.swift
+      - path: CavnarAI/Assets.xcassets
+      - path: CavnarAI/Fonts
+    info:
+      path: Generated/CavnarShare-Info.plist
+      properties:
+        CFBundleDisplayName: Send to Cavnar AI
+        CavnarKeychainGroup: $(AppIdentifierPrefix)ai.cavnar.CavnarAI.shared
+        UIAppFonts:
+          - ApfelGrotezk-Regular.ttf
+          - ApfelGrotezk-Fett.ttf
+          - ClashDisplay-Regular.ttf
+          - ClashDisplay-Medium.ttf
+          - ClashDisplay-Semibold.ttf
+          - ClashDisplay-Bold.ttf
+          - SpaceGrotesk.ttf
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: ShareViewController
+          NSExtensionAttributes:
+            # PDFs and images only — up to ten at once.
+            NSExtensionActivationRule: >-
+              SUBQUERY (extensionItems, $extensionItem, SUBQUERY ($extensionItem.attachments,
+              $attachment, ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image").@count > 0
+              AND SUBQUERY ($extensionItem.attachments, $attachment, ANY
+              $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image").@count <= 10
+              ).@count > 0
+    entitlements:
+      path: Generated/CavnarShare.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)ai.cavnar.CavnarAI.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cavnar.CavnarAI.Share
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 8DW8XL63K6
+        CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
+        CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CAVNAR_SHARE_EXTENSION"
         APPLICATION_EXTENSION_API_ONLY: YES
 
   CavnarAITests:

@@ -1180,14 +1180,21 @@ def finish_async_job(job_id, status, result):
         status, payload = "error", json.dumps({"ok": False, "error": f"Result could not be stored: {e}"})
     try:
         conn = _async_conn()
-        conn.execute(
+        cur = conn.execute(
             "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=? AND status='pending'",
             (status, payload, str(job_id)),
         )
         conn.commit()
         conn.close()
+        finished = cur.rowcount == 1
     except Exception as e:
         log.error(f"finish_async_job({job_id}) failed: {e}")
+        return
+    if finished:
+        # Its Live Activity, if a phone is showing one, ends with how it
+        # went (#38). Never raises.
+        import live_activities
+        live_activities.job_finished(job_id, status, result)
 
 
 def rewrite_async_result(job_id, result) -> None:
@@ -1246,6 +1253,11 @@ def set_async_job_progress(job_id, progress) -> None:
         conn.close()
     except Exception as e:
         log.error(f"set_async_job_progress({job_id}) failed: {e}")
+        return
+    # A phone showing this generation's Live Activity hears of the new day
+    # (iOS parity audit 10/7/26 #38). Never raises.
+    import live_activities
+    live_activities.job_progress(job_id, progress)
 
 
 def job_still_pending(job_id) -> bool:
@@ -2433,6 +2445,12 @@ _RETENTION_DAYS = {
     "alert_holds":        int(os.getenv("RETAIN_ALERT_HOLDS_DAYS", "30")),
     # Tap de-duplication only needs the last half hour (marketing_links).
     "marketing_link_taps": int(os.getenv("RETAIN_LINK_TAPS_DAYS", "2")),
+    # The phone's Live Activities (push.py, iOS parity audit 10/7/26 #38, #61,
+    # #94): one row per send, generation or night it was about, read only
+    # while the thing is live; a token not re-registered in 60 days belongs
+    # to a session that has long ended.
+    "live_activity_runs": int(os.getenv("RETAIN_LIVE_ACTIVITY_RUNS_DAYS", "60")),
+    "live_activity_tokens": int(os.getenv("RETAIN_LIVE_ACTIVITY_TOKENS_DAYS", "60")),
     "notification_opens": int(os.getenv("RETAIN_NOTIFICATION_OPENS_DAYS", "365")),
     # Registered by #72. The admin audit trail is long: a year and a month,
     # so last year's same month is still there to compare.
@@ -2610,6 +2628,7 @@ _RETENTION_COLUMN = {
     "ai_visibility_runs": "created_at", "job_period_claims": "claimed_at",
     "alert_holds": "created_at", "notification_opens": "opened_at",
     "marketing_link_taps": "tapped_at",
+    "live_activity_runs": "created_at", "live_activity_tokens": "updated_at",
     "admin_events": "created_at", "data_health_daily": "created_at", "stripe_events_seen": "seen_at",
     "sessions": "expires_at", "rec_events": "at",
     "operator_alerts": "created_at", "backup_runs": "started_at", "job_run_requests": "requested_at",
@@ -2763,6 +2782,9 @@ _RETENTION_FLOOR_DAYS = {
     "ai_gate_verdicts": 30,
     # A cache: a pruned row is rebuilt on the next packet that needs it.
     "context_sections": 1,
+    # A Live Activity lasts a night at most (a service) — a few days covers
+    # the longest one; a live session re-registers its tokens on every open.
+    "live_activity_runs": 7, "live_activity_tokens": 31,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",

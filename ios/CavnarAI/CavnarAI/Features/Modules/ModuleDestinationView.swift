@@ -32,6 +32,8 @@ struct ModuleDestinationView: View {
             .toolbar {
                 cavnarToolbarItem(placement: .topBarTrailing) { CavnarBellButton() }
             }
+            // Handoff: the same place on dashboard.cavnar.ai (parity audit #97).
+            .cavnarHandoff(route?.navPath?.raw ?? moduleKey)
     }
 
     @ViewBuilder

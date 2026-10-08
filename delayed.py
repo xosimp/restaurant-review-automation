@@ -59,9 +59,14 @@ def schedule(restaurant_id, kind, payload, delay_minutes, label=None, actor=None
              ((actor or AUTOMATION_ACTOR).get("username") or "")[:80]))
         conn.commit()
         row = conn.execute("SELECT * FROM delayed_actions WHERE id=?", (cur.lastrowid,)).fetchone()
-        return _row(row)
+        out = _row(row)
     finally:
         conn.close()
+    # The countdown with Undo reaches the phones that may undo it without
+    # the app being opened (iOS parity audit 10/7/26 #61). Never raises.
+    import live_activities
+    live_activities.pending_send_queued(out, db_path=db_path)
+    return out
 
 
 def pending(restaurant_id, db_path=DB_PATH, sees_food=True):
@@ -130,9 +135,14 @@ def cancel(restaurant_id, action_id, actor=None, db_path=DB_PATH, reason_code=No
             "WHERE id=? AND restaurant_id=? AND status='pending'",
             (_utc(), json.dumps(result), action_id, restaurant_id))
         conn.commit()
-        return cur.rowcount == 1
+        cancelled = cur.rowcount == 1
     finally:
         conn.close()
+    if cancelled:
+        # Every phone showing its countdown says "Stopped" (#61).
+        import live_activities
+        live_activities.pending_send_finished(restaurant_id, action_id, "stopped", db_path=db_path)
+    return cancelled
 
 
 def _conn_now(db_path):
@@ -330,6 +340,11 @@ def _run_one(aid, db_path):
         conn.commit()
     finally:
         conn.close()
+    # The countdown on the phones ends with what happened (#61).
+    import live_activities
+    live_activities.pending_send_finished(
+        action["restaurant_id"], aid, "sent" if status == "done" else "failed",
+        note=None if status == "done" else (result or {}).get("error"), db_path=db_path)
     return status
 
 

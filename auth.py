@@ -5291,6 +5291,10 @@ _MODULE_PREFIXES = (
     # the day's bird's-eye view and the consistency report.
     ("/api/task-sheets",            "labor"),
     ("/mobile/api/task-sheets",     "labor"),
+    # Tonight's service — the pulse and who hasn't clocked in — for the
+    # phone's Live Activity (iOS parity audit 10/7/26 #94).
+    ("/api/intraday",               "labor"),
+    ("/mobile/api/intraday",        "labor"),
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),
@@ -5336,6 +5340,9 @@ _UNGATED_PREFIXES = (
     "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions", "/api/passkeys",
     # The app's passkey sign-in and its own passkeys (iOS parity #57).
     "/mobile/api/passkey",
+    # A phone's Live Activity push tokens, filed under its session; who may
+    # hold a push-to-start token is checked in live_activities.register_token.
+    "/mobile/api/live-activity-tokens",
     "/api/change-password", "/api/update-email", "/api/send-2fa-test", "/api/verify-2fa-setup",
     "/api/toggle-2fa", "/api/toggle-login-notify", "/api/toggle-staff-signin-notify",
     "/api/switch-location", "/mobile/api/switch-location", "/api/group-locations", "/mobile/api/group-locations",

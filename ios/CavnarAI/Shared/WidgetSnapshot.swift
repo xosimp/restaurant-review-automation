@@ -41,6 +41,18 @@ struct WidgetSnapshot: Codable, Equatable {
     /// owner-only); nil otherwise, and on a snapshot written before it.
     var budgetLabel: String? = nil
     var budgetIsUp: Bool? = nil
+    /// Last night's labor % and food cost % (parity audit #59) — the
+    /// report's own KPI figures (value_text, so the widget cannot drift
+    /// into a second format) with the number behind each for the gauge and
+    /// the target it is held to. Nil when the night didn't measure one or
+    /// this login's view of the report leaves it out (a manager's view has
+    /// no food cost): the widget then says "—", never 0%.
+    var laborLabel: String? = nil
+    var laborPct: Double? = nil
+    var laborTarget: Double? = nil
+    var foodLabel: String? = nil
+    var foodPct: Double? = nil
+    var foodTarget: Double? = nil
     /// Open items in the action queue for this login (0 = nothing waiting).
     var waitingCount: Int
     /// Drafted replies waiting for approval — the quick action's subtitle.
@@ -63,9 +75,11 @@ struct WidgetSnapshot: Codable, Equatable {
     static let widgetKind = "CavnarWaitingWidget"
     /// The "Last night" widget — the same snapshot, the night half only.
     static let lastNightWidgetKind = "CavnarLastNightWidget"
+    /// Labor % and food cost % (#59) — the same snapshot's cost half.
+    static let costsWidgetKind = "CavnarCostsWidget"
     /// Every widget drawn from this snapshot: the app reloads all of them
     /// whenever it writes or clears it.
-    static let allWidgetKinds = [widgetKind, lastNightWidgetKind]
+    static let allWidgetKinds = [widgetKind, lastNightWidgetKind, costsWidgetKind]
 
     /// Last night's figures stay good for a day and a half — the next
     /// night's report replaces them.
@@ -141,21 +155,86 @@ struct WidgetSnapshot: Codable, Equatable {
         }
     }
 
+    /// "Labor 28.4% · Food 31.2%" — one line for the inline Lock Screen
+    /// slot; "—" for a figure the night didn't measure.
+    var costsLine: String {
+        "Labor \(laborLabel ?? "—") \u{00B7} Food \(foodLabel ?? "—")"
+    }
+
     // MARK: Storage
 
     private static var defaults: UserDefaults? { UserDefaults(suiteName: appGroup) }
+    /// Every location's last snapshot, by restaurant id (#96): a widget set
+    /// to a location shows that location's figures, as they were when the
+    /// app last read them there — each half still going stale on its own.
+    static let byLocationKey = "cavnar.widget.snapshots.byLocation.v1"
 
+    /// The location the app is on now.
     static func load() -> WidgetSnapshot? {
         guard let data = defaults?.data(forKey: storageKey) else { return nil }
         return try? JSONDecoder().decode(WidgetSnapshot.self, from: data)
     }
 
+    /// One location's snapshot; nil when the app has never read it there.
+    static func load(restaurantId: Int) -> WidgetSnapshot? {
+        if let active = load(), active.restaurantId == restaurantId { return active }
+        return loadAll()[String(restaurantId)]
+    }
+
+    /// What a widget configured for `locationId` draws: that location's
+    /// snapshot, or the active one's when it names none.
+    static func forWidget(locationId: Int?) -> WidgetSnapshot? {
+        guard let locationId else { return load() }
+        return load(restaurantId: locationId)
+    }
+
+    private static func loadAll() -> [String: WidgetSnapshot] {
+        guard let data = defaults?.data(forKey: byLocationKey),
+              let all = try? JSONDecoder().decode([String: WidgetSnapshot].self, from: data) else { return [:] }
+        return all
+    }
+
     static func save(_ snapshot: WidgetSnapshot) {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         defaults?.set(data, forKey: storageKey)
+        guard let rid = snapshot.restaurantId, rid > 0 else { return }
+        var all = loadAll()
+        all[String(rid)] = snapshot
+        if let blob = try? JSONEncoder().encode(all) { defaults?.set(blob, forKey: byLocationKey) }
     }
 
-    /// Signed out: the widget must stop showing the restaurant's figures.
+    /// Signed out: the widget must stop showing the restaurant's figures —
+    /// every location's.
+    static func clear() {
+        defaults?.removeObject(forKey: storageKey)
+        defaults?.removeObject(forKey: byLocationKey)
+        WidgetLocations.clear()
+    }
+}
+
+/// The locations a widget may be set to (#96): the app writes the list it
+/// reads from /mobile/api/group-locations; the widget's location picker
+/// (CavnarLocationQuery) reads it here — the extension never calls the API.
+struct WidgetLocationOption: Codable, Hashable, Sendable {
+    let id: Int
+    let name: String
+}
+
+enum WidgetLocations {
+    static let storageKey = "cavnar.widget.locations.v1"
+    private static var defaults: UserDefaults? { UserDefaults(suiteName: WidgetSnapshot.appGroup) }
+
+    static func load() -> [WidgetLocationOption] {
+        guard let data = defaults?.data(forKey: storageKey),
+              let list = try? JSONDecoder().decode([WidgetLocationOption].self, from: data) else { return [] }
+        return list
+    }
+
+    static func save(_ list: [WidgetLocationOption]) {
+        guard let data = try? JSONEncoder().encode(list) else { return }
+        defaults?.set(data, forKey: storageKey)
+    }
+
     static func clear() {
         defaults?.removeObject(forKey: storageKey)
     }

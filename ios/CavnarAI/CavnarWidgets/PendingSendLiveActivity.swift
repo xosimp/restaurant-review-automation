@@ -12,18 +12,22 @@ struct PendingSendLiveActivity: Widget {
         ActivityConfiguration(for: PendingSendAttributes.self) { context in
             PendingSendLockView(attributes: context.attributes, state: context.state, isStale: context.isStale)
                 .padding(16)
-                .activityBackgroundTint(Color.cavnarPaper)
-                .activitySystemActionForegroundColor(Color.cavnarInk)
+                .cavnarForcedDark()
+                // A tint is a value, not a view: the dark token itself (#18).
+                .activityBackgroundTint(Color.cavnarPaperDark)
+                .activitySystemActionForegroundColor(Color.cavnarInkDark)
                 .widgetURL(URL(string: "cavnarai://nav/action/\(context.attributes.actionId)"))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     Image(systemName: context.attributes.kind == "order_send" ? "shippingbox.fill" : "calendar")
                         .foregroundStyle(Color.cavnarEmber)
+                        .cavnarForcedDark()
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     PendingSendCountdown(state: context.state)
                         .font(.cavnarNumber(15, weight: 600))
+                        .cavnarForcedDark()
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack {
@@ -34,17 +38,21 @@ struct PendingSendLiveActivity: Widget {
                         PendingSendUndoButton(actionId: context.attributes.actionId, state: context.state,
                                               isStale: context.isStale)
                     }
+                    .cavnarForcedDark()
                 }
             } compactLeading: {
                 Image(systemName: context.attributes.kind == "order_send" ? "shippingbox.fill" : "calendar")
                     .foregroundStyle(Color.cavnarEmber)
+                    .cavnarForcedDark()
             } compactTrailing: {
                 PendingSendCountdown(state: context.state)
                     .font(.cavnarNumber(13, weight: 600))
                     .frame(maxWidth: 52)
+                    .cavnarForcedDark()
             } minimal: {
                 Image(systemName: "arrow.uturn.backward")
                     .foregroundStyle(Color.cavnarEmber)
+                    .cavnarForcedDark()
             }
             .widgetURL(URL(string: "cavnarai://nav/action/\(context.attributes.actionId)"))
         }
@@ -88,6 +96,11 @@ private struct PendingSendLockView: View {
             Text("Stopped. Nothing went out.")
                 .font(.cavnarBody(13, weight: 600))
                 .foregroundStyle(Color.cavnarGreen)
+        case "sent":
+            // Ended by the server when it ran (#61): what went out.
+            Text(attributes.kind == "order_send" ? "Sent to the supplier." : "Sent to your team.")
+                .font(.cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk2)
         default:
             Text(state.note ?? "Open Cavnar AI to see where it stands.")
                 .font(.cavnarBody(13))

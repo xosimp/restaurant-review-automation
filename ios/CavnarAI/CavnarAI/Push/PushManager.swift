@@ -397,6 +397,9 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         /// Said on a local notification when it worked — only where the
         /// owner needs to know what happened next ("check your email").
         var successTitle: String? = nil
+        /// "Ask someone to cover" on this issue: the next suggested cover is
+        /// read first, and asked by name (the route needs the name).
+        var asksCoverForIssue: Int? = nil
     }
 
     struct SavedDraft: Equatable {
@@ -440,9 +443,6 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                 try c.encode(id, forKey: .loginUserId)
             }
         }
-        /// "Ask someone to cover" on this issue: the next suggested cover is
-        /// read first, and asked by name (the route needs the name).
-        var asksCoverForIssue: Int? = nil
     }
 
     /// What an Approve & post answer means for the owner who pressed it from

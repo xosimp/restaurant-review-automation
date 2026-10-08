@@ -21,6 +21,8 @@ struct AccountMyNotifications: View {
         VStack(alignment: .leading, spacing: 22) {
             if let prefs = viewModel.prefs {
                 mine(prefs)
+                // "Tonight's service" on the Lock Screen (parity audit #94).
+                ServiceActivitySettingsSection()
                 if prefs.showsSources {
                     shared(prefs)
                 }

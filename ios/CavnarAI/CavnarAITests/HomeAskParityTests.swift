@@ -269,7 +269,7 @@ final class HomeAskParityTests: XCTestCase {
     func testAnAskLinkFillsInTheQuestion() throws {
         let url = try XCTUnwrap(URL(string: "https://dashboard.cavnar.ai/?ask=Why%20was%20Friday%20slow%3F"))
         let destination = try XCTUnwrap(SystemEntry.destination(for: url))
-        guard case .link(let path) = SystemEntry.fromLink(destination) else {
+        guard case .link(let path, _) = SystemEntry.fromLink(destination) else {
             return XCTFail("an ask link opens Ask, as a link")
         }
         XCTAssertEqual(path.head, "ask")

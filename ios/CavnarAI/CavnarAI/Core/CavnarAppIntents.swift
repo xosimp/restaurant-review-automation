@@ -1,17 +1,19 @@
 import AppIntents
 import Foundation
+import SwiftUI
 
 /// App Shortcuts: Siri, Spotlight, the Action button and the Shortcuts app
 /// reach the same places the Home Screen quick actions do (Friction audit
-/// #31, U3-12 b). Every intent but Undo and "How was last night?" (which
-/// only reads the widget snapshot aloud) only OPENS the app somewhere — it
-/// never sends, posts or approves on its own; anything outward still meets
-/// the confirm card inside the app. The lock screen still stands between
+/// #31, U3-12 b). Every intent but Undo, "How was last night?" (which only
+/// reads the widget snapshot aloud) and "Ask Cavnar AI" (which answers a
+/// question in Siri, parity audit #58) only OPENS the app somewhere — none
+/// of them sends, posts or approves on its own; anything outward, an Ask
+/// proposal included, still meets the confirm card inside the app. The lock screen still stands between
 /// Siri and the data: the destination waits in SystemEntry until the scene
 /// is active, and the app's own Face ID lock runs first.
 
 struct OpenAskCavnarIntent: AppIntent {
-    static let title: LocalizedStringResource = "Ask Cavnar AI"
+    static let title: LocalizedStringResource = "Open Ask Cavnar AI"
     static let description = IntentDescription("Opens Ask Cavnar AI, with your question in the box.")
     static let openAppWhenRun: Bool = true
 
@@ -136,11 +138,225 @@ struct LastNightSummaryIntent: AppIntent {
     }
 }
 
+// MARK: - Ask Cavnar AI, answered in Siri (parity audit #58)
+
+/// "Ask Cavnar AI" — Siri asks for the question, Cavnar AI answers it, and
+/// the answer is spoken and shown in a snippet without opening the app. The
+/// same route and the same tools as Ask's own screen (POST
+/// /mobile/api/ask-cavnar, a new conversation, so it is in Ask's history
+/// afterwards). An answer that proposes an action never acts: Siri says
+/// what was proposed and that it is waiting in Ask, where the confirm card
+/// is. Needs an unlocked device — the restaurant's figures, out loud.
+struct AskCavnarAnswerIntent: AppIntent {
+    static let title: LocalizedStringResource = "Ask Cavnar AI"
+    static let description = IntentDescription("Asks Cavnar AI about your restaurant and tells you the answer.")
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+    static let openAppWhenRun: Bool = false
+
+    @Parameter(title: "Question", requestValueDialog: "What would you like to ask Cavnar AI?")
+    var question: String
+
+    init() {}
+    init(question: String) { self.question = question }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        let outcome = await SiriAsk.ask(question)
+        return .result(dialog: IntentDialog(stringLiteral: outcome.spoken),
+                       view: SiriAskSnippet(question: question, outcome: outcome))
+    }
+}
+
+/// The body POST /mobile/api/ask-cavnar reads — every key the route takes
+/// (mobile_api.mobile_ask_cavnar): a fresh conversation, no history, no
+/// screen it was asked from.
+struct SiriAskBody: Encodable, Equatable {
+    let question: String
+    let history: [String]
+    let conversationId: Int?
+    let newConversation: Bool
+    let screen: String?
+
+    enum CodingKeys: String, CodingKey {
+        case question, history, screen
+        case conversationId = "conversation_id"
+        case newConversation = "new_conversation"
+    }
+
+    init(question: String) {
+        self.question = question
+        self.history = []
+        self.conversationId = nil
+        self.newConversation = true
+        self.screen = nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(question, forKey: .question)
+        try c.encode(history, forKey: .history)
+        try c.encode(conversationId, forKey: .conversationId)
+        try c.encode(newConversation, forKey: .newConversation)
+        try c.encode(screen, forKey: .screen)
+    }
+}
+
+enum SiriAsk {
+    struct Outcome: Equatable {
+        /// What Siri says: the answer as plain sentences, clipped.
+        let spoken: String
+        /// What the snippet shows: the answer, markdown removed.
+        let text: String
+        /// How many actions the answer proposed — none were taken.
+        let proposals: Int
+        let ok: Bool
+    }
+
+    /// Only what Siri needs from the answer. A proposal is counted, never
+    /// decoded into something that could be run.
+    struct Response: Decodable {
+        struct Ignored: Decodable { init(from decoder: Decoder) throws {} }
+        let ok: Bool
+        let answer: String?
+        let error: String?
+        let proposals: [Ignored]?
+    }
+
+    /// The longest answer Siri reads out; the snippet shows all of it.
+    static let spokenLimit = 600
+
+    static func ask(_ question: String, client: APIClient = .shared) async -> Outcome {
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else {
+            return Outcome(spoken: "Ask me a question about your restaurant.", text: "", proposals: 0, ok: false)
+        }
+        guard let bearer = Keychain.get(Keychain.Key.sessionToken), !bearer.isEmpty else {
+            return Outcome(spoken: "Sign in to Cavnar AI on this iPhone first.", text: "", proposals: 0, ok: false)
+        }
+        do {
+            let r: Response = try await client.sendWithBearer(
+                "/mobile/api/ask-cavnar", method: .post, body: SiriAskBody(question: String(q.prefix(2000))),
+                bearer: bearer)
+            guard r.ok, let answer = r.answer, !answer.isEmpty else {
+                let why = r.error ?? "Cavnar AI couldn\u{2019}t answer that just now."
+                return Outcome(spoken: why, text: why, proposals: 0, ok: false)
+            }
+            return outcome(answer: answer, proposals: r.proposals?.count ?? 0)
+        } catch let error as APIClient.APIError {
+            return Outcome(spoken: error.message, text: error.message, proposals: 0, ok: false)
+        } catch {
+            let why = "Cavnar AI is still working on that. Open Ask to see the answer."
+            return Outcome(spoken: why, text: why, proposals: 0, ok: false)
+        }
+    }
+
+    static func outcome(answer: String, proposals: Int) -> Outcome {
+        let text = plain(answer)
+        var spoken = text.count > spokenLimit ? clip(text, to: spokenLimit) : text
+        if proposals > 0 {
+            spoken += proposals == 1
+                ? " Cavnar AI suggested one thing to do. It\u{2019}s waiting in Ask for you to look over; nothing was done."
+                : " Cavnar AI suggested \(proposals) things to do. They\u{2019}re waiting in Ask for you to look over; nothing was done."
+        }
+        return Outcome(spoken: spoken, text: text, proposals: proposals, ok: true)
+    }
+
+    /// Markdown to plain sentences: no **bold**, # headings, bullets,
+    /// backticks or link syntax read aloud.
+    static func plain(_ markdown: String) -> String {
+        var lines: [String] = []
+        for raw in markdown.components(separatedBy: .newlines) {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            while line.hasPrefix("#") { line.removeFirst() }
+            for bullet in ["- ", "* ", "\u{2022} "] where line.hasPrefix(bullet) {
+                line = String(line.dropFirst(bullet.count))
+            }
+            line = line.replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "__", with: "")
+                .replacingOccurrences(of: "`", with: "")
+            line = line.replacingOccurrences(of: #"\[([^\]]+)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+            line = line.trimmingCharacters(in: .whitespaces)
+            if !line.isEmpty { lines.append(line) }
+        }
+        return lines.map { l in
+            let last = l.last
+            return (last == "." || last == "?" || last == "!" || last == ":") ? l : l + "."
+        }.joined(separator: " ")
+    }
+
+    /// Cut at the last sentence end inside `limit`, else the last word.
+    static func clip(_ text: String, to limit: Int) -> String {
+        let head = String(text.prefix(limit))
+        if let end = head.lastIndex(where: { $0 == "." || $0 == "?" || $0 == "!" }) {
+            return String(head[...end])
+        }
+        if let space = head.lastIndex(of: " ") { return String(head[..<space]) + "\u{2026}" }
+        return head + "\u{2026}"
+    }
+}
+
+/// The answer as Siri shows it — dark, Cavnar AI's type.
+struct SiriAskSnippet: View {
+    let question: String
+    let outcome: SiriAsk.Outcome
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("ASK CAVNAR AI")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.1)
+                .foregroundStyle(Color.cavnarEmber)
+            Text(question)
+                .font(.cavnarBody(14, weight: 600))
+                .foregroundStyle(Color.cavnarInk2)
+                .lineLimit(2)
+            Text(outcome.text.isEmpty ? outcome.spoken : outcome.text)
+                .font(.cavnarBody(15))
+                .foregroundStyle(outcome.ok ? Color.cavnarInk : Color.cavnarAmber)
+                .lineLimit(14)
+                .fixedSize(horizontal: false, vertical: true)
+            if outcome.proposals > 0 {
+                HomeMixedText.make(outcome.proposals == 1
+                                   ? "1 suggestion waiting in Ask \u{2014} nothing was done."
+                                   : "\(outcome.proposals) suggestions waiting in Ask \u{2014} nothing was done.",
+                                   size: 13, weight: 600, color: .cavnarEmber2)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarPaper)
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+// MARK: - Switch location (parity audit #96)
+
+/// "Switch to Wicker Park in Cavnar AI" — opens the app on that location,
+/// the same switch the header's location picker makes (location/<id>).
+struct SwitchLocationIntent: AppIntent {
+    static let title: LocalizedStringResource = "Switch location"
+    static let description = IntentDescription("Opens Cavnar AI on another of your locations.")
+    static let openAppWhenRun: Bool = true
+
+    @Parameter(title: "Location")
+    var location: CavnarLocationEntity
+
+    init() {}
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        if let path = NavPath("location/\(location.id)") { SystemEntry.open(path) }
+        return .result()
+    }
+}
+
 struct CavnarShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        AppShortcut(intent: OpenAskCavnarIntent(),
+        AppShortcut(intent: AskCavnarAnswerIntent(),
                     phrases: ["Ask \(.applicationName)", "Ask \(.applicationName) a question"],
                     shortTitle: "Ask Cavnar AI", systemImageName: "sparkles")
+        AppShortcut(intent: OpenAskCavnarIntent(),
+                    phrases: ["Open Ask in \(.applicationName)"],
+                    shortTitle: "Open Ask", systemImageName: "text.bubble")
         AppShortcut(intent: OpenLastNightIntent(),
                     phrases: ["How did last night go in \(.applicationName)",
                               "Last night's sales in \(.applicationName)"],
@@ -164,5 +380,9 @@ struct CavnarShortcuts: AppShortcutsProvider {
         AppShortcut(intent: OpenCommandSheetIntent(),
                     phrases: ["Find in \(.applicationName)", "Search \(.applicationName)"],
                     shortTitle: "Find in Cavnar AI", systemImageName: "magnifyingglass")
+        AppShortcut(intent: SwitchLocationIntent(),
+                    phrases: ["Switch to \(\.$location) in \(.applicationName)",
+                              "Switch locations in \(.applicationName)"],
+                    shortTitle: "Switch location", systemImageName: "building.2")
     }
 }

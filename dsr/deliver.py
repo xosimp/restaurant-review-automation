@@ -552,6 +552,14 @@ def on_terminal(restaurant, report_id, now_utc=None, db_path=None):
         return dict(out, reason="not a deliverable version")
     if not _allowed():
         return dict(out, reason="not the production scheduler host")
+    # Wake the owner app on this restaurant's phones so the Home and Lock
+    # Screen widgets show the new night without being opened (iOS parity
+    # audit 10/7/26 #31) — a silent push, whether or not anyone is told.
+    try:
+        import push
+        push.fire_silent(restaurant.id, "dsr", db_path=db)
+    except Exception as e:
+        ops.capture(e, job="dsr_deliver", context=f"restaurant_id={restaurant.id} widget wake")
     if not getattr(restaurant, "dsr_notify", 0):
         # Off until the owner turns it on (Account → Daily report): the
         # report still builds and shows in the app, nobody is emailed.

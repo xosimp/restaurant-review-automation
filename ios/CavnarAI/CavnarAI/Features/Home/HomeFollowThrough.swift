@@ -122,6 +122,9 @@ struct ActionItem: Decodable, Identifiable {
     let action: Action?
     /// Where the item itself opens (action_queue.nav_for).
     let nav: String?
+    /// How many the row stands for (the drafted replies waiting) — what
+    /// the widget reads from Home's own read (HomeReadShare).
+    var count: Int? = nil
     var id: String { key }
 
     enum CodingKeys: String, CodingKey { case key, kind, title, detail, severity, action, nav }
@@ -937,6 +940,9 @@ final class HomeFollowThroughViewModel {
     func load() async {
         isLoading = actions.isEmpty && goals.isEmpty && results.isEmpty
         defer { isLoading = false }
+        // The widget refresh borrows this read rather than making its own
+        // at the same moment (HomeReadShare).
+        HomeReadShare.shared.beginActions()
         async let a: ActionsResponse? = try? client.send("/mobile/api/actions", hapticOnError: false)
         async let g: GoalsResponse? = try? client.send("/mobile/api/goals", hapticOnError: false)
         async let o: RecOutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
@@ -946,7 +952,9 @@ final class HomeFollowThroughViewModel {
         async let ls: LossSignals? = try? client.send("/mobile/api/loss-signals", hapticOnError: false)
         // Once Results has been read, a reload keeps it current too.
         async let lazy: Void = refreshResultsIfLoaded()
-        actions = (await a)?.items ?? []
+        let actionsRead = await a
+        actions = actionsRead?.items ?? []
+        HomeReadShare.shared.finishActions(actionsRead.map { $0.items.map { (key: $0.key, count: $0.count) } })
         let goalsResponse = await g
         goals = goalsResponse?.goals ?? []
         proposedGoals = goalsResponse?.proposed?.items ?? []

@@ -851,7 +851,14 @@ def _do_actions(u):
     is not the owner seeing the queue (F3-6)."""
     import action_queue
     peek = request.args.get("peek") == "1"
-    return {"ok": True, **action_queue.items(_rid(u), viewer=u, today=_local_today(u), present=not peek)}, 200
+    out = action_queue.items(_rid(u), viewer=u, today=_local_today(u), present=not peek)
+    # The widget's "3 things waiting" follows the queue: a count the web
+    # finds changed wakes this login's phones to redraw it (iOS parity audit
+    # 10/7/26 #31). Never raises.
+    import live_activities
+    live_activities.note_waiting_count(_rid(u), u.get("id"), len(out.get("items") or []),
+                                       from_web=request.path.startswith("/api/"))
+    return {"ok": True, **out}, 200
 
 
 # ── the Command Center (command_center.py; Friction audit #14, #48) ──────────
@@ -4859,6 +4866,13 @@ def _do_delayed_pending(u):
     return {"ok": True, "actions": delayed.pending(_rid(u), sees_food=_sees_food(u))}, 200
 
 
+def _do_intraday_tonight(u):
+    """Tonight's service (live_activities.service_content): one body for the
+    web route, the phone's twin and the Live Activity's pushes."""
+    import live_activities
+    return live_activities._do_intraday_tonight(u)
+
+
 def _may_undo(u, kind) -> bool:
     """Undoing a queued send is the power to make that send: a week to
     staff is the schedule sender's, a supplier order is food cost's, and
@@ -6881,6 +6895,9 @@ _ROUTES = [
     ("/account/preferences/mine", ["POST"], _do_preferences_mine, "preferences_mine"),
     ("/account/preferences/apply-to-all", ["POST"], _do_preferences_apply_to_all, "preferences_apply_to_all"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
+    # Tonight's service as the phone's Live Activity draws it (iOS parity
+    # audit 10/7/26 #94): the pulse and who hasn't clocked in.
+    ("/intraday/tonight", ["GET"], _do_intraday_tonight, "intraday_tonight"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
     ("/actions/<int:action_id>/why", ["POST"], _do_delayed_why, "delayed_why"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),

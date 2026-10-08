@@ -9,7 +9,8 @@ struct CavnarNextShiftWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: StaffShiftSnapshot.widgetKind, provider: NextShiftProvider()) { entry in
             NextShiftWidgetView(entry: entry)
-                .containerBackground(for: .widget) { Color.cavnarPaper }
+                .cavnarForcedDark()
+                .containerBackground(for: .widget) { Color.cavnarPaper.cavnarForcedDark() }
         }
         .configurationDisplayName("Next shift")
         .description("Your next shift from the published schedule.")

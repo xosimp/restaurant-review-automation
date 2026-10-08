@@ -1821,7 +1821,7 @@ def run_intraday_capture(db_path=DB_PATH, restaurants=None):
     bound, a cursor; `restaurants` is the slot's one read of the list
     (slot_restaurants). Each capture that reached the POS is recorded as
     `pos_intraday` in the Data Health ledger."""
-    import intraday, ops
+    import intraday, ops, live_activities
     from time_utils import restaurant_now
     c = {"captured": 0, "closed": 0, "attempted": 0, "failed": 0, "not_yet": 0}
     lock = threading.Lock()
@@ -1831,8 +1831,13 @@ def run_intraday_capture(db_path=DB_PATH, restaurants=None):
         if not _open_now(r, local):
             with lock:
                 c["closed"] += 1
+            # Tonight's service Live Activity ends at close (#94).
+            live_activities.service_tick(r, local, db_path=db_path)
             return
         if not ops.claim_period(f"intraday:{r.id}", f"{local.date().isoformat()}-{local.hour}"):
+            # Captured this hour already; the service activity still hears
+            # the open or a change (#94).
+            live_activities.service_tick(r, local, db_path=db_path)
             return
         try:
             out = intraday.capture(r.id, now_local=local, db_path=db_path, restaurant=r)
@@ -1857,6 +1862,9 @@ def run_intraday_capture(db_path=DB_PATH, restaurants=None):
         if answered:
             _record_intraday(r.id, bool(out.get("ok")), out.get("provider"), db_path,
                              error=None if out.get("ok") else out.get("reason"))
+        # The new hour's pulse reaches tonight's service Live Activity
+        # (iOS parity audit 10/7/26 #94); started here at open.
+        live_activities.service_tick(r, local, db_path=db_path)
 
     hit = _slot_sweep("intraday_capture", restaurants, _one, db_path, workers=INTRADAY_WORKERS,
                       max_seconds=INTRADAY_CAPTURE_MAX_SECONDS)
@@ -2214,6 +2222,10 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
             # The service the clock is in — the date coverage_gaps read the
             # published week and the clock-ins for (E-4).
             bday = str(gaps.get("business_date") or business_date(r, local).isoformat())[:10]
+            # Who hasn't clocked in, for tonight's service on the phone's
+            # Lock Screen (#94) — names and roles only. Never raises.
+            import live_activities
+            live_activities.note_coverage(r, local, gaps, db_path=db_path)
             # Someone who turned up late closes their own no-show issue on
             # this pass — the manager is not left chasing a person already
             # on the floor (#13 / #18).
