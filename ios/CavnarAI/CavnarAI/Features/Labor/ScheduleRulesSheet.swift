@@ -35,6 +35,8 @@ struct ScheduleRulesSheet: View {
     @State private var salariedCap = ""
     @State private var capEdited = false
     @State private var showingClosers = false
+    @State private var showingKitchen = false
+    @State private var showingSectionNames = false
     @State private var standingFor: StandingPerson?
     /// What "Suggest from history" filled in, said until the next save.
     @State private var floorNote: String?
@@ -117,13 +119,22 @@ struct ScheduleRulesSheet: View {
                         RulesOwnerRulesSection(rules: viewModel.teamSetup.hoursRules,
                                                unchecked: viewModel.teamSetup.hoursRulesUnchecked,
                                                kicker: "Your hours & shift rules")
+                        // The weekdays the restaurant is closed, the
+                        // section count and the kitchen's stations save as
+                        // they change, apart from Save rules (iOS parity,
+                        // 10/7/26 — the web saves each on its own too).
+                        RulesClosedDaysSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules)
                         floorsSection
                         cutFloorSection
                         arrivalsSection
                         crossTrainingSection
                         certificationsSection
+                        RulesKitchenSection(store: viewModel.teamSetup) { showingKitchen = true }
                         roleListSection("Front of house", detail: "Roles counted against sections and the section cap.",
                                         selection: $fohRoles)
+                        RulesDiningSectionsSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules) {
+                            showingSectionNames = true
+                        }
                         roleListSection("Patio", detail: "Roles the weather read can thin or thicken.",
                                         selection: $patioRoles)
                         budgetSection
@@ -193,6 +204,14 @@ struct ScheduleRulesSheet: View {
         }
         .sheet(item: $standingFor, onDismiss: { Task { await viewModel.loadRules() } }) { person in
             RosterDetailSheet(viewModel: viewModel, name: person.name)
+        }
+        .sheet(isPresented: $showingKitchen) {
+            KitchenStationsSheet(store: viewModel.teamSetup, canEdit: viewModel.canEditRules)
+                .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showingSectionNames) {
+            FloorSectionsSheet()
+                .presentationDetents([.medium, .large])
         }
     }
 

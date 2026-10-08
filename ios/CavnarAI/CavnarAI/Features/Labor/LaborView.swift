@@ -51,6 +51,7 @@ struct LaborView: View {
     @State private var editingShift: ShiftEditSheet.Mode?
     /// A shift the owner asked to take off the week, awaiting the confirm.
     @State private var removingRow: ScheduleRow?
+    @State private var editingSectionNames = false
     /// What the schedule has learned, and measured ratings (H2-1, H2-3).
     @State private var showingMemory = false
     @State private var showingMeasuredRatings = false
@@ -477,6 +478,9 @@ struct LaborView: View {
         .sheet(item: $editingShift) { mode in
             ShiftEditSheet(mode: mode, viewModel: viewModel, roster: setupViewModel.activeRoster)
                 .cavnarFormSheet()
+        }
+        .sheet(isPresented: $editingSectionNames, onDismiss: { Task { await viewModel.loadSections() } }) {
+            FloorSectionsSheet().presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showingNotesSheet) { ScheduleNotesSheet(settings: buildSettings) }
         .sheet(isPresented: $viewModel.showingDraftSummary) {
@@ -1586,7 +1590,19 @@ struct LaborView: View {
                         if viewModel.sections.section(for: row) != nil {
                             Button("No section") { Task { await viewModel.assignSection(row, section: "") } }
                         }
+                        // The names themselves (the web's "Edit sections").
+                        if viewModel.sections.canEdit != false {
+                            Divider()
+                            Button { editingSectionNames = true } label: { Label("Edit sections", systemImage: "pencil") }
+                        }
                     } label: { Label("Section", systemImage: "square.grid.2x2") }
+                } else if viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role),
+                          viewModel.sections.canEdit == true {
+                    // No sections named yet: a front-of-house shift offers
+                    // to name them, as the web's shift pane does.
+                    Button { editingSectionNames = true } label: {
+                        Label("Name floor sections", systemImage: "square.grid.2x2")
+                    }
                 }
                 Button(role: .destructive) {
                     removingRow = row
