@@ -886,3 +886,31 @@ def test_a_pos_sync_forgets_codes_and_station_logins_but_keeps_people_who_left(d
     conn.close()
     assert left == ["Dana Reyes", "Old Timer"]
     assert schedule_intel.forget_stale_names(rid, [], db_path=db_path) == 0          # an empty pull proves nothing
+
+
+def test_the_profile_carries_its_own_weekly_series_for_the_dna_screen(db_path):
+    """Parity audit #98: the DNA screen charts each dimension over the weeks
+    behind it — this restaurant's own stored rows only, oldest first, a
+    measured numeric dimension only (an unmeasured one has no series, never
+    zeros), at most HISTORY_WEEKS of them."""
+    rid = _rid(db_path, "Series Grill")
+    other = _rid(db_path, "Someone Else")
+    conn = get_conn(db_path)
+    weeks = [features.iso_week(date.today() - timedelta(weeks=k)) for k in range(dna.HISTORY_WEEKS + 2)][::-1]
+    for i, wk in enumerate(weeks):
+        conn.execute("INSERT INTO intel_dna (restaurant_id, week, dims_json, coverage) VALUES (?,?,?,0.1)",
+                     (rid, wk, json.dumps({"labor_pct": {"raw": 30.0 + i, "z": 0.0, "basis": "b"},
+                                           "service_type": {"raw": "service:full_service"}})))
+    conn.execute("INSERT INTO intel_dna (restaurant_id, week, dims_json, coverage) VALUES (?,?,?,0.1)",
+                 (other, weeks[-1], json.dumps({"labor_pct": {"raw": 99.0, "z": 0.0}})))
+    conn.commit()
+    conn.close()
+    p = dna.profile(rid, db_path=db_path)
+    items = {i["key"]: i for f in p["families"] for i in f["dimensions"]}
+    series = items["labor_pct"]["history"]
+    assert len(series) == dna.HISTORY_WEEKS
+    assert [s["week"] for s in series] == weeks[-dna.HISTORY_WEEKS:]
+    assert series[-1]["value"] == 30.0 + len(weeks) - 1 and 99.0 not in [s["value"] for s in series]
+    assert items["service_type"]["history"] == []          # categorical: no chart
+    assert items["volume_band"]["history"] == []           # unmeasured: no series, never zeros
+    privacy.assert_anonymous({k: [s["value"] for s in v["history"]] for k, v in items.items()})

@@ -1062,6 +1062,10 @@ def _home_module_tiles(rid, restaurant, user=None):
 
     inv = {}
     inv_live = False
+    # The inventory analysis as analysis_for returned it, when it ran — Home
+    # hands it to home_brief so the brief does not run it a second time on
+    # the same request (parity audit #20).
+    inv_read = None
     modules_out = []
     for m in active_modules:
         key = m["key"]
@@ -1097,6 +1101,7 @@ def _home_module_tiles(rid, restaurant, user=None):
             try:
                 from inventory import analysis_for
                 _items, _live, inv = analysis_for(rid)
+                inv_read = (_items, _live, inv)
                 # Only a restaurant with its own live inventory gets a
                 # waste line on the weekly receipt — the sample items a
                 # fresh account is analysed against aren't its own waste.
@@ -1129,7 +1134,11 @@ def _home_module_tiles(rid, restaurant, user=None):
                             "mode": "full",
                             "pulse": _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=inv_live)})
     return {"modules": modules_out, "active_keys": active_keys, "rstats": rstats, "labor": labor,
-            "inv": inv, "inv_live": inv_live}
+            "inv": inv, "inv_live": inv_live,
+            # What ran, for home_brief.build_home_brief(reads=...): only the
+            # analyses this request actually computed (parity audit #20).
+            "reads": dict(({"labor": labor} if "labor" in active_keys else {}),
+                          **({"inventory": inv_read} if inv_read is not None else {}))}
 
 
 @mobile_bp.route("/benchmarks")
@@ -1215,7 +1224,9 @@ def mobile_home_brief_group(current_user):
     return jsonify(**payload), status
 
 
-def _do_mobile_home(current_user):
+def _do_mobile_home(current_user, fresh=False):
+    """`fresh` (pull-to-refresh, ?fresh=1) rebuilds the brief instead of
+    serving home_brief's 60-second cache — the web's hbLoad(true)."""
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
     if not restaurant:
@@ -1289,15 +1300,15 @@ def _do_mobile_home(current_user):
             "nav": "reviews?filter=pending",
         })
 
-    # Total value delivered — the Home tab's chart card. Snapshot recorded
-    # opportunistically right here (upsert-on-conflict, so a second load
-    # the same day is a no-op) rather than via a separate scheduled job —
-    # see value_delivered.py.
+    # Total value delivered — the Home tab's chart card. The day's point is
+    # written by the 6am value_snapshots job for every restaurant in service
+    # (value_delivered.run_value_snapshots); a GET writes nothing (parity
+    # audit #20 — Home's cold launch wrote to the database on every load).
     # The same headline web Home shows (value_delivered.headline, H-8): a
     # monthly run-rate of what was measured, as this login may see it, with
     # the modules it came from. A filtered figure is not the restaurant's,
-    # so it is neither snapshotted nor drawn against its history.
-    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history, home_block
+    # so it is not drawn against its history.
+    from value_delivered import headline as _value_headline, get_value_history, home_block
     try:
         _vh = _value_headline(rid, user=current_user)
     except Exception as e:
@@ -1305,11 +1316,6 @@ def _do_mobile_home(current_user):
         _vh = {"monthly": 0, "by_module": [], "label": "measured, per month", "restaurant_wide": False}
     total_value = _vh["monthly"]
     if _vh.get("restaurant_wide"):
-        try:
-            # The NET figure is the day's point (re-audit A29).
-            record_value_snapshot(rid, _vh.get("net_monthly", total_value))
-        except Exception:
-            pass  # the chart just has one fewer data point — never worth failing Home over
         value_history = get_value_history(rid, days=365)
     else:
         value_history = []
@@ -1331,7 +1337,11 @@ def _do_mobile_home(current_user):
     # fallback when the brief can't be built.
     try:
         import home_brief as _hb
-        _brief_payload, _brief_status = _hb.build_home_brief(current_user)
+        # The labor and inventory analyses the tiles above already ran go in
+        # with the request, so the brief reads them instead of running them
+        # twice (parity audit #20).
+        _brief_payload, _brief_status = _hb.build_home_brief(current_user, fresh=fresh,
+                                                             reads=_tiles.get("reads"))
         if _brief_status == 200:
             _order = {"critical": 0, "important": 1, "watch": 2}
             _attn = sorted(_brief_payload.get("attention") or [],
@@ -1555,7 +1565,7 @@ def _home_first_look(restaurant, rstats, labor, inv):
 @mobile_bp.route("/home")
 @mobile_login_required
 def mobile_home(current_user):
-    payload, status = _do_mobile_home(current_user)
+    payload, status = _do_mobile_home(current_user, fresh=request.args.get("fresh") == "1")
     return jsonify(**payload), status
 
 

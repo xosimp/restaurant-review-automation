@@ -529,7 +529,7 @@ _EXPIRY_SECONDS = {
 # unlocking, finding the module and starting again.
 CATEGORY_REVIEW = "CAVNAR_REVIEW"     # Reply (opens the review)
 CATEGORY_BRIEF  = "CAVNAR_BRIEF"      # Ask about this
-CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # no extra button: the tap opens it
+CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # Ask someone to cover · Resolved (the app, in the background)
 # The actionable kinds (friction audit #22, 9/25/26): the button does the
 # work in the background, behind the phone's own unlock, and nothing opens.
 CATEGORY_REVIEW_DRAFTED = "CAVNAR_REVIEW_DRAFTED"   # Approve & post · Edit
@@ -628,12 +628,16 @@ def nav_for(alert_type, data=None) -> str:
         return nav.path("labor", "requests")
     if alert_type == "schedule_publish_held" and data.get("schedule_id"):
         return nav.path("schedule", data["schedule_id"])
+    # An issue push - a coverage issue too - opens the issue itself, where
+    # Ask to cover and Resolve are (parity audit #11): a coverage push named
+    # its issue_id and still opened Labor's schedule, because the schedule
+    # line below matched "coverage" first.
+    if alert_type in ("issue", "issue_escalated", "coverage") and data.get("issue_id"):
+        return nav.path("issue", data["issue_id"])
     if alert_type in ("schedule_drafted", "schedule_publish_held", "coverage"):
         return nav.path("labor", "schedule")
     if alert_type in ("critical_low", "order_send_held", "order_send_voided", "order_send_pending"):
         return nav.path("inventory", "order")
-    if alert_type in ("issue", "issue_escalated") and data.get("issue_id"):
-        return nav.path("issue", data["issue_id"])
     if alert_type in ("login", "staff_signin"):
         return nav.path("account", "security")
     module = module_of(alert_type)
