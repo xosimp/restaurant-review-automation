@@ -16,6 +16,7 @@ struct DailyReportWeekView: View {
     @State private var date: String?
     @State private var kind: GridKind
     @State private var viewModel = DailyReportWeekViewModel()
+    @State private var editingBudget = false
 
     enum GridKind: String, CaseIterable, Identifiable {
         case week = "Week"
@@ -39,6 +40,24 @@ struct DailyReportWeekView: View {
                 header
                 if viewModel.isLoading && viewModel.grid == nil {
                     CavnarSkeletonLines(widths: [1, 1, 1, 1, 1, 0.8]).cavnarCard()
+                } else if viewModel.needsCalendar {
+                    // No fiscal calendar: the server's sentence, and where
+                    // the calendar is set — never a dead end (parity #64).
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("No periods yet").font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
+                        Text(viewModel.errorMessage ?? "Set your fiscal calendar to see periods.")
+                            .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Set your calendar on the web: Account \u{2192} Daily report. Weeks read here in the meantime.")
+                            .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("See the week") {
+                            Haptic.light()
+                            kind = .week
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    }
+                    .cavnarCard()
                 } else if let error = viewModel.errorMessage, viewModel.grid == nil {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
@@ -62,6 +81,7 @@ struct DailyReportWeekView: View {
                         Text("Budget columns are the owner\u{2019}s.")
                             .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                     }
+                    weekActions(grid)
                 }
             }
             .padding(.horizontal, 20)
@@ -75,6 +95,37 @@ struct DailyReportWeekView: View {
         .toolbar { cavnarTitleToolbar(isPeriod ? "The period" : "The week") }
         .cavnarEmberBackButton()
         .task(id: loadKey) { await viewModel.load(date: date, period: isPeriod) }
+        .sheet(isPresented: $editingBudget) {
+            if let grid = viewModel.grid {
+                DSRBudgetSheet(days: grid.days) {
+                    Task { await viewModel.load(date: date, period: isPeriod) }
+                }
+            }
+        }
+    }
+
+    /// The week's own actions: the budget (owner) and the week as the
+    /// server's .xlsx, shared (parity audit #63, #79).
+    @ViewBuilder
+    private func weekActions(_ grid: DSRGrid) -> some View {
+        if grid.kind != "period" {
+            HStack(spacing: 10) {
+                if viewModel.canEditBudget {
+                    Button {
+                        Haptic.light()
+                        editingBudget = true
+                    } label: {
+                        Label("Budget", systemImage: "dollarsign.circle").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
+                ShareLink(item: DSRWeekWorkbook(date: grid.start, filename: DSRWeekWorkbook.filename(start: grid.start)),
+                          preview: SharePreview("Daily sales \u{00B7} \(CavnarDate.mdyRange(grid.start, grid.end))")) {
+                    Label("Export to Excel", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+            }
+        }
     }
 
     private var header: some View {

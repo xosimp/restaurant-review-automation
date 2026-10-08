@@ -186,7 +186,9 @@ struct CommandSheet: View {
         if let replies = viewModel.waiting.first(where: { $0.key == "no_response" }), (replies.count ?? 0) > 0 {
             chip("Replies (\(replies.count ?? 0))", icon: "checkmark.bubble") { go("reviews?filter=pending") }
         }
-        chip("Last night", icon: "chart.bar.doc.horizontal") { go("dsr") }
+        if DSRAvailability.isEnabled {
+            chip("Last night", icon: "chart.bar.doc.horizontal") { go("dsr") }
+        }
         chip("Scan invoice", icon: "doc.text.viewfinder") { go("inventory/invoices?scan=camera") }
         chip("Requests", icon: "person.2") { go("labor/requests") }
         chip("Ask Cavnar AI", icon: "sparkles") { go("ask") }

@@ -1,0 +1,1190 @@
+import SwiftUI
+import Charts
+
+// The night in detail (parity audit #14) — the phone half of the web's
+// detailHtml (dashboard.html "The night in detail", owner 9/30/26 and
+// 10/5/26): the hour-by-hour story, where the money came from (meal
+// periods and rooms), where the labor went (departments, salaries
+// included), the servers and bartenders, what was given away (comps,
+// discounts and refunds by reason and approver, voids apart), the punches
+// a manager edited, and cash and cards.
+//
+// Every figure is read from the stored facts as this login was sent them
+// (dsr/access.py): a manager without the comps-and-voids grant has no
+// `loss` in the payload, and nobody but the owner has `timeclock_edits` or
+// `salaried_cost` — so a part the payload leaves out is simply not drawn.
+// Nothing here re-derives a permission.
+
+// MARK: - Reading the service block
+
+extension DSRBlock {
+    struct Split: Hashable, Identifiable {
+        let name: String
+        let net: Double?
+        let guests: Double?
+        let checks: Double?
+        let perGuest: Double?
+        let sharePct: Double?
+        var id: String { name }
+    }
+
+    struct Server: Hashable, Identifiable {
+        let name: String
+        let checks: Double?
+        let guests: Double?
+        let net: Double?
+        let perGuest: Double?
+        let drinksPerGuest: Double?
+        let tipPct: Double?
+        let hours: Double?
+        let netPerHour: Double?
+        /// Spend per guest against the floor's, in dollars.
+        let vsFloor: Double?
+        var id: String { name }
+    }
+
+    struct LossLine: Hashable, Identifiable {
+        /// "comp" / "discount" / "refund" for money given away; nil for a void.
+        let kind: String?
+        let label: String
+        let lines: Double?
+        let amount: Double?
+        var id: String { (kind ?? "") + "|" + label }
+    }
+
+    struct LossGroup: Hashable {
+        let total: Double?
+        let lines: Double?
+        let pctOfGross: Double?
+        let byReason: [LossLine]
+        let byApprover: [LossLine]
+    }
+
+    struct PunchEdit: Hashable, Identifiable {
+        let employee: String
+        let role: String?
+        let clockIn: String?
+        let clockOut: String?
+        let hours: Double?
+        let editedBy: String
+        let editedAt: String?
+        let code: String?
+        var id: String { employee + (clockIn ?? "") + (editedAt ?? "") }
+    }
+
+    struct Tender: Hashable, Identifiable {
+        let method: String
+        let payments: Double?
+        let amount: Double?
+        let tips: Double?
+        var id: String { method }
+    }
+
+    struct Payout: Hashable, Identifiable {
+        let category: String
+        let isPayIn: Bool
+        let amount: Double?
+        let approvedBy: String
+        let at: String?
+        let reference: String?
+        var id: String { category + (at ?? "") + (reference ?? "") + String(amount ?? 0) }
+    }
+
+    struct Register: Hashable {
+        let tenders: [Tender]
+        let all: Double?
+        let card: Double?
+        let cash: Double?
+        let cardTips: Double?
+        let cardTipFees: Double?
+        let paidOut: Double?
+        let paidIn: Double?
+        let payouts: [Payout]
+        let payoutsNote: String?
+    }
+
+    struct Department: Hashable, Identifiable {
+        let name: String
+        let hours: Double?
+        let cost: Double?
+        let pctOfSales: Double?
+        let roles: [String]
+        var salaried = false
+        var id: String { name }
+    }
+
+    struct Unmapped: Hashable, Identifiable {
+        let department: String
+        let net: Double?
+        /// The mapped department this one is new inside ("Other › Pool").
+        let newIn: String?
+        let mappedTo: String?
+        let posCategory: String?
+        var id: String { department }
+    }
+
+    private static func splits(_ v: JSONValue?) -> [Split] {
+        (v?.array ?? []).compactMap { x in
+            guard let name = x["name"]?.string else { return nil }
+            return Split(name: name, net: x["net"]?.double, guests: x["guests"]?.double, checks: x["checks"]?.double,
+                         perGuest: x["per_guest"]?.double, sharePct: x["share_pct"]?.double)
+        }
+    }
+
+    /// Meal periods (the POS's own tags, late night apart when set).
+    var dayparts: [Split] { Self.splits(detail["dayparts"]) }
+    /// Rooms — the POS's profit centres.
+    var rooms: [Split] { Self.splits(detail["rooms"]) }
+    /// The meal-period split is worth drawing: more than one period, or one
+    /// that isn't the POS's "Other" (the web's rule).
+    var showsDayparts: Bool {
+        let d = dayparts
+        return d.count > 1 || (d.count == 1 && d[0].name != "Other")
+    }
+
+    var servers: [Server] {
+        (detail["servers"]?.array ?? []).compactMap { x in
+            guard let name = x["name"]?.string else { return nil }
+            return Server(name: name, checks: x["checks"]?.double, guests: x["guests"]?.double, net: x["net"]?.double,
+                          perGuest: x["per_guest"]?.double, drinksPerGuest: x["drinks_per_guest"]?.double,
+                          tipPct: x["tip_pct"]?.double, hours: x["hours"]?.double,
+                          netPerHour: x["net_per_hour"]?.double, vsFloor: x["vs_floor"]?.double)
+        }
+    }
+    var serversBelowFloor: Int? { detail["servers_below_floor"]?.int }
+    var serversMinChecks: Int? { detail["servers_min_checks"]?.int }
+    var serversBasis: String? { detail["servers_basis"]?.string }
+
+    private static func lossGroup(_ v: JSONValue?, given: Bool) -> LossGroup? {
+        guard let v, v.object != nil else { return nil }
+        let reasons = (v["by_reason"]?.array ?? []).compactMap { r -> LossLine? in
+            guard let reason = r["reason"]?.string else { return nil }
+            let kind = r["kind"]?.string
+            let label = given ? "\(DSRNightDetail.cap(kind ?? "")) \u{00B7} \(reason)" : reason
+            return LossLine(kind: given ? kind : nil, label: label, lines: r["lines"]?.double, amount: r["amount"]?.double)
+        }
+        let approvers = (v["by_approver"]?.array ?? []).compactMap { r -> LossLine? in
+            guard let who = r["approver"]?.string else { return nil }
+            return LossLine(kind: nil, label: who, lines: r["lines"]?.double, amount: r["amount"]?.double)
+        }
+        return LossGroup(total: v["total"]?.double, lines: v["lines"]?.double, pctOfGross: v["pct_of_gross"]?.double,
+                         byReason: reasons, byApprover: approvers)
+    }
+
+    /// Comps, discounts and refunds — nil when this login wasn't sent them
+    /// (the comps-and-voids permission) or the night had no loss read.
+    var lossGiven: LossGroup? { Self.lossGroup(detail["loss"]?["given"], given: true) }
+    /// Voided lines — never reached the bill, so listed apart.
+    var lossVoids: LossGroup? { Self.lossGroup(detail["loss"]?["voids"], given: false) }
+
+    /// The punches a manager edited — nil when the payload has no list (a
+    /// non-owner view), an empty list when nobody edited one.
+    var punchEdits: [PunchEdit]? {
+        guard case .array(let list)? = detail["timeclock_edits"] else { return nil }
+        return list.map { x in
+            PunchEdit(employee: x["employee"]?.string ?? "Unknown", role: x["role"]?.string,
+                      clockIn: x["clock_in"]?.string, clockOut: x["clock_out"]?.string, hours: x["hours"]?.double,
+                      editedBy: x["edited_by"]?.string ?? "Not recorded", editedAt: x["edited_at"]?.string,
+                      code: x["code"]?.string)
+        }
+    }
+
+    var register: Register? {
+        guard let r = detail["register"], r.object != nil else { return nil }
+        let t = r["totals"]
+        let tenders = (r["tenders"]?.array ?? []).compactMap { x -> Tender? in
+            guard let m = x["method"]?.string else { return nil }
+            return Tender(method: m, payments: x["payments"]?.double, amount: x["amount"]?.double, tips: x["tips"]?.double)
+        }
+        let payouts = (r["payouts"]?.array ?? []).map { x in
+            Payout(category: x["category"]?.string ?? "Not recorded", isPayIn: x["type"]?.string == "pay-in",
+                   amount: x["amount"]?.double, approvedBy: x["approved_by"]?.string ?? "Not recorded",
+                   at: x["at"]?.string, reference: x["reference"]?.string)
+        }
+        return Register(tenders: tenders, all: t?["all"]?.double, card: t?["card"]?.double, cash: t?["cash"]?.double,
+                        cardTips: t?["card_tips"]?.double, cardTipFees: t?["card_tip_fees"]?.double,
+                        paidOut: t?["payouts"]?.double, paidIn: t?["payins"]?.double, payouts: payouts,
+                        payoutsNote: r["payouts_note"]?.string)
+    }
+
+    // Labor
+
+    /// Where the labor went, by department — and, for the owner, the
+    /// salaries as their own slice (`salaried_cost` is owner-only).
+    var departments: [Department] {
+        var out = (detail["departments"]?.array ?? []).compactMap { x -> Department? in
+            guard let name = x["department"]?.string else { return nil }
+            return Department(name: name, hours: x["hours"]?.double, cost: x["cost"]?.double,
+                              pctOfSales: x["pct_of_sales"]?.double,
+                              roles: x["roles"]?.array.compactMap(\.string) ?? [])
+        }
+        let withCost = out.contains { $0.cost != nil }
+        if withCost, !out.isEmpty, let sal = metric("salaried_cost") {
+            out.append(Department(name: "Salaried", hours: nil, cost: sal, pctOfSales: nil, roles: [], salaried: true))
+        }
+        return out
+    }
+    var departmentsBasis: String? { detail["departments_basis"]?.string }
+
+    // Sales
+
+    /// The night's slowest sellers (block_sales bottom_items) — the web's
+    /// "Slowest" table under Top items.
+    var slowestItems: [Item] {
+        (detail["bottom_items"]?.array ?? []).compactMap { x in
+            guard let name = x["name"]?.string else { return nil }
+            return Item(name: name, qty: x["qty"]?.double, net: x["net"]?.double)
+        }
+    }
+
+    /// POS departments the report couldn't place — never guessed into a
+    /// category — and departments new inside one the owner mapped.
+    var unmappedDepartments: [Unmapped] {
+        (detail["unmapped"]?.array ?? []).compactMap { x in
+            guard let d = x["department"]?.string else { return nil }
+            return Unmapped(department: d, net: x["net"]?.double, newIn: x["new_in"]?.string,
+                            mappedTo: x["mapped_to"]?.string, posCategory: x["pos_category"]?.string)
+        }
+    }
+    /// Net the POS put in no department.
+    var unallocated: Double? { detail["unallocated"]?.double }
+}
+
+// MARK: - The hour-by-hour story
+
+/// One night, hour by hour (the web's hourData / hxCallouts / hxStory):
+/// net sales, a usual same weekday when two finished reports exist for it,
+/// and the people on the clock. Every callout is arithmetic over those
+/// three series — nothing here is new data.
+struct DSRHourStory: Equatable {
+    struct Row: Equatable, Identifiable {
+        let hour: Int
+        let net: Double
+        let usual: Double?
+        let hours: Double?
+        var splh: Double? { (hours ?? 0) >= 1 ? net / hours! : nil }
+        var id: Int { hour }
+    }
+
+    struct Callout: Equatable, Identifiable {
+        enum Tone: Equatable { case info, good, warn, bad }
+        let index: Int
+        let kind: String
+        let tone: Tone
+        let title: String
+        let text: String
+        var id: String { kind + String(index) }
+    }
+
+    let rows: [Row]
+    let typicalNights: Int?
+    let hasLabor: Bool
+
+    /// Nil unless the Sales block is ready with at least three hours.
+    init?(sales: DSRBlock?, labor: DSRBlock?) {
+        guard let sales, sales.isReady else { return nil }
+        let hourly = sales.detail["hourly"]?.array ?? []
+        guard hourly.count >= 3 else { return nil }
+        let typical = sales.detail["hourly_typical"]?["hours"]?.object
+        let laborHours = (labor?.isReady == true) ? labor?.detail["hourly_hours"]?.object : nil
+        rows = hourly.compactMap { h in
+            guard let hr = h["hour"]?.int else { return nil }
+            let key = String(hr)
+            return Row(hour: hr, net: h["net"]?.double ?? 0, usual: typical?[key]?.double, hours: laborHours?[key]?.double)
+        }
+        guard rows.count >= 3 else { return nil }
+        typicalNights = typical == nil ? nil : sales.detail["hourly_typical"]?["nights"]?.int
+        hasLabor = laborHours != nil
+    }
+
+    var hasTypical: Bool { rows.contains { $0.usual != nil } }
+
+    var peak: Row { rows.max { $0.net < $1.net } ?? rows[0] }
+
+    /// "6pm", "12pm", "11am" — the web's hourLabel(h, true).
+    static func hourLong(_ hour: Int) -> String {
+        let h = ((hour % 24) + 24) % 24
+        return "\(h % 12 == 0 ? 12 : h % 12)\(h < 12 ? "am" : "pm")"
+    }
+
+    /// Sales per labor hour across the night (hours ≥ 0 only where staffed).
+    var nightSPLH: Double? {
+        let staffed = rows.filter { ($0.hours ?? 0) > 0 }
+        let hrs = staffed.reduce(0) { $0 + ($1.hours ?? 0) }
+        guard hrs > 0 else { return nil }
+        return staffed.reduce(0) { $0 + $1.net } / hrs
+    }
+
+    /// At most four, left to right — the web's hxCallouts, rule for rule.
+    var callouts: [Callout] {
+        let n = rows.count
+        let pk = rows.firstIndex(of: peak) ?? 0
+        let peakRow = rows[pk]
+        var out: [Callout] = []
+        let money = DSRFormat.money
+        // The rush is the climb INTO the peak: walk back while sales rose,
+        // then take that climb's biggest jump.
+        var st = pk
+        while st > 0 && rows[st - 1].net < rows[st].net { st -= 1 }
+        var rush: Int?
+        if st + 1 < pk {
+            for i in (st + 1)..<pk {
+                let r = rows[i], pv = rows[i - 1]
+                guard pv.net > 0, r.net >= 1.5 * pv.net, r.net >= 0.45 * peakRow.net else { continue }
+                if let k = rush, r.net / pv.net <= rows[k].net / rows[k - 1].net { continue }
+                rush = i
+            }
+        }
+        if let k = rush {
+            let r = rows[k]
+            out.append(Callout(index: k, kind: "rush", tone: .info,
+                               title: r.hour >= 15 ? "Dinner rush begins" : "The rush begins",
+                               text: "\(money(r.net)) at \(Self.hourLong(r.hour)), up from \(money(rows[k - 1].net)) the hour before."))
+        }
+        var spike: Int?
+        for i in 0..<n where i != pk {
+            let r = rows[i]
+            guard let u = r.usual, u >= 0.1 * peakRow.net, r.net >= 1.25 * u else { continue }
+            if let k = spike, r.net / u <= rows[k].net / (rows[k].usual ?? 1) { continue }
+            spike = i
+        }
+        if let k = spike, let u = rows[k].usual {
+            out.append(Callout(index: k, kind: "spike", tone: .good,
+                               title: "\(Self.hourLong(rows[k].hour)) ran \(Int(((rows[k].net / u - 1) * 100).rounded()))% above usual",
+                               text: "\(money(rows[k].net)) against a usual night\u{2019}s \(money(u))."))
+        }
+        let staffedHours = rows.compactMap(\.hours).filter { $0 > 0 }.sorted()
+        let median = staffedHours.isEmpty ? nil : staffedHours[staffedHours.count / 2]
+        var dip: Int?
+        for i in 0..<n {
+            let r = rows[i]
+            guard let u = r.usual, u >= 0.15 * peakRow.net, r.net <= 0.8 * u else { continue }
+            if let k = dip, u - r.net <= (rows[k].usual ?? 0) - rows[k].net { continue }
+            dip = i
+        }
+        if let k = dip, let u = rows[k].usual {
+            let r = rows[k]
+            let staffed = r.hours != nil && median != nil && r.hours! >= median!
+            out.append(Callout(index: k, kind: staffed ? "dip" : "missed", tone: .bad,
+                               title: staffed ? "Sales dipped despite full staffing" : "Missed revenue at \(Self.hourLong(r.hour))",
+                               text: "\(Self.hourLong(r.hour)) came in \(money(u - r.net)) below a usual night"
+                                   + (staffed ? ", with \(String(format: "%.1f", r.hours!)) hours on the clock." : ".")))
+        }
+        if let night = nightSPLH {
+            var lo: Int?
+            for i in 0..<n {
+                guard let s = rows[i].splh, (rows[i].hours ?? 0) >= 2, s < 0.6 * night else { continue }
+                if let k = lo, s >= (rows[k].splh ?? .infinity) { continue }
+                lo = i
+            }
+            let top = rows.enumerated().sorted { $0.element.net > $1.element.net }.prefix(3)
+            let ok = top.first { e in
+                guard let s = e.element.splh, (e.element.hours ?? 0) >= 2 else { return false }
+                return abs(s / night - 1) <= 0.15
+            }?.offset
+            if let k = lo, k != dip {
+                out.append(Callout(index: k, kind: "labor", tone: .warn, title: "Labor ran ahead of demand",
+                                   text: "\(Self.hourLong(rows[k].hour)): \(money(rows[k].splh)) per labor hour against \(money(night)) for the night."))
+            }
+            if let k = ok {
+                out.append(Callout(index: k, kind: "matched", tone: .good, title: "Staffing matched demand",
+                                   text: "\(Self.hourLong(rows[k].hour)): \(money(rows[k].splh)) per labor hour, right on the night\u{2019}s \(money(night))."))
+            }
+        }
+        return Array(out.sorted { $0.index < $1.index }.prefix(4))
+    }
+
+    /// One sentence: where the rush began, the peak against a usual night,
+    /// and the first hour that ran ahead of demand or under it.
+    func story(weekday: String?) -> String {
+        let wd = weekday ?? "night"
+        let cs = callouts
+        let p = peak
+        var s = ""
+        if let rush = cs.first(where: { $0.kind == "rush" }) {
+            s = "The rush began at \(Self.hourLong(rows[rush.index].hour)) and peaked"
+        } else {
+            s = "Sales peaked"
+        }
+        s += " at \(Self.hourLong(p.hour)) with \(DSRFormat.money(p.net))"
+        if let u = p.usual, u > 0 {
+            let d = Int(((p.net / u - 1) * 100).rounded())
+            s += d == 0 ? ", right on a usual \(wd)." : ", \(abs(d))% \(d > 0 ? "above" : "below") a usual \(wd)."
+        } else {
+            s += "."
+        }
+        for c in cs {
+            if c.kind == "labor" { s += " Staffing ran ahead of demand at \(Self.hourLong(rows[c.index].hour))."; break }
+            if c.kind == "dip" || c.kind == "missed" {
+                s += " \(Self.hourLong(rows[c.index].hour)) came in below a usual \(wd)."
+                break
+            }
+        }
+        return s
+    }
+}
+
+// MARK: - The card's body
+
+/// What the "The night in detail" card shows when opened: each part only
+/// when the payload carries it.
+struct DSRNightDetail: View {
+    let service: DSRBlock
+    let blocks: [String: DSRBlock]
+    var businessDate: String?
+    @State private var openServer: DSRBlock.Server?
+
+    static func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            if let story = DSRHourStory(sales: blocks["sales"], labor: blocks["labor"]) {
+                DSRHourStoryView(story: story, weekday: businessDate.flatMap { DSRFormat.weekday($0) })
+            }
+            moneySplit
+            if let labor = blocks["labor"], labor.isReady, !labor.departments.isEmpty {
+                DSRLaborDepartments(labor: labor, salesNet: blocks["sales"]?.metric("net"))
+            }
+            servers
+            DSRLossSection(given: service.lossGiven, voids: service.lossVoids)
+            if let edits = service.punchEdits { DSRPunchEdits(edits: edits) }
+            if let reg = service.register { DSRRegisterSection(register: reg) }
+        }
+        .sheet(item: $openServer) { s in
+            DSRServerSheet(server: s, floor: service.metric("server_floor_per_guest"))
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    @ViewBuilder
+    private var moneySplit: some View {
+        let dp = service.showsDayparts ? service.dayparts : []
+        let rm = service.rooms
+        if !dp.isEmpty || !rm.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                DSRKicker(text: "Where the money came from")
+                if !dp.isEmpty { DSRSplitBars(title: "By meal period", rows: dp) }
+                if !rm.isEmpty { DSRSplitBars(title: "By room", rows: rm) }
+                if let dg = service.metric("drinks_per_guest") {
+                    HomeMixedText.make("\(String(format: "%.2f", dg)) drinks a guest across the night.",
+                                       size: 12.5, color: .cavnarInk3)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var servers: some View {
+        let list = service.servers
+        if !list.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    DSRKicker(text: "Servers and bartenders")
+                    Spacer(minLength: 8)
+                    if let below = service.serversBelowFloor, below > 0, let min = service.serversMinChecks {
+                        HomeMixedText.make("\(below) with fewer than \(min) checks not shown", size: 11.5, color: .cavnarInk3)
+                    }
+                }
+                VStack(spacing: 0) {
+                    ForEach(Array(list.enumerated()), id: \.element.id) { i, s in
+                        Button {
+                            Haptic.light()
+                            openServer = s
+                        } label: { serverRow(s) }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens \(s.name)'s night")
+                        if i < list.count - 1 { AccountRowDivider() }
+                    }
+                }
+                if let floor = service.metric("server_floor_per_guest") {
+                    HomeMixedText.make("Per guest is set against the floor\u{2019}s \(DSRFormat.money(floor)).",
+                                       size: 12, color: .cavnarInk3)
+                }
+                if let basis = service.serversBasis {
+                    Text(Self.cap(basis)).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func serverRow(_ s: DSRBlock.Server) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.name).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                HomeMixedText.make("\(DSRFormat.count(s.checks)) checks \u{00B7} \(DSRFormat.count(s.guests)) guests",
+                                   size: 12, color: .cavnarInk3)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(DSRFormat.money(s.net)).font(.cavnarNumber(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text("\(DSRFormat.money(s.perGuest)) a guest")
+                    .font(.cavnarNumber(12, weight: 600))
+                    .foregroundStyle(DSRServerSheet.floorTone(s.vsFloor))
+            }
+            Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.cavnarInk3)
+        }
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Parts
+
+/// The hour-by-hour chart: ember bars of net sales, the usual same weekday
+/// dashed, the people on the clock on their own right-hand scale, the peak
+/// hour lit and its figure over it, then "What stood out".
+struct DSRHourStoryView: View {
+    let story: DSRHourStory
+    let weekday: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var grown = false
+    @State private var selected: Int?
+
+    private var maxNet: Double { max(1, story.rows.map { max($0.net, $0.usual ?? 0) }.max() ?? 1) }
+    private var maxHours: Double { max(1, story.rows.compactMap(\.hours).max() ?? 1) }
+    /// People-on-the-clock drawn on the dollar axis, scaled so the busiest
+    /// hour's headcount sits at 90% of the chart (the web's yl()).
+    private var hoursScale: Double { maxNet * 1.05 * 0.9 / (maxHours * 1.15) }
+
+    var body: some View {
+        let peak = story.peak
+        VStack(alignment: .leading, spacing: 12) {
+            DSRKicker(text: "Hour by hour")
+            Text("What happened that night").font(.cavnarHeadline(18)).foregroundStyle(Color.cavnarInk)
+            HomeMixedText.make(story.story(weekday: weekday), size: 14, color: .cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+            Chart {
+                ForEach(story.rows) { r in
+                    BarMark(x: .value("Hour", DSRHourStory.hourLong(r.hour)), y: .value("Net", grown || reduceMotion ? r.net : 0))
+                        .foregroundStyle(LinearGradient(colors: [r == peak ? Color.cavnarEmber2 : Color.cavnarEmber,
+                                                                 Color.cavnarEmber.opacity(0.3)],
+                                                        startPoint: .top, endPoint: .bottom))
+                        .cornerRadius(4)
+                        .annotation(position: .top) {
+                            if r == peak {
+                                Text(DSRFormat.money(r.net)).font(.cavnarNumber(10.5, weight: 700))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                            }
+                        }
+                    if let u = r.usual {
+                        LineMark(x: .value("Hour", DSRHourStory.hourLong(r.hour)), y: .value("Usual", u),
+                                 series: .value("Series", "usual"))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                            .interpolationMethod(.catmullRom)
+                    }
+                    if let h = r.hours {
+                        LineMark(x: .value("Hour", DSRHourStory.hourLong(r.hour)), y: .value("People", h * hoursScale),
+                                 series: .value("Series", "people"))
+                            .foregroundStyle(Color.cavnarAmber)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                            .interpolationMethod(.catmullRom)
+                            .symbol(.circle)
+                            .symbolSize(18)
+                    }
+                }
+                if let s = selected, let r = story.rows.first(where: { $0.hour == s }) {
+                    RuleMark(x: .value("Hour", DSRHourStory.hourLong(r.hour)))
+                        .foregroundStyle(Color.cavnarInk3.opacity(0.4))
+                        .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
+                            tooltip(r)
+                        }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { v in
+                    AxisGridLine().foregroundStyle(Color.cavnarPaper3.opacity(0.4))
+                    AxisValueLabel {
+                        if let d = v.as(Double.self) { Text(Self.short(d)).font(.cavnarNumber(9)).foregroundStyle(Color.cavnarInk3) }
+                    }
+                }
+                if story.hasLabor {
+                    AxisMarks(position: .trailing, values: [0, maxHours * hoursScale]) { v in
+                        AxisValueLabel {
+                            if let d = v.as(Double.self) {
+                                Text(String(Int((d / hoursScale).rounded()))).font(.cavnarNumber(9)).foregroundStyle(Color.cavnarAmber)
+                            }
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks { _ in AxisValueLabel().font(.cavnarNumber(9)).foregroundStyle(Color.cavnarInk3) }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geo in
+                    Rectangle().fill(Color.clear).contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                guard let plot = proxy.plotFrame else { return }
+                                let x = value.location.x - geo[plot].origin.x
+                                guard let label: String = proxy.value(atX: x),
+                                      let r = story.rows.first(where: { DSRHourStory.hourLong($0.hour) == label }) else { return }
+                                if selected != r.hour { Haptic.selection() }
+                                selected = r.hour
+                            }
+                            .onEnded { _ in selected = nil })
+                }
+            }
+            .frame(height: 210)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Net sales by hour")
+            .accessibilityValue("Peak at \(DSRHourStory.hourLong(peak.hour)), \(DSRFormat.money(peak.net))")
+            legend
+            let cs = story.callouts
+            if !cs.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    DSRKicker(text: "What stood out", tone: .cavnarInk3)
+                    ForEach(Array(cs.enumerated()), id: \.element.id) { i, c in
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(story.rows[c.index] == peak ? "\u{2605}" : "\(i + 1)")
+                                .font(.cavnarNumber(12, weight: 700))
+                                .foregroundStyle(Self.tone(c.tone))
+                                .frame(width: 22, height: 22)
+                                .background(Self.tone(c.tone).opacity(0.14), in: Circle())
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(c.title).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                HomeMixedText.make(c.text, size: 13, color: .cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            if !story.hasTypical {
+                Text("A usual night shows here once two finished reports exist for this weekday.")
+                    .font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear { withAnimation(.easeOut(duration: 0.6)) { grown = true } }
+    }
+
+    private var legend: some View {
+        AccountFlowLayout(spacing: 12) {
+            legendItem(Color.cavnarEmber, "Net sales", dashed: false, bar: true)
+            if story.hasLabor { legendItem(Color.cavnarAmber, "People on the clock", dashed: false, bar: false) }
+            if story.hasTypical {
+                legendItem(Color.cavnarInk3, "A usual \(weekday ?? "night")"
+                           + (story.typicalNights.map { " \u{00B7} median of \($0)" } ?? ""), dashed: true, bar: false)
+            }
+        }
+    }
+
+    private func legendItem(_ color: Color, _ text: String, dashed: Bool, bar: Bool) -> some View {
+        HStack(spacing: 5) {
+            if bar {
+                RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 9, height: 9)
+            } else {
+                Rectangle().fill(color).frame(width: 14, height: 2).opacity(dashed ? 0.7 : 1)
+            }
+            HomeMixedText.make(text, size: 11.5, color: .cavnarInk3)
+        }
+    }
+
+    private func tooltip(_ r: DSRHourStory.Row) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(DSRHourStory.hourLong(r.hour)).font(.cavnarBody(11.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+            Text(DSRFormat.money(r.net)).font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarInk)
+            if let u = r.usual { HomeMixedText.make("Usual \(DSRFormat.money(u))", size: 11.5, color: .cavnarInk3) }
+            if let h = r.hours { HomeMixedText.make("\(String(format: "%.1f", h)) labor hours", size: 11.5, color: .cavnarInk3) }
+            if let s = r.splh { HomeMixedText.make("\(DSRFormat.money(s)) per labor hour", size: 11.5, color: .cavnarInk3) }
+        }
+        .padding(8)
+        .background(Color.cavnarPaper2.opacity(0.96), in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarPaper3.opacity(0.6), lineWidth: 1))
+    }
+
+    static func tone(_ t: DSRHourStory.Callout.Tone) -> Color {
+        switch t {
+        case .info: return .cavnarEmber2
+        case .good: return .cavnarGreen
+        case .warn: return .cavnarAmber
+        case .bad: return .cavnarRed
+        }
+    }
+
+    /// "$1.2k" / "$800" on the axis.
+    static func short(_ v: Double) -> String {
+        let a = abs(v)
+        if a >= 1000 {
+            let k = (a / 100).rounded() / 10
+            return "$" + (k == k.rounded() ? String(Int(k)) : String(k)) + "k"
+        }
+        return "$\(Int(a.rounded()))"
+    }
+}
+
+/// One split — meal periods or rooms — as bars against the biggest, each
+/// with its share, guests, checks and spend per guest.
+struct DSRSplitBars: View {
+    let title: String
+    let rows: [DSRBlock.Split]
+
+    var body: some View {
+        let top = max(1, rows.compactMap(\.net).max() ?? 1)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.cavnarBody(13, weight: 700)).foregroundStyle(Color.cavnarInk2)
+            ForEach(rows) { r in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(r.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk)
+                        Spacer(minLength: 8)
+                        Text(DSRFormat.money(r.net)).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(DSRFormat.pct(r.sharePct)).font(.cavnarNumber(12.5)).foregroundStyle(Color.cavnarInk3)
+                            .frame(width: 48, alignment: .trailing)
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.cavnarPaper3.opacity(0.6))
+                            Capsule()
+                                .fill(LinearGradient(colors: [Color.cavnarEmber, Color.cavnarEmber2], startPoint: .leading, endPoint: .trailing))
+                                .frame(width: max(4, geo.size.width * CGFloat((r.net ?? 0) / top)))
+                        }
+                    }
+                    .frame(height: 6)
+                    HomeMixedText.make("\(DSRFormat.count(r.guests)) guest\(r.guests == 1 ? "" : "s") \u{00B7} \(DSRFormat.count(r.checks)) checks"
+                                       + (r.perGuest.map { " \u{00B7} \(DSRFormat.money($0)) a guest" } ?? ""),
+                                       size: 12, color: .cavnarInk3)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+}
+
+/// Where the labor went: one stacked bar by department (cost when the
+/// payroll is known, else hours), then each department's hours, cost and
+/// share of sales — the salaries their own slice for the owner.
+struct DSRLaborDepartments: View {
+    let labor: DSRBlock
+    let salesNet: Double?
+
+    private static let tones: [Color] = [.cavnarEmber, .cavnarEmber2, .cavnarAmber, .cavnarInk2]
+
+    var body: some View {
+        let ds = labor.departments
+        let withCost = ds.contains { $0.cost != nil && !$0.salaried }
+        let weights = ds.map { withCost ? ($0.cost ?? 0) : ($0.hours ?? 0) }
+        let total = max(weights.reduce(0, +), 1)
+        VStack(alignment: .leading, spacing: 12) {
+            DSRKicker(text: "Where the labor went")
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    ForEach(Array(ds.enumerated()), id: \.element.id) { i, d in
+                        Rectangle().fill(color(i, d))
+                            .frame(width: max(2, geo.size.width * CGFloat(weights[i] / total) - 2))
+                    }
+                }
+            }
+            .frame(height: 10)
+            .clipShape(Capsule())
+            .accessibilityHidden(true)
+            VStack(spacing: 0) {
+                ForEach(Array(ds.enumerated()), id: \.element.id) { i, d in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Circle().fill(color(i, d)).frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(d.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk)
+                            if !d.roles.isEmpty {
+                                Text(d.roles.joined(separator: ", ")).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 6)
+                        if let h = d.hours {
+                            Text("\(String(format: "%.1f", h))h").font(.cavnarNumber(12.5)).foregroundStyle(Color.cavnarInk3)
+                        }
+                        Text(DSRFormat.money(d.cost)).font(.cavnarNumber(14, weight: 600))
+                            .foregroundStyle(d.cost == nil ? Color.cavnarInk3 : Color.cavnarInk)
+                            .frame(width: 70, alignment: .trailing)
+                        Text(pctOfSales(d).map { DSRFormat.pct($0) } ?? "")
+                            .font(.cavnarNumber(12)).foregroundStyle(Color.cavnarInk3)
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                    .padding(.vertical, 7)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            if withCost, let sal = labor.metric("salaried_cost") {
+                let all = ds.filter { !$0.salaried }.compactMap(\.cost).reduce(0, +) + sal
+                HomeMixedText.make("\(DSRFormat.money(all)) all in, salaries included.", size: 12.5, color: .cavnarInk2)
+            }
+            if let basis = labor.departmentsBasis {
+                Text(DSRNightDetail.cap(basis)).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func color(_ i: Int, _ d: DSRBlock.Department) -> Color {
+        d.salaried ? Color.cavnarInk3.opacity(0.6) : Self.tones[i % Self.tones.count]
+    }
+
+    /// A salaried slice's share is its cost over the night's net (the web's rule).
+    private func pctOfSales(_ d: DSRBlock.Department) -> Double? {
+        if let p = d.pctOfSales { return p }
+        guard d.salaried, let c = d.cost, let net = salesNet, net > 0 else { return nil }
+        return c / net * 100
+    }
+}
+
+/// Comps, discounts and refunds by reason and by who approved them, and
+/// voided lines apart — only in a payload that carries `loss`.
+struct DSRLossSection: View {
+    let given: DSRBlock.LossGroup?
+    let voids: DSRBlock.LossGroup?
+
+    var body: some View {
+        if let given {
+            VStack(alignment: .leading, spacing: 12) {
+                DSRKicker(text: "Given away")
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(DSRFormat.money(given.total)).font(.cavnarNumber(26, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    HomeMixedText.make("in comps, discounts and refunds"
+                                       + (given.pctOfGross.map { " \u{00B7} \(DSRFormat.pct($0)) of gross" } ?? ""),
+                                       size: 12.5, color: .cavnarInk3)
+                }
+                if !given.byReason.isEmpty { DSRLossLines(title: "By reason", lines: given.byReason) }
+                if !given.byApprover.isEmpty { DSRLossLines(title: "Approved by", lines: given.byApprover) }
+                if let voids, (voids.lines ?? 0) > 0 {
+                    DSRLossLines(title: "Voided lines \u{00B7} never reached the bill", lines: voids.byReason)
+                }
+            }
+        }
+    }
+}
+
+struct DSRLossLines: View {
+    let title: String
+    let lines: [DSRBlock.LossLine]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.cavnarBody(13, weight: 700)).foregroundStyle(Color.cavnarInk2)
+            ForEach(lines) { l in
+                HStack {
+                    Text(l.label).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Text(DSRFormat.count(l.lines)).font(.cavnarNumber(12.5)).foregroundStyle(Color.cavnarInk3)
+                    Text(DSRFormat.money(l.amount)).font(.cavnarNumber(13.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        .frame(width: 72, alignment: .trailing)
+                }
+                .padding(.vertical, 3)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+}
+
+/// Punches a manager edited — the owner's check on who edits them.
+struct DSRPunchEdits: View {
+    let edits: [DSRBlock.PunchEdit]
+    static let shown = 8
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DSRKicker(text: "Punch edits")
+            if edits.isEmpty {
+                Text("No punch was edited for this night.").font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+            } else {
+                HomeMixedText.make("\(edits.count) punch\(edits.count == 1 ? "" : "es") a manager edited",
+                                   size: 13.5, weight: 600, color: .cavnarInk2)
+                ForEach(edits.prefix(Self.shown)) { e in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(e.employee).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            if let role = e.role { Text(role).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3) }
+                        }
+                        HomeMixedText.make(Self.line(e), size: 12.5, color: .cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                if edits.count > Self.shown {
+                    HomeMixedText.make("\(edits.count - Self.shown) more in the POS.", size: 12.5, color: .cavnarInk3)
+                }
+            }
+        }
+    }
+
+    /// "4:02pm–11:15pm · 7.22h · edited by Dana at 11:40pm · RPOWER code 3".
+    static func line(_ e: DSRBlock.PunchEdit) -> String {
+        var parts: [String] = []
+        if let i = DSRFormat.localTime(e.clockIn) {
+            parts.append("\(i)\u{2013}\(DSRFormat.localTime(e.clockOut) ?? "open")")
+        }
+        if let h = e.hours { parts.append(String(format: "%.2fh", h)) }
+        parts.append("edited by \(e.editedBy)" + (DSRFormat.localTime(e.editedAt).map { " at \($0)" } ?? ""))
+        if let code = e.code { parts.append("RPOWER code \(code)") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+}
+
+/// Cash and cards: the tenders, card tips, and every payout and pay-in rung
+/// on the POS with who approved it.
+struct DSRRegisterSection: View {
+    let register: DSRBlock.Register
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            DSRKicker(text: "Cash and cards")
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(DSRFormat.money(register.all)).font(.cavnarNumber(26, weight: 600)).foregroundStyle(Color.cavnarInk)
+                HomeMixedText.make("taken \u{00B7} cards \(DSRFormat.money(register.card)) \u{00B7} cash \(DSRFormat.money(register.cash))",
+                                   size: 12.5, color: .cavnarInk3)
+            }
+            if !register.tenders.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("By tender").font(.cavnarBody(13, weight: 700)).foregroundStyle(Color.cavnarInk2)
+                    ForEach(register.tenders) { t in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(t.method).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk2)
+                                if let tips = t.tips, tips > 0 {
+                                    HomeMixedText.make("tips \(DSRFormat.money(tips))", size: 11.5, color: .cavnarInk3)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Text(DSRFormat.count(t.payments)).font(.cavnarNumber(12.5)).foregroundStyle(Color.cavnarInk3)
+                            Text(DSRFormat.money(t.amount)).font(.cavnarNumber(13.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                .frame(width: 80, alignment: .trailing)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            if let tips = register.cardTips, tips > 0 {
+                HomeMixedText.make("Card tips \(DSRFormat.money(tips))"
+                                   + ((register.cardTipFees ?? 0) > 0 ? " \u{00B7} tip fees the POS recorded \(DSRFormat.money(register.cardTipFees))" : "")
+                                   + ".", size: 12.5, color: .cavnarInk3)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Paid out and in \u{00B7} petty cash, check requests").font(.cavnarBody(13, weight: 700))
+                    .foregroundStyle(Color.cavnarInk2)
+                if register.payouts.isEmpty {
+                    Text(register.payoutsNote ?? "Nothing was paid out or in.").font(.cavnarBody(12.5))
+                        .foregroundStyle(Color.cavnarInk3).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(register.payouts) { p in
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(p.category + (p.isPayIn ? " \u{00B7} pay-in" : "")).font(.cavnarBody(13.5))
+                                    .foregroundStyle(Color.cavnarInk2)
+                                HomeMixedText.make([p.approvedBy, DSRFormat.localTime(p.at), p.reference].compactMap { $0 }
+                                                    .joined(separator: " \u{00B7} "), size: 11.5, color: .cavnarInk3)
+                            }
+                            Spacer(minLength: 8)
+                            Text(DSRFormat.money(p.amount)).font(.cavnarNumber(13.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    HomeMixedText.make("Paid out \(DSRFormat.money(register.paidOut))"
+                                       + ((register.paidIn ?? 0) > 0 ? " \u{00B7} paid in \(DSRFormat.money(register.paidIn))" : "") + ".",
+                                       size: 12.5, color: .cavnarInk3)
+                }
+            }
+        }
+    }
+}
+
+/// One server's night, opened from the list.
+struct DSRServerSheet: View {
+    let server: DSRBlock.Server
+    let floor: Double?
+
+    /// Green a dollar or more over the floor's spend per guest, red a
+    /// dollar or more under it.
+    static func floorTone(_ vs: Double?) -> Color {
+        guard let vs else { return .cavnarInk3 }
+        if vs >= 1 { return .cavnarGreen }
+        if vs <= -1 { return .cavnarRed }
+        return .cavnarInk2
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        DSRKicker(text: "Their night")
+                        Text(DSRFormat.money(server.net)).font(.cavnarNumber(34, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            .cavnarNumberGlow()
+                        HomeMixedText.make("net across \(DSRFormat.count(server.checks)) checks", size: 13.5, color: .cavnarInk3)
+                    }
+                    DSRTileRow(tiles: [
+                        DSRStatTile(label: "Guests", value: DSRFormat.count(server.guests)),
+                        DSRStatTile(label: "Per guest", value: DSRFormat.money(server.perGuest), tone: Self.floorTone(server.vsFloor),
+                                    detail: server.vsFloor.flatMap { abs($0) >= 1 ? "\($0 > 0 ? "+" : "\u{2212}")\(DSRFormat.money(abs($0))) vs the floor" : nil }),
+                        DSRStatTile(label: "Drinks a guest", value: server.drinksPerGuest.map { String(format: "%.2f", $0) } ?? DSRFormat.dash),
+                        DSRStatTile(label: "Card tip", value: DSRFormat.pct(server.tipPct)),
+                        DSRStatTile(label: "Net an hour", value: DSRFormat.money(server.netPerHour)),
+                        DSRStatTile(label: "Hours", value: server.hours.map { String(format: "%.1f", $0) } ?? DSRFormat.dash),
+                    ])
+                    if let floor {
+                        HomeMixedText.make("The floor\u{2019}s spend per guest was \(DSRFormat.money(floor)).",
+                                           size: 12.5, color: .cavnarInk3)
+                    }
+                }
+                .padding(20)
+            }
+            .accountSheetChrome(server.name)
+        }
+    }
+}
+
+// MARK: - The day after: labor and overtime
+
+/// Tomorrow's labor % (the schedule priced against the forecast, salaries
+/// in for the owner) and the week's overtime — dsr.tomorrow labor_plan and
+/// overtime_outlook, the web's tmrLaborHtml.
+struct DSRTomorrowLaborCard: View {
+    let tomorrow: DSRTomorrow
+    let isOwner: Bool
+
+    var body: some View {
+        if tomorrow.labor != nil || tomorrow.overtime != nil {
+            VStack(alignment: .leading, spacing: 14) {
+                if let l = tomorrow.labor { laborPart(l) }
+                if let o = tomorrow.overtime { overtimePart(o) }
+                if let basis = tomorrow.labor?.basis ?? tomorrow.overtime?.basis {
+                    Text(DSRNightDetail.cap(basis)).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard()
+        }
+    }
+
+    private func laborPart(_ l: DSRTomorrow.LaborPlan) -> some View {
+        let own = isOwner && l.salariedTotalPct != nil
+        let pct = own ? l.salariedTotalPct : l.hourlyPct
+        let gap = l.gap(pct: pct)
+        let soft = l.targetSource == "default"
+        let tone: Color = gap.map { $0 > 0 ? (soft ? .cavnarAmber : .cavnarRed) : .cavnarGreen } ?? .cavnarInk
+        return VStack(alignment: .leading, spacing: 4) {
+            DSRKicker(text: "\(tomorrow.weekday ?? "The day after")\u{2019}s labor")
+            Text(DSRFormat.pct(pct)).font(.cavnarNumber(30, weight: 600)).foregroundStyle(pct == nil ? Color.cavnarInk3 : tone)
+            HomeMixedText.make("\(DSRFormat.count(l.hours)) hours \u{00B7} \(DSRFormat.money(own ? l.salariedTotalCost : l.hourlyCost))"
+                               + (own ? " with salaries" : "")
+                               + (l.forecastNet.map { " over a \(DSRFormat.money($0)) forecast" } ?? ""),
+                               size: 13, color: .cavnarInk3)
+            if let line = l.targetLine(pct: pct) {
+                HomeMixedText.make(line, size: 13, weight: 600, color: tone)
+            }
+            if let ot = l.overtimeHours, ot > 0 {
+                HomeMixedText.make("\(DSRFormat.count(ot)) overtime hours on it", size: 13, weight: 600, color: .cavnarRed)
+            }
+        }
+    }
+
+    private func overtimePart(_ o: DSRTomorrow.Overtime) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            DSRKicker(text: "Overtime this week")
+            if o.people.isEmpty {
+                Text("No one goes past 40 hours this week if the schedule holds.")
+                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
+            } else {
+                HomeMixedText.make("\(o.overCount ?? o.people.count) \((o.overCount ?? o.people.count) == 1 ? "person goes" : "people go") past 40 hours"
+                                   + ((o.extraCost ?? 0) > 0 ? " \u{00B7} about \(DSRFormat.money(o.extraCost)) extra" : ""),
+                                   size: 13.5, weight: 600, color: .cavnarInk2)
+                ForEach(o.people) { p in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(p.employee).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            if let r = p.role { Text(r).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3) }
+                        }
+                        HomeMixedText.make("\(DSRFormat.count(p.projectedHours))h scheduled \u{00B7} \(DSRFormat.count(p.overtimeHours))h over"
+                                           + (p.extraCost.map { " \u{00B7} \(DSRFormat.money($0)) extra" } ?? ""),
+                                           size: 12.5, color: .cavnarInk3)
+                        if !p.room.isEmpty {
+                            HomeMixedText.make("Room: " + p.room.joined(separator: ", "), size: 12.5, color: .cavnarGreen)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - The game card (intel)
+
+/// Tonight's game against the last one on the same side — both against
+/// their own usual weekday (the web's drGameHtml). Nothing until tonight's
+/// net is in.
+struct DSRGameCard: View {
+    let game: JSONValue
+
+    var body: some View {
+        if let tonight = game["tonight"], tonight["net"]?.double != nil {
+            let side = game["side"]?.string == "home" ? "home" : "road"
+            VStack(alignment: .leading, spacing: 10) {
+                DSRKicker(text: "Compared to your last \(side) game", tone: .cavnarInk3)
+                HStack(alignment: .top, spacing: 10) {
+                    sideCard("Tonight", title: game["describe"]?.string, x: tonight, weekday: game["weekday"]?.string)
+                    if let last = game["last"], last.object != nil {
+                        sideCard("Last \(side) game", title: last["describe"]?.string, x: last, weekday: last["weekday"]?.string)
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            DSRKicker(text: "Last \(side) game", tone: .cavnarInk3)
+                            Text("The first one measured here.").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Color.cavnarPaper3.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+                if let also = Self.alsoTonight(game) {
+                    HomeMixedText.make("Also tonight: \(also).", size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let basis = game["basis"]?.string {
+                    Text(DSRNightDetail.cap(basis)).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// The other headline games that shared the night (`also`, or the tail
+    /// of an older report's text).
+    static func alsoTonight(_ game: JSONValue) -> String? {
+        let list = game["also"]?.array.compactMap(\.string) ?? []
+        if !list.isEmpty { return list.joined(separator: "; ") }
+        guard let text = game["text"]?.string, let r = text.range(of: "Also tonight: ") else { return nil }
+        let tail = String(text[r.upperBound...])
+        return tail.hasSuffix(".") ? String(tail.dropLast()) : tail
+    }
+
+    private func sideCard(_ kicker: String, title: String?, x: JSONValue, weekday: String?) -> some View {
+        let lift = x["lift_pct"]?.double.map { Int($0.rounded()) }
+        var bits: [String] = []
+        if let g = x["guests"]?.double { bits.append("\(DSRFormat.count(g)) guests") }
+        if let h = x["headcount"]?.double { bits.append("\(DSRFormat.count(h)) on the clock") }
+        if let l = x["labor_pct"]?.double { bits.append("labor \(DSRFormat.pct(l))") }
+        return VStack(alignment: .leading, spacing: 4) {
+            DSRKicker(text: kicker, tone: .cavnarInk3)
+            if let title { HomeMixedText.make(title, size: 13, weight: 600, color: .cavnarInk2).fixedSize(horizontal: false, vertical: true) }
+            Text(DSRFormat.money(x["net"]?.double)).font(.cavnarNumber(20, weight: 600)).foregroundStyle(Color.cavnarInk)
+            if let lift {
+                HomeMixedText.make("\(lift > 0 ? "+" : (lift < 0 ? "\u{2212}" : ""))\(abs(lift))% vs a usual \(weekday ?? "night")"
+                                   + (x["usual"]?.double.map { " \u{00B7} \(DSRFormat.money($0))" } ?? ""),
+                                   size: 12, weight: 600, color: lift < 0 ? .cavnarRed : .cavnarGreen)
+            } else {
+                Text("No usual night to compare yet").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+            }
+            if !bits.isEmpty { HomeMixedText.make(bits.joined(separator: " \u{00B7} "), size: 11.5, color: .cavnarInk3) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.cavnarPaper3.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
+    }
+}

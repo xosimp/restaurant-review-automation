@@ -69,7 +69,12 @@ final class FoodCostQuickEntryViewModel {
     var typedAt: String?
     private(set) var hasLoaded = false
 
-    var isReadOnly: Bool { fromPantry && !isEditing }
+    /// The inventory system's sync (the tracker's `source`): synced prices
+    /// are its own, read-only here with no submit, as on the web (#8).
+    var source: InventorySyncSource?
+    var isSynced: Bool { source?.synced == true }
+
+    var isReadOnly: Bool { isSynced || (fromPantry && !isEditing) }
 
     private let client: APIClient
 
@@ -91,9 +96,10 @@ final class FoodCostQuickEntryViewModel {
         let submittedAt: String?
         let typedAt: String?
         let customItems: [Custom]?
+        var source: InventorySyncSource? = nil
         struct Custom: Decodable { let name: String }
         enum CodingKeys: String, CodingKey {
-            case ok, items
+            case ok, items, source
             case fromPantry = "from_pantry"
             case submittedAt = "submitted_at"
             case typedAt = "typed_at"
@@ -115,6 +121,7 @@ final class FoodCostQuickEntryViewModel {
                                     isCustom: custom, customSaved: custom)
             }
             fromPantry = r.fromPantry == true
+            source = r.source
             submittedAt = r.submittedAt
             typedAt = r.typedAt
             hasLoaded = true

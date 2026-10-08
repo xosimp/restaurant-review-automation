@@ -2664,7 +2664,7 @@ def mobile_purchase_orders(current_user):
 def mobile_receive_purchase_order(current_user, po_id):
     """Close a PO and post what arrived into stock - the one body is
     client_api._do_receive_po (`lines` carries a short line's quantity)."""
-    payload, status = _capi._do_receive_po(current_user, po_id, request.get_json(silent=True) or {})
+    payload, status = _capi._do_receive_po_once(current_user, po_id, request.get_json(silent=True) or {})
     return jsonify(**payload), status
 
 
@@ -2679,8 +2679,8 @@ def mobile_create_ingredient(current_user):
 @mobile_bp.route("/food-cost/waste", methods=["POST"])
 @mobile_login_required
 def mobile_log_waste(current_user):
-    """See client_api._do_log_waste."""
-    payload, status = _capi._do_log_waste(current_user, request.get_json(silent=True) or {})
+    """See client_api._do_log_waste (deduplicated: _do_log_waste_once)."""
+    payload, status = _capi._do_log_waste_once(current_user, request.get_json(silent=True) or {})
     return jsonify(**payload), status
 
 
@@ -2833,45 +2833,27 @@ def mobile_food_cost_analytics(current_user):
 @mobile_bp.route("/food-cost/trend")
 @mobile_login_required
 def mobile_food_cost_trend(current_user):
-    """Weekly waste-cost history for the Analytics tab's trend chart — same
-    inventory_history table admin_routes.py's own /api/inv-trend (desktop-
-    only) reads, just mobile-auth'd and re-exposed here. 8 weeks (not that
-    route's 6) to match LaborPerformanceChart's own "8-Week Trend" window,
-    so the two modules' trend charts read as the same convention."""
-    rid = current_user["restaurant_id"]
-    try:
-        # Served from the same ISO-week series the web card reads
-        # (waste_trend.load_waste_history): one figure per week even when
-        # the insight ran twice that week, and the table is created lazily
-        # there, so a fresh install reads as "no history yet", not a 500.
-        from waste_trend import load_waste_history, implied_target_weekly, get_waste_target_pct
-        weeks, _total = load_waste_history(rid, limit=8)
-        # The target travels with the series. iOS used to back-solve weekly
-        # purchases from THIS week's analytics (dividing by a rate already
-        # rounded to one decimal) and draw that against bars sourced from a
-        # different endpoint and a different table — two numbers from two
-        # places presented as one chart. The web card has always taken its
-        # target from here; now both do.
-        target_pct = get_waste_target_pct(rid)
-        # The live analysis, exactly as the web card takes it
-        # (client_api.waste_trend_analysis): passing None here drew the
-        # target from history on the phone and from this week's purchases
-        # on the web, so one chart showed two different target dollars.
-        _live_analysis, _ = _capi.waste_trend_analysis(rid)
-        target_weekly, basis = implied_target_weekly(_live_analysis, weeks, target_pct)
-        # Whose target the line is (Benchmarking #10): NULL waste_target_pct
-        # is Cavnar's starting 4.5%, never "your target".
-        try:
-            _own_waste = getattr(get_restaurant(rid), "waste_target_pct", None) is not None
-        except Exception:
-            _own_waste = False
-        import thresholds as _thr_w
-        return jsonify(ok=True, weeks=[{
-            "label": w["label"], "start": w["start"], "end": w["week_end"], "waste": w["waste"],
-        } for w in weeks], target={"pct": target_pct, "weekly": target_weekly, "basis": basis,
-                                   "label": "your target" if _own_waste else _thr_w.STARTING_TARGET_LABEL})
-    except Exception as e:
-        return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
+    """The 8-week waste series in its older phone shape ({weeks: [{label,
+    start, end, waste}], target}) — kept for app builds that still call it
+    (this build reads /food-cost/waste-trend). Read from the same builder as
+    the web card and the new route (client_api._do_waste_trend, parity
+    audit #77), so the three can never draw different bars or targets."""
+    payload, status = _capi._do_waste_trend(current_user["restaurant_id"], "8w")
+    if status != 200 or not payload.get("ok"):
+        return jsonify(ok=False, weeks=[], error=payload.get("error")), status
+    return jsonify(ok=True, weeks=[{
+        "label": w["label"], "start": w["start"], "end": w["week_end"], "waste": w["waste"],
+    } for w in payload.get("weeks") or []][-8:], target=payload.get("target"))
+
+
+@mobile_bp.route("/food-cost/waste-trend")
+@mobile_login_required
+def mobile_food_cost_waste_trend(current_user):
+    """The web's Waste Trend card, whole: ranges (8w/13w/26w/all, only the
+    ones the history fills), the target, stats and observations. The one
+    body is client_api._do_waste_trend."""
+    payload, status = _capi._do_waste_trend(current_user["restaurant_id"], request.args.get("range") or "8w")
+    return jsonify(**payload), status
 
 
 # ── Restaurant switcher ───────────────────────────────────────────────────

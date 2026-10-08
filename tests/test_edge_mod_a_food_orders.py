@@ -288,7 +288,9 @@ def test_the_ios_order_is_never_sent_on_one_tap():
 
 def test_the_ios_receive_can_record_a_short_delivery_and_says_why_it_failed():
     src = open("ios/CavnarAI/CavnarAI/Features/FoodCost/FoodCostDeliveries.swift", encoding="utf-8").read()
-    assert "/received" in src and "ReceiveBody(lines: lines)" in src
+    # The receive carries its idempotency key (parity audit #23, 10/7/26),
+    # so a replay from the offline queue answers with the first result.
+    assert "QueuedWrite.receivePath(order.id)" in src and "ReceiveBody(lines: lines, idempotencyKey: key)" in src
     assert "Some were short" in src and "Receive these" in src
     assert "errors[order.id] = error.message" in src, "a failed receive is shown, never swallowed"
 

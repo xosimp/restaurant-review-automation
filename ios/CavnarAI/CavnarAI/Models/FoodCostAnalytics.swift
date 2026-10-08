@@ -123,8 +123,85 @@ struct FoodCostTrendWeek: Decodable, Identifiable {
     let start: String
     let end: String
     let waste: Double
+    /// Over the target line that week (the waste-trend card's flags).
+    var overTarget: Bool = false
 
     var id: String { end }
+
+    enum CodingKeys: String, CodingKey { case label, start, end, waste, flags; case weekEnd = "week_end" }
+    private enum FlagKeys: String, CodingKey { case overTarget = "over_target" }
+
+    init(label: String, start: String, end: String, waste: Double) {
+        self.label = label; self.start = start; self.end = end; self.waste = waste
+    }
+
+    /// The older phone route sends `end`; the waste-trend card's builder
+    /// (waste_trend.build_waste_trend) sends `week_end` — both read.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = try c.decode(String.self, forKey: .label)
+        start = (try? c.decode(String.self, forKey: .start)) ?? ""
+        if let e = try? c.decode(String.self, forKey: .end) {
+            end = e
+        } else {
+            end = try c.decode(String.self, forKey: .weekEnd)
+        }
+        waste = (try? c.decode(Double.self, forKey: .waste)) ?? 0
+        if let flags = try? c.nestedContainer(keyedBy: FlagKeys.self, forKey: .flags) {
+            overTarget = (try? flags.decode(Bool.self, forKey: .overTarget)) ?? false
+        }
+    }
+}
+
+/// GET /mobile/api/food-cost/waste-trend?range= — the web's Waste Trend
+/// card whole (client_api._do_waste_trend, parity audit #77): the ranges the
+/// history fills, the weeks, the target with whose it is, and the
+/// observations, every figure in them one the series holds. Lenient, so the
+/// older /food-cost/trend body (weeks and target only) decodes as well.
+struct FoodCostWasteTrend: Decodable {
+    struct Observation: Decodable, Hashable, Identifiable {
+        let text: String
+        let tone: String?
+        let confidence: String?
+        var id: String { text }
+    }
+    struct Empty: Decodable, Hashable {
+        let title: String?
+        let reason: String?
+        let needed: String?
+        let when: String?
+    }
+
+    let ok: Bool
+    let range: String
+    let ranges: [String]
+    let weeks: [FoodCostTrendWeek]
+    let target: FoodCostTrendTarget?
+    let observations: [Observation]
+    let empty: Empty?
+
+    enum CodingKeys: String, CodingKey { case ok, range, ranges, weeks, target, observations, empty }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+        range = (try? c.decode(String.self, forKey: .range)) ?? "8w"
+        ranges = (try? c.decodeIfPresent([String].self, forKey: .ranges)) ?? []
+        weeks = (try? c.decodeIfPresent([FoodCostTrendWeek].self, forKey: .weeks)) ?? []
+        target = (try? c.decodeIfPresent(FoodCostTrendTarget.self, forKey: .target)) ?? nil
+        observations = (try? c.decodeIfPresent([Observation].self, forKey: .observations)) ?? []
+        empty = (try? c.decodeIfPresent(Empty.self, forKey: .empty)) ?? nil
+    }
+
+    /// "8 weeks", "13 weeks", "26 weeks", "All" — the range control's words.
+    static func label(_ range: String) -> String {
+        switch range {
+        case "all": return "All"
+        default:
+            let n = range.dropLast()
+            return range.hasSuffix("w") && Int(n) != nil ? "\(n) weeks" : range
+        }
+    }
 }
 
 struct FoodCostTrend: Decodable {
@@ -440,9 +517,20 @@ struct FoodCostCFO: Decodable {
         /// The driver's rec_ledger key, when the server sends one — what
         /// "Why?" records the evidence look against.
         let recKey: String?
+        /// Where the driver is acted on (food_cost_intelligence.driver_action,
+        /// friction U4-9): "Open the order" → inventory/order, "Look at X's
+        /// price" → inventory/menu?dish=X, "Log or count it" →
+        /// inventory/count. Absent when the Food Cost page is already the place.
+        var act: Act? = nil
         var id: String { "\(kind)-\(label)" }
+
+        struct Act: Decodable, Hashable {
+            let label: String
+            let nav: String
+        }
+
         enum CodingKeys: String, CodingKey {
-            case kind, label, confidence, difficulty, evidence
+            case kind, label, confidence, difficulty, evidence, act
             case confidenceDetail = "confidence_detail"
             case dollarsMonthly = "dollars_monthly"
             case ifIgnored = "if_ignored"

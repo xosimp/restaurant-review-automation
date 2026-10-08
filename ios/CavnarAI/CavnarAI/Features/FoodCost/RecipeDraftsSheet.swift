@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 import Observation
 
 /// Recipes to confirm — the phone half of the web Food Cost card. Drafts
@@ -155,10 +156,44 @@ struct RecipeAcceptResult: Decodable {
     }
 }
 
+/// One dish and its lines as the inventory system loaded them
+/// (GET /food-cost/recipes — strategy_routes._do_recipes_list).
+struct SyncedRecipe: Decodable, Identifiable, Hashable {
+    struct Line: Decodable, Hashable {
+        let name: String?
+        let qty: Double?
+        let unit: String?
+    }
+    let id: Int?
+    let name: String
+    let sellPrice: Double?
+    let lines: [Line]
+    enum CodingKeys: String, CodingKey { case id, name, lines; case sellPrice = "sell_price" }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decodeIfPresent(Int.self, forKey: .id)) ?? nil
+        name = (try? c.decode(String.self, forKey: .name)) ?? "A dish"
+        sellPrice = (try? c.decodeIfPresent(Double.self, forKey: .sellPrice)) ?? nil
+        lines = (try? c.decodeIfPresent([Line].self, forKey: .lines)) ?? []
+    }
+}
+
+struct SyncedRecipesResponse: Decodable {
+    let ok: Bool
+    let recipes: [SyncedRecipe]
+    let source: InventorySyncSource?
+}
+
 @Observable
 @MainActor
 final class RecipeDraftsViewModel {
     var drafts: [RecipeDraft] = []
+    /// Once an inventory system has synced, every dish's recipe is its own
+    /// — listed read-only here, and nothing is drafted (parity audit #78).
+    var recipes: [SyncedRecipe] = []
+    var source: InventorySyncSource?
+    var isSynced: Bool { source?.synced == true }
     var isLoading = false
     var isScanning = false
     var busyId: Int?
@@ -175,6 +210,12 @@ final class RecipeDraftsViewModel {
     func load() async {
         isLoading = true
         defer { isLoading = false }
+        if let r: SyncedRecipesResponse = try? await client.send("/mobile/api/food-cost/recipes", hapticOnError: false),
+           r.ok {
+            source = r.source
+            recipes = r.source?.synced == true ? r.recipes : []
+        }
+        guard !isSynced else { drafts = []; return }
         do {
             let r: ListResponse = try await client.send("/mobile/api/food-cost/recipe-drafts")
             drafts = r.drafts
@@ -187,13 +228,31 @@ final class RecipeDraftsViewModel {
         }
     }
 
+    /// A recipe card from the document camera (parity audit #92): its first
+    /// page, flattened and squared by VisionKit, read like a photo.
+    func scan(pages: [UIImage]) async {
+        guard let first = pages.first, let raw = first.jpegData(compressionQuality: 0.9) else { return }
+        if pages.count > 1 {
+            lastMessage = "Reading the first page \u{2014} scan one card at a time."
+        }
+        await read(raw)
+    }
+
     func scan(_ item: PhotosPickerItem) async {
         errorMessage = nil; lastMessage = nil
+        guard let raw = try? await item.loadTransferable(type: Data.self) else {
+            errorMessage = "That photo couldn't be read. Try another."
+            return
+        }
+        await read(raw)
+    }
+
+    private func read(_ raw: Data) async {
+        errorMessage = nil
         isScanning = true
         defer { isScanning = false }
         do {
-            guard let raw = try await item.loadTransferable(type: Data.self),
-                  let jpeg = InvoiceScanViewModel.downscaledJPEG(raw) else {
+            guard let jpeg = InvoiceScanViewModel.downscaledJPEG(raw) else {
                 errorMessage = "That photo couldn't be read. Try another."
                 return
             }
@@ -257,6 +316,7 @@ final class RecipeDraftsViewModel {
 struct RecipeDraftsSheet: View {
     @State private var viewModel = RecipeDraftsViewModel()
     @State private var pickerItem: PhotosPickerItem?
+    @State private var showingCamera = false
     /// The yield typed for each batch draft (H6), by draft id.
     @State private var yieldText: [Int: String] = [:]
     @Environment(\.dismiss) private var dismiss
@@ -272,6 +332,9 @@ struct RecipeDraftsSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if viewModel.isSynced {
+                        syncedRecipes
+                    } else {
                     intro
                     if viewModel.isScanning {
                         VStack(alignment: .leading, spacing: 10) {
@@ -301,6 +364,7 @@ struct RecipeDraftsSheet: View {
                             draftCard(draft)
                         }
                     }
+                    }
                 }
                 .padding(20)
             }
@@ -327,6 +391,57 @@ struct RecipeDraftsSheet: View {
                     pickerItem = nil
                 }
             }
+            .fullScreenCover(isPresented: $showingCamera) {
+                DocumentCameraView { pages in
+                    showingCamera = false
+                    guard !pages.isEmpty else { return }
+                    Task { await viewModel.scan(pages: pages) }
+                }
+                .ignoresSafeArea()
+            }
+        }
+    }
+
+    /// The inventory system's recipes, read-only (parity audit #78) — the
+    /// web's "Your recipes" block.
+    private var syncedRecipes: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YOUR RECIPES")
+                    .font(.cavnarBody(13.5, weight: 700)).tracking(1.2).foregroundStyle(Color.cavnarEmber2)
+                if let source = viewModel.source {
+                    HomeMixedText.make("From \(source.name)" + (source.syncedOn.map { " \u{00B7} \($0)" } ?? "")
+                                       + ". Every plate cost and depletion reads these.", size: 14, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .cavnarCard()
+            if viewModel.recipes.isEmpty {
+                Text("No recipes came over with the last sync.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarCard()
+            }
+            ForEach(viewModel.recipes) { r in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(r.name).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Spacer(minLength: 8)
+                        if let p = r.sellPrice {
+                            Text(String(format: "$%.2f", p)).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    AccountFlowLayout(spacing: 6) {
+                        ForEach(Array(r.lines.enumerated()), id: \.offset) { _, l in
+                            HomeMixedText.make("\(l.name ?? "") \(l.qty.map { RecipeDraftLine.format($0) } ?? DSRFormat.dash)"
+                                               + (l.unit.map { $0.isEmpty ? "" : " \($0)" } ?? ""),
+                                               size: 12.5, color: .cavnarInk2)
+                                .padding(.horizontal, 9).padding(.vertical, 4)
+                                .background(Color.cavnarPaper3.opacity(0.4), in: Capsule())
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cavnarCard()
+            }
         }
     }
 
@@ -336,19 +451,46 @@ struct RecipeDraftsSheet: View {
                 .font(.cavnarBody(13.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
-            Text("Photograph a recipe card and it becomes a draft here, using only ingredients already on your list. Accept writes the recipe; nothing changes until you do.")
+            Text("Scan a recipe card and it becomes a draft here, using only ingredients already on your list. Accept writes the recipe; nothing changes until you do.")
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                HStack(spacing: 8) {
-                    Image(systemName: "camera.viewfinder").font(.system(size: 13, weight: .semibold))
-                    Text("Photograph a recipe card")
+            // The document camera first — flattened, squared and without the
+            // card landing in the photo library (parity audit #92); the
+            // library is the fallback, and the only way in without a camera.
+            if DocumentCameraView.isAvailable {
+                Button {
+                    Haptic.light()
+                    showingCamera = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.viewfinder").font(.system(size: 13, weight: .semibold))
+                        Text("Scan a recipe card")
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
+                .disabled(viewModel.isScanning)
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "photo.on.rectangle").font(.system(size: 13, weight: .semibold))
+                        Text("Choose a photo instead")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(viewModel.isScanning)
+            } else {
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "camera.viewfinder").font(.system(size: 13, weight: .semibold))
+                        Text("Photograph a recipe card")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
+                .disabled(viewModel.isScanning)
             }
-            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
-            .disabled(viewModel.isScanning)
         }
         .cavnarCard()
     }

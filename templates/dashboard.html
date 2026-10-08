@@ -1901,7 +1901,7 @@ function clientUpload(dataType, input) {
       if (data.ok) {
         if (resultEl) {
           resultEl.style.display = 'inline';
-          resultEl.style.color = '#2d6a4f';
+          resultEl.style.color = 'var(--hb-good)';
           resultEl.textContent = '✓ ' + data.rows + ' rows loaded — refreshing…';
         }
         cavDel('labor_insight');cavDel('labor_insight_at');cavDel('inv_insight');cavDel('inv_insight_at');
@@ -1909,7 +1909,7 @@ function clientUpload(dataType, input) {
       } else {
         if (resultEl) {
           resultEl.style.display = 'inline';
-          resultEl.style.color = '#c84b2f';
+          resultEl.style.color = 'var(--hb-bad)';
           resultEl.textContent = '✗ ' + (data.error || 'Upload failed');
         }
       }
@@ -1918,7 +1918,7 @@ function clientUpload(dataType, input) {
       if (overlay) overlay.style.display = 'none';
       if (resultEl) {
         resultEl.style.display = 'inline';
-        resultEl.style.color = '#c84b2f';
+        resultEl.style.color = 'var(--hb-bad)';
         resultEl.textContent = '✗ Network error — try again';
       }
     });
@@ -12105,7 +12105,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-hist">
         <div class="ss-kick">History</div>
         <h1>Every week you've built</h1>
-        <div id="ss-hist-list" class="ss-hist-list"><div class="sw-note">Loading…</div></div>
+        <div id="ss-hist-list" class="ss-hist-list"><div class="dr-pulse" role="status" aria-label="Loading the weeks you have built"><i></i></div></div>
       </div>
     </section>
 
@@ -12774,6 +12774,19 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-rcp-row .ls{display:flex;flex-wrap:wrap;gap:6px 8px;margin-top:8px}
 .fc2-rcp-row .ln{font-size:13px;color:var(--ink2);padding:4px 10px;border-radius:999px;background:var(--hb-inner,rgba(255,255,255,.04));border:1px solid var(--hb-line2)}
 .fc2-rcp-row .ln b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
+/* The recipe drafts confirm screen (parity audit #92). */
+#fc2-drafts{margin-top:18px;display:flex;flex-direction:column;gap:12px}
+.fc2-drafts-k{display:flex;align-items:center;gap:10px}
+.fc2-drafts-k .hb-num{font-size:13px;font-weight:700;color:var(--ember);background:var(--hb-tint);border-radius:999px;padding:2px 9px}
+.fc2-drafts-all{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13.5px;color:var(--ink3)}
+.fc2-draft .fc2-draft-n{font-size:13.5px;color:var(--ink3);line-height:1.5;margin-top:6px}
+.fc2-draft .fc2-draft-n.warn{color:var(--amber)}
+.fc2-draft .fc2-draft-est{font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-left:6px}
+.fc2-draft-q{font-style:normal;font-size:11.5px;font-weight:700;color:var(--ink3);margin-left:4px}
+.fc2-draft-q.warn{color:var(--amber)}
+.fc2-draft-y{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;color:var(--ink2);margin-top:10px}
+.fc2-draft-y .ac-input{max-width:110px}
+.fc2-draft-ft{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
 .fc2-tool .ch{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
 .fc2-tool .bd{font-size:14px;color:var(--ink3);padding-top:10px;line-height:1.5}
 .fc2-tool table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -13221,6 +13234,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         {% if _fc_ledger %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" id="fc-edit-prices" onclick="fcEditPrices(this)">Edit prices</button>{% if food_cost_data.current.typed_at %}{% set _ta=food_cost_data.current.typed_at %}<div class="sub">Last typed <span class="hb-num">{{ _ta[5:7]|int }}/{{ _ta[8:10]|int }}/{{ _ta[2:4] }}</span></div>{% endif %}{% endif %}
         {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa2=food_cost_data.current.submitted_at %}<div class="sub">Last submitted <span class="hb-num">{{ _sa2[5:7]|int }}/{{ _sa2[8:10]|int }}/{{ _sa2[2:4] }}</span></div>{% endif %}
         <label class="cbtn cbtn-secondary">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
+        {# The columns the upload reads, beside the upload (parity audit #93): the template was only linked from an admin page. #}
+        <a class="cbtn cbtn-text cbtn-inline cbtn-sm" href="/client/sample-template/inventory" download>Download the template</a>
         <span id="inventory-inline-result" style="font-size:12px;color:var(--hb-good);display:none"></span>
       </div>{% endif %}
     </div>
@@ -27086,10 +27101,14 @@ function fc2LoadFoodCostPct(){
 // Recipes come from the inventory system (owner, 9/26/26: nobody types a
 // menu's worth of recipes). Once it has synced, every dish and its
 // ingredients list here, read-only; before that the block says where they
-// will come from. The drafting tools that lived here (menu paste, recipe
-// cards, one-by-one accept) are off the web; the phone's Recipe drafts
-// sheet and the /food-cost/recipe-drafts routes are unchanged.
-function fc2LoadRecipeDrafts(){
+// will come from. Until then, the drafts waiting to be confirmed — dishes
+// the POS created with no recipe, drafted from your own ingredient list, or
+// read off a recipe card on the phone — are confirmed here (parity audit
+// #92: the accept / reject / accept-all handlers below had lost the screen
+// that drew their buttons). Nothing is written until a draft is accepted.
+// Typing a menu stays off the web (owner, 9/26/26: nobody types a menu's
+// worth of recipes); the POS's own dishes are drafted with one button.
+function fc2LoadRecipeDrafts(msg){
   var el=document.getElementById('fc2-recipes');if(!el)return;
   fetch('/api/food-cost/recipes',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok)return;
@@ -27105,17 +27124,59 @@ function fc2LoadRecipeDrafts(){
         h+='<div class="fc2-rcp-row"><div class="h"><span>'+esc(r.name||'')+'</span>'+(r.sell_price!=null?'<span class="p">$'+(+r.sell_price).toFixed(2)+'</span>':'')+'</div><div class="ls">'+ls+'</div></div>';}
       h+='</div>';
     }
+    if(!synced)h+='<div id="fc2-drafts"><div class="dr-pulse" role="status" aria-label="Loading recipe drafts"><i></i></div></div>';
     el.innerHTML=h;el.hidden=false;
     fc2WorkRow('recipes',synced?('<b class="hb-num">'+rs.length+'</b> recipe'+(rs.length===1?'':'s')+' from '+esc(label)):'load once your inventory system is connected');
+    if(!synced)fc2LoadDraftList(msg);
   }).catch(function(){});
+}
+// The confirm screen: each draft's lines with how sure each one is, the
+// units that won't convert (left out on Accept), a batch card's yield, and
+// Accept / Not right. The drafts every line of which clears FC2_SURE_PCT
+// accept together. The menu paste and the "draft the dishes without a
+// recipe" button feed the same list (fc2DraftRecipes).
+function fc2LoadDraftList(msg){
+  var box=document.getElementById('fc2-drafts');if(!box)return;
+  fetch('/api/food-cost/recipe-drafts',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    if(!d||!d.ok){box.innerHTML='';return;}
+    var ds=d.drafts||[],h='',i,j,miss=+d.missing||0,ings=+d.ingredients||0;
+    h+='<div class="fc2-drafts-k"><span class="hb-kicker">Recipes to confirm</span>'+(ds.length?'<span class="hb-num">'+ds.length+'</span>':'')+'</div>';
+    if(!ds.length)h+='<div class="hb-empty">No drafts waiting. Drafts arrive Tuesday mornings for dishes the POS created without a recipe.</div>';
+    var sure=fc2ConfidentDrafts(ds);
+    if(sure.length>1)h+='<div class="fc2-drafts-all"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-recipe-accept-all="'+esc(sure.join(','))+'">Accept the '+sure.length+' sure ones</button><span>every line sure, every unit converted</span></div>';
+    for(i=0;i<ds.length;i++){var dr=ds[i],ls='',ws=dr.unit_warnings||[],wl=[];
+      for(j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j],bd=fc2LineBand(ln);
+        /* How sure each line is, quietly (H6/J9, the phone's marks): high
+           says nothing, medium "check", low an amber "?". */
+        var q=ln.unit_ok===false?' <i class="fc2-draft-q warn" title="'+esc(ln.unit_note||'The unit did not convert')+'">unit?</i>':(bd==='low'?' <i class="fc2-draft-q warn" title="Unsure: check this amount">?</i>':(bd==='medium'?' <i class="fc2-draft-q" title="Worth a check">check</i>':''));
+        ls+='<span class="ln">'+esc(ln.name||'')+' <b class="hb-num">'+esc(ln.qty)+'</b>'+(ln.unit?' '+esc(ln.unit):'')+(ln.per==='batch'?' <small>per batch</small>':'')+q+'</span>';}
+      for(j=0;j<ws.length;j++)if(ws[j]&&ws[j].name)wl.push(esc(ws[j].name)+(ws[j].note?': '+esc(ws[j].note):''));
+      h+='<div class="fc2-rcp-row fc2-draft"><div class="h"><span>'+esc(dr.menu_item_name||'A dish')+(dr.is_estimate?' <small class="fc2-draft-est">estimate</small>':'')+'</span></div>'
+        +(dr.note?'<div class="fc2-draft-n">'+esc(dr.note)+'</div>':'')
+        +(wl.length?'<div class="fc2-draft-n warn">Units to check: '+wl.join(' · ')+'. These lines are left out when you accept; add them by hand.</div>':'')
+        +'<div class="ls">'+ls+'</div>'
+        +(dr.needs_yield?'<label class="fc2-draft-y">This card is a batch. Plates it makes <input class="ac-input ac-num" type="number" min="1" step="any" data-recipe-yield="'+esc(dr.id)+'" aria-label="Plates this card makes"></label>':'')
+        +'<div class="fc2-draft-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button></div></div>';}
+    if(miss>0&&ings>0)h+='<div class="fc2-menu-draft"><div class="t"><b>'+miss+' dish'+(miss===1?'':'es')+' on the POS without a recipe</b><span>Cavnar AI drafts each from your ingredient list; you confirm every line above before anything is written.</span></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,true)">Draft them</button></div>';
+    h+='<div class="ac-status" id="fc2-menu-status"></div>';
+    box.innerHTML=h;
+    var st=document.getElementById('fc2-menu-status');if(st&&msg)st.textContent=msg;
+    if(ds.length)fc2WorkRow('recipes','<b class="hb-num">'+ds.length+'</b> recipe draft'+(ds.length===1?'':'s')+' to confirm');
+  }).catch(function(){box.innerHTML='';});
 }
 // A draft line at or above this measured support accepts in one tap (U2-24).
 var FC2_SURE_PCT=80;
+// A line's band: its measured support when it carries one, else the band
+// the draft was written with (recipes.py: high, medium, low).
+function fc2LineBand(ln){
+  if(typeof ln.confidence_pct==='number'&&isFinite(ln.confidence_pct))return ln.confidence_pct>=FC2_SURE_PCT?'high':(ln.confidence_pct>=50?'medium':'low');
+  var b=String(ln.confidence||'').toLowerCase();return b==='high'||b==='medium'||b==='low'?b:'';
+}
 function fc2ConfidentDrafts(ds){
   var out=[],i,j;
   for(i=0;i<(ds||[]).length;i++){var dr=ds[i],ls=dr.lines||[],ok=ls.length>0&&!dr.needs_yield;
     for(j=0;ok&&j<ls.length;j++){var ln=ls[j];
-      if(ln.unit_ok===false||typeof ln.confidence_pct!=='number'||!isFinite(ln.confidence_pct)||ln.confidence_pct<FC2_SURE_PCT)ok=false;}
+      if(ln.unit_ok===false||fc2LineBand(ln)!=='high')ok=false;}
     if(ok)out.push(dr.id);}
   return out;
 }
@@ -28963,10 +29024,14 @@ function loadMemory() {
 }
 document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-mem-older]') : null; if (!b || memArchLast == null) return;
-  var done = cbtnBusy(b, 'Loading…');
+  // The pulse bar under the list while the older notes load (the loading
+  // convention), never a "Loading…" label.
+  var done = cbtnBusy(b, ''), al = document.getElementById('acct-memory-arch-list'), pb = null;
+  if (al) { pb = document.createElement('div'); pb.className = 'dr-pulse wide'; pb.setAttribute('role', 'status'); pb.setAttribute('aria-label', 'Loading older notes'); pb.innerHTML = '<i></i>'; al.appendChild(pb); }
+  var fin = function () { done(); if (pb && pb.parentNode) pb.parentNode.removeChild(pb); };
   fetch('/api/account/memory?archive_before=' + encodeURIComponent(memArchLast), {credentials: 'same-origin'}).then(apiJson)
-    .then(function (d) { done(); if (d && d.ok) memArchPage(d.archived || [], !!d.archive_more, true); })
-    .catch(function () { done(); });
+    .then(function (d) { fin(); if (d && d.ok) memArchPage(d.archived || [], !!d.archive_more, true); })
+    .catch(function () { fin(); });
 });
 document.addEventListener('click', function (e) {
   var b = e.target && e.target.closest ? e.target.closest('[data-dismiss-fact]') : null; if (!b) return;

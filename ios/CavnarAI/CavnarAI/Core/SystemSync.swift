@@ -397,7 +397,9 @@ final class WidgetSnapshotService {
             } catch {
                 return nil
             }
-            latestRow = list.reports.first
+            // A report switched off for this location has no "Last night" (parity audit #64).
+            DSRAvailability.record(list.enabled)
+            latestRow = list.enabled == false ? nil : list.reports.first
         }
         guard let latest = latestRow else { return NightPart.none }
         var part = NightPart(date: latest.businessDate, label: latest.displayDate)

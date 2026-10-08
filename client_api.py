@@ -4866,21 +4866,40 @@ def waste_trend_analysis(rid):
     return analysis, is_live
 
 
+def _do_waste_trend(rid, range_key="8w"):
+    """(payload, status) — the Waste Trend card for one restaurant and one
+    range, the ONE body behind the web's /api/food-cost/waste-trend, the
+    phone's /mobile/api/food-cost/waste-trend and the older phone route
+    /mobile/api/food-cost/trend (parity audit #77): the ISO-week series,
+    every derived figure and the observations, computed once in
+    waste_trend.build_waste_trend. The live analysis is passed in so the
+    target line reflects this week's real purchases rather than an average
+    of history, and the target says whose it is (Benchmarking #10: NULL
+    waste_target_pct is Cavnar AI's starting figure, never "your target")."""
+    from waste_trend import build_waste_trend
+    range_key = str(range_key or "8w").lower()
+    analysis, is_live = waste_trend_analysis(rid)
+    try:
+        out = build_waste_trend(rid, range_key, analysis=analysis, is_live=bool(is_live))
+    except Exception as e:
+        return {"ok": False, "weeks": [], "error": _safe_err(e)}, 500
+    try:
+        own = getattr(get_restaurant(rid), "waste_target_pct", None) is not None
+    except Exception:
+        own = False
+    import thresholds as _thr_wt
+    tgt = dict(out.get("target") or {})
+    tgt["label"] = "your target" if own else _thr_wt.STARTING_TARGET_LABEL
+    out["target"] = tgt
+    return out, 200
+
+
 @client_bp.route("/api/food-cost/waste-trend")
 @login_required
 def food_cost_waste_trend(current_user):
-    """The Waste Trend card: the ISO-week series plus every derived figure
-    and observation, computed once server-side (waste_trend.py). The live
-    analysis is passed in so the target line reflects this week's real
-    purchases rather than an average of history."""
-    from waste_trend import build_waste_trend
-    rid = current_user["restaurant_id"]
-    range_key = (request.args.get("range") or "8w").lower()
-    analysis, is_live = waste_trend_analysis(rid)
-    try:
-        return jsonify(**build_waste_trend(rid, range_key, analysis=analysis, is_live=bool(is_live)))
-    except Exception as e:
-        return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
+    """The Waste Trend card — the one body is _do_waste_trend."""
+    payload, status = _do_waste_trend(current_user["restaurant_id"], request.args.get("range") or "8w")
+    return jsonify(**payload), status
 
 def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False, user_id=None,
                          rate_checked=False, user=None):
@@ -7022,7 +7041,16 @@ def _do_food_cost_tracker(restaurant_id):
     else:
         rows = [_row({"name": n, "unit": u}) for n, u in FOOD_COST_TRACKER_DEFAULTS]
         rows += [_row({"name": ci.get("name"), "unit": ci.get("unit")}, custom=True) for ci in custom]
+    # Where the prices come from: once an inventory system has synced, the
+    # web's price monitor reads "Synced from <system>" and hides its submit;
+    # the phone's Tracker does the same from this (parity audit #8).
+    try:
+        import inventory_sync
+        source = inventory_sync.status(restaurant_id)
+    except Exception:
+        source = {"synced": False}
     return {
+        "source": source,
         "ok": True,
         "items": rows,
         "from_pantry": bool(current and current.get("from_pantry")),
@@ -11237,7 +11265,7 @@ def purchase_orders_for(current_user, status=None):
 @login_required
 def receive_purchase_order(current_user, po_id):
     """Web twin - the one body is _do_receive_po."""
-    payload, status = _do_receive_po(current_user, po_id, request.get_json(silent=True) or {})
+    payload, status = _do_receive_po_once(current_user, po_id, request.get_json(silent=True) or {})
     return jsonify(**payload), status
 
 
@@ -11429,10 +11457,34 @@ def _do_log_waste(current_user, data):
     return out, 200
 
 
+def _once(route, body, busy):
+    """Run `body(current_user)` at most once per Idempotency-Key (header, or
+    `idempotency_key` in the JSON body) — strategy_routes._idempotent, the
+    invoice scan's guard. The phone's offline queue replays a waste line or
+    a delivery with the key it was first sent with, so a send whose answer
+    was lost in the walk-in lands once (parity audit #23)."""
+    import strategy_routes as _sr_once
+    return _sr_once._idempotent(body, route, busy=busy)
+
+
+def _do_log_waste_once(current_user, data):
+    """_do_log_waste, deduplicated by its idempotency key (web and phone)."""
+    return _once("food_waste", lambda u: _do_log_waste(u, data),
+                 "That waste line is still being logged — check back in a moment.")(current_user)
+
+
+def _do_receive_po_once(current_user, po_id, data):
+    """_do_receive_po, deduplicated by its idempotency key: a replayed
+    receive is answered with the first one's result rather than "already
+    received" (web and phone)."""
+    return _once(f"po_received:{int(po_id)}", lambda u: _do_receive_po(u, po_id, data),
+                 "That delivery is still being put into stock — check back in a moment.")(current_user)
+
+
 @client_bp.route("/api/food-cost/waste", methods=["POST"])
 @login_required
 def log_waste(current_user):
-    payload, status = _do_log_waste(current_user, request.get_json(silent=True) or {})
+    payload, status = _do_log_waste_once(current_user, request.get_json(silent=True) or {})
     return jsonify(**payload), status
 
 

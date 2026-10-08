@@ -29,6 +29,12 @@ struct FoodCostQuickEntryView: View {
     }
 
     private func openSheet(_ action: FoodCostAction) {
+        // The pars live on Analytics: brought into view, not a sheet.
+        if case .pars = action {
+            subTab = .analytics
+            analyticsViewModel.scrollToPars = true
+            return
+        }
         actionSheet = action
     }
 
@@ -51,7 +57,7 @@ struct FoodCostQuickEntryView: View {
             if subTab == .tracker {
                 tracker
             } else {
-                FoodCostAnalyticsSection(viewModel: analyticsViewModel)
+                FoodCostAnalyticsSection(viewModel: analyticsViewModel, open: { openSheet($0) })
             }
         }
         .cavnarModuleBackground()
@@ -103,6 +109,10 @@ struct FoodCostQuickEntryView: View {
             case .order: SupplierOrderSheet()
             case .recipes: RecipeDraftsSheet()
             case .margins: MenuMarginsSheet()
+            case .menu(let dish): MenuMarginsSheet(focusDish: dish)
+            case .dishes: DishScorecardSheet()
+            case .suppliers: SupplierOverviewSheet()
+            case .pars: EmptyView()
             }
         }
         // "inventory/invoices", "inventory/order", "inventory/count" — from
@@ -114,7 +124,7 @@ struct FoodCostQuickEntryView: View {
             guard !focusSpent, let focus, let action = FoodCostAction(path: focus) else { return }
             focusSpent = true
             try? await Task.sleep(for: .milliseconds(450))
-            actionSheet = action
+            openSheet(action)
         }
         .task {
             if let restaurantId = sessionStore.currentUser?.restaurantId {
@@ -224,8 +234,13 @@ struct FoodCostQuickEntryView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
                         // Where these rows came from, as the web's tracker
-                        // says it: the ledger, or the last typed submission.
-                        if viewModel.fromPantry {
+                        // says it: the inventory system, the ledger, or the
+                        // last typed submission.
+                        if let source = viewModel.source, source.synced {
+                            HomeMixedText.make(source.line("Prices") + ". Change them there.",
+                                               size: 13.5, weight: 500, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if viewModel.fromPantry {
                             HStack(spacing: 10) {
                                 Text("Kept current by scanned invoices; edit only to override.")
                                     .font(.cavnarBody(13.5))

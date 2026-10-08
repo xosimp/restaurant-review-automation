@@ -33,6 +33,9 @@ struct DailyReportView: View {
     @State private var showingAllPriorities = false
     @State private var confirmingRerun = false
     @State private var didLoad = false
+    /// An unmapped POS department the owner is placing (parity audit #33).
+    @State private var mapping: DSRBlock.Unmapped?
+    @State private var showingSettings = false
     @State private var clock = CavnarEntranceClock()
 
     init(date: String?, follow: DSRFollow? = nil) {
@@ -52,6 +55,11 @@ struct DailyReportView: View {
                 } else if let error = viewModel.errorMessage, viewModel.report == nil, viewModel.checklist == nil {
                     errorCard(error)
                 } else {
+                    // Switched off for this location (parity audit #64):
+                    // past nights still read; nothing new is built.
+                    if !viewModel.enabled {
+                        CavnarCaveat(title: "Switched off", detail: DSRAvailability.offLine)
+                    }
                     if showsProgress { progressCard }
                     if viewModel.nothingYet && !showsProgress { nothingYetCard }
                     if let report = viewModel.report { reportBody(report) }
@@ -67,6 +75,23 @@ struct DailyReportView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             cavnarTitleToolbar("Daily report")
+            // The owner's report settings (parity audit #64) — notify,
+            // deadline, gross basis, the category map, the switch.
+            if viewModel.isOwner {
+                cavnarToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Haptic.light()
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarToolbarIconGlass()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Report settings")
+                }
+            }
             cavnarToolbarItem(placement: .topBarTrailing) {
                 NavigationLink(value: DailyReportRoute.week(date: viewModel.businessDate)) {
                     Image(systemName: "tablecells")
@@ -79,6 +104,14 @@ struct DailyReportView: View {
             }
         }
         .cavnarEmberBackButton()
+        .sheet(item: $mapping, onDismiss: { Task { await viewModel.load() } }) { dept in
+            DSRCategoryMapSheet(department: dept)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showingSettings, onDismiss: { Task { await viewModel.load() } }) {
+            DSRSettingsSheet()
+        }
         .task {
             guard !didLoad else { return }
             didLoad = true
@@ -363,6 +396,9 @@ struct DailyReportView: View {
         if let n = report.narrative { narrativeSections(n, report: report) }
         if let t = report.tomorrow {
             DSRTomorrowCard(tomorrow: t, recommendation: staffingRecommendation(report.narrative))
+            // The day after's labor % and the week's overtime, while the
+            // schedule can still change (parity audit #33).
+            DSRTomorrowLaborCard(tomorrow: t, isOwner: report.isOwnerView)
         }
 
         // 4–6 KPIs (the owner's `kpis_headline`: without the score's four
@@ -582,7 +618,10 @@ struct DailyReportView: View {
                      headline: DSRHeadline.line(for: name, block),
                      isExpanded: Binding(get: { expanded.contains(name) },
                                          set: { if $0 { expanded.insert(name) } else { expanded.remove(name) } })) {
-            DSRBlockBody(name: name, block: block, businessDate: viewModel.businessDate)
+            DSRBlockBody(name: name, block: block, businessDate: viewModel.businessDate,
+                         blocks: viewModel.report?.facts.blocks ?? [:],
+                         isOwner: viewModel.report?.isOwnerView == true,
+                         onMap: { mapping = $0 })
         }
     }
 
@@ -635,11 +674,18 @@ struct DSRBlockBody: View {
     let name: String
     let block: DSRBlock
     var businessDate: String?
+    /// Every block this login was sent — the night in detail reads the
+    /// Sales and Labor blocks beside the Service one.
+    var blocks: [String: DSRBlock] = [:]
+    /// The owner places an unmapped POS department ("Map it").
+    var isOwner = false
+    var onMap: ((DSRBlock.Unmapped) -> Void)? = nil
 
     var body: some View {
         switch name {
         case "sales": sales
         case "labor": labor
+        case "service": DSRNightDetail(service: block, blocks: blocks, businessDate: businessDate)
         case "food": food
         case "reviews": reviews
         case "marketing": marketing
@@ -730,6 +776,7 @@ struct DSRBlockBody: View {
                     DSRCategoryBars(categories: cats)
                 }
             }
+            unmappedDepartments
 
             let hours = block.hourly
             if !hours.isEmpty {
@@ -743,7 +790,24 @@ struct DSRBlockBody: View {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     DSRKicker(text: "Top items", tone: .cavnarInk3)
-                    ForEach(Array(items.prefix(5).enumerated()), id: \.offset) { _, item in
+                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                        HStack {
+                            Text(item.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2).lineLimit(1)
+                            Spacer()
+                            Text(DSRFormat.count(item.qty)).font(.cavnarNumber(14)).foregroundStyle(Color.cavnarInk3)
+                            Text(DSRFormat.money(item.net)).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                .frame(width: 76, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+            // The night's slowest sellers, as the web's "Slowest" table
+            // (parity audit #33).
+            let slow = block.slowestItems
+            if !slow.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    DSRKicker(text: "Slowest", tone: .cavnarInk3)
+                    ForEach(Array(slow.enumerated()), id: \.offset) { _, item in
                         HStack {
                             Text(item.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2).lineLimit(1)
                             Spacer()
@@ -769,6 +833,49 @@ struct DSRBlockBody: View {
             if let note = block.definitionNote {
                 HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// POS departments the night couldn't place — shown on their own, never
+    /// guessed — each with "Map it" for the owner (parity audit #33; the
+    /// web's "Map departments" / "Place it").
+    @ViewBuilder
+    private var unmappedDepartments: some View {
+        let un = block.unmappedDepartments
+        if !un.isEmpty || block.unallocated != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(un) { u in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(u.department).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                                Text(u.newIn == nil ? "unmapped" : "new").font(.cavnarBody(11.5, weight: 700))
+                                    .foregroundStyle(Color.cavnarAmber)
+                            }
+                            HomeMixedText.make(DSRCategoryMapSheet.why(u), size: 12, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Text(DSRFormat.money(u.net)).font(.cavnarNumber(13.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        if isOwner, let onMap {
+                            Button {
+                                Haptic.light()
+                                onMap(u)
+                            } label: {
+                                Text(u.newIn == nil ? "Map it" : "Place it").font(.cavnarBody(13.5, weight: 700))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                if let gap = block.unallocated {
+                    HomeMixedText.make("\(DSRFormat.money(gap)) of net isn\u{2019}t in any department on the POS.",
+                                       size: 12.5, color: .cavnarInk3)
+                }
             }
         }
     }
@@ -806,6 +913,11 @@ struct DSRBlockBody: View {
             // The web's labor tiles, in its order and words (D3-13): After
             // 6pm, No-shows, Late clock-ins, Shift quality when measured.
             DSRTileRow(tiles: laborTiles)
+            // Where the labor went: in the night in detail when the Service
+            // block is ready, here otherwise (a POS without check detail).
+            if blocks["service"]?.isReady != true, !block.departments.isEmpty {
+                DSRLaborDepartments(labor: block, salesNet: blocks["sales"]?.metric("net"))
+            }
             if !block.observations.isEmpty {
                 DSRLineList(lines: block.observations.map { DSRLine(text: $0) }, dot: .cavnarInk3)
             }
@@ -1047,6 +1159,11 @@ struct DSRBlockBody: View {
             if let events = block.eventsSummary {
                 HomeMixedText.make("Events: \(events)", size: 14, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            // Tonight's game against the last one on the same side (parity
+            // audit #33, Event Intelligence phase 2).
+            if let game = block.detail["game"], game.object != nil {
+                DSRGameCard(game: game)
             }
             if let note = block.weatherNote {
                 Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)

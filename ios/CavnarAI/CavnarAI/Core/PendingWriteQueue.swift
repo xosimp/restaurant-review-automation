@@ -158,6 +158,11 @@ actor PendingWriteQueue {
                     path: next.path, method: next.method, bodyJSON: next.bodyJSON
                 )
                 remove(id: next.id)
+            } catch let error as APIClient.APIError where Self.isInFlight(error) {
+                // The first send of a keyed write is still being handled
+                // server-side (strategy_routes._idempotent's 409): it will
+                // land, and the next drain is answered with its result.
+                return
             } catch let error as APIClient.APIError where Self.isRefusal(status: error.status) {
                 refuse(next, reason: error.message)
             } catch {
@@ -221,6 +226,14 @@ actor PendingWriteQueue {
     /// A 2xx carried by an error is a refusal as well: some routes answer
     /// 200 `{ok: false, error}` (an empty or over-long draft save), and
     /// sendQueuedWrite throws those with their status.
+    /// A keyed write the server is still handling from its first send — a
+    /// 409 carrying `in_progress: true` — is not a refusal: it waits.
+    static func isInFlight(_ error: APIClient.APIError) -> Bool {
+        guard error.status == 409 else { return false }
+        struct Body: Decodable { let inProgress: Bool?; enum CodingKeys: String, CodingKey { case inProgress = "in_progress" } }
+        return error.decodeBody(Body.self)?.inProgress == true
+    }
+
     static func isRefusal(status: Int?) -> Bool {
         guard let status else { return false }
         if (200..<300).contains(status) { return true }
@@ -281,11 +294,14 @@ struct QueuedWrite: Equatable {
 
     static let recEventPath = "/mobile/api/recs/event"
     static let countSheetPath = "/mobile/api/food-cost/count-sheet"
+    static let wastePath = "/mobile/api/food-cost/waste"
+
+    static func receivePath(_ poId: Int) -> String { "/mobile/api/food-cost/purchase-orders/\(poId)/received" }
 
     /// Writes no later write depends on — so one the server refuses can be
     /// dropped without breaking an order the queue exists to keep.
     static func standsAlone(path: String) -> Bool {
-        path == recEventPath || path == countSheetPath
+        path == recEventPath || path == countSheetPath || path == wastePath
     }
 
     /// Which later writes fall with this one when the server refuses it:
@@ -319,6 +335,27 @@ struct QueuedWrite: Equatable {
         }
         guard let data = try? JSONEncoder().encode(body) else { return nil }
         return QueuedWrite(path: recEventPath, method: "POST", bodyJSON: data, label: label)
+    }
+
+    /// One line of waste (POST /mobile/api/food-cost/waste), thrown out in
+    /// the walk-in with no signal (parity audit #23). Not a figure to land
+    /// twice — so it carries the `idempotency_key` it was first sent with,
+    /// and the server answers a replay from that first send
+    /// (strategy_routes._idempotent). That key is what makes it safe to park
+    /// even when the first send may have reached the server.
+    static func waste(_ body: WasteLogViewModel.Body) -> QueuedWrite? {
+        guard body.idempotencyKey?.isEmpty == false, let data = try? JSONEncoder().encode(body) else { return nil }
+        return QueuedWrite(path: wastePath, method: "POST", bodyJSON: data,
+                           label: "Log \(CountSheetViewModel.expectedString(body.qty)) of waste")
+    }
+
+    /// A delivery received into stock (POST /purchase-orders/<id>/received).
+    /// The order's status claim already stops a second posting; the key
+    /// makes a replay answer with the first result rather than "already
+    /// received" — which the queue would read as a refusal.
+    static func receive(poId: Int, poNumber: String, _ body: DeliveriesViewModel.ReceiveBody) -> QueuedWrite? {
+        guard body.idempotencyKey?.isEmpty == false, let data = try? JSONEncoder().encode(body) else { return nil }
+        return QueuedWrite(path: receivePath(poId), method: "POST", bodyJSON: data, label: "Receive \(poNumber)")
     }
 
     /// A count sheet's recounts (POST /mobile/api/food-cost/count-sheet).

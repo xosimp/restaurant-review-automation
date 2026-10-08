@@ -84,6 +84,32 @@ struct DSRListResponse: Decodable {
     /// Home's card measures the latest report against. Lenient: absent on
     /// an older server.
     var tonight: LenientText? = nil
+    /// The location's report switch (restaurants.dsr_enabled). False: the
+    /// report is off here, and the app hides "Last night" everywhere —
+    /// Home's card, the command chip and place, the widget (parity audit
+    /// #64). Absent on an older server: treated as on.
+    var enabled: Bool? = nil
+}
+
+/// Whether this location's nightly report is switched on, as the last list
+/// read said (GET /dsr `enabled`). Kept in UserDefaults so the places that
+/// offer "Last night" without reading the list — the command sheet's chip
+/// and its built-in places — can ask synchronously. Unknown is on.
+enum DSRAvailability {
+    static let key = "dsr.enabled"
+
+    static var isEnabled: Bool {
+        (UserDefaults.standard.object(forKey: key) as? Bool) ?? true
+    }
+
+    /// Records what a /dsr list read said; nil (an older server) changes nothing.
+    static func record(_ enabled: Bool?) {
+        guard let enabled else { return }
+        UserDefaults.standard.set(enabled, forKey: key)
+    }
+
+    /// What the report screens say when it is off.
+    static let offLine = "The daily report is switched off for this location. The owner turns it back on in the report\u{2019}s settings."
 }
 
 /// One night in the list (access.summary).
@@ -359,9 +385,12 @@ struct DSRFacts: Decodable {
 /// anything else carries the server's own `reason` sentence.
 struct DSRBlock: Hashable {
     // Reading order (9/25/26): sales, labor, food cost, reviews, weather — then the rest.
-    static let order = ["sales", "labor", "food", "reviews", "intel", "marketing", "closeout"]
+    // "service" — the night in detail (dsr.block_service: meal periods and
+    // rooms, servers, comps and voids, punch edits, cash and cards) — reads
+    // right after the labor it details (parity audit #14; web b9bb404b, 98d664b2).
+    static let order = ["sales", "labor", "service", "food", "reviews", "intel", "marketing", "closeout"]
     static let titles: [String: String] = [
-        "sales": "Sales", "labor": "Labor", "food": "Food", "reviews": "Reviews",
+        "sales": "Sales", "labor": "Labor", "service": "The night in detail", "food": "Food", "reviews": "Reviews",
         "marketing": "Marketing", "intel": "Intel", "closeout": "Manager close-out",
     ]
 

@@ -30,6 +30,11 @@ struct FoodCostTrendChart: View {
     /// from stored weekly snapshots and the badge beside them is recomputed
     /// live, so without a date the two read as one moment when they may not be.
     var asOf: String?
+    /// The range it covers ("WASTE — LAST 13 WEEKS") and whether the
+    /// target line is drawn — the web card's range control and its
+    /// "Target line" toggle (parity audit #77).
+    var title: String = "WASTE \u{2014} LAST 8 WEEKS"
+    var showsTarget: Bool = true
 
     @State private var barsVisible = false
     @State private var selectedWeek: FoodCostTrendWeek?
@@ -128,7 +133,7 @@ struct FoodCostTrendChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("WASTE — LAST 8 WEEKS")
+                Text(title)
                     .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
@@ -182,7 +187,7 @@ struct FoodCostTrendChart: View {
                                 .background(Color.cavnarInk)
                                 .clipShape(Capsule())
                         }
-                    if let industryTargetDollar {
+                    if showsTarget, let industryTargetDollar {
                         // "Your target" — what VoiceOver reads for this
                         // line. It is the owner's target (or Cavnar's
                         // starting one), never an industry figure (#36).

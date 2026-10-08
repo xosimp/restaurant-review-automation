@@ -84,8 +84,14 @@ enum CommandMatch {
     }
 
     /// The places the sheet can always open, whether or not the registry
-    /// route exists yet on this server — every module in the nav grammar.
-    static let fallbackPlaces: [CommandEntry] = [
+    /// route exists yet on this server — every module in the nav grammar,
+    /// less last night's report where it is switched off (parity audit #64;
+    /// the server's registry already leaves it out).
+    static var fallbackPlaces: [CommandEntry] {
+        allFallbackPlaces.filter { $0.nav != "dsr" || DSRAvailability.isEnabled }
+    }
+
+    private static let allFallbackPlaces: [CommandEntry] = [
         CommandEntry(id: "nav:home", label: "Home", keywords: ["today", "brief"], kind: "nav", nav: "home"),
         CommandEntry(id: "nav:reviews", label: "Reviews", keywords: ["replies", "google", "stars"], kind: "nav", nav: "reviews"),
         CommandEntry(id: "nav:reviews-pending", label: "Replies to approve", keywords: ["approve", "drafted"],
