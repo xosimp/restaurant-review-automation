@@ -68,6 +68,10 @@ def _capture(monkeypatch):
     ("shift_request", {}, "labor/requests"),
     ("schedule_publish_held", {"schedule_id": 88}, "schedule/88"),
     ("schedule_drafted", {}, "labor/schedule"),
+    # A coverage push opens its issue (parity audit #11), not Labor's top.
+    ("coverage", {"issue_id": 7}, "issue/7"),
+    ("coverage", {}, "labor/schedule"),
+    ("issue", {"issue_id": 3}, "issue/3"),
     ("critical_low", {}, "inventory/order"),
     ("dsr", {"business_date": "2026-09-24"}, "dsr/night/2026-09-24"),
     ("dsr", {}, "dsr"),

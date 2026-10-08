@@ -152,6 +152,14 @@ enum SystemEntry {
         if let nav = items.first(where: { $0.name == "nav" })?.value, let path = NavPath(nav) {
             return .nav(path)
         }
+        // An email's "Ask about this →" (`/?ask=<question>`, morning_brief /
+        // rec_delivery): Ask with the question filled in — a link's question
+        // is never sent on its own (openFromLink), the owner sends it.
+        if let ask = items.first(where: { $0.name == "ask" })?.value,
+           !ask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let path = askPath(String(ask.prefix(300))) {
+            return .nav(path)
+        }
         if let review = items.first(where: { $0.name == "review" })?.value, let id = Int(review), id > 0 {
             return NavPath("review/\(id)").map { .nav($0) }
         }

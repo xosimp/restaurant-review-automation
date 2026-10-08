@@ -57,6 +57,35 @@ struct HomeResultsDisclosure<Content: View>: View {
     }
 }
 
+/// Runs `action` once, the first time the view comes within a screen's
+/// margin of the scroll view's visible area — Home's Results blocks read
+/// their four endpoints then, not at launch (parity audit #20). A Home
+/// VStack mounts every section at once, so `.onAppear` fires at launch;
+/// this reads the view's place against the scroll view's own bounds.
+private struct OnScrolledNear: ViewModifier {
+    let margin: CGFloat
+    let action: () -> Void
+    @State private var fired = false
+
+    func body(content: Content) -> some View {
+        content.onGeometryChange(for: Bool.self) { proxy in
+            // Outside a scroll view there is nothing to wait for.
+            guard let visible = proxy.bounds(of: .scrollView) else { return true }
+            return visible.insetBy(dx: 0, dy: -margin).intersects(CGRect(origin: .zero, size: proxy.size))
+        } action: { near in
+            guard near, !fired else { return }
+            fired = true
+            action()
+        }
+    }
+}
+
+extension View {
+    func onScrolledNear(margin: CGFloat = 320, perform action: @escaping () -> Void) -> some View {
+        modifier(OnScrolledNear(margin: margin, action: action))
+    }
+}
+
 /// The closed row's sentence, pure so the rule is pinned by tests. Only
 /// the measured figure is ever named — never an opportunity or an
 /// estimate (CLAUDE.md, value rule) — and "net" only when something

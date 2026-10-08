@@ -149,12 +149,14 @@ def test_the_nightly_pass_writes_a_point_for_every_restaurant_in_service(monkeyp
     monkeypatch.setattr(value_delivered, "compute_total_value_delivered",
                         lambda rid, db_path=None: {a: 300, b: -40}.get(rid, 0))
     out = value_delivered.run_value_snapshots()
+    # Internal accounts too (parity audit #20): this pass is the series' only
+    # writer now that Home's GET writes nothing, and it sends nothing.
     assert {k: out[k] for k in ("attempted", "ok", "failed", "hit_bound")} == \
-        {"attempted": 2, "ok": 2, "failed": 0, "hit_bound": False}
+        {"attempted": 3, "ok": 3, "failed": 0, "hit_bound": False}
     got = {r["restaurant_id"]: (r["snapshot_date"], r["total_value"])
            for r in _rows("SELECT * FROM value_snapshots")}
-    assert got == {a: ("2026-09-28", 300), b: ("2026-09-28", -40)}
-    assert gone not in got and ours not in got
+    assert got == {a: ("2026-09-28", 300), b: ("2026-09-28", -40), ours: ("2026-09-28", 0)}
+    assert gone not in got
 
 
 def test_the_nightly_pass_is_bounded_and_resumes_from_its_cursor(monkeypatch):

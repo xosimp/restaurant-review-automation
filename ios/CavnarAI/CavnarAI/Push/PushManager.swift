@@ -138,6 +138,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// Set by RootView: a push that arrives while the app is open re-reads
     /// the bell's count (parity audit #81).
     var onForegroundPush: (@MainActor () -> Void)?
+    /// An issue's lock-screen buttons (parity audit #11): ask the next
+    /// suggested cover, or mark it resolved — both in the background,
+    /// behind the phone's unlock.
+    nonisolated static let askCoverAction         = "CAVNAR_ASK_COVER"
+    nonisolated static let resolveIssueAction     = "CAVNAR_RESOLVE_ISSUE"
 
     /// The system prompt used to fire within seconds of the first login,
     /// before the owner had seen a single number. Asking on the second open
@@ -342,13 +347,23 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: briefCategory, actions: [ask],
                                    intentIdentifiers: [], options: []),
-            UNNotificationCategory(identifier: issueCategory, actions: [],
+            UNNotificationCategory(identifier: issueCategory, actions: Self.issueActions,
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: messageCategory, actions: [replyMessage],
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: lineupCategory, actions: [approveLineup, openLineup],
                                    intentIdentifiers: [], options: []),
         ]
+    }
+
+    /// The issue category's two buttons (parity audit #11). Neither opens
+    /// the app; both need the phone unlocked. "Ask someone to cover" texts
+    /// the issue's next suggested cover and then says who was asked.
+    nonisolated static var issueActions: [UNNotificationAction] {
+        [UNNotificationAction(identifier: askCoverAction, title: "Ask someone to cover",
+                              options: [.authenticationRequired]),
+         UNNotificationAction(identifier: resolveIssueAction, title: "Resolved",
+                              options: [.authenticationRequired])]
     }
 
     // MARK: - Acting from the notification (friction audit #22)
@@ -425,6 +440,9 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                 try c.encode(id, forKey: .loginUserId)
             }
         }
+        /// "Ask someone to cover" on this issue: the next suggested cover is
+        /// read first, and asked by name (the route needs the name).
+        var asksCoverForIssue: Int? = nil
     }
 
     /// What an Approve & post answer means for the owner who pressed it from
@@ -529,6 +547,14 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             return BackgroundAction(path: "\(base)/\(id)/decide", decision: approve ? "approve" : "deny",
                                     failureTitle: approve ? "Couldn't approve that request"
                                                           : "Couldn't deny that request")
+        case resolveIssueAction:
+            guard let id = reviewId(from: cavnar["issue_id"]) else { return nil }
+            return BackgroundAction(path: "/mobile/api/issues/\(id)/resolve", decision: nil,
+                                    failureTitle: "Couldn't resolve that issue")
+        case askCoverAction:
+            guard let id = reviewId(from: cavnar["issue_id"]) else { return nil }
+            return BackgroundAction(path: "/mobile/api/issues/\(id)/ask-cover", decision: nil,
+                                    failureTitle: "Couldn't ask anyone to cover", asksCoverForIssue: id)
         default:
             return nil
         }
@@ -613,6 +639,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         if let restaurantId, restaurantId > 0, active > 0, restaurantId != active {
             await postFailure(action.failureTitle,
                               "It's for another location — tap to open it there.", userInfo: userInfo)
+            return
+        }
+        if let issueId = action.asksCoverForIssue {
+            await performAskCover(issueId, action: action, token: token, userInfo: userInfo)
             return
         }
         do {
@@ -742,6 +772,55 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             await postFailure(title, error.message, userInfo: userInfo)
         } catch {
             await postFailure(title, "Tap to open the week and try again.", userInfo: userInfo)
+        }
+    }
+
+    private struct IssueListResponse: Decodable {
+        let ok: Bool
+        let issues: [HomeDayViewModel.Issue]?
+    }
+    private struct CoverBody: Encodable { let name: String }
+
+    /// "Ask someone to cover" from the lock screen: the issue is read as it
+    /// stands now, its next suggested cover nobody has asked yet is asked by
+    /// name (the same ask-cover route Home's button posts), and a
+    /// notification says who — an owner must know who was texted. Nobody
+    /// left to ask, or a refusal, says so and opens the issue on a tap.
+    nonisolated private static func performAskCover(_ issueId: Int, action: BackgroundAction, token: String,
+                                                    userInfo: [AnyHashable: Any]) async {
+        do {
+            var issue: HomeDayViewModel.Issue?
+            for status in ["open", "acknowledged"] where issue == nil {
+                let list: IssueListResponse = try await APIClient.shared.sendWithBearer(
+                    "/mobile/api/issues", query: ["status": status], bearer: token)
+                issue = list.issues?.first { $0.id == issueId }
+            }
+            guard let issue else {
+                await postFailure(action.failureTitle, "That issue isn\u{2019}t open any more.", userInfo: userInfo)
+                return
+            }
+            guard let name = issue.nextCoverToAsk else {
+                // The category is every issue's (push._ISSUE_TYPES); only a
+                // shift to cover has anyone to ask.
+                let why = (issue.kind == "coverage" || issue.kind == "no_show")
+                    ? "Everyone suggested has been asked \u{2014} tap to open the issue."
+                    : "This issue isn\u{2019}t a shift to cover \u{2014} tap to open it."
+                await postFailure("Nobody to ask", why, userInfo: userInfo)
+                return
+            }
+            let r: APIClient.OKResponse = try await APIClient.shared.sendWithBearer(
+                action.path, method: .post, body: CoverBody(name: name), bearer: token)
+            if r.ok {
+                // Not a failure: the same local notification, saying who.
+                await postFailure("\(name) has been asked to cover",
+                                  "Cavnar AI texted them. Tap to open the issue.", userInfo: userInfo)
+            } else {
+                await postFailure(action.failureTitle, r.error ?? "Tap to open it.", userInfo: userInfo)
+            }
+        } catch let error as APIClient.APIError {
+            await postFailure(action.failureTitle, error.message, userInfo: userInfo)
+        } catch {
+            await postFailure(action.failureTitle, "Tap to open it and try again.", userInfo: userInfo)
         }
     }
 

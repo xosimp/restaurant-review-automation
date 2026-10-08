@@ -442,19 +442,27 @@ def _location_signal(conn, r, now):
 
 # ── the brief ────────────────────────────────────────────────────────────────
 
-def build_home_brief(current_user, fresh=False, present=True):
+def build_home_brief(current_user, fresh=False, present=True, reads=None):
     """Home's payload for this login. `present=False` builds it for a
     screen that does not render Home — Ask's opening fallback — and records
     nothing: what the owner has answered is still left out, but no card is
     logged as shown (re-audit C5 / K5). Such a build is never cached, so
-    the next real Home load still presents what it shows."""
+    the next real Home load still presents what it shows.
+
+    `reads` carries analyses the caller already ran on this request —
+    {"labor": analyse_shifts_for_restaurant(...) or None, "inventory":
+    analysis_for(...)'s (items, is_live, analysis)} — so /mobile/api/home,
+    whose module tiles run both, does not run them twice (parity audit #20).
+    A key that is absent is computed here as before."""
     rid = current_user["restaurant_id"]
     key = (rid, current_user.get("id"))
     if not fresh:
         hit = _CACHE.get(key)
         if hit and (datetime.now(timezone.utc) - hit[0]).total_seconds() < _CACHE_TTL:
             return hit[1], 200
-    payload, status = _build(current_user) if present else _build(current_user, present=False)
+    kw = {"reads": reads} if reads else {}
+    payload, status = (_build(current_user, **kw) if present
+                       else _build(current_user, present=False, **kw))
     if status == 200 and present:
         _cache_put(key, payload)
     return payload, status
@@ -1143,7 +1151,7 @@ def comparison_changes(events, active_keys) -> list:
     return out
 
 
-def _build(current_user, present=True):
+def _build(current_user, present=True, reads=None):
     from models import get_review_stats, get_active_modules, get_sentiment_trend, get_top_issues, get_labor_history, is_in_quiet_hours
     from time_utils import restaurant_now
     import mobile_api as _mob
@@ -1204,8 +1212,12 @@ def _build(current_user, present=True):
     # The client_data row carries the whole shifts CSV. Read once here and
     # handed to Labor and Food Cost, which each read it for themselves —
     # three reads of a year of shifts on every cold Home build (MOD-HOME-2).
+    # Analyses the caller already ran on this request (`reads`, parity audit
+    # #20) are used as they are; only what is missing is run here.
+    reads = reads or {}
     stored = None
-    if "labor" in active_keys or "inventory" in active_keys:
+    if ("labor" in active_keys and "labor" not in reads) \
+            or ("inventory" in active_keys and "inventory" not in reads):
         from models import get_client_data as _get_client_data
         try:
             stored = _get_client_data(rid)
@@ -1214,7 +1226,10 @@ def _build(current_user, present=True):
 
     # ── labor ───────────────────────────────────────────────────────────────
     labor, labor_live = None, False
-    if "labor" in active_keys:
+    if "labor" in active_keys and "labor" in reads:
+        labor = reads["labor"]
+        labor_live = bool((labor or {}).get("is_live"))
+    elif "labor" in active_keys:
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(rid, client_data=stored)
@@ -1236,8 +1251,11 @@ def _build(current_user, present=True):
     inv, inv_live = {}, False
     if "inventory" in active_keys:
         try:
-            from inventory import analysis_for
-            items, inv_live, inv = analysis_for(rid, client_data=stored)
+            if "inventory" in reads:
+                items, inv_live, inv = reads["inventory"]
+            else:
+                from inventory import analysis_for
+                items, inv_live, inv = analysis_for(rid, client_data=stored)
             inv = inv if items else {}
         except Exception:
             inv = {}
@@ -2388,9 +2406,10 @@ def _build(current_user, present=True):
     checklist = _mob._setup_checklist(restaurant, rstats, labor, active_keys)
     # The headline as THIS viewer may see it, a monthly run-rate of what was
     # measured, with where it came from (H-8). A filtered figure is not the
-    # restaurant's, so it is neither snapshotted nor drawn against the
-    # restaurant-wide history.
-    from value_delivered import headline as _value_headline, record_value_snapshot, get_value_history, home_block
+    # restaurant's, so it is not drawn against the restaurant-wide history.
+    # The history itself is written by the 6am value_snapshots job, never
+    # by a page load (parity audit #20: every Home GET wrote a row).
+    from value_delivered import headline as _value_headline, get_value_history, home_block
     try:
         _vh = _value_headline(rid, user=current_user)
     except Exception as e:
@@ -2398,12 +2417,6 @@ def _build(current_user, present=True):
         _vh = {"monthly": 0, "by_module": [], "label": "measured, per month", "restaurant_wide": False}
     total_value = _vh["monthly"]
     if _vh.get("restaurant_wide"):
-        try:
-            # The day's point is the NET figure (re-audit A29): a history of
-            # improvements alone rose while things got worse.
-            record_value_snapshot(rid, _vh.get("net_monthly", total_value))
-        except Exception as e:
-            print(f"[home] value snapshot failed for {rid}: {e}")
         value_history = get_value_history(rid, days=365)
     else:
         value_history = []

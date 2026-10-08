@@ -243,6 +243,15 @@ struct AskProposal: Decodable, Identifiable, Hashable {
     struct Route: Decodable, Hashable {
         let mobile: String
         let method: String
+        /// Where a job the route starts is polled to its end (a schedule
+        /// build, a competitor refresh): `mobile` + the job id. Nil for a
+        /// route that finishes in its own request, and from an older server.
+        var status: Status? = nil
+
+        struct Status: Decodable, Hashable {
+            var web: String? = nil
+            var mobile: String? = nil
+        }
     }
 
     struct Detail: Decodable, Hashable {
@@ -327,6 +336,89 @@ indirect enum AnyCodableValue: Decodable, Hashable, Encodable {
         case .array(let v):  try c.encode(v)
         case .object(let v): try c.encode(v)
         }
+    }
+}
+
+/// The publish gate's answer (409 `needs_ack`): `blockers` arrives as
+/// strings or as `{key, text}` objects, `blocker_keys` beside them on some
+/// routes — the web's `cavBlockers`. Pure, so the shapes are pinned by tests.
+enum AskBlockers {
+    struct Gate: Decodable {
+        let error: String?
+        let needsAck: Bool
+        let texts: [String]
+        /// The keys to acknowledge, one per text — nil when the server sent
+        /// none, and the acknowledgement is then `true` (re-audit F2-9).
+        let keys: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case error, blockers
+            case needsAck = "needs_ack"
+            case blockerKeys = "blocker_keys"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+            needsAck = ((try? c.decodeIfPresent(Bool.self, forKey: .needsAck)) ?? nil) ?? false
+            let raw = (try? c.decodeIfPresent([AnyCodableValue].self, forKey: .blockers)) ?? nil
+            texts = AskBlockers.texts(raw)
+            let ownKeys = AskBlockers.keys(raw)
+            let sent = ((try? c.decodeIfPresent([AnyCodableValue].self, forKey: .blockerKeys)) ?? nil)?
+                .compactMap(AskBlockers.scalar) ?? []
+            if let ownKeys, ownKeys.count == texts.count, !ownKeys.isEmpty {
+                keys = ownKeys
+            } else if !sent.isEmpty, sent.count == texts.count {
+                keys = sent
+            } else {
+                keys = nil
+            }
+        }
+
+        /// The value posted back as `acknowledge`: the keys shown, or true.
+        var acknowledgement: AnyCodableValue {
+            keys.map { .array($0.map { .string($0) }) } ?? .bool(true)
+        }
+    }
+
+    static func texts(_ raw: [AnyCodableValue]?) -> [String] {
+        (raw ?? []).compactMap { v -> String? in
+            switch v {
+            case .string(let s): return s.isEmpty ? nil : s
+            case .object(let o):
+                if case .string(let s)? = o["text"], !s.isEmpty { return s }
+                return nil
+            default: return nil
+            }
+        }
+    }
+
+    /// Each object blocker's own key; nil when any blocker carries none.
+    static func keys(_ raw: [AnyCodableValue]?) -> [String]? {
+        var out: [String] = []
+        for v in raw ?? [] {
+            guard case .object(let o) = v, let k = o["key"].flatMap(scalar) else { return nil }
+            out.append(k)
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    static func scalar(_ v: AnyCodableValue) -> String? {
+        switch v {
+        case .string(let s): return s
+        case .int(let i): return String(i)
+        case .double(let d): return String(d)
+        default: return nil
+        }
+    }
+
+    /// The card's sentence for a gate it may not pass itself — acknowledging
+    /// is the schedule's own step, never the confirm card's (the web's
+    /// `_runAskCavnarProposal`).
+    static func cardLine(error: String?, blockers: [String]) -> String {
+        let lead = error ?? "This week has things to look at first."
+        guard !blockers.isEmpty else { return lead }
+        return lead + " " + blockers.joined(separator: " \u{00B7} ") + " \u{2014} open the week to send it knowingly."
     }
 }
 
@@ -512,31 +604,52 @@ final class AskCavnarViewModel {
     /// A confirmed action's response. Most routes do the work inline and
     /// just answer ok; schedule generation hands back a job id and
     /// finishes on a background thread (see confirm()).
-    private struct JobOrOK: Decodable {
+    struct JobOrOK: Decodable {
         let ok: Bool
         let error: String?
         let jobId: String?
         /// POST /goals from a teammate: the goal waits for the owner
         /// (memory round 9/29/26, M2 — goal.proposed).
         var proposed: Bool? = nil
+        /// The server recorded the confirm on this same request (the
+        /// X-Cavnar-Proposal header, command_center.settle_confirmed), so no
+        /// second request is sent (re-audit F1-9, parity audit #4).
+        var proposalSettled: Bool? = nil
+        /// What the route flags beside its ok — time off approved over a
+        /// published week names who is still on it (F2-5).
+        var warning: String? = nil
+        /// The publish gate: what stopped the send, by name.
+        var needsAck: Bool? = nil
+        var blockers: [String] = []
 
         enum CodingKeys: String, CodingKey {
-            case ok, error, proposed
+            case ok, error, proposed, warning, blockers
             case jobId = "job_id"
+            case proposalSettled = "proposal_settled"
+            case needsAck = "needs_ack"
         }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
             error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
-            jobId = (try? c.decodeIfPresent(String.self, forKey: .jobId)) ?? nil
+            // A job id is a string today; read a number as one too.
+            jobId = ((try? c.decodeIfPresent(String.self, forKey: .jobId)) ?? nil)
+                ?? ((try? c.decodeIfPresent(Int.self, forKey: .jobId)) ?? nil).map(String.init)
             proposed = (try? c.decodeIfPresent(Bool.self, forKey: .proposed)) ?? nil
+            proposalSettled = (try? c.decodeIfPresent(Bool.self, forKey: .proposalSettled)) ?? nil
+            warning = (try? c.decodeIfPresent(String.self, forKey: .warning)) ?? nil
+            needsAck = (try? c.decodeIfPresent(Bool.self, forKey: .needsAck)) ?? nil
+            blockers = AskBlockers.texts((try? c.decodeIfPresent([AnyCodableValue].self, forKey: .blockers)) ?? nil)
         }
     }
 
     /// What a confirmed card did beyond "Done", when the route says so —
     /// "Sent to the owner to confirm" for a teammate's goal. Nil otherwise.
     private(set) var lastConfirmNote: String?
+    /// The route's own warning beside its ok, shown on the card under Done
+    /// (the web's `d.warning`, parity audit #4). Nil otherwise.
+    private(set) var lastConfirmWarning: String?
 
     /// The line a goal a teammate set earns: it waits for an account holder.
     static let proposedGoalNote = "Sent to the owner to confirm"
@@ -737,29 +850,53 @@ final class AskCavnarViewModel {
     func confirm(_ proposal: AskProposal) async -> Bool {
         lastConfirmMayHaveRun = false
         lastConfirmNote = nil
+        lastConfirmWarning = nil
         do {
+            // The action request names its proposal (and chat), so the
+            // server records the confirm in the SAME request when the route
+            // says ok — the web card's headers (re-audit F1-9, parity #4). A
+            // lost second request used to leave it "never confirmed", open to
+            // a second Confirm from Still open.
+            let headers = Self.confirmHeaders(proposalId: proposal.proposalId, conversationId: conversationId)
             let response: JobOrOK
             if proposal.route.method == "GET" {
-                response = try await client.send(proposal.route.mobile)
+                response = try await client.sendWithHeaders(proposal.route.mobile, method: .get, headers: headers)
             } else {
-                response = try await client.send(proposal.route.mobile, method: .post,
-                                                 body: proposal.postedBody)
+                response = try await client.sendWithHeaders(proposal.route.mobile, method: .post,
+                                                            body: proposal.postedBody, headers: headers)
             }
             guard response.ok else {
-                errorBanner = response.error ?? "That didn't go through — nothing was sent."
+                errorBanner = response.needsAck == true
+                    ? AskBlockers.cardLine(error: response.error, blockers: response.blockers)
+                    : (response.error ?? "That didn't go through — nothing was sent.")
                 return false
             }
-            // Schedule generation answers immediately with a job id and
-            // does the actual work on a background thread. Taking that
-            // first ok at face value meant the card said "Done" while the
-            // schedule was still being built — and stayed saying it even
-            // if the job then failed. Wait for the real outcome.
-            if let jobId = response.jobId, !(await scheduleJobSucceeded(jobId)) {
-                errorBanner = "The schedule didn't finish building. Open Labor to see where it stopped."
-                return false
+            // A route that only STARTED a job (a schedule build, a competitor
+            // refresh) answers at once with its id. Done means the job
+            // finished: polled at the route's own status address — the
+            // schedule poll used to run for any job, so "refresh competitors"
+            // reported "the schedule didn't finish" (parity audit #4).
+            if let jobId = response.jobId, let statusPath = Self.statusPath(for: proposal) {
+                switch await pollJob(statusPath + Self.pathComponent(jobId)) {
+                case .done:
+                    break
+                case .failed(let reason):
+                    errorBanner = reason ?? "That didn't finish. Open the module to see where it stopped."
+                    return false
+                case .stillRunning:
+                    lastConfirmMayHaveRun = true
+                    errorBanner = "This is still running. Check back in a minute before asking again."
+                    return false
+                }
             }
             if response.proposed == true { lastConfirmNote = Self.proposedGoalNote }
-            await record(proposal, outcome: "confirmed")
+            lastConfirmWarning = response.warning
+            if response.proposalSettled == true {
+                // Recorded already; only the transcript line is mirrored.
+                appendOutcomeLine(proposal, outcome: "confirmed", reason: nil)
+            } else {
+                await record(proposal, outcome: "confirmed")
+            }
             return true
         } catch is CancellationError {
             return false
@@ -771,7 +908,13 @@ final class AskCavnarViewModel {
             return false
         } catch let error as APIClient.APIError {
             // The server said no (its own reason), or the request never left.
-            errorBanner = error.message
+            // The publish gate names what stopped it; acknowledging is the
+            // schedule's own step, never this card's.
+            if let gate = error.decodeBody(AskBlockers.Gate.self), gate.needsAck {
+                errorBanner = AskBlockers.cardLine(error: gate.error ?? error.message, blockers: gate.texts)
+            } else {
+                errorBanner = error.message
+            }
             return false
         } catch {
             errorBanner = error.localizedDescription
@@ -779,24 +922,53 @@ final class AskCavnarViewModel {
         }
     }
 
+    /// The headers a confirm carries: the proposal it settles and the chat
+    /// it belongs to, each only when known.
+    static func confirmHeaders(proposalId: Int?, conversationId: Int?) -> [String: String] {
+        var h: [String: String] = [:]
+        if let p = proposalId, p > 0 { h["X-Cavnar-Proposal"] = String(p) }
+        if let c = conversationId, c > 0 { h["X-Cavnar-Conversation"] = String(c) }
+        return h
+    }
+
+    /// Where a started job is polled: the route's own `status.mobile`; for
+    /// an older server that sends none, the schedule build's address for
+    /// the schedule tool only — never for any other job.
+    static func statusPath(for proposal: AskProposal) -> String? {
+        if let s = proposal.route.status?.mobile, !s.isEmpty { return s }
+        if proposal.action == "generate_schedule" { return "/mobile/api/labor/schedule-status/" }
+        return nil
+    }
+
+    private static func pathComponent(_ id: String) -> String {
+        id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? id
+    }
+
     /// Set by confirm() when its request timed out or dropped mid-flight —
     /// the action may have run even though no answer arrived.
     private(set) var lastConfirmMayHaveRun = false
 
-    /// Polls the async schedule job to its real conclusion. Generation
-    /// takes a little while (it's a live model call over the roster), so
-    /// this allows a generous window before giving up rather than
-    /// reporting a failure the owner would have to guess at.
-    private func scheduleJobSucceeded(_ jobId: String) async -> Bool {
+    enum JobOutcome: Equatable { case done, failed(String?), stillRunning }
+
+    /// Polls a started job to its real conclusion: the web's budget, 40
+    /// polls 1.5s apart. A failed poll is not a failed job — only a finished
+    /// answer decides it.
+    private func pollJob(_ path: String) async -> JobOutcome {
         for _ in 0..<40 {
             try? await Task.sleep(for: .seconds(1.5))
-            guard let status: JobStatus = try? await client.send(
-                "/mobile/api/labor/schedule-status/\(jobId)", hapticOnError: false)
-            else { continue }
-            if status.status == "pending" { continue }
-            return status.ok && status.status != "error"
+            if Task.isCancelled { return .stillRunning }
+            guard let status: JobStatus = try? await client.send(path, hapticOnError: false) else { continue }
+            if let outcome = Self.jobOutcome(ok: status.ok, status: status.status, error: status.error) {
+                return outcome
+            }
         }
-        return false
+        return .stillRunning
+    }
+
+    /// One poll's answer: nil while it is still pending (or said nothing).
+    static func jobOutcome(ok: Bool, status: String?, error: String?) -> JobOutcome? {
+        guard let status, status != "pending" else { return nil }
+        return (ok && status != "error") ? .done : .failed(error)
     }
 
     /// "Not now", with the owner's one-tap reason — Ask reads it before
@@ -818,10 +990,14 @@ final class AskCavnarViewModel {
                                     summary: proposal.summary, conversation_id: conversationId,
                                     proposal_id: proposal.proposalId, reason: cleanReason,
                                     reason_code: outcome == "dismissed" ? reasonCode : nil))
-        // The status line the backend just wrote — mirrored locally so the
-        // transcript on screen matches what a reopen would show.
+        appendOutcomeLine(proposal, outcome: outcome, reason: cleanReason)
+    }
+
+    /// The status line the backend wrote — mirrored locally so the
+    /// transcript on screen matches what a reopen would show.
+    private func appendOutcomeLine(_ proposal: AskProposal, outcome: String, reason: String?) {
         let verb = outcome == "confirmed" ? "Confirmed" : "Dismissed"
-        let tail = cleanReason.map { " — \($0)" } ?? ""
+        let tail = reason.map { " — \($0)" } ?? ""
         messages.append(ChatMessage(text: "[\(verb): \(proposal.summary)\(tail)]", isUser: true, hasRevealed: true))
     }
 

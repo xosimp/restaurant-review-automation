@@ -673,11 +673,11 @@ def record_value_snapshot(restaurant_id: int, total_value: int, db_path: str = D
     """Upserts the day's total — the NET monthly figure (headline's
     net_monthly, re-audit A29) — dated on the restaurant's local day.
 
-    Written by the nightly pass (run_value_snapshots) for every restaurant
-    in service, and again by the Home endpoints when a restaurant-wide
-    headline is in hand (the same day's point, updated to the newest
-    figure). It was written ONLY from Home, so the series had holes on
-    exactly the days nobody looked (memory audit 9/29/26, "value_nightly").
+    Written only by the 6am pass (run_value_snapshots), for every restaurant
+    whose logins can open Home. It was written ONLY from Home, so the series
+    had holes on exactly the days nobody looked (memory audit 9/29/26,
+    "value_nightly"); then by both, so every Home GET wrote a row (parity
+    audit #20) — the pass alone writes it now.
     Kept forever: value_snapshots is in no retention registry."""
     conn = models.get_conn(db_path)
     try:
@@ -725,8 +725,13 @@ def run_value_snapshots(db_path: str = None, max_seconds=None) -> dict:
     db_path = db_path or models.DB_PATH
     conn = models.get_conn(db_path)
     try:
+        # Every restaurant in service, internal ones included: this pass is
+        # the only writer of the series now (Home's GET wrote a point for
+        # any restaurant whose login opened it, internal accounts too —
+        # parity audit #20), and it sends nothing, so there is nothing for
+        # the `internal` exclusion that sending jobs need to protect.
         ids = [r["id"] for r in conn.execute(
-            "SELECT id FROM restaurants WHERE " + scheduler._served_client_sql() + " ORDER BY id").fetchall()]
+            "SELECT id FROM restaurants WHERE " + models.in_service_sql() + " ORDER BY id").fetchall()]
     finally:
         conn.close()
     counts = {"ok": 0, "failed": 0}

@@ -3463,6 +3463,19 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-goal .bar{height:6px;border-radius:999px;background:var(--hb-line2);margin-top:8px;overflow:hidden}
 .hb-goal .bar i{display:block;height:100%;border-radius:999px;background:var(--ember);width:0;transition:width .9s cubic-bezier(.2,.9,.3,1)}
 .hb-goal.good .bar i{background:var(--hb-good)}.hb-goal.critical .bar i{background:var(--hb-bad)}
+/* Restaurant DNA in Results (parity audit #98): one row per dimension -
+   the figure, the weeks behind it as a sparkline, the move against four
+   weeks ago, how it was measured or what would measure it. */
+.hb-dna-fam{margin-top:18px}
+.hb-dna-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 14px;padding:11px 0;border-top:1px solid var(--hb-line2)}
+.hb-dna-fam .hb-h3+.hb-dna-row{border-top:none}
+.hb-dna-row .l{font-size:15px;font-weight:600;color:var(--ink);line-height:1.4;min-width:0}
+.hb-dna-row .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink);text-align:right;white-space:nowrap}
+.hb-dna-row .v.none{color:var(--ink3)}
+.hb-dna-row .s{grid-column:1/-1;font-size:13px;color:var(--ink3);line-height:1.45}
+.hb-dna-row .s.good{color:var(--hb-good)}.hb-dna-row .s.bad{color:var(--hb-bad)}
+.hb-dna-row svg{grid-column:1/-1;width:100%;height:44px;display:block;overflow:visible}
+.hb-dna-row .ends{grid-column:1/-1;display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink3)}
 /* checklist */
 .hb-chk{display:flex;align-items:flex-start;gap:12px;padding:11px 0;border-top:1px solid var(--hb-line2)}
 .hb-chk:first-of-type{border-top:none}
@@ -5524,10 +5537,14 @@ svg:hover .hb-xh{opacity:1}
     // each lives here (density fix #20).
     h+=renderSignals(d);
     h+='<section id="hb-follow" aria-label="Follow-through"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:34%;height:11px;margin-bottom:14px"></div><div class="hb-skel" style="width:84%"></div><div class="hb-skel" style="width:62%;margin-top:9px"></div><div class="hb-skel" style="width:71%;margin-top:9px"></div></div></section>';
+    // Restaurant DNA (parity audit #98) - read the first time Results opens.
+    h+='<section id="hb-dna" aria-label="Restaurant DNA"></section>';
     h+='</details>';
     body.innerHTML='<div class="hb-fade">'+h+'</div>';
     var rs=document.getElementById('hb-results');
-    if(rs)rs.addEventListener('toggle',function(){try{localStorage.setItem('cavnar_hb_results',rs.open?'1':'0');}catch(e){}});
+    _hbDnaLoaded=false;
+    if(rs&&rs.open)hbDnaLoad();
+    if(rs)rs.addEventListener('toggle',function(){try{localStorage.setItem('cavnar_hb_results',rs.open?'1':'0');}catch(e){}if(rs.open)hbDnaLoad();});
     if(document.getElementById('hb-hero'))renderHero(d);
     if(window.cavBench)window.cavBench.strip(document.getElementById('hb-bench'));
     hbReveal();hbLiveStart();
@@ -5593,6 +5610,61 @@ svg:hover .hb-xh{opacity:1}
     if(pr.length){h+='<div class="hb-h3" style="margin-top:16px"><span>Worth your time next month</span></div><div class="hb-ledger">';for(var k=0;k<Math.min(pr.length,3);k++){var p=pr[k];var amt=p.is_range?('$'+num2(p.monthly_low)+'–$'+num2(p.monthly_high)+'/mo'):(p.monthly?'$'+num2(p.monthly)+'/mo':'');h+='<span>'+num(p.label+(amt?' · '+amt:''))+'</span>';}h+='</div>';}
     h+='<div class="ft" style="margin-top:14px"><button type="button" class="cbtn cbtn-text cbtn-inline" data-print="hb-month" title="Print this month, or save it as a PDF from the print dialog">Print</button><span class="hb-ft-sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(mr.ask||('Walk me through '+r.month))+'">Ask about this month →</button></div>';
     return h+'</section></div>';
+  }
+  // ── Restaurant DNA (parity audit #98) ─────────────────────────────────────
+  // The restaurant's own operating profile (GET /api/dna, intelligence/dna):
+  // each dimension's figure, its weeks as a sparkline, its move against four
+  // weeks ago and how it was measured. Below its floor a dimension is a dash
+  // with what would measure it - never 0. Own figures only: no other
+  // restaurant's number, no z-score, no personality label. Read when Results
+  // opens, not on every Home load.
+  var _hbDnaLoaded=false;
+  function hbIsoMonday(wk){
+    var m=/^(\d{4})-W(\d{1,2})$/.exec(String(wk||''));if(!m)return '';
+    var j4=new Date(Date.UTC(+m[1],0,4)),dw=j4.getUTCDay()||7;
+    var mon=new Date(j4.getTime()+(((+m[2])-1)*7-(dw-1))*86400000);
+    var mm=mon.getUTCMonth()+1,dd=mon.getUTCDate();
+    return mdy(mon.getUTCFullYear()+'-'+(mm<10?'0':'')+mm+'-'+(dd<10?'0':'')+dd);
+  }
+  function hbDnaSpark(pts,tone,label){
+    if(!pts||pts.length<2)return '';
+    var lo=Infinity,hi=-Infinity,i,v;
+    for(i=0;i<pts.length;i++){v=+pts[i].value;if(v<lo)lo=v;if(v>hi)hi=v;}
+    var pad=(hi-lo)*0.2||Math.abs(hi)*0.02||1,top=hi+pad,bot=lo-pad,xy=[];
+    for(i=0;i<pts.length;i++)xy.push((i*300/(pts.length-1)).toFixed(1)+','+(40-((+pts[i].value-bot)/(top-bot))*36).toFixed(1));
+    var c=tone==='good'?'var(--hb-good)':(tone==='bad'?'var(--hb-bad)':'var(--ember2)');
+    var last=xy[xy.length-1].split(',');
+    return '<svg viewBox="0 0 300 44" preserveAspectRatio="none" role="img" aria-label="'+esc(label+' over '+pts.length+' weeks')+'">'
+      +'<polyline fill="none" vector-effect="non-scaling-stroke" style="stroke:'+c+';stroke-width:2;stroke-linecap:round;stroke-linejoin:round" points="'+xy.join(' ')+'"/>'
+      +'<circle cx="'+last[0]+'" cy="'+last[1]+'" r="3" style="fill:'+c+'"/></svg>';
+  }
+  function renderDna(d){
+    var p=d&&d.ok?d.profile:null;if(!p)return '';
+    var h='<section class="hb-card quiet hb-rise" style="margin-top:34px" aria-label="Restaurant DNA"><div class="hb-h3"><span class="hb-kicker">Restaurant DNA</span>'
+      +(p.available&&p.of?'<span class="cnt">'+num(p.measured+' of '+p.of+' measured')+'</span>':'')+'</div>';
+    if(!p.available)return h+'<div class="hb-empty">'+esc(p.why_not||'Your profile builds with the nightly pass — check back tomorrow.')+'</div></section>';
+    h+='<div class="hb-empty" style="padding-top:0">'+num('How this restaurant runs, measured from its own data'+(p.as_of?' · as of '+p.as_of:''))+'</div>';
+    var fams=p.families||[],i,j;
+    for(i=0;i<fams.length;i++){var f=fams[i],ds=f.dimensions||[];if(!ds.length)continue;
+      h+='<div class="hb-dna-fam"><div class="hb-h3"><span>'+esc(f.label)+'</span></div>';
+      for(j=0;j<ds.length;j++){var x=ds[j],dir=(x.trend&&x.trend.direction)||'',tone='';
+        if(x.measured&&x.better&&(dir==='up'||dir==='down'))tone=((dir==='up')===(x.better==='higher'))?'good':'bad';
+        h+='<div class="hb-dna-row"><div class="l">'+esc(x.label)+'</div><div class="v'+(x.measured?'':' none')+'">'+esc(x.measured?(x.display||'—'):'—')+'</div>';
+        var hs=x.history||[];
+        if(x.measured&&hs.length>=2){h+=hbDnaSpark(hs,tone,x.label);var a=hbIsoMonday(hs[0].week),b=hbIsoMonday(hs[hs.length-1].week);
+          if(a&&b)h+='<div class="ends"><span class="hb-num">'+a+'</span><span class="hb-num">'+b+'</span></div>';}
+        if(x.measured&&dir)h+='<div class="s '+tone+'">'+num(dir==='steady'?'Steady against four weeks ago':((dir==='up'?'Up':'Down')+' from '+((x.trend&&x.trend.previous_display)||'before')+' four weeks ago'))+'</div>';
+        if(!x.measured)h+='<div class="s">'+num(x.dormant?('Not measurable on Cavnar AI yet — needs '+(x.needs||'a source')):('Needs '+(x.needs||'more data')))+'</div>';
+        else if(x.basis)h+='<div class="s">'+num(x.basis)+'</div>';
+        h+='</div>';}
+      h+='</div>';}
+    if(p.note)h+='<div class="hb-empty" style="font-size:12px">'+esc(p.note)+'</div>';
+    return h+'</section>';
+  }
+  function hbDnaLoad(){
+    var el=document.getElementById('hb-dna');if(!el||_hbDnaLoaded)return;_hbDnaLoaded=true;
+    fetch('/api/dna',{credentials:'same-origin'}).then(apiJson).then(function(d){el.innerHTML=renderDna(d);hbReveal();})
+      .catch(function(){_hbDnaLoaded=false;});
   }
   // ── comps, voids and refunds ──────────────────────────────────────────────
   // loss_detection has measured these against an 8-week baseline since it

@@ -25,6 +25,26 @@ struct LocationSwitcherView: View {
                 // side-by-side table stays on the web's group Home.
                 if let g = viewModel.group {
                     Section {
+                        // The whole group Home, card by card (parity #32).
+                        NavigationLink {
+                            LocationGroupHomeView(viewModel: viewModel, onSwitched: onSwitched,
+                                                  close: { dismiss() })
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "square.grid.2x2")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("All locations, side by side")
+                                        .font(.cavnarBody(15, weight: 700))
+                                        .foregroundStyle(Color.cavnarInk)
+                                    Text("Last night, labor, reviews, food cost")
+                                        .font(.cavnarBody(12.5, weight: 500))
+                                        .foregroundStyle(Color.cavnarInk3)
+                                }
+                            }
+                            .frame(minHeight: 44)
+                        }
                         groupSummary(g)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
@@ -179,6 +199,18 @@ struct LocationSwitcherView: View {
                     }
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            // The rest are on the all-locations screen, every one of them.
+            if g.attention.count > 5 {
+                NavigationLink {
+                    LocationGroupHomeView(viewModel: viewModel, onSwitched: onSwitched, close: { dismiss() })
+                } label: {
+                    Text("+\(g.attention.count - 5) more")
+                        .font(.cavnarBody(13, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 44, alignment: .leading)
                 }
                 .buttonStyle(.plain)
             }

@@ -1252,6 +1252,39 @@ def _row_at_least_weeks_before(restaurant_id, week, weeks, db_path):
     return {"week": r["week"], "dims": json.loads(r["dims_json"] or "{}")} if r else None
 
 
+HISTORY_WEEKS = 12          # profile(): the weekly series behind each numeric dimension
+
+
+def _history(restaurant_id, weeks, db_path):
+    """{dim: [{"week", "value"}, …]} oldest first — this restaurant's OWN
+    stored weeks (at most `weeks`), numeric dimensions only and only the
+    weeks that measured them. Never another restaurant's row; the values are
+    the same ratios and bands the stored rows already passed
+    privacy.assert_anonymous with (Restaurant DNA screen, parity audit #98)."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT week, dims_json FROM intel_dna WHERE restaurant_id=? "
+                            "ORDER BY week DESC LIMIT ?", (restaurant_id, int(weeks))).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in reversed(rows):
+        try:
+            dims = json.loads(r["dims_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        for dim, e in dims.items():
+            meta = DIMENSIONS.get(dim) or {}
+            raw = (e or {}).get("raw") if isinstance(e, dict) else None
+            if meta.get("kind", "numeric") != "numeric" or raw is None:
+                continue
+            try:
+                out.setdefault(dim, []).append({"week": r["week"], "value": float(raw)})
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
     """The restaurant's OWN profile: every dimension with its label, value,
     change against TREND_WEEKS ago, how it was measured, and for an
@@ -1264,6 +1297,7 @@ def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
         return {"available": False, "why_not": "Your profile builds with the nightly pass — check back tomorrow.",
                 "families": []}
     prev = _row_at_least_weeks_before(restaurant_id, row["week"], TREND_WEEKS, db_path) or {"dims": {}, "week": None}
+    series = _history(restaurant_id, HISTORY_WEEKS, db_path)
     fams = []
     measured = total = 0
     for fam, fam_label in FAMILIES:
@@ -1297,6 +1331,10 @@ def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
                 except (TypeError, ValueError):
                     trend = None
             item["trend"] = trend
+            # The weeks behind the figure, for the DNA screen's per-dimension
+            # chart (parity audit #98): a measured numeric dimension only —
+            # an unmeasured one has no series, never a line of zeros.
+            item["history"] = series.get(dim, []) if (raw is not None and meta["kind"] == "numeric") else []
             if meta["buildable"]:
                 total += 1
                 measured += 1 if raw is not None else 0

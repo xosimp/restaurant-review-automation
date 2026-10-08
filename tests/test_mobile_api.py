@@ -790,7 +790,9 @@ def _local_today(rid):
     return restaurant_now_by_id(rid).date().isoformat()
 
 
-def test_home_includes_total_value_delivered_and_records_a_snapshot(client, db_path):
+def test_home_includes_total_value_delivered_and_writes_nothing(client, db_path):
+    """The figure and its history ride the payload; the day's point is the
+    6am value_snapshots job's to write, never a GET's (parity audit #20)."""
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     resp = client.get("/mobile/api/home", headers=_auth_headers(token))
@@ -803,8 +805,7 @@ def test_home_includes_total_value_delivered_and_records_a_snapshot(client, db_p
         "SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = ?", (rid, _local_today(rid))
     ).fetchone()
     conn.close()
-    assert row is not None
-    assert row["total_value"] == data["total_value_delivered"]
+    assert row is None
 
 
 def test_home_carries_the_k4_value_object(client, db_path):
@@ -829,6 +830,10 @@ def test_home_carries_the_k4_value_object(client, db_path):
     assert {"net_monthly", "worsened", "cumulative", "unpriced_wins", "total"} <= set(v)
     assert v["total"] == data["total_value_delivered"] == 400
     assert v["net_monthly"] == 250 and v["worsened"]["count"] == 1 and v["worsened"]["priced_count"] == 1
+    # The day's point is the NET figure (re-audit A29), written by the 6am
+    # pass — the GET above wrote nothing (parity audit #20).
+    import value_delivered
+    value_delivered.run_value_snapshots(db_path=db_path)
     conn = get_conn(db_path)
     row = conn.execute("SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = ?",
                        (rid, _local_today(rid))).fetchone()
@@ -840,6 +845,9 @@ def test_home_value_snapshot_upserts_not_duplicates_same_day(client, db_path):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
     client.get("/mobile/api/home", headers=_auth_headers(token))
+    import value_delivered
+    value_delivered.run_value_snapshots(db_path=db_path)
+    value_delivered.run_value_snapshots(db_path=db_path)
     client.get("/mobile/api/home", headers=_auth_headers(token))
 
     conn = get_conn(db_path)
@@ -4835,3 +4843,51 @@ def test_retry_post_has_a_mobile_twin(client, db_path):
     resp = client.post(f"/mobile/api/reviews/{review_id}/retry-post", headers=_auth_headers(token_a))
     assert resp.status_code == 400
     assert resp.get_json()["error"].startswith("Only an approved Google reply")
+
+
+# ── Home's cold launch (parity audit #20) ──────────────────────────────────
+
+def test_home_pull_to_refresh_rebuilds_the_brief(client, db_path, monkeypatch):
+    """?fresh=1 — the phone's pull-to-refresh — skips home_brief's 60s cache,
+    as the web's hbLoad(true) does; a plain load may serve it."""
+    import home_brief
+    seen = []
+    real = home_brief.build_home_brief
+
+    def spy(user, fresh=False, present=True, reads=None):
+        seen.append(fresh)
+        return real(user, fresh=fresh, present=present, reads=reads)
+    monkeypatch.setattr(home_brief, "build_home_brief", spy)
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    assert client.get("/mobile/api/home", headers=_auth_headers(token)).status_code == 200
+    assert client.get("/mobile/api/home?fresh=1", headers=_auth_headers(token)).status_code == 200
+    assert seen == [False, True]
+
+
+def test_home_runs_the_labor_and_food_analyses_once_per_request(client, db_path, monkeypatch):
+    """The module tiles run the labor and inventory analyses; the brief built
+    on the same request reads them (`reads`) instead of running both again."""
+    import labor
+    import inventory
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"module_labor": 1, "module_inventory": 1}, db_path=db_path)
+    counts = {"labor": 0, "inventory": 0}
+    real_labor, real_inv = labor.analyse_shifts_for_restaurant, inventory.analysis_for
+
+    def lab(*a, **k):
+        counts["labor"] += 1
+        return real_labor(*a, **k)
+
+    def inv(*a, **k):
+        counts["inventory"] += 1
+        return real_inv(*a, **k)
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lab)
+    monkeypatch.setattr(inventory, "analysis_for", inv)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/home?fresh=1", headers=_auth_headers(token))
+    assert resp.status_code == 200 and resp.get_json()["ok"] is True
+    assert counts["labor"] == 1
+    # The tile's read and the brief's are one; the brief's stock-key helper
+    # (answering a critically-low card) is not on this path.
+    assert counts["inventory"] == 1

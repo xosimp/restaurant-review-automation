@@ -47,9 +47,7 @@ final class LocationSwitcherViewModel {
             locations = response.locations
             groupName = response.groupName
             if response.locations.count > 1 {
-                let g: LocationGroupBrief? = try? await client.send("/mobile/api/home/brief/group",
-                                                                    hapticOnError: false)
-                group = (g?.ok == true) ? g : nil
+                await loadGroup()
             } else {
                 group = nil
             }
@@ -59,6 +57,22 @@ final class LocationSwitcherViewModel {
             // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load locations."
+        }
+    }
+
+    /// The group read alone — the all-locations screen's pull-to-refresh
+    /// passes `fresh` so the server rebuilds it rather than serving its
+    /// 60-second copy (parity audit #32).
+    func loadGroup(fresh: Bool = false) async {
+        do {
+            let g: LocationGroupBrief = try await client.send("/mobile/api/home/brief/group",
+                                                              query: fresh ? ["fresh": "1"] : [:],
+                                                              hapticOnError: false)
+            group = g.ok ? g : nil
+        } catch let error as APIClient.APIError where fresh {
+            errorMessage = error.message
+        } catch {
+            if !fresh { group = nil }
         }
     }
 

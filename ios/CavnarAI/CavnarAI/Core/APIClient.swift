@@ -221,6 +221,22 @@ actor APIClient {
                                   timeout: timeout, retryTransient: retryTransient).value
     }
 
+    /// `send` with request headers the route reads — Ask's confirm names its
+    /// proposal and conversation (X-Cavnar-Proposal / X-Cavnar-Conversation,
+    /// command_center.settle_confirmed) so the answer is recorded in the same
+    /// request (parity audit #4). Same auth, retries and status handling.
+    @discardableResult
+    func sendWithHeaders<Response: Decodable>(
+        _ path: String,
+        method: HTTPMethod = .post,
+        body: (any Encodable)? = nil,
+        headers: [String: String],
+        retryTransient: Bool? = nil
+    ) async throws -> Response {
+        try await sendKeepingBody(path, method: method, body: body, retryTransient: retryTransient,
+                                  headers: headers).value
+    }
+
     /// `send`, also handing back the body the answer was decoded from — so a
     /// screen can keep that exact payload for its next warm start
     /// (ResponseCache) without every Decodable model it holds having to be
@@ -232,9 +248,11 @@ actor APIClient {
         query: [String: String] = [:],
         hapticOnError: Bool = true,
         timeout: TimeInterval? = nil,
-        retryTransient: Bool? = nil
+        retryTransient: Bool? = nil,
+        headers: [String: String] = [:]
     ) async throws -> (value: Response, body: Data) {
         var request = try buildRequest(path: path, method: method.rawValue, body: body, query: query)
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let timeout { request.timeoutInterval = timeout }
         // A conditional GET (parity #56): the copy this client holds of an
         // ETagged read goes back as If-None-Match, and a 304 reuses it.

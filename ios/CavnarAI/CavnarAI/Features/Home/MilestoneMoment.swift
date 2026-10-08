@@ -28,25 +28,39 @@ struct MilestoneMoment: View {
 
     /// One glyph per kind. Nothing here is a trophy or a star: this product
     /// does not award points, and a medal would say it does.
-    private var glyph: String {
-        switch milestone.kind {
+    private var glyph: String { Self.glyph(milestone.kind) }
+    private var kicker: String { Self.kicker(milestone.kind) }
+
+    /// The web's six kinds (MILESTONE_KICKER, parity audit #90): a record
+    /// and a streak had no kicker here and read "A MILESTONE".
+    static func glyph(_ kind: String) -> String {
+        switch kind {
         case "savings":      return "chart.line.uptrend.xyaxis"
         case "anniversary":  return "calendar"
         case "response_rate": return "checkmark.bubble"
         case "goal":         return "target"
+        case "record":       return "arrow.up.right.circle"
+        case "streak":       return "calendar.badge.checkmark"
         default:             return "sparkles"
         }
     }
 
-    private var kicker: String {
-        switch milestone.kind {
+    static func kicker(_ kind: String) -> String {
+        switch kind {
         case "savings":      return "MEASURED RESULTS"
         case "anniversary":  return "A MILESTONE"
         case "response_rate": return "EVERY REVIEW ANSWERED"
         case "goal":         return "GOAL MET"
+        case "record":       return "A RECORD"
+        case "streak":       return "ON A RUN"
         default:             return "A MILESTONE"
         }
     }
+
+    /// The research line the web shows under the response-rate milestone
+    /// only (hbMilestone).
+    static let responseRateSource = "5\u{2013}9% revenue lift per star gained \u{2014} Michael Luca, "
+        + "Harvard Business School (2011), on independent restaurants\u{2019} Yelp ratings."
 
     var body: some View {
         ZStack {
@@ -74,6 +88,13 @@ struct MilestoneMoment: View {
                             .foregroundStyle(Color.cavnarInk3)
                             .multilineTextAlignment(.center)
                             .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if milestone.kind == "response_rate" {
+                        Text(Self.responseRateSource)
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
