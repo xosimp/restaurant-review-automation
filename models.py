@@ -6551,11 +6551,16 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
                 who + (review_id, restaurant_id, bulk_publish_window()))
             conn.commit()
             return cur.rowcount == 1
+        # A person may approve a reply they skipped earlier ("Approve after
+        # all" on the web card and the phone, parity audit 10/7/26 #91); it
+        # was refused here as "no drafted reply", so the button never worked.
+        # The auto-approve rule never approves what a person turned down.
+        _from = "('drafted','pending')" if ap.get("via") == "rule" else "('drafted','pending','skipped')"
         cur = conn.execute("""
             UPDATE reviews
             SET response_status='approved', approved_at=datetime('now'),
                 approved_by=?, approved_role=?, approved_via=?
-            WHERE id=? AND restaurant_id=? AND response_status IN ('drafted','pending')
+            WHERE id=? AND restaurant_id=? AND response_status IN """ + _from + """
               AND deleted_at IS NULL
               AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
         """ + ("" if allow_flagged else " AND COALESCE(draft_needs_review, 0) = 0")

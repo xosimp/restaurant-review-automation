@@ -195,6 +195,20 @@ def test_the_web_check_polls_the_job():
     assert "JSON.stringify({async: 1})" in run and "aiJobAwait(d)" in run
 
 
+# ── #91 Approve after all ───────────────────────────────────────────────────
+
+def test_a_person_may_approve_a_reply_they_skipped_but_the_rule_never_does(rid, db_path):
+    a = _review(rid, db_path, "g/skipped-a", status="skipped")
+    b = _review(rid, db_path, "g/skipped-b", status="skipped")
+    person = {"user_id": 7, "role": "principal", "via": "normal"}
+    assert models.claim_approval(a, rid, approver=person) is True
+    assert _rows(rid)[a]["response_status"] == "approved"
+    assert models.claim_approval(b, rid, approver=models.reply_approver(auto=True)) is False
+    assert _rows(rid)[b]["response_status"] == "skipped"
+    # Nor in a bulk publish: BULK_PUBLISHABLE_SQL is drafted-only.
+    assert models.claim_approval(b, rid, publishable_only=True, approver=person) is False
+
+
 # ── #52 Read now on the web ─────────────────────────────────────────────────
 
 def test_the_web_connect_card_has_read_now():
