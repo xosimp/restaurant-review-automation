@@ -52,12 +52,27 @@ struct AccountStaffDetailView: View {
                     Text("Only needed if someone can't sign themselves up — you'll have to read them the PIN.")
                         .font(.cavnarBody(13))
                         .foregroundStyle(Color.cavnarInk3)
+
+                    // The web's sign-in notice and its Recent failed PINs
+                    // (parity #70).
+                    AccountSection(kicker: "Sign-ins") {
+                        AccountSwitchRow(
+                            label: "Tell me when someone opens the staff app",
+                            detail: "A push and a bell entry per staff sign-in. Off by default so it never becomes noise.",
+                            isOn: Binding(get: { viewModel.summary?.account.staffSignInNotify ?? false },
+                                          set: { on in Task { await viewModel.toggleStaffSignInNotify(on) } }),
+                            busy: viewModel.isTogglingStaffSignIn,
+                            showsDivider: false
+                        )
+                    }
+                    if !viewModel.pinEvents.isEmpty { pinEventsSection }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
             .accountSheetChrome("Staff accounts")
             .task { await viewModel.loadStaff() }
+            .cavnarEmberRefreshable { await viewModel.loadStaff() }
             .sheet(isPresented: $showingAdd) { AddStaffSheet(viewModel: viewModel) }
             .sheet(item: $person) { target in PersonSheet(target: target) }
             .sheet(item: $renaming) { staff in
@@ -144,6 +159,34 @@ struct AccountStaffDetailView: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
+    }
+
+    /// Recent failed and locked-out staff PINs (auth.get_pin_security_events)
+    /// — someone guessing at a PIN shows here, newest first.
+    private var pinEventsSection: some View {
+        AccountSection(kicker: "Recent failed PINs") {
+            ForEach(Array(viewModel.pinEvents.prefix(8).enumerated()), id: \.element.id) { i, e in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Circle().fill(e.isLockout ? Color.cavnarRed : Color.cavnarAmber).frame(width: 7, height: 7)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(e.name ?? "Someone").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(e.isLockout ? "Locked out" : "Wrong PIN")
+                            .font(.cavnarBody(13.5, weight: 600))
+                            .foregroundStyle(e.isLockout ? Color.cavnarRed : Color.cavnarInk3)
+                    }
+                    Spacer(minLength: 8)
+                    Text(Self.when(e.createdAt)).font(.cavnarNumber(13.5)).foregroundStyle(Color.cavnarInk3)
+                }
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+                if i < min(viewModel.pinEvents.count, 8) - 1 { AccountRowDivider() }
+            }
+        }
+    }
+
+    /// "10/7/26 · 6:45pm" on the restaurant's clock (the stamp is UTC).
+    static func when(_ stamp: String) -> String {
+        CavnarDate.timestamp(stamp).map { CavnarDate.mdyTime($0, in: RestaurantClock.timeZone) } ?? CavnarDate.mdy(stamp)
     }
 
     private var unclaimedSection: some View {

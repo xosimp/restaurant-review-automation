@@ -20,6 +20,11 @@ site's own (config.base_url), localhost, or one listed in PASSKEY_HOSTS
 (an ngrok tunnel for testing): a passkey is bound to that host by the
 browser, so one made on dashboard.cavnar.ai never answers anywhere else.
 Tables: auth.AUTH_SCHEMA user_passkeys, passkey_challenges.
+
+The iOS app runs the same two ceremonies over bearer-token twins
+(/mobile/api/passkey/options + /verify to sign in; /mobile/api/passkeys...
+to list, add and remove), against app_host() rather than the request's
+host — the bodies are auth_routes' _do_passkey_*, shared with the web.
 """
 import json
 import os
@@ -58,6 +63,17 @@ def relying_party(host: str):
     if not name or not (name == ours or local or name in extra):
         return None
     return name, ("http://" if local else "https://") + host
+
+
+def app_host() -> str:
+    """The relying party the iOS app's passkeys belong to: this site's own
+    host (config.base_url — dashboard.cavnar.ai), whatever host the app's
+    request reached. The app may only use passkeys for a domain in its
+    webcredentials entitlement, and iOS signs for "https://<rp id>", so a
+    passkey made in the app answers on the website and one made on the
+    website answers in the app (iOS parity #57)."""
+    import config
+    return (urlparse(config.base_url()).netloc or "").lower()
 
 
 # ── challenges ───────────────────────────────────────────────────────────────

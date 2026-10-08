@@ -136,14 +136,21 @@ def client_save_square(current_user):
 @square_bp.route("/api/square/sync", methods=["POST"])
 @login_required
 def client_sync_square(current_user):
+    payload, status = do_sync(current_user)
+    return jsonify(**payload), status
+
+
+def do_sync(current_user):
+    """Sync now — one body for the web card and the app's twin
+    (POST /mobile/api/connections/square/sync). Any login, as on the web."""
     from square import is_connected
     rid = current_user["restaurant_id"]
     if not is_connected(rid):
-        return jsonify(ok=False, error="Square is not connected yet.")
+        return {"ok": False, "error": "Square is not connected yet."}, 200
     # The same path as the console's button and the nightly sync (#65).
     import scheduler
     job_id, _joined = scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")
-    return jsonify(ok=True, job_id=job_id, message="Sync started — labor data refreshes in ~30 seconds")
+    return {"ok": True, "job_id": job_id, "message": "Sync started — labor data refreshes in ~30 seconds"}, 200
 
 
 @square_bp.route("/api/square/disconnect", methods=["POST"])

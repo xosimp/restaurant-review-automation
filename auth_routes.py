@@ -920,15 +920,12 @@ def toggle_login_notify(current_user):
 @csrf_required
 @login_required
 def toggle_staff_signin_notify(current_user):
-    """Alert the owner when an employee opens the staff portal."""
-    from models import update_restaurant
-    from permissions import is_principal
-    if not is_principal(current_user):
-        return jsonify(ok=False, error="Only the account owner can change sign-in alerts."), 403
-    data = request.get_json() or {}
-    enabled = 1 if data.get("enabled") else 0
-    update_restaurant(current_user["restaurant_id"], {"staff_signin_notify": enabled})
-    return jsonify(ok=True)
+    """Alert the owner when an employee opens the staff portal. One body with
+    the app's twin (client_api._do_staff_signin_notify)."""
+    from client_api import _do_staff_signin_notify
+    payload, status = _do_staff_signin_notify(current_user["restaurant_id"],
+                                              request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
 
 
 # ── Admin routes ──────────────────────────────────────────────────────────────
@@ -1516,16 +1513,23 @@ def _json_sign_in(user, *, second_factor, via):
 
 @auth_bp.route("/auth/passkey/options", methods=["POST"])
 def passkey_login_options():
+    if not _csrf_json_ok():
+        return jsonify(ok=False, error="Your session expired. Refresh the page and try again."), 403
+    payload, status = _do_passkey_login_options(request.host)
+    return jsonify(**payload), status
+
+
+def _do_passkey_login_options(host):
+    """The sign-in challenge — one body for the login page and the app's
+    /mobile/api/passkey/options (which passes passkeys.app_host())."""
     import passkeys
     ip = _get_client_ip()
     if _is_rate_limited("passkey:" + ip):
-        return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
-    if not _csrf_json_ok():
-        return jsonify(ok=False, error="Your session expired. Refresh the page and try again."), 403
+        return {"ok": False, "error": "Too many attempts. Please wait 5 minutes and try again."}, 429
     try:
-        return jsonify(ok=True, options=passkeys.authentication_options(request.host))
+        return {"ok": True, "options": passkeys.authentication_options(host)}, 200
     except passkeys.PasskeyError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return {"ok": False, "error": str(e)}, 400
 
 
 @auth_bp.route("/auth/passkey/verify", methods=["POST"])
@@ -1534,27 +1538,38 @@ def passkey_login_verify():
     face, finger or PIN that unlocked it), so it is this sign-in's second
     factor. Not for an internal login: the admin console's second factor
     is its own authenticator app (SECURITY-1), and stays so."""
+    if not _csrf_json_ok():
+        return jsonify(ok=False, error="Your session expired. Refresh the page and try again."), 403
+    user, refusal = _passkey_signin_user((request.get_json(silent=True) or {}).get("credential"), request.host)
+    if refusal:
+        return jsonify(**refusal[0]), refusal[1]
+    return _json_sign_in(user, second_factor=True, via="passkey")
+
+
+def _passkey_signin_user(cred, host):
+    """(user, None) for a passkey that checks out, or (None, (payload,
+    status)) — the rate limit, the ceremony and the internal-login refusal,
+    one body for the login page and the app's /mobile/api/passkey/verify.
+    What a sign-in then needs (an active login, no forced reset) is each
+    caller's sign-in step, as for a password."""
     import passkeys
     from auth import get_user_by_id, is_internal_login
     ip = _get_client_ip()
     if _is_rate_limited("passkey:" + ip):
-        return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
-    if not _csrf_json_ok():
-        return jsonify(ok=False, error="Your session expired. Refresh the page and try again."), 403
-    cred = (request.get_json(silent=True) or {}).get("credential")
+        return None, ({"ok": False, "error": "Too many attempts. Please wait 5 minutes and try again."}, 429)
     if not isinstance(cred, dict):
-        return jsonify(ok=False, error="No passkey was sent."), 400
+        return None, ({"ok": False, "error": "No passkey was sent."}, 400)
     try:
-        uid = passkeys.finish_authentication(cred, request.host)
+        uid = passkeys.finish_authentication(cred, host)
     except passkeys.PasskeyError as e:
         _record_failed_attempt("passkey:" + ip)
-        return jsonify(ok=False, error=str(e)), 401
+        return None, ({"ok": False, "error": str(e)}, 401)
     user = get_user_by_id(uid)
     if user and is_internal_login(user):
-        return jsonify(ok=False, error="Cavnar AI staff logins sign in with a password and their "
-                                       "authenticator app."), 403
+        return None, ({"ok": False, "error": "Cavnar AI staff logins sign in with a password and their "
+                                             "authenticator app."}, 403)
     _clear_attempts("passkey:" + ip)
-    return _json_sign_in(user, second_factor=True, via="passkey")
+    return user, None
 
 
 def _passkey_password_ok(current_user, password):
@@ -1566,13 +1581,20 @@ def _passkey_password_ok(current_user, password):
 @auth_bp.route("/api/passkeys", methods=["GET"])
 @login_required
 def passkeys_list(current_user):
+    payload, status = _do_passkeys_list(current_user)
+    return jsonify(**payload), status
+
+
+def _do_passkeys_list(current_user):
+    """This login's passkeys, dated M/D/YY — the web's and the app's list."""
     import passkeys
     from time_utils import mdy
     rows = passkeys.list_passkeys(current_user["id"])
     for r in rows:
         r["created"] = mdy(r.get("created_at"))
         r["last_used"] = mdy(r.get("last_used_at")) if r.get("last_used_at") else None
-    return jsonify(ok=True, passkeys=rows, offer=_passkey_offer(current_user, rows))
+        r["backed_up"] = bool(r.get("backed_up"))
+    return {"ok": True, "passkeys": rows, "offer": _passkey_offer(current_user, rows)}, 200
 
 
 def _passkey_offer(current_user, rows):
@@ -1596,63 +1618,86 @@ def _passkey_offer(current_user, rows):
 def passkeys_register_options(current_user):
     """Adding a passkey asks for the password first: a session left open on
     a shared computer must not be able to plant a way back in."""
+    payload, status = _do_passkey_register_options(current_user, request.get_json(silent=True) or {},
+                                                   request.host)
+    return jsonify(**payload), status
+
+
+def _do_passkey_register_options(current_user, data, host):
+    """The add-a-passkey challenge, after the step-up — one body for the web
+    and the app's /mobile/api/passkeys/options (host passkeys.app_host())."""
     import passkeys
     from auth import get_user_by_id
-    if current_user.get("acting_admin"):
-        return jsonify(ok=False, error="Passkeys are added by the account holder, not in view-as."), 403
+    if current_user.get("acting_admin") or current_user.get("acting_admin_id"):
+        return {"ok": False, "error": "Passkeys are added by the account holder, not in view-as."}, 403
     ip = _get_client_ip()
     if _is_rate_limited("passkey-add:" + ip):
-        return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
+        return {"ok": False, "error": "Too many attempts. Please wait 5 minutes and try again."}, 429
     # The password, unless it was typed moments ago (the offer right after
     # signing in - _passkey_offer; auth.reauth_is_recent).
     from auth import reauth_is_recent
-    pw = (request.get_json(silent=True) or {}).get("password")
+    pw = (data or {}).get("password")
     just_signed_in = not pw and reauth_is_recent(current_user)
     if not just_signed_in and not _passkey_password_ok(current_user, pw):
         _record_failed_attempt("passkey-add:" + ip)
-        return jsonify(ok=False, error="That password isn't right."), 403
+        return {"ok": False, "error": "That password isn't right."}, 403
     try:
-        return jsonify(ok=True, options=passkeys.registration_options(get_user_by_id(current_user["id"]),
-                                                                       request.host))
+        return {"ok": True, "options": passkeys.registration_options(get_user_by_id(current_user["id"]), host)}, 200
     except passkeys.PasskeyError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return {"ok": False, "error": str(e)}, 400
 
 
 @auth_bp.route("/api/passkeys", methods=["POST"])
 @csrf_required
 @login_required
 def passkeys_register(current_user):
+    payload, status = _do_passkey_register(current_user, request.get_json(silent=True) or {}, request.host,
+                                           request.headers.get("User-Agent", ""))
+    return jsonify(**payload), status
+
+
+def _do_passkey_register(current_user, data, host, user_agent=""):
+    """Saves the passkey the device just made against the challenge issued
+    for this login — one body for the web and the app's POST
+    /mobile/api/passkeys."""
     import passkeys
     from auth import get_user_by_id
-    cred = (request.get_json(silent=True) or {}).get("credential")
+    if current_user.get("acting_admin") or current_user.get("acting_admin_id"):
+        return {"ok": False, "error": "Passkeys are added by the account holder, not in view-as."}, 403
+    cred = (data or {}).get("credential")
     if not isinstance(cred, dict):
-        return jsonify(ok=False, error="No passkey was sent."), 400
+        return {"ok": False, "error": "No passkey was sent."}, 400
     try:
-        saved = passkeys.finish_registration(get_user_by_id(current_user["id"]), cred, request.host,
-                                             request.headers.get("User-Agent", ""))
+        saved = passkeys.finish_registration(get_user_by_id(current_user["id"]), cred, host, user_agent)
     except passkeys.PasskeyError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return {"ok": False, "error": str(e)}, 400
     try:
         from client_api import log_account_event
         log_account_event(current_user.get("restaurant_id"), "passkey_added", current_user, saved["name"])
     except Exception:
         pass
-    return jsonify(ok=True, passkey=saved)
+    return {"ok": True, "passkey": saved}, 200
 
 
 @auth_bp.route("/api/passkeys/<int:passkey_id>/remove", methods=["POST"])
 @csrf_required
 @login_required
 def passkeys_remove(current_user, passkey_id):
+    payload, status = _do_passkey_remove(current_user, passkey_id)
+    return jsonify(**payload), status
+
+
+def _do_passkey_remove(current_user, passkey_id):
+    """One of this login's own passkeys removed — the web's and the app's."""
     import passkeys
     if not passkeys.remove_passkey(current_user["id"], passkey_id):
-        return jsonify(ok=False, error="That passkey isn't on this login."), 404
+        return {"ok": False, "error": "That passkey isn't on this login."}, 404
     try:
         from client_api import log_account_event
         log_account_event(current_user.get("restaurant_id"), "passkey_removed", current_user, str(passkey_id))
     except Exception:
         pass
-    return jsonify(ok=True)
+    return {"ok": True}, 200
 
 
 def apple_web_services_id() -> str:

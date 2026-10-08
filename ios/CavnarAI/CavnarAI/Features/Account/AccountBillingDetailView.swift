@@ -1,33 +1,24 @@
 import SwiftUI
 
-/// Pushed from Account's "Plan & payment" row. Adds recent invoices to
-/// what the old inline card showed (next charge / amount / payment
-/// method / manage link only) — mobile_api.py's billing route now
-/// includes a short invoice history from the same Stripe customer.
+/// Pushed from Account's "Plan & payment" row: the plan and recent
+/// invoices, read only. App Store Guideline 3.1.1 (iOS parity #13): the app
+/// links to no payment page — the Stripe portal link and the invoice PDF
+/// links are gone, and where billing is managed is said in plain text,
+/// never a link or a button. Pause stays here (it stops billing; it buys
+/// nothing), which is also where the paused message points: "Resume any
+/// time from Account → Billing" (auth._billing_blocked_message).
 struct AccountBillingDetailView: View {
     let viewModel: AccountViewModel
     let billing: BillingSummary?
     @Environment(\.scenePhase) private var scenePhase
 
     /// Prefer live state over the snapshot the sheet was opened with — the
-    /// owner can change their plan in Stripe's portal while this sheet is
-    /// backgrounded, and the snapshot would keep showing the pre-handoff
-    /// state forever (audit 4.1).
+    /// plan can change on the web while this sheet is backgrounded, and the
+    /// snapshot would keep showing the old state forever (audit 4.1).
     private var live: BillingSummary? { viewModel.billing ?? billing }
 
-    /// Stripe's billing portal only ever lives on these hosts. `portalURL` is
-    /// whatever the backend put in the JSON, and URL(string:) accepts far more
-    /// than https — a tampered response (or a backend bug) could point this at
-    /// an arbitrary phishing page opened from inside the trusted app UI
-    /// (audit 1.4). Anything that isn't Stripe means no link is offered.
-    private func validatedPortalURL(_ raw: String?) -> URL? {
-        guard let raw, let url = URL(string: raw),
-              url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased(),
-              host == "stripe.com" || host.hasSuffix(".stripe.com")
-        else { return nil }
-        return url
-    }
+    /// Where billing is managed — plain text, deliberately not a link (3.1.1).
+    static let manageNote = "Manage billing at dashboard.cavnar.ai"
 
     // Own NavigationStack — presented as a sheet from AccountView, matching
     // every other Account detail screen (see ScheduleHistoryView's comment
@@ -51,17 +42,6 @@ struct AccountBillingDetailView: View {
                         row("Amount", billing.amount ?? "—", isNumber: true)
                         divider()
                         row("Payment method", billing.paymentMethod ?? "—")
-                        if let url = validatedPortalURL(billing.portalURL) {
-                            divider()
-                            Link(destination: url) {
-                                HStack {
-                                    Text("Manage payment method").font(.cavnarBody(15.5, weight: 600))
-                                    Spacer()
-                                    Image(systemName: "arrow.up.right").font(.system(size: 11))
-                                }
-                            }
-                            .foregroundStyle(Color.cavnarEmber)
-                        }
                     }
                     .cavnarCard()
 
@@ -80,25 +60,28 @@ struct AccountBillingDetailView: View {
                         }
                     }
                 }
-                // No body text in the empty state — the hero already
-                // shows "No active plan" + billing?.message (or the same
-                // "Contact will@cavnar.ai to get set up" fallback) right
-                // above; this used to repeat that exact string a second
-                // time.
+                // Plain text, read only: no portal, no invoice link (3.1.1).
+                Text(Self.manageNote)
+                    .font(.cavnarBody(14.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .textSelection(.disabled)
+
+                // Pause lives with billing, as the paused message says.
+                AccountPauseSection()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
         .accountSheetChrome("Billing")
         // Billing is the one screen whose source of truth changes outside the
-        // app: the owner leaves for Stripe's portal, updates a card, and comes
-        // back. Without these it kept showing "Payment past due" indefinitely
-        // after they had already fixed it (audit 4.1).
+        // app: the owner updates a card on the web and comes back. Without
+        // these it kept showing "Payment past due" indefinitely after they
+        // had already fixed it (audit 4.1).
         .task { await viewModel.loadBilling() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await viewModel.loadBilling() } }
         }
-        .refreshable { await viewModel.loadBilling() }
+        .cavnarEmberRefreshable { await viewModel.loadBilling() }
         }
     }
 
@@ -116,16 +99,6 @@ struct AccountBillingDetailView: View {
         }
     }
 
-    // "will@cavnar.ai" as a tappable ember link, subject prefilled — only
-    // for the static fallback copy (below); billing?.message is arbitrary
-    // server text and isn't assumed to contain the address at all, let
-    // alone in a linkable form.
-    private var billingMailtoLink: String {
-        let subject = "Cavnar AI billing question"
-        let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
-        return "mailto:will@cavnar.ai?subject=\(encoded)"
-    }
-
     private var hero: some View {
         AccountHero(title: planTitle) {
             GlowBadge(systemImage: "creditcard", size: 64)
@@ -136,23 +109,9 @@ struct AccountBillingDetailView: View {
                     + Text(billing.nextDate ?? "—").font(.cavnarNumber(15.5, weight: 600))
             } else if let message = live?.message {
                 Text(message)
-            } else if let url = URL(string: billingMailtoLink) {
-                // A real Link, not a markdown link embedded in Text. The
-                // markdown-in-Text approach looked identical and even
-                // colored correctly, but never actually became tappable —
-                // confirmed on a real device, twice, after two different
-                // "should be correct" fixes. Link is the exact mechanism
-                // "Contact Will" in Help & FAQ already uses successfully, so
-                // this stops guessing and copies the thing that's proven to
-                // work: Link owns the tap gesture and calls openURL itself,
-                // it doesn't depend on Text's internal markdown-link
-                // hit-testing at all, so Text+Text concatenation for
-                // per-segment color is completely safe here.
-                Link(destination: url) {
-                    Text("Contact ").foregroundStyle(Color.cavnarInk3)
-                        + Text("will@cavnar.ai").foregroundStyle(Color.cavnarEmber)
-                        + Text(" to get set up").foregroundStyle(Color.cavnarInk3)
-                }
+            } else {
+                // Informational only — no link to sign up or pay (3.1.1).
+                Text("No plan on file for this account.")
             }
         }
     }
@@ -178,30 +137,30 @@ struct AccountBillingDetailView: View {
         }
     }
 
+    /// Read only — the PDF link is not offered in the app (3.1.1); the web
+    /// keeps it. The date is the server's M/D/YY.
     private func invoiceRow(_ invoice: BillingInvoice) -> some View {
-        Group {
-            if let urlString = invoice.pdfURL, let url = URL(string: urlString) {
-                Link(destination: url) { invoiceRowContent(invoice) }
-            } else {
-                invoiceRowContent(invoice)
-            }
-        }
-        .padding(.vertical, 10)
-    }
-
-    private func invoiceRowContent(_ invoice: BillingInvoice) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(invoice.date).font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Text(invoice.status.capitalized).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
+                Text(invoice.date).font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text(Self.invoiceStatus(invoice.status)).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
             Text(invoice.amount).font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-            if invoice.pdfURL != nil {
-                Image(systemName: "arrow.down.circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.cavnarInk3)
-            }
+        }
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The web's words for Stripe's invoice states (_INV_STATUS).
+    static func invoiceStatus(_ raw: String) -> String {
+        switch raw {
+        case "paid": return "Paid"
+        case "open": return "Due"
+        case "draft": return "Draft"
+        case "void": return "Void"
+        case "uncollectible": return "Unpaid"
+        default: return raw.capitalized
         }
     }
 

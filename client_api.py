@@ -5955,6 +5955,36 @@ def _do_request_account_deletion(rid, current_user=None):
             "requested_on": _stamp_local_mdy(restaurant, requested_at)}, 200
 
 
+def _do_delete_own_login(current_user):
+    """Account -> Delete my login, for a teammate's login (parity #13; Apple
+    Guideline 5.1.1(v)). An account holder closes the account instead
+    (_do_request_account_deletion); this is the rest of the team's way to
+    delete what they themselves signed up with. Only ever the caller's own
+    login, never in view-as. Twin routes: POST /api/account/delete-login and
+    /mobile/api/account/delete-login. Returns ({ok}, status)."""
+    from permissions import is_principal
+    if not current_user:
+        return {"ok": False, "error": "Sign in first."}, 401
+    if current_user.get("acting_admin_id") or current_user.get("acting_admin"):
+        return {"ok": False, "error": "A login is deleted by its own holder, not in view-as."}, 403
+    if is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "An owner's login closes with the account — use Close my account."}, 403
+    from auth import delete_own_login
+    rid = current_user["restaurant_id"]
+    out = delete_own_login(current_user["id"], rid)
+    if not out.get("ok"):
+        return {"ok": False, "error": out.get("error") or "Couldn't delete your login."}, 400
+    try:
+        # The owner reads who left in Account -> Activity; by role, since
+        # the name on the login is gone with it.
+        log_account_event(rid, "login_deleted_by_holder", None,
+                          detail=str(current_user.get("role") or "member"))
+    except Exception:
+        pass
+    return {"ok": True}, 200
+
+
 def _notify_deletion_request(rid, restaurant, current_user, requested_at):
     """Record a new close-account request in the console's event trail and
     email the operator, checking that the email went (#34).
@@ -6018,6 +6048,18 @@ def request_account_deletion_route(current_user):
     /mobile/api/account/request-deletion (_do_request_account_deletion)."""
     payload, status = _do_request_account_deletion(current_user["restaurant_id"], current_user)
     return jsonify(**payload), status
+
+
+@client_bp.route("/api/account/delete-login", methods=["POST"])
+@login_required
+def delete_own_login_route(current_user):
+    """A teammate deletes their own login (_do_delete_own_login; twin
+    /mobile/api/account/delete-login). The session cookie goes with it."""
+    payload, status = _do_delete_own_login(current_user)
+    resp = jsonify(**payload)
+    if payload.get("ok"):
+        resp.delete_cookie("session_token")
+    return resp, status
 
 
 @client_bp.route("/api/billing-info")
@@ -6092,6 +6134,34 @@ def _validated_alert_fields(data):
     return out, None
 
 
+# Alert columns one client has a control for and the other did not (parity
+# #86: the web's rating rise / any review / reply approved, the app's food
+# waste / AI visibility / extra emails / health-through-quiet-hours). Each is
+# written ONLY when the request carries it, so a client or build without the
+# control never switches the owner's setting off on its next save.
+_ALERT_WHEN_SENT = ("alert_rating_threshold", "alert_any_review", "alert_resp_approved",
+                    "alert_health_bypass_quiet", "alert_food_waste", "alert_ai_visibility_drop")
+
+
+def _alert_fields_when_sent(data):
+    """({column: value} for the _ALERT_WHEN_SENT switches, the rating floor
+    and the extra alert emails present in `data`, error). Shared by the web
+    save and its mobile twin; a floor that is not a star rating is a 400."""
+    out = {col: int(bool(data.get(col))) for col in _ALERT_WHEN_SENT if col in data}
+    if "alert_rating_floor" in data:
+        try:
+            floor = float(data.get("alert_rating_floor") or 4.0)
+        except (TypeError, ValueError):
+            return None, "The rating to climb above has to be a number like 4.5."
+        if not 1.0 <= floor <= 5.0:
+            return None, "The rating to climb above is between 1 and 5 stars."
+        out["alert_rating_floor"] = round(floor, 1)
+    if "alert_extra_emails" in data:
+        from mobile_api import _clean_email_list
+        out["alert_extra_emails"] = _clean_email_list(data.get("alert_extra_emails"))
+    return out, None
+
+
 # The per-alert-type push switches, in the order the settings screens list
 # them. deliver_alert reads these columns; both clients now write them.
 _PUSH_COLUMNS = ("al_1star_push", "al_2star_push", "al_5star_push",
@@ -6127,6 +6197,11 @@ def get_alert_settings(current_user):
         "alert_quiet_start":     getattr(r, "alert_quiet_start", None),
         "alert_quiet_end":       getattr(r, "alert_quiet_end", None),
         "alert_max_per_day":     getattr(r, "alert_max_per_day", 0),
+        # The app's four (parity #86), saved here only when the page sends them.
+        "alert_food_waste":      int(bool(getattr(r, "alert_food_waste", 0))),
+        "alert_ai_visibility_drop": int(bool(getattr(r, "alert_ai_visibility_drop", 0))),
+        "alert_health_bypass_quiet": int(bool(getattr(r, "alert_health_bypass_quiet", 0))),
+        "alert_extra_emails":    getattr(r, "alert_extra_emails", None) or "",
     }
     # Per-type push switches. These columns have existed and been honoured by
     # deliver_alert since push shipped, and iOS has had switches for them —
@@ -6167,6 +6242,9 @@ def save_alert_settings(current_user):
     checked, bad = _validated_alert_fields(data)
     if bad:
         return jsonify(ok=False, error=bad), 400
+    when_sent, bad = _alert_fields_when_sent(data)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
 
     # Sync contacts — max 2. A real error instead of silently dropping the
     # extras — the client already hides its own "+ Add" past 2, but a
@@ -6205,15 +6283,14 @@ def save_alert_settings(current_user):
         "alert_negative_trend":  int(bool(data.get("alert_negative_trend"))),
         "alert_no_response":     int(bool(data.get("alert_no_response"))),
         "alert_5star":           int(bool(data.get("alert_5star"))),
-        "alert_rating_threshold": int(bool(data.get("alert_rating_threshold"))),
-        "alert_rating_floor":    float(data.get("alert_rating_floor") or 4.0),
         "alert_labor_over":      int(bool(data.get("alert_labor_over"))),
         "urgent_via_sms":        int(sms_on),
         "urgent_via_email":      int(bool(data.get("urgent_via_email"))),
-        "alert_any_review":      int(bool(data.get("alert_any_review"))),
-        "alert_resp_approved":   int(bool(data.get("alert_resp_approved"))),
         "digest_enabled":        int(bool(data.get("digest_enabled"))),
         **checked,
+        # Rating rise / any review / reply approved and the app's four, each
+        # only when sent (_alert_fields_when_sent, parity #86).
+        **when_sent,
         **{col: int(bool(data.get(col, True))) for col in _PUSH_COLUMNS},
         "push_sound":            0 if data.get("push_sound") is False else 1,
     }
@@ -10606,6 +10683,20 @@ def _do_login_notify(rid, data, current_user=None):
     return {"ok": True}, 200
 
 
+def _do_staff_signin_notify(rid, data, current_user=None):
+    """A push and a bell entry each time an employee opens the staff portal
+    — the account holder's switch. Shared by /api/toggle-staff-signin-notify
+    and /mobile/api/account/staff-signin-notify (parity #70)."""
+    refused = _owner_only_setting(current_user, "sign-in alerts")
+    if refused:
+        return refused
+    enabled = bool((data or {}).get("enabled"))
+    update_restaurant(rid, {"staff_signin_notify": int(enabled)})
+    log_account_event(rid, "staff_signin_notify_changed", current_user,
+                      detail="on" if enabled else "off")
+    return {"ok": True, "enabled": enabled}, 200
+
+
 def _account_settings_payload(rid):
     """Everything the web Account panel needs to render these five settings."""
     import json as _json_s
@@ -12682,26 +12773,31 @@ def account_trusted_devices_revoke_all(current_user):
 @client_bp.route("/api/account/security-summary")
 @login_required
 def account_security_summary(current_user):
-    """The numbers behind the Security checkup — same inputs the phone
-    scores (see AccountSecurityCheckupView)."""
-    from models import count_unused_backup_codes
-    from auth import get_trusted_devices, get_sessions_for_user
-    rid = current_user["restaurant_id"]
-    r = get_restaurant(rid)
-    try:
-        sessions = len(get_sessions_for_user(current_user["id"]))
-    except Exception:
-        sessions = 1
-    return jsonify(ok=True,
-                   two_fa_enabled=bool(r and r.two_fa_enabled),
-                   two_fa_method=(getattr(r, "two_fa_method", None) or "email") if r else "email",
-                   backup_codes_remaining=count_unused_backup_codes(rid),
-                   trusted_devices=len(get_trusted_devices(rid)),
-                   login_notify=bool(r and getattr(r, "login_notify", 0)),
-                   recovery_email=current_user.get("recovery_email"),
-                   password_strength=current_user.get("password_strength"),
-                   password_changed_at=current_user.get("password_changed_at"),
-                   active_sessions=sessions)
+    """The numbers behind the Security checkup and the checkup itself
+    (_do_security_summary; twin /mobile/api/account/security-summary)."""
+    payload, status = _do_security_summary(current_user)
+    return jsonify(**payload), status
+
+
+def _do_security_summary(current_user):
+    """The checkup's inputs and its one score (account_health
+    .security_checkup): `checkup` is what both clients draw, so the web's
+    card and the app's sheet can no longer score the same account apart."""
+    import account_health
+    inputs = account_health.security_inputs(current_user)
+    return dict(ok=True, **inputs, checkup=account_health.security_checkup(current_user, inputs=inputs)), 200
+
+
+@client_bp.route("/api/account/health")
+@login_required
+def account_health_route(current_user):
+    """Account health, scored on the server (account_health.payload; twin
+    /mobile/api/account/health)."""
+    import account_health
+    payload = account_health.payload(current_user)
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, (200 if payload.get("ok") else 404)
 
 
 @client_bp.route("/api/intel/search-places")

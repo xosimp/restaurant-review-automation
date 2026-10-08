@@ -6,10 +6,11 @@ import SwiftUI
 /// the brand's own real mark (see ConnectionMark below — real SVGs/PNG
 /// sourced from each brand's own public assets, not SF Symbol
 /// approximations), and a real action where one exists: Google Business
-/// runs a full mobile OAuth round trip (GMBConnectCoordinator), Toast,
-/// Square and Clover each take a credential pair (their own *ConnectSheet)
-/// — none of the three has OAuth of its own. Instagram/Facebook has no
-/// connect API wired up yet, so it shows status only, no dead-end CTA.
+/// and Instagram & Facebook each run a full mobile OAuth round trip in a
+/// browser sheet (GMBConnectCoordinator), Toast, Square and Clover each take
+/// a credential pair (their own *ConnectSheet) — none of the three has OAuth
+/// of its own. A connected POS has Sync now (the web card's button, parity
+/// #80); RPOWER is set up by Cavnar AI and only taken off here, by the owner.
 struct AccountConnectionsDetailView: View {
     let viewModel: AccountViewModel
     let connections: AccountConnections
@@ -21,6 +22,8 @@ struct AccountConnectionsDetailView: View {
     @State private var showingToastConnect = false
     @State private var showingSquareConnect = false
     @State private var showingCloverConnect = false
+    /// A disconnect waiting on its confirm: what it disconnects and how.
+    @State private var pendingDisconnect: (name: String, action: () async -> Void)?
 
     var body: some View {
         NavigationStack {
@@ -38,6 +41,7 @@ struct AccountConnectionsDetailView: View {
                            connect: { showingCloverConnect = true },
                            disconnect: { await viewModel.disconnectClover() })
                     rpowerRow
+                    webAnalyticsRow
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -51,6 +55,21 @@ struct AccountConnectionsDetailView: View {
             }
             .sheet(isPresented: $showingCloverConnect) {
                 CloverConnectSheet(viewModel: viewModel)
+            }
+            .confirmationDialog(
+                pendingDisconnect.map { "Disconnect \($0.name)?" } ?? "",
+                isPresented: Binding(get: { pendingDisconnect != nil }, set: { if !$0 { pendingDisconnect = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Disconnect", role: .destructive) {
+                    guard let pending = pendingDisconnect else { return }
+                    Task { await pending.action(); Haptic.success() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(pendingDisconnect?.name == "RPOWER POS"
+                     ? "Sales and labor stop syncing from RPOWER. Connecting it again goes through Cavnar AI."
+                     : "Sales and labor stop syncing from it until you connect it again.")
             }
         }
     }
@@ -67,7 +86,8 @@ struct AccountConnectionsDetailView: View {
         ]
     }
 
-    private var connectedNames: [String] { marks.filter { $0.status.connected }.map(\.name) }
+    /// Every connection, RPOWER and website analytics included (parity #80).
+    private var connectedNames: [String] { connections.all.filter(\.connected).map(\.name) }
 
     private var hero: some View {
         AccountHero(title: connectedNames.isEmpty ? "Nothing connected yet" : connectedNames.joined(separator: " · ")) {
@@ -75,8 +95,21 @@ struct AccountConnectionsDetailView: View {
         } subtitle: {
             Text("\(connectedNames.count)").font(.cavnarNumber(15.5, weight: 600))
                 + Text(" of ")
-                + Text("5").font(.cavnarNumber(15.5, weight: 600))
-                + Text(" apps connected")
+                + Text("\(connections.all.count)").font(.cavnarNumber(15.5, weight: 600))
+                + Text(" connected")
+        }
+    }
+
+    /// Sync now on a connected POS — any login, as on the web; the message
+    /// is the server's ("Sync started — labor data refreshes in ~30 seconds").
+    @ViewBuilder
+    private func syncRow(_ provider: String) -> some View {
+        AccountActionRow(label: "Sync now",
+                         detail: viewModel.syncMessage[provider] ?? "Pulls the latest sales and labor now.",
+                         symbol: "arrow.triangle.2.circlepath",
+                         busy: viewModel.syncingProvider == provider,
+                         showsDivider: isOwner) {
+            Task { await viewModel.syncNow(provider) }
         }
     }
 
@@ -175,9 +208,14 @@ struct AccountConnectionsDetailView: View {
             Self.syncStateLine(connections.toast, provider: "toast", posLine: connections.posLine)
 
             if connections.toast.connected {
-                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                    Task { await viewModel.disconnectToast() }
+                syncRow("toast")
+                if isOwner {
+                    AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                        pendingDisconnect = ("Toast", { await viewModel.disconnectToast() })
+                    }
                 }
+            } else if !isOwner {
+                ownerOnlyNote
             } else {
                 // Same — the style's own press haptic covers this.
                 Button {
@@ -208,9 +246,14 @@ struct AccountConnectionsDetailView: View {
             Self.syncStateLine(status, provider: provider, posLine: connections.posLine)
 
             if status.connected {
-                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                    Task { await disconnect() }
+                syncRow(provider)
+                if isOwner {
+                    AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                        pendingDisconnect = (label, disconnect)
+                    }
                 }
+            } else if !isOwner {
+                ownerOnlyNote
             } else {
                 // The button style's own press haptic covers this.
                 Button(action: connect) {
@@ -334,6 +377,53 @@ struct AccountConnectionsDetailView: View {
                 }
                 Self.syncStateLine(rp, provider: "rpower", posLine: connections.posLine)
                 Text("Set up by Cavnar AI from your RPOWER account \u{2014} contact us to change it.")
+                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if rp.connected {
+                    syncRow("rpower")
+                    // The owner can take the store off, as on the web
+                    // (principal only); connecting again is Cavnar AI's.
+                    if isOwner {
+                        AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                            pendingDisconnect = ("RPOWER POS", { await viewModel.disconnectRPower() })
+                        }
+                    }
+                }
+                if let error = viewModel.disconnectError {
+                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    /// Website analytics (GA4 / Search Console) — status here; it's set up
+    /// on the web, under Marketing. Counted with the rest (parity #80).
+    @ViewBuilder
+    private var webAnalyticsRow: some View {
+        if let wa = connections.webAnalytics {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 13) {
+                    GlowBadge(systemImage: "chart.bar.xaxis", size: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Website analytics").font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        if let synced = wa.lastSyncedText {
+                            HomeMixedText.make(synced, size: 15.5, color: .cavnarInk3)
+                        } else if !wa.connected {
+                            Text("Not connected").font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    Spacer()
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(wa.connected ? Color.cavnarGreen : Color.cavnarInk3.opacity(0.4))
+                            .frame(width: 6, height: 6)
+                        Text(wa.connected ? "Connected" : "Off")
+                            .font(.cavnarBody(15, weight: 600))
+                            .foregroundStyle(wa.connected ? Color.cavnarGreen : Color.cavnarInk3)
+                    }
+                }
+                Text("Google Analytics and Search Console, set up on the web under Marketing \u{2192} Website.")
                     .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }

@@ -17,6 +17,7 @@ struct AccountSecurityDetailView: View {
     @State private var showingTrustedDevices = false
     @State private var showingRecoveryEmail = false
     @State private var showingCheckup = false
+    @State private var showingPasskeys = false
     @State private var prefs = AppPreferences.shared
     @State private var disabledLabel: String?
     // The same posted-check overlay 2FA-disable already used, now shared
@@ -93,6 +94,7 @@ struct AccountSecurityDetailView: View {
         .sheet(isPresented: $showingActivity) { AccountActivityLogView(viewModel: viewModel) }
         .sheet(isPresented: $showingTrustedDevices) { AccountTrustedDevicesView(viewModel: viewModel) }
         .sheet(isPresented: $showingRecoveryEmail) { AccountRecoveryEmailSheet(viewModel: viewModel) }
+        .sheet(isPresented: $showingPasskeys) { AccountPasskeysView() }
         .sheet(isPresented: $showingCheckup) {
             AccountSecurityCheckupView(viewModel: viewModel, account: live) { fix in
                 // The checkup dismisses itself first; give the sheet a beat
@@ -180,6 +182,8 @@ struct AccountSecurityDetailView: View {
             }
             AccountNavRow(label: "Security checkup") { showingCheckup = true }
             AccountNavRow(label: "Password") { showingChangePassword = true }
+            // Face ID sign-in, the same passkeys as the web (parity #57).
+            AccountNavRow(label: "Passkeys") { showingPasskeys = true }
             if live.twoFAEnabled {
                 AccountNavRow(label: "Backup codes", value: viewModel.backupCodesRemaining.map { "\($0) left" }, valueIsNumber: true) { showingBackupCodes = true }
                 AccountNavRow(label: "Trusted devices") { showingTrustedDevices = true }

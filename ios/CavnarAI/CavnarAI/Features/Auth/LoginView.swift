@@ -88,6 +88,10 @@ struct LoginView: View {
                 }
             }
             .keyboardNavToolbar($focusedField)
+            // A passkey saved for dashboard.cavnar.ai is offered in the
+            // keyboard's QuickType bar over the username field (parity #57).
+            .task { viewModel.startPasskeyAutoFill() }
+            .onDisappear { viewModel.stopPasskeyAutoFill() }
             .sheet(isPresented: $showingForgot) {
                 ForgotPasswordSheet(sessionStore: sessionStore, prefill: viewModel.username)
             }
@@ -310,6 +314,17 @@ struct LoginView: View {
                 Image("GoogleMark").resizable().aspectRatio(contentMode: .fit)
             } action: {
                 Task { await viewModel.signInWithGoogle() }
+            }
+            .loginRise(Cue.google, enabled: introReady)
+
+            // Face ID / Touch ID with a passkey added in Account → Security
+            // (here or on the web) — the same credential either place.
+            LoginSocialButton(title: "Sign in with a passkey", isLoading: viewModel.isLoading) {
+                Image(systemName: "person.badge.key.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.cavnarInk)
+            } action: {
+                Task { await viewModel.signInWithPasskey() }
             }
             .loginRise(Cue.google, enabled: introReady)
         }

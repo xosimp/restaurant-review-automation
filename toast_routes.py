@@ -184,14 +184,21 @@ def client_save_toast(current_user):
 @toast_bp.route("/api/toast/sync", methods=["POST"])
 @login_required
 def client_sync_toast(current_user):
+    payload, status = do_sync(current_user)
+    return jsonify(**payload), status
+
+
+def do_sync(current_user):
+    """Sync now — one body for the web card and the app's twin
+    (POST /mobile/api/connections/toast/sync). Any login, as on the web."""
     from toast import is_connected
     rid = current_user["restaurant_id"]
     if not is_connected(rid):
-        return jsonify(ok=False, error="Toast is not connected yet.")
+        return {"ok": False, "error": "Toast is not connected yet."}, 200
     # The same path as the console's button and the nightly sync (#65).
     import scheduler
     scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")
-    return jsonify(ok=True, message="Sync started — labor data refreshes in ~30 seconds")
+    return {"ok": True, "message": "Sync started — labor data refreshes in ~30 seconds"}, 200
 
 
 @toast_bp.route("/api/toast/disconnect", methods=["POST"])

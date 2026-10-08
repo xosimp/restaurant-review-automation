@@ -12,11 +12,18 @@ struct AccountHoursSheet: View {
     private static let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
     @State private var hours: [String: HoursDayDraft]
+    /// The closed dates as the server last answered them. Each add or
+    /// remove saves on its own and this list is replaced by the server's
+    /// (parity #7) — never a whole list sent behind Save hours.
     @State private var closures: [String]
-    /// What the sheet opened with, sent as closures_base on save.
-    private let closuresBase: [String]
     @State private var newClosure = Date()
     @State private var postedLabel: String?
+    /// "From Google — not saved yet" / "Monday's hours on every day — not
+    /// saved yet": the form changed, nothing is stored until Save hours.
+    @State private var fillNote: String?
+    @State private var fillError: String?
+    @State private var fillingFromGoogle = false
+    @State private var pendingRemoval: String?
 
     private static let dayFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -47,9 +54,7 @@ struct AccountHoursSheet: View {
                                                           closes: decode(profile.closeTimesJson)))
         // The scheduler's closed dates (Friction #6: these used to land in
         // the marketing holiday list and never reached the scheduler).
-        let opened = (profile.closures ?? []).filter { !$0.isEmpty }.sorted()
-        _closures = State(initialValue: opened)
-        closuresBase = opened
+        _closures = State(initialValue: (profile.closures ?? []).filter { !$0.isEmpty }.sorted())
     }
 
     /// Read only for a login the server won't take hours from.
@@ -72,40 +77,28 @@ struct AccountHoursSheet: View {
                     }
 
                     AccountSection(kicker: "Weekly hours") {
+                        if let fillNote {
+                            Text(fillNote)
+                                .font(.cavnarBody(14, weight: 600))
+                                .foregroundStyle(Color.cavnarAmber)
+                                .padding(.vertical, 6)
+                        }
+                        if let fillError {
+                            Text(fillError)
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarRed)
+                                .padding(.vertical, 6)
+                        }
+                        if fillingFromGoogle {
+                            CavnarSkeletonBar(height: 3)
+                                .padding(.vertical, 6)
+                                .accessibilityLabel("Reading your Google hours")
+                        }
                         ForEach(Array(Self.days.enumerated()), id: \.element) { index, day in
                             dayRow(day, showsDivider: index < Self.days.count - 1)
                         }
                     }
                     .disabled(!canEdit)
-
-                    AccountSection(kicker: closures.isEmpty ? "Closures" : "Closures · \(closures.count)") {
-                        ForEach(Array(closures.enumerated()), id: \.element) { index, date in
-                            AccountKVRow(label: Self.closureLabel(date)) {
-                                if canEdit {
-                                    AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove closure") {
-                                        closures.removeAll { $0 == date }
-                                    }
-                                }
-                            }
-                        }
-                        if canEdit {
-                        HStack(spacing: 12) {
-                            DatePicker("", selection: $newClosure, displayedComponents: .date)
-                                .labelsHidden()
-                                .tint(Color.cavnarEmber)
-                            Spacer(minLength: 0)
-                            AccountActionChip(symbol: "plus", accessibilityLabel: "Add closure") {
-                                let s = Self.dayFormatter.string(from: newClosure)
-                                if !closures.contains(s) { closures.append(s); closures.sort() }
-                            }
-                        }
-                        .padding(.vertical, 9)
-                        }
-                    }
-
-                    if let error = viewModel.saveHoursError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-                    }
 
                     if canEdit {
                     Button {
@@ -114,8 +107,9 @@ struct AccountHoursSheet: View {
                             // untouched day goes back exactly as it was stored
                             // (F3-17).
                             let (open, close) = HoursDayDraft.payload(days: Self.days, drafts: hours)
-                            if await viewModel.saveHours(open: open, close: close, closures: closures, closuresBase: closuresBase) {
+                            if await viewModel.saveHours(open: open, close: close) {
                                 Haptic.success()
+                                fillNote = nil
                                 postedLabel = "Hours saved"
                             }
                         }
@@ -128,13 +122,138 @@ struct AccountHoursSheet: View {
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingHours))
                     .disabled(viewModel.isSavingHours)
                     }
+
+                    if let error = viewModel.saveHoursError {
+                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                    }
+
+                    // Closed dates save the moment one is added or removed —
+                    // no Save step (parity #7, owner edits never vanish).
+                    AccountSection(kicker: closures.isEmpty ? "Closed dates" : "Closed dates · \(closures.count)") {
+                        ForEach(Array(closures.enumerated()), id: \.element) { index, date in
+                            AccountKVRow(label: Self.closureLabel(date)) {
+                                if canEdit {
+                                    if viewModel.closureBusy == date {
+                                        CavnarShimmerLine(color: .cavnarRed).frame(width: 28)
+                                    } else {
+                                        AccountActionChip(symbol: "xmark", tone: .cavnarRed,
+                                                          accessibilityLabel: "Remove \(Self.closureLabel(date))") {
+                                            pendingRemoval = date
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if canEdit {
+                        HStack(spacing: 12) {
+                            DatePicker("", selection: $newClosure, displayedComponents: .date)
+                                .labelsHidden()
+                                .tint(Color.cavnarEmber)
+                            Spacer(minLength: 0)
+                            if let busy = viewModel.closureBusy, !closures.contains(busy) {
+                                CavnarShimmerLine(color: .cavnarEmber).frame(width: 28)
+                            } else {
+                                AccountActionChip(symbol: "plus", accessibilityLabel: "Add closed date") {
+                                    let s = Self.dayFormatter.string(from: newClosure)
+                                    guard !closures.contains(s) else { return }
+                                    Task { await applyClosure(.init(add: s), saved: "Closed \(CavnarDate.mdy(s)) saved") }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 9)
+                        }
+                        Text("Each date saves as soon as you add or remove it.")
+                            .font(.cavnarBody(13.5))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.bottom, 6)
+                    }
+                    if let error = viewModel.closureError {
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
             .accountSheetChrome("Hours")
-            .cavnarPostedOverlay(postedLabel) { dismiss() }
+            .toolbar {
+                if canEdit {
+                    cavnarToolbarItem(placement: .topBarTrailing) {
+                        // Fill the form only: nothing saves until Save hours
+                        // (parity #88, the web's Fill from Google / Same
+                        // every day).
+                        Menu {
+                            Button {
+                                Task { await fillFromGoogle() }
+                            } label: { Label("Fill from Google", systemImage: "globe") }
+                            Button {
+                                copyMondayToAll()
+                            } label: { Label("Copy Monday to all", systemImage: "doc.on.doc") }
+                        } label: {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Color.cavnarEmber)
+                                .cavnarToolbarIconGlass()
+                        }
+                        .accessibilityLabel("Fill hours")
+                    }
+                }
+            }
+            .confirmationDialog(
+                pendingRemoval.map { "Remove \(Self.closureLabel($0))?" } ?? "",
+                isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Remove closed date", role: .destructive) {
+                    guard let date = pendingRemoval else { return }
+                    Task { await applyClosure(.init(remove: date), saved: "Date removed") }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The schedule plans this day as open again. It saves right away.")
+            }
+            .cavnarPostedOverlay(postedLabel) { if postedLabel == "Hours saved" { dismiss() } else { postedLabel = nil } }
         }
+    }
+
+    /// Saves one closed date and adopts the list the server answers with.
+    private func applyClosure(_ change: AccountViewModel.ClosureChange, saved: String) async {
+        if let list = await viewModel.changeClosure(change) {
+            closures = list
+            Haptic.success()
+            postedLabel = saved
+        } else {
+            Haptic.error()
+        }
+    }
+
+    /// Google's listed hours into the form; a day Google lists no hours for
+    /// is closed. Not saved until Save hours.
+    private func fillFromGoogle() async {
+        fillError = nil
+        fillingFromGoogle = true
+        defer { fillingFromGoogle = false }
+        let answer = await viewModel.hoursFromGoogle()
+        guard answer.ok, let open = answer.open, !open.isEmpty else {
+            fillError = answer.error ?? "Your Google listing has no opening hours on it."
+            Haptic.error()
+            return
+        }
+        hours = HoursDayDraft.filled(days: Self.days, current: hours, opens: open, closes: answer.close ?? [:])
+        fillNote = "From Google \u{2014} not saved yet"
+        Haptic.success()
+    }
+
+    /// Monday's open and close on every day — the form only.
+    private func copyMondayToAll() {
+        fillError = nil
+        guard let monday = hours["Monday"], !monday.closed else {
+            fillError = "Set Monday's hours first \u{2014} it's closed."
+            Haptic.error()
+            return
+        }
+        hours = HoursDayDraft.copying(monday, to: Self.days, current: hours)
+        fillNote = "Monday\u{2019}s hours on every day \u{2014} not saved yet"
+        Haptic.success()
     }
 
     private func dayRow(_ day: String, showsDivider: Bool) -> some View {
@@ -270,6 +389,50 @@ struct HoursDayDraft: Equatable {
             return "No opening time saved \u{2014} set one to add it."
         }
         return nil
+    }
+
+    /// A day set to these times, as if the owner picked them (saved as
+    /// picked, not "as stored").
+    static func picked(original: HoursDayDraft?, open: (hour: Int, minute: Int), close: (hour: Int, minute: Int)) -> HoursDayDraft {
+        var d = HoursDayDraft(originalOpen: original?.originalOpen, originalClose: original?.originalClose,
+                              closed: original?.closed ?? false)
+        d.setClosed(false)
+        d.setOpen(HoursFormat.date(open))
+        d.setClose(HoursFormat.date(close))
+        return d
+    }
+
+    /// The form filled from Google's listed hours: a day it lists is set to
+    /// them, a day it lists no hours for is closed, a time it lists that
+    /// can't be read leaves that day as it was.
+    static func filled(days: [String], current: [String: HoursDayDraft],
+                       opens: [String: String], closes: [String: String]) -> [String: HoursDayDraft] {
+        var out = current
+        for day in days {
+            let o = HoursFormat.parse(opens[day]), c = HoursFormat.parse(closes[day])
+            if let o, let c {
+                out[day] = picked(original: current[day], open: o, close: c)
+            } else if opens[day] == nil && closes[day] == nil {
+                var d = current[day] ?? HoursDayDraft(originalOpen: nil, originalClose: nil, closed: false)
+                d.setClosed(true)
+                out[day] = d
+            }
+        }
+        return out
+    }
+
+    /// `source`'s times on every day (the web's "Same every day").
+    static func copying(_ source: HoursDayDraft, to days: [String],
+                        current: [String: HoursDayDraft]) -> [String: HoursDayDraft] {
+        let cal = Calendar.current
+        let o = cal.dateComponents([.hour, .minute], from: source.openTime)
+        let c = cal.dateComponents([.hour, .minute], from: source.closeTime)
+        var out = current
+        for day in days {
+            out[day] = picked(original: current[day], open: (o.hour ?? 11, o.minute ?? 0),
+                              close: (c.hour ?? 21, c.minute ?? 0))
+        }
+        return out
     }
 
     /// The two dictionaries the save route takes. A day missing from both

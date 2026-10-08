@@ -106,6 +106,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 
 | Module | Layer | Job |
 |---|---|---|
+| `account_health` | 2 | Account health and the security checkup scored once for both clients (iOS parity 10/7/26): `payload(user)` — the six health items, score, ring tone, sentence and one fix, the modules on the plan (`features`), every connection (`connections`) and the measured line (`measured_value`: `value_delivered.delivered` only, viewer-scoped); `security_checkup` / `security_inputs` — the six shared checkup items and their points. Reads only, no provider call; `GET /api/account/health`, `/api/account/security-summary` and their mobile twins |
 | `action_queue` | 2 | everything still open for the owner, with what finishes it |
 | `activity` | 2 | the Account activity trail and its `build()` |
 | `admin_events` | 2 | the admin audit trail: `record_admin_action` — the one typed call every admin action that records itself makes (action, target, before/after with secrets redacted and a phone cut to its last four, result, ip, request id) — the after-response request hook registered on every admin blueprint (a row only for a console login that passed CSRF; anonymous, non-admin and CSRF-failed attempts go to the capped `admin_audit_refused`), the Stripe/DocuSign ledger rows (`record_stripe`, one per event id), `support_notes` (append-only) and `bug_reports`; `init_admin_events` at boot |

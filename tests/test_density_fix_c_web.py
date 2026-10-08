@@ -193,7 +193,12 @@ def test_the_overview_is_one_sentence_one_fix_and_a_toned_ring():
     for gone in ("Google {{ 'connected'", "POS {{ 'needs attention'", "2FA on", 'id="ac-sub-chip"'):
         assert gone not in ov, gone
     js = SRC[SRC.index("window.acctHealthRefresh=function(){"):SRC.index("window.acctApplyBilling=")]
-    assert "score>=90?'good':(score>=60?'warn':'bad')" in js and "sayAndFix(score)" in js
+    # Scored on the server since iOS parity #89 (account_health.payload):
+    # the page paints the server's tone and sentence.
+    assert "rb.classList.add(d.tone||'bad')" in js and "sayAndFix(score)" in js
+    import account_health
+    src = open(account_health.__file__).read()
+    assert '"good" if score >= 90 else ("warn" if score >= 60 else "bad")' in src
     assert ".ac-ring.good .ar{stroke:var(--green)" in SRC and ".ac-ring.bad .ar{stroke:var(--red)" in SRC
 
 
@@ -201,8 +206,9 @@ def test_data_health_leads_integrations_and_drives_its_health_item():
     it = _section("integrations")
     assert it.index('id="acct-dh-card"') < it.index("{{ pos_card(")
     assert 'data-dh-open="1"' in it
-    js = SRC[SRC.index("window.acctHealthRefresh=function(){"):SRC.index("window.acctApplyBilling=")]
-    assert "dh&&dh.pct!=null" in js
+    # The health item reads Data health on the server (account_health.payload).
+    import account_health
+    assert 'dh and dh.get("pct") is not None' in open(account_health.__file__).read()
     assert "cavDataHealth.fetch(false).then(acctApplyDataHealth)" in SRC
 
 

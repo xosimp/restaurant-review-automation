@@ -31,6 +31,7 @@ struct AccountProfileDetailView: View {
     @State private var autoApprovePaused: Bool
     @State private var autoApproveCap: Int
     @State private var autoApproveEarned: Bool
+    @State private var autoApprove4star: Bool
 
     private enum Field: Hashable { case ownerName, ownerPhone, voiceNotes, neverSay, menuNotes, signOff }
 
@@ -70,6 +71,7 @@ struct AccountProfileDetailView: View {
         _autoApprovePaused = State(initialValue: auto?.paused ?? false)
         _autoApproveCap = State(initialValue: auto?.dailyCap ?? 5)
         _autoApproveEarned = State(initialValue: auto?.earned ?? false)
+        _autoApprove4star = State(initialValue: auto?.include4star ?? false)
     }
 
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
@@ -364,21 +366,40 @@ struct AccountProfileDetailView: View {
     // visibly, same as 2FA's own Turn on/off.
     private func saveAutoApprove() {
         Task {
-            if await viewModel.saveAutoApprove(enabled: autoApproveEnabled, paused: autoApprovePaused, dailyCap: autoApproveCap, earned: autoApproveEarned) {
+            if await viewModel.saveAutoApprove(enabled: autoApproveEnabled, paused: autoApprovePaused,
+                                               dailyCap: autoApproveCap, earned: autoApproveEarned,
+                                               include4star: autoApprove4star) {
                 Haptic.success()
             }
         }
     }
 
+    /// The rule in words, as the web's card says it (parity #2: this read
+    /// "Only drafted 5-star replies, never anything lower" while 4-star
+    /// replies were going out too).
+    private var autoApproveRuleLine: String {
+        let bands = autoApprove4star ? "Drafted 5- and 4-star replies" : "Only drafted 5-star replies"
+        let floor = autoApprove4star ? "never 3 stars or below, and anything the analyser flags still waits for you."
+                                     : "never anything lower."
+        return "\(bands), \(floor) \(viewModel.summary?.reviews.approvedToday ?? 0) auto-approved today."
+    }
+
     private var autoApproveSection: some View {
         AccountSection(kicker: "Auto-approve") {
             AccountSwitchRow(
-                label: "Post 5-star replies automatically",
+                label: autoApprove4star ? "Post 5- and 4-star replies automatically" : "Post 5-star replies automatically",
                 isOn: Binding(get: { autoApproveEnabled }, set: { on in autoApproveEnabled = on; saveAutoApprove() }),
                 busy: viewModel.isSavingAutoApprove,
                 showsDivider: autoApproveEnabled
             )
             if autoApproveEnabled {
+                AccountSwitchRow(
+                    label: "Include 4-star reviews",
+                    detail: "Same ceiling, same rule: anything the analyser flags still waits for you. Never 3 stars or below.",
+                    isOn: Binding(get: { autoApprove4star }, set: { on in autoApprove4star = on; saveAutoApprove() }),
+                    busy: viewModel.isSavingAutoApprove,
+                    showsDivider: true
+                )
                 AccountKVRow(label: "Daily cap") {
                     Picker("", selection: Binding(get: { autoApproveCap }, set: { cap in
                         Haptic.selection(); autoApproveCap = cap; saveAutoApprove()
@@ -406,7 +427,7 @@ struct AccountProfileDetailView: View {
                 )
                 Text(autoApprovePaused
                      ? "Paused — nothing posts on its own until you resume."
-                     : "Only drafted 5-star replies, never anything lower. \(viewModel.summary?.reviews.approvedToday ?? 0) auto-approved today.")
+                     : autoApproveRuleLine)
                     .font(.cavnarBody(14))
                     .foregroundStyle(autoApprovePaused ? Color.cavnarAmber : Color.cavnarInk3)
                     .padding(.vertical, 9)

@@ -4318,6 +4318,60 @@ def revoke_team_member(restaurant_id: int, user_id: int, acting_user_id: int,
     return {"ok": True}
 
 
+def delete_own_login(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """A teammate deletes their own login (App Store Guideline 5.1.1(v),
+    parity #13): the login is turned off, every session, remembered device,
+    passkey and push token it holds is removed, and what identified the
+    person on it (email, username, phone, recovery address, Apple and Google
+    links, password) is cleared, so the address is free to be invited again.
+    The restaurant's own records stay the restaurant's: their schedule row,
+    ratings and what they wrote are business data, and their private memory
+    notes are archived for the owner exactly as on a revoke.
+
+    Never an account holder's login (they close the account instead) or a
+    Cavnar AI staff login, and never the restaurant's last active login."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, is_admin, COALESCE(NULLIF(role,''),'client') AS r FROM users "
+            "WHERE id=? AND restaurant_id=? AND is_active=1", (user_id, restaurant_id)).fetchone()
+        if not row:
+            return {"ok": False, "error": "That login wasn't found."}
+        if row["is_admin"] or row["r"] in _PRINCIPAL_ROLES:
+            return {"ok": False, "error": "An owner's login closes with the account — use Close my account."}
+        active = conn.execute("SELECT COUNT(*) AS n FROM users WHERE restaurant_id=? AND is_active=1",
+                              (restaurant_id,)).fetchone()["n"]
+        if active <= 1:
+            return {"ok": False, "error": "Can't remove the only remaining login."}
+        import secrets as _secrets_del
+        conn.execute(
+            "UPDATE users SET is_active=0, email=?, username=?, password_hash=?, reset_token=NULL, "
+            "reset_token_expires=NULL WHERE id=?",
+            (f"deleted-{user_id}@deleted.invalid", f"deleted-{user_id}",
+             "!deleted:" + _secrets_del.token_hex(16), user_id))
+        # Columns added by migrations, each cleared only where it exists.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+        for col in ("phone", "recovery_email", "recovery_email_pending", "recovery_email_code",
+                    "recovery_email_expires", "google_id", "apple_user_id", "two_fa_method"):
+            if col in cols:
+                conn.execute(f"UPDATE users SET {col}=NULL WHERE id=?", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        for table in ("trusted_devices", "user_passkeys", "device_tokens", "login_prefs"):
+            try:
+                conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+            except Exception:
+                pass   # a table this database doesn't have yet
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        import owner_memory
+        owner_memory.retire_departed(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[auth] deleted login's memory not retired rid={restaurant_id}: {e}")
+    return {"ok": True}
+
+
 def list_users(db_path: str = DB_PATH) -> list[dict]:
     conn = get_conn(db_path)
     rows = conn.execute("""
@@ -5155,6 +5209,8 @@ _BILLING_EXEMPT_PREFIXES = (
     # Closing the account stays reachable too, as it is on the phone
     # (/mobile/api/account below).
     "/api/account/request-deletion",
+    # ...and so does a teammate deleting their own login (parity #13).
+    "/api/account/delete-login",
     "/account", "/mobile/api/account", "/mobile/api/login",
     "/mobile/api/logout", "/mobile/api/me", "/mobile/api/forgot-password",
     "/mobile/api/reset-password", "/admin",
@@ -5278,6 +5334,8 @@ _UNGATED_PREFIXES = (
     "/mobile/api/login", "/mobile/api/verify-2fa", "/mobile/api/resend-2fa", "/mobile/api/apple-signin", "/mobile/api/register",
     "/mobile/api/forgot-password", "/mobile/api/reset-password", "/mobile/api/logout", "/mobile/api/me",
     "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions", "/api/passkeys",
+    # The app's passkey sign-in and its own passkeys (iOS parity #57).
+    "/mobile/api/passkey",
     "/api/change-password", "/api/update-email", "/api/send-2fa-test", "/api/verify-2fa-setup",
     "/api/toggle-2fa", "/api/toggle-login-notify", "/api/toggle-staff-signin-notify",
     "/api/switch-location", "/mobile/api/switch-location", "/api/group-locations", "/mobile/api/group-locations",

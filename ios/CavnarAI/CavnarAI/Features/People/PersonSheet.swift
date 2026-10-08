@@ -34,8 +34,8 @@ struct PersonRecord: Decodable, Equatable {
     let certifications: [String]?
     let posId: String?
     /// The rate this person's hours are costed at. Read only here: rates
-    /// are per ROLE (people._pay_rate), set on the web in Account → Targets & pay rates
-    /// (/api/account/targets; the phone has no editor for them). The server
+    /// are per ROLE (people._pay_rate), set in Account → Targets & pay rates
+    /// (/account/targets; AccountTargetsView, opened from the Pay card). The server
     /// sends `{role, rate, source}`; a bare number or text is read too.
     /// Decoding only a number left the field blank for everyone (F3-5).
     private(set) var payRate: Double?
@@ -539,6 +539,8 @@ struct PersonSheet: View {
     @State private var mergeInto: PeopleListRow?
     @State private var erasing = false
     @State private var undoing: PeopleMerge?
+    /// Account → Targets & pay rates, opened from the Pay card (parity #27).
+    @State private var showingPayRates = false
 
     var body: some View {
         NavigationStack {
@@ -567,6 +569,9 @@ struct PersonSheet: View {
                 if case .loaded(let person) = viewModel.state, person.canManageLogin {
                     cavnarToolbarItem(placement: .topBarTrailing) { overflowMenu(person) }
                 }
+            }
+            .sheet(isPresented: $showingPayRates, onDismiss: { Task { await viewModel.load(target) } }) {
+                AccountTargetsView()
             }
         }
         .task {
@@ -757,10 +762,7 @@ struct PersonSheet: View {
         if !person.mayEdit("pay_rate", fallback: false) {
             AccountSection(kicker: "Pay") {
                 kv("Pay rate", last: true, person.payRateLine ?? "Not set")
-                Text("Rates are per role \u{2014} set them on the web, in Account \u{2192} Targets & pay rates.")
-                    .font(.cavnarBody(12.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .padding(.top, 6)
+                AccountNavRow(label: "Targets & pay rates", showsDivider: false) { showingPayRates = true }
             }
         }
 

@@ -249,11 +249,15 @@ def test_the_web_never_sends_a_whole_closed_dates_list_again():
     assert "cavClosedDateChange({remove:iso}" in listener
 
 
-def test_the_iphone_sheet_sends_the_list_it_opened_with():
+def test_the_iphone_sheet_saves_each_closed_date_on_its_own():
+    """iOS parity #7: the sheet no longer sends a closures list with Save
+    hours (closures_base stays on the server for an older build) — each add
+    or remove posts {add}/{remove} to /account/closures, as the web does."""
     import os
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "ios", "CavnarAI", "CavnarAI", "Features", "Account")
     vm = open(os.path.join(root, "AccountViewModel.swift"), encoding="utf-8").read()
     sheet = open(os.path.join(root, "AccountHoursSheet.swift"), encoding="utf-8").read()
-    assert 'closuresBase = "closures_base"' in vm
-    assert "closuresBase: closuresBase" in sheet
+    assert "closures_base" not in vm and "closuresBase" not in sheet
+    assert '"/mobile/api/account/closures"' in vm
+    assert "changeClosure(" in sheet and ".init(add: s)" in sheet and ".init(remove: date)" in sheet
