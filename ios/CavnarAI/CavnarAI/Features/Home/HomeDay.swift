@@ -9,6 +9,9 @@ import Observation
 struct HomeDayCard: View {
     @State private var viewModel = HomeDayViewModel()
     let dateLabel: String?
+    /// The restaurant's weekday (local_now) — the phone's clock only when
+    /// the server sent none.
+    var weekday: String? = nil
     /// What the page above already says — the one thing and every Needs
     /// attention item, by job (HomeBriefFilter.same) — so a brief line
     /// about the same job is left out, as the web's `hbShownKeys` does.
@@ -16,6 +19,21 @@ struct HomeDayCard: View {
     /// Where a line's own action lands (its `action.nav`).
     var onOpenNav: (String) -> Void = { _ in }
     var onOpenIssues: () -> Void = {}
+    /// An issue a push or a row opened (`issue/<id>`, parity audit #11):
+    /// the list opens far enough to show it, Home scrolls to it
+    /// (`onFocus`, with the row's scroll id) and it pulses once.
+    var focusIssueId: Int? = nil
+    var onFocus: (Int) -> Void = { _ in }
+
+    /// Every open issue is on Home — the first four, then "+N more" in
+    /// place (the header counts N; only four used to render).
+    @State private var showAllIssues = false
+    @State private var openIssue: HomeDayViewModel.Issue?
+    @State private var pulsing: Int?
+    @State private var askingCover: HomeDayViewModel.CoverAsk?
+
+    /// The scroll id HomeView's ScrollViewReader scrolls to.
+    static func issueAnchor(_ id: Int) -> String { "home-issue-\(id)" }
 
     /// The lines this card draws: the web's rule, applied to the brief.
     private var lines: [HomeDayViewModel.BriefLine] {
@@ -25,9 +43,14 @@ struct HomeDayCard: View {
     }
 
     var body: some View {
+        issueChrome(dayStack)
+    }
+
+    private var dayStack: some View {
         let lines = self.lines
-        VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Today", title: Date.now.formatted(.dateTime.weekday(.wide)), trailing: dateLabel)
+        return VStack(alignment: .leading, spacing: 12) {
+            HomeSectionHeader(kicker: "Today", title: weekday ?? Date.now.formatted(.dateTime.weekday(.wide)),
+                              trailing: dateLabel)
             VStack(alignment: .leading, spacing: 0) {
                 if viewModel.isLoading && viewModel.lines.isEmpty {
                     CavnarWorkingLine().padding(.vertical, 10)
@@ -105,81 +128,197 @@ struct HomeDayCard: View {
             .cavnarCard(.ai)
 
             // Open issues: the day's obligations, beside the day's read.
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text("OPEN ISSUES").font(.cavnarBody(12, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarInk3)
-                    Spacer()
-                    if !viewModel.issues.isEmpty {
-                        Text("\(viewModel.issues.count)").font(.cavnarNumber(12, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-                    }
-                }
-                .padding(.bottom, 6)
-                if viewModel.issues.isEmpty {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Color.cavnarGreen)
-                        Text("Nothing open.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                    }
-                    .padding(.vertical, 6)
-                } else {
-                    ForEach(Array(viewModel.issues.prefix(4).enumerated()), id: \.element.id) { index, issue in
-                        VStack(spacing: 0) {
-                            HStack(alignment: .top, spacing: 12) {
-                                Circle().fill(issue.tone).frame(width: 8, height: 8).padding(.top, 6)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HomeMixedText.make(issue.title, size: 14.5, weight: 600, color: .cavnarInk)
-                                    Text((issue.assigneeName ?? "unassigned") + " · " + (issue.status == "acknowledged" ? "on it" : (issue.status ?? "open")))
-                                        .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
-                                    // A call-off of several people is one issue
-                                    // per role (schedule audit 10/3/26 E-31):
-                                    // each gap with where it stands, and one
-                                    // cover button per gap still open.
-                                    if issue.isGroup {
-                                        CoverageGapList(issue: issue) { name in
-                                            Task { await viewModel.askToCover(issue, name: name) }
-                                        }
-                                    }
-                                    // A coverage issue's suggested covers: one
-                                    // tap asks that person (text or email).
-                                    // The schedule moves only when the manager
-                                    // decides who is on.
-                                    let covers = issue.isGroup ? [] : issue.coversToAsk
-                                    if !covers.isEmpty {
-                                        HStack(spacing: 14) {
-                                            ForEach(covers, id: \.self) { name in
-                                                Button {
-                                                    Haptic.light()
-                                                    Task { await viewModel.askToCover(issue, name: name) }
-                                                } label: {
-                                                    Text("Ask \(name.split(separator: " ").first.map(String.init) ?? name) to cover")
-                                                        .font(.cavnarBody(12.5, weight: 700))
-                                                        .foregroundStyle(Color.cavnarEmber2)
-                                                }
-                                                .buttonStyle(.plain)
-                                            }
-                                        }
-                                        .padding(.top, 4)
-                                    }
-                                    if let note = viewModel.coverNote[issue.id] {
-                                        Text(note).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarGreen)
-                                    }
-                                    // Whoever was asked: "Did Zed take it?" —
-                                    // the manager's word counts on their
-                                    // record of covers (memory round).
-                                    ForEach(issue.askedNames, id: \.self) { name in
-                                        CoverAnswerRow(issueId: issue.id, name: name)
-                                    }
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.vertical, 8)
-                            if index < min(viewModel.issues.count, 4) - 1 { AccountRowDivider() }
-                        }
-                    }
-                }
-            }
-            .cavnarCard()
+            issuesCard
         }
         .task { await viewModel.load() }
+    }
+
+    /// The issue sheet, the cover confirm, the focus a push set and the
+    /// Undo window's end — apart from the day's stack so each type-checks
+    /// on its own.
+    private func issueChrome<Content: View>(_ content: Content) -> some View {
+        content
+            .task(id: focusIssueId) { await focus() }
+            .onDisappear { viewModel.keepPendingResolve() }
+            .sheet(item: $openIssue, onDismiss: { Task { await viewModel.load() } }) { issue in
+                HomeIssueSheet(issue: issue, viewModel: viewModel) { resolved in
+                    openIssue = nil
+                    viewModel.resolveWithUndo(resolved)
+                }
+            }
+            .confirmationDialog(askingCover.map { "Ask \($0.name) to cover?" } ?? "",
+                                isPresented: coverDialogShown,
+                                titleVisibility: .visible, presenting: askingCover) { ask in
+                Button("Ask \(HomeDayViewModel.firstName(ask.name))") {
+                    Task { await viewModel.askToCover(ask.issue, name: ask.name) }
+                }
+                Button("Not yet", role: .cancel) {}
+            } message: { ask in
+                Text(HomeDayViewModel.coverAskMessage(ask))
+            }
+    }
+
+    private var coverDialogShown: Binding<Bool> {
+        Binding(get: { askingCover != nil }, set: { if !$0 { askingCover = nil } })
+    }
+
+    /// The issues card: every open issue (the first four, then "+N more"
+    /// in place), each a swipe to Resolve with an Undo, a tap for the
+    /// issue's own sheet (Resolve, Hand it to…, Ask to cover).
+    private var issuesCard: some View {
+        let shown = viewModel.visibleIssues
+        let limit = showAllIssues ? shown.count : min(shown.count, HomeDayViewModel.issuesShown)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("OPEN ISSUES").font(.cavnarBody(12, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarEmber2)
+                Spacer()
+                if !shown.isEmpty {
+                    Text("\(shown.count)").font(.cavnarNumber(12, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                }
+            }
+            .padding(.bottom, 6)
+            if let pending = viewModel.pendingResolve {
+                StaffUndoCapsule(text: "Resolved \u{2014} \(pending.title)") {
+                    viewModel.undoResolve()
+                }
+                .padding(.vertical, 6)
+            }
+            if let error = viewModel.issueError {
+                Text(error).font(.cavnarBody(12.5, weight: 600)).foregroundStyle(Color.cavnarRed)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 4)
+            }
+            if shown.isEmpty && viewModel.pendingResolve == nil {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Color.cavnarGreen)
+                    Text("Nothing open.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                }
+                .padding(.vertical, 6)
+            } else {
+                ForEach(Array(shown.prefix(limit).enumerated()), id: \.element.id) { index, issue in
+                    issueRow(issue, showsDivider: index < limit - 1)
+                        .id(Self.issueAnchor(issue.id))
+                }
+                if shown.count > HomeDayViewModel.issuesShown {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.2)) { showAllIssues.toggle() }
+                    } label: {
+                        Text(showAllIssues ? "Show fewer" : "+\(shown.count - HomeDayViewModel.issuesShown) more")
+                            .font(.cavnarBody(13, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .cavnarCard()
+    }
+
+    private func issueRow(_ issue: HomeDayViewModel.Issue, showsDivider: Bool) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                Circle().fill(issue.tone).frame(width: 8, height: 8).padding(.top, 6)
+                VStack(alignment: .leading, spacing: 2) {
+                    HomeMixedText.make(issue.title, size: 14.5, weight: 600, color: .cavnarInk)
+                    Text(issue.statusLine)
+                        .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    // A call-off of several people is one issue per role
+                    // (schedule audit 10/3/26 E-31): each gap with where it
+                    // stands, and one cover button per gap still open.
+                    if issue.isGroup {
+                        CoverageGapList(issue: issue) { name in
+                            askingCover = HomeDayViewModel.CoverAsk(issue: issue, name: name)
+                        }
+                    }
+                    // A coverage issue's suggested covers: asking one texts
+                    // (or emails) them, so it confirms first. The schedule
+                    // moves only when the manager decides who is on.
+                    let covers = issue.isGroup ? [] : issue.coversToAsk
+                    if !covers.isEmpty {
+                        HStack(spacing: 14) {
+                            ForEach(covers, id: \.self) { name in
+                                Button {
+                                    Haptic.light()
+                                    askingCover = HomeDayViewModel.CoverAsk(issue: issue, name: name)
+                                } label: {
+                                    Text("Ask \(HomeDayViewModel.firstName(name)) to cover")
+                                        .font(.cavnarBody(12.5, weight: 700))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .frame(minHeight: 32)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    if let note = viewModel.coverNote[issue.id] {
+                        Text(note).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                    }
+                    // Whoever was asked: "Did Zed take it?" — the manager's
+                    // word counts on their record of covers (memory round).
+                    ForEach(issue.askedNames, id: \.self) { name in
+                        CoverAnswerRow(issueId: issue.id, name: name)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 5)
+            }
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                Haptic.light()
+                openIssue = issue
+            }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens the issue: resolve it, hand it to someone, or ask someone to cover")
+            if showsDivider { AccountRowDivider() }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.cavnarEmber.opacity(pulsing == issue.id ? 0.16 : 0))
+                .padding(.horizontal, -8)
+        )
+        .homeSwipeAction(issue.status == "resolved" ? nil : HomeSwipeAction(
+            label: "Resolve", systemImage: "checkmark", tint: .cavnarGreen) {
+                viewModel.resolveWithUndo(issue)
+            })
+        .contextMenu {
+            Button { openIssue = issue } label: { Label("Open the issue", systemImage: "arrow.up.right") }
+            if issue.status != "resolved" {
+                Button { viewModel.resolveWithUndo(issue) } label: { Label("Resolve", systemImage: "checkmark") }
+            }
+            ForEach(issue.isGroup ? issue.groupCoverNames : issue.coversToAsk, id: \.self) { name in
+                Button { askingCover = HomeDayViewModel.CoverAsk(issue: issue, name: name) } label: {
+                    Label("Ask \(HomeDayViewModel.firstName(name)) to cover", systemImage: "person.badge.plus")
+                }
+            }
+        }
+    }
+
+    /// A push or a row named an issue: open the list far enough, scroll to
+    /// it, pulse it once. An issue not on the list (resolved since the push
+    /// went out) says so instead of opening nothing.
+    private func focus() async {
+        guard let id = focusIssueId else { return }
+        if !viewModel.issues.contains(where: { $0.id == id }) { await viewModel.load() }
+        guard let index = viewModel.visibleIssues.firstIndex(where: { $0.id == id }) else {
+            viewModel.issueError = "That issue isn\u{2019}t open any more."
+            onFocus(id)
+            return
+        }
+        if index >= HomeDayViewModel.issuesShown { showAllIssues = true }
+        try? await Task.sleep(for: .milliseconds(150))
+        onFocus(id)
+        try? await Task.sleep(for: .milliseconds(450))
+        withAnimation(.easeInOut(duration: 0.35)) { pulsing = id }
+        try? await Task.sleep(for: .seconds(1.4))
+        withAnimation(.easeOut(duration: 0.6)) { pulsing = nil }
     }
 }
 
@@ -388,9 +527,33 @@ final class HomeDayViewModel {
         let status: String?
         let assigneeName: String?
         let meta: Meta?
-        enum CodingKeys: String, CodingKey { case id, title, severity, status, meta; case assigneeName = "assignee_name" }
+        /// The issue's own words, its kind and when it was filed — the
+        /// issue sheet's body (parity audit #11). Optional: an older
+        /// server or a cached list may not carry them.
+        var detail: String? = nil
+        var kind: String? = nil
+        var createdAt: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case id, title, severity, status, meta, detail, kind
+            case assigneeName = "assignee_name"
+            case createdAt = "created_at"
+        }
         /// A role's issue holding several people (E-31): drawn gap by gap.
         var isGroup: Bool { (meta?.people?.count ?? 0) > 1 }
+
+        /// "Dana · on it" / "unassigned · open".
+        var statusLine: String {
+            (assigneeName ?? "unassigned") + " \u{00B7} " + (status == "acknowledged" ? "on it" : (status ?? "open"))
+        }
+
+        /// The one cover per open gap of a role's issue, by name.
+        var groupCoverNames: [String] {
+            (meta?.people ?? []).compactMap { cover(for: $0)?.name }.filter { !$0.isEmpty }
+        }
+
+        /// Who "Ask someone to cover" asks: the first suggested cover nobody
+        /// has asked yet (per gap on a role's issue) — nil when none is left.
+        var nextCoverToAsk: String? { (isGroup ? groupCoverNames : coversToAsk).first }
 
         /// The cover to ask for one open gap: the first suggested for that
         /// gap whom nobody has asked yet — one button per gap, not just the
@@ -469,17 +632,165 @@ final class HomeDayViewModel {
     private struct CoverBody: Encodable { let name: String }
 
     /// POST /mobile/api/issues/<id>/ask-cover — text (or email) the chosen
-    /// cover; the server refuses anyone not suggested or already asked.
-    func askToCover(_ issue: Issue, name: String) async {
-        let r: APIClient.OKResponse? = try? await client.send(
-            "/mobile/api/issues/\(issue.id)/ask-cover", method: .post,
-            body: CoverBody(name: name), retryTransient: false)
-        if r?.ok == true {
+    /// cover, once the owner confirmed it; the server refuses anyone not
+    /// suggested or already asked, and its reason is shown, never dropped.
+    @discardableResult
+    func askToCover(_ issue: Issue, name: String) async -> Bool {
+        do {
+            let r: APIClient.OKResponse = try await client.send(
+                "/mobile/api/issues/\(issue.id)/ask-cover", method: .post,
+                body: CoverBody(name: name), retryTransient: false)
+            guard r.ok else {
+                issueError = r.error ?? "Couldn\u{2019}t ask \(name)."
+                return false
+            }
             await Haptic.success()
+            issueError = nil
             coverNote[issue.id] = "\(name) has been asked"
             await load()
-        } else {
-            coverNote[issue.id] = r?.error ?? "Couldn\u{2019}t ask \(name)"
+            return true
+        } catch let error as APIClient.APIError {
+            issueError = error.message
+        } catch is CancellationError {
+        } catch {
+            issueError = "Couldn\u{2019}t ask \(name)."
+        }
+        return false
+    }
+
+    // MARK: Every issue, Resolve with Undo, Hand it to… (parity audit #11)
+
+    /// Home shows the first four (the web's focus card plus three rows,
+    /// strategy_routes.HOME_ISSUES_SHOWN); "+N more" opens the rest in place.
+    static let issuesShown = 4
+    /// How long a resolve waits for Undo before it is sent (DS §10 tier 1).
+    static let undoSeconds: Double = 7
+
+    /// A cover the owner tapped, waiting on the confirm that asks them.
+    struct CoverAsk: Identifiable {
+        let issue: Issue
+        let name: String
+        var id: String { "\(issue.id)|\(name)" }
+    }
+
+    static func firstName(_ name: String) -> String {
+        name.split(separator: " ").first.map(String.init) ?? name
+    }
+
+    /// What the cover confirm says it does: a text (or an email), and that
+    /// the schedule does not move until the manager decides.
+    static func coverAskMessage(_ ask: CoverAsk) -> String {
+        "Cavnar AI texts \(firstName(ask.name)) (or emails them) asking them to cover. "
+            + "The schedule doesn\u{2019}t change until you decide who\u{2019}s on."
+    }
+
+    /// Resolved from a swipe or the sheet, held for the Undo window.
+    private(set) var pendingResolve: Issue?
+    private var resolveTask: Task<Void, Never>?
+    /// The last refusal from an issue action, in the server's words.
+    var issueError: String?
+
+    /// The list as drawn: every issue but the one waiting out its Undo.
+    var visibleIssues: [Issue] { issues.filter { $0.id != pendingResolve?.id } }
+
+    /// Tier 1 of the confirm-and-undo policy: gone from the list now, and
+    /// resolved on the server only if nobody taps Undo within the window.
+    /// A second resolve sends the first at once.
+    func resolveWithUndo(_ issue: Issue) {
+        Haptic.light()
+        if let earlier = pendingResolve, earlier.id != issue.id {
+            resolveTask?.cancel()
+            Task { await resolve(earlier) }
+        }
+        issueError = nil
+        pendingResolve = issue
+        resolveTask?.cancel()
+        resolveTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.undoSeconds))
+            guard !Task.isCancelled, pendingResolve?.id == issue.id else { return }
+            await resolve(issue)
+        }
+    }
+
+    func undoResolve() {
+        resolveTask?.cancel()
+        resolveTask = nil
+        pendingResolve = nil
+    }
+
+    /// Leaving Home inside the Undo window keeps the issue open — the safe
+    /// side, as every Undo capsule in the app.
+    func keepPendingResolve() { undoResolve() }
+
+    /// POST /mobile/api/issues/<id>/resolve. On a refusal the issue comes
+    /// back with the server's reason.
+    private func resolve(_ issue: Issue) async {
+        do {
+            let r: APIClient.OKResponse = try await client.send(
+                "/mobile/api/issues/\(issue.id)/resolve", method: .post,
+                body: [String: String](), retryTransient: false)
+            if pendingResolve?.id == issue.id { pendingResolve = nil }
+            if r.ok {
+                await Haptic.success()
+                issues.removeAll { $0.id == issue.id }
+                await load()
+            } else {
+                issueError = r.error ?? "Couldn\u{2019}t resolve that."
+            }
+        } catch let error as APIClient.APIError {
+            if pendingResolve?.id == issue.id { pendingResolve = nil }
+            issueError = error.message
+        } catch {
+            if pendingResolve?.id == issue.id { pendingResolve = nil }
+            issueError = "Couldn\u{2019}t resolve that \u{2014} it\u{2019}s still open."
+        }
+    }
+
+    /// Someone an issue can be handed to: a consented alert contact
+    /// (GET /mobile/api/issues/routing — the owner's list).
+    struct Contact: Decodable, Identifiable, Hashable {
+        let id: Int
+        let name: String
+        let smsConsent: Bool?
+        enum CodingKeys: String, CodingKey {
+            case id, name
+            case smsConsent = "sms_consent"
+        }
+    }
+
+    private struct RoutingResponse: Decodable {
+        let ok: Bool
+        let contacts: [Contact]?
+    }
+
+    /// The people this login may hand an issue to — nil when it may not
+    /// (the routing list is the account holder's, a 403 for anyone else).
+    func reassignableContacts() async -> [Contact]? {
+        guard let r: RoutingResponse = try? await client.send("/mobile/api/issues/routing", hapticOnError: false),
+              r.ok else { return nil }
+        return (r.contacts ?? []).filter { $0.smsConsent == true }
+    }
+
+    private struct ReassignBody: Encodable {
+        let contactId: Int
+        enum CodingKeys: String, CodingKey { case contactId = "contact_id" }
+    }
+
+    /// POST /mobile/api/issues/<id>/reassign — the issue goes to `contact`,
+    /// who is texted a fresh link. Returns nil on success, else the reason.
+    func reassign(_ issue: Issue, to contact: Contact) async -> String? {
+        do {
+            let r: APIClient.OKResponse = try await client.send(
+                "/mobile/api/issues/\(issue.id)/reassign", method: .post,
+                body: ReassignBody(contactId: contact.id), retryTransient: false)
+            guard r.ok else { return r.error ?? "Couldn\u{2019}t hand that over." }
+            await Haptic.success()
+            await load()
+            return nil
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "Couldn\u{2019}t hand that over."
         }
     }
 }

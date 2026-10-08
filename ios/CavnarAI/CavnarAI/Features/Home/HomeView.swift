@@ -53,6 +53,11 @@ struct HomeView: View {
     // after the dialog has closed itself.
     @State private var attentionAskingWhy: NeedsAttentionItem?
     @State private var showingAttentionWhy = false
+    /// The issue an issue push named (DeepLinkRouter.pendingIssueId), handed
+    /// to the day card to scroll to and pulse (parity audit #11).
+    @State private var issueFocus: Int?
+    /// Restaurant DNA, opened from Results (parity audit #98).
+    @State private var showingDNA = false
     // Drives the hero's one-time landing reveal (opacity + upward offset),
     // and everything below it rises in off the same flip, a beat later.
     // Owned and animated by RootView, not here — the Ask Cavnar FAB (a
@@ -109,6 +114,9 @@ struct HomeView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
 
+                // The reader lets an issue push scroll Home to the issue
+                // (parity audit #11).
+                ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if let summary = viewModel.summary {
@@ -248,10 +256,18 @@ struct HomeView: View {
                             // The brief leaves out what the page already
                             // says (web `hbShownKeys`, parity #3).
                             HomeDayCard(dateLabel: dayLabel(summary),
+                                        weekday: Self.localDay(summary.localNow)?.weekday,
                                         shownKeys: HomeBriefFilter.shownKeys(
                                             attention: summary.needsAttention + followThrough.linkItems,
                                             focusKey: followThrough.fixFirst?.answerKey ?? lead?.key),
-                                        onOpenNav: { nav in open(nav: nav, module: "home", in: summary) })
+                                        onOpenNav: { nav in open(nav: nav, module: "home", in: summary) },
+                                        focusIssueId: issueFocus,
+                                        onFocus: { id in
+                                            withAnimation(.easeInOut(duration: 0.35)) {
+                                                scrollProxy.scrollTo(HomeDayCard.issueAnchor(id), anchor: .center)
+                                            }
+                                            issueFocus = nil
+                                        })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.36)
@@ -301,9 +317,10 @@ struct HomeView: View {
                             // not — it may never be opened).
                             HomeFollowThrough(viewModel: followThrough, part: .work,
                                               showsCloseOut: !summary.localIsEvening,
-                                              homeLoadedAt: viewModel.lastLoadedAt) { module in
+                                              homeLoadedAt: viewModel.lastLoadedAt,
+                                              onOpenModule: { module in
                                 navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                            }
+                            }, onOpenNav: { nav in open(nav: nav.raw, module: "home", in: summary) })
                             .padding(.horizontal, 20)
                             .padding(.top, 30)
                             .belowFold(heroAppeared, delay: 0.5)
@@ -360,9 +377,19 @@ struct HomeView: View {
                                         .padding(.horizontal, 20)
                                         .padding(.top, 30)
                                     }
+
+                                    // The restaurant's own operating profile,
+                                    // dimension by dimension (parity #98).
+                                    dnaRow
+                                        .padding(.horizontal, 20)
+                                        .padding(.top, 30)
                                 }
                             }
                             .padding(.top, 34)
+                            // Its four reads (what worked, the value figures,
+                            // what got better, last month) wait until Results
+                            // nears the screen (parity audit #20).
+                            .onScrolledNear { Task { await followThrough.loadResults() } }
                             .belowFold(heroAppeared, delay: 0.56)
 
                             // What Cavnar AI is doing right now, rotating;
@@ -392,7 +419,9 @@ struct HomeView: View {
                         }
                     }
                 }
-                .cavnarEmberRefreshable { await viewModel.load() }
+                // A pull rebuilds the brief (fresh=1) instead of the
+                // server's 60-second copy — the web's hbLoad(true) (#90).
+                .cavnarEmberRefreshable { await viewModel.load(fresh: true) }
                 // Anchored to the whole screen, not to HomeActionDeck —
                 // publishing can be the LAST needs-attention item, and the
                 // reload that follows a successful publish (inside
@@ -417,6 +446,7 @@ struct HomeView: View {
                         }
                         .transition(.opacity)
                     }
+                }
                 }
             }
             .animation(.easeOut(duration: 0.2), value: pendingPublish != nil)
@@ -444,7 +474,12 @@ struct HomeView: View {
             .onChange(of: deepLinkRouter.pendingDailyReport) { _, route in
                 if route != nil { Task { @MainActor in openPendingDailyReport() } }
             }
-            .onAppear { openPendingDailyReport() }
+            .onAppear { openPendingDailyReport(); takePendingIssue() }
+            // An issue push (or a row naming one): back to Home's top
+            // level, then the day card scrolls to the issue and pulses it.
+            .onChange(of: deepLinkRouter.pendingIssueId) { _, id in
+                if id != nil { Task { @MainActor in takePendingIssue() } }
+            }
             .sensoryFeedback(.impact(weight: .medium), trigger: navHapticTrigger)
             // The base colour behind everything — where the field's own
             // bottom fade ends, and for any content below it.
@@ -513,6 +548,9 @@ struct HomeView: View {
             .sheet(isPresented: $showingDataHealth) {
                 DataHealthSheet(summary: viewModel.summary?.dataHealth)
             }
+            .sheet(isPresented: $showingDNA) {
+                RestaurantDNASheet()
+            }
             .sheet(item: $evidenceLink, onDismiss: { Task { await followThrough.load() } }) { link in
                 HomeLinkEvidenceSheet(link: link)
             }
@@ -535,7 +573,7 @@ struct HomeView: View {
     /// looking — centred, alone on the field, revealed as one block.
     private func hero(_ summary: HomeSummary) -> some View {
         VStack(spacing: 10) {
-            Text(todayDateString)
+            Text(Self.heroDate(localNow: summary.localNow))
                 .font(.cavnarBody(12.5, weight: 700))
                 .tracking(2.2)
                 .foregroundStyle(Color.cavnarEmber2)
@@ -548,13 +586,9 @@ struct HomeView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // "Since your last visit: …" — the web header's changes line
-            // (parity #1), the first three changes, each without its tail.
-            if let changes = summary.changes?.line {
-                HomeMixedText.make(changes, size: 13, weight: 600, color: .cavnarInk3)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // No "Since your last visit" line: the web removed it from the
+            // header on 9/26/26 at the owner's call, and the phone follows
+            // (parity audit #90). The changes still reach the brief.
         }
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
@@ -641,7 +675,9 @@ struct HomeView: View {
             return lead + Text(verbatim: "All quiet since yesterday — nothing new for you.")
                 .font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
         }
-        let when = Calendar.current.component(.hour, from: Date()) < 12 ? "Overnight" : "Since yesterday"
+        // The restaurant's own hour (local_now), not the phone's clock.
+        let hour = summary.localHour ?? Calendar.current.component(.hour, from: Date())
+        let when = hour < 12 ? "Overnight" : "Since yesterday"
         var line = lead + Text(verbatim: "\(when), Cavnar AI ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
         var clauses: [Text] = []
         if overnight.answered > 0 {
@@ -666,11 +702,32 @@ struct HomeView: View {
     }
 
     /// "MONDAY · 9/21/26" — the weekday for orientation, the date in the
-    /// one owner-facing form, M/D/YY (CLIENT-45).
-    private var todayDateString: String {
+    /// one owner-facing form, M/D/YY (CLIENT-45) — on the restaurant's own
+    /// clock (the server's local_now, parity audit #90): an owner in another
+    /// time zone, or a phone set wrong, saw a different day from the brief
+    /// under it. The phone's clock only when the server sent none.
+    static func heroDate(localNow: String?) -> String {
+        if let day = localDay(localNow) {
+            return "\(day.weekday) · \(CavnarDate.mdy(day.iso))".uppercased()
+        }
         let now = Date()
         let weekday = now.formatted(Date.FormatStyle(locale: Locale(identifier: "en_US")).weekday(.wide))
         return "\(weekday) · \(CavnarDate.mdy(now))".uppercased()
+    }
+
+    /// The restaurant's calendar day from local_now ("2026-09-21T07:12:00-05:00")
+    /// and its weekday name, read without any time-zone conversion.
+    static func localDay(_ localNow: String?) -> (iso: String, weekday: String)? {
+        guard let s = localNow, s.count >= 10 else { return nil }
+        let iso = String(s.prefix(10))
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: iso) else { return nil }
+        f.locale = Locale(identifier: "en_US")
+        f.dateFormat = "EEEE"
+        return (iso, f.string(from: d))
     }
 
     // MARK: - Sections
@@ -809,6 +866,37 @@ struct HomeView: View {
                 await viewModel.load()
             }
         }
+    }
+
+    /// "Restaurant DNA" — one row in Results that opens the profile sheet.
+    private var dnaRow: some View {
+        Button {
+            Haptic.light()
+            showingDNA = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Restaurant DNA")
+                        .font(.cavnarBody(15, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                    Text("How this restaurant runs, week by week")
+                        .font(.cavnarBody(12.5, weight: 500))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .cavnarCard()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens your restaurant's operating profile")
     }
 
     private var valueDetailSheet: some View {
@@ -1161,6 +1249,15 @@ struct HomeView: View {
     // resolve the FIRST tile's tap late, landing a stale extra navigation
     // moments after the real one. Ignore any tap within 350ms of the last
     // accepted one.
+    /// The router's pending issue becomes the day card's focus; Home pops
+    /// back to its own top level first so the issue is on screen.
+    private func takePendingIssue() {
+        guard let id = deepLinkRouter.pendingIssueId else { return }
+        deepLinkRouter.pendingIssueId = nil
+        if !path.isEmpty { path = NavigationPath() }
+        issueFocus = id
+    }
+
     private func openPendingDailyReport() {
         guard let route = deepLinkRouter.consumePendingDailyReport() else { return }
         var fresh = NavigationPath()

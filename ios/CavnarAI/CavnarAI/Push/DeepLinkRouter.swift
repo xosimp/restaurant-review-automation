@@ -53,6 +53,10 @@ final class DeepLinkRouter {
     /// (`business_date` → that night) or its row in the notification list
     /// (no date there → the list of nights). HomeView consumes it.
     var pendingDailyReport: DailyReportRoute?
+    /// An issue to show on Home — `issue/<id>` from an issue or coverage push,
+    /// its notification row, a Still-open row (parity audit #11). HomeView
+    /// consumes it: Home scrolls to the issue and pulses it once.
+    var pendingIssueId: Int?
     /// Bumped each time the active location changed — by RootView, from
     /// SessionStore.onLocationSwitched, whichever screen switched — so Home
     /// reloads for the location it now shows.
@@ -144,10 +148,18 @@ final class DeepLinkRouter {
     private func apply(_ nav: NavPath, askAutoSend: Bool, askPrompt: String?) {
         pendingReviewID = nil
         switch nav.head {
-        case "home", "issue":
+        case "home":
             pendingTab = .home
             pendingModuleKey = nil
             pendingModuleRoute = nil
+        case "issue":
+            // The issue itself, not Home's top: Home scrolls to it (parity
+            // audit #11). The id was dropped, so an issue push landed on
+            // Home and left the owner to find it.
+            pendingTab = .home
+            pendingModuleKey = nil
+            pendingModuleRoute = nil
+            if let id = nav.target.flatMap({ Int($0) }), id > 0 { pendingIssueId = id }
         case "action", "proposal":
             // The queued send's own sheet — or the Ask proposal's — over
             // whatever is on screen.

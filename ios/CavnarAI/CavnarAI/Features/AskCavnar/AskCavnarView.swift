@@ -977,6 +977,8 @@ struct ProposalCard: View {
     @State private var askingWhy = false
     /// What the confirmed route said beyond "Done" (a proposed goal).
     @State private var doneNote: String?
+    /// The route's warning beside its ok (the web's `d.warning`).
+    @State private var doneWarning: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1045,6 +1047,12 @@ struct ProposalCard: View {
                 Label(doneNote ?? "Done", systemImage: "checkmark.circle.fill")
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarGreen)
+                // A decision the route flags (time off over a published
+                // week): its warning stays on the card (parity audit #4).
+                if let warning = doneWarning, !warning.isEmpty {
+                    HomeMixedText.make(warning, size: 13, weight: 600, color: .cavnarAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             case .working:
                 // CavnarShimmerText takes text + color only (see ViewModifiers);
                 // it sets its own type. Same call shape as AddCompetitorSheet.
@@ -1057,6 +1065,7 @@ struct ProposalCard: View {
                             let ok = await viewModel?.confirm(proposal) ?? false
                             failure = ok ? nil : viewModel?.errorBanner
                             doneNote = ok ? viewModel?.lastConfirmNote : nil
+                            doneWarning = ok ? viewModel?.lastConfirmWarning : nil
                             phase = ok ? .done : (viewModel?.lastConfirmMayHaveRun == true ? .uncertain : .failed)
                             if ok { onDone?() }
                         }

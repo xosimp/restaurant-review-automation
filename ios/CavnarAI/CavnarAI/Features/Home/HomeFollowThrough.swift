@@ -12,26 +12,159 @@ import Observation
 
 // MARK: - Models
 
+/// One "Still open" item (GET /mobile/api/actions, action_queue). Its action
+/// is decoded whole (parity audit #3): the body the route needs is passed
+/// through as the server wrote it — it decoded only a reprice's dish and
+/// price, so Send now posted `{}` where publish reads `schedule_id`, Approve
+/// posted `{}` where decide reads `decision`, and both got a 400 that a
+/// `try?` swallowed. `confirm` (an outward action's confirm card), `alt`
+/// (Deny beside Approve) and `nav` (the item itself) were dropped too.
 struct ActionItem: Decodable, Identifiable {
-    struct Action: Decodable {
-        /// The same endpoint on each client — the web and mobile APIs have
-        /// different prefixes, so the server hands over both.
-        struct Route: Decodable { let web: String?; let mobile: String? }
-        /// What the route needs posted — a reprice's dish and price.
-        struct Body: Codable { let dish: String?; let price: Double? }
+    /// The same endpoint on each client — the web and mobile APIs have
+    /// different prefixes, so the server hands over both.
+    struct Route: Decodable, Equatable { let web: String?; let mobile: String? }
+
+    /// The command action whose confirm card an outward step opens first
+    /// (POST /command/propose) — an answer reaching an employee, the week
+    /// going to staff (DESIGN_SYSTEM §10, re-audit F1-3).
+    struct Confirm: Decodable, Equatable {
+        let action: String
+        let args: [String: AnyCodableValue]
+
+        enum CodingKeys: String, CodingKey { case action, args }
+
+        init(action: String, args: [String: AnyCodableValue] = [:]) {
+            self.action = action; self.args = args
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            action = try c.decode(String.self, forKey: .action)
+            args = ((try? c.decodeIfPresent([String: AnyCodableValue].self, forKey: .args)) ?? nil) ?? [:]
+        }
+    }
+
+    /// One thing the row can do: its primary action, or the `alt` beside it.
+    struct Step: Decodable, Equatable {
         let label: String
         let route: Route?
         let method: String?
         let module: String?
-        let body: Body?
+        /// What the route needs posted, exactly as the server wrote it.
+        let body: [String: AnyCodableValue]?
+        let confirm: Confirm?
+        let nav: String?
+        /// "Open it" on an unanswered Ask proposal carries the question too.
+        let ask: String?
+
+        enum CodingKeys: String, CodingKey { case label, route, method, module, body, confirm, nav, ask }
+
+        init(label: String, route: Route? = nil, method: String? = nil, module: String? = nil,
+             body: [String: AnyCodableValue]? = nil, confirm: Confirm? = nil, nav: String? = nil,
+             ask: String? = nil) {
+            self.label = label; self.route = route; self.method = method; self.module = module
+            self.body = body; self.confirm = confirm; self.nav = nav; self.ask = ask
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            label = ((try? c.decodeIfPresent(String.self, forKey: .label)) ?? nil) ?? "Open"
+            route = (try? c.decodeIfPresent(Route.self, forKey: .route)) ?? nil
+            method = (try? c.decodeIfPresent(String.self, forKey: .method)) ?? nil
+            module = (try? c.decodeIfPresent(String.self, forKey: .module)) ?? nil
+            body = (try? c.decodeIfPresent([String: AnyCodableValue].self, forKey: .body)) ?? nil
+            confirm = (try? c.decodeIfPresent(Confirm.self, forKey: .confirm)) ?? nil
+            nav = (try? c.decodeIfPresent(String.self, forKey: .nav)) ?? nil
+            ask = (try? c.decodeIfPresent(String.self, forKey: .ask)) ?? nil
+        }
+
+        /// What a tap on this step does, in the web's order (hbQueueActs):
+        /// a confirm card first, else the route in place, else the item's
+        /// place, else Ask, else the module.
+        enum Kind: Equatable { case confirm(Confirm), post(String), open, ask(String), module(String), none }
+        var kind: Kind {
+            if let confirm { return .confirm(confirm) }
+            if let path = route?.mobile, !path.isEmpty { return .post(path) }
+            if nav != nil { return .open }
+            if let ask, !ask.isEmpty { return .ask(ask) }
+            if let module { return .module(module) }
+            return .none
+        }
     }
+
+    /// The row's action: a Step, plus the `alt` beside it.
+    struct Action: Decodable {
+        let step: Step
+        let alt: Step?
+        var label: String { step.label }
+        var route: Route? { step.route }
+        var module: String? { step.module }
+        var body: [String: AnyCodableValue]? { step.body }
+        var confirm: Confirm? { step.confirm }
+        var nav: String? { step.nav }
+
+        enum CodingKeys: String, CodingKey { case alt }
+
+        init(step: Step, alt: Step? = nil) { self.step = step; self.alt = alt }
+
+        init(from decoder: Decoder) throws {
+            step = try Step(from: decoder)
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            alt = (try? c.decodeIfPresent(Step.self, forKey: .alt)) ?? nil
+        }
+    }
+
     let key: String
     let kind: String
     let title: String
     let detail: String?
     let severity: String
     let action: Action?
+    /// Where the item itself opens (action_queue.nav_for).
+    let nav: String?
     var id: String { key }
+
+    enum CodingKeys: String, CodingKey { case key, kind, title, detail, severity, action, nav }
+
+    init(key: String, kind: String, title: String, detail: String? = nil, severity: String = "watch",
+         action: Action? = nil, nav: String? = nil) {
+        self.key = key; self.kind = kind; self.title = title; self.detail = detail
+        self.severity = severity; self.action = action; self.nav = nav
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        kind = ((try? c.decodeIfPresent(String.self, forKey: .kind)) ?? nil) ?? ""
+        title = try c.decode(String.self, forKey: .title)
+        detail = (try? c.decodeIfPresent(String.self, forKey: .detail)) ?? nil
+        severity = ((try? c.decodeIfPresent(String.self, forKey: .severity)) ?? nil) ?? "watch"
+        action = (try? c.decodeIfPresent(Action.self, forKey: .action)) ?? nil
+        nav = (try? c.decodeIfPresent(String.self, forKey: .nav)) ?? nil
+    }
+
+    /// The stored Ask proposal this row is, for key "ask:<id>".
+    var proposalId: Int? {
+        let parts = key.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, parts[0] == "ask", let id = Int(parts[1]), id > 0 else { return nil }
+        return id
+    }
+
+    /// Where a tap on the row lands: an unanswered Ask proposal opens as a
+    /// proposal — `action/<id>` is a queued send's address, a different id
+    /// space (F3-2) — and "Open it" on one used to push the "ask" module, a
+    /// Coming soon screen; else the item's own nav, else the action's.
+    var destination: NavPath? {
+        if let id = proposalId { return NavPath("proposal/\(id)") }
+        return NavPath(nav) ?? NavPath(action?.nav) ?? action?.module.flatMap { NavPath($0) }
+    }
+
+    /// Where a step with no route or confirm opens: the row's destination
+    /// when the step is the row's own "Open it", else the step's nav.
+    func destination(for step: Step) -> NavPath? {
+        if proposalId != nil { return destination }
+        return NavPath(step.nav) ?? destination
+    }
 
     /// Home's own severity vocabulary, so these rows read exactly like the
     /// needs-attention ones above them.
@@ -222,6 +355,8 @@ final class HomeFollowThroughViewModel {
     var goals: [GoalRow] = []
     /// Goals waiting for an account holder, and whether this login is one.
     var proposedGoals: [ProposedGoal] = []
+    /// Missed goals waiting to be renewed or closed (parity audit #66).
+    var missedGoals: [ProposedGoal] = []
     var canConfirmGoals = false
     /// The goal being confirmed or declined right now.
     var answeringGoal: Int?
@@ -298,13 +433,17 @@ final class HomeFollowThroughViewModel {
     var checkInsDue: [RecOutcome] { Array(outcomes.filter(RecCheckIn.isDue).prefix(2)) }
 
     private struct ActionsResponse: Decodable { let ok: Bool; let items: [ActionItem] }
-    private struct GoalsResponse: Decodable {
+    struct GoalsResponse: Decodable {
         let ok: Bool
         let goals: [GoalRow]
         var proposed: HomeLenientList<ProposedGoal>? = nil
+        /// Goals whose date passed without reaching them, retired from every
+        /// prompt and asked once: renew or close (memory re-audit R3,
+        /// parity audit #66). Same {id, summary} shape as a proposal.
+        var missed: HomeLenientList<ProposedGoal>? = nil
         var canConfirm: Bool? = nil
         enum CodingKeys: String, CodingKey {
-            case ok, goals, proposed
+            case ok, goals, proposed, missed
             case canConfirm = "can_confirm"
         }
         init(from decoder: Decoder) throws {
@@ -312,6 +451,7 @@ final class HomeFollowThroughViewModel {
             ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
             goals = (try? c.decode([GoalRow].self, forKey: .goals)) ?? []
             proposed = (try? c.decodeIfPresent(HomeLenientList<ProposedGoal>.self, forKey: .proposed)) ?? nil
+            missed = (try? c.decodeIfPresent(HomeLenientList<ProposedGoal>.self, forKey: .missed)) ?? nil
             canConfirm = (try? c.decodeIfPresent(Bool.self, forKey: .canConfirm)) ?? nil
         }
     }
@@ -777,37 +917,36 @@ final class HomeFollowThroughViewModel {
 
     /// Every block is optional: a login without an endpoint's permission, or
     /// a module it can't see, simply shows fewer rows rather than an error.
+    /// The work half's reads — what Home's first screens show. The Results
+    /// blocks below the fold (what worked, the value figures, what got
+    /// better, last month) are read by `loadResults()` when Results scrolls
+    /// into view (parity audit #20: eleven requests went out at once on
+    /// every cold launch, four of them for a section that starts closed).
     func load() async {
         isLoading = actions.isEmpty && goals.isEmpty && results.isEmpty
         defer { isLoading = false }
         async let a: ActionsResponse? = try? client.send("/mobile/api/actions", hapticOnError: false)
         async let g: GoalsResponse? = try? client.send("/mobile/api/goals", hapticOnError: false)
         async let o: RecOutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
-        // 180 days: the server's default window and the monthly email's,
-        // so Home says the same sentences the owner was emailed.
-        async let ww: WhatWorked? = try? client.send("/mobile/api/recs/what-worked", query: ["days": "180"],
-                                                     hapticOnError: false)
         async let c: CloseOutResponse? = try? client.send("/mobile/api/closeout", hapticOnError: false)
-        async let v: ValueSummary? = try? client.send("/mobile/api/value", hapticOnError: false)
         async let x: CrossModule? = try? client.send("/mobile/api/cross-module", hapticOnError: false)
-        async let n: GoodNews? = try? client.send("/mobile/api/good-news", hapticOnError: false)
         async let ms: Milestones? = try? client.send("/mobile/api/milestones", hapticOnError: false)
         async let ls: LossSignals? = try? client.send("/mobile/api/loss-signals", hapticOnError: false)
-        async let mr: HomeMonthlyReview? = try? client.send("/mobile/api/monthly-review", hapticOnError: false)
+        // Once Results has been read, a reload keeps it current too.
+        async let lazy: Void = refreshResultsIfLoaded()
         actions = (await a)?.items ?? []
         let goalsResponse = await g
         goals = goalsResponse?.goals ?? []
         proposedGoals = goalsResponse?.proposed?.items ?? []
+        missedGoals = goalsResponse?.missed?.items ?? []
         canConfirmGoals = goalsResponse?.canConfirm ?? false
         let fetchedOutcomes = await o
         outcomes = fetchedOutcomes?.outcomes ?? []
         results = outcomes.filter { $0.summary?.isEmpty == false }
         caveat = fetchedOutcomes?.caveat
-        whatWorked = await ww
         let close = await c
         closeOut = close?.closeout
         closeOutDate = close?.businessDate
-        value = await v
         let cross = await x
         fixFirst = cross?.fixFirst.flatMap { ($0.what ?? "").isEmpty ? nil : $0 }
         // The one thing owns a link it leads with — the same finding is
@@ -815,9 +954,6 @@ final class HomeFollowThroughViewModel {
         let owned = fixFirst.flatMap { $0.linkHeadline ?? $0.what }
         links = (cross?.links ?? []).filter { $0.headline != owned }
         crossLoaded = true
-        let news = await n
-        goodNews = news?.items ?? []
-        goodNewsCaveat = news?.caveat
         // Only ever offer one, and only one that has not been shown on any
         // device — the server's UNIQUE row is what makes that true.
         pendingMilestone = (await ms)?.unseen?.first
@@ -825,7 +961,68 @@ final class HomeFollowThroughViewModel {
         lossFlags = (loss?.available == true) ? (loss?.flagged ?? []) : []
         lossWeek = loss?.week ?? []
         lossNote = loss?.note
+        _ = await lazy
+    }
+
+    /// True once the Results blocks have been read (and are then kept
+    /// current by every `load()`).
+    private(set) var resultsLoaded = false
+    private var resultsInFlight = false
+
+    private func refreshResultsIfLoaded() async {
+        if resultsLoaded { await loadResults() }
+    }
+
+    /// The Results blocks: what worked, the value figures, what got better
+    /// and last month — read the first time Results scrolls into view (or
+    /// the measured-results sheet opens), not at launch.
+    func loadResults() async {
+        guard !resultsInFlight else { return }
+        resultsInFlight = true
+        defer { resultsInFlight = false }
+        // 180 days: the server's default window and the monthly email's,
+        // so Home says the same sentences the owner was emailed.
+        async let ww: WhatWorked? = try? client.send("/mobile/api/recs/what-worked", query: ["days": "180"],
+                                                     hapticOnError: false)
+        async let v: ValueSummary? = try? client.send("/mobile/api/value", hapticOnError: false)
+        async let n: GoodNews? = try? client.send("/mobile/api/good-news", hapticOnError: false)
+        async let mr: HomeMonthlyReview? = try? client.send("/mobile/api/monthly-review", hapticOnError: false)
+        whatWorked = await ww
+        value = await v
+        let news = await n
+        goodNews = news?.items ?? []
+        goodNewsCaveat = news?.caveat
         month = await mr
+        resultsLoaded = true
+    }
+
+    /// Renew a missed goal for another month (the same target, a new date)
+    /// or close it for good — POST /mobile/api/goals/<id>/renew | close, the
+    /// web Goals card's two buttons (parity audit #66). Returns the line to
+    /// show, or nil (errorMessage says why).
+    func answerMissed(_ goal: ProposedGoal, renew: Bool) async -> String? {
+        struct RenewBody: Encodable { let days: Int }
+        guard answeringGoal == nil else { return nil }
+        answeringGoal = goal.id
+        defer { answeringGoal = nil }
+        errorMessage = nil
+        do {
+            let path = "/mobile/api/goals/\(goal.id)/\(renew ? "renew" : "close")"
+            let r: OKResponse = renew
+                ? try await client.send(path, method: .post, body: RenewBody(days: 30), retryTransient: false)
+                : try await client.send(path, method: .post, body: [String: String](), retryTransient: false)
+            guard r.ok else { errorMessage = r.error ?? "Couldn\u{2019}t save that."; return nil }
+            await Haptic.success()
+            missedGoals.removeAll { $0.id == goal.id }
+            await load()
+            return renew ? "Renewed for another month \u{2014} it\u{2019}s the target again" : "Closed"
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return nil
+        } catch {
+            errorMessage = "Couldn\u{2019}t save that."
+            return nil
+        }
     }
 
     private struct TrackBody: Encodable {
@@ -1114,16 +1311,130 @@ final class HomeFollowThroughViewModel {
         await load()
     }
 
-    func run(_ item: ActionItem) async {
-        guard let route = item.action?.route?.mobile else { return }
-        let done: OKResponse?
-        if let body = item.action?.body {
-            done = try? await client.send(route, method: .post, body: body, retryTransient: false)
-        } else {
-            done = try? await client.send(route, method: .post, retryTransient: false)
+    /// What one step of a Still-open row came to.
+    enum StepOutcome: Equatable {
+        /// It went through; the route's own warning beside it, if any.
+        case done(warning: String?)
+        /// The publish gate (409 needs_ack): what stops it, to be read
+        /// before "Send anyway".
+        case needsAck(texts: [String], acknowledgement: AnyCodableValue)
+        /// It did not — the server's own sentence.
+        case failed(String)
+    }
+
+    private struct StepResult: Decodable {
+        let ok: Bool
+        let error: String?
+        let warning: String?
+        let needsAck: Bool?
+        let queued: Bool?
+        enum CodingKeys: String, CodingKey {
+            case ok, error, warning, queued
+            case needsAck = "needs_ack"
         }
-        if done?.ok == true { await Haptic.success() }
-        await load()
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = ((try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? nil) ?? false
+            error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+            warning = (try? c.decodeIfPresent(String.self, forKey: .warning)) ?? nil
+            needsAck = (try? c.decodeIfPresent(Bool.self, forKey: .needsAck)) ?? nil
+            queued = (try? c.decodeIfPresent(Bool.self, forKey: .queued)) ?? nil
+        }
+    }
+
+    /// The body a step posts: the server's own body, whole, plus the
+    /// acknowledgement when the owner sends past the publish gate.
+    static func postBody(_ step: ActionItem.Step, acknowledge: AnyCodableValue? = nil) -> [String: AnyCodableValue] {
+        var body = step.body ?? [:]
+        if let acknowledge { body["acknowledge"] = acknowledge }
+        return body
+    }
+
+    /// One row's last outcome, said under the row ("Approved", the gate's
+    /// list, the server's refusal) — never swallowed (parity audit #3).
+    var rowNote: [String: RowNote] = [:]
+    /// The step being run, per row, while it is in flight.
+    var running: Set<String> = []
+
+    struct RowNote: Equatable {
+        enum Tone: Equatable { case good, warn, bad }
+        let text: String
+        let tone: Tone
+        /// The gate's blockers, and what "Send anyway" posts back.
+        var blockers: [String] = []
+        var ackStep: ActionItem.Step? = nil
+        var acknowledgement: AnyCodableValue? = nil
+    }
+
+    /// POST a step's route with the server's body (an internal, reversible
+    /// step — Reprice; an outward one goes through its confirm card first).
+    /// The row says what happened; Still open re-reads on success.
+    @discardableResult
+    func run(_ item: ActionItem, step: ActionItem.Step, acknowledge: AnyCodableValue? = nil) async -> StepOutcome {
+        guard let route = step.route?.mobile, !route.isEmpty else { return .failed("Nothing to run for that.") }
+        running.insert(item.key)
+        defer { running.remove(item.key) }
+        let outcome: StepOutcome
+        do {
+            let r: StepResult = try await client.send(route, method: .post,
+                                                      body: Self.postBody(step, acknowledge: acknowledge),
+                                                      retryTransient: false)
+            if r.ok {
+                outcome = .done(warning: r.warning)
+            } else if r.needsAck == true {
+                outcome = .failed(r.error ?? "This week has things to look at first.")
+            } else {
+                outcome = .failed(r.error ?? "That didn\u{2019}t go through.")
+            }
+        } catch let error as APIClient.APIError {
+            if let gate = error.decodeBody(AskBlockers.Gate.self), gate.needsAck {
+                outcome = .needsAck(texts: gate.texts, acknowledgement: gate.acknowledgement)
+            } else {
+                outcome = .failed(error.message)
+            }
+        } catch is CancellationError {
+            return .failed("Cancelled.")
+        } catch {
+            outcome = .failed("Couldn\u{2019}t reach Cavnar AI \u{2014} check your connection.")
+        }
+        switch outcome {
+        case .done(let warning):
+            await Haptic.success()
+            rowNote[item.key] = warning.map { RowNote(text: $0, tone: .warn) } ?? RowNote(text: "Done", tone: .good)
+            await load()
+        case .needsAck(let texts, let ack):
+            Haptic.warning()
+            rowNote[item.key] = RowNote(text: "Read before this goes out", tone: .warn, blockers: texts,
+                                        ackStep: step, acknowledgement: ack)
+        case .failed(let message):
+            rowNote[item.key] = RowNote(text: message, tone: .bad)
+        }
+        return outcome
+    }
+
+    private struct ProposeBody: Encodable {
+        let action: String
+        let args: [String: AnyCodableValue]
+    }
+
+    /// The confirm card for an outward step (POST /mobile/api/command/
+    /// propose, no model call) — the same card Ask and the command sheet
+    /// render. Nil with the server's reason in `rowNote` when it can't.
+    func propose(_ item: ActionItem, _ confirm: ActionItem.Confirm) async -> AskProposal? {
+        do {
+            let r: CommandProposeResponse = try await client.send(
+                "/mobile/api/command/propose", method: .post,
+                body: ProposeBody(action: confirm.action, args: confirm.args), retryTransient: false)
+            if r.ok, let p = r.proposal { return p }
+            rowNote[item.key] = RowNote(text: r.error ?? "Couldn\u{2019}t open that \u{2014} open the item instead.",
+                                        tone: .bad)
+        } catch let error as APIClient.APIError {
+            rowNote[item.key] = RowNote(text: error.message, tone: .bad)
+        } catch is CancellationError {
+        } catch {
+            rowNote[item.key] = RowNote(text: "Couldn\u{2019}t reach Cavnar AI \u{2014} check your connection.", tone: .bad)
+        }
+        return nil
     }
 
     @discardableResult
@@ -1174,10 +1485,21 @@ struct HomeFollowThrough: View {
     /// needs-attention item on the same screen), and again after each one.
     var homeLoadedAt: Date? = nil
     var onOpenModule: (String) -> Void
+    /// Where a Still-open row (and its "Open it") lands: the item itself,
+    /// through Home's router — a proposal opens as a proposal, a request as
+    /// the request (parity audit #3).
+    var onOpenNav: (NavPath) -> Void = { _ in }
 
     /// The recommendation record (RecommendationHistoryView), opened from
     /// "What your changes did" and from the worth card.
     @State private var showingRecord = false
+    /// The outward step whose confirm card is open (Send now, Approve,
+    /// Deny) — the same card Ask and the command sheet render.
+    @State private var proposing: HomeActionProposal?
+    /// The row whose "Send anyway" asked for its own confirm.
+    @State private var sendingAnyway: ActionItem?
+    /// The monthly review opened whole, with its PDF share (parity #79).
+    @State private var showingMonth = false
 
     private var hasAnything: Bool {
         !viewModel.actions.isEmpty || !viewModel.goals.isEmpty || !viewModel.results.isEmpty
@@ -1203,9 +1525,44 @@ struct HomeFollowThrough: View {
             guard homeLoadedAt != nil else { return }
             await viewModel.load()
         }
+        .task {
+            // The measured-results sheet's Worth card reads the value
+            // figures, which Home now reads only once Results is in view.
+            if part == .worth, !viewModel.resultsLoaded { await viewModel.loadResults() }
+        }
         .sheet(isPresented: $showingRecord, onDismiss: { Task { await viewModel.load() } }) {
             RecommendationHistoryView()
         }
+        .sheet(item: $proposing, onDismiss: { Task { await viewModel.load() } }) { p in
+            HomeActionProposalSheet(proposal: p, viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingMonth) {
+            if let month = viewModel.month {
+                HomeMonthlyReviewSheet(month: month)
+            }
+        }
+        .confirmationDialog(sendingAnyway.map { Self.sendAnywayTitle(viewModel.rowNote[$0.key]?.blockers.count ?? 0) } ?? "",
+                            isPresented: Binding(get: { sendingAnyway != nil },
+                                                 set: { if !$0 { sendingAnyway = nil } }),
+                            titleVisibility: .visible, presenting: sendingAnyway) { item in
+            Button("Send it anyway", role: .destructive) {
+                guard let note = viewModel.rowNote[item.key], let step = note.ackStep else { return }
+                Task { await viewModel.run(item, step: step, acknowledge: note.acknowledgement) }
+            }
+            Button("Not yet", role: .cancel) {}
+        } message: { _ in
+            Text("It goes out with the warnings above. Open the week instead to fix them first.")
+        }
+    }
+
+    /// "9/21/26 – 9/27/26" (the web's mdy range); nil without both ends.
+    static func lossWeekLabel(_ week: [String]) -> String? {
+        guard week.count == 2, !week[0].isEmpty, !week[1].isEmpty else { return nil }
+        return CavnarDate.mdyRange(week[0], week[1])
+    }
+
+    static func sendAnywayTitle(_ n: Int) -> String {
+        "Send it with \(n) rule warning\(n == 1 ? "" : "s")?"
     }
 
     /// True when `.results` has anything to draw — HomeView hides the
@@ -1223,6 +1580,11 @@ struct HomeFollowThrough: View {
         // decision, so with the work, never inside Results (M2).
         if !viewModel.proposedGoals.isEmpty {
             HomeProposedGoals(viewModel: viewModel)
+        }
+        // A goal whose date passed: renew or close — a decision, so with
+        // the work too (parity audit #66).
+        if !viewModel.missedGoals.isEmpty {
+            HomeMissedGoals(viewModel: viewModel)
         }
         if !viewModel.actions.isEmpty {
             HomeSectionHeader(kicker: "Follow-through", title: "Still open",
@@ -1312,7 +1674,7 @@ struct HomeFollowThrough: View {
         }
 
         if let month = viewModel.month {
-            HomeMonthlyReviewCard(month: month)
+            HomeMonthlyReviewCard(month: month, onOpen: { showingMonth = true })
         }
     }
 
@@ -1420,8 +1782,10 @@ struct HomeFollowThrough: View {
     @ViewBuilder
     private var lossCard: some View {
         if !viewModel.lossFlags.isEmpty {
+            // The week as the owner reads dates, M/D/YY — it showed the
+            // server's ISO end date (parity audit #19).
             HomeSectionHeader(kicker: "Comps, voids and refunds", title: "Worth reviewing",
-                              trailing: viewModel.lossWeek.count == 2 ? viewModel.lossWeek[1] : nil)
+                              trailing: Self.lossWeekLabel(viewModel.lossWeek))
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(viewModel.lossFlags.enumerated()), id: \.element.id) { index, flag in
                     VStack(alignment: .leading, spacing: 6) {
@@ -1684,8 +2048,17 @@ struct HomeFollowThrough: View {
         return bits.joined(separator: " · ") + " (estimates at stated rates)"
     }
 
+    /// One Still-open row (parity audit #3, the web's hbQueueActs): a tap
+    /// on the row opens the item itself; its action button does the step —
+    /// an outward one (the week to staff, an answer to an employee) opens
+    /// its confirm card first, never a one-tap post; the `alt` beside it
+    /// (Deny beside Approve) is a trailing swipe and a context-menu item.
+    /// What happened is said under the row, never swallowed.
     private func actionRow(_ item: ActionItem, showsDivider: Bool) -> some View {
-        VStack(spacing: 0) {
+        let note = viewModel.rowNote[item.key]
+        let busy = viewModel.running.contains(item.key)
+        let alt = item.action?.alt
+        return VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Circle().fill(item.tone).frame(width: 8, height: 8).padding(.top, 6)
                 VStack(alignment: .leading, spacing: 3) {
@@ -1694,22 +2067,43 @@ struct HomeFollowThrough: View {
                         HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
                     }
                 }
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard let nav = item.destination else { return }
+                    Haptic.light()
+                    onOpenNav(nav)
+                }
+                .accessibilityAddTraits(item.destination != nil ? .isButton : [])
+                .accessibilityHint(item.destination != nil ? "Opens it" : "")
                 VStack(alignment: .trailing, spacing: 6) {
                     if let action = item.action {
                         Button {
                             Haptic.light()
-                            if action.route?.mobile != nil {
-                                Task { await viewModel.run(item) }
-                            } else if let module = action.module {
-                                onOpenModule(module)
-                            }
+                            perform(action.step, on: item)
                         } label: {
                             Text(action.label)
-                                .font(.cavnarBody(13, weight: 600))
+                                .font(.cavnarBody(13, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
+                                .frame(minHeight: 32)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .disabled(busy)
+                    }
+                    if let alt {
+                        Button {
+                            Haptic.light()
+                            perform(alt, on: item)
+                        } label: {
+                            Text(alt.label)
+                                .font(.cavnarBody(12.5, weight: 600))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .frame(minHeight: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
                     }
                     Button {
                         Haptic.light()
@@ -1718,18 +2112,122 @@ struct HomeFollowThrough: View {
                         Text("Not today")
                             .font(.cavnarBody(12.5))
                             .foregroundStyle(Color.cavnarInk3)
+                            .frame(minHeight: 28)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Puts it back tomorrow")
                 }
             }
             .padding(.vertical, 11)
+            if busy {
+                CavnarSkeletonBar(height: 3).padding(.leading, 20).padding(.bottom, 8)
+            }
+            if let note {
+                rowNoteView(item, note)
+            }
             if showsDivider {
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
             }
         }
+        .homeSwipeAction(alt.map { a in
+            HomeSwipeAction(label: a.label, systemImage: Self.altGlyph(a), tint: Self.altTint(a)) {
+                perform(a, on: item)
+            }
+        })
+        .contextMenu {
+            if let nav = item.destination {
+                Button { onOpenNav(nav) } label: { Label("Open it", systemImage: "arrow.up.right") }
+            }
+            if let action = item.action {
+                Button { perform(action.step, on: item) } label: {
+                    Label(action.label, systemImage: action.step.confirm != nil ? "checkmark.seal" : "bolt")
+                }
+            }
+            if let alt {
+                Button(role: Self.altTint(alt) == .cavnarRed ? .destructive : nil) { perform(alt, on: item) } label: {
+                    Label(alt.label, systemImage: Self.altGlyph(alt))
+                }
+            }
+            Button { Task { await viewModel.snooze(item) } } label: { Label("Not today", systemImage: "moon") }
+        }
     }
 
+    /// What a step does when tapped — the web's order: the confirm card,
+    /// else the route in place, else the item, else Ask, else the module.
+    private func perform(_ step: ActionItem.Step, on item: ActionItem) {
+        switch step.kind {
+        case .confirm(let confirm):
+            proposing = HomeActionProposal(item: item, step: step, confirm: confirm)
+        case .post:
+            Task { await viewModel.run(item, step: step) }
+        case .open:
+            if let nav = item.destination(for: step) { onOpenNav(nav) }
+        case .ask(let question):
+            // An unanswered Ask proposal reopens as itself, not as a new
+            // question about it.
+            if let nav = item.proposalId != nil ? item.destination : SystemEntry.askPath(question) {
+                onOpenNav(nav)
+            }
+        case .module(let module):
+            if let nav = item.destination(for: step) { onOpenNav(nav) } else { onOpenModule(module) }
+        case .none:
+            if let nav = item.destination { onOpenNav(nav) }
+        }
+    }
+
+    /// Deny reads red (an answer that turns someone down); any other alt is
+    /// the quiet ink of a secondary choice.
+    static func altTint(_ step: ActionItem.Step) -> Color {
+        if case .string(let d)? = step.confirm?.args["decision"], d == "deny" { return .cavnarRed }
+        if case .string(let d)? = step.body?["decision"], d == "deny" { return .cavnarRed }
+        return .cavnarInk3
+    }
+
+    static func altGlyph(_ step: ActionItem.Step) -> String {
+        altTint(step) == .cavnarRed ? "xmark" : "arrow.up.right"
+    }
+
+    /// Under a row: what happened, or the publish gate's list with the one
+    /// button that sends past it knowingly (after its own confirm).
+    @ViewBuilder
+    private func rowNoteView(_ item: ActionItem, _ note: HomeFollowThroughViewModel.RowNote) -> some View {
+        let color: Color = note.tone == .good ? .cavnarGreen : (note.tone == .warn ? .cavnarAmber : .cavnarRed)
+        VStack(alignment: .leading, spacing: 6) {
+            if note.blockers.isEmpty {
+                HomeMixedText.make(note.text, size: 12.5, weight: 600, color: color)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(note.text.uppercased())
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarEmber2)
+                ForEach(Array(note.blockers.enumerated()), id: \.offset) { _, b in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle().fill(Color.cavnarRed).frame(width: 6, height: 6).padding(.top, 6)
+                        HomeMixedText.make(b, size: 13, weight: 500, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Button {
+                    Haptic.warning()
+                    sendingAnyway = item
+                } label: {
+                    Text(Self.sendAnywayLabel(note.blockers.count))
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .padding(.top, 2)
+            }
+        }
+        .padding(.leading, 20)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "Send with 2 rule warnings…" — the web's hbAckInPlace button.
+    static func sendAnywayLabel(_ n: Int) -> String {
+        "Send with \(n) rule warning\(n == 1 ? "" : "s")\u{2026}"
+    }
     private func lineRow(_ text: String, tone: Color, showsDivider: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
@@ -1772,7 +2270,8 @@ struct CloseOutSheet: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    AccountSection(kicker: viewModel.closeOutDate ?? "Tonight") {
+                    // M/D/YY, never the server's ISO date (parity audit #19).
+                    AccountSection(kicker: viewModel.closeOutDate.map { CavnarDate.mdy($0) } ?? "Tonight") {
                         AccountField(label: "What went well", text: $draft.wentWell,
                                      focus: $focused, field: CloseOutField.well)
                         AccountField(label: "What went wrong", text: $draft.wentWrong,
@@ -1894,6 +2393,100 @@ struct HomeProposedGoals: View {
                     .foregroundStyle(Color.cavnarGreen)
                     .transition(.opacity)
             }
+        }
+    }
+}
+
+/// "Renew or close" — a goal whose date passed without reaching it, retired
+/// from every prompt after two weeks and asked once (memory re-audit R3):
+/// Another month (the same target, a new date) or Close it — the web Goals
+/// card's two buttons (parity audit #66). A teammate sees it read-only.
+struct HomeMissedGoals: View {
+    let viewModel: HomeFollowThroughViewModel
+    @State private var note: String?
+    @State private var closing: ProposedGoal?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HomeSectionHeader(kicker: "Renew or close", title: "Missed goals",
+                              trailing: viewModel.missedGoals.count > 1 ? "\(viewModel.missedGoals.count)" : nil)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(viewModel.missedGoals.enumerated()), id: \.element.id) { index, goal in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HomeMixedText.make(goal.summary, size: CavnarType.body, weight: 700, color: .cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Its date passed without reaching it")
+                            .font(.cavnarBody(CavnarType.caption, weight: 500))
+                            .foregroundStyle(Color.cavnarInk3)
+                        if viewModel.canConfirmGoals {
+                            HStack(spacing: 18) {
+                                Button {
+                                    Haptic.light()
+                                    Task {
+                                        if let said = await viewModel.answerMissed(goal, renew: true) {
+                                            withAnimation { note = said }
+                                        }
+                                    }
+                                } label: {
+                                    Text("Another month")
+                                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .frame(minHeight: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                Button {
+                                    Haptic.light()
+                                    closing = goal
+                                } label: {
+                                    Text("Close it")
+                                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
+                                        .foregroundStyle(Color.cavnarInk3)
+                                        .frame(minHeight: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                Spacer(minLength: 0)
+                            }
+                            .disabled(viewModel.answeringGoal != nil)
+                            if viewModel.answeringGoal == goal.id {
+                                CavnarSkeletonBar(height: 3)
+                            }
+                        } else {
+                            Text("Waiting for the owner to renew or close it")
+                                .font(.cavnarBody(CavnarType.caption, weight: 600))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    .padding(.vertical, 10)
+                    if index < viewModel.missedGoals.count - 1 { AccountRowDivider() }
+                }
+            }
+            .cavnarCard()
+            if let note {
+                Text(note)
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarGreen)
+                    .transition(.opacity)
+            } else if let error = viewModel.errorMessage, viewModel.answeringGoal == nil, closing == nil {
+                Text(error)
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarRed)
+            }
+        }
+        .confirmationDialog("Close this goal?", isPresented: Binding(get: { closing != nil },
+                                                                     set: { if !$0 { closing = nil } }),
+                            titleVisibility: .visible, presenting: closing) { goal in
+            Button("Close it", role: .destructive) {
+                Task {
+                    if let said = await viewModel.answerMissed(goal, renew: false) {
+                        withAnimation { note = said }
+                    }
+                }
+            }
+            Button("Keep it", role: .cancel) {}
+        } message: { goal in
+            Text("\u{201C}\(goal.summary)\u{201D} stops being a target. You can set a new goal any time.")
         }
     }
 }

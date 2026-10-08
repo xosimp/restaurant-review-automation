@@ -93,6 +93,8 @@ final class HomeViewModel {
         return r.proposal
     }
 
+    static func homeQuery(fresh: Bool) -> [String: String] { fresh ? ["fresh": "1"] : [:] }
+
     private struct UndoBody: Encodable {
         let key: String
         let undo: Bool
@@ -109,7 +111,9 @@ final class HomeViewModel {
         return true
     }
 
-    func load() async {
+    /// `fresh`: pull-to-refresh — the server rebuilds the brief rather than
+    /// serving its 60-second copy (GET /mobile/api/home?fresh=1, parity #90).
+    func load(fresh: Bool = false) async {
         adoptCurrentSession()
         let generation = SessionScope.generation
         // Warm start: paint cached numbers immediately rather than a loading
@@ -123,7 +127,7 @@ final class HomeViewModel {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let fetched: HomeSummary = try await client.send("/mobile/api/home")
+            let fetched: HomeSummary = try await client.send("/mobile/api/home", query: Self.homeQuery(fresh: fresh))
             DebugFrameWatchdog.mark("home summary fetched")
             // Signed out or switched location while this was in flight: the
             // answer belongs to a session that no longer exists.

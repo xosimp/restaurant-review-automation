@@ -86,6 +86,12 @@ struct HomeMonthlyReview: Decodable {
 
 struct HomeMonthlyReviewCard: View {
     let month: HomeMonthlyReview
+    /// False for the PDF: no Ask links, nothing tappable on paper.
+    var interactive: Bool = true
+    /// The full sheet shows every result and priority; Home shows three.
+    var showsAll: Bool = false
+    /// "The whole month →" — opens HomeMonthlyReviewSheet (parity #79).
+    var onOpen: (() -> Void)? = nil
 
     var body: some View {
         if let r = month.review, month.hasAnything {
@@ -105,7 +111,7 @@ struct HomeMonthlyReviewCard: View {
                             }
                         }
                     }
-                    let results = (r.results ?? []).filter { ($0.summary ?? $0.title) != nil }.prefix(3)
+                    let results = (r.results ?? []).filter { ($0.summary ?? $0.title) != nil }.prefix(showsAll ? 50 : 3)
                     if !results.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             kicker("What your changes did")
@@ -117,9 +123,11 @@ struct HomeMonthlyReviewCard: View {
                             }
                         }
                     }
-                    HomeAskLink(question: month.ask ?? "Walk me through \(r.month)",
-                                label: "Ask about this month")
-                    let priorities = (r.priorities ?? []).prefix(3)
+                    if interactive {
+                        HomeAskLink(question: month.ask ?? "Walk me through \(r.month)",
+                                    label: "Ask about this month")
+                    }
+                    let priorities = (r.priorities ?? []).prefix(showsAll ? 10 : 3)
                     if !priorities.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             kicker("Worth your time next month")
@@ -127,6 +135,20 @@ struct HomeMonthlyReviewCard: View {
                                 HomeMixedText.make(Self.priorityLine(p), size: 13.5, weight: 500, color: .cavnarInk2)
                             }
                         }
+                    }
+                    if let onOpen {
+                        Button {
+                            Haptic.light()
+                            onOpen()
+                        } label: {
+                            Text("The whole month, to share \u{2192}")
+                                .font(.cavnarBody(13, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .frame(minHeight: 44, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens last month in full, with a PDF to share")
                     }
                 }
                 .cavnarCard()
@@ -164,7 +186,7 @@ struct HomeMonthlyReviewCard: View {
                 HomeMixedText.make(yc.replacingOccurrences(of: "^ — ", with: "", options: .regularExpression),
                                    size: 12, weight: 500, color: .cavnarInk3)
             }
-            if let ask = m.ask {
+            if interactive, let ask = m.ask {
                 HomeAskLink(question: ask, label: "Ask").padding(.top, 2)
             }
         }
@@ -222,5 +244,85 @@ struct HomeMonthlyReviewCard: View {
         f.numberStyle = .decimal
         f.maximumFractionDigits = 0
         return f.string(from: NSNumber(value: v.rounded())) ?? "\(Int(v.rounded()))"
+    }
+}
+
+/// Last month in full, with a PDF to share (parity audit #79): the web
+/// card prints, or saves as a PDF from the print dialog, so an owner can
+/// show a partner "how did August go". The phone renders the same card —
+/// every metric, every result and priority — to a PDF with ImageRenderer
+/// and hands it to the share sheet. The PDF is the screen's own dark card,
+/// as the app is dark-only; nothing on it is tappable.
+struct HomeMonthlyReviewSheet: View {
+    let month: HomeMonthlyReview
+    @State private var pdfURL: URL?
+    @State private var renderFailed = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HomeMonthlyReviewCard(month: month, showsAll: true)
+                    if let pdfURL {
+                        ShareLink(item: pdfURL,
+                                  preview: SharePreview(Self.fileName(month), image: Image("LaunchSeal"))) {
+                            Label("Share as PDF", systemImage: "square.and.arrow.up")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    } else if renderFailed {
+                        Text("Couldn\u{2019}t make the PDF \u{2014} take a screenshot of the month instead.")
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarRed)
+                    } else {
+                        CavnarSkeletonBar(height: 3)
+                    }
+                }
+                .padding(20)
+            }
+            .cavnarModuleBackground()
+            .accountSheetChrome(month.review?.month ?? "Last month")
+        }
+        .task {
+            pdfURL = Self.renderPDF(month)
+            renderFailed = pdfURL == nil
+        }
+    }
+
+    /// "Cavnar AI · September 2026.pdf".
+    static func fileName(_ month: HomeMonthlyReview) -> String {
+        let name = (month.review?.month ?? "Last month").replacingOccurrences(of: "/", with: "-")
+        return "Cavnar AI \u{00B7} \(name).pdf"
+    }
+
+    /// The month card drawn onto one US-Letter-wide page, as tall as the card.
+    @MainActor
+    static func renderPDF(_ month: HomeMonthlyReview) -> URL? {
+        let page = VStack(alignment: .leading, spacing: 16) {
+            Text("CAVNAR AI")
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .tracking(1.6)
+                .foregroundStyle(Color.cavnarEmber2)
+            HomeMonthlyReviewCard(month: month, interactive: false, showsAll: true)
+        }
+        .padding(36)
+        .frame(width: 612, alignment: .topLeading)
+        .background(Color.cavnarPaper)
+        .environment(\.colorScheme, .dark)
+        let renderer = ImageRenderer(content: page)
+        renderer.proposedSize = ProposedViewSize(width: 612, height: nil)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName(month))
+        var wrote = false
+        renderer.render { size, draw in
+            var box = CGRect(origin: .zero, size: size)
+            guard size.width > 0, size.height > 0,
+                  let ctx = CGContext(url as CFURL, mediaBox: &box, nil) else { return }
+            ctx.beginPDFPage(nil)
+            draw(ctx)
+            ctx.endPDFPage()
+            ctx.closePDF()
+            wrote = true
+        }
+        return wrote ? url : nil
     }
 }
