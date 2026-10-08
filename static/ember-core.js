@@ -360,7 +360,10 @@
         ms.forEach(function (m) {
           var el = m.target;
           if (m.attributeName !== 'class' || !el.classList) return;
-          if (el.classList.contains('shown') && !el._fed) { el._fed = 1; if ((fed++) % 2 === 0) Streams.add(sc, el, { dur: 1000, bend: 0.1, w: 1.1, r: 5 }); }
+          // the week is scrubbed by the scroll: a cell unfilled on the way
+          // back up can be drafted again
+          if (!el.classList.contains('shown')) el._fed = 0;
+          else if (!el._fed) { el._fed = 1; if ((fed++) % 2 === 0) Streams.add(sc, el, { dur: 1000, bend: 0.1, w: 1.1, r: 5 }); }
           if (el.classList.contains('moved') && !el._moved) { el._moved = 1; var c = find('sched'); if (c) c.flare = 1; }
         });
       }).observe(grid, { attributes: true, subtree: true, attributeFilter: ['class'] });

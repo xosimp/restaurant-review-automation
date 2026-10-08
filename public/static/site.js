@@ -144,26 +144,64 @@
     for (c = 0; c < 7; c++) h += '<div class="h">' + days[c] + '</div>';
     for (r = 0; r < people.length; r++) {
       h += '<div class="p">' + people[r] + '</div>';
-      for (c = 0; c < 7; c++) h += plan[r][c] ? '<div class="c s" data-r="' + r + '" data-c="' + c + '">' + times[(r + c) % times.length] + '</div>' : '<div class="c"></div>';
+      for (c = 0; c < 7; c++) h += plan[r][c] ? '<div class="c s" data-r="' + r + '" data-c="' + c + '" data-t="' + times[(r + c) % times.length] + '">' + times[(r + c) % times.length] + '</div>' : '<div class="c"></div>';
     }
     g.innerHTML = h;
     var steps = $$('#steps div'), lit = function (i) { if (steps[i]) steps[i].classList.add('on'); };
-    onView($('#board'), function () {
-      var cells = $$('.s', g), gap = reduce ? 0 : 36, t = reduce ? 0 : 160 + cells.length * gap;
-      lit(0);
-      cells.forEach(function (el, i) { setTimeout(function () { el.classList.add('shown'); }, reduce ? 0 : 160 + i * gap); });
-      setTimeout(function () { lit(1); }, t * 0.5);
-      // Sam works seven days: the weekend shifts break 40h, flag, and move.
-      var ot = $$('.s[data-r="6"][data-c="5"], .s[data-r="6"][data-c="6"]', g);
-      setTimeout(function () { ot.forEach(function (e) { e.classList.add('ot'); }); }, t + (reduce ? 0 : 200));
-      setTimeout(function () {
-        lit(2); ot.forEach(function (e) { e.classList.remove('ot'); e.classList.add('moved'); e.textContent = 'moved'; });
-        $('#otv').textContent = '0'; $('#ots').textContent = 'Nobody past 40h';
-      }, t + (reduce ? 0 : 1200));
-      setTimeout(function () { lit(3); $('#labbar').style.transform = 'scaleX(' + (31.4 / 50) + ')'; countTo($('#labv'), 31.4, 1); }, t + (reduce ? 0 : 1650));
-      setTimeout(function () { lit(4); $('#ringfg').style.strokeDashoffset = String(151 * (1 - 0.86)); countTo($('#sqv'), 86, 0); }, t + (reduce ? 0 : 2250));
-      setTimeout(function () { lit(5); }, t + (reduce ? 0 : 3050));
-    }, 0.35);
+    // The week builds as you scroll (10/8/26): pinned on a desktop tall
+    // enough to hold it, the scroll scrubs the draft — cells fill, two
+    // overtime shifts flag and move, labor lands on target, the score rises —
+    // and scrolling back unbuilds it. On a phone it scrubs as the board
+    // crosses the screen. Reduced motion shows the finished week.
+    var cells = $$('.s', g), ot = $$('.s[data-r="6"][data-c="5"], .s[data-r="6"][data-c="6"]', g);
+    var sec = $('#schedule'), board = $('#board'), last = -1, clamp = function (x) { return Math.max(0, Math.min(1, x)); };
+    var marks = [0.001, 0.3, 0.62, 0.78, 0.88, 0.97];
+    var apply = function (p) {
+      if (Math.abs(p - last) < 0.002) return;
+      last = p;
+      var n = Math.round(clamp(p / 0.55) * cells.length);
+      cells.forEach(function (el, i) { el.classList.toggle('shown', i < n); });
+      var flagged = p >= 0.6, moved = p >= 0.7;
+      ot.forEach(function (e) { e.classList.toggle('ot', flagged && !moved); e.classList.toggle('moved', moved); e.textContent = moved ? 'moved' : e.getAttribute('data-t'); });
+      $('#otv').textContent = moved ? '0' : '6.5';
+      $('#ots').textContent = moved ? 'Nobody past 40h' : '2 shifts over 40h';
+      var lab = clamp((p - 0.74) / 0.12), sq = clamp((p - 0.84) / 0.12);
+      $('#labbar').style.transform = 'scaleX(' + (31.4 / 50 * lab) + ')';
+      $('#labv').textContent = (31.4 * lab).toFixed(1);
+      $('#ringfg').style.strokeDashoffset = String(151 * (1 - 0.86 * sq));
+      $('#sqv').textContent = String(Math.round(86 * sq));
+      steps.forEach(function (st, i) { st.classList.toggle('on', p >= marks[i]); });
+    };
+    // pin only when the whole section fits under the nav (a short laptop
+    // screen would clip its first and last lines); else scrub in place
+    var wide = window.matchMedia ? window.matchMedia('(min-width:961px)') : null, inner = $('.wrap.sched', sec);
+    var fit = function () {
+      var on = !reduce && !!wide && wide.matches && inner.offsetHeight <= window.innerHeight - 96;
+      if (on !== sec.classList.contains('pinned')) sec.classList.toggle('pinned', on);
+    };
+    fit();
+    var progress = function () {
+      var vh = window.innerHeight;
+      if (sec.classList.contains('pinned')) { var r = sec.getBoundingClientRect(); return clamp(-r.top / Math.max(1, r.height - vh)); }
+      var b = board.getBoundingClientRect();
+      // unpinned (a phone): from the board's top at 85% of the screen until
+      // it has scrolled a fifth of a screen past the top, so the meters at
+      // its foot are in view when labor and the score land
+      return clamp((vh * 0.85 - b.top) / (vh * 1.05));
+    };
+    if (reduce) apply(1);
+    else {
+      var queued = false;
+      var tick = function () { queued = false; apply(progress()); };
+      // a frame, or 120ms, whichever comes first (a throttled tab can hold frames back)
+      var ask = function () { if (!queued) { queued = true; requestAnimationFrame(tick); setTimeout(function () { if (queued) tick(); }, 120); } };
+      window.addEventListener('scroll', ask, { passive: true });
+      window.addEventListener('resize', function () { fit(); ask(); });
+      // the fit is measured again once the real fonts have set the headline
+      window.addEventListener('load', function () { fit(); ask(); });
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { fit(); ask(); });
+      tick();
+    }
   }
 
   // ── everything connected ──
@@ -315,4 +353,98 @@
       })
       .catch(function () { btn.disabled = false; btn.textContent = 'Request a demo'; err.style.display = 'block'; });
   });
+
+  // ── headlines that catch: where the browser can't tie the sweep to the
+  //    scroll (no animation-timeline), it plays once as the heading arrives ──
+  if (!(window.CSS && CSS.supports && CSS.supports('animation-timeline: view()'))) {
+    $$('.ig').forEach(function (el) { onView(el, function () { el.classList.add('lit'); }, 0.6); });
+  }
+
+  // ── the Ember Thread (10/8/26): one ember line leaves the hero, runs down
+  //    a rail in the gutter and branches into each core as it is reached —
+  //    by the bottom the visitor has traced everything back to one AI. It is
+  //    drawn in page coordinates behind the content, so it scrolls natively
+  //    (a layer placed by script every frame trailed iOS's momentum scroll).
+  //    The rail draws to a reading line 60% down the screen; a branch draws in
+  //    when the line reaches its tap, and its core answers with one pulse.
+  //    Branches come in from the side or down through the section's empty
+  //    top padding, so no line crosses a word. ──
+  (function () {
+    var hero = $('.hero'), anchors = $$('[data-thread]');
+    if (!hero || !anchors.length) return;
+    var NS = 'http://www.w3.org/2000/svg';
+    var mk = function (tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var a in attrs) e.setAttribute(a, attrs[a]); parent.appendChild(e); return e; };
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('id', 'thread'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+    var defs = mk('defs', {}, svg), rg = mk('radialGradient', { id: 'thr-dot' }, defs);
+    mk('stop', { offset: '0', 'stop-color': '#fff4e8' }, rg);
+    mk('stop', { offset: '.3', 'stop-color': '#f2b183', 'stop-opacity': '.9' }, rg);
+    mk('stop', { offset: '1', 'stop-color': '#c84b2f', 'stop-opacity': '0' }, rg);
+    var gT = mk('g', {}, svg), gL = mk('g', {}, svg), gB = mk('g', {}, svg);
+    var head = mk('circle', { r: 9, fill: 'url(#thr-dot)', 'class': 'head', opacity: 0 }, svg);
+    document.body.appendChild(svg);
+    var segs = [], brs = [];
+    var abs = function (el) { var r = el.getBoundingClientRect(); return { x: r.left + window.pageXOffset, y: r.top + window.pageYOffset, w: r.width, h: r.height }; };
+    var phone = function () { return window.innerWidth < 760; };
+    var update = function () {
+      var readY = reduce ? 1e9 : window.pageYOffset + window.innerHeight * 0.6, hx = null, hy = 0;
+      segs.forEach(function (sg) {
+        var f = Math.max(0, Math.min(1, (readY - sg.y1) / Math.max(1, sg.y2 - sg.y1)));
+        if (Math.abs(f - sg.f) > 0.0005) { sg.el.setAttribute('stroke-dashoffset', (sg.L * (1 - f)).toFixed(1)); sg.f = f; }
+        if (f > 0 && f < 1) { var pt = sg.el.getPointAtLength(sg.L * f); hx = pt.x; hy = pt.y; }
+      });
+      if (hx === null) head.setAttribute('opacity', 0); else { head.setAttribute('cx', hx.toFixed(1)); head.setAttribute('cy', hy.toFixed(1)); head.setAttribute('opacity', 1); }
+      brs.forEach(function (b) {
+        var on = readY >= b.y;
+        if (on === b.on) return;
+        b.on = on;
+        if (b.p) b.p.style.strokeDashoffset = on ? '0' : String(b.L);
+        if (on && !reduce && window.EmberCore) setTimeout(function () { if (b.on) window.EmberCore.pulse(b.name); }, b.p ? 850 : 0);
+      });
+    };
+    var geometry = function () {
+      var root = document.documentElement;
+      svg.setAttribute('width', root.scrollWidth); svg.setAttribute('height', root.scrollHeight);
+      var w0 = $('.sec .wrap'), wa = abs(w0), pad = parseFloat(window.getComputedStyle(w0).paddingLeft) || 0;
+      var rx = phone() ? 10 : Math.max(16, wa.x + pad - 34);
+      var hb = abs(hero), hint = $('.scrollhint'), hr = hint ? abs(hint) : null;
+      var sx = hr && hr.w ? hr.x + hr.w / 2 : hb.x + hb.w / 2, sy = hr && hr.w ? hr.y + hr.h + 8 : hb.y + hb.h - 40, y0 = hb.y + hb.h;
+      var taps = anchors.map(function (el) {
+        var mode = (el.getAttribute('data-thread') || 'left|left').split('|')[phone() ? 1 : 0];
+        var a = abs(el), ax = a.x + a.w / 2, ay = a.y + a.h / 2, r = Math.min(a.w, a.h) / 2 + 6;
+        var sc = el.closest('section'), st = sc ? abs(sc).y : ay - 120, d = null, y = ay;
+        if (mode === 'top') { y = st + 46; d = 'M' + rx + ' ' + (y - 16) + ' Q' + rx + ' ' + y + ' ' + (rx + 16) + ' ' + y + ' H' + (ax - 16) + ' Q' + ax + ' ' + y + ' ' + ax + ' ' + (y + 16) + ' V' + (ay - r); }
+        else if (mode === 'left') { d = 'M' + rx + ' ' + (ay - 16) + ' Q' + rx + ' ' + ay + ' ' + (rx + 16) + ' ' + ay + ' H' + (ax - r); }
+        else y = st + 46;            // no branch (a pinned or crowded core): it still answers
+        return { y: y, d: d, name: el.getAttribute('data-core') };
+      }).sort(function (p, q) { return p.y - q.y; });
+      var parts = [{ d: 'M' + sx + ' ' + sy + ' C' + sx + ' ' + (sy + 90) + ' ' + rx + ' ' + (y0 - 90) + ' ' + rx + ' ' + y0, y1: sy, y2: y0 }], prev = y0;
+      taps.forEach(function (t) { if (t.y > prev + 1) { parts.push({ d: 'M' + rx + ' ' + prev + ' V' + t.y, y1: prev, y2: t.y }); prev = t.y; } });
+      gT.innerHTML = ''; gL.innerHTML = ''; gB.innerHTML = '';
+      segs = parts.map(function (pt) {
+        mk('path', { d: pt.d, 'class': 'track' }, gT);
+        var el = mk('path', { d: pt.d, 'class': 'lit' }, gL), L = el.getTotalLength();
+        el.setAttribute('stroke-dasharray', L + ' ' + L); el.setAttribute('stroke-dashoffset', L);
+        return { el: el, L: L, y1: pt.y1, y2: pt.y2, f: -1 };
+      });
+      var was = {};
+      brs.forEach(function (b) { was[b.name] = b.on; });
+      brs = taps.map(function (t) {
+        var p = t.d ? mk('path', { d: t.d, 'class': 'br' }, gB) : null, L = p ? p.getTotalLength() : 0, on = !!was[t.name];
+        if (p) { p.setAttribute('stroke-dasharray', L + ' ' + L); p.style.strokeDashoffset = on ? '0' : String(L); }
+        return { p: p, L: L, y: t.y, name: t.name, on: on };
+      });
+      update();
+    };
+    var queued = false, regeo = 0;
+    var tick = function () { queued = false; update(); };
+    window.addEventListener('scroll', function () { if (!queued) { queued = true; requestAnimationFrame(tick); setTimeout(function () { if (queued) tick(); }, 120); } }, { passive: true });
+    // the route follows the layout: on resize, as fonts land, and as sections reveal
+    var later = function () { clearTimeout(regeo); regeo = setTimeout(geometry, 180); };
+    window.addEventListener('resize', later);
+    window.addEventListener('load', later);
+    document.addEventListener('transitionend', function (e) { if (e.target && e.target.classList && e.target.classList.contains('rv')) later(); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(later);
+    geometry();
+  })();
 })();

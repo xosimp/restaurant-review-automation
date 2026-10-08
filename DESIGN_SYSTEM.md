@@ -1746,6 +1746,23 @@ connections, then the demo form. Rules:
   into the core (and into the learning curve), shallow parallax on the hero's
   rings and the closing glow, and cross-page View Transitions with the nav held
   still. Reduced motion shows every section finished.
+- **The scroll story** (10/8/26). *The Ember Thread*: one ember line leaves the
+  hero's scroll hint and runs down a rail in the gutter (10px from the edge on
+  a phone), drawn to a reading line 60% down the screen with a glowing head;
+  at each core it branches in (`data-thread="desktop|phone"`: `left` straight
+  in, `top` down through the section's empty top padding, `none` no branch)
+  and the core answers with one pulse. It is an SVG in page coordinates
+  behind the content (`main` sits above it), so it scrolls natively and runs
+  under cards and words, never over them. *The scroll-built schedule*: the
+  Schedule Generator section is scrubbed by the scroll — cells fill, two
+  overtime shifts flag then move, labor lands on 31.4%, the score sweeps to
+  86, the six steps light in order — and unbuilt on the way back; it pins
+  (`.pinned`, 250vh) only on a desktop where the whole section fits under the
+  nav, otherwise it scrubs in place as the board crosses the screen.
+  *Headlines that catch*: each section's key words (`.ig`) heat from cream to
+  ember, left to right, tied to the scroll where the browser supports
+  `animation-timeline: view()`, else once as the heading arrives. Nothing is
+  placed by script per frame (the lesson of the Ember Core on iOS).
 - **The SMS consent line** on the form is the registered opt-in wording; it
   stays verbatim (`tests/test_a2p_staff_verification_optin.py`).
 - **Integrations** list only what is live; anything else is "on request".
