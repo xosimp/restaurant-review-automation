@@ -162,8 +162,12 @@ def test_s2_a_leftover_stamp_is_not_a_connection():
 
 def test_s2_every_disconnect_route_clears_the_sync_stamp():
     import rpower_routes
+    # Both routes (admin and client, web and mobile) share one body since the
+    # parity round (#80): rpower_routes.do_disconnect.
+    assert '"rpower_last_synced": None' in inspect.getsource(rpower_routes.do_disconnect)
     for fn in (rpower_routes.disconnect_rpower, rpower_routes.rpower_disconnect_client):
-        assert '"rpower_last_synced": None' in inspect.getsource(fn)
+        src = inspect.getsource(fn)
+        assert '"rpower_last_synced": None' in src or "do_disconnect(" in src
     assert '"toast_last_synced": None' in inspect.getsource(mobile_api.mobile_disconnect_toast)
 
 
