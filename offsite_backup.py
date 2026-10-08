@@ -353,6 +353,7 @@ SCRUB_TABLES = {
     "two_fa_backup_codes": "2FA recovery codes",
     "trusted_devices": "remembered 2FA devices",
     "device_tokens": "APNs device tokens",
+    "live_activity_tokens": "APNs Live Activity push tokens (parity audit #61)",
     "login_reports": "one-time 'this wasn't me' links that revoke sessions",
     "staff_portal_tokens": "bearer links into each restaurant's staff portal",
     "app_secrets": "this install's own link-signing secrets",

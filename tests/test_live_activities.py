@@ -387,6 +387,11 @@ def test_the_tonight_route_has_a_web_and_a_phone_twin(db, monkeypatch):
     rid = _open_restaurant(db)
     owner, token, _h = _login(db, rid)
     monkeypatch.setattr(intraday, "pulse", lambda *a, **k: {"available": False, "reason": "nothing captured"})
+    # In service, whatever the clock says when the suite runs (it read
+    # "Closed now" outside the test restaurant's hours).
+    import time_utils
+    from datetime import date as _date
+    monkeypatch.setattr(time_utils, "open_service_day", lambda restaurant, local=None: _date(2026, 10, 9))
     app = Flask(__name__)
     app.register_blueprint(strategy_bp)
     app.register_blueprint(strategy_mobile_bp)

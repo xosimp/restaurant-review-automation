@@ -187,6 +187,8 @@ CREATE TABLE IF NOT EXISTS live_activity_tokens (
 CREATE INDEX IF NOT EXISTS idx_la_tokens_lookup
     ON live_activity_tokens(activity_type, kind, restaurant_id, activity_key);
 CREATE INDEX IF NOT EXISTS idx_la_tokens_session ON live_activity_tokens(session_hash);
+-- The retention sweep deletes by age (ops._RETENTION_DAYS); never a scan.
+CREATE INDEX IF NOT EXISTS idx_la_tokens_updated ON live_activity_tokens(updated_at);
 -- One row per thing a Live Activity is about — a pending send, a schedule
 -- generation, one night's service: when the server started it on the
 -- phones (push-to-start, claimed once), the last content it sent (an update

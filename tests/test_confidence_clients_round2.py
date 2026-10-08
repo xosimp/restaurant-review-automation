@@ -299,7 +299,8 @@ def test_old_recipe_drafts_are_not_called_transcribed():
 
 def test_a_review_read_error_is_not_tagged_or_cached_as_a_read():
     fn = _fn(_src(), "loadReviewInsight", indent="")
-    i = fn.index("fetch('/api/review-insight')")
+    # Since the parity round (#37) the read goes through insightSwr.
+    i = fn.index("insightSwr('/api/review-insight'")
     after = fn[i:]
     assert after.index("d.error") < after.index("cavSet('review_insight'")   # scoped cache (Data Freshness #14)
 

@@ -35,7 +35,9 @@ def test_the_start_answer_carries_it_on_every_path():
     import inspect
     import mobile_api
     src = inspect.getsource(mobile_api.mobile_generate_schedule)
-    assert src.count("typical=_se.typical_generation_seconds(rid)") == 3
+    # Four since the parity round (#15): the 409 "busy" answer carries it too,
+    # so the phone can say how long the running week usually takes.
+    assert src.count("typical=_se.typical_generation_seconds(rid)") == 4
 
 
 def test_the_building_screen_centres_the_steps_and_says_the_time():

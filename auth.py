@@ -4359,8 +4359,9 @@ def delete_own_login(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -
         for table in ("trusted_devices", "user_passkeys", "device_tokens", "login_prefs"):
             try:
                 conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
-            except Exception:
-                pass   # a table this database doesn't have yet
+            except sqlite3.OperationalError as e:
+                if "no such table" not in str(e):   # only a table this database doesn't have yet
+                    raise
         conn.commit()
     finally:
         conn.close()

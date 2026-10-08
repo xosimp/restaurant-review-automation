@@ -344,6 +344,10 @@ def test_the_sync_buttons_no_longer_call_sync_to_db_directly():
     for fn in (toast_routes.sync_toast, toast_routes.client_sync_toast, rpower_routes.sync_rpower,
                rpower_routes.rpower_sync_client):
         src = inspect.getsource(fn)
+        # Since the parity round (#80) a client route may delegate to its
+        # module's shared do_sync body (web + mobile twins); read through it.
+        if "do_sync(" in src:
+            src += inspect.getsource(inspect.getmodule(fn).do_sync)
         assert "start_manual_pos_sync" in src and "sync_to_db(" not in src, fn.__name__
 
 

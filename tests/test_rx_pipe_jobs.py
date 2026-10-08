@@ -81,7 +81,11 @@ def test_generate_for_another_week_never_joins_a_running_redo(client, db_path, m
         other = client.post("/mobile/api/labor/generate-schedule", headers=h,
                             json={"week_start": "2026-10-19", "instruction": "Patio closed"})
         body = other.get_json()
-        assert other.status_code == 409 and body["busy"] is True and not body.get("job_id")
+        # Nothing is started or joined for the other week. Since the parity
+        # round (#15) the refusal names the RUNNING job so the phone can offer
+        # "Watch it" — the redo's own id, never a new one.
+        assert other.status_code == 409 and body["busy"] is True and body["ok"] is False
+        assert body.get("job_id") in (None, redo["job_id"]) and not body.get("joined")
         assert "redoing Tuesday 10/13/26 of the week of 10/12/26" in body["error"]
         # The same redo pressed again joins it.
         again = client.post("/mobile/api/labor/generate-schedule", headers=h,

@@ -21,9 +21,13 @@ def _between(a, b):
 # ── the overview ────────────────────────────────────────────────────────────
 
 def test_turn_on_two_factor_opens_the_setup_on_security():
-    fix = _between("var FIX={", "var FIX_ORDER=")
-    assert "security:['Turn on two-factor',function(){acctGo('security');" in fix
+    # Since the parity round (#89) the server names each fix (account_health:
+    # the label and its order); the page keeps only what a fix does.
+    fix = _between("var FIX={", "people:function(")
+    assert "security:function(){acctGo('security');" in fix
     assert "cModal.open('twofa-modal')" in fix
+    import account_health
+    assert ("security", "Security", "Turn on two-factor") in account_health.HEALTH_ITEMS
     assert 'class="cbtn cbtn-secondary cbtn-sm" data-twofa-enable>Enable</button>' in SRC
     go = _between("window.acctGo=function(section,focusId){", "function setCurrent(section){")
     # A scroll aimed before the sections above grew stopped on Integrations.
