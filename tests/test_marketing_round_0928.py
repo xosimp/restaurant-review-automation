@@ -27,7 +27,7 @@ def test_no_today_line_and_the_brief_is_the_ai_read_box():
     assert '<div class="tag">Cavnar AI&rsquo;s marketing brief</div>' in SRC
     assert "mkt-brief-ft" not in SRC and ".mkt-brief .insight-text{" not in SRC
     # The panel has no --hb-tint of its own; the box gets Food Cost's.
-    assert "#panel-marketing .lb2-ai,#panel-marketing .cal-card{--hb-tint:rgba(200,75,47,.06);" in SRC
+    assert "#panel-marketing .lb2-ai,#panel-marketing .cal-card{--hb-tint:color-mix(in srgb,var(--ember) 6%,transparent);" in SRC
 
 
 def test_preview_opens_where_the_owner_is():
