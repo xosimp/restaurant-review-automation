@@ -263,6 +263,7 @@ struct AccountView: View {
     @State private var showingReferral = false
     @State private var showingTargets = false
     @State private var showingDeleteLogin = false
+    @State private var showingViewAs = false
     @State private var prefs = AppPreferences.shared
 
     private var anySheetOpen: Bool {
@@ -278,6 +279,20 @@ struct AccountView: View {
 
     private func groupedSettings(_ summary: AccountSummary) -> some View {
         VStack(alignment: .leading, spacing: 24) {
+            // Cavnar AI's own login only — the web console's View as client
+            // (10/8/26). Hidden while a view is open: the banner ends it.
+            if sessionStore.currentUser?.isInternal == true, sessionStore.viewAs == nil {
+                group("Cavnar AI admin") {
+                    settingsRow {
+                        row("View as a client", systemImage: "eye")
+                    } action: {
+                        showingViewAs = true
+                    }
+                }
+                .sheet(isPresented: $showingViewAs) {
+                    AdminViewAsSheet()
+                }
+            }
             group("Restaurant") {
                 settingsRow {
                     row("Profile & details", systemImage: "building.2")
@@ -733,6 +748,25 @@ struct AccountView: View {
 
     @ViewBuilder
     private var signOutSection: some View {
+        // Viewing as a client, this is the client's Account: the way out is
+        // back to the admin's own login, never a sign-out of either.
+        if let view = sessionStore.viewAs {
+            Button("Stop viewing as \(view.restaurantName)") {
+                Haptic.light()
+                Task { await sessionStore.stopViewAs() }
+            }
+            .font(.cavnarBody(15, weight: 700))
+            .foregroundStyle(Color.cavnarAmber)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 13)
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.cavnarAmber.opacity(0.45), lineWidth: 1))
+            .padding(.top, 4)
+        } else {
+            signOutButton
+        }
+    }
+
+    private var signOutButton: some View {
         Button("Sign Out", role: .destructive) {
             Haptic.light()
             Task { await sessionStore.logout() }

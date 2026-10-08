@@ -967,7 +967,7 @@ enum OwnerProofPhoto {
     @MainActor
     static func image(_ token: String) async -> UIImage? {
         if let hit = cache[token] { return hit }
-        guard isToken(token), let bearer = Keychain.get(Keychain.Key.sessionToken) else { return nil }
+        guard isToken(token), let bearer = Keychain.activeSessionToken() else { return nil }
         var request = URLRequest(url: AppEnvironment.baseURL.appendingPathComponent("/mobile/api/task-sheets/photo/" + token))
         request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 15

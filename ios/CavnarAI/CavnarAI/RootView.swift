@@ -613,6 +613,13 @@ struct RootView: View {
                 tabShell
             }
         }
+        // An admin viewing as a client: the banner over every screen, the
+        // way back on it (ViewAsBanner). Nothing at all otherwise.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if sessionStore.viewAs != nil || sessionStore.viewAsNotice != nil {
+                ViewAsBanner()
+            }
+        }
         // ⌘1…⌘4, ⌘K, ⌘N and ⌘R from a hardware keyboard, either shape.
         .background { keyboardShortcuts }
         .onChange(of: modulesPath.count) { _, count in

@@ -2895,6 +2895,111 @@ def mobile_group_locations(current_user):
     return jsonify(**payload), status
 
 
+# ── Admin view-as from the phone (10/8/26) ──────────────────────────────────
+# The web's /admin/view-as/<id>, for an internal login signed in on the app:
+# the same auth.create_view_as_session (VIEW_AS_HOURS, absolute; read-only
+# for a support login; the admin named on the session row), the same
+# view_as_started / view_as_stopped audit rows, and every request through it
+# attributed by mobile_login_required exactly as the web's are. The app keeps
+# the admin's own token and puts it back when the view ends.
+
+def _internal_login_refusal(current_user):
+    """403 unless an admin or support login is asking, else the admin
+    request ceiling's 429, else None."""
+    from auth import is_internal_login, _admin_rate_limited
+    if not is_internal_login(current_user):
+        return jsonify(ok=False, error="Only a Cavnar AI admin can do this."), 403
+    return _admin_rate_limited(current_user)
+
+
+@mobile_bp.route("/admin/clients")
+@mobile_login_required
+def mobile_admin_clients(current_user):
+    """Every restaurant an admin can view as: the ones with an owner login
+    (admin_routes._principal_login_id's rule, in one query)."""
+    refused = _internal_login_refusal(current_user)
+    if refused:
+        return refused
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT r.id, r.name, r.location_name, r.neighborhood, COALESCE(r.is_demo, 0) AS is_demo, "
+            "r.billing_status FROM restaurants r WHERE r.id > 0 AND EXISTS ("
+            "  SELECT 1 FROM users u WHERE u.restaurant_id = r.id AND u.is_admin = 0 AND u.is_active = 1"
+            "  AND COALESCE(NULLIF(u.role,''),'client') IN ('client','owner')"
+            "  AND u.email NOT LIKE '%@staff.invalid') "
+            "ORDER BY COALESCE(r.is_demo, 0), LOWER(r.name), r.id").fetchall()
+    finally:
+        conn.close()
+    clients = [{"id": r["id"], "name": r["name"] or f"Restaurant {r['id']}",
+                "location_name": r["location_name"] or None, "neighborhood": r["neighborhood"] or None,
+                "is_demo": bool(r["is_demo"]), "billing_status": r["billing_status"] or None} for r in rows]
+    from auth import VIEW_AS_HOURS
+    return jsonify(ok=True, clients=clients, hours=VIEW_AS_HOURS,
+                   read_only=not current_user.get("is_admin"))
+
+
+@mobile_bp.route("/admin/view-as/<int:restaurant_id>", methods=["POST"])
+@mobile_login_required
+def mobile_admin_view_as(restaurant_id, current_user):
+    """Opens a view-as session on the restaurant's owner login and hands its
+    token to the app. A POST with the admin's bearer — there is no cookie
+    for another site to ride, so no confirm page is needed."""
+    refused = _internal_login_refusal(current_user)
+    if refused:
+        return refused
+    from admin_routes import _principal_login_id, _audit_admin_action
+    user_id = _principal_login_id(restaurant_id)
+    if not user_id:
+        return jsonify(ok=False, error="This restaurant has no owner login to view as."), 404
+    from auth import create_view_as_session, get_session_user, VIEW_AS_HOURS, sql_utc
+    from datetime import datetime as _dt_mva, timedelta as _td_mva, timezone as _tz_mva
+    read_only = not current_user.get("is_admin")
+    ends = _dt_mva.now(_tz_mva.utc) + _td_mva(hours=VIEW_AS_HOURS)
+    token = create_view_as_session(user_id, current_user, read_only=read_only,
+                                   ip_address=_get_client_ip(),
+                                   user_agent=request.headers.get("User-Agent", "Cavnar-iOS"))
+    viewing = get_session_user(token)
+    if not viewing:
+        return jsonify(ok=False, error="The view could not be opened. Try again."), 500
+    _audit_admin_action(current_user, "view_as_started", restaurant_id=restaurant_id,
+                        target=f"user:{user_id}",
+                        after={"target_user_id": user_id, "read_only": read_only, "hours": VIEW_AS_HOURS,
+                               "ends_at": sql_utc(ends), "surface": "ios"},
+                        summary=(f"{current_user.get('username')} opened a "
+                                 f"{'read-only ' if read_only else ''}view-as session from the app "
+                                 f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h)"))
+    rest = get_restaurant(restaurant_id)
+    return jsonify(ok=True, token=token, user=_public_user(viewing), restaurant_id=restaurant_id,
+                   restaurant_name=(rest.name if rest else None) or f"Restaurant {restaurant_id}",
+                   ends_at=ends.strftime("%Y-%m-%dT%H:%M:%SZ"), read_only=read_only, hours=VIEW_AS_HOURS)
+
+
+@mobile_bp.route("/admin/stop-viewing", methods=["POST"])
+def mobile_admin_stop_viewing():
+    """Ends the view-as session the bearer names (only a view-as one) and
+    records who ended it. Not @mobile_login_required, as the web's
+    /admin/stop-viewing is not @admin_required: the session is the client's
+    login worn by the admin, and a read-only view would refuse the POST."""
+    from auth import get_session_user
+    token = _bearer_token()
+    viewing = get_session_user(token) if token else None
+    if not viewing or (viewing.get("device_type") or "") != "admin-view-as":
+        # Already over (it ran out, or was stopped elsewhere): nothing to do.
+        return jsonify(ok=True, stopped=False)
+    delete_session(token)
+    from admin_routes import _audit_admin_action
+    _audit_admin_action({"id": viewing.get("acting_admin_id"),
+                         "username": viewing.get("acting_admin") or "an admin"},
+                        "view_as_stopped", restaurant_id=viewing.get("restaurant_id"),
+                        target=f"user:{viewing.get('id')}",
+                        before={"view_as": True, "as_username": viewing.get("username")},
+                        after={"view_as": False, "surface": "ios"},
+                        summary=f"{viewing.get('acting_admin') or 'an admin'} stopped viewing as "
+                                f"{viewing.get('username')} from the app")
+    return jsonify(ok=True, stopped=True)
+
+
 # ── Push device-token registration ─────────────────────────────────────────
 
 @mobile_bp.route("/device-tokens", methods=["POST"])
@@ -2908,8 +3013,17 @@ def mobile_register_device_token(current_user):
         return jsonify(ok=False, error="apns_token required"), 400
     if environment not in ("sandbox", "production"):
         return jsonify(ok=False, error="environment must be 'sandbox' or 'production'"), 400
+    if _is_view_as(current_user):
+        # An admin's phone viewing as a client must never be filed as the
+        # client's device: it would get their alerts, and the upsert by
+        # token would take the row off the admin's own login.
+        return jsonify(ok=True, skipped="view_as")
     register_device_token(current_user["id"], current_user["restaurant_id"], apns_token, environment)
     return jsonify(ok=True)
+
+
+def _is_view_as(current_user) -> bool:
+    return (current_user.get("device_type") or "") == "admin-view-as"
 
 
 def _unregister_device_token(restaurant_id, apns_token):
@@ -2942,6 +3056,8 @@ def mobile_delete_device_token(apns_token, current_user):
 @mobile_bp.route("/live-activity-tokens", methods=["POST"])
 @mobile_login_required
 def mobile_register_live_activity_token(current_user):
+    if _is_view_as(current_user):
+        return jsonify(ok=True, skipped="view_as")
     import live_activities
     from auth import hash_session_token
     payload, status = live_activities.register_token(current_user, hash_session_token(_bearer_token()),

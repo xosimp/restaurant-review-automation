@@ -991,6 +991,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // the owner route would only answer "session expired". The token
         // waits for whichever sign-in comes next.
         guard Keychain.get(Keychain.Key.sessionToken) != nil else { return }
+        // Viewing as a client, the app's requests wear the client's login:
+        // the token waits for the admin's own session to come back (the
+        // server refuses it from a view as well).
+        guard !ViewAsSession.isActive else { return }
         do {
             let _: APIClient.EmptyResponse = try await APIClient.shared.send(
                 "/mobile/api/device-tokens", method: .post,
@@ -1022,7 +1026,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// deletes the row scoped to the caller's own restaurant; the token stays
     /// queued locally so the next sign-in re-registers it.
     func unregisterCurrentDevice() async {
-        guard let token = registeredToken else { return }
+        guard let token = registeredToken, !ViewAsSession.isActive else { return }
         do {
             let _: APIClient.EmptyResponse = try await APIClient.shared.send(
                 "/mobile/api/device-tokens/\(token)", method: .delete, hapticOnError: false

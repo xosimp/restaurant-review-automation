@@ -201,6 +201,16 @@ enum Keychain {
         /// sessionToken on purpose — the two tiers must never be able to
         /// read each other's token, even by a typo'd key.
         static let staffSessionToken = "cavnar.staff_session_token"
+        /// An admin's view-as session on a client's owner login (see
+        /// ViewAsSession). Never mirrored to the extensions: the admin's own
+        /// token stays in sessionToken for everything outside the app.
+        static let viewAsToken = "cavnar.view_as_token"
+    }
+
+    /// The token the app's own screens use: the view-as one while an admin
+    /// is viewing as a client, else the session's.
+    static func activeSessionToken() -> String? {
+        get(Key.viewAsToken) ?? get(Key.sessionToken)
     }
 
     /// A stable identifier for this physical device/install, generated

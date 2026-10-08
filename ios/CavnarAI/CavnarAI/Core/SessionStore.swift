@@ -132,6 +132,12 @@ enum RestaurantClock {
 final class SessionStore {
     private(set) var currentUser: User?
     private(set) var token: String?
+    /// An admin viewing as a client (ViewAsSession): the client's owner
+    /// login is `currentUser` meanwhile, and RootView shows the banner.
+    private(set) var viewAs: ViewAsSession?
+    /// One line about a view that just ended (ran out, or left unsent
+    /// changes behind) — RootView's strip, under where the banner was.
+    var viewAsNotice: String?
     var isLocked: Bool = false
     var lastError: String?
     // Set once Home's landing-hero animation has played this session — Home
@@ -164,7 +170,9 @@ final class SessionStore {
     private let client: APIClient
 
     convenience init(client: APIClient = .shared) {
-        self.init(client: client, storedToken: Keychain.get(Keychain.Key.sessionToken))
+        // A view-as in force wears the client's token; the admin's own stays
+        // in sessionToken for when it ends (ViewAsSession).
+        self.init(client: client, storedToken: Keychain.activeSessionToken())
     }
 
     /// Test seam for the launch path below: exercises the exact same logic
@@ -177,6 +185,7 @@ final class SessionStore {
     init(client: APIClient = .shared, storedToken: String?) {
         self.client = client
         self.token = storedToken
+        self.viewAs = storedToken != nil ? ViewAsSession.load() : nil
         self.appPasscodeSet = AppPasscode.isSet
         // Only gate a cold launch when something can actually enforce the
         // gate — with Face ID off and no passcode set, LockedView would
@@ -615,6 +624,87 @@ final class SessionStore {
         onLocationSwitched?(restaurantId)
     }
 
+    // MARK: - Admin view-as (10/8/26)
+
+    /// Opens a view-as session on the client's owner login and switches the
+    /// app to it. Refused while the admin's own offline changes are still
+    /// queued: they would replay under the client's login.
+    func startViewAs(_ target: ViewAsClient) async throws {
+        guard let admin = currentUser, admin.isInternal, viewAs == nil else { return }
+        let waiting = await PendingWriteQueue.shared.pendingCount
+        if waiting > 0 {
+            throw APIClient.APIError(message: "\(waiting) change\(waiting == 1 ? " is" : "s are") still waiting to "
+                                     + "send from your own login. Try again once \(waiting == 1 ? "it's" : "they've") gone.")
+        }
+        let r: ViewAsStartResponse = try await client.send(
+            "/mobile/api/admin/view-as/\(target.id)", method: .post, retryTransient: false)
+        guard Keychain.set(r.token, for: Keychain.Key.viewAsToken) else {
+            // A view the phone cannot keep would be lost on the next launch
+            // and left open on the server: end it now instead.
+            _ = try? await client.sendWithBearer("/mobile/api/admin/stop-viewing", method: .post,
+                                                 bearer: r.token) as APIClient.OKResponse
+            throw APIClient.APIError(message: "This phone couldn't keep the view. Nothing was opened.")
+        }
+        let session = ViewAsSession(restaurantId: r.restaurantId, restaurantName: r.restaurantName,
+                                    endsAt: CavnarISODate.parse(r.endsAt) ?? Date().addingTimeInterval(2 * 3600),
+                                    readOnly: r.readOnly, returnUser: admin)
+        session.save()
+        viewAs = session
+        await wear(token: r.token, user: r.user)
+    }
+
+    /// The banner's Stop, the clock running out, or a sign-out.
+    func stopViewAs() async {
+        await endViewAs(callServer: true, message: nil)
+    }
+
+    private func endViewAs(callServer: Bool, message: String?) async {
+        guard let ending = viewAs else { return }
+        // Cleared first: a burst of expired requests calls back here more
+        // than once, and only the first may do the work.
+        viewAs = nil
+        if callServer {
+            _ = try? await client.send("/mobile/api/admin/stop-viewing", method: .post,
+                                       hapticOnError: false) as APIClient.OKResponse
+        }
+        // Anything queued offline while viewing was the client's: replayed
+        // after this it would go out under the admin's own login.
+        let dropped = await PendingWriteQueue.shared.pendingCount
+        if dropped > 0 { await PendingWriteQueue.shared.clear() }
+        Keychain.delete(Keychain.Key.viewAsToken)
+        ViewAsSession.clearRecord()
+        guard let own = Keychain.get(Keychain.Key.sessionToken) else {
+            clearLocalSession()
+            return
+        }
+        await wear(token: own, user: ending.returnUser)
+        if dropped > 0 {
+            viewAsNotice = "\(dropped) unsent change\(dropped == 1 ? "" : "s") made while viewing as "
+                         + "\(ending.restaurantName) \(dropped == 1 ? "was" : "were") discarded."
+        } else {
+            viewAsNotice = message
+        }
+        // The admin's own session may itself have run out meanwhile (12
+        // hours): the same check a launch makes.
+        await validateStoredSession()
+    }
+
+    /// Switches every request, cache and screen to `user` on `token`, the way
+    /// a location switch does — the scope moves on, the old identity's
+    /// cached data goes, and RootView reloads both stacks.
+    private func wear(token: String, user: User) async {
+        await client.setToken(token)
+        self.token = token
+        self.currentUser = user
+        SessionScope.begin(userId: user.id, restaurantId: user.restaurantId)
+        SecureCache.purgeAll(keeping: [PendingWriteQueue.storeKey],
+                             keepingPrefixes: [CountSheetDraft.keyPrefix])
+        DSRAvailability.clearAll()
+        await PendingWriteQueue.shared.setActiveRestaurant(user.restaurantId)
+        learnRestaurantClock()
+        onLocationSwitched?(user.restaurantId)
+    }
+
     /// Set by RootView: what everything outside the session must do when
     /// the location changes. See didSwitchLocation.
     @ObservationIgnored var onLocationSwitched: ((Int) -> Void)?
@@ -625,6 +715,9 @@ final class SessionStore {
     }
 
     func logout() async {
+        // Viewing as a client: end the view first, so what follows signs the
+        // admin's own login out, never the client's.
+        if viewAs != nil { await endViewAs(callServer: true, message: nil) }
         // Unregister push while the bearer token is still valid. Signing out
         // used to leave the device_tokens row in place, so the phone kept
         // getting that restaurant's review alerts and daily digests — the
@@ -639,12 +732,22 @@ final class SessionStore {
     }
 
     private func handleSessionExpired() {
+        // The view ran out (two hours, absolute) or was ended elsewhere:
+        // back to the admin's own login, not the sign-in screen.
+        if let ending = viewAs {
+            Task { await endViewAs(callServer: false,
+                                   message: "Your view as \(ending.restaurantName) ended. You're back on your own login.") }
+            return
+        }
         clearLocalSession()
         lastError = "Your session expired — please log in again."
     }
 
     private func clearLocalSession() {
         Keychain.delete(Keychain.Key.sessionToken)
+        Keychain.delete(Keychain.Key.viewAsToken)
+        ViewAsSession.clearRecord()
+        viewAs = nil
         // The app passcode belongs to the session that set it — the next
         // person to sign in on this device starts without one (and a
         // forgotten passcode is recovered by signing out and back in).

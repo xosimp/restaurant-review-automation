@@ -25,4 +25,7 @@ struct User: Codable, Equatable {
     /// Was `role != "member"`, which also counted managers — who then saw
     /// owner-only controls the server refuses them.
     var isOwner: Bool { role.isEmpty || role == "client" || role == "owner" || isAdmin }
+
+    /// Cavnar AI's own login (auth.is_internal_login): an admin, or support.
+    var isInternal: Bool { isAdmin || role == "support" }
 }
