@@ -18,8 +18,12 @@ struct FoodCostAnalyticsSection: View {
     @State private var showingRecipes = false
     @State private var showingCountSheet = false
     let viewModel: FoodCostAnalyticsViewModel
+    /// Opens a Food Cost action — a cost driver's own button ("Open the
+    /// order", "Look at X's price", "Log or count it", parity audit #76).
+    var open: ((FoodCostAction) -> Void)? = nil
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             // 34pt between top-level sections — the §3 rhythm every other
             // screen uses (density #25). It was 44, the loosest in the app,
@@ -74,6 +78,7 @@ struct FoodCostAnalyticsSection: View {
                     // one raised or declined in place.
                     if !viewModel.parSuggestions.isEmpty {
                         parSection(viewModel.parSuggestions)
+                            .id("pars")
                     }
                     // The recoverable gauge that stood here is gone from this
                     // page (density #25): it drew the hero's recoverable
@@ -111,6 +116,7 @@ struct FoodCostAnalyticsSection: View {
                         priceWatchDetail(analytics.priceWatch)
                     }
                     VStack(alignment: .leading, spacing: 12) {
+                        trendControls
                         FoodCostTrendChart(
                             weeks: viewModel.trend,
                             benchmarkLabel: analytics.benchmarkLabel,
@@ -118,8 +124,13 @@ struct FoodCostAnalyticsSection: View {
                             totalWasteCostWeek: analytics.totalWasteCostWeek,
                             wasteState: analytics.wasteState,
                             target: viewModel.trendTarget,
-                            asOf: analytics.lastUpdated
+                            asOf: analytics.lastUpdated,
+                            title: "WASTE \u{2014} " + (viewModel.trendRange == "all" ? "EVERY WEEK ON FILE"
+                                : "LAST " + FoodCostWasteTrend.label(viewModel.trendRange).uppercased()),
+                            showsTarget: viewModel.showsTargetLine
                         )
+                        .opacity(viewModel.isLoadingTrend ? 0.5 : 1)
+                        trendObservations
                         // The annual projection, under the waste trend it
                         // extrapolates — with its basis, never as a
                         // headline (one week's count projected to a year).
@@ -159,6 +170,83 @@ struct FoodCostAnalyticsSection: View {
         }
         .sheet(isPresented: $showingCountSheet) {
             CountSheetView()
+        }
+        // nav "inventory/pars" — the par section brought into view.
+        .onChange(of: viewModel.scrollToPars && !viewModel.parSuggestions.isEmpty, initial: true) { _, go in
+            guard go else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                withAnimation(.easeOut(duration: 0.4)) { proxy.scrollTo("pars", anchor: .top) }
+                viewModel.scrollToPars = false
+            }
+        }
+        }
+    }
+
+    /// The waste trend's range (only the ranges the history fills) and the
+    /// target-line toggle — the web card's controls.
+    @ViewBuilder
+    private var trendControls: some View {
+        if viewModel.trendRanges.count > 1 || viewModel.trendTarget?.weekly != nil {
+            HStack(spacing: 10) {
+                if viewModel.trendRanges.count > 1 {
+                    Picker("Range", selection: Binding(get: { viewModel.trendRange }, set: { r in
+                        Haptic.selection()
+                        Task { await viewModel.loadTrend(range: r) }
+                    })) {
+                        ForEach(viewModel.trendRanges, id: \.self) { r in Text(FoodCostWasteTrend.label(r)).tag(r) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Trend range")
+                }
+                if viewModel.trendTarget?.weekly != nil {
+                    Button {
+                        Haptic.light()
+                        viewModel.showsTargetLine.toggle()
+                    } label: {
+                        Label("Target", systemImage: viewModel.showsTargetLine ? "checkmark" : "line.diagonal")
+                            .font(.cavnarBody(12.5, weight: 700))
+                            .foregroundStyle(viewModel.showsTargetLine ? Color.cavnarEmber2 : Color.cavnarInk3)
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 32)
+                            .background(Color.cavnarEmber.opacity(viewModel.showsTargetLine ? 0.14 : 0.04), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Target line")
+                    .accessibilityValue(viewModel.showsTargetLine ? "Shown" : "Hidden")
+                }
+            }
+        }
+    }
+
+    /// What the series shows, said: every figure is one the trend holds
+    /// (waste_trend.waste_trend_observations); or why there is no trend yet.
+    @ViewBuilder
+    private var trendObservations: some View {
+        if !viewModel.trendObservations.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(viewModel.trendObservations) { o in
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle().fill(Self.toneColor(o.tone == "neutral" ? nil : o.tone)).frame(width: 7, height: 7)
+                            .padding(.top, 6)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HomeMixedText.make(o.text, size: 13.5, color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let c = o.confidence {
+                                HomeMixedText.make(c, size: 11.5, color: .cavnarInk3)
+                            }
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        } else if let e = viewModel.trendEmpty, let title = e.title {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                ForEach([e.reason, e.needed, e.when].compactMap { $0 }, id: \.self) { line in
+                    HomeMixedText.make(line, size: 12.5, color: .cavnarInk3).fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -516,6 +604,24 @@ struct FoodCostAnalyticsSection: View {
                     HomeMixedText.make("\(d.difficulty) effort · risk if left alone: \(d.ifIgnored)",
                                        size: 11.5, weight: 400, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
+                    // Where it is acted on (U4-9), the server's own nav path —
+                    // the web's "Open the order →" (parity audit #76).
+                    if let act = d.act, let path = NavPath(act.nav), let action = FoodCostAction(path: path) {
+                        Button {
+                            Haptic.light()
+                            route(action)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(act.label)
+                                Image(systemName: "arrow.right").font(.system(size: 11, weight: .bold))
+                            }
+                            .font(.cavnarBody(13.5, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -524,6 +630,16 @@ struct FoodCostAnalyticsSection: View {
                 .accessibilityElement(children: .contain)
             }
         }
+    }
+
+    /// A driver's action: the pars are on this tab; anything else opens
+    /// through the screen's own action sheet.
+    private func route(_ action: FoodCostAction) {
+        if case .pars = action {
+            viewModel.scrollToPars = true
+            return
+        }
+        open?(action)
     }
 
     private func cfoRow(_ label: String, _ body: String, quiet: Bool = false) -> some View {

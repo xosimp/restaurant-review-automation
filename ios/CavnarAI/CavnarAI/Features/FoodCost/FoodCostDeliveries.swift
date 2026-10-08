@@ -67,15 +67,25 @@ final class DeliveriesViewModel {
         arrived[order.id, default: [:]][item.lineKey] = text
     }
 
-    private struct ReceiveBody: Encodable {
-        struct Line: Encodable {
+    /// Every key /purchase-orders/<id>/received reads (`lines` only for a
+    /// short delivery), plus the `idempotency_key` that answers a resend
+    /// with the first result (parity audit #23).
+    struct ReceiveBody: Encodable, Equatable {
+        struct Line: Encodable, Equatable {
             let ingredientId: Int?
             let item: String?
             let qty: Double
             enum CodingKeys: String, CodingKey { case item, qty; case ingredientId = "ingredient_id" }
         }
         let lines: [Line]?
+        var idempotencyKey: String? = nil
+        enum CodingKeys: String, CodingKey { case lines; case idempotencyKey = "idempotency_key" }
     }
+
+    /// One key per order until its receive lands.
+    private var receiveKeys: [Int: String] = [:]
+    /// Orders whose receive is parked in the offline queue.
+    var queued: Set<Int> = []
 
     private struct ReceiveResponse: Decodable {
         struct Posted: Decodable { let item: String }
@@ -95,7 +105,7 @@ final class DeliveriesViewModel {
     /// `withLines`: the quantities typed under "Some were short"; without
     /// them every line is received as ordered.
     func receive(_ order: PurchaseOrder, withLines: Bool) async {
-        guard !receiving.contains(order.id) else { return }
+        guard !receiving.contains(order.id), !queued.contains(order.id) else { return }
         errors[order.id] = nil
         receivedLine = nil
         var lines: [ReceiveBody.Line]?
@@ -114,10 +124,14 @@ final class DeliveriesViewModel {
         }
         receiving.insert(order.id)
         defer { receiving.remove(order.id) }
+        let key = receiveKeys[order.id] ?? "po:\(order.id):" + UUID().uuidString
+        receiveKeys[order.id] = key
+        let body = ReceiveBody(lines: lines, idempotencyKey: key)
         do {
             let r: ReceiveResponse = try await client.send(
-                "/mobile/api/food-cost/purchase-orders/\(order.id)/received", method: .post,
-                body: ReceiveBody(lines: lines), retryTransient: false)
+                QueuedWrite.receivePath(order.id), method: .post,
+                body: body, retryTransient: false)
+            receiveKeys[order.id] = nil
             guard r.ok else {
                 errors[order.id] = r.error ?? "Couldn\u{2019}t receive that order."
                 return
@@ -133,7 +147,20 @@ final class DeliveriesViewModel {
             arrived[order.id] = nil
             await Haptic.success()
             await load()
+        } catch let error as APIClient.APIError where error.isRetryable {
+            // Signed for at the back door with no signal: the receive waits
+            // in the offline queue with its key (parity audit #23).
+            if let write = QueuedWrite.receive(poId: order.id, poNumber: order.poNumber, body) {
+                await PendingWriteQueue.shared.enqueue(write)
+                receiveKeys[order.id] = nil
+                queued.insert(order.id)
+                shortOpen = nil
+                receivedLine = "\(order.poNumber) kept on this phone. " + RecAnswer.queuedLine + "."
+            } else {
+                errors[order.id] = error.message
+            }
         } catch let error as APIClient.APIError {
+            receiveKeys[order.id] = nil
             errors[order.id] = error.message
         } catch is CancellationError {
         } catch {
@@ -221,7 +248,7 @@ struct DeliveriesSection: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .disabled(viewModel.receiving.contains(order.id))
+                .disabled(viewModel.receiving.contains(order.id) || viewModel.queued.contains(order.id))
                 if viewModel.shortOpen == order.id {
                     shortLines(order)
                 }

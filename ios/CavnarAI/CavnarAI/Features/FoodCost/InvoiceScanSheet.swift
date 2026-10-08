@@ -2,6 +2,7 @@ import ImageIO
 import SwiftUI
 import PhotosUI
 import Observation
+import UniformTypeIdentifiers
 
 /// One line of a scanned invoice, as the server proposes it (invoices.py).
 /// The proposal is only a starting point — the owner can change the
@@ -182,6 +183,40 @@ final class InvoiceScanViewModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// The files Files can hand over: a supplier's emailed PDF, or a photo
+    /// saved there (parity audit #43; the route reads both).
+    static let importTypes: [UTType] = [.pdf, .image]
+
+    /// The server's limit on a PDF (invoices.MAX_PDF_BYTES is 4.5 MB).
+    static let maxPDFBytes = Int(4.5 * 1024 * 1024)
+
+    /// An invoice chosen in Files — a PDF goes up as the document it is
+    /// (the server reads it page by page); an image goes up like a photo.
+    func scan(file url: URL) async {
+        errorMessage = nil
+        appliedCount = nil
+        extraPagesNote = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            errorMessage = "That file couldn\u{2019}t be opened. Try another."
+            return
+        }
+        isScanning = true
+        defer { isScanning = false }
+        let type = UTType(filenameExtension: url.pathExtension.lowercased())
+        if type?.conforms(to: .pdf) == true || data.starts(with: Data("%PDF".utf8)) {
+            guard data.count <= Self.maxPDFBytes else {
+                errorMessage = "That PDF is over 4.5 MB. Send the invoice pages on their own, or scan them with the camera."
+                return
+            }
+            extraPagesNote = "Reading every page of the PDF."
+            await send(data, filename: "invoice.pdf", mimeType: "application/pdf")
+            return
+        }
+        await upload(data)
     }
 
     /// Pages from the document camera (Friction audit #28). One page goes
@@ -471,6 +506,8 @@ struct InvoiceScanSheet: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var showingCamera = false
     @State private var didAutoOpenCamera = false
+    /// Files — a supplier's emailed PDF (parity audit #43).
+    @State private var importingFile = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -536,6 +573,11 @@ struct InvoiceScanSheet: View {
                 }
                 .ignoresSafeArea()
             }
+            .fileImporter(isPresented: $importingFile, allowedContentTypes: InvoiceScanViewModel.importTypes,
+                          allowsMultipleSelection: false) { result in
+                guard case .success(let urls) = result, let url = urls.first else { return }
+                Task { await viewModel.scan(file: url) }
+            }
             // After the sheet's own presentation has settled: a cover asked
             // for in the same onAppear is dropped by SwiftUI while the sheet
             // is still animating in, and the quick action landed on the sheet
@@ -598,6 +640,20 @@ struct InvoiceScanSheet: View {
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
                 .disabled(viewModel.isScanning)
             }
+            // Supplier invoices arrive as emailed PDFs: save to Files, pick
+            // here (parity audit #43).
+            Button {
+                Haptic.light()
+                importingFile = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.richtext").font(.system(size: 13, weight: .semibold))
+                    Text("Choose a PDF or file")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(viewModel.isScanning)
             if let note = viewModel.extraPagesNote {
                 HomeMixedText.make(note, size: 13.5, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)

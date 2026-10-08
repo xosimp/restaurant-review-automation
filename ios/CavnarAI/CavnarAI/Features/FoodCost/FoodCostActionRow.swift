@@ -12,6 +12,16 @@ enum FoodCostAction: Identifiable, Hashable {
     case order
     case recipes
     case margins
+    /// Menu margins on one dish's price — a cost driver's "Look at X's
+    /// price" (nav "inventory/menu?dish=X", parity audit #76).
+    case menu(dish: String?)
+    /// The pars the 86s say are too low — Analytics' par section
+    /// (nav "inventory/pars"). Scrolled to, not a sheet.
+    case pars
+    /// The dish scorecard, "Your dishes" (parity audit #42).
+    case dishes
+    /// Who each ingredient is ordered from, with bulk assign (#78).
+    case suppliers
 
     var id: String {
         switch self {
@@ -22,6 +32,10 @@ enum FoodCostAction: Identifiable, Hashable {
         case .order: return "order"
         case .recipes: return "recipes"
         case .margins: return "margins"
+        case .menu(let dish): return "menu-\(dish ?? "")"
+        case .pars: return "pars"
+        case .dishes: return "dishes"
+        case .suppliers: return "suppliers"
         }
     }
 
@@ -49,6 +63,15 @@ enum FoodCostAction: Identifiable, Hashable {
             self = .recipes
         case "margins":
             self = .margins
+        case "menu":
+            let dish = path.query["dish"]?.trimmingCharacters(in: .whitespaces)
+            self = .menu(dish: (dish?.isEmpty ?? true) ? nil : dish)
+        case "pars":
+            self = .pars
+        case "dishes", "scorecard":
+            self = .dishes
+        case "suppliers":
+            self = .suppliers
         default:
             return nil
         }
@@ -70,9 +93,11 @@ struct FoodCostActionRow: View {
             item("Order", icon: "paperplane") { open(.order) }
             Menu {
                 Button { open(.waste) } label: { Label("Log waste", systemImage: "trash") }
+                Button { open(.dishes) } label: { Label("Your dishes", systemImage: "fork.knife") }
                 Button { open(.recipes) } label: { Label("Recipes", systemImage: "list.bullet.clipboard") }
                 Button { open(.margins) } label: { Label("Menu margins", systemImage: "chart.pie") }
-                Button { open(.scan(camera: false)) } label: { Label("Invoice from a photo", systemImage: "photo") }
+                Button { open(.suppliers) } label: { Label("Suppliers", systemImage: "shippingbox") }
+                Button { open(.scan(camera: false)) } label: { Label("Invoice from a photo or PDF", systemImage: "doc.richtext") }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .semibold))

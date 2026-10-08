@@ -12,6 +12,10 @@ struct SupplierOrderSheet: View {
     @State private var deliveries = DeliveriesViewModel()
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focusedLine: String?
+    /// A followed game this week and what its kind used here (#78).
+    @State private var game: FoodCostGameWeek.Game?
+    /// The inventory system's sync — its suppliers are then read-only (#8).
+    @State private var source: InventorySyncSource?
 
     var body: some View {
         NavigationStack {
@@ -34,6 +38,9 @@ struct SupplierOrderSheet: View {
                         }
                         if let result = viewModel.lastResult {
                             resultBanner(result)
+                        }
+                        if let game {
+                            GameWeekCard(game: game)
                         }
                         if draft.isEmpty {
                             emptyState
@@ -74,7 +81,13 @@ struct SupplierOrderSheet: View {
             .task {
                 async let draft: Void = viewModel.load()
                 async let orders: Void = deliveries.load()
+                async let week: FoodCostGameWeek? = try? APIClient.shared.send("/mobile/api/food-cost/game-week",
+                                                                              hapticOnError: false)
+                async let sheet: CountSheetSourceOnly? = try? APIClient.shared.send("/mobile/api/food-cost/count-sheet",
+                                                                                    hapticOnError: false)
                 _ = await (draft, orders)
+                game = (await week)?.game
+                source = (await sheet)?.source
             }
             // A send just made shows up in the orders below.
             .onChange(of: viewModel.lastResult?.sent.count) { _, _ in
@@ -210,14 +223,22 @@ struct SupplierOrderSheet: View {
                 .font(.cavnarBody(13.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarAmber)
-            Text("These are on the order list but have nowhere to go. Add a supplier and they'll be included next time.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+            if let source, source.synced {
+                // Synced: suppliers are set in the inventory system (#8).
+                HomeMixedText.make("These are on the order list but have nowhere to go. "
+                                   + source.line("Suppliers") + " \u{2014} set theirs there.", size: 14, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("These are on the order list but have nowhere to go. Add a supplier and they'll be included next time.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     Button {
                         Haptic.light()
+                        guard source?.synced != true else { return }
                         viewModel.assigningItem = item
                     } label: {
                         HStack(spacing: 10) {
@@ -400,4 +421,10 @@ private struct SupplierAssignSheet: View {
             .keyboardNavToolbar($focusedField)
         }
     }
+}
+
+/// Just the count sheet's `source` — the order sheet asks whether the
+/// suppliers are an inventory system's.
+struct CountSheetSourceOnly: Decodable {
+    let source: InventorySyncSource?
 }

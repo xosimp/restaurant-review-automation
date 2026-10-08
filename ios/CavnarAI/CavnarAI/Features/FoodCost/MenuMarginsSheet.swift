@@ -107,6 +107,21 @@ final class MenuMarginsViewModel {
 struct MenuMarginsSheet: View {
     @State private var viewModel = MenuMarginsViewModel()
     @Environment(\.dismiss) private var dismiss
+    /// A dish to open on its price — a cost driver's "Look at X's price"
+    /// (nav "inventory/menu?dish=X", parity audit #76).
+    var focusDish: String? = nil
+    @State private var focusSpent = false
+
+    init(focusDish: String? = nil) {
+        self.focusDish = focusDish
+    }
+
+    /// The dish a focus names, matched without case or edge spaces —
+    /// priced first, then unpriced.
+    static func match(_ dish: String?, in data: MenuProfitability) -> MenuMarginItem? {
+        guard let want = dish?.trimmingCharacters(in: .whitespaces).lowercased(), !want.isEmpty else { return nil }
+        return (data.priced + data.unpriced).first { $0.name.trimmingCharacters(in: .whitespaces).lowercased() == want }
+    }
 
     var body: some View {
         NavigationStack {
@@ -155,7 +170,13 @@ struct MenuMarginsSheet: View {
                     .buttonStyle(.plain)
                 }
             }
-            .task { await viewModel.load() }
+            .task {
+                await viewModel.load()
+                guard !focusSpent, let data = viewModel.data, let item = Self.match(focusDish, in: data) else { return }
+                focusSpent = true
+                try? await Task.sleep(for: .milliseconds(350))
+                viewModel.pricingItem = item
+            }
             .sheet(item: $viewModel.pricingItem) { item in
                 MenuPriceSheet(viewModel: viewModel, item: item)
             }

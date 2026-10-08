@@ -9,7 +9,7 @@ import SwiftUI
 /// returns a dollar.
 struct FoodCostCountsOnlyView: View {
     var focus: NavPath? = nil
-    @State private var countSheet = CountSheetViewModel()
+    @State private var countSheet = CountSheetViewModel(persistsDraft: false)
     @State private var deliveries = DeliveriesViewModel()
     @State private var sheet: Sheet?
     @State private var focusSpent = false

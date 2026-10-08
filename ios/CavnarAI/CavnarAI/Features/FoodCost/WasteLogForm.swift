@@ -21,16 +21,31 @@ final class WasteLogViewModel {
     var isLogging = false
     var errorMessage: String?
     var loggedLine: String?
+    /// Set when the line was kept on the phone for the connection to come
+    /// back (parity audit #23) — the walk-in has no signal.
+    var queuedLine: String?
 
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
 
-    private struct Body: Encodable {
+    /// Every key /food-cost/waste reads, plus the `idempotency_key` that
+    /// makes a resend (the offline queue's replay, a second tap after a lost
+    /// answer) land once.
+    struct Body: Encodable, Equatable {
         let ingredientId: Int
         let qty: Double
         let reason: String
-        enum CodingKeys: String, CodingKey { case qty, reason; case ingredientId = "ingredient_id" }
+        var idempotencyKey: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case qty, reason
+            case ingredientId = "ingredient_id"
+            case idempotencyKey = "idempotency_key"
+        }
     }
+
+    /// One key per line of waste, kept until it lands, so a retry of the
+    /// same line is the same write.
+    private var pendingKey: String?
     private struct Response: Decodable { let ok: Bool; let name: String?; let unit: String?; let error: String? }
 
     var quantity: Double? {
@@ -48,11 +63,15 @@ final class WasteLogViewModel {
         isLogging = true
         errorMessage = nil
         loggedLine = nil
+        queuedLine = nil
         defer { isLogging = false }
+        let key = pendingKey ?? UUID().uuidString
+        pendingKey = key
+        let body = Body(ingredientId: ingredientId, qty: qty, reason: reason, idempotencyKey: "waste:" + key)
         do {
             let r: Response = try await client.send("/mobile/api/food-cost/waste", method: .post,
-                                                    body: Body(ingredientId: ingredientId, qty: qty, reason: reason),
-                                                    retryTransient: false)
+                                                    body: body, retryTransient: false)
+            pendingKey = nil
             guard r.ok else {
                 errorMessage = r.error ?? "Couldn\u{2019}t log that."
                 return false
@@ -62,7 +81,20 @@ final class WasteLogViewModel {
             qtyText = ""
             await Haptic.success()
             return true
+        } catch let error as APIClient.APIError where error.isRetryable {
+            // No signal in the walk-in: the line waits in the offline queue
+            // with its key, so it lands once whether or not this send did.
+            guard let write = QueuedWrite.waste(body) else {
+                errorMessage = error.message
+                return false
+            }
+            await PendingWriteQueue.shared.enqueue(write)
+            pendingKey = nil
+            queuedLine = "Kept on this phone. " + RecAnswer.queuedLine + "."
+            qtyText = ""
+            return false
         } catch let error as APIClient.APIError {
+            pendingKey = nil
             errorMessage = error.message
         } catch is CancellationError {
         } catch {
@@ -121,6 +153,14 @@ struct WasteLogForm: View {
                 HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarGreen)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let line = viewModel.queuedLine {
+                Label {
+                    HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color.cavnarInk3)
+                }
+            }
             Button {
                 Haptic.light()
                 qtyFocused = false
@@ -146,7 +186,7 @@ struct WasteLogForm: View {
 /// Reads the count sheet for the ingredient list — the same list the web's
 /// form offers.
 struct WasteLogSheet: View {
-    @State private var countSheet = CountSheetViewModel()
+    @State private var countSheet = CountSheetViewModel(persistsDraft: false)
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {

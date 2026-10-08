@@ -7,6 +7,17 @@ final class FoodCostAnalyticsViewModel {
     var analytics: FoodCostAnalytics?
     var trend: [FoodCostTrendWeek] = []
     var trendTarget: FoodCostTrendTarget?
+    /// The waste-trend card's range ("8w", "13w", "26w", "all"), the ranges
+    /// the history fills, its observations, and whether the target line is
+    /// drawn (parity audit #77: one endpoint, the web's card).
+    var trendRange = "8w"
+    var trendRanges: [String] = []
+    var trendObservations: [FoodCostWasteTrend.Observation] = []
+    var trendEmpty: FoodCostWasteTrend.Empty?
+    var showsTargetLine = true
+    var isLoadingTrend = false
+    /// Set to bring Analytics' par section into view (nav "inventory/pars").
+    var scrollToPars = false
     /// The CFO read — ranked cost drivers, the stored root cause, and the
     /// month-end prime-cost projection. Best-effort like the trend: a failure
     /// here removes one card, it does not empty the tab.
@@ -95,7 +106,7 @@ final class FoodCostAnalyticsViewModel {
     /// The last good analytics + trend, as one envelope (CacheEnvelope).
     private struct CachedAnalytics: Decodable {
         let analytics: FoodCostAnalytics
-        let trend: FoodCostTrend?
+        let trend: FoodCostWasteTrend?
     }
     @ObservationIgnored private let cache = ResponseCache<CachedAnalytics>("foodcost.analytics")
     /// When the cached copy on screen was stored; nil once a live load lands.
@@ -122,13 +133,12 @@ final class FoodCostAnalyticsViewModel {
         let generation = SessionScope.generation
         if analytics == nil, let hit = await cache.load() {
             analytics = hit.value.analytics
-            trend = hit.value.trend?.weeks ?? []
-            trendTarget = hit.value.trend?.target
+            if let t = hit.value.trend { adoptTrend(t) }
             cachedAt = hit.savedAt
             isLoading = false
         }
-        async let trendResult: (value: FoodCostTrend, body: Data)? = try? client.sendKeepingBody(
-            "/mobile/api/food-cost/trend")
+        async let trendResult: (value: FoodCostWasteTrend, body: Data)? = try? client.sendKeepingBody(
+            "/mobile/api/food-cost/waste-trend", query: ["range": trendRange])
         async let cfoResult: FoodCostCFO? = try? client.send("/mobile/api/food-cost/cfo")
         async let repriceResult: RepriceSuggestions? = try? client.send(
             "/mobile/api/food-cost/reprice", hapticOnError: false)
@@ -159,9 +169,12 @@ final class FoodCostAnalyticsViewModel {
         let trendPayload = await trendResult
         // A cached trend stays beside cached figures; beside live ones a
         // failed trend is the chart's own "not enough data", as before.
-        if trendPayload != nil || cachedAt == nil {
-            trend = trendPayload?.value.weeks ?? []
-            trendTarget = trendPayload?.value.target
+        if let t = trendPayload?.value {
+            adoptTrend(t)
+        } else if cachedAt == nil {
+            trend = []
+            trendTarget = nil
+            trendObservations = []
         }
         if let freshBody {
             cache.save(CacheEnvelope.make([("analytics", freshBody), ("trend", trendPayload?.body)]),
@@ -185,6 +198,30 @@ final class FoodCostAnalyticsViewModel {
             parRaised = parRaised.filter { liveItems.contains($0.key) }
             parDismissed = parDismissed.intersection(liveItems)
             parErrors = [:]
+        }
+        // Asked to show the pars and there are none: nothing to scroll to.
+        if parSuggestions.isEmpty { scrollToPars = false }
+    }
+
+    private func adoptTrend(_ t: FoodCostWasteTrend) {
+        trend = t.weeks
+        trendTarget = t.target
+        trendRange = t.range
+        trendRanges = t.ranges
+        trendObservations = t.observations
+        trendEmpty = t.empty
+    }
+
+    /// Another range of the waste trend — the server resolves one the
+    /// history can't fill to the widest it can.
+    func loadTrend(range: String) async {
+        guard range != trendRange || trend.isEmpty else { return }
+        isLoadingTrend = true
+        defer { isLoadingTrend = false }
+        if let t: FoodCostWasteTrend = try? await client.send("/mobile/api/food-cost/waste-trend",
+                                                              query: ["range": range], hapticOnError: false),
+           t.ok {
+            adoptTrend(t)
         }
     }
 
