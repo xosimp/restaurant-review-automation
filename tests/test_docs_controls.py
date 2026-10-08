@@ -69,6 +69,23 @@ def test_owner_web_and_staff_session_lifetimes():
           "staff pin sessions: 14 hours")
 
 
+def test_the_staff_browser_portal_holds_cookie_writes_to_csrf():
+    import staff_routes
+    src = _read("hosted_dashboard.py")
+    assert "app.before_request(staff_csrf_check)" in src
+    assert staff_routes.STAFF_CSRF_BLUEPRINTS == {"staff", "staff_knowledge"}
+    check = inspect.getsource(staff_routes.staff_csrf_check)
+    assert 'startswith("Bearer ")' in check and 'request.cookies.get("staff_session")' in check
+    assert {"staff.portal_authenticate", "staff.signup_claim", "staff.api_pin_forgot_set"} <= \
+        staff_routes.STAFF_CSRF_EXEMPT_ENDPOINTS
+    assert "__CSRF__" in staff_routes._LOGOUT_PAGE and "name='csrf_token'" in staff_routes._LOGOUT_PAGE
+    _says(SECURITY, "every cookie-authenticated write on `staff_bp` and `staff_knowledge_bp` passes the "
+                    "double-submit csrf check (`staff_routes.staff_csrf_check`",
+          "a request carrying a bearer token (the app) is left alone",
+          "the pre-session routes (sign-in, sign-up, forgot pin)",
+          "sign-out: a get only asks; the post carries the token")
+
+
 def test_session_tokens_are_stored_as_a_sha256():
     import hashlib
     import auth

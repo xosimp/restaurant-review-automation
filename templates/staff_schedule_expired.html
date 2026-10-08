@@ -19,6 +19,7 @@
   h1{font-family:'Clash Display',sans-serif;font-weight:600;font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
   p{color:var(--ink2);font-size:14.5px;line-height:1.6;margin:0 0 12px}
   .cbtn{margin-top:8px}
+  p a{color:var(--ember2);font-weight:700}
 </style>
 </head>
 <body>
@@ -27,7 +28,7 @@
   <h1>This schedule link has expired</h1>
   <p>Schedule links stop working after a while, and when someone leaves, for privacy.</p>
   {# Where the schedule always is now (UX-25). #}
-  <p>Your schedule is always in the Cavnar AI app. No iPhone? Your manager can send this week&rsquo;s link again.</p>
+  <p>Your schedule is always in the Cavnar AI app. No iPhone? It&rsquo;s <a href="/staff/">in your browser</a> too &mdash; sign in with your restaurant code and PIN &mdash; or your manager can send this week&rsquo;s link again.</p>
   {% if app_url %}<a class="cbtn cbtn-primary" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<p>The app is on iPhone, in testing &mdash; ask your manager for the invite.</p>{% endif %}
 </div>
 </body>

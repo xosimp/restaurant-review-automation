@@ -606,12 +606,15 @@ def test_the_ready_page_shows_the_restaurant_code(db_path):
     assert "window.location = '/staff/home?ready=1'" in _read("templates", "staff_login.html")
 
 
-def test_the_logout_page_no_longer_offers_my_shifts(db_path):
+def test_the_logout_page_offers_to_stay_in_the_portal(db_path):
+    """The browser portal is back (owner, 10/7/26): "Stay signed in" goes
+    to it, and the sign-out POST carries the double-submit token."""
     rid = _restaurant(db_path)
     uid, _ = _staff(db_path, rid)
     body = _staff_client(db_path, rid, uid).get("/staff/logout").get_data(as_text=True)
-    assert "Back to my shifts" not in body and "/staff/home" not in body
+    assert "Back to my shifts" not in body and "href='/staff/home'" in body
     assert "Stay signed in" in body and "cbtn" in body and "#D4583A" not in body
+    assert "name='csrf_token' value='" in body and "__CSRF__" not in body
 
 
 def test_one_name_for_the_code_and_no_stale_copy():

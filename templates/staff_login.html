@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -101,33 +101,104 @@
 .getapp{margin-top:14px}
 .noiphone{margin-top:14px;color:var(--ink3);font-size:13.5px;line-height:1.55}
 .noiphone b{color:var(--ink2)}
+.noiphone a{color:var(--ember2);font-weight:700;text-decoration:underline;text-underline-offset:3px}
+/* The two ways in (10/7/26): the browser first, then the app. */
+.ways{display:flex;flex-direction:column;gap:10px;margin-top:18px}
+.ways .or{color:var(--ink3);font-size:12.5px;text-align:center}
+.codeform[hidden]{display:none}
+.codeform{margin-top:12px}
+.codeform .cbtn{min-height:44px}
+.who button{min-height:52px}
 </style>
 <script src="/static/cavnar-phone.js"></script>
 </head>
 <body>
 <div class="wrap">
  <div id="signin-root">
-  {# The staff portal lives in the Cavnar AI iPhone app only (owner,
-     9/30/26: "no web version for employees"). This page stays because it
-     is the opt-in page registered for the staff verification texts (A2P,
-     tests/test_a2p_staff_verification_optin.py): it says where to go, shows
-     the restaurant's join code when the link names one, and still lets
-     someone create their account here. #}
+  {# Two ways in (owner, 10/7/26 — parity audit #100: staff without an
+     iPhone, Android included, are not left out): this browser — the
+     restaurant's PIN pad, then the portal at /staff/home over the same
+     /staff/api routes as the app — or the Cavnar AI iPhone app. This page
+     is also the opt-in page registered for the staff verification texts
+     (A2P, tests/test_a2p_staff_verification_optin.py), so create-your-
+     account stays here. #}
     <img class="wordmark" src="/static/brand/wordmark-light.svg" alt="Cavnar AI">
     {% if restaurant %}<div class="kicker">{{ restaurant.name }}</div>{% endif %}
-    <h1>{% if ready %}You&rsquo;re all set{% else %}Your shifts are in the Cavnar AI app{% endif %}</h1>
-    <p class="sub" {% if error %}role="alert"{% endif %}>{% if error %}{{ error }}{% elif ready %}Open the Cavnar AI app on your iPhone, tap <b>I&rsquo;m staff</b>, enter your restaurant code{% if join_code %} below{% endif %}, then sign in with the PIN you just set.{% else %}Your schedule, swaps, time off and today&rsquo;s tasks are in the Cavnar AI iPhone app. Get the app, tap <b>I&rsquo;m staff</b>, then <b>Create your account</b>.{% endif %}</p>
+  {% if pinpad %}
+    {# The restaurant's link or code: pick your name, enter your PIN. The
+       roster is /staff/api/roster's (PIN set, employee tier, this
+       restaurant only); the sign-in posts the one-shot nonce. #}
+    <div id="pick">
+      <h1>Who&rsquo;s starting a shift?</h1>
+      <p class="sub">Tap your name, then enter your PIN.</p>
+      {% if roster %}
+        {# Type-to-filter for a long roster (friction audit U2-29). #}
+        {% if roster|length > 8 %}<input type="search" id="who-find" class="who-find" placeholder="Type your name" aria-label="Find your name" autocomplete="off">{% endif %}
+        <div class="who">
+          {% for person in roster %}
+          <button type="button" data-id="{{ person.membership_id }}" data-name="{{ person.name }}">{{ person.name }}</button>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty">Nobody here has a PIN yet. Create your account below, or ask your manager to set one for you.</div>
+      {% endif %}
+    </div>
+
+    <div id="pinstep" class="pinstep">
+      <div class="backrow">
+        <button type="button" onclick="back()" aria-label="Back to the names">&larr;</button>
+        <span class="nm" id="who-name"></span>
+      </div>
+      <div class="dots" id="dots" role="img" aria-label="PIN: no digits entered"><i></i><i></i><i></i><i></i></div>
+      <div class="pad">
+        <button type="button" data-d="1" aria-label="1">1</button>
+        <button type="button" data-d="2" aria-label="2">2</button>
+        <button type="button" data-d="3" aria-label="3">3</button>
+        <button type="button" data-d="4" aria-label="4">4</button>
+        <button type="button" data-d="5" aria-label="5">5</button>
+        <button type="button" data-d="6" aria-label="6">6</button>
+        <button type="button" data-d="7" aria-label="7">7</button>
+        <button type="button" data-d="8" aria-label="8">8</button>
+        <button type="button" data-d="9" aria-label="9">9</button>
+        <button type="button" class="act" onclick="clearPin()" aria-label="Clear PIN">Clear</button>
+        <button type="button" data-d="0" aria-label="0">0</button>
+        <button type="button" class="act" onclick="del()" aria-label="Delete last digit">&#9003;</button>
+      </div>
+      <button type="button" id="pin-go" class="cbtn cbtn-primary pin-go" onclick="submitPin()" disabled>Sign in</button>
+      <div class="err" id="err" role="status" aria-live="polite"></div>
+    </div>
+    <p class="noiphone">Signing in here keeps you signed in on this browser for your shift. Prefer the app?
+      {% if app_url %}<a href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}The Cavnar AI app is on iPhone, in testing &mdash; ask your manager for the invite{% endif %}{% if join_code %}; your restaurant code is <b class="hb-num">{{ join_code }}</b>{% endif %}.</p>
+  {% else %}
+    <h1>{% if ready %}You&rsquo;re all set{% else %}Your shifts, in your browser or the app{% endif %}</h1>
+    <p class="sub" {% if error %}role="alert"{% endif %}>{% if error %}{{ error }}{% elif ready %}Use Cavnar AI right here in your browser, or open the Cavnar AI app on your iPhone, tap <b>I&rsquo;m staff</b>, enter your restaurant code{% if join_code %} below{% endif %}, then sign in with the PIN you just set.{% else %}Your schedule, swaps, time off and today&rsquo;s tasks &mdash; in this browser, or in the Cavnar AI iPhone app. Sign in with your restaurant code and your PIN.{% endif %}</p>
     {# One name for the code everywhere: "restaurant code" (UX-26). On the
        ready page it is the thing the app asks for next. #}
     {% if join_code %}
     <div class="empty appcode"><span>Your restaurant code</span><b>{{ join_code }}</b>{% if ready %}<small>The app asks for it once.</small>{% endif %}</div>
     {% endif %}
-    {# Always says how to get the app (C1 / UX-08): the App Store link once
-       it is listed, else the TestFlight invite, still naming the app. #}
-    {% if app_url %}<a class="cbtn cbtn-primary getapp" style="width:100%" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<div class="empty getapp">The Cavnar AI app is on iPhone, in testing through Apple&rsquo;s TestFlight. Ask your manager for the invite &mdash; it comes by email.</div>{% endif %}
-    {# How an employee without an iPhone gets their week (UX-08): the
-       per-week link, which opens in any browser and takes availability. #}
-    <p class="noiphone"><b>No iPhone?</b> Each week&rsquo;s schedule comes to you as a link, by email or by text where your restaurant sends them &mdash; make sure your manager has your email address. The link opens in any browser, and you can mark the days you can&rsquo;t work there.</p>
+    <div class="ways">
+      {# The browser: straight in when this browser is signed in, the
+         restaurant's PIN pad when the code is known, else ask for it. #}
+      {% if signed_in %}
+      <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="/staff/home">Use it in your browser</a>
+      {% elif join_code %}
+      <a class="cbtn cbtn-primary cbtn-lg cbtn-block" href="/staff/r/{{ join_code|urlencode }}">Use it in your browser</a>
+      {% else %}
+      <button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="use-browser" aria-expanded="false" aria-controls="codeform">Use it in your browser</button>
+      <div class="codeform" id="codeform" hidden>
+        <input id="code-in" class="fld code" maxlength="40" autocapitalize="characters" autocomplete="off" placeholder="ABC123" aria-label="Restaurant code">
+        <button type="button" class="cbtn cbtn-secondary cbtn-block" id="code-go">Continue</button>
+        <div class="err" id="code-err" role="status" aria-live="polite"></div>
+      </div>
+      {% endif %}
+      <div class="or">or</div>
+      {# Always says how to get the app (C1 / UX-08): the App Store link once
+         it is listed, else the TestFlight invite, still naming the app. #}
+      {% if app_url %}<a class="cbtn cbtn-secondary cbtn-lg cbtn-block" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<div class="empty">The Cavnar AI app is on iPhone, in testing through Apple&rsquo;s TestFlight. Ask your manager for the invite &mdash; it comes by email.</div>{% endif %}
+    </div>
+    <p class="noiphone"><b>No iPhone?</b> Everything in the app &mdash; your week, swaps, time off, tasks and messages &mdash; opens in any browser, Android included. Sign in with your restaurant code and your PIN.</p>
+  {% endif %}
 
   <div class="newhere">
     <button type="button" class="linkish" onclick="startSignup()">First time here? Create your account</button>
@@ -229,6 +300,149 @@
     box.setAttribute('aria-label', n ? ('PIN: ' + n + (n === 1 ? ' digit' : ' digits') + ' entered')
                                      : 'PIN: no digits entered');
   }
+
+  /* ── "Use it in your browser" with no code in the link ────────────────
+     The restaurant code opens that restaurant's PIN pad (/staff/r/<code>,
+     which takes either kind of staff code). */
+  var useBrowser = $('use-browser');
+  if (useBrowser) {
+    useBrowser.addEventListener('click', function(){
+      var form = $('codeform');
+      form.hidden = !form.hidden;
+      useBrowser.setAttribute('aria-expanded', form.hidden ? 'false' : 'true');
+      if (!form.hidden) { $('code-in').focus(); }
+    });
+    var goCode = function(){
+      var code = ($('code-in').value || '').replace(/\s+/g, '');
+      if (!code) { $('code-err').textContent = 'Enter your restaurant code.'; return; }
+      window.location = '/staff/r/' + encodeURIComponent(code);
+    };
+    $('code-go').addEventListener('click', goCode);
+    $('code-in').addEventListener('keydown', function(e){ if (e.key === 'Enter') goCode(); });
+  }
+
+  /* ── The PIN pad (/staff/r/<code>) ─────────────────────────────────── */
+  var PORTAL = "{{ portal_token|e }}";
+  var NONCE = "{{ login_nonce|e }}";
+  var pin = "", membershipId = null, busy = false;
+
+  function paint(){
+    paintDots($('dots'), pin.length);
+    $('pin-go').disabled = busy || pin.length < PIN_MIN;
+  }
+
+  if ($('pinstep')) {
+    window.clearPin = function(){ pin = ""; paint(); $('err').textContent = ""; };
+    window.del = function(){ pin = pin.slice(0, -1); paint(); };
+    window.back = function(){
+      membershipId = null; window.clearPin();
+      $('pinstep').className = 'pinstep';
+      $('pick').style.display = '';
+    };
+
+    var picks = document.querySelectorAll('.who button[data-id]');
+    /* Whoever signed in last on this device goes first (U2-29) — a
+       per-device convenience only, so storage failing changes nothing. */
+    var LAST_KEY = 'cav_staff_last_' + String(PORTAL).slice(0, 8);
+    try {
+      var last = window.localStorage ? localStorage.getItem(LAST_KEY) : null;
+      if (last) {
+        for (var li = 0; li < picks.length; li++) {
+          if (picks[li].getAttribute('data-id') === last) {
+            picks[li].className = 'last';
+            picks[li].parentNode.insertBefore(picks[li], picks[li].parentNode.firstChild);
+            break;
+          }
+        }
+      }
+    } catch (e) {}
+    var find = $('who-find');
+    if (find) {
+      find.addEventListener('input', function(){
+        var q = String(find.value || '').toLowerCase().replace(/^\s+|\s+$/g, '');
+        for (var fi = 0; fi < picks.length; fi++) {
+          var nm = String(picks[fi].getAttribute('data-name') || '').toLowerCase();
+          picks[fi].style.display = (!q || nm.indexOf(q) >= 0) ? '' : 'none';
+        }
+      });
+    }
+    for (var pi = 0; pi < picks.length; pi++) {
+      picks[pi].addEventListener('click', function(){
+        membershipId = parseInt(this.getAttribute('data-id'), 10);
+        try { if (window.localStorage) localStorage.setItem(LAST_KEY, String(membershipId)); } catch (e2) {}
+        $('who-name').textContent = this.getAttribute('data-name');
+        $('pick').style.display = 'none';
+        $('pinstep').className = 'pinstep on';
+        window.clearPin();
+      });
+    }
+
+    var keys = document.querySelectorAll('.pad button[data-d]');
+    for (var k = 0; k < keys.length; k++) {
+      keys[k].addEventListener('click', function(){
+        if (busy || pin.length >= PIN_MAX) return;
+        pin += this.getAttribute('data-d');
+        paint();
+        if (pin.length === 8) submit();
+      });
+    }
+
+    document.addEventListener('keydown', function(e){
+      if (membershipId === null || busy) return;
+      if (e.key >= '0' && e.key <= '9' && pin.length < PIN_MAX) {
+        pin += e.key; paint();
+        if (pin.length === 8) submit();
+      } else if (e.key === 'Backspace') {
+        window.del();
+      } else if (e.key === 'Enter' && pin.length >= PIN_MIN) {
+        submit();
+      }
+    });
+  }
+
+  /* The sign-in body is one-shot: the server spends NONCE when it reads it,
+     so a captured request cannot be replayed. A stale one (a page left open
+     all afternoon) is recoverable rather than fatal — read the roster again
+     for a fresh one and send the same PIN once more. */
+  function post(attempt){
+    fetch('/staff/r/' + encodeURIComponent(PORTAL) + '/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({membership_id: membershipId, pin: pin, nonce: NONCE})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (d.ok) { window.location = d.redirect || '/staff/home'; return; }
+      if (d.login_nonce) { NONCE = d.login_nonce; }
+      if (d.nonce_expired && attempt === 0) { refreshNonce(post); return; }
+      busy = false;
+      window.clearPin();
+      $('err').textContent = d.error || 'That PIN didn’t match.';
+    }).catch(function(){
+      busy = false; window.clearPin();
+      $('err').textContent = 'Could not reach the server. Try again.';
+    });
+  }
+
+  function refreshNonce(next){
+    fetch('/staff/api/roster/' + encodeURIComponent(PORTAL), {credentials: 'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        NONCE = (d && d.login_nonce) || "";
+        next(1);
+      }).catch(function(){
+        busy = false; window.clearPin();
+        $('err').textContent = 'Could not reach the server. Try again.';
+      });
+  }
+
+  function submit(){
+    if (busy || membershipId === null || pin.length < PIN_MIN) return;
+    busy = true;
+    paint();
+    $('err').textContent = "";
+    post(0);
+  }
+  window.submitPin = submit;
 
 
   /* ── Self-signup ──────────────────────────────────────────────────────
