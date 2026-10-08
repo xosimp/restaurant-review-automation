@@ -41,6 +41,14 @@ from models import Restaurant, create_restaurant
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+@pytest.fixture(autouse=True)
+def _every_restaurant_a_canary(monkeypatch):
+    """These tests read the ladders as written; a canaried workflow starts on
+    its cheap rung only for AI_CANARY_RESTAURANTS (context re-audit 10/7/26
+    #3), so every restaurant here is a canary restaurant."""
+    monkeypatch.setenv("AI_CANARY_RESTAURANTS", "*")
+
+
 @pytest.fixture
 def db(db_path, monkeypatch):
     real = models.get_conn
