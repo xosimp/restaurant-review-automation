@@ -81,12 +81,17 @@ final class LaborParityRoundTests: XCTestCase {
              "can_publish": true \(extra)}
             """.utf8))
         }
-        XCTAssertTrue(PushManager.publishCheckAllowsOneTap(try check(""), scheduleId: 41))
-        XCTAssertFalse(PushManager.publishCheckAllowsOneTap(try check(""), scheduleId: 42))
+        // The server's own verdict decides (re-audit 10/8/26 #1); the phone
+        // never re-derives it from the blockers.
+        XCTAssertTrue(PushManager.publishCheckAllowsOneTap(try check(", \"one_tap_safe\": true"), scheduleId: 41))
+        XCTAssertFalse(PushManager.publishCheckAllowsOneTap(try check(", \"one_tap_safe\": true"), scheduleId: 42))
+        XCTAssertFalse(PushManager.publishCheckAllowsOneTap(try check(""), scheduleId: 41))
         XCTAssertFalse(PushManager.publishCheckAllowsOneTap(
-            try check(", \"blocker_items\": [{\"key\": \"hard\", \"text\": \"Ana is past 40 hours\"}]"), scheduleId: 41))
+            try check(", \"one_tap_safe\": false, \"blocker_items\": [{\"key\": \"hard\", \"text\": \"Ana is past 40 hours\"}]"),
+            scheduleId: 41))
         let cannot = try JSONDecoder.cavnar.decode(PublishCheck.self, from: Data("""
-        {"ok": true, "schedule_id": 41, "blockers": [], "reach": {"total": 12, "reachable": 11}, "can_publish": false}
+        {"ok": true, "schedule_id": 41, "blockers": [], "reach": {"total": 12, "reachable": 11}, "can_publish": false,
+         "one_tap_safe": true}
         """.utf8))
         XCTAssertFalse(PushManager.publishCheckAllowsOneTap(cannot, scheduleId: 41))
     }
@@ -220,10 +225,11 @@ final class LaborParityRoundTests: XCTestCase {
         {"ok": true, "history_id": 5, "preview_rows": []}
         """.utf8))
         let tiles = Dictionary(uniqueKeysWithValues: ScheduleSummaryTiles.tiles(r).map { ($0.key, $0) })
-        for key in ["quality", "labor", "coverage", "overtime", "savings"] {
+        // The warnings too: no rules check is "—", never a green "0 · Every
+        // rule kept" (re-audit 10/8/26 #4).
+        for key in ["quality", "labor", "coverage", "overtime", "warnings", "savings"] {
             XCTAssertNil(tiles[key]?.value, key)
         }
-        XCTAssertEqual(tiles["warnings"]?.value, "0")
     }
 
     func testAReopenedWeekReadsItsForecastFromEconomics() throws {

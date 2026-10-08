@@ -713,11 +713,12 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Whether publish-check still finds the week safe for one tap — the
-    /// rule LaborWaitingOnYou applies: unsent, not replaced, this login may
-    /// send, nothing to read first, somebody to reach.
+    /// server's own `one_tap_safe` (PublishCheck.allowsOneTap), the verdict
+    /// LaborWaitingOnYou reads too. Never the phone's own blocker-only rule,
+    /// which sent a week with soft flags and unread notes unread
+    /// (re-audit 10/8/26 #1).
     nonisolated static func publishCheckAllowsOneTap(_ check: PublishCheck, scheduleId: Int) -> Bool {
-        check.ok && check.scheduleId == scheduleId && check.publishedAt == nil && check.replacedReason == nil
-            && check.canPublish && check.shown.lines.isEmpty && (check.reach?.total ?? 0) > 0
+        check.allowsOneTap(scheduleId: scheduleId)
     }
 
     private struct ScheduleSendAnswer: Decodable {
@@ -767,7 +768,8 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             }
             let sent: ScheduleSendAnswer = try await APIClient.shared.sendWithBearer(
                 "/mobile/api/labor/publish-schedule", method: .post,
-                body: PublishScheduleViewModel.PublishBody(scheduleId: scheduleId, acknowledge: false), bearer: token)
+                body: PublishScheduleViewModel.PublishBody(scheduleId: scheduleId, acknowledge: false, oneTap: true),
+                bearer: token)
             guard sent.ok else {
                 await postFailure(title, sent.error ?? "Tap to open the week.", userInfo: userInfo)
                 return

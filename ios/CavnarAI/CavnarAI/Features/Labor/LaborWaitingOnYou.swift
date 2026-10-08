@@ -125,14 +125,18 @@ struct LaborWaitingOnYou: View {
 
     /// The drafted week: staff don't have it yet, who it reaches, what to
     /// read first; Review it opens the send sheet, and Send goes in one tap
-    /// when there is nothing to read (named by who it REACHES, F2-17).
+    /// only when the server's unattended check finds nothing to read — no
+    /// blocker, soft flag or note (`one_tap_safe`, re-audit 10/8/26 #1;
+    /// named by who it REACHES, F2-17).
     private func draftRow(_ draft: PublishCheck, id: Int) -> some View {
         let reach = draft.reach
         let warnings = draft.shown.lines.count
+        let notes = draft.notes.count
         var detail = "Staff don\u{2019}t have it yet"
         if let reach, reach.total > 0 { detail += " · reaches \(reach.reachable) of \(reach.total)" }
         if warnings > 0 { detail += " · \(warnings) rule warning\(warnings == 1 ? "" : "s") to read first" }
-        let oneTap = draft.canPublish && warnings == 0 && (reach?.total ?? 0) > 0
+        if notes > 0 { detail += " · \(notes) note\(notes == 1 ? "" : "s") worth a look" }
+        let oneTap = draft.allowsOneTap(scheduleId: id)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 HomeMixedText.make("The week of \(CavnarDate.mdy(draft.weekStart ?? "")) is drafted",
@@ -188,8 +192,27 @@ struct LaborWaitingOnYou: View {
             }
             Button("Cancel", role: .cancel) { confirmingSend = nil }
         } message: {
-            Text("Each person on it hears about their shifts. Nothing for the publish check to flag.")
+            Text(Self.oneTapConfirmMessage(reach))
         }
+    }
+
+    /// What the one-tap confirm promises — only what is known (re-audit
+    /// 10/8/26 #13): who it reaches by app, text or email, that the rest
+    /// only see the staff portal, and that the gate runs again as it goes.
+    /// Never "everyone hears" or "nothing to flag" — the check can change
+    /// between this read and the press.
+    static func oneTapConfirmMessage(_ reach: PublishReach?) -> String {
+        let total = reach?.total ?? 0, reachable = reach?.reachable ?? 0
+        var out: String
+        if reachable <= 0 {
+            out = "Nobody on it can be told by app, text or email \u{2014} it goes to the staff portal only."
+        } else if reachable < total {
+            out = "\(reachable) of the \(total) on it hear about their shifts by app, text or email; "
+                + "the rest only see it in the staff portal."
+        } else {
+            out = "All \(total) on it hear about their shifts by app, text or email."
+        }
+        return out + " The publish check runs again as it sends \u{2014} anything new to read stops it."
     }
 
     /// "Mon 9/28/26" from an ISO date.

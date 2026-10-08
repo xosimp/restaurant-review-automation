@@ -84,6 +84,16 @@ enum CavnarDate {
         return mdy(date, in: timeZone)
     }
 
+    /// `9/21/26 · 6:45pm` for a server TIMESTAMP (SQLite's UTC
+    /// `datetime('now')`), read in `timeZone` — the restaurant's clock
+    /// (`RestaurantClock.timeZone`) for when a week went to staff.
+    /// `mdyTime(_ iso:)` printed the UTC wall clock as if it were local.
+    /// A bare date, or anything unparseable, reads as given.
+    static func mdyTimeLocal(_ stamp: String, in timeZone: TimeZone = .current) -> String {
+        guard let date = timestamp(stamp) else { return mdyTime(stamp) }
+        return mdyTime(date, in: timeZone)
+    }
+
     /// A server timestamp as a moment: `yyyy-MM-dd HH:mm[:ss[.fff]]`, with
     /// a space or a `T`, read as UTC unless it carries `Z` or an offset
     /// (`+00:00`, `-0500`). Nil for a bare date or anything else.

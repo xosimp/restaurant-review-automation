@@ -40,9 +40,18 @@ struct ShiftEditSheet: View {
 
     private var rows: [ScheduleRow] { viewModel.scheduleResult?.previewRows ?? [] }
 
-    /// The week's dates, in order.
+    /// The week's dates, in order — every day of the week, not only the
+    /// days that already have a shift (re-audit 10/8/26 #9): a shift can be
+    /// added or moved to an empty day, as on the web grid.
     private var weekDates: [String] {
-        Array(Set(rows.compactMap { $0.date.map { String($0.prefix(10)) } })).sorted()
+        Self.pickableDays(weekDates: viewModel.scheduleResult?.weekDates, rows: rows)
+    }
+
+    /// The server's `week_dates` with any row's date, ISO days, in order.
+    static func pickableDays(weekDates: [String]?, rows: [ScheduleRow]) -> [String] {
+        let days = (weekDates ?? []).map { String($0.prefix(10)) }
+            + rows.compactMap { $0.date.map { String($0.prefix(10)) } }
+        return Array(Set(days.filter { $0.count == 10 })).sorted()
     }
 
     /// Everyone who can be put on a shift: the roster (active), else the

@@ -176,12 +176,19 @@ struct CoversPayload: Decodable {
     var ok: Bool = false
     var days: [CoversDay] = []
     var error: String? = nil
-    enum CodingKeys: String, CodingKey { case ok, days, error }
+    /// The restaurant's business date — the night a count is for by
+    /// default (re-audit 10/8/26 #6). Nil from an older server.
+    var businessDate: String? = nil
+    enum CodingKeys: String, CodingKey {
+        case ok, days, error
+        case businessDate = "business_date"
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         ok = (try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? false
         days = (try? c.decodeIfPresent([CoversDay].self, forKey: .days)) ?? []
         error = try? c.decodeIfPresent(String.self, forKey: .error)
+        businessDate = (try? c.decodeIfPresent(String.self, forKey: .businessDate)) ?? nil
     }
 
     /// "about 84 a day" over the nights on file; nil with none.
@@ -396,10 +403,14 @@ struct ScheduleAutoDraft: Decodable, Equatable {
     var day = "Thursday"
     var publishDay: String? = nil
     var externalTool = ""
+    /// Whether this login may switch it (SCHEDULE_DRAFT, the POST's check).
+    /// Missing (an older server): not offered (re-audit 10/8/26 #12).
+    var canEdit = false
     enum CodingKeys: String, CodingKey {
         case enabled, weekday, day
         case publishDay = "publish_day"
         case externalTool = "external_tool"
+        case canEdit = "can_edit"
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -409,6 +420,7 @@ struct ScheduleAutoDraft: Decodable, Equatable {
         day = (try? c.decodeIfPresent(String.self, forKey: .day)) ?? "Thursday"
         publishDay = try? c.decodeIfPresent(String.self, forKey: .publishDay)
         externalTool = ((try? c.decodeIfPresent(String.self, forKey: .externalTool)) ?? nil) ?? ""
+        canEdit = ((try? c.decodeIfPresent(Bool.self, forKey: .canEdit)) ?? nil) ?? false
     }
 }
 
@@ -418,7 +430,13 @@ struct ScheduleAutoPublish: Decodable, Equatable {
     var trust = 0
     var needed = 0
     var armed = false
-    enum CodingKeys: String, CodingKey { case enabled, day, trust, needed, armed }
+    /// Whether this login may switch it (SCHEDULE_PUBLISH, the POST's
+    /// check). Missing: not offered (re-audit 10/8/26 #12).
+    var canEdit = false
+    enum CodingKeys: String, CodingKey {
+        case enabled, day, trust, needed, armed
+        case canEdit = "can_edit"
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
@@ -426,6 +444,7 @@ struct ScheduleAutoPublish: Decodable, Equatable {
         trust = (try? c.decodeIfPresent(Int.self, forKey: .trust)) ?? 0
         needed = (try? c.decodeIfPresent(Int.self, forKey: .needed)) ?? 0
         armed = (try? c.decodeIfPresent(Bool.self, forKey: .armed)) ?? false
+        canEdit = ((try? c.decodeIfPresent(Bool.self, forKey: .canEdit)) ?? nil) ?? false
     }
 }
 

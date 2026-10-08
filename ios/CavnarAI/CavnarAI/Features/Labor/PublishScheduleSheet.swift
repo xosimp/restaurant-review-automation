@@ -112,9 +112,16 @@ struct PublishCheck: Decodable, Equatable {
     /// Why this copy cannot be sent: a newer copy of the week replaced it
     /// (schedule re-audit 10/4/26 UI-3). Nil when it can.
     var replacedReason: String? = nil
+    /// The server's own verdict on sending this week in one tap
+    /// (strategy_routes.draft_one_tap_safe): an unattended check — no
+    /// blocker, no soft flag automation is held by, no unread note, this
+    /// login may send, somebody it reaches. Nil from an older server: never
+    /// one tap (re-audit 10/8/26 #1).
+    var oneTapSafe: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok, blockers, reach, notes, hours
+        case oneTapSafe = "one_tap_safe"
         case replacedReason = "replaced_reason"
         case likelyToChange = "likely_to_change"
         case scheduleId = "schedule_id"
@@ -144,6 +151,16 @@ struct PublishCheck: Decodable, Equatable {
         hours = (try? c.decodeIfPresent(PublishHours.self, forKey: .hours)) ?? nil
         likelyToChange = (try? c.decodeIfPresent(LikelyToChange.self, forKey: .likelyToChange)) ?? nil
         replacedReason = (try? c.decodeIfPresent(String.self, forKey: .replacedReason)) ?? nil
+        oneTapSafe = (try? c.decodeIfPresent(Bool.self, forKey: .oneTapSafe)) ?? nil
+    }
+
+    /// Whether this week may go out in one tap — Waiting on you's Send and
+    /// the drafted push's Send to staff. The server's verdict only: the
+    /// phone never re-derives it from the blockers alone, which missed the
+    /// soft flags and unread notes (re-audit 10/8/26 #1). The publish route
+    /// runs the same gate again on `one_tap: true`.
+    func allowsOneTap(scheduleId id: Int) -> Bool {
+        ok && scheduleId == id && oneTapSafe == true && canPublish && publishedAt == nil && replacedReason == nil
     }
 
     /// The lines to show and the keys they carry, items first.
@@ -420,18 +437,28 @@ final class PublishScheduleViewModel {
     /// Always names the week (the server refuses a publish without one) and,
     /// when the owner read the gate's blockers, acknowledges exactly the keys
     /// shown — `true` only for an older gate that sent no keys.
+    ///
+    /// `oneTap` is a send nobody reads a sheet for (Waiting on you's Send,
+    /// the drafted push's Send to staff): `one_tap: true` makes the server
+    /// run the unattended gate first and refuse (409 `one_tap_refused`)
+    /// anything it would not send unread. It never acknowledges.
     struct PublishBody: Encodable {
         let scheduleId: Int
         let acknowledge: Bool
         var keys: [String] = []
+        var oneTap = false
         enum CodingKeys: String, CodingKey {
             case acknowledge
             case scheduleId = "schedule_id"
+            case oneTap = "one_tap"
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(scheduleId, forKey: .scheduleId)
-            if acknowledge && !keys.isEmpty {
+            if oneTap {
+                try c.encode(false, forKey: .acknowledge)
+                try c.encode(true, forKey: .oneTap)
+            } else if acknowledge && !keys.isEmpty {
                 try c.encode(keys, forKey: .acknowledge)
             } else {
                 try c.encode(acknowledge, forKey: .acknowledge)
@@ -450,8 +477,12 @@ final class PublishScheduleViewModel {
         let scheduleId: Int?
         /// Worth a look, never holding the send (SQ-29, G-1).
         var notes: HomeLenientList<PublishNote>? = nil
+        /// A one-tap send the unattended check refused (re-audit 10/8/26
+        /// #1): open the week and read it.
+        var oneTapRefused: Bool? = nil
         enum CodingKeys: String, CodingKey {
             case blockers, notes
+            case oneTapRefused = "one_tap_refused"
             case needsAck = "needs_ack"
             case blockerKeys = "blocker_keys"
             case blockerItems = "blocker_items"
