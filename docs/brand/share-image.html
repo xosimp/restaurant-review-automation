@@ -3,7 +3,7 @@
      Rebuild: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars
        --allow-file-access-from-files --force-device-scale-factor=2 --window-size=1200,630
        --virtual-time-budget=5000 --screenshot="$PWD/share@2x.png" "file://$PWD/docs/brand/share-image.html"
-     then: magick share@2x.png -strip -quality 88 -sampling-factor 4:4:4 -interlace JPEG public/share/<new-name>.jpg
+     then: magick share@2x.png -filter Lanczos -resize 1200x630 -strip -quality 92 -sampling-factor 4:4:4 -interlace JPEG public/share/<new-name>.jpg (1200x630: LinkedIn blurred the 2400x1260)
      and point og:image / twitter:image at the new name on every page (platforms cache by URL).
      The schedule and its figures are an illustration, like the homepage board. -->
 <html><head><meta charset="utf-8">
