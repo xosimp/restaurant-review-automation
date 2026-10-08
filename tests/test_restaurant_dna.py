@@ -888,6 +888,20 @@ def test_a_pos_sync_forgets_codes_and_station_logins_but_keeps_people_who_left(d
     assert schedule_intel.forget_stale_names(rid, [], db_path=db_path) == 0          # an empty pull proves nothing
 
 
+def test_both_clients_render_the_dna_from_their_own_route():
+    """Parity audit #98: /dna had no screen on either client. The web reads it
+    into Home's Results when they open; the phone opens a sheet from Results."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    web = open(os.path.join(root, "templates", "dashboard.html")).read()
+    assert "fetch('/api/dna'" in web and '<section id="hb-dna"' in web
+    assert "if(rs.open)hbDnaLoad();" in web                     # lazily, when Results opens
+    ios = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeDNA.swift")).read()
+    assert '"/mobile/api/dna"' in ios and "LineMark" in ios
+    home = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeView.swift")).read()
+    assert "RestaurantDNASheet()" in home
+
+
 def test_the_profile_carries_its_own_weekly_series_for_the_dna_screen(db_path):
     """Parity audit #98: the DNA screen charts each dimension over the weeks
     behind it — this restaurant's own stored rows only, oldest first, a

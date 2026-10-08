@@ -460,8 +460,9 @@ def build_home_brief(current_user, fresh=False, present=True, reads=None):
         hit = _CACHE.get(key)
         if hit and (datetime.now(timezone.utc) - hit[0]).total_seconds() < _CACHE_TTL:
             return hit[1], 200
-    payload, status = (_build(current_user, reads=reads) if present
-                       else _build(current_user, present=False, reads=reads))
+    kw = {"reads": reads} if reads else {}
+    payload, status = (_build(current_user, **kw) if present
+                       else _build(current_user, present=False, **kw))
     if status == 200 and present:
         _cache_put(key, payload)
     return payload, status
