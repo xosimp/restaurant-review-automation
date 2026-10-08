@@ -157,7 +157,7 @@
     var sec = $('#schedule'), board = $('#board'), last = -1, clamp = function (x) { return Math.max(0, Math.min(1, x)); };
     var marks = [0.001, 0.3, 0.62, 0.78, 0.88, 0.97];
     var apply = function (p) {
-      if (Math.abs(p - last) < 0.002) return;
+      if (Math.abs(p - last) < 0.002) { lightSteps(p); return; }
       last = p;
       var n = Math.round(clamp(p / 0.55) * cells.length);
       cells.forEach(function (el, i) { el.classList.toggle('shown', i < n); });
@@ -170,7 +170,18 @@
       $('#labv').textContent = (31.4 * lab).toFixed(1);
       $('#ringfg').style.strokeDashoffset = String(151 * (1 - 0.86 * sq));
       $('#sqv').textContent = String(Math.round(86 * sq));
-      steps.forEach(function (st, i) { st.classList.toggle('on', p >= marks[i]); });
+      lightSteps(p);
+    };
+    // Pinned (a desktop), the steps keep time with the build beside them.
+    // Unpinned (a phone) the list sits above the board and would still be
+    // waiting on it after scrolling away (10/8/26): there each step lights as
+    // it reaches the lower part of the screen, in order, as it is read.
+    var lightSteps = function (p) {
+      var pinnedNow = sec.classList.contains('pinned'), line = window.innerHeight * 0.78;
+      steps.forEach(function (st, i) {
+        var on = reduce || pinnedNow ? p >= marks[i] : (i === 0 || steps[i - 1].classList.contains('on')) && st.getBoundingClientRect().top < line;
+        st.classList.toggle('on', on);
+      });
     };
     // pin only when the whole section fits under the nav (a short laptop
     // screen would clip its first and last lines); else scrub in place

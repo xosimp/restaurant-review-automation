@@ -172,4 +172,7 @@ def test_the_scroll_story_runs_natively_and_rests_for_reduced_motion():
     # a core within a bend's reach of the rail gets the bend alone, never a
     # straight run that doubles back (the phone's demo core, 10/8/26)
     assert "ex < rx + 16 ? ex + ' ' + ay" in js
+    # unpinned (a phone), each step lights as it is read, not on the board's
+    # timing: the list sits above the board and waited on it (10/8/26)
+    assert "steps[i - 1].classList.contains('on')) && st.getBoundingClientRect().top < line" in js
     assert "=>" not in js
