@@ -223,7 +223,19 @@ final class CavnarSceneDelegate: NSObject, UIWindowSceneDelegate {
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         SystemEntry.flush()
-        Task { await WidgetSnapshotService.shared.refresh() }
+        Task {
+            // Home reads the queue and last night's report as the scene
+            // comes up; a moment's wait lets the widget refresh reuse those
+            // reads (HomeReadShare) rather than make them a second time.
+            try? await Task.sleep(for: .seconds(3))
+            await WidgetSnapshotService.shared.refresh()
+        }
+    }
+
+    /// Leaving the app asks iOS for the next background refresh, so the
+    /// widgets keep up while it stays closed (parity audit #31).
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        BackgroundRefresh.schedule()
     }
 }
 

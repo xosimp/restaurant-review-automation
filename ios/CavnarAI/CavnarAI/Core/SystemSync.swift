@@ -55,6 +55,8 @@ final class WidgetSnapshotService {
         WidgetSnapshot.allWidgetKinds.forEach { WidgetCenter.shared.reloadTimelines(ofKind: $0) }
         UIApplication.shared.shortcutItems = []
         PendingSendActivities.endAll()
+        LiveActivitySync.endAll()
+        HomeReadShare.shared.reset()
     }
 
     /// The waiting half of one read: the open count and the replies count.
@@ -82,7 +84,30 @@ final class WidgetSnapshotService {
         /// budget (the server sends none) or a night with none set.
         var budget: String?
         var budgetUp: Bool?
+        /// Last night's labor % and food cost % — the report's own KPI text,
+        /// the number behind it and its target (#59); nil when the night
+        /// didn't measure one or this login's view leaves it out.
+        var laborLabel: String?
+        var laborPct: Double?
+        var laborTarget: Double?
+        var foodLabel: String?
+        var foodPct: Double?
+        var foodTarget: Double?
         static let none = NightPart()
+
+        /// The labor % and food cost % from the report's KPIs (dsr/kpis.py
+        /// `labor_pct` — all-in, salaries included — and `food_pct`, an
+        /// estimate). Read from what the report shows, never recomputed.
+        mutating func setCosts(_ kpis: [DSRKPI]) {
+            let labor = kpis.first { $0.key == "labor_pct" }
+            let food = kpis.first { $0.key == "food_pct" }
+            laborLabel = labor?.valueText
+            laborPct = WidgetSnapshotService.percent(labor?.valueText)
+            laborTarget = WidgetSnapshotService.percent(labor?.target?.valueText)
+            foodLabel = food?.valueText
+            foodPct = WidgetSnapshotService.percent(food?.valueText)
+            foodTarget = WidgetSnapshotService.percent(food?.target?.valueText)
+        }
 
         mutating func setVerdict(_ v: HomeLastNightCard.Verdict?) {
             verdict = v?.label
@@ -129,6 +154,12 @@ final class WidgetSnapshotService {
             snap.nightScore = night.score
             snap.budgetLabel = night.budget
             snap.budgetIsUp = night.budgetUp
+            snap.laborLabel = night.laborLabel
+            snap.laborPct = night.laborPct
+            snap.laborTarget = night.laborTarget
+            snap.foodLabel = night.foodLabel
+            snap.foodPct = night.foodPct
+            snap.foodTarget = night.foodTarget
             snap.nightUpdatedAt = now
         } else if !sameStore {
             snap.nightUpdatedAt = .distantPast
@@ -137,7 +168,10 @@ final class WidgetSnapshotService {
         return snap
     }
 
-    func refresh(force: Bool = false) async {
+    /// Refreshes everything the system shows. Returns whether a new snapshot
+    /// was written — what a background refresh reports back to iOS (#31).
+    @discardableResult
+    func refresh(force: Bool = false) async -> Bool {
         guard let token = Keychain.get(Keychain.Key.sessionToken), !token.isEmpty else {
             if let staffToken = Keychain.get(Keychain.Key.staffSessionToken), !staffToken.isEmpty {
                 Self.clearOwnerSurfaces()
@@ -145,48 +179,99 @@ final class WidgetSnapshotService {
             } else {
                 Self.clearForSignOut()
             }
-            return
+            return false
         }
+        // The Share extension reads the session from the shared keychain
+        // group (#95); an install signed in before it existed gets its copy.
+        Keychain.mirrorSessionForExtensions(token)
         // An owner phone carries no employee's shifts.
         if Keychain.get(Keychain.Key.staffSessionToken) == nil, StaffShiftSnapshot.load() != nil {
             StaffShiftSnapshot.clear()
             WidgetCenter.shared.reloadTimelines(ofKind: StaffShiftSnapshot.widgetKind)
         }
-        if inFlight { return }
-        if !force, let last = lastRefresh, Date().timeIntervalSince(last) < Self.minInterval { return }
+        if inFlight { return false }
+        if !force, let last = lastRefresh, Date().timeIntervalSince(last) < Self.minInterval { return false }
         inFlight = true
         defer { inFlight = false }
+        let rid = SessionScope.activeRestaurantId
+
+        // What Home read moments ago is the widget's too (the widget-read
+        // dedupe): the queue and the night list are not read a second time
+        // at the same moment. Home's read presents the queue — it is the
+        // owner looking — so it may stand in for the widget's; never the
+        // other way round.
+        let homeActions = await HomeReadShare.shared.recentActions(restaurantId: rid)
+        let homeNight = await HomeReadShare.shared.recentNight(restaurantId: rid)
 
         // `peek=1`: a background read for the widget is not the owner seeing
         // the queue — the server skips presenting its recommendations, as it
         // does for the report below (F3-6).
-        async let actions: ActionsResponse? = try? client.sendWithBearer(
-            "/mobile/api/actions", query: ["peek": "1"], bearer: token)
+        async let actions = Self.readActions(client: client, bearer: token, skip: homeActions != nil)
         async let pending: PendingSendActivities.PendingResponse? =
             try? client.sendWithBearer("/mobile/api/actions/pending", bearer: token)
-        async let night = Self.lastNight(client: client, bearer: token)
+        async let night = Self.lastNight(client: client, bearer: token, homeList: homeNight)
         async let locations: LocationsResponse? = try? client.sendWithBearer(
             "/mobile/api/group-locations", bearer: token)
         let (a, p, n, l) = await (actions, pending, night, locations)
         lastRefresh = Date()
 
-        let items = a?.items ?? []
-        let waiting = a.map { _ in
-            WaitingPart(count: items.count,
-                        replies: items.first(where: { $0.key == "no_response" })?.count ?? 0)
+        let waiting: WaitingPart?
+        if let homeActions {
+            waiting = WaitingPart(count: homeActions.count, replies: homeActions.replies)
+        } else {
+            let items = a?.items ?? []
+            waiting = a.map { _ in
+                WaitingPart(count: items.count,
+                            replies: items.first(where: { $0.key == "no_response" })?.count ?? 0)
+            }
         }
         // A store's name only means something beside another one.
         let name = l.flatMap { r in r.locations.count > 1 ? r.locations.first(where: \.active)?.name : nil }
-        if let snapshot = Self.merge(previous: WidgetSnapshot.load(), restaurantId: SessionScope.activeRestaurantId,
+        if let l {
+            // The widget's location picker (#96): every location this login
+            // may switch to; one location has nothing to pick.
+            let list = l.locations.count > 1 ? l.locations.map { WidgetLocationOption(id: $0.id, name: $0.name) } : []
+            if list != WidgetLocations.load() {
+                WidgetLocations.save(list)
+                // Siri's "Switch to <location>" learns the new names.
+                CavnarShortcuts.updateAppShortcutParameters()
+            }
+        }
+        var wrote = false
+        if let snapshot = Self.merge(previous: WidgetSnapshot.load(), restaurantId: rid,
                                      restaurantName: name, waiting: waiting, night: n, now: Date()) {
             WidgetSnapshot.save(snapshot)
             WidgetSnapshot.allWidgetKinds.forEach { WidgetCenter.shared.reloadTimelines(ofKind: $0) }
+            wrote = true
         }
         if let waiting {
             UIApplication.shared.shortcutItems =
                 [QuickAction.approveRepliesItem(waiting: waiting.replies)].compactMap { $0 }
         }
         if let p { PendingSendActivities.sync(p.actions ?? []) }
+        // The phone's Live Activity tokens follow the session and location
+        // it is on now (#38, #61, #94).
+        await LiveActivitySync.shared.refresh(bearer: token)
+        return wrote
+    }
+
+    private static func readActions(client: APIClient, bearer: String, skip: Bool) async -> ActionsResponse? {
+        if skip { return nil }
+        return try? await client.sendWithBearer("/mobile/api/actions", query: ["peek": "1"], bearer: bearer)
+    }
+
+    /// "28.4%" -> 28.4; nil for "—" or nothing.
+    nonisolated static func percent(_ text: String?) -> Double? {
+        guard let text else { return nil }
+        let kept = text.filter { "0123456789.-".contains($0) }
+        guard !kept.isEmpty, let v = Double(kept), v.isFinite else { return nil }
+        return v
+    }
+
+    /// The waiting half from Home's own read of the queue: the open count
+    /// and the drafted-replies count, as the widget's own read takes them.
+    nonisolated static func waiting(fromHome items: [(key: String, count: Int?)]) -> WaitingPart {
+        WaitingPart(count: items.count, replies: items.first(where: { $0.key == "no_response" })?.count ?? 0)
     }
 
     // MARK: Staff tier — the "Next shift" widget (MISS-11)
@@ -282,16 +367,24 @@ final class WidgetSnapshotService {
     /// no report; nil when the read failed. The report is read with
     /// `peek=1`: a widget refresh is not someone opening the report, so its
     /// actions are not recorded as shown (F3-6 / D3-8).
-    private static func lastNight(client: APIClient, bearer: String) async -> NightPart? {
-        let list: DSRListResponse
-        do {
-            list = try await client.sendWithBearer("/mobile/api/dsr", query: ["limit": "1"], bearer: bearer)
-        } catch let error as APIClient.APIError where error.status == 403 {
-            return NightPart.none
-        } catch {
-            return nil
+    private static func lastNight(client: APIClient, bearer: String,
+                                  homeList: HomeReadShare.Night? = nil) async -> NightPart? {
+        let latestRow: DSRSummary?
+        if let homeList {
+            // Home's card read the list a moment ago (dedupe).
+            latestRow = homeList.latest
+        } else {
+            let list: DSRListResponse
+            do {
+                list = try await client.sendWithBearer("/mobile/api/dsr", query: ["limit": "1"], bearer: bearer)
+            } catch let error as APIClient.APIError where error.status == 403 {
+                return NightPart.none
+            } catch {
+                return nil
+            }
+            latestRow = list.reports.first
         }
-        guard let latest = list.reports.first else { return NightPart.none }
+        guard let latest = latestRow else { return NightPart.none }
         var part = NightPart(date: latest.businessDate, label: latest.displayDate)
         part.setVerdict(HomeLastNightCard.verdict(latest, nil))
         // The list's own net-minus-budget (dsr.access.summary) — present
@@ -305,6 +398,7 @@ final class WidgetSnapshotService {
             return part
         }
         part.setVerdict(HomeLastNightCard.verdict(latest, report))
+        part.setCosts(report.kpis)
         guard let sales = report.facts.blocks["sales"], sales.isReady else { return part }
         if let net = sales.metric("net") { part.net = DSRFormat.money(net) }
         if let vs = DSRScorecardCard.vsBudget(sales) { part.setBudget(vs) }
@@ -383,7 +477,11 @@ enum PendingSendActivities {
             }
             let title = (row.label?.isEmpty == false ? row.label! : PendingSendAttributes.plainTitle(kind: row.kind))
             let attributes = PendingSendAttributes(actionId: row.id, kind: row.kind, title: title)
-            _ = try? Activity.request(attributes: attributes, content: content, pushType: nil)
+            // With a push token (#61): the server ends it when the send runs
+            // or is undone elsewhere, with the app closed. The server may
+            // also have started one by push-to-start — that one is found by
+            // its action id above, and never started twice.
+            _ = try? Activity.request(attributes: attributes, content: content, pushType: .token)
         }
     }
 

@@ -4173,9 +4173,11 @@ final class LaborViewModel {
         /// How long the job can run (P-22) — the poll waits this long, not
         /// a guessed 15 minutes.
         var waitSeconds: Int? = nil
+        /// The measured typical run — the Live Activity's estimate (#38).
+        var typical: ScheduleTypical? = nil
 
         enum CodingKeys: String, CodingKey {
-            case ok, error, joined
+            case ok, error, joined, typical
             case jobId = "job_id"
             case waitSeconds = "wait_seconds"
         }
@@ -4303,6 +4305,11 @@ final class LaborViewModel {
             joinedRunningGeneration = response.joined ?? false
             generateInstruction = ""
             rememberRunningGeneration(jobId, dates: redo ?? [], waitSeconds: response.waitSeconds)
+            // "Building next week" on the Lock Screen (parity audit #38).
+            ScheduleBuildActivities.start(
+                jobId: jobId, weekLabel: ScheduleBuildActivities.weekLabel(pickerLabel: generateWeek.label,
+                                                                          redoCount: redo?.count ?? 0),
+                typicalSeconds: response.typical?.seconds)
             await pollSchedule(jobId: jobId, waitSeconds: response.waitSeconds)
         } catch is CancellationError {
             isGeneratingSchedule = false
@@ -4341,6 +4348,7 @@ final class LaborViewModel {
         var transientFailures = 0
         var deadline = Date().addingTimeInterval(waitSeconds.map { TimeInterval($0) + 30 } ?? Self.defaultPollSeconds)
         func finish(error: String?) {
+            ScheduleBuildActivities.end(jobId: jobId, ok: error == nil, note: error)
             scheduleError = error
             isGeneratingSchedule = false
             joinedRunningGeneration = false
@@ -4371,6 +4379,7 @@ final class LaborViewModel {
                     // The days drafted so far (#36), shown under the steps.
                     if let p = result.progress, p != generationProgress {
                         generationProgress = p
+                        ScheduleBuildActivities.update(jobId: jobId, daysDrafted: p.daysDrafted, daysTotal: p.daysTotal)
                     }
                     if Date() > deadline {
                         finish(error: "Schedule generation is taking longer than it should \u{2014} check back in a bit.")

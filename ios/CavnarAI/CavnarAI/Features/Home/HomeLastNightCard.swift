@@ -194,9 +194,12 @@ final class HomeLastNightViewModel {
     init(client: APIClient = .shared) { self.client = client }
 
     func load() async {
+        // The widget refresh borrows this read (HomeReadShare).
+        HomeReadShare.shared.beginNight()
         do {
             let list: DSRListResponse = try await client.send("/mobile/api/dsr", query: ["limit": "1"],
                                                               hapticOnError: false)
+            HomeReadShare.shared.finishNight(.some(list.reports.first))
             guard let latest = list.reports.first else {
                 state = .hidden
                 return
@@ -207,9 +210,12 @@ final class HomeLastNightViewModel {
             // the whole report (peeked) is gone.
             state = .ready(latest, nil, list.tonight?.value)
         } catch is CancellationError {
+            HomeReadShare.shared.finishNight(nil)
         } catch let error as APIClient.APIError where error.status == 403 {
+            HomeReadShare.shared.finishNight(.some(nil))
             state = .hidden
         } catch {
+            HomeReadShare.shared.finishNight(nil)
             // Home must not grow an error card for a secondary read: keep
             // what's on screen, or show nothing if nothing loaded yet.
             if case .loading = state { state = .hidden }

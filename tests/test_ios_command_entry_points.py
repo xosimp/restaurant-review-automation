@@ -125,9 +125,22 @@ def test_app_shortcuts_only_open_the_app_except_undo():
             for reach in ("client.send", "APIClient", "sendWithBearer", "Keychain", "PendingSendCanceller"):
                 assert reach not in chunk, reach
             continue
+        if name == "AskCavnarAnswerIntent":
+            # Answers in Siri (parity audit #58) — a read: it asks, and an
+            # answer that proposes an action never acts (SiriAsk counts
+            # proposals, never decodes them into anything runnable).
+            assert "openAppWhenRun: Bool = false" in chunk
+            assert ".requiresAuthentication" in chunk
+            assert "SiriAsk.ask(question)" in chunk
+            continue
         assert "openAppWhenRun: Bool = true" in chunk, name
         assert "client.send" not in chunk and "APIClient" not in chunk, name
     assert "AppShortcutsProvider" in src
+    # The Siri answer posts the question and nothing else: no action route,
+    # and a proposal is only counted.
+    siri = src[src.index("enum SiriAsk"):src.index("struct SiriAskSnippet")]
+    assert '"/mobile/api/ask-cavnar", method: .post' in siri
+    assert "/ask-cavnar/action" not in src and "struct Ignored" in siri
 
 
 def test_links_from_outside_route_through_one_door():

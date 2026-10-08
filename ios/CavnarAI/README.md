@@ -40,6 +40,14 @@ echo 'http://192.168.1.211:5050' > ios/CavnarAI/.dev-url   # same wifi
 ./generate.sh
 ```
 
+## Targets
+
+- `CavnarAI` — the app.
+- `CavnarWidgets` — the Home and Lock Screen widgets (waiting · last night, labor and food cost, the staff "Next shift"), the Live Activities (the queued-send countdown, "Building next week", "Tonight's service") and, on iOS 18, the Control Center buttons. Reads only what the app writes into the `group.ai.cavnar.CavnarAI` app group; never signs in.
+- `CavnarShare` — "Send to Cavnar AI" from Mail, Files or Photos: a PDF or photo of a supplier invoice goes to Food Cost → Invoices. It reads the owner session from the `$(AppIdentifierPrefix)ai.cavnar.CavnarAI.shared` keychain group, which the app writes (`Keychain.mirrorSessionForExtensions`); the widgets are not in that group. Automatic signing adds the Keychain Sharing capability to both App IDs on the next device build.
+
+The app refreshes the widgets in the background (`BackgroundRefresh.swift`: a `BGAppRefreshTask`, `ai.cavnar.CavnarAI.refresh`, and the server's silent pushes) — `fetch` and `remote-notification` are both in `UIBackgroundModes`.
+
 ## Tests
 
 ```bash

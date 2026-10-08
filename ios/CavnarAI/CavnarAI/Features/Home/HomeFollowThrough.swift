@@ -31,6 +31,9 @@ struct ActionItem: Decodable, Identifiable {
     let detail: String?
     let severity: String
     let action: Action?
+    /// How many the row stands for (the drafted replies waiting) — what
+    /// the widget reads from Home's own read (HomeReadShare).
+    var count: Int? = nil
     var id: String { key }
 
     /// Home's own severity vocabulary, so these rows read exactly like the
@@ -780,6 +783,9 @@ final class HomeFollowThroughViewModel {
     func load() async {
         isLoading = actions.isEmpty && goals.isEmpty && results.isEmpty
         defer { isLoading = false }
+        // The widget refresh borrows this read rather than making its own
+        // at the same moment (HomeReadShare).
+        HomeReadShare.shared.beginActions()
         async let a: ActionsResponse? = try? client.send("/mobile/api/actions", hapticOnError: false)
         async let g: GoalsResponse? = try? client.send("/mobile/api/goals", hapticOnError: false)
         async let o: RecOutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
@@ -794,7 +800,9 @@ final class HomeFollowThroughViewModel {
         async let ms: Milestones? = try? client.send("/mobile/api/milestones", hapticOnError: false)
         async let ls: LossSignals? = try? client.send("/mobile/api/loss-signals", hapticOnError: false)
         async let mr: HomeMonthlyReview? = try? client.send("/mobile/api/monthly-review", hapticOnError: false)
-        actions = (await a)?.items ?? []
+        let actionsRead = await a
+        actions = actionsRead?.items ?? []
+        HomeReadShare.shared.finishActions(actionsRead.map { $0.items.map { (key: $0.key, count: $0.count) } })
         let goalsResponse = await g
         goals = goalsResponse?.goals ?? []
         proposedGoals = goalsResponse?.proposed?.items ?? []

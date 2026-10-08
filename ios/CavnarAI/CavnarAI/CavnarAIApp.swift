@@ -52,5 +52,10 @@ struct CavnarAIApp: App {
                     if let url = activity.webpageURL { SystemEntry.handle(url: url) }
                 }
         }
+        // The widgets refresh with the app closed (parity audit #31):
+        // scheduled each time the app goes to the background.
+        .backgroundTask(.appRefresh(BackgroundRefresh.taskIdentifier)) {
+            await BackgroundRefresh.run()
+        }
     }
 }

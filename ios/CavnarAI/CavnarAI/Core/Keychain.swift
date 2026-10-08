@@ -31,7 +31,10 @@ enum Keychain {
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = accessibility
         let status = SecItemAdd(item as CFDictionary, nil)
-        if status == errSecSuccess { return true }
+        if status == errSecSuccess {
+            if key == Key.sessionToken { mirrorSessionForExtensions(value) }
+            return true
+        }
         // The delete above can lose a race with another writer of the same
         // key; update in place rather than give up.
         if status == errSecDuplicateItem {
@@ -83,6 +86,80 @@ enum Keychain {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(query as CFDictionary)
+        // Signed out: the Share extension's copy goes with it (#95).
+        if key == Key.sessionToken { clearSharedSession() }
+    }
+
+    // MARK: - The Share extension's copy of the session (parity audit #95)
+
+    /// "Send to Cavnar AI" from Mail or Files runs in its own process, which
+    /// cannot read the app's own keychain items. The owner session is
+    /// copied into one keychain access group the app and the Share extension
+    /// both hold (project.yml: keychain-access-groups) — never the widget
+    /// extension, which signs nothing in. Same ThisDeviceOnly class as the
+    /// original. The copy carries the server it belongs to, so a Debug build
+    /// pointed at a tunnel uploads there and nowhere else.
+    static let sharedSessionAccount = "cavnar.shared.session"
+
+    /// "<team>.ai.cavnar.CavnarAI.shared", from Info.plist (CavnarKeychainGroup).
+    static var sharedAccessGroup: String? {
+        guard let g = Bundle.main.object(forInfoDictionaryKey: "CavnarKeychainGroup") as? String,
+              !g.isEmpty, !g.hasPrefix("$(") else { return nil }
+        return g
+    }
+
+    struct SharedSession: Codable, Equatable {
+        let token: String
+        let baseURL: String
+        enum CodingKeys: String, CodingKey {
+            case token
+            case baseURL = "base_url"
+        }
+    }
+
+    /// Writes the copy when it differs from what is there. No-op without a
+    /// shared group (an unsigned Simulator build).
+    static func mirrorSessionForExtensions(_ token: String) {
+        guard let group = sharedAccessGroup, !token.isEmpty else { return }
+        let session = SharedSession(token: token, baseURL: AppEnvironment.baseURL.absoluteString)
+        if readSharedSession(group: group) == session { return }
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: sharedSessionAccount,
+            kSecAttrAccessGroup as String: group,
+        ]
+        SecItemDelete(query as CFDictionary)
+        var item = query
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = accessibility
+        let status = SecItemAdd(item as CFDictionary, nil)
+        if status != errSecSuccess { log("add shared", key: sharedSessionAccount, status: status) }
+    }
+
+    static func readSharedSession(group: String? = sharedAccessGroup) -> SharedSession? {
+        guard let group else { return nil }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: sharedSessionAccount,
+            kSecAttrAccessGroup as String: group,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return try? JSONDecoder().decode(SharedSession.self, from: data)
+    }
+
+    static func clearSharedSession() {
+        guard let group = sharedAccessGroup else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: sharedSessionAccount,
+            kSecAttrAccessGroup as String: group,
         ]
         SecItemDelete(query as CFDictionary)
     }
