@@ -3056,7 +3056,11 @@ def add_role(restaurant_id, name, role, since=None, primary=False, created_by=No
                      "qualified_since, is_primary, created_by) VALUES (?,?,?,?,?,?,?,?,?) "
                      "ON CONFLICT(restaurant_id, employee_key, role) DO UPDATE SET removed_at=NULL, "
                      "qualified_since=COALESCE(excluded.qualified_since, qualified_since), "
-                     "is_primary=excluded.is_primary, source=excluded.source, person_id=excluded.person_id",
+                     # Re-adding a role they already hold keeps it their main
+                     # role; only a promotion (primary) sets it, and that
+                     # cleared every other row above (parity round 10/7/26).
+                     "is_primary=MAX(is_primary, excluded.is_primary), source=excluded.source, "
+                     "person_id=excluded.person_id",
                      (restaurant_id, pid, display, key, role, source, since_iso, 1 if primary else 0, created_by))
         conn.commit()
     except Exception:

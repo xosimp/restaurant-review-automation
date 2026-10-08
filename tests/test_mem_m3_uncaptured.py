@@ -62,6 +62,16 @@ def test_a_promotion_is_the_persons_role_on_the_roster_from_its_date():
     assert next(e for e in staff_settings.roster(rid) if e["name"] == "Ana B.")["role"] == "Server"
 
 
+def test_re_adding_a_held_role_keeps_it_the_main_role():
+    """Adding a role again (a new start date, say) without ticking "A
+    promotion" must not quietly demote a promotion (parity round 10/7/26)."""
+    rid = _rid()
+    _history(rid, [("Ana B.", "Server")])
+    people.add_role(rid, "Ana B.", "Bartender", since=date.today().isoformat(), primary=True)
+    people.add_role(rid, "Ana B.", "Bartender", since=(date.today() - timedelta(days=30)).isoformat())
+    assert next(e for e in staff_settings.roster(rid) if e["name"] == "Ana B.")["role"] == "Bartender"
+
+
 # ── who takes covers ────────────────────────────────────────────────────────
 
 def test_whoever_took_a_cover_when_asked_is_suggested_first():
