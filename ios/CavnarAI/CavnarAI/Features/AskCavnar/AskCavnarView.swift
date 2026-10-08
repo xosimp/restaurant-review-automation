@@ -304,11 +304,15 @@ struct AskCavnarView: View {
     /// sees is their own business rather than an invitation to explain it.
     private var emptyState: some View {
         VStack(spacing: 18) {
+            // Before anything is asked the screen shows Cavnar AI itself: the
+            // Ember Core, large and breathing (10/8/26; the web's Ask panel
+            // does the same). The dotted orb stays for working and loading.
+            EmberCoreView(size: 96)
+                .padding(.top, 28)
+                .padding(.bottom, 14)
             if let opening = viewModel.opening, let headline = opening.headline {
                 briefing(opening, headline: headline)
             } else {
-                GlowBadge(systemImage: "sparkles", size: 64)
-                    .padding(.top, 20)
                 VStack(spacing: 6) {
                     Text("Ask me anything")
                         .font(.cavnarHeadline(21.5))

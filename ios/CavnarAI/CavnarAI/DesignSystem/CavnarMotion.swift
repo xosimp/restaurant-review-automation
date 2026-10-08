@@ -1346,10 +1346,12 @@ struct CavnarAlertBadge: View {
 
 // MARK: - 14 · Cold Hearth
 
-/// The one empty state for the whole app: a gray seal with a cold ember —
-/// "nothing here yet" — that the CTA is what lights. Replaces the scattered
-/// per-screen SF Symbol ContentUnavailableViews. With no CTA it just keeps
-/// a slow, faint breath so it never reads as dead.
+/// The one empty state for the whole app — a whole screen with nothing in
+/// it yet. Since 10/8/26 it shows Cavnar AI itself, resting: the Ember Core
+/// (`EmberCoreView`) at low energy, breathing, that the CTA wakes while it is
+/// held — the cold hearth the CTA lights, now alive. The web's whole-screen
+/// empty states do the same (`ecEmptyCore` in dashboard.html). Replaces the
+/// scattered per-screen SF Symbol ContentUnavailableViews.
 struct CavnarEmptyHearth: View {
     var title: String
     var message: String? = nil
@@ -1357,29 +1359,11 @@ struct CavnarEmptyHearth: View {
     var action: (() -> Void)? = nil
 
     @State private var pressed = false
-    @State private var start = Date()
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var onScreen = true
-
-    /// The breath is ambient: it rests (a cold ember) under Reduce Motion,
-    /// off screen, and in Low Power Mode or heat (parity #83). The press
-    /// still warms it.
-    private var resting: Bool { reduceMotion || !onScreen || CavnarEnvironment.shared.reducedActivity }
 
     var body: some View {
         VStack(spacing: 14) {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: resting)) { timeline in
-                let t = timeline.date.timeIntervalSince(start)
-                let breath = resting ? 0 : CGFloat(max(0, sin(t * 2 * .pi / 5.0))) * 0.28
-                CavnarSealMark(
-                    size: 64,
-                    ringColor: Color.cavnarInk3.opacity(0.32),
-                    emberWarmth: pressed ? 1 : breath
-                )
-                .animation(.easeOut(duration: pressed ? 0.3 : 0.9), value: pressed)
-            }
-            .frame(width: 64, height: 64)
-            .padding(.bottom, 4)
+            EmberCoreView(size: 56, scale: 2.4, energy: 0.3, awake: pressed)
+                .padding(.vertical, 8)
 
             Text(title)
                 .font(.cavnarBody(15, weight: 700))
@@ -1409,8 +1393,6 @@ struct CavnarEmptyHearth: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 44)
         .padding(.horizontal, 24)
-        .onAppear { onScreen = true }
-        .onDisappear { onScreen = false }
     }
 }
 
