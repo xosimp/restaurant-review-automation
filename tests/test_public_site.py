@@ -165,5 +165,8 @@ def test_the_scroll_story_runs_natively_and_rests_for_reduced_motion():
     # script it showed twice on a fast scroll), and the rail stops where the
     # last branch bends, so nothing pokes past the curve (10/8/26)
     assert ".thread-head{position:fixed;" in css and "head.className = 'thread-head'" in js
-    assert "i === taps.length - 1 && t.d ? t.y - 16 : t.y" in js
+    # the lit rail is drawn whole in the page and a fixed veil hides it below
+    # the head, so a fast scroll can't outrun it; branches start at their bend
+    assert ".thread-veil{position:fixed;" in css and "mk('path', { d: rail, 'class': 'lit' }, litSvg)" in js
+    assert "return { y: d ? y - 16 : y" in js
     assert "=>" not in js

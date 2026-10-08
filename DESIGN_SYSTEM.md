@@ -1748,7 +1748,11 @@ connections, then the demo form. Rules:
   still. Reduced motion shows every section finished.
 - **The scroll story** (10/8/26). *The Ember Thread*: one ember line leaves the
   hero's scroll hint and runs down a rail in the gutter (10px from the edge on
-  a phone), drawn to a reading line 60% down the screen with a glowing head;
+  a phone), lit down to a reading line 60% down the screen with a glowing
+  head — the lit rail is drawn whole in the page, the head is fixed on the
+  reading line and a fixed veil in the page colour hides the lit rail below
+  it, so line and head are both placed by the browser and a fast scroll
+  can't separate them;
   at each core it branches in (`data-thread="desktop|phone"`: `left` straight
   in, `top` down through the section's empty top padding, `none` no branch)
   and the core answers with one pulse. It is an SVG in page coordinates

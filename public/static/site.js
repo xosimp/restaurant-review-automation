@@ -362,53 +362,52 @@
 
   // ── the Ember Thread (10/8/26): one ember line leaves the hero, runs down
   //    a rail in the gutter and branches into each core as it is reached —
-  //    by the bottom the visitor has traced everything back to one AI. It is
-  //    drawn in page coordinates behind the content, so it scrolls natively
-  //    (a layer placed by script every frame trailed iOS's momentum scroll).
-  //    The rail draws to a reading line 60% down the screen; a branch draws in
-  //    when the line reaches its tap, and its core answers with one pulse.
-  //    Branches come in from the side or down through the section's empty
-  //    top padding, so no line crosses a word. ──
+  //    by the bottom the visitor has traced everything back to one AI.
+  //    Nothing on the rail is redrawn per frame, so a fast scroll can't
+  //    outrun it: the lit rail is drawn whole in the page (it scrolls
+  //    natively), the head is fixed on the reading line 60% down the screen,
+  //    and a fixed veil in the page's own colour hides the lit rail below the
+  //    head, with the dashed track drawn over it. Line and head are both
+  //    placed by the browser, so they always meet. A branch draws in as the
+  //    head reaches its bend, and its core answers with one pulse. Branches
+  //    come in from the side or down through the section's empty top
+  //    padding, so no line crosses a word. ──
   (function () {
     var hero = $('.hero'), anchors = $$('[data-thread]');
     if (!hero || !anchors.length) return;
     var NS = 'http://www.w3.org/2000/svg';
     var mk = function (tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var a in attrs) e.setAttribute(a, attrs[a]); parent.appendChild(e); return e; };
-    var svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('id', 'thread'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
+    var layer = function (id) { var v = document.createElementNS(NS, 'svg'); v.setAttribute('id', id); v.setAttribute('class', 'thread-layer'); v.setAttribute('aria-hidden', 'true'); v.setAttribute('focusable', 'false'); document.body.appendChild(v); return v; };
+    // paint order: the lit rail, the veil over it, then the track, the
+    // lead-in and the branches, then the head
+    var litSvg = layer('thread-lit');
+    var veil = document.createElement('div'); veil.className = 'thread-veil'; veil.setAttribute('aria-hidden', 'true'); document.body.appendChild(veil);
+    var svg = layer('thread');
     var gT = mk('g', {}, svg), gL = mk('g', {}, svg), gB = mk('g', {}, svg);
-    document.body.appendChild(svg);
-    // The head sits on the reading line, a fixed spot on the screen: a fixed
-    // element the browser composites itself. Drawn in the page and moved by
-    // script it rode the scroll for a frame before snapping back, so a fast
-    // scroll showed it twice (10/8/26).
-    var head = document.createElement('div');
-    head.className = 'thread-head'; head.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(head);
-    var railTop = 0, railEnd = 0;
-    var segs = [], brs = [];
+    var head = document.createElement('div'); head.className = 'thread-head'; head.setAttribute('aria-hidden', 'true'); document.body.appendChild(head);
+    var railTop = 0, railEnd = 0, lead = null, brs = [];
     var abs = function (el) { var r = el.getBoundingClientRect(); return { x: r.left + window.pageXOffset, y: r.top + window.pageYOffset, w: r.width, h: r.height }; };
     var phone = function () { return window.innerWidth < 760; };
     var update = function () {
       var readY = reduce ? 1e9 : window.pageYOffset + window.innerHeight * 0.6;
-      segs.forEach(function (sg) {
-        var f = Math.max(0, Math.min(1, (readY - sg.y1) / Math.max(1, sg.y2 - sg.y1)));
-        if (Math.abs(f - sg.f) > 0.0005) { sg.el.setAttribute('stroke-dashoffset', (sg.L * (1 - f)).toFixed(1)); sg.f = f; }
-      });
-      // shown only while the reading line is on the straight rail
+      // the lead-in from the hero (above the rail; only near the top)
+      if (lead) {
+        var f = Math.max(0, Math.min(1, (readY - lead.y1) / Math.max(1, lead.y2 - lead.y1)));
+        if (Math.abs(f - lead.f) > 0.0005) { lead.el.setAttribute('stroke-dashoffset', (lead.L * (1 - f)).toFixed(1)); lead.f = f; }
+      }
       var on = !reduce && readY > railTop && readY < railEnd;
       if (on !== head._on) { head._on = on; head.classList.toggle('on', on); }
       brs.forEach(function (b) {
-        var on = readY >= b.y;
-        if (on === b.on) return;
-        b.on = on;
-        if (b.p) b.p.style.strokeDashoffset = on ? '0' : String(b.L);
-        if (on && !reduce && window.EmberCore) setTimeout(function () { if (b.on) window.EmberCore.pulse(b.name); }, b.p ? 850 : 0);
+        var hit = readY >= b.y;
+        if (hit === b.on) return;
+        b.on = hit;
+        if (b.p) b.p.style.strokeDashoffset = hit ? '0' : String(b.L);
+        if (hit && !reduce && window.EmberCore) setTimeout(function () { if (b.on) window.EmberCore.pulse(b.name); }, b.p ? 650 : 0);
       });
     };
     var geometry = function () {
-      var root = document.documentElement;
-      svg.setAttribute('width', root.scrollWidth); svg.setAttribute('height', root.scrollHeight);
+      var root = document.documentElement, W = root.scrollWidth, H = root.scrollHeight;
+      [litSvg, svg].forEach(function (v) { v.setAttribute('width', W); v.setAttribute('height', H); });
       var w0 = $('.sec .wrap'), wa = abs(w0), pad = parseFloat(window.getComputedStyle(w0).paddingLeft) || 0;
       var rx = phone() ? 10 : Math.max(16, wa.x + pad - 34);
       var hb = abs(hero), hint = $('.scrollhint'), hr = hint ? abs(hint) : null;
@@ -420,24 +419,23 @@
         if (mode === 'top') { y = st + 46; d = 'M' + rx + ' ' + (y - 16) + ' Q' + rx + ' ' + y + ' ' + (rx + 16) + ' ' + y + ' H' + (ax - 16) + ' Q' + ax + ' ' + y + ' ' + ax + ' ' + (y + 16) + ' V' + (ay - r); }
         else if (mode === 'left') { d = 'M' + rx + ' ' + (ay - 16) + ' Q' + rx + ' ' + ay + ' ' + (rx + 16) + ' ' + ay + ' H' + (ax - r); }
         else y = st + 46;            // no branch (a pinned or crowded core): it still answers
-        return { y: y, d: d, name: el.getAttribute('data-core') };
+        // a branch starts at its bend, 16px above the tap: that's where the
+        // head leaves the rail for it
+        return { y: d ? y - 16 : y, d: d, name: el.getAttribute('data-core') };
       }).sort(function (p, q) { return p.y - q.y; });
-      var parts = [{ d: 'M' + sx + ' ' + sy + ' C' + sx + ' ' + (sy + 90) + ' ' + rx + ' ' + (y0 - 90) + ' ' + rx + ' ' + y0, y1: sy, y2: y0 }], prev = y0;
-      taps.forEach(function (t, i) {
-        // the rail ends where the last branch's curve begins, so nothing
-        // pokes past the bend (10/8/26)
-        var end = i === taps.length - 1 && t.d ? t.y - 16 : t.y;
-        if (end > prev + 1) { parts.push({ d: 'M' + rx + ' ' + prev + ' V' + end, y1: prev, y2: end }); prev = end; }
-      });
-      railTop = y0; railEnd = prev;
-      head.style.transform = 'translate3d(' + rx.toFixed(1) + 'px,' + (window.innerHeight * 0.6).toFixed(1) + 'px,0)';
-      gT.innerHTML = ''; gL.innerHTML = ''; gB.innerHTML = '';
-      segs = parts.map(function (pt) {
-        mk('path', { d: pt.d, 'class': 'track' }, gT);
-        var el = mk('path', { d: pt.d, 'class': 'lit' }, gL), L = el.getTotalLength();
-        el.setAttribute('stroke-dasharray', L + ' ' + L); el.setAttribute('stroke-dashoffset', L);
-        return { el: el, L: L, y1: pt.y1, y2: pt.y2, f: -1 };
-      });
+      // the rail ends where the last branch bends, so nothing pokes past it
+      var last = taps[taps.length - 1];
+      railTop = y0; railEnd = last ? Math.max(y0, last.y) : y0 + 400;
+      var rail = 'M' + rx + ' ' + y0 + ' V' + railEnd, leadD = 'M' + sx + ' ' + sy + ' C' + sx + ' ' + (sy + 90) + ' ' + rx + ' ' + (y0 - 90) + ' ' + rx + ' ' + y0;
+      litSvg.innerHTML = ''; gT.innerHTML = ''; gL.innerHTML = ''; gB.innerHTML = '';
+      mk('path', { d: rail, 'class': 'lit' }, litSvg);
+      mk('path', { d: leadD + ' V' + railEnd, 'class': 'track' }, gT);
+      var le = mk('path', { d: leadD, 'class': 'lit' }, gL), LL = le.getTotalLength();
+      le.setAttribute('stroke-dasharray', LL + ' ' + LL); le.setAttribute('stroke-dashoffset', LL);
+      lead = { el: le, L: LL, y1: sy, y2: y0, f: -1 };
+      var rl = (window.innerHeight * 0.6).toFixed(1);
+      head.style.transform = 'translate3d(' + rx.toFixed(1) + 'px,' + rl + 'px,0)';
+      veil.style.transform = 'translate3d(' + (rx - 4).toFixed(1) + 'px,' + rl + 'px,0)';
       var was = {};
       brs.forEach(function (b) { was[b.name] = b.on; });
       brs = taps.map(function (t) {
