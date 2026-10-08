@@ -404,14 +404,15 @@ p{margin:0}
 .chat .top .mini .ember{position:absolute;inset:0;box-shadow:0 0 14px 2px rgba(200,75,47,.45),inset -3px -4px 8px rgba(24,4,1,.55)}
 
 /* ── The Ember Core (ember-core.js, 10/7/26): Cavnar AI's intelligence,
-   drawn once by WebGL wherever an element carries data-core — the hero,
-   the problem's join, the schedule's drafter, the platform's centre, Ask
-   Cavnar AI and the demo. The canvas and the data streams sit over the
-   page and never take a click. Each anchor keeps its CSS .ember under it:
+   drawn by one WebGL renderer wherever an element carries data-core — the
+   hero, the problem's join, the schedule's drafter, the platform's centre,
+   Ask Cavnar AI and the demo — into a canvas on that anchor. The canvases
+   and the data streams scroll with the page and never take a click. Each anchor keeps its CSS .ember under it:
    hidden only once WebGL is live (html.core-live), so no WebGL, a lost
    context or a failed compile still shows the old sphere. ── */
-#core-gl{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:60}
-#core-streams{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:59;overflow:visible}
+/* each core's canvas sits on its anchor and scrolls with the page */
+.core-cv{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:none;max-height:none;pointer-events:none;visibility:visible;z-index:1}
+#core-streams{position:absolute;left:0;top:0;pointer-events:none;z-index:59;overflow:visible}
 .core-live [data-core].ember,.core-live [data-core] .ember{visibility:hidden;animation:none}
 .core-live .orb .r{display:none}
 .pcore{position:relative;width:72px;height:72px;margin:58px auto 0}

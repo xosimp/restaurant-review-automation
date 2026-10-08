@@ -1657,9 +1657,12 @@ soft reflection band (never a white glint: that read as a marble), and embers
 in orbit that pass behind the shell. Nothing loops: the flow is 3D noise, the
 breath two incommensurate sines.
 - **One renderer.** `public/static/ember-core.js` (ES5, WebGL1, no library):
-  one canvas fixed over the page (`#core-gl`, z 60, under the nav, no clicks)
-  draws a core at every `[data-core]` element, each inside its own square
-  (viewport + scissor) at `data-core-scale` × its size (2.6 default). Detail
+  one off-page WebGL context draws a core for every `[data-core]` element and
+  copies it into that anchor's own `.core-cv` canvas (`data-core-scale` × its
+  size, 2.6 default), so every core scrolls with the page like an image — a
+  canvas fixed over the page trailed iOS's momentum scroll and bounced
+  (10/7/26). At most 60 frames a second; ember orbits are placed once a frame
+  by the script; phones cap the volume at 7 steps and 12 embers. Detail
   steps down with size — 10 / 7 / 5 / 3 volume steps, 18 / 9 / 0 embers — so a
   16px core is the same thing as the 168px hero. Quality drops once if frames
   run long; the loop stops when no core is on screen or the tab is hidden.
@@ -1668,8 +1671,8 @@ breath two incommensurate sines.
   flares. *Thinking* (`EmberCore.think`): the flow quickens and sparks run the
   veins. *Learning*: every core brightens with how far the visitor has read.
 - **Story on the homepage.** Hero: the core alone. The problem: what each
-  system knows streams into it (`#core-streams`, an SVG layer; lines leave and
-  enter at box edges, never across words). The Schedule Generator: the core in
+  system knows streams into it (`#core-streams`, an SVG layer in page
+  coordinates; lines leave and enter at box edges, never across words). The Schedule Generator: the core in
   the board's header beams into each cell as it fills. The platform: the
   centre is the core; each module that lights flares it and feeds its spoke.
   Ask Cavnar AI: the avatar is the core, thinking while it answers. The demo:

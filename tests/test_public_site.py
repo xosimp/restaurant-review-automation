@@ -122,8 +122,12 @@ def test_the_ember_core_is_one_renderer_with_a_fallback_and_a_still_frame():
         assert f'data-core="{name}"' in html, name
     css = open(os.path.join(PUBLIC, "static", "site.css"), encoding="utf-8").read()
     assert ".core-live [data-core].ember,.core-live [data-core] .ember{visibility:hidden" in css
-    assert "#core-gl{position:fixed;inset:0;width:100%;height:100%;pointer-events:none" in css
+    # each core paints on its own anchor and scrolls with the page: a canvas
+    # fixed over the page trailed iOS's momentum scroll and bounced (10/7/26)
+    assert ".core-cv{position:absolute;" in css and "pointer-events:none" in css
+    assert "#core-gl" not in css and "position:fixed" not in css.split("#core-streams")[1].split("}")[0]
     js = open(os.path.join(PUBLIC, "static", "ember-core.js"), encoding="utf-8").read()
     assert "prefers-reduced-motion" in js and "root.classList.add('core-live')" in js
+    assert "now - lastDraw < 15" in js, "at most 60 frames a second"
     assert "webglcontextlost" in js and "root.classList.remove('core-live')" in js
     assert "=>" not in js and "let " not in js and "const " not in js.replace("const vec", "").replace("const int", ""), "ES5, like site.js"

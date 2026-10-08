@@ -1,9 +1,10 @@
 /* cavnar.ai — the Ember Core: Cavnar AI's intelligence, drawn (10/7/26).
-   One WebGL canvas fixed over the page draws the core wherever an element
-   carries data-core (the hero, the problem's join, the schedule's drafter,
-   the platform's centre, Ask Cavnar AI, the demo): the same AI, met again in
-   every section. Each core is drawn only inside its own square (viewport +
-   scissor), so the GPU shades a few hundred thousand pixels, not the page.
+   One WebGL renderer draws the core wherever an element carries data-core
+   (the hero, the problem's join, the schedule's drafter, the platform's
+   centre, Ask Cavnar AI, the demo): the same AI, met again in every section.
+   Each core paints into its own small canvas in its section, so it scrolls
+   with the page natively (10/7/26: a canvas fixed over the page trailed
+   iOS's momentum scroll and bounced), at most 60 times a second.
 
    The material is "molten core": a dark glass shell holding a slow plasma —
    a hot heart, thin veins of light carried by a domain-warped flow, smoke
@@ -22,7 +23,7 @@
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var anchors = [], canvas, gl, prog, U = {}, running = false, raf = 0, lastT = 0, flowT = 0;
   var mouse = { x: -1e4, y: -1e4 }, knowledge = 0, scrollKick = 0, lastScrollY = window.pageYOffset;
-  var quality = 1, slow = 0, frames = 0, dprCap = window.innerWidth < 700 ? 1.5 : 1.75;
+  var quality = 1, slow = 0, frames = 0;
 
   // ── the shader ─────────────────────────────────────────────────────────
   var NOISE = [
@@ -44,8 +45,9 @@
   ].join('\n');
   var FS = [
     'precision highp float;',
-    'uniform vec2 u_res,u_off,u_gaze;',
-    'uniform float u_t,u_flow,u_energy,u_pulse,u_flare,u_think,u_steps,u_parts,u_scale,u_seed,u_alpha;',
+    'uniform vec2 u_res,u_gaze;',
+    'uniform vec4 u_p[18];',
+    'uniform float u_t,u_flow,u_energy,u_pulse,u_flare,u_think,u_steps,u_parts,u_scale,u_seed;',
     NOISE,
     'vec3 rotY(vec3 p,float a){float c=cos(a),s=sin(a);return vec3(c*p.x+s*p.z,p.y,-s*p.x+c*p.z);}',
     'vec3 rotX(vec3 p,float a){float c=cos(a),s=sin(a);return vec3(p.x,c*p.y-s*p.z,s*p.y+c*p.z);}',
@@ -54,9 +56,8 @@
     'if(x<.25)return mix(a,b,x/.25);if(x<.5)return mix(b,c,(x-.25)/.25);if(x<.78)return mix(c,d,(x-.5)/.28);return mix(d,e,(x-.78)/.22);}',
     'float fbm3(vec3 p){float a=.5,s=0.;for(int i=0;i<3;i++){s+=a*snoise(p);p=p*2.03+vec3(1.7,9.2,3.1);a*=.5;}return s;}',
     'float ridge3(vec3 p){float a=.5,s=0.;for(int i=0;i<3;i++){float n=1.-abs(snoise(p));s+=a*n*n;p=p*2.1+vec3(3.1,1.7,5.3);a*=.5;}return s;}',
-    'float hash(float n){return fract(sin(n)*43758.5453);}',
     'void main(){',
-    ' vec2 ps=(((gl_FragCoord.xy-u_off)/u_res)*2.-1.)*u_scale;',
+    ' vec2 ps=((gl_FragCoord.xy/u_res)*2.-1.)*u_scale;',
     ' float t=u_t,fl=u_flow;',
     // breath: two incommensurate sines, never the same twice
     ' float br=.5+.3*sin(t*.53+u_seed)+.2*sin(t*.31+1.3+u_seed*2.);',
@@ -105,23 +106,18 @@
     '  float lum=dot(ins,vec3(.3,.5,.2)); ins=ins*(1./(1.+lum*.42));',
     '  col=mix(col,ins,inside);',
     ' }',
-    // embers in orbit, hidden when they pass behind the shell
+    // embers in orbit (placed by the script once a frame: x, y, size, light)
     ' for(int k=0;k<18;k++){',
-    '  float fk=float(k); if(fk>=u_parts)break;',
-    '  float h1=hash(fk*12.9898+u_seed),h2=hash(fk*78.233+u_seed),h3=hash(fk*39.42+u_seed);',
-    '  float orb=1.1+h1*.75; float sp=(.035+.09*h2)*(mod(fk,2.)<1.?1.:-1.); float a=h3*6.2831+fl*sp;',
-    '  vec3 q=vec3(cos(a)*orb,sin(a)*orb*.16,sin(a)*orb); q=rotX(q,(h1-.5)*1.1+.25); q=rotY(q,h2*3.);',
-    '  float occl=(q.z<0.&&length(q.xy)<R)?0.:1.;',
-    '  float fli=.5+.5*sin(t*(.9+h2*1.7)+fk*2.1);',
-    '  float s=(.006+.009*h3)*(1.+.35*q.z/orb);',
-    '  vec2 dv=ps-q.xy; float g=exp(-dot(dv,dv)/(s*s))*occl*fli*en;',
-    '  float hal=exp(-length(dv)/(s*4.))*.22*occl*fli*en;',
+    '  if(float(k)>=u_parts)break;',
+    '  vec4 e=u_p[k]; vec2 dv=ps-e.xy;',
+    '  float g=exp(-dot(dv,dv)/(e.z*e.z))*e.w*en;',
+    '  float hal=exp(-length(dv)/(e.z*4.))*.22*e.w*en;',
     '  col+=vec3(1.,.72,.46)*g*1.2+vec3(.9,.33,.1)*hal;',
     ' }',
     // premultiplied, and never brighter than its own alpha: it lights the page, never punches through it
     ' float al=max(inside,max(col.r,max(col.g,col.b)));',
     ' al=clamp(al,0.,1.);',
-    ' gl_FragColor=vec4(min(col,vec3(al)),al)*u_alpha;',
+    ' gl_FragColor=vec4(min(col,vec3(al)),al);',
     '}'
   ].join('\n');
 
@@ -140,46 +136,77 @@
     var buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     var loc = gl.getAttribLocation(prog, 'a'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    ['u_res', 'u_off', 'u_gaze', 'u_t', 'u_flow', 'u_energy', 'u_pulse', 'u_flare', 'u_think', 'u_steps', 'u_parts', 'u_scale', 'u_seed', 'u_alpha'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
-    gl.enable(gl.SCISSOR_TEST);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    ['u_res', 'u_gaze', 'u_t', 'u_flow', 'u_energy', 'u_pulse', 'u_flare', 'u_think', 'u_steps', 'u_parts', 'u_scale', 'u_seed', 'u_p'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
     gl.clearColor(0, 0, 0, 0);
   }
 
   // ── anchors: every element that holds the core ─────────────────────────
+  // Each core paints into its own small 2D canvas inside its section, so it
+  // scrolls with the page like an image (on iOS a canvas fixed over the page
+  // trailed the momentum scroll and bounced back). One WebGL context draws
+  // every core in turn and each copy is blitted to its own canvas.
   function Core(el, i) {
     this.el = el; this.name = el.getAttribute('data-core');
     this.scale = parseFloat(el.getAttribute('data-core-scale')) || 2.6;
     this.seed = 1.7 + i * 3.1;
     this.energy = 0.55; this.think = 0; this.thinkTo = 0; this.flare = 0;
-    this.pulse = -1; this.gx = 0; this.gy = 0; this.hot = 0; this.box = null;
-    // the section's own reveal (.rv) fades the core in with it
-    var f = el; while (f && f !== doc.body && !(f.classList && f.classList.contains('rv'))) f = f.parentNode;
-    this.fade = f && f !== doc.body ? f : null;
+    this.pulse = -1; this.gx = 0; this.gy = 0; this.box = null; this.visible = false; this.css = 0;
+    // the canvas sits in the anchor's own box, or beside the sphere it
+    // replaces (a .ember clips its children to a circle)
+    var host = el.classList.contains('ember') ? el.parentNode : el;
+    this.cv = doc.createElement('canvas'); this.cv.className = 'core-cv'; this.cv.setAttribute('aria-hidden', 'true');
+    this.cv.width = this.cv.height = 0; this.cv.style.width = this.cv.style.height = '0px';
+    host.appendChild(this.cv);
+    this.ctx = this.cv.getContext('2d');
+    var self = this;
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (es) { es.forEach(function (e) { self.visible = e.isIntersecting; }); if (self.visible) kick(); }, { rootMargin: '160px 0px' }).observe(host);
+    } else this.visible = true;
   }
   Core.prototype.measure = function () {
     var r = this.el.getBoundingClientRect(), s = Math.min(r.width, r.height);
     this.box = { cx: r.left + r.width / 2, cy: r.top + r.height / 2, s: s };
-    var q = s * this.scale / 2, vw = canvas.clientWidth || window.innerWidth, vh = canvas.clientHeight || window.innerHeight;
-    this.visible = s > 3 && r.width > 0 && this.box.cx + q > 0 && this.box.cx - q < vw && this.box.cy + q > 0 && this.box.cy - q < vh;
-    return this.visible;
+    return s > 3;
+  };
+  // the canvas follows the anchor's size (breakpoints change it)
+  Core.prototype.fit = function (d) {
+    var css = Math.round(this.box.s * this.scale), px = Math.round(css * d);
+    if (css !== this.css) { this.css = css; this.cv.style.width = css + 'px'; this.cv.style.height = css + 'px'; }
+    if (this.cv.width !== px) { this.cv.width = px; this.cv.height = px; }
+    return px;
   };
   function find(name) { for (var i = 0; i < anchors.length; i++) if (anchors[i].name === name) return anchors[i]; return null; }
+  function frac(x) { return x - Math.floor(x); }
+  function hash(n) { return frac(Math.sin(n) * 43758.5453); }
+  // the embers' orbits, once a frame instead of once a pixel: x, y, size, light
+  var P = new Float32Array(72);
+  function embers(c, n, t, fl) {
+    for (var k = 0; k < n; k++) {
+      var h1 = hash(k * 12.9898 + c.seed), h2 = hash(k * 78.233 + c.seed), h3 = hash(k * 39.42 + c.seed);
+      var orb = 1.1 + h1 * 0.75, sp = (0.035 + 0.09 * h2) * (k % 2 ? -1 : 1), a = h3 * 6.2831 + fl * sp;
+      var x = Math.cos(a) * orb, y = Math.sin(a) * orb * 0.16, z = Math.sin(a) * orb;
+      var ax = (h1 - 0.5) * 1.1 + 0.25, cx = Math.cos(ax), sx = Math.sin(ax), y2 = cx * y - sx * z, z2 = sx * y + cx * z;
+      var ay = h2 * 3, cy = Math.cos(ay), sy = Math.sin(ay), x3 = cy * x + sy * z2, z3 = -sy * x + cy * z2;
+      var hidden = z3 < 0 && Math.sqrt(x3 * x3 + y2 * y2) < 1 ? 0 : 1;
+      P[k * 4] = x3; P[k * 4 + 1] = y2; P[k * 4 + 2] = (0.006 + 0.009 * h3) * (1 + 0.35 * z3 / orb);
+      P[k * 4 + 3] = hidden * (0.5 + 0.5 * Math.sin(t * (0.9 + h2 * 1.7) + k * 2.1));
+    }
+  }
 
   // ── the loop ───────────────────────────────────────────────────────────
-  function resize() {
-    if (!canvas) return;
-    var d = Math.min(window.devicePixelRatio || 1, dprCap) * quality;
-    var w = Math.round((canvas.clientWidth || window.innerWidth) * d), h = Math.round((canvas.clientHeight || window.innerHeight) * d);
-    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-  }
+  var phone = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 700;
+  function density() { return Math.min(window.devicePixelRatio || 1, phone ? 1.5 : 1.75) * quality; }
+  var lastDraw = 0;
   function frame(now) {
     raf = 0;
-    var t = now / 1000, dt = lastT ? Math.min(0.1, t - lastT) : 0.016; lastT = t;
+    // 60 a second is enough for something this slow; a 120Hz phone would
+    // otherwise draw it twice as often
+    if (!reduce && lastDraw && now - lastDraw < 15) { raf = requestAnimationFrame(frame); return; }
+    var t = now / 1000, dt = lastT ? Math.min(0.1, t - lastT) : 0.016; lastT = t; lastDraw = now;
     if (!reduce) {
       // quality steps down once if the device can't hold the frame rate
       frames++; if (dt > 0.026) slow++;
-      if (frames === 120) { if (slow > 50 && quality > 0.7) { quality = 0.7; resize(); } frames = 0; slow = 0; }
+      if (frames === 90) { if (slow > 35 && quality > 0.7) quality = 0.7; frames = 0; slow = 0; }
     }
     var y = window.pageYOffset, dy = Math.abs(y - lastScrollY); lastScrollY = y;
     scrollKick = Math.min(1, scrollKick * 0.92 + dy * 0.004);
@@ -188,45 +215,45 @@
     var anyThink = 0;
     anchors.forEach(function (c) { anyThink = Math.max(anyThink, c.think); });
     flowT += dt * (1 + 1.4 * anyThink + 0.8 * scrollKick);
-
-    var k = canvas.width / (canvas.clientWidth || window.innerWidth), H = canvas.height, visible = 0;
-    gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, canvas.width, H); gl.clear(gl.COLOR_BUFFER_BIT); gl.enable(gl.SCISSOR_TEST);
+    var d = density(), drawn = 0;
     anchors.forEach(function (c) {
-      if (!c.measure()) return;
-      visible++;
+      if (!c.visible || !c.measure()) return;
+      drawn++;
       var b = c.box, dx = mouse.x - b.cx, dyy = mouse.y - b.cy, dist = Math.sqrt(dx * dx + dyy * dyy);
       var reach = Math.max(420, b.s * 3);
       var near = Math.max(0, 1 - dist / reach), over = dist < b.s * 0.6 ? 1 : 0;
       var gx = Math.max(-1, Math.min(1, dx / reach)), gy = Math.max(-1, Math.min(1, -dyy / reach));
       var e = 0.55 + 0.4 * knowledge + 0.16 * near + 0.18 * over + 0.12 * scrollKick + 0.2 * c.think;
-      var ease = Math.min(1, dt * 2.2);
-      c.energy += (Math.min(1.2, e) - c.energy) * ease;
+      c.energy += (Math.min(1.2, e) - c.energy) * Math.min(1, dt * 2.2);
       c.gx += (gx * near - c.gx) * Math.min(1, dt * 1.6); c.gy += (gy * near - c.gy) * Math.min(1, dt * 1.6);
       c.think += (c.thinkTo - c.think) * Math.min(1, dt * 2.5);
       c.flare = Math.max(0, c.flare - dt * 0.9);
       if (c.pulse >= 0) { c.pulse += dt / 1.6; if (c.pulse >= 1) c.pulse = -1; }
-      var px = b.s * k, q = px * c.scale;
-      var x0 = Math.round(b.cx * k - q / 2), y0 = Math.round(H - (b.cy * k + q / 2)), qs = Math.round(q);
-      gl.viewport(x0, y0, qs, qs); gl.scissor(x0, y0, qs, qs);
+      var qs = c.fit(d), px = b.s * d;
+      if (canvas.width < qs) { canvas.width = qs; canvas.height = qs; }
       var steps = px >= 150 ? 10 : px >= 70 ? 7 : px >= 36 ? 5 : 3;
+      if (phone) steps = Math.min(steps, 7);
       if (quality < 1) steps = Math.max(3, steps - 2);
-      gl.uniform2f(U.u_res, qs, qs); gl.uniform2f(U.u_off, x0, y0); gl.uniform2f(U.u_gaze, c.gx, c.gy);
+      var parts = px >= 110 ? (phone ? 12 : 18) : px >= 60 ? 9 : 0;
+      embers(c, parts, reduce ? 12 : t, reduce ? 12 : flowT);
+      gl.viewport(0, 0, qs, qs); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.uniform2f(U.u_res, qs, qs); gl.uniform2f(U.u_gaze, c.gx, c.gy);
       gl.uniform1f(U.u_t, reduce ? 12 : t); gl.uniform1f(U.u_flow, reduce ? 12 : flowT);
       gl.uniform1f(U.u_energy, c.energy); gl.uniform1f(U.u_pulse, c.pulse); gl.uniform1f(U.u_flare, c.flare);
-      gl.uniform1f(U.u_think, c.think); gl.uniform1f(U.u_steps, steps);
-      gl.uniform1f(U.u_parts, px >= 110 ? 18 : px >= 60 ? 9 : 0);
-      gl.uniform1f(U.u_scale, c.scale); gl.uniform1f(U.u_seed, c.seed);
-      gl.uniform1f(U.u_alpha, c.fade ? +window.getComputedStyle(c.fade).opacity : 1);
+      gl.uniform1f(U.u_think, c.think); gl.uniform1f(U.u_steps, steps); gl.uniform1f(U.u_parts, parts);
+      gl.uniform1f(U.u_scale, c.scale); gl.uniform1f(U.u_seed, c.seed); gl.uniform4fv(U.u_p, P);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      // WebGL's origin is bottom-left: the square drawn sits at the bottom
+      c.ctx.clearRect(0, 0, qs, qs);
+      c.ctx.drawImage(canvas, 0, canvas.height - qs, qs, qs, 0, 0, qs, qs);
     });
     var live = Streams.step(now);
-    running = !reduce && !doc.hidden && (visible > 0 || live);
+    running = !reduce && !doc.hidden && (drawn > 0 || live);
     if (running) raf = requestAnimationFrame(frame);
   }
   function kick() {
     if (!gl || raf) return;
-    if (reduce || doc.hidden) { raf = requestAnimationFrame(frame); return; }
-    lastT = 0; raf = requestAnimationFrame(frame);
+    lastT = 0; lastDraw = 0; raf = requestAnimationFrame(frame);
   }
 
   // ── streams: data moving into the core, or out of it ───────────────────
@@ -242,9 +269,12 @@
       mk('stop', { offset: '0', 'stop-color': '#fff4e8', 'stop-opacity': '1' }, rg);
       mk('stop', { offset: '.28', 'stop-color': '#f2b183', 'stop-opacity': '.9' }, rg);
       mk('stop', { offset: '1', 'stop-color': '#c84b2f', 'stop-opacity': '0' }, rg);
-      doc.body.appendChild(svg);
+      doc.body.appendChild(svg); size();
     }
-    function center(el) { var r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, Math.min(r.width, r.height), r.width / 2, r.height / 2]; }
+    // the layer spans the document and is drawn in page coordinates, so
+    // lines scroll with the page instead of being re-placed every frame
+    function size() { if (!svg) return; svg.setAttribute('width', root.scrollWidth); svg.setAttribute('height', root.scrollHeight); }
+    function center(el) { var r = el.getBoundingClientRect(); return [r.left + window.pageXOffset + r.width / 2, r.top + window.pageYOffset + r.height / 2, Math.min(r.width, r.height), r.width / 2, r.height / 2]; }
     // how far from an end's centre the line starts: the core's shell, or the
     // edge of a box (so a line never runs across a card's words)
     function inset(el, P, ux, uy) {
@@ -255,7 +285,7 @@
     // from: an element or the core; to: the same. dir only changes the curve's lean.
     function add(fromEl, toEl, opts) {
       if (!svg || reduce || list.length > 12) return;
-      opts = opts || {};
+      opts = opts || {}; size();
       var id = 'cs' + (uid++);
       var g = mk('linearGradient', { id: id, gradientUnits: 'userSpaceOnUse' }, svg.firstChild);
       mk('stop', { offset: '0', 'stop-color': '#e8956a', 'stop-opacity': '0' }, g);
@@ -290,7 +320,7 @@
       }
       return list.length > 0;
     }
-    return { init: init, add: add, step: step };
+    return { init: init, add: add, step: step, size: size };
   })();
 
   // ── the story: what each section asks of the core ──────────────────────
@@ -362,17 +392,17 @@
   // ── start ──────────────────────────────────────────────────────────────
   function start() {
     var els = doc.querySelectorAll('[data-core]'); if (!els.length) return;
-    canvas = doc.createElement('canvas'); canvas.id = 'core-gl'; canvas.setAttribute('aria-hidden', 'true');
+    // the shared renderer draws off-page; each core copies its square out
+    canvas = doc.createElement('canvas'); canvas.width = canvas.height = 256;
     var opts = { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: 'high-performance' };
     try { gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts); } catch (e) { gl = null; }
     if (!gl) return;
     try { compile(); } catch (e) { gl = null; return; }
-    doc.body.appendChild(canvas);
     for (var i = 0; i < els.length; i++) anchors.push(new Core(els[i], i));
     root.classList.add('core-live');
-    Streams.init(); story(); resize();
-    canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); root.classList.remove('core-live'); gl = null; if (raf) cancelAnimationFrame(raf); raf = 0; });
-    window.addEventListener('resize', function () { dprCap = window.innerWidth < 700 ? 1.5 : 1.75; resize(); kick(); });
+    Streams.init(); story();
+    canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); root.classList.remove('core-live'); gl = null; if (raf) cancelAnimationFrame(raf); raf = 0; anchors.forEach(function (c) { c.cv.remove(); }); });
+    window.addEventListener('resize', function () { Streams.size(); kick(); });
     window.addEventListener('scroll', kick, { passive: true });
     window.addEventListener('pointermove', function (e) { if (e.pointerType === 'mouse') { mouse.x = e.clientX; mouse.y = e.clientY; } kick(); }, { passive: true });
     window.addEventListener('pointerdown', function (e) {
