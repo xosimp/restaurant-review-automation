@@ -852,6 +852,13 @@ def record_recount_route(restaurant_id, ingredient_id, current_user):
     data = request.get_json() or {}
     if "counted_qty" not in data:
         return jsonify(ok=False, error="counted_qty required")
+    # Synced from an inventory system, its counts are the ledger's: a hand
+    # recount here would stand only until the next sync put the figure back
+    # (re-audit 10/8/26 #5) — the owner's count sheet refuses it the same way.
+    import strategy_routes as _sr_sync
+    _refused = _sr_sync._synced_refusal(restaurant_id, "Counts")
+    if _refused:
+        return jsonify(**_refused[0]), _refused[1]
     try:
         result = inventory_ledger.record_recount(
             restaurant_id, ingredient_id, float(data["counted_qty"]),

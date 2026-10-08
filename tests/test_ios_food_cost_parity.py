@@ -17,7 +17,10 @@ def test_the_count_sheet_asks_about_a_delivery_that_arrived_mid_count():
     delivery received after the sheet opened was in the count."""
     src = _swift("Features/FoodCost/CountSheetView.swift")
     assert 'case ledgerMark = "ledger_mark"' in src
-    assert "SaveBody(items: lines, ledgerMark: ledgerMark, deliveries: deliveries)" in src
+    # The mark the counts were started on (a kept draft's, else the sheet's),
+    # live and parked alike (re-audit 10/8/26 #1).
+    assert "let mark = draftMark ?? ledgerMark" in src
+    assert src.count("ledgerMark: mark, deliveries: deliveries)") == 2
     assert "needsConfirm == true" in src and "error.status == 409" in src
     assert 'save(deliveries: "counted")' in src and 'save(deliveries: "after")' in src
 
