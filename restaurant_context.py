@@ -471,6 +471,20 @@ def _params_key(params) -> str:
     return (";p" + _hash(params)[:10]) if params else ""
 
 
+# Params that move with the day rather than name a different reading: they
+# stay in the section's version (version_memory hashes every param) but out
+# of its cache scope, so the DSR narrative's memory - read with that night's
+# subjects and morning-after clock - replaces its one row each night instead
+# of adding a scope a night that nothing reads again (context re-audit
+# 10/7/26 #10). Only for a section whose version reads req.params.
+VERSIONED_PARAMS = {"memory": ("now", "subjects")}
+
+
+def _scope_params(name, params) -> dict:
+    drop = VERSIONED_PARAMS.get(name) or ()
+    return {k: v for k, v in (params or {}).items() if k not in drop}
+
+
 def section(restaurant_id, name, viewer=None, params=None, db_path=None) -> Built:
     """One section for one viewer: from L1, else L2, else built — each only
     while its version stands. Never raises: a builder that fails gives a
@@ -479,7 +493,7 @@ def section(restaurant_id, name, viewer=None, params=None, db_path=None) -> Buil
     if sec is None:
         raise KeyError(f"unknown context section {name!r}")
     params = dict(params or {})
-    scope = viewer_scope(viewer, name) + _params_key(params)
+    scope = viewer_scope(viewer, name) + _params_key(_scope_params(name, params))
     if sec.salaries:
         scope += ";" + viewer_scope(None, "labor_trend")
     req = SectionRequest(restaurant_id=restaurant_id, section=name, viewer=viewer, scope=scope, params=params,

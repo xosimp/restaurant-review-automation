@@ -356,6 +356,25 @@ def test_a_record_from_before_the_change_still_verifies_its_prefix():
     assert got == [answer.strip()[:2400]]
 
 
+# ── #10 the DSR's nightly memory read keeps one row ─────────────────────────
+
+def test_the_dsr_memory_read_replaces_its_row_each_night_never_adds_a_scope():
+    import types
+    from datetime import date
+    from dsr import narrative
+    rid = _rid()
+    owner_memory.remember(rid, "Patio closes for the season on 10/15/26", audience="team", user=_owner(rid))
+    for d in (date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7)):
+        text = narrative._memory(types.SimpleNamespace(restaurant_id=rid, business_date=d, db_path=None))
+        assert "Patio closes" in text
+    rows = _l2(rid, "memory")
+    assert len(rows) == 1, "one scope for the DSR's memory, whatever the night"
+    # The night still moves the version: a new night is a new build, not a hit.
+    v = rows[0]["version"]
+    narrative._memory(types.SimpleNamespace(restaurant_id=rid, business_date=date(2026, 10, 8), db_path=None))
+    assert _l2(rid, "memory")[0]["version"] != v
+
+
 def test_the_canary_is_documented():
     env = open("docs/ops/ENVIRONMENT.md", encoding="utf-8").read()
     lib = open("PROMPT_LIBRARY.md", encoding="utf-8").read()

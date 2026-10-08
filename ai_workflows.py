@@ -105,7 +105,10 @@ class Policy:
     # auto-approved review reply): unset means the same as `reviewer`.
     reviewer_unattended: str = ""
     shadow_rate: float = 0.0     # share of runs a haiku_shadow reviewer scores
-    context: tuple = ()          # restaurant_context sections it reads
+    # The restaurant_context sections it is meant to read, and their budget.
+    # Declarative today (context re-audit 10/7/26 #10): no caller assembles
+    # its prompt from these; each read renders the sections it names itself.
+    context: tuple = ()
     context_tokens: int = 0
     caps: Caps = field(default_factory=Caps)
     batch: bool = False          # may run through Message Batches (unattended)
