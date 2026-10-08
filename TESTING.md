@@ -52,6 +52,34 @@ Editing a `.py` file, running its tests, restoring the original content, and re-
 
 About 140 test sites read a template, a module or a doc as text (`open(...)`, `inspect.getsource`) — 24 files read `templates/dashboard.html`, 11 of them slicing it by position, and `docs/ops/RECOVERY.md`, `docs/app-store-submission.md` and `DESIGN_SYSTEM.md`'s Email section are pinned the same way. `tests/test_docs_controls.py` reads `docs/ops/SECURITY.md`, `RECOVERY.md` and `RAILWAY_SCHEDULER_SPLIT.md` sentence by sentence against the code, and `tests/test_architecture_manifest.py` reads `ARCHITECTURE_MANIFEST.md`'s module table. Before moving, splitting or renaming any of those, grep `tests/` for the path.
 
+## iOS request bodies against their routes (`tests/test_ios_request_body_parity.py`, parity audit #24)
+
+Five Critical parity bugs were one bug: a hand-written Swift `Encodable` body left out a key the server reads, and the server quietly did something else. This test reads both halves from source and fails when a route reads a key that no iOS caller of that route sends. It runs in about 7 s.
+
+- **Swift side.** It parses every Swift file of the app's targets, not the tests. It finds each call that names a write `method:` (`send`, `sendKeepingBody`, `sendWithHeaders`, `sendWithBearer`, `QueuedWrite`, a view model's own `post(_:body:)`, and so on) and follows wrapper functions out to the call that names the path. It then turns the body into its JSON keys:
+  - a struct's stored properties
+  - `CodingKeys` raw values
+  - the `forKey:` cases of a custom `encode(to:)`
+  - a dictionary literal's keys, and the `body["k"] = …` writes to it
+  - keys sent in a `query:` string
+
+  `JSONEncoder.cavnar` has no key strategy, and `test_the_encoder_has_no_key_strategy` keeps it that way.
+- **Server side.** A subprocess imports `hosted_dashboard`. Importing it in-process would wire CSRF onto `client_bp` for the rest of the worker. For every write rule under `/mobile/` and `/staff/`, the subprocess reads the keys the view takes from the JSON body:
+  - `.get`, `[...]` and `in`
+  - a `_body()` helper
+  - `request.args.get` for keys the route also takes from the query string
+
+  It follows the functions the body is handed to, the callbacks it is handed through, and the functions that reach `request` themselves, three levels deep. `b.get("a") or b.get("b")` counts as one value under two names.
+- **The comparison** is per route, over every iOS caller: a partial update spread over several sheets counts as one body.
+
+  A key no caller sends fails, unless `NOT_SENT_BY_IOS` lists it. Each entry there was checked against the route and the web's own body: optional with a default the web also omits, the note beside a reason code, a web-only control, or a key that travels as a header or under another name.
+
+  A write whose route or body the server named, such as a push action's path, a confirmed Ask proposal or the offline queue's replay, sits in `UNREADABLE_OK`. Both lists fail when they go stale.
+
+  A key the phone sends that the route never reads is only a warning, unless it is one edit away from a key the route reads; then it is a typo, and fails.
+
+When it fails on new code, fix the Swift body, and add an XCTest for the body's shape (`RequestBodyParityTests.swift`). Don't extend the allowlist to get it passing.
+
 ## Strategic features
 `tests/test_strategic_foundations.py` (metrics, outcomes, goals, menu, demand, loss, issues) and `tests/test_strategic_features.py` (invoices with a fake Anthropic client, the web/mobile route twins and permission lines, the public issue link, the scheduled jobs). Both patch `get_conn` on every module they touch — each binds it at import.
 
