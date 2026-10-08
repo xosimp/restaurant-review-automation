@@ -905,7 +905,8 @@ def test_both_clients_render_the_dna_from_their_own_route():
     ios = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeDNA.swift")).read()
     assert '"/mobile/api/dna"' in ios and "LineMark" in ios
     home = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeView.swift")).read()
-    assert "RestaurantDNASheet()" in home
+    assert "DNAHomeCard(model: dnaModel)" in home and "RestaurantDNAScreen(model: dnaModel)" in home
+    assert "dnaRow" not in home                                   # no longer a row inside Results
 
 
 def test_the_profile_carries_its_own_weekly_series_for_the_dna_screen(db_path):

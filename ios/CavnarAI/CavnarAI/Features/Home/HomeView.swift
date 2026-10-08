@@ -56,8 +56,10 @@ struct HomeView: View {
     /// The issue an issue push named (DeepLinkRouter.pendingIssueId), handed
     /// to the day card to scroll to and pulse (parity audit #11).
     @State private var issueFocus: HomeIssueFocus?
-    /// Restaurant DNA, opened from Results (parity audit #98).
+    /// Restaurant DNA (redesigned 10/8/26): a card under the day card that
+    /// opens the full DNA screen. One read feeds both.
     @State private var showingDNA = false
+    @State private var dnaModel = RestaurantDNAViewModel()
     // Drives the hero's one-time landing reveal (opacity + upward offset),
     // and everything below it rises in off the same flip, a beat later.
     // Owned and animated by RootView, not here — the Ask Cavnar FAB (a
@@ -271,6 +273,14 @@ struct HomeView: View {
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.36)
 
+                            // Restaurant DNA under the day's read (owner,
+                            // 10/8/26: it sat at the foot of Results where
+                            // no one saw it). Opens the full DNA screen.
+                            DNAHomeCard(model: dnaModel) { showingDNA = true }
+                                .padding(.horizontal, 20)
+                                .padding(.top, 30)
+                                .belowFold(heroAppeared, delay: 0.4)
+
                             // What Cavnar recommends, each with the button
                             // that starts measuring it — less the one the
                             // one-thing card leads with — and the undo for
@@ -377,11 +387,6 @@ struct HomeView: View {
                                         .padding(.top, 30)
                                     }
 
-                                    // The restaurant's own operating profile,
-                                    // dimension by dimension (parity #98).
-                                    dnaRow
-                                        .padding(.horizontal, 20)
-                                        .padding(.top, 30)
                                 }
                             }
                             .padding(.top, 34)
@@ -550,8 +555,8 @@ struct HomeView: View {
             .sheet(isPresented: $showingDataHealth) {
                 DataHealthSheet(summary: viewModel.summary?.dataHealth)
             }
-            .sheet(isPresented: $showingDNA) {
-                RestaurantDNASheet()
+            .fullScreenCover(isPresented: $showingDNA) {
+                RestaurantDNAScreen(model: dnaModel)
             }
             .sheet(item: $evidenceLink, onDismiss: { Task { await followThrough.load() } }) { link in
                 HomeLinkEvidenceSheet(link: link)
@@ -879,37 +884,6 @@ struct HomeView: View {
                 await viewModel.load()
             }
         }
-    }
-
-    /// "Restaurant DNA" — one row in Results that opens the profile sheet.
-    private var dnaRow: some View {
-        Button {
-            Haptic.light()
-            showingDNA = true
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber2)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Restaurant DNA")
-                        .font(.cavnarBody(15, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                    Text("How this restaurant runs, week by week")
-                        .font(.cavnarBody(12.5, weight: 500))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.cavnarInk3)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .cavnarCard()
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens your restaurant's operating profile")
     }
 
     private var valueDetailSheet: some View {

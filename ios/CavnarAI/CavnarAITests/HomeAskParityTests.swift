@@ -266,6 +266,43 @@ final class HomeAskParityTests: XCTestCase {
         XCTAssertEqual(RestaurantDNA.weekStart("2026-W40"), "9/28/26")
     }
 
+    /// The redesign (10/8/26): the story beside the profile — traits earned
+    /// by a figure, a still-learning axis as nil (never 0), progress from
+    /// the dimension's own count, and the read split into its headline.
+    func testTheDNAStoryDecodesTraitsTheShapeAndWhatIsStillLearning() throws {
+        let r = try decode(RestaurantDNA.self, """
+            {"ok": true, "profile": {"available": true, "measured": 1, "of": 2, "families": [{"key": "sales", "label": "Sales",
+              "dimensions": [{"key": "weekend_share", "label": "Share of sales Friday to Sunday", "display": "61%", "value": 0.61,
+                              "measured": true, "dormant": false, "history": []}]}]},
+             "story": {"headline": "Simple EJ's is a full-service sports bar that does 61% of its sales Friday to Sunday. Watch: labor % swings 9.3 points.",
+               "identity": [{"key": "concept", "label": "Sports bar"}],
+               "traits": [{"key": "uneven_labor_days", "name": "Uneven Labor Days", "icon": "wave", "family": "labor", "figure": "9.3 pts",
+                           "figure_label": "day-to-day labor % swing", "sentence": "s", "rule": "8 points or more", "dims": ["labor_swing"],
+                           "strength": 94, "tone": "watch"},
+                          {"key": "weekend_driven", "name": "Weekend Driven", "icon": "calendar", "family": "sales", "figure": "61%",
+                           "figure_label": "of sales Friday to Sunday", "sentence": "s", "rule": "55% or more", "dims": ["weekend_share"], "strength": 82}],
+               "axes": [{"key": "sales_stability", "label": "Sales Stability", "score": 47, "measured": 1, "of": 1},
+                        {"key": "predictability", "label": "Predictability", "score": null, "measured": 0, "of": 1}],
+               "learning": [{"key": "service_complaints", "name": "Service Under Pressure", "icon": "reply", "dormant": false,
+                             "progress": {"have": 19, "need": 20, "unit": "analysed reviews in 90 days", "pct": 95}},
+                            {"key": "beverage", "name": "Bar-Led", "icon": "glass", "dormant": true, "needs": "a mapped daily sales report"}],
+               "connections": [{"key": "labor_chain", "title": "How your staffing follows your sales",
+                                "nodes": [{"label": "Hours follow sales", "figure": "0.45", "note": "elasticity"},
+                                          {"label": "Results improved", "figure": null, "note": "measuring"}], "sentence": "When sales rise 10%"}],
+               "observed": {"nights": 43, "measured": 23, "of": 39, "coverage_pct": 59, "learning": 14}}}
+            """)
+        let s = try XCTUnwrap(r.story)
+        XCTAssertEqual(s.headParts.head, "Simple EJ's is a full-service sports bar that does 61% of its sales Friday to Sunday.")
+        XCTAssertEqual(s.headParts.rest, "Watch: labor % swings 9.3 points.")
+        XCTAssertEqual(s.orderedTraits.map(\.key), ["weekend_driven", "uneven_labor_days"])   // a watch after the strengths
+        XCTAssertNil(s.axes[1].score)                                                          // still learning, never 0
+        XCTAssertEqual(s.learning[0].line, "19 of 20 analysed reviews in 90 days")
+        XCTAssertEqual(s.learning[1].line, "Not measurable on Cavnar AI yet \u{2014} needs a mapped daily sales report")
+        XCTAssertNil(s.connections[0].nodes[1].figure)
+        XCTAssertEqual(r.value("weekend_share"), 0.61)
+        XCTAssertEqual(s.observed?.nights, 43)
+    }
+
     // MARK: The email's "Ask about this" link
 
     func testAnAskLinkFillsInTheQuestion() throws {
