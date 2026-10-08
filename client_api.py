@@ -277,7 +277,7 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
         if _row:
             if auto:
                 _action = "auto_approved"
-            elif _via_approve():
+            elif _via_approve(user):
                 # Support approving through view-as: not the owner's yes,
                 # not the owner's style (memory audit 9/29/26, view_as) —
                 # left out of trust, style examples and edit learning like
@@ -653,13 +653,19 @@ def approve_all_reviews_api(current_user):
     return jsonify(**payload), status
 
 
-def _do_skip(rid, restaurant_id):
+def _do_skip(rid, restaurant_id, user=None):
     """Turn a draft down. Never a reply that is approved or posted: a
     bulk skip (or a stale card, or a queued replay) used to mark a live
     Google reply 'skipped', so it read as never answered while it stood in
     public. That is a 409 naming what to do instead (/undo for an approved
     one that hasn't posted, retract for a posted one). Compare-and-set, so a
-    skip racing an approve cannot land on the approved row."""
+    skip racing an approve cannot land on the approved row.
+
+    `user`: the login skipping (the route's current_user, Ask's viewer).
+    Who it is is read from the login itself, not only from the request:
+    Ask's skip tool runs on the stream's worker thread, where there is no
+    request, and a view-as skip there was filed as the owner's "no"
+    (re-audit #7b)."""
     conn = get_conn()
     try:
         # skipped_at dates the owner turning a draft down; auto_approve_trust
@@ -667,14 +673,15 @@ def _do_skip(rid, restaurant_id):
         # skipping through view-as is not the owner's "no" (memory audit
         # 9/29/26, view_as): response_action 'support_skipped', left out.
         from permissions import acting_via as _via_skip
+        support = bool(_via_skip(user))
         cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now'), "
                            "response_action=CASE WHEN ? THEN 'support_skipped' ELSE response_action END "
                            "WHERE id=? AND restaurant_id=? "
                            "AND COALESCE(response_status, '') NOT IN ('approved', 'posted')",
-                           (1 if _via_skip() else 0, rid, restaurant_id))
+                           (1 if support else 0, rid, restaurant_id))
         conn.commit()
         if cur.rowcount:
-            if not _via_skip():
+            if not support:
                 # The owner turned the draft down: on the run that wrote it
                 # (orchestration Phase 5). Support's skip is not the owner's "no".
                 from drafter import record_reply_outcome
@@ -905,7 +912,7 @@ def delete_review(rid, current_user):
 @client_bp.route("/skip/<int:rid>", methods=["POST"])
 @login_required
 def skip(rid, current_user):
-    payload, status = _do_skip(rid, current_user["restaurant_id"])
+    payload, status = _do_skip(rid, current_user["restaurant_id"], user=current_user)
     return jsonify(**payload), status
 
 
@@ -4731,7 +4738,7 @@ def food_cost_waste_trend(current_user):
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
 def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False, user_id=None,
-                         rate_checked=False):
+                         rate_checked=False, user=None):
     """Write one marketing post — the one body behind /api/generate-content
     and /mobile/api/marketing/generate-content. The two had drifted: the web
     answered a rate limit with 200 and no `ok`, the phone a failed model call
@@ -4751,7 +4758,7 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
         # A calendar idea's angle was written by a model: the post is written
         # from it, but it is never the owner's word for an offer (AI-2).
         result = generate_content(content_type, topic, restaurant_id=restaurant_id,
-                                  topic_is_owner=not from_calendar, user_id=user_id)
+                                  topic_is_owner=not from_calendar, user_id=user_id, user=user)
     except MarketingCopyRejected:
         # Two drafts failed the public-copy check (already counted as a
         # quality event). Nothing broke: say so, never "server error".
@@ -4788,12 +4795,16 @@ def generate_content_answer(current_user, data):
     post written now, or — when the client asks (`async`, the Campaign
     Studio's social channel) — a job to poll on the owner AI job pool
     (ai_async, AI cost audit 10/7/26 #57). The rate limit is counted here,
-    on the request thread, either way."""
+    on the request thread, either way. So is who is asking: the login dict
+    goes down to marketing_voice.record_draft, because on the pool there is
+    no request and flask.g cannot say this is support through view-as
+    (re-audit #4)."""
     rid = current_user["restaurant_id"]
     import ai_async
     if not ai_async.wants_async():
         return _do_generate_content(rid, data.get("type"), data.get("topic"),
-                                    from_calendar=bool(data.get("from_calendar")), user_id=current_user.get("id"))
+                                    from_calendar=bool(data.get("from_calendar")), user_id=current_user.get("id"),
+                                    user=dict(current_user))
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"gencontent:{rid}", max_calls=8, window_secs=60):
         return {"ok": False, "content": "",
@@ -4801,7 +4812,8 @@ def generate_content_answer(current_user, data):
     key = {"type": data.get("type"), "topic": data.get("topic"), "from_calendar": bool(data.get("from_calendar"))}
     job_id, joined = ai_async.start("campaign_post", rid, key, _do_generate_content, rid, data.get("type"),
                                     data.get("topic"), from_calendar=bool(data.get("from_calendar")),
-                                    user_id=current_user.get("id"), rate_checked=True, by_user=current_user.get("id"))
+                                    user_id=current_user.get("id"), user=dict(current_user), rate_checked=True,
+                                    by_user=current_user.get("id"))
     return ai_async.started_answer(job_id, joined, "campaign_post"), 202
 
 
@@ -5299,9 +5311,14 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False, user=No
             from models import record_reply_rejection
             record_reply_rejection(restaurant_id, review_id, cur_row["draft_response"], rating=cur_row["rating"],
                                    how="rewrite", user=user)
-            # ...and on the run that wrote it (orchestration Phase 5).
-            from drafter import record_reply_outcome
-            record_reply_outcome(restaurant_id, review_id, "rejected", detail="rewritten")
+            # ...and on the run that wrote it (orchestration Phase 5) - only
+            # the owner's rewrite: support asking Ask through view-as (or an
+            # admin login) is not the owner turning the draft down (re-audit
+            # #7a; read from the login, as Ask's tool runs off the request).
+            from permissions import acting_via as _via_rw, answer_authority as _auth_rw
+            if not (_via_rw(user) or (user is not None and _auth_rw(user) == "admin")):
+                from drafter import record_reply_outcome
+                record_reply_outcome(restaurant_id, review_id, "rejected", detail="rewritten")
         if by_model:
             cur = conn.execute(
                 "UPDATE reviews SET original_draft=NULL, draft_edited=0, draft_edited_via=NULL, "

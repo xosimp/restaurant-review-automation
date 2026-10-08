@@ -207,6 +207,24 @@ def _reset_ask_context_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_staff_answer_cache():
+    """staff_knowledge keeps a house-rules answer per (restaurant, the exact
+    source lines, the question) — a day for an answer, an hour for "the
+    lines don't cover it" (AI cost audit 10/7/26 re-audit #3) — and every
+    test's fresh database starts its ids at 1 with the same fixture rules,
+    so one test's answer would be served to the next. Same shape as the
+    resets above."""
+    import sys as _sys
+    sk = _sys.modules.get("staff_knowledge")
+    if sk is not None:
+        sk.clear_answer_cache()
+    yield
+    sk = _sys.modules.get("staff_knowledge")
+    if sk is not None:
+        sk.clear_answer_cache()
+
+
+@pytest.fixture(autouse=True)
 def _reset_studio_cache():
     """schedule_engine keeps a Studio re-score's inputs per restaurant and
     week for two minutes (studio_prepared, schedule audit 10/3/26 P-25), and
@@ -345,6 +363,24 @@ def _no_live_anthropic_calls(monkeypatch):
     yield hits                     # the guard's own test clears what it tripped on purpose
     if hits:
         pytest.fail(f"a live Anthropic call was attempted: {hits[:3]}", pytrace=False)
+
+
+@pytest.fixture
+def reviewer_passes(monkeypatch):
+    """The Haiku rubric (ai_reviewer.review_text) as a reviewer that ran and
+    passed. With no model in the suite the real one cannot run, and since
+    the 10/7/26 re-audit (#1) the auto-approve rule holds a reply a gate
+    could not read — so a test about the rule itself, not its gate, takes
+    this. Records what it read."""
+    import ai_orchestrator
+    import ai_reviewer
+    calls = []
+
+    def review_text(kind, draft, restaurant_id=None, context="", mode="haiku_gate"):
+        calls.append({"kind": kind, "draft": draft, "mode": mode})
+        return ai_orchestrator.Verdict(ok=True, score=0.9, label="pass")
+    monkeypatch.setattr(ai_reviewer, "review_text", review_text)
+    return calls
 
 
 _DB_TEMPLATE = None

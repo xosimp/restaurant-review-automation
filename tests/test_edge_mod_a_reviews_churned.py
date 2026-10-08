@@ -96,7 +96,10 @@ def test_a_deletion_notice_does_not_stop_the_fetch(db_path, monkeypatch):
 
 # ── R3 #8: not auto-published ──────────────────────────────────────────────
 
-def test_a_churned_restaurant_is_never_auto_published(db_path, monkeypatch):
+def test_a_churned_restaurant_is_never_auto_published(db_path, monkeypatch, reviewer_passes):
+    # The reviewer gate ran and passed (conftest.reviewer_passes): since the
+    # 10/7/26 re-audit (#1) a gate that cannot run holds the reply, and this
+    # test is about the rule, not its gate.
     import scheduler
     _pair(db_path, module_reviews=1, auto_approve_5star=1, auto_approve_daily_cap=5,
           gmb_refresh_token=None)

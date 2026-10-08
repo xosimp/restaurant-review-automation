@@ -913,15 +913,21 @@ def record_approval_outcome(restaurant_id, review_id, action, db_path=None) -> b
     """The outcome of an approval labelled `action` (client_api's
     response_action): an edited reply's quality is edit_quality between the
     model's text (original_draft) and the approved reply; a regenerated
-    draft approved is accepted or edited by the same test. Never raises."""
+    draft approved is accepted or edited by the same test. A reply whose
+    words support edited through view-as (draft_edited_via='view_as') is
+    support's text, not the owner's verdict on the model's: "ignored"
+    whoever approves it (re-audit #7d). Never raises."""
     try:
         outcome = APPROVAL_OUTCOMES.get(action, "ignored")
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT original_draft, draft_response, COALESCE(draft_edited, 0) AS edited "
-                               "FROM reviews WHERE id=? AND restaurant_id=?", (review_id, restaurant_id)).fetchone()
+            row = conn.execute("SELECT original_draft, draft_response, COALESCE(draft_edited, 0) AS edited, "
+                               "draft_edited_via FROM reviews WHERE id=? AND restaurant_id=?",
+                               (review_id, restaurant_id)).fetchone()
         finally:
             conn.close()
+        if row and (row["draft_edited_via"] or "") == "view_as":
+            outcome = "ignored"
         if outcome is None:
             outcome = "edited" if row and row["edited"] else "accepted"
         quality = None
@@ -944,9 +950,14 @@ def gate_unattended_reply(restaurant_id, review_id, draft, review_text="", db_pa
     the needs-review reason when it flags the reply (it is then left for the
     owner, never posted) or None. The policy's unattended reviewer decides
     whether the gate runs (draft_response: haiku_gate; the console may
-    change it). A reviewer that cannot run passes (ai_reviewer), as the
-    rule did before the gate. The verdict is filed on the run that wrote
-    the reply. AI cost audit 10/7/26, orchestration Phase 3."""
+    change it). A reviewer that cannot run passes elsewhere (ai_reviewer,
+    label "reviewer_unavailable"), and passed here too until the re-audit
+    (#1): nobody is waiting on this reply and nobody reads it before it is
+    public, so a gate that could not read it (budget spent, breaker open, an
+    unreadable answer) holds it for the owner (GATE_UNREAD_REASON) instead
+    of posting it ungated. The
+    verdict is filed on the run that wrote the reply. AI cost audit 10/7/26,
+    orchestration Phase 3."""
     try:
         import ai_workflows
         pol = ai_workflows.policy("draft_response", db_path)
@@ -960,7 +971,9 @@ def gate_unattended_reply(restaurant_id, review_id, draft, review_text="", db_pa
                                       db_path=db_path)
     except Exception as e:
         print(f"[drafter] reply gate did not run for review {review_id}: {e!r}")
-        return None
+        return GATE_REVIEW_REASON + ": " + GATE_UNREAD_REASON
+    if v.ok and v.label == "reviewer_unavailable":
+        return GATE_REVIEW_REASON + ": " + GATE_UNREAD_REASON
     if v.ok:
         return None
     return GATE_REVIEW_REASON + (": " + "; ".join(v.reasons[:2]) if v.reasons else "")
@@ -968,6 +981,8 @@ def gate_unattended_reply(restaurant_id, review_id, draft, review_text="", db_pa
 
 # The needs-review reason of a reply the reviewer gate held (after "This reply …").
 GATE_REVIEW_REASON = "needs a read before it posts"
+# ...and why, when the gate could not read it at all (re-audit #1).
+GATE_UNREAD_REASON = "the automatic check couldn't read it"
 
 
 def draft_pending(restaurant_id: int, limit: int = 50):

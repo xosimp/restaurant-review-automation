@@ -75,11 +75,13 @@ def _msg(text):
 
 def _digest(db_path, monkeypatch, reply, rid=None, reviews=None, name="Probe Bistro"):
     rid = rid or _rid(db_path, name=name)
+    # Two days ago: inside the digest's week of whole local days ending
+    # yesterday (reporter.digest_window, re-audit #6).
     save_reviews(reviews or [
         Review(restaurant_id=rid, platform="google", external_id="d1", author="Dana Ray", rating=5,
-               text="Lovely dinner and a friendly room.", review_date=date.today().isoformat()),
+               text="Lovely dinner and a friendly room.", review_date=(date.today() - timedelta(days=2)).isoformat()),
         Review(restaurant_id=rid, platform="google", external_id="d2", author="Sam Lee", rating=4,
-               text="Good tacos, slow bar.", review_date=date.today().isoformat()),
+               text="Good tacos, slow bar.", review_date=(date.today() - timedelta(days=2)).isoformat()),
     ], db_path=db_path)
     report = reporter.build_report_from_db(rid, name, days=7, db_path=db_path)
     seen = {}
@@ -108,7 +110,7 @@ def test_a_digest_line_naming_another_cavnar_restaurant_is_dropped(db_path, monk
     _rid(db_path, name="Rosa's Cantina", owner_email="rosa@x.test")
     rid = _rid(db_path)
     reviews = [Review(restaurant_id=rid, platform="google", external_id="t1", author="Dana Ray", rating=5,
-                      text="Better than Rosa's Cantina, honestly.", review_date=date.today().isoformat())]
+                      text="Better than Rosa's Cantina, honestly.", review_date=(date.today() - timedelta(days=2)).isoformat())]
     out, _ = _digest(db_path, monkeypatch,
                      "HEADLINE: Pat, one new 5★ review this week.\n"
                      "REVIEWS: Dana said you beat Rosa's Cantina.", rid=rid, reviews=reviews)

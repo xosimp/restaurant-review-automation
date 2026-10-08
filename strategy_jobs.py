@@ -3024,8 +3024,16 @@ def _draft_quiet_night_fill(r, out, db_path):
     synchronously if the batch cannot answer by QUIET_NIGHT_BATCH_CUTOFF_HOURS."""
     weekday = out.get("weekday") or "the quiet night"
     topic = f"{weekday}{_QN_POST_SUFFIX}"
-    if _submit_quiet_night_post(r, topic):
+    sent = _submit_quiet_night_post(r, topic)
+    if sent == "submitted":
         return {"post_draft_queued": True}
+    if sent == "blocked":
+        # A gate refused the item (budget, breaker, readiness) and its
+        # callback was told so, which drafts nothing — the synchronous call
+        # would be refused the same. Not drafted: the push keeps the old
+        # wording and never promises a post that is not coming (AI cost
+        # audit 10/7/26 re-audit #5).
+        return {}
     return _quiet_night_post_now(r, topic)
 
 
@@ -3040,7 +3048,11 @@ def _quiet_night_post_now(r, topic):
         # source (AI-2).
         body = marketing.generate_content("instagram_post", topic, restaurant_id=r.id, topic_is_owner=False)
         if body and body.strip():
-            res = marketing_drafts.save_draft(r.id, body.strip(), content_type="instagram_post", topic=topic)
+            # The model draft it is (draft_ref), so approving it files the
+            # outcome on the run that wrote it (re-audit #8).
+            res = marketing_drafts.save_draft(r.id, body.strip(), content_type="instagram_post", topic=topic,
+                                              draft_ref=getattr(body, "draft_ref", None),
+                                              content_log_id=getattr(body, "content_log_id", None))
             if res.get("ok"):
                 saved["post_draft_id"] = res["id"]
     except Exception as e:
@@ -3055,15 +3067,17 @@ QUIET_NIGHT_BATCH_CALLBACK = "strategy_jobs:on_quiet_night_post"
 QUIET_NIGHT_BATCH_CUTOFF_HOURS = 6
 
 
-def _submit_quiet_night_post(r, topic) -> bool:
+def _submit_quiet_night_post(r, topic):
     """The post's request sent as one batch item (the prompt built now, as
-    the synchronous draft would build it). True when it went — or a gate
-    refused it, which the synchronous call would have too; False when it
+    the synchronous draft would build it). "submitted" when it went;
+    "blocked" when a gate refused it — the synchronous call would have been
+    refused too, and nothing will be drafted (re-audit #5: this used to read
+    as sent, and the push promised a post that never came); None when it
     must be written now (batches off here, the submit failed). Never raises."""
     try:
         import ai_batches
         if not ai_batches.enabled(QUIET_NIGHT_BATCH_WORKFLOW):
-            return False
+            return None
         from datetime import datetime, timedelta
         import ai_orchestrator
         import ai_workflows as wf
@@ -3080,11 +3094,16 @@ def _submit_quiet_night_post(r, topic) -> bool:
             "correlation_id": run_id,
             "cutoff_at": datetime.utcnow() + timedelta(hours=QUIET_NIGHT_BATCH_CUTOFF_HOURS),
             "context": {"topic": topic, "state": state, "run_id": run_id}}])
-        return res.get(cid) in (ai_batches.SUBMITTED, ai_batches.BLOCKED)
+        status = res.get(cid)
+        if status == ai_batches.SUBMITTED:
+            return "submitted"
+        if status == ai_batches.BLOCKED:
+            return "blocked"
+        return None
     except Exception as e:
         import ops
         ops.capture(e, job="quiet_night_post", context=f"restaurant_id={r.id} batch submit")
-        return False
+        return None
 
 
 def on_quiet_night_post(item, message=None, error=None):
@@ -3115,7 +3134,9 @@ def on_quiet_night_post(item, message=None, error=None):
         body = marketing.generate_content("instagram_post", topic, restaurant_id=rid, topic_is_owner=False,
                                           first=message, run_id=ctx.get("run_id"), state=ctx.get("state"))
         if body and body.strip():
-            marketing_drafts.save_draft(rid, body.strip(), content_type="instagram_post", topic=topic)
+            marketing_drafts.save_draft(rid, body.strip(), content_type="instagram_post", topic=topic,
+                                        draft_ref=getattr(body, "draft_ref", None),
+                                        content_log_id=getattr(body, "content_log_id", None))
     except Exception as e:
         # A second refusal (MarketingCopyRejected) is already a quality
         # event; nothing is saved, as the synchronous draft would save none.

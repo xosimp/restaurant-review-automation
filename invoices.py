@@ -61,6 +61,9 @@ MAX_PDF_BYTES = int(4.5 * 1024 * 1024)
 # line total (rounding on the invoice itself is usually a cent or two).
 LINE_TOLERANCE_PCT = 2.0
 LINE_TOLERANCE_ABS = 0.05
+# The product lines may sum to this share of the printed total and still be
+# plausible: tax, fuel surcharges and deposits are left off on purpose.
+TOTAL_FLOOR_SHARE = 0.8
 # A proposed cost this far from the current one is shown but not preselected:
 # it is far more often a unit mismatch (case price vs per-lb) than a real
 # overnight doubling.
@@ -149,7 +152,11 @@ def extract(restaurant_id, data, media_type, client=None):
     import ai_orchestrator
     # On the orchestrator's route (invoice_extract: "default" — the call
     # site's own model, unchanged until an eval on stored invoices clears a
-    # cheaper tier; AI cost audit 10/7/26, orchestration Phase 3).
+    # cheaper tier; AI cost audit 10/7/26, orchestration Phase 3). The
+    # arithmetic is its check (extraction_verdict): lines that sum over the
+    # printed total, or far under it, are a rule_breach — recorded on the
+    # run, and an escalation only if the console gives the ladder a rung
+    # above "default" (re-audit #10). The owner still confirms every line.
     msg = ai_orchestrator.generate("invoice_extract", restaurant_id, lambda route, notes: create_with_retry(
         client, restaurant_id=restaurant_id, action="invoice_extract",
         # Rests on no data source: invoice OCR the owner confirms line by line.
@@ -158,8 +165,8 @@ def extract(restaurant_id, data, media_type, client=None):
             model=MODEL, max_tokens=8000,
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
             messages=[{"role": "user", "content": [_content_block(data, media_type),
-                                                   {"type": "text", "text": _PROMPT}]}]))),
-        subject="invoice").result
+                                                   {"type": "text", "text": _PROMPT + _notes_text(notes)}]}]))),
+        check=extraction_verdict, subject="invoice").result
     if getattr(msg, "stop_reason", None) == "refusal":
         raise InvoiceError("The invoice couldn't be read. Try a clearer photo.")
     if getattr(msg, "stop_reason", None) == "max_tokens":
@@ -176,6 +183,53 @@ def extract(restaurant_id, data, media_type, client=None):
     if not out.get("lines"):
         raise InvoiceError("No product lines were found on that invoice.")
     return out
+
+
+def _notes_text(notes) -> str:
+    """Why an earlier reading was not used, for an escalated rung."""
+    if not notes:
+        return ""
+    return ("\n\nAn earlier reading of this invoice was not used: " + "; ".join(str(n) for n in notes)
+            + ". Read every line and the printed total again, exactly as printed.")
+
+
+def totals_check(lines, invoice_total):
+    """{"lines_sum", "invoice_total", "plausible"} for the product lines'
+    totals against the printed invoice total, or None when either is
+    missing. Surcharges and tax are skipped on purpose (_PROMPT), so the
+    lines may sum to a little under the printed total — only a sum OVER it,
+    or under TOTAL_FLOOR_SHARE of it, suggests a misread."""
+    totals = [l.get("line_total") for l in (lines or []) if isinstance(l, dict)
+              and isinstance(l.get("line_total"), (int, float))]
+    if not invoice_total or not totals:
+        return None
+    s = round(sum(totals), 2)
+    return {"lines_sum": s, "invoice_total": invoice_total,
+            "plausible": s <= invoice_total + LINE_TOLERANCE_ABS and s >= invoice_total * TOTAL_FLOOR_SHARE}
+
+
+def extraction_verdict(msg):
+    """invoice_extract's deterministic check (ai_orchestrator.Verdict): a
+    reading that is not JSON is a schema_fail; product lines that do not add
+    up to the printed total (totals_check) a rule_breach. Anything it cannot
+    check passes — extract() still refuses what it cannot use."""
+    import ai_orchestrator
+    text = next((b.text for b in (getattr(msg, "content", None) or []) if getattr(b, "type", "") == "text"), "")
+    try:
+        out = json.loads(text)
+    except (TypeError, ValueError):
+        return ai_orchestrator.Verdict.failed("schema_fail", "the reading was not the invoice's JSON")
+    if not isinstance(out, dict):
+        return ai_orchestrator.Verdict.failed("schema_fail", "the reading was not the invoice's JSON")
+    try:
+        chk = totals_check(out.get("lines"), float(out["invoice_total"]) if out.get("invoice_total") else None)
+    except (TypeError, ValueError):
+        chk = None
+    if chk and not chk["plausible"]:
+        return ai_orchestrator.Verdict.failed(
+            "rule_breach", f"the product lines add up to ${chk['lines_sum']:,.2f} against a printed total of "
+                           f"${chk['invoice_total']:,.2f}", label="totals_mismatch")
+    return ai_orchestrator.Verdict.passed()
 
 
 # ── 2. propose ────────────────────────────────────────────────────────────────
@@ -359,16 +413,9 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 line["verified"] = bool(ok is True and cur > 0 and not big)
         lines.append(line)
 
-    totals = [l["line_total"] for l in lines if l["line_total"] is not None]
-    inv_total = extracted.get("invoice_total")
-    total_check = None
-    if inv_total and totals:
-        # Surcharges and tax are skipped on purpose, so the lines can
-        # legitimately sum to a little under the printed total — only a sum
-        # OVER it, or far under, suggests a misread.
-        s = round(sum(totals), 2)
-        total_check = {"lines_sum": s, "invoice_total": inv_total,
-                       "plausible": s <= inv_total + LINE_TOLERANCE_ABS and s >= inv_total * 0.8}
+    # The same arithmetic the extraction's run was checked with
+    # (extraction_verdict), shown to the owner beside the lines.
+    total_check = totals_check(lines, extracted.get("invoice_total"))
     return {"supplier": extracted.get("supplier"), "invoice_date": extracted.get("invoice_date"),
             "lines": lines, "total_check": total_check,
             "ingredients": [{"id": x["id"], "name": x["name"], "unit": x["unit"]}

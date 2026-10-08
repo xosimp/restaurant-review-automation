@@ -6126,7 +6126,11 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
             continue
         try:
             from client_api import _do_approve
-            payload, status = _do_approve(review_id, rid, auto=True)
+            # The text the checks and the gate passed is the text that posts:
+            # a draft rewritten after this pass read it (a regenerate, an
+            # owner's save) is a 409 here, never posted unread (re-audit #2;
+            # models.claim_approval compares it in the same UPDATE).
+            payload, status = _do_approve(review_id, rid, auto=True, expected_draft=draft_text)
         except Exception as e:
             log.error(f"Auto-approve failed for review {review_id}: {e}")
             continue

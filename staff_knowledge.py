@@ -842,9 +842,12 @@ def answer(restaurant_id, membership_id, reader, roles, question, db_path=DB_PAT
     by_id = {x["id"]: x for x in lines}
     import ai_orchestrator as _orch
     # The answer's one call, on the orchestrator's rung (staff_answer: T1,
-    # then T2 when the first reading found nothing, cited nothing, failed
-    # the staff check or was flagged by the reviewer — AI cost audit
-    # 10/7/26, orchestration Phase 3).
+    # then T2 when the first reading cited no line it was given, was not
+    # JSON, failed the staff check or was flagged by the reviewer — AI cost
+    # audit 10/7/26, orchestration Phase 3). A reading that says the lines
+    # don't cover it (found: false) is final: missing coverage is missing
+    # data, not a weak model (re-audit #3), and it is kept for
+    # REFUSAL_CACHE_SECONDS so the same question is not paid for again.
     _send = lambda route, note: create_with_retry(  # noqa: E731 — keeps the call in this function (readiness scan)
         get_client(timeout=ANSWER_TIMEOUT), restaurant_id=restaurant_id, action="staff_answer",
         readiness=data_health.NOT_APPLICABLE,
@@ -861,14 +864,14 @@ def answer(restaurant_id, membership_id, reader, roles, question, db_path=DB_PAT
         except ValueError:
             return {"reason": "not_found", "trigger": "schema_fail", "why": "the reply was not the answer's JSON"}
         if not isinstance(data, dict) or not data.get("found"):
-            return {"reason": "not_found", "trigger": "not_found", "why": "it found no line that answers it"}
+            return {"reason": "not_found", "trigger": "not_covered", "why": "it found no line that answers it"}
         cited = [str(s).strip().strip("[]") for s in (data.get("sources") or [])]
         cited = [c for c in dict.fromkeys(cited) if c in by_id]
         text = " ".join(str(data.get("answer") or "").split())
         text = re.sub(r"\s*\[S\d+\]", "", text).strip()
         if not cited or not text:
             mark_outcome(msg, "unparseable", reason="answer without a citation")
-            return {"reason": "not_found", "trigger": "not_found", "why": "it cited no line it was given"}
+            return {"reason": "not_found", "trigger": "uncited", "why": "it cited no line it was given"}
         src_text = "\n".join(by_id[c]["text"] for c in cited)
         ctx = rv.ValidationContext(
             restaurant_id=restaurant_id, surface="staff_answer", audience="staff", delivery="interactive",
@@ -921,7 +924,14 @@ def answer(restaurant_id, membership_id, reader, roles, question, db_path=DB_PAT
                                  detail="answer not shown (reviewer flagged it); asked to ask the manager",
                                  action="staff_answer")
             return _refused("unchecked")
-        return _refused(out.get("reason") or "not_found")
+        refused = _refused(out.get("reason") or "not_found")
+        if run.verdict.trigger == "not_covered":
+            # The model read every line and none answers it: the same
+            # question about the same lines gets the same "ask your manager"
+            # for a while, without a call (re-audit #3). An edited rule is a
+            # new key; any other failure is never kept.
+            _store_answer(key, refused, reader, ttl=REFUSAL_CACHE_SECONDS)
+        return refused
     shown = {k: out[k] for k in ("answered", "answer", "reason", "suggest_message", "sources")}
     _store_answer(key, shown, reader)
     return shown
@@ -933,6 +943,9 @@ def answer(restaurant_id, membership_id, reader, roles, question, db_path=DB_PAT
 # Keyed by the restaurant, a hash of the exact source lines the reader's
 # roles see (an edited rule is a new key) and the question normalised.
 ANSWER_CACHE_SECONDS = 24 * 3600
+# "The lines don't cover it" is kept for an hour, not a day: the manager the
+# reader is told to ask may add the rule (a new key anyway) or answer it.
+REFUSAL_CACHE_SECONDS = 3600
 ANSWER_CACHE_MAX = 500
 _ANSWER_CACHE = {}
 _ANSWER_LOCK = threading.Lock()
@@ -952,23 +965,26 @@ def _cached_answer(key, reader=None):
         hit = _ANSWER_CACHE.get(key)
         if not hit:
             return None
-        at, payload = hit
-        if datetime.now(timezone.utc).timestamp() - at > ANSWER_CACHE_SECONDS:
+        at, payload = hit[0], hit[1]
+        ttl = hit[2] if len(hit) > 2 else ANSWER_CACHE_SECONDS
+        if datetime.now(timezone.utc).timestamp() - at > ttl:
             _ANSWER_CACHE.pop(key, None)
             return None
     return json.loads(json.dumps(payload))
 
 
-def _store_answer(key, payload, reader=None):
+def _store_answer(key, payload, reader=None, ttl=None):
     """Keep a shown answer for the next reader who asks the same thing — not
-    one that carries the asker's own name (it was allowed for them only)."""
+    one that carries the asker's own name (it was allowed for them only) —
+    for `ttl` seconds (ANSWER_CACHE_SECONDS unless given)."""
     if reader and reader.split()[0].casefold() in str(payload.get("answer") or "").casefold():
         return
     with _ANSWER_LOCK:
         if len(_ANSWER_CACHE) >= ANSWER_CACHE_MAX:
             oldest = min(_ANSWER_CACHE, key=lambda k: _ANSWER_CACHE[k][0])
             _ANSWER_CACHE.pop(oldest, None)
-        _ANSWER_CACHE[key] = (datetime.now(timezone.utc).timestamp(), dict(payload))
+        _ANSWER_CACHE[key] = (datetime.now(timezone.utc).timestamp(), dict(payload),
+                              int(ttl or ANSWER_CACHE_SECONDS))
 
 
 def clear_answer_cache():

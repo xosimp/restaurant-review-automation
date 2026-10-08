@@ -128,7 +128,12 @@ def draft_signals(text, typical_words=None) -> list:
 
 # The orchestrator workflow that writes each channel's drafts (ai_workflows):
 # what the owner does with a draft is filed against the run that wrote it.
+# A draft row carries its own workflow (marketing_model_drafts.workflow,
+# re-audit #9) — the Content tab's weekly email and loyalty nudge are
+# marketing_content runs on the email and text channels — and this map is
+# only the default for a row written without one (before the column).
 CHANNEL_WORKFLOW = {"social": "marketing_content", "text": "guest_campaign_draft", "email": "guest_newsletter_draft"}
+_DRAFT_WORKFLOWS = frozenset(CHANNEL_WORKFLOW.values())
 
 
 def draft_subject(draft_id) -> str:
@@ -136,11 +141,13 @@ def draft_subject(draft_id) -> str:
     return f"mkt_draft:{int(draft_id)}"
 
 
-def _run_outcome(restaurant_id, channel, draft_id, outcome, quality=None, detail=None, db_path=None):
+def _run_outcome(restaurant_id, channel, draft_id, outcome, quality=None, detail=None, db_path=None,
+                 workflow=None):
     """File what the owner did with a model draft on the run that wrote it
     (ai_orchestrator.record_outcome; AI cost audit 10/7/26, orchestration
-    Phase 5). Never raises."""
-    wf = CHANNEL_WORKFLOW.get(channel)
+    Phase 5): `workflow` the draft row's own, else the channel's. Never
+    raises."""
+    wf = workflow if workflow in _DRAFT_WORKFLOWS else CHANNEL_WORKFLOW.get(channel)
     if not (wf and draft_id):
         return False
     try:
@@ -152,7 +159,7 @@ def _run_outcome(restaurant_id, channel, draft_id, outcome, quality=None, detail
 
 
 def record_draft(restaurant_id, channel, body, source, user_id=None, content_log_id=None, db_path=None,
-                 run_id=None):
+                 run_id=None, user=None, workflow=None):
     """One piece of copy a model drafted. Returns its id (the `draft_ref`
     the clients send back with the piece that goes out) or None; never
     raises into the draft.
@@ -161,7 +168,16 @@ def record_draft(restaurant_id, channel, body, source, user_id=None, content_log
     "view_as"): the session answers as the owner's own login, and an
     admin's drafts thrown away for another (regenerated) or matched to a
     send by person (_match_draft) are support at work, not the owner's
-    "no". It is still kept, and still matched by its draft_ref.
+    "no". It is still kept, and still matched by its draft_ref. Who is
+    acting is read from `user`, the login dict the caller captured on the
+    request thread (re-audit #4): a Campaign Studio draft is written on the
+    owner AI job pool, where there is no request and flask.g says nothing,
+    so a view-as draft was kept as the owner's.
+
+    `workflow` is the orchestrator workflow that wrote it, stored on the row
+    so its outcome is filed on the right run (re-audit #9: the Content tab's
+    weekly email and loyalty nudge are marketing_content runs on the email
+    and text channels); unset, the channel's own (CHANNEL_WORKFLOW).
 
     `run_id` is the orchestrator run that wrote it (the text's `.run_id`):
     the run is named after this draft, and a person's earlier draft on the
@@ -172,22 +188,23 @@ def record_draft(restaurant_id, channel, body, source, user_id=None, content_log
         return None
     try:
         from permissions import acting_via
-        if acting_via():
+        if acting_via(user):
             user_id = None
     except Exception:
         pass
+    workflow = workflow if workflow in _DRAFT_WORKFLOWS else CHANNEL_WORKFLOW.get(channel)
     try:
         conn = get_conn(db_path)
         try:
             prev = None
             if user_id:
                 prev = conn.execute(
-                    "SELECT id FROM marketing_model_drafts WHERE restaurant_id=? AND channel=? AND user_id=? "
-                    "AND used_at IS NULL AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+                    "SELECT id, workflow FROM marketing_model_drafts WHERE restaurant_id=? AND channel=? "
+                    "AND user_id=? AND used_at IS NULL AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
                     (restaurant_id, channel, user_id, f"-{int(REGENERATED_WITHIN_MINUTES)} minutes")).fetchone()
             cur = conn.execute("INSERT INTO marketing_model_drafts (restaurant_id, channel, source, body, "
-                               "content_log_id, user_id) VALUES (?,?,?,?,?,?)",
-                               (restaurant_id, channel, source, body[:6000], content_log_id, user_id))
+                               "content_log_id, user_id, workflow) VALUES (?,?,?,?,?,?,?)",
+                               (restaurant_id, channel, source, body[:6000], content_log_id, user_id, workflow))
             conn.commit()
             new_id = cur.lastrowid
         finally:
@@ -196,7 +213,8 @@ def record_draft(restaurant_id, channel, body, source, user_id=None, content_log
         print(f"[marketing_voice] draft not recorded for {restaurant_id}: {e}")
         return None
     if prev is not None:
-        _run_outcome(restaurant_id, channel, prev["id"], "rejected", detail="regenerated", db_path=db_path)
+        _run_outcome(restaurant_id, channel, prev["id"], "rejected", detail="regenerated", db_path=db_path,
+                     workflow=prev["workflow"])
     if run_id and new_id:
         try:
             import ai_orchestrator
@@ -206,11 +224,16 @@ def record_draft(restaurant_id, channel, body, source, user_id=None, content_log
     return new_id
 
 
-def _match_draft(conn, restaurant_id, channel, final, draft_id=None, content_log_id=None, user_id=None):
-    """The model draft this final piece came from: by its reference, by the
-    generated content-log row, else this person's latest draft on the
-    channel within MATCH_HOURS that shares MATCH_MIN_RATIO of its words —
-    or None (written from blank, or no draft to match)."""
+def _row_workflow(row):
+    try:
+        return row["workflow"]
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
+def _draft_by_reference(conn, restaurant_id, channel, draft_id=None, content_log_id=None):
+    """The model draft a reference names — its id, else the content-log row
+    it was written for — or None. Never a guess by text."""
     row = None
     if draft_id:
         try:
@@ -221,6 +244,15 @@ def _match_draft(conn, restaurant_id, channel, final, draft_id=None, content_log
     if row is None and content_log_id:
         row = conn.execute("SELECT * FROM marketing_model_drafts WHERE restaurant_id=? AND content_log_id=? "
                            "ORDER BY id DESC LIMIT 1", (restaurant_id, content_log_id)).fetchone()
+    return row
+
+
+def _match_draft(conn, restaurant_id, channel, final, draft_id=None, content_log_id=None, user_id=None):
+    """The model draft this final piece came from: by its reference, by the
+    generated content-log row, else this person's latest draft on the
+    channel within MATCH_HOURS that shares MATCH_MIN_RATIO of its words —
+    or None (written from blank, or no draft to match)."""
+    row = _draft_by_reference(conn, restaurant_id, channel, draft_id, content_log_id)
     if row is None:
         cands = conn.execute(
             "SELECT * FROM marketing_model_drafts WHERE restaurant_id=? AND channel=? AND used_at IS NULL "
@@ -242,9 +274,13 @@ def record_final(restaurant_id, channel, final_body, source, ref_id=None, user=N
     | draft_approved | campaign | winback | newsletter; `ref_id` the row it
     went out as). The model's original is `original_body` when the caller
     has it, else the matched model draft; the edit is measured against it
-    and who sent it recorded. One row per (source, ref_id), and one per
-    identical text on a channel within SAME_PIECE_DAYS. Returns the
-    measured edit or None; never raises into the send."""
+    and who sent it recorded. The model draft is still found by its
+    reference (`draft_id`, `content_log_id`) when the caller gives the
+    original, so its run gets the outcome: a saved draft's approval always
+    passes its original and never filed one (re-audit #8). One row per
+    (source, ref_id), and one per identical text on a channel within
+    SAME_PIECE_DAYS. Returns the measured edit or None; never raises into
+    the send."""
     final_body = str(final_body or "").strip()
     if not restaurant_id or channel not in CHANNELS or not final_body:
         return None
@@ -266,6 +302,10 @@ def record_final(restaurant_id, channel, final_body, source, ref_id=None, user=N
                 matched = _match_draft(conn, restaurant_id, channel, final_body, draft_id=draft_id,
                                        content_log_id=content_log_id, user_id=u.get("id"))
                 original_body = matched["body"] if matched else None
+            elif draft_id or content_log_id:
+                # By reference only — never the fuzzy match: the caller's
+                # original is what the edit is measured against.
+                matched = _draft_by_reference(conn, restaurant_id, channel, draft_id, content_log_id)
             summary = compare(original_body, final_body) if (original_body or "").strip() else None
             conn.execute(
                 "INSERT OR IGNORE INTO marketing_edits (restaurant_id, channel, source, ref_id, draft_id, "
@@ -292,7 +332,7 @@ def record_final(restaurant_id, channel, final_body, source, ref_id=None, user=N
             same = " ".join(str(original_body).split()) == " ".join(final_body.split())
             _run_outcome(restaurant_id, channel, matched["id"], "accepted" if same else "edited",
                          quality=None if same else ai_orchestrator.edit_quality(original_body, final_body),
-                         detail=source, db_path=db_path)
+                         detail=source, db_path=db_path, workflow=_row_workflow(matched))
         return summary
     except Exception as e:
         print(f"[marketing_voice] {source} not recorded for {restaurant_id}: {e}")

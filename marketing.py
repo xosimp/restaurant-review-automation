@@ -667,7 +667,7 @@ def _clean_social_post(msg) -> str:
 
 def generate_content(content_type: str, topic: str,
                      restaurant_id: int = None, topic_is_owner: bool = True, user_id: int = None,
-                     first=None, run_id=None, state=None) -> str:
+                     first=None, run_id=None, state=None, user=None) -> str:
     """Generate marketing content for a given type and topic.
 
     `topic_is_owner` is whether the owner typed the topic. A calendar idea's
@@ -683,7 +683,9 @@ def generate_content(content_type: str, topic: str,
     this channel (marketing_voice.voice_block — their edits, three pieces
     they sent in their own words, what their regenerated drafts had in
     common), and the draft is kept (marketing_voice.record_draft, `user_id`
-    the person who asked) so what goes out can be measured against it; its
+    the person who asked, `user` their login dict as captured on the request
+    thread — the only way a pool thread knows a draft was support's through
+    view-as, re-audit #4) so what goes out can be measured against it; its
     id rides on the text as `draft_ref`.
 
     `first`, `run_id` and `state` are a batch item's answer coming back (the
@@ -756,9 +758,12 @@ def generate_content(content_type: str, topic: str,
         # The run is named after the draft it wrote (run_id), so what the
         # owner does with it — published as written, rewritten, regenerated —
         # lands on the run (marketing_voice.record_final / record_draft).
+        # workflow: this run's, whatever the channel (re-audit #9 — a weekly
+        # email is a marketing_content run, not a newsletter draft).
         draft_ref = marketing_voice.record_draft(restaurant_id, content_channel(content_type), str(result),
                                                  "post" if user_id else "job", user_id=user_id,
-                                                 content_log_id=row_id, run_id=run.run_id)
+                                                 content_log_id=row_id, run_id=run.run_id,
+                                                 workflow="marketing_content", user=user)
         result.draft_ref = draft_ref
     except Exception:
         pass

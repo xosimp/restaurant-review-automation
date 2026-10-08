@@ -1297,7 +1297,7 @@ def _edit_review_reply(restaurant_id, review_id=None, draft=None, _viewer=None):
     return {"ok": status == 200 and result.get("ok", False), "review_id": rid, "result": result}
 
 
-def _skip_review(restaurant_id, review_id=None):
+def _skip_review(restaurant_id, review_id=None, _viewer=None):
     """Take a review out of the queue. Direct — it publishes nothing and
     /undo reverses it."""
     import client_api
@@ -1305,7 +1305,9 @@ def _skip_review(restaurant_id, review_id=None):
         rid = int(review_id)
     except (TypeError, ValueError):
         return {"ok": False, "error": "Which review? Use read_reviews to get the id."}
-    result, status = client_api._do_skip(rid, restaurant_id)
+    # The login asking: the tool runs on the stream's worker thread, where
+    # there is no request to read view-as from (re-audit #7b).
+    result, status = client_api._do_skip(rid, restaurant_id, user=getattr(_viewer, "_ask_dsr_user", None))
     out = {"ok": status == 200 and result.get("ok", False), "review_id": rid}
     if not out["ok"] and result.get("error"):
         out["error"] = result["error"]   # e.g. already approved or posted (409)
@@ -2962,6 +2964,7 @@ TOOLS = [
         "kind": "action",
         "fn": _skip_review,
         "module": "module_reviews",
+        "wants_viewer": True,
         "spec": {
             "name": "skip_review",
             "description": "Take a review out of the response queue (undoable).",

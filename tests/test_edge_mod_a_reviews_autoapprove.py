@@ -39,7 +39,10 @@ def _redirect_to(db_path, monkeypatch, wrap=None):
 
 
 @pytest.fixture(autouse=True)
-def _redirect(db_path, monkeypatch):
+def _redirect(db_path, monkeypatch, reviewer_passes):
+    # The reviewer gate ran and passed (conftest.reviewer_passes): since the
+    # 10/7/26 re-audit (#1) a gate that cannot run holds the reply, and every
+    # test here is about the rule's cap and holds, not its gate.
     _redirect_to(db_path, monkeypatch)
     monkeypatch.setattr(notify, "fire_response_approved_alert", lambda *a, **k: None)
     monkeypatch.setattr(gmb, "is_connected", lambda rid: True)

@@ -359,7 +359,10 @@ def update_sheet(restaurant_id, sheet_id, fields, who=None, db_path=DB_PATH) -> 
         conn.close()
 
 
-def add_line(restaurant_id, sheet_id, fields, who=None, db_path=DB_PATH) -> dict:
+def add_line(restaurant_id, sheet_id, fields, who=None, db_path=DB_PATH, user=None) -> dict:
+    """Add one line to a sheet. `user` is the login adding it (the route's
+    current_user): support adding lines through view-as, or an admin login,
+    is not the owner keeping a starter line (re-audit #7c)."""
     vals = _clean_line(fields)
     conn = get_conn(db_path)
     try:
@@ -379,8 +382,10 @@ def add_line(restaurant_id, sheet_id, fields, who=None, db_path=DB_PATH) -> dict
     sheet = get_sheet(restaurant_id, sheet_id, db_path=db_path)
     line = next(l for l in sheet["lines"] if l["id"] == line_id)
     # An added line may be one of Cavnar AI's starter lines: the share kept
-    # is filed on the run that offered them (orchestration Phase 5).
-    starter_outcome(restaurant_id, sheet, db_path=db_path)
+    # is filed on the run that offered them (orchestration Phase 5) - the
+    # owner's (or their manager's) keeping only, never support's.
+    if not _support_at_work(user):
+        starter_outcome(restaurant_id, sheet, db_path=db_path)
     return {"line": line, "sheet": sheet, "similar": similar_lines(sheet, line)}
 
 
@@ -1636,6 +1641,18 @@ def starter_lines(restaurant_id, job_code, shift_kind, existing=(), db_path=DB_P
 def starter_subject(job_code, shift_kind) -> str:
     """The ai_runs subject of a starter draft for one job code and shift."""
     return f"task_sheet:{_key(job_code)[:40]}:{shift_kind}"
+
+
+def _support_at_work(user) -> bool:
+    """True for a write by support through view-as or by an admin login -
+    read from the login dict, never only from the request. Never raises."""
+    if not isinstance(user, dict):
+        return False
+    try:
+        from permissions import acting_via, answer_authority
+        return bool(acting_via(user)) or answer_authority(user) == "admin"
+    except Exception:
+        return False
 
 
 def starter_outcome(restaurant_id, sheet, db_path=None) -> bool:

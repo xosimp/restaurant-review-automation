@@ -306,12 +306,18 @@ def test_the_job_asks_for_batches():
 
 # ── #82 #50 #61 the weekly digest ───────────────────────────────────────────
 
+# Two days ago: the digest's week is whole local days ending yesterday
+# (reporter.digest_window, AI cost audit 10/7/26 re-audit #6) — a review
+# from today is next week's, whatever timezone the run is in.
+_IN_WEEK = (date.today() - timedelta(days=2)).isoformat()
+
+
 def _week(db, rid):
     save_reviews([
         Review(restaurant_id=rid, platform="google", external_id="d1", author="Dana Ray", rating=5,
-               text="Lovely dinner.", review_date=date.today().isoformat()),
+               text="Lovely dinner.", review_date=_IN_WEEK),
         Review(restaurant_id=rid, platform="google", external_id="d2", author="Sam Lee", rating=4,
-               text="Good tacos.", review_date=date.today().isoformat())], db_path=db)
+               text="Good tacos.", review_date=_IN_WEEK)], db_path=db)
     return reporter.build_report_from_db(rid, "Batch Bistro", days=7, db_path=db)
 
 
@@ -357,7 +363,7 @@ def test_the_same_week_is_written_once_and_served_again(db, monkeypatch):
     assert calls == [1] and again == first, "a preview or a resend of the same week serves the kept answer"
     # New data is a new prompt: written again.
     save_reviews([Review(restaurant_id=rid, platform="google", external_id="d3", author="Lee Q", rating=3,
-                         text="Fine.", review_date=date.today().isoformat())], db_path=db)
+                         text="Fine.", review_date=_IN_WEEK)], db_path=db)
     report2 = reporter.build_report_from_db(rid, "Batch Bistro", days=7, db_path=db)
     reporter.generate_ai_digest_summary(report2, "Batch Bistro", "Pat", restaurant_id=rid)
     assert calls == [1, 1]
@@ -646,3 +652,88 @@ def test_a_batched_read_landing_after_a_newer_read_is_dropped(db, monkeypatch):
     item["context"].update(gathered_at=now.strftime("%Y-%m-%dT%H:%M:%S+00:00"), run_id="run:ci:10")
     competitor.on_insight_batch(item, message=_msg("Rival A is slow."))
     assert stored == ["READ: Rival A is slow."]
+
+
+# ── the blind re-audit of 10/7/26 (#5, #6) ──────────────────────────────────
+
+def test_a_quiet_night_post_a_gate_refused_is_not_promised(db, batches, monkeypatch):
+    """#5: a gate's refusal (budget, breaker) was read as queued, and the
+    push said a post was being drafted that never came. Blocked is not
+    drafted: {} — the push's old wording — and nothing is written now
+    either (the synchronous call would be refused the same)."""
+    rid = _rid(db)
+    monkeypatch.setattr(ai_batches, "submit", lambda workflow, items, **k: {items[0]["custom_id"]: ai_batches.BLOCKED})
+    monkeypatch.setattr(strategy_jobs, "_quiet_night_post_now", lambda r, topic: pytest.fail("not written now"))
+    out = strategy_jobs._draft_quiet_night_fill(models.get_restaurant(rid), {"weekday": "Tuesday"}, db)
+    assert out == {}
+    # A submit that failed outright still writes the post now, as before.
+    monkeypatch.setattr(ai_batches, "submit",
+                        lambda workflow, items, **k: {items[0]["custom_id"]: ai_batches.SUBMIT_FAILED})
+    monkeypatch.setattr(strategy_jobs, "_quiet_night_post_now", lambda r, topic: {"post_draft_id": 7})
+    assert strategy_jobs._draft_quiet_night_fill(models.get_restaurant(rid), {"weekday": "Tuesday"}, db) == \
+        {"post_draft_id": 7}
+
+
+def test_the_digest_week_is_whole_local_days_ending_yesterday(db, monkeypatch):
+    """#6: the owner reads the week the email covers — the seven days ending
+    yesterday, M/D/YY — and a review written today is next week's."""
+    import time_utils
+    rid = _rid(db)
+    fixed = datetime(2026, 10, 7, 2, 0)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r=None, naive=False: fixed)
+    save_reviews([
+        Review(restaurant_id=rid, platform="google", external_id="w1", author="Dana Ray", rating=5,
+               text="Lovely.", review_date="2026-09-30T19:00:00"),
+        Review(restaurant_id=rid, platform="google", external_id="w2", author="Sam Lee", rating=4,
+               text="Good.", review_date="2026-10-06T23:30:00"),
+        Review(restaurant_id=rid, platform="google", external_id="w0", author="Old Ann", rating=1,
+               text="Old.", review_date="2026-09-29T23:59:00"),
+        Review(restaurant_id=rid, platform="google", external_id="w3", author="Lee Q", rating=3,
+               text="Today.", review_date="2026-10-07T00:30:00")], db_path=db)
+    report = reporter.build_report_from_db(rid, "Batch Bistro", days=7, db_path=db)
+    assert (report.period_start, report.period_end) == ("9/30/26", "10/6/26")
+    assert report.total_reviews == 2 and report.avg_rating == 4.5
+
+
+def test_the_night_and_the_morning_build_the_same_prompt_and_the_send_reads_the_batch(db, batches, monkeypatch):
+    """#6: the precompute (2am) and the send (9am) build their week on the
+    same fixed edges, so a review the 8am fetch brings in from this morning
+    does not make the night's answer a stranger: the prompt is byte for byte
+    the same, and the send serves the batch's answer without a call."""
+    import time_utils
+    rid = _rid(db)
+    day = date.today() + timedelta(days=1)          # tomorrow: the cutoff is ahead of the real clock
+    now = {"t": datetime(day.year, day.month, day.day, 2, 0)}
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r=None, naive=False: now["t"])
+    in_week = (day - timedelta(days=2)).isoformat()
+    save_reviews([
+        Review(restaurant_id=rid, platform="google", external_id="n1", author="Dana Ray", rating=5,
+               text="Lovely dinner.", review_date=in_week),
+        Review(restaurant_id=rid, platform="google", external_id="n2", author="Sam Lee", rating=4,
+               text="Good tacos.", review_date=in_week)], db_path=db)
+    bases = []
+    real_fp = reporter.digest_fingerprint
+    monkeypatch.setattr(reporter, "digest_fingerprint", lambda base, ready: bases.append(base) or real_fp(base, ready))
+    monkeypatch.setattr(ai_utils, "get_client", lambda *a, **k: object())
+    monkeypatch.setattr(ai_utils, "create_with_retry", lambda *a, **k: pytest.fail("the send paid again"))
+    night = reporter.build_report_from_db(rid, "Batch Bistro", days=7, db_path=db)
+    assert reporter.generate_ai_digest_summary(night, "Batch Bistro", "Pat", restaurant_id=rid,
+                                               precompute=True) == {"_precompute": ai_batches.SUBMITTED}
+    (row,) = _rows(db, "SELECT * FROM ai_batch_items WHERE workflow='weekly_digest'")
+    ctx = json.loads(row["context_json"])
+    reporter.on_digest_batch({"restaurant_id": rid, "context": ctx, "call_id": None},
+                             message=_msg("HEADLINE: Pat, two new reviews this week."))
+    # 8am: the fetch brings in a review written this morning, and drafts it.
+    save_reviews([Review(restaurant_id=rid, platform="google", external_id="n3", author="Lee Q", rating=2,
+                         text="Slow this morning.", review_date=f"{day.isoformat()}T07:30:00")], db_path=db)
+    c = sqlite3.connect(db)
+    c.execute("UPDATE reviews SET response_status='drafted', draft_response='Thanks, Lee.' WHERE external_id='n3'")
+    c.commit()
+    c.close()
+    now["t"] = datetime(day.year, day.month, day.day, 9, 0)
+    morning = reporter.build_report_from_db(rid, "Batch Bistro", days=7, db_path=db)
+    sent = reporter.generate_ai_digest_summary(morning, "Batch Bistro", "Pat", restaurant_id=rid)
+    assert sent["headline"] == "Pat, two new reviews this week."
+    assert len(bases) == 2 and bases[0] == bases[1], "the night's prompt and the morning's differ"
+    assert f"Period: {morning.period_start} to {morning.period_end}" in bases[1]
+    assert morning.period_end == time_utils.mdy(day - timedelta(days=1))

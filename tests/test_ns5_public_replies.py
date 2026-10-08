@@ -133,12 +133,15 @@ def test_the_probe_3_star_allergen_reply_is_not_auto_approved(db, monkeypatch):
                       "Thanks Sam! Sorry the service dragged. Rest easy next time: our kitchen is completely "
                       "nut-free and every dish is allergen-safe.", processed=1)
     calls = []
-    monkeypatch.setattr(client_api, "_do_approve", lambda review_id, r, auto=False: (calls.append(review_id) or ({"ok": True}, 200)))
+    monkeypatch.setattr(client_api, "_do_approve", lambda review_id, r, auto=False, **kw: (calls.append(review_id) or ({"ok": True}, 200)))
     scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db))
     assert rev not in calls
 
 
-def test_a_clean_draft_is_still_held_on_a_3_star_review_with_a_complaint(db, monkeypatch):
+def test_a_clean_draft_is_still_held_on_a_3_star_review_with_a_complaint(db, monkeypatch, reviewer_passes):
+    # The reviewer gate ran and passed (conftest.reviewer_passes): since the
+    # 10/7/26 re-audit (#1) a gate that cannot run holds the reply, and this
+    # test is about the rule, not its gate.
     import client_api, scheduler
     rid = _earned_restaurant(db)
     held = _new_review(db, rid, "c3", 3, "Food fine but the wait was 40 minutes.", "Thanks for coming in, Sam!",
@@ -146,7 +149,7 @@ def test_a_clean_draft_is_still_held_on_a_3_star_review_with_a_complaint(db, mon
     clean = _new_review(db, rid, "k3", 3, "Pretty good overall.", "Thanks for coming in, Sam!",
                         processed=1, sentiment="positive", categories=json.dumps(["food_quality"]))
     calls = []
-    monkeypatch.setattr(client_api, "_do_approve", lambda review_id, r, auto=False: (calls.append(review_id) or ({"ok": True}, 200)))
+    monkeypatch.setattr(client_api, "_do_approve", lambda review_id, r, auto=False, **kw: (calls.append(review_id) or ({"ok": True}, 200)))
     scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db))
     assert held not in calls and clean in calls
 
@@ -157,7 +160,7 @@ def test_a_five_star_reply_with_a_comp_is_held_and_marked(db, monkeypatch):
     update_restaurant(rid, {"auto_approve_5star": 1, "auto_approve_daily_cap": 5, "billing_status": "active"}, db_path=db)
     rev = _new_review(db, rid, "f5", 5, "Loved it", "Thanks! Next round's on me when you're back.", processed=1)
     calls = []
-    monkeypatch.setattr(client_api, "_do_approve", lambda review_id, r, auto=False: (calls.append(review_id) or ({"ok": True}, 200)))
+    monkeypatch.setattr(client_api, "_do_approve", lambda review_id, r, auto=False, **kw: (calls.append(review_id) or ({"ok": True}, 200)))
     scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db))
     assert calls == []
     conn = get_conn(db)

@@ -180,6 +180,36 @@ def test_a_pdf_goes_as_a_document_block(db_path, no_budget):
     assert fake.requests[0]["messages"][0]["content"][0]["type"] == "document"
 
 
+def test_the_extraction_run_is_checked_by_the_arithmetic(db_path, no_budget):
+    """AI cost audit 10/7/26 re-audit #10: invoice_extract declared
+    rule_breach as its trigger and passed no check. The arithmetic is the
+    check now: lines over the printed total (or far under) are a
+    rule_breach on the run — recorded, never escalated on the "default"
+    ladder — and the owner still gets the lines to confirm."""
+    import sqlite3
+    import invoices
+    rid = _rid(db_path)
+    over = _FakeClient({"supplier": "Sysco", "invoice_date": None, "invoice_total": 50.0,
+                        "lines": [_line("OLIVE OIL", 2, "GAL", 32.0)]})
+    out = invoices.extract(rid, b"\x89PNG over", "image/png", client=over)
+    assert out["lines"] and len(over.requests) == 1
+    fine = _FakeClient({"supplier": "Sysco", "invoice_date": None, "invoice_total": 68.5,
+                        "lines": [_line("OLIVE OIL", 2, "GAL", 32.0)]})
+    invoices.extract(rid, b"\x89PNG fine", "image/png", client=fine)
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    runs = [dict(r) for r in c.execute("SELECT status, verdict, reasons, escalations FROM ai_runs "
+                                       "WHERE workflow='invoice_extract' ORDER BY rowid")]
+    c.close()
+    assert [r["status"] for r in runs] == ["failed", "ok"]
+    assert runs[0]["verdict"] == "totals_mismatch" and "$64.00" in runs[0]["reasons"] and runs[0]["escalations"] == 0
+    # The verdict reads the same rule the owner's card shows (propose's total_check).
+    assert invoices.totals_check([_line("X", 2, "GAL", 32.0)], 50.0)["plausible"] is False
+    assert invoices.totals_check([_line("X", 2, "GAL", 32.0)], 68.5)["plausible"] is True
+    assert invoices.totals_check([_line("X", 2, "GAL", 32.0)], 100.0)["plausible"] is False
+    assert invoices.totals_check([], 100.0) is None and invoices.totals_check([_line("X", 1, "EA", 1.0)], None) is None
+
+
 def test_the_same_file_twice_is_not_read_twice(db_path, no_budget):
     import invoices
     rid = _rid(db_path)
