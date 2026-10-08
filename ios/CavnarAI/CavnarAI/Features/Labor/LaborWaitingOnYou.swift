@@ -239,10 +239,14 @@ struct LaborWaitingOnYou: View {
             HomeMixedText.make(req.whenLabel + (req.reason.map { " · \($0)" } ?? ""),
                                size: 13.5, weight: 500, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
-            decideButtons(busy: busy,
-                          deny: { await setupViewModel.decideShiftRequest(req.id, approve: false) },
-                          approve: { await setupViewModel.decideShiftRequest(req.id, approve: true) })
-            if !req.isSwap {
+            // Only a login the decide route allows (SCHEDULE_DRAFT, the
+            // list's can_decide) is offered the buttons.
+            if setupViewModel.canDecideShifts {
+                decideButtons(busy: busy,
+                              deny: { await setupViewModel.decideShiftRequest(req.id, approve: false) },
+                              approve: { await setupViewModel.decideShiftRequest(req.id, approve: true) })
+            }
+            if !req.isSwap && setupViewModel.canDecideShifts {
                 // Approving a drop opens it for anyone to claim; naming who
                 // covers it outright is the full section's picker.
                 Button {

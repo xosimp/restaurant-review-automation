@@ -48,7 +48,7 @@ struct ShiftRequestsSection: View {
                         openBlock
                     }
                 }
-                if viewModel.canEditRoster {
+                if viewModel.canDecideShifts {
                     Button {
                         Haptic.light()
                         posting = true
@@ -143,7 +143,7 @@ struct ShiftRequestsSection: View {
                         .foregroundStyle(statusTone(req.status))
                 }
             }
-            if req.isSwap && req.status == "approved" && viewModel.canEditRoster {
+            if req.isSwap && req.status == "approved" && viewModel.canDecideShifts {
                 Button {
                     Haptic.light()
                     agreeing = req
@@ -156,7 +156,7 @@ struct ShiftRequestsSection: View {
                 .buttonStyle(.plain)
                 .disabled(viewModel.requestBusyId == req.id)
             }
-            if req.status == "pending" {
+            if req.status == "pending" && viewModel.canDecideShifts {
                 HStack(spacing: 10) {
                     Button {
                         Haptic.light()
@@ -249,7 +249,7 @@ struct ShiftRequestsSection: View {
                             }
                             Spacer()
                         }
-                        if viewModel.canEditRoster {
+                        if viewModel.canDecideShifts {
                             HStack(spacing: 16) {
                                 Button {
                                     Haptic.light()
@@ -273,7 +273,7 @@ struct ShiftRequestsSection: View {
                     }
                     .padding(.vertical, 4)
                     .contextMenu {
-                        if viewModel.canEditRoster {
+                        if viewModel.canDecideShifts {
                             Button { offering = shift } label: { Label("Offer it to someone", systemImage: "person.badge.plus") }
                             Button(role: .destructive) { cancelling = shift } label: { Label("Take it off", systemImage: "xmark") }
                         }

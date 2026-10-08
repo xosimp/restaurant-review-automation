@@ -312,9 +312,10 @@ def announce_waiting(restaurant_id, day, db_path=DB_PATH) -> int:
     """Tell the logins who approve the brief (SCHEDULE_PUBLISH — the
     route's own gate) that tonight's draft is waiting: a push with Approve
     on it (push.CATEGORY_LINEUP; the app posts /staff-brief/approve with
-    this `day`), email for anyone without the app (strategy_jobs._reach).
-    Never raises; returns how many were reached. The push says only that a
-    draft is waiting — the draft itself is read in the app."""
+    this `day`). Push only (strategy_jobs._reach email=False): the web
+    shows the brief's own card, and an approver without the app was emailed
+    on every draft. Never raises; returns how many were reached. The push
+    says only that a draft is waiting — the draft itself is read in the app."""
     try:
         import strategy_jobs
         from permissions import SCHEDULE_PUBLISH
@@ -325,7 +326,7 @@ def announce_waiting(restaurant_id, day, db_path=DB_PATH) -> int:
         return int(strategy_jobs._reach(
             restaurant_id, WAITING_TYPE, "Tonight's lineup brief is waiting", body,
             {"day": day.isoformat(), "kind": "lineup_brief"}, db_path, lines=[body],
-            permissions=[SCHEDULE_PUBLISH], deciders=True) or 0)
+            permissions=[SCHEDULE_PUBLISH], deciders=True, email=False) or 0)
     except Exception as e:
         try:
             import ops
