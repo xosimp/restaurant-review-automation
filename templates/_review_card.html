@@ -106,14 +106,17 @@
                to tell "in progress" from "silently failed" and no retry. #}
             {# r.post_failed (models.review_post_failed): the one rule the
                phone reads too - approved, Google, Business Profile
-               connected, never posted. #}
+               connected, not posted and no post in flight. Nothing posts
+               an approved reply on its own once Google is connected, so a
+               reply approved before then is posted from here (re-audit
+               10/8/26); r.post_error is the last attempt's reason. #}
             {% if r.post_failed %}
               <span class="rv2-status bad">⚠ Couldn't post to Google</span>
-              <span style="font-size:11.5px;color:var(--ink3)">The reply is saved — try posting it again.</span>
-              <button class="cbtn cbtn-secondary cbtn-sm" onclick="retryPostR({{ r.id }},this)">Retry posting</button>
+              <span style="font-size:11.5px;color:var(--ink3)">{% if r.post_error %}The reply is saved — try posting it again.{% else %}It was approved before Google was connected — post it now.{% endif %}</span>
+              <button class="cbtn cbtn-secondary cbtn-sm" onclick="retryPostR({{ r.id }},this)">{% if r.post_error %}Retry posting{% else %}Post to Google{% endif %}</button>
             {% else %}
               <span class="rv2-status ok">✓ Approved</span>
-              <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Will post to Google once connected{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
+              <span style="font-size:11.5px;color:var(--ink3)">{% if r.platform=='google' %}Post it once Google is connected{% else %}Copy and post to {{ r.platform|title }}{% endif %}</span>
             {% endif %}
             {# Undo, not skip (M-29): an approved reply being edited was not
                turned down, and a skip counted against auto-approve trust. #}
@@ -122,7 +125,7 @@
           {% elif r.response_status=='skipped' %}
             {# Skipped is a decision: the reply stays available, but not as
                the card's primary action. #}
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve after all</button>
+            <button class="cbtn cbtn-secondary cbtn-sm" onclick="approveR({{ r.id }},false,true)">✓ Approve after all</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Edit</button>
             <button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft({{ r.id }})">↻ Regenerate</button>
             <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Mark as replied on {{ r.platform|title }}</button>

@@ -424,9 +424,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
 
     /// The JSON body of a lock-screen action, by route.
     enum ActionBody: Encodable, Equatable {
-        /// `/reviews/<id>/approve` — the reply the owner saw (`expected_draft`):
-        /// changed since, and nothing posts (409 draft_changed).
-        case approve(expectedDraft: String)
+        /// `/reviews/<id>/approve` — the reply the owner saw (`expected_draft`)
+        /// when it was shown whole, and its fingerprint (`expected_draft_hash`,
+        /// push.py `draft_hash`) — the only binding when it was clipped or
+        /// dropped: changed since, and nothing posts (409 draft_changed).
+        case approve(expectedDraft: String?, expectedDraftHash: String? = nil)
         /// `/labor/publish-schedule` — the week and the blocker keys the push
         /// named (client_api._publish_schedule_request).
         case publish(scheduleId: Int, acknowledge: [String])
@@ -437,6 +439,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
 
         private enum Keys: String, CodingKey {
             case expectedDraft = "expected_draft"
+            case expectedDraftHash = "expected_draft_hash"
             case scheduleId = "schedule_id"
             case acknowledge
             case loginUserId = "login_user_id"
@@ -444,9 +447,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
 
         func encode(to encoder: Encoder) throws {
             switch self {
-            case .approve(let text):
+            case .approve(let text, let hash):
                 var c = encoder.container(keyedBy: Keys.self)
-                try c.encode(text, forKey: .expectedDraft)
+                try c.encodeIfPresent(text, forKey: .expectedDraft)
+                try c.encodeIfPresent(hash, forKey: .expectedDraftHash)
             case .publish(let id, let keys):
                 var c = encoder.container(keyedBy: Keys.self)
                 try c.encode(id, forKey: .scheduleId)
@@ -503,11 +507,18 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         case approvePostAction:
             guard let id = reviewId(from: cavnar["review_id"]) else { return nil }
             // The reply the notification showed (push.py `draft`, #36), sent
-            // back so a draft changed since is not posted unread — only when
-            // the push carried it whole (`draft_complete`).
+            // back so a draft changed since is not posted unread — the text
+            // only when the push carried it whole (`draft_complete`), the
+            // fingerprint (`draft_hash`) always: a clipped or dropped draft
+            // is still bound to the reply the push was about (re-audit
+            // 10/8/26). A push with neither cannot bind the words, so the
+            // button just opens the review.
+            let shown = shownDraft(cavnar)
+            let hash = draftHash(cavnar)
+            guard shown != nil || hash != nil else { return nil }
             var action = BackgroundAction(path: "/mobile/api/reviews/\(id)/approve", decision: nil,
                                           failureTitle: "Couldn't post that reply", postsReply: true)
-            if let shown = shownDraft(cavnar) { action.body = .approve(expectedDraft: shown) }
+            action.body = .approve(expectedDraft: shown, expectedDraftHash: hash)
             return action
         case replyTextAction:
             // A typed reply (#54): saved as the draft, then approved with
@@ -519,7 +530,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             let reply = String(text.prefix(4000))
             return BackgroundAction(path: "/mobile/api/reviews/\(id)/approve", decision: nil,
                                     failureTitle: "Couldn't post your reply", postsReply: true,
-                                    body: .approve(expectedDraft: reply),
+                                    body: .approve(expectedDraft: reply, expectedDraftHash: nil),
                                     savesDraft: SavedDraft(path: "/mobile/api/reviews/\(id)/save-draft", text: reply))
         case recDoneAction, recNotForUsAction:
             // Done / Pass on a recommendation the app may answer
@@ -573,6 +584,14 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         default:
             return nil
         }
+    }
+
+    /// The fingerprint of the reply a push was about (push.py `draft_hash`,
+    /// models.draft_hash), or nil.
+    nonisolated static func draftHash(_ cavnar: [String: Any]) -> String? {
+        guard let raw = cavnar["draft_hash"] as? String else { return nil }
+        let hash = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return hash.isEmpty ? nil : hash
     }
 
     /// The drafted reply a push carried whole (push.py `draft` with

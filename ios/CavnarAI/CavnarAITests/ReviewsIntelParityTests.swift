@@ -93,14 +93,30 @@ final class ReviewsIntelParityTests: XCTestCase {
 
     @MainActor
     func testBulkApproveSendsReviewIdsInChunksOfTwentyFive() throws {
-        let bodies = ReviewsListViewModel.bulkApproveBodies(Array(1...30))
+        let reviews = try (1...30).map { id in
+            try decode(Review.self, #"{"id": \#(id), "platform": "google", "rating": 5, "text": "Great", "draft_response": "Thanks \#(id)!", "response_status": "drafted", "categories": []}"#)
+        }
+        let bodies = ReviewsListViewModel.bulkApproveBodies(reviews)
         XCTAssertEqual(bodies.count, 2)
-        let first = try JSONSerialization.jsonObject(with: bodies[0]) as? [String: Any]
-        XCTAssertEqual((first?["review_ids"] as? [Int])?.count, 25)
-        XCTAssertEqual(first?["limit"] as? Int, 25)
-        let second = try JSONSerialization.jsonObject(with: bodies[1]) as? [String: Any]
-        XCTAssertEqual(second?["review_ids"] as? [Int], [26, 27, 28, 29, 30])
-        XCTAssertEqual(second?["limit"] as? Int, 5)
+        let first = try object(bodies[0])
+        XCTAssertEqual((first["review_ids"] as? [Int])?.count, 25)
+        XCTAssertEqual(first["limit"] as? Int, 25)
+        let second = try object(bodies[1])
+        XCTAssertEqual(second["review_ids"] as? [Int], [26, 27, 28, 29, 30])
+        XCTAssertEqual(second["limit"] as? Int, 5)
+        // Each bound to the words the confirm listed (re-audit 10/8/26).
+        let hashes = try XCTUnwrap(second["review_hashes"] as? [String: String])
+        XCTAssertEqual(hashes.count, 5)
+        XCTAssertEqual(hashes["26"], ReviewsListViewModel.draftHash("Thanks 26!"))
+    }
+
+    /// models.draft_hash, byte for byte: sha256 hex of the stripped reply.
+    func testTheDraftFingerprintIsTheServersSha256OfTheStrippedReply() {
+        // hashlib.sha256("Thanks, Ann!".encode()).hexdigest()
+        XCTAssertEqual(ReviewsListViewModel.draftHash("  Thanks, Ann!\n"),
+                       "5aab66fd71190e13c0b358374867058680317a60f5cf0377b634229587754116")
+        XCTAssertEqual(ReviewsListViewModel.draftHash(""),
+                       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     }
 
     @MainActor

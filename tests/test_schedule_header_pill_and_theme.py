@@ -889,7 +889,10 @@ def test_approved_google_state_shows_retry_only_when_the_post_actually_failed():
     assert "{% if r.post_failed %}" in block
     assert "Couldn't post to Google" in block
     assert 'onclick="retryPostR({{ r.id }},this)"' in block
-    assert "Will post to Google once connected" in block
+    # Nothing posts it on its own once connected (re-audit 10/8/26): the
+    # owner posts it from the card then.
+    assert "Post it once Google is connected" in block
+    assert "Will post to Google once connected" not in block
     assert "Posting to Google" not in block
 
 

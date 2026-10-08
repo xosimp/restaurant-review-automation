@@ -31,6 +31,9 @@ struct ReviewsListView: View {
     /// waiting on a decision, and a bar to approve or skip the ticked ones.
     @State private var editMode: EditMode = .inactive
     @State private var confirmingBulkApprove = false
+    /// The replies the bulk confirm lists — Approve posts exactly these.
+    @State private var bulkConfirmReviews: [Review] = []
+    @State private var bulkConfirmHeld = 0
     @State private var confirmingBulkSkip = false
     /// "Publish N ready": Home's publish confirm, from the inbox header.
     @State private var showingPublishReady = false
@@ -122,21 +125,20 @@ struct ReviewsListView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        // The bar's two outward actions ask first, with the counts (the
-        // web's confirm): never one tap from a list.
-        .confirmationDialog(
-            "Approve and post \(viewModel.bulkApprovable.count) \(viewModel.bulkApprovable.count == 1 ? "reply" : "replies")?",
-            isPresented: $confirmingBulkApprove, titleVisibility: .visible
-        ) {
-            Button("Approve \(viewModel.bulkApprovable.count)") {
+        // The bar's two outward actions ask first: never one tap from a
+        // list. Approve lists the replies themselves, in the words that
+        // would post (re-audit 10/8/26 — words, not a count).
+        .sheet(isPresented: $confirmingBulkApprove) {
+            BulkApproveConfirmSheet(reviews: bulkConfirmReviews, held: bulkConfirmHeld,
+                                    isWorking: viewModel.isBulkWorking) {
+                let shown = bulkConfirmReviews
                 Task {
-                    await viewModel.bulkApprove()
+                    await viewModel.bulkApprove(shown: shown)
                     editMode = .inactive
                 }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(Self.bulkApproveMessage(held: viewModel.bulkHeld))
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .confirmationDialog(
             "Skip \(viewModel.bulkSkippable.count) \(viewModel.bulkSkippable.count == 1 ? "review" : "reviews")?",
@@ -483,6 +485,8 @@ struct ReviewsListView: View {
             HStack(spacing: 10) {
                 Button {
                     Haptic.light()
+                    bulkConfirmReviews = viewModel.bulkApprovableReviews
+                    bulkConfirmHeld = viewModel.bulkHeld
                     confirmingBulkApprove = true
                 } label: {
                     HomeMixedText.make("Approve \(ap)", size: 15, weight: 700, color: .white, numberColor: .white)

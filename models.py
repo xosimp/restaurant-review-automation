@@ -1597,6 +1597,13 @@ def ensure_columns(db_path: str = DB_PATH):
         # window its guest text and replies are blanked for good
         # (history_rollups.erase_removed_reviews). NULL while restorable.
         ("reviews", "erased_at", "TEXT"),
+        # The Google post of an approved reply (re-audit 10/8/26): when the
+        # last attempt started and, when it failed, the owner-facing reason.
+        # An attempt with no error yet is in flight (client_api.
+        # _attempt_google_post claims it), so no inbox offers Retry over it
+        # and a second post is never started beside it.
+        ("reviews", "post_attempted_at", "TEXT"),
+        ("reviews", "post_error", "TEXT"),
         # Why each comp and void happened, by the POS's own reason names
         # ({reason: {amount, events}}; RPower endpoint audit 9/29/26 — the
         # reason on every line was kept as an id and never read).
@@ -6517,7 +6524,8 @@ def draft_hash(text) -> str:
 
 def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
                    publishable_only: bool = False, allow_flagged: bool = True,
-                   expected_draft: str = None, approver: dict = None) -> bool:
+                   expected_draft: str = None, approver: dict = None,
+                   approve_skipped: bool = False) -> bool:
     """Approve a drafted reply as a compare-and-set. True only for the one
     caller that moved THIS restaurant's live, drafted, non-empty reply to
     'approved'; everyone else gets False and nothing changes.
@@ -6547,24 +6555,37 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
     `approver` (reply_approver) is recorded in the same statement: who
     approved, their authority and how (memory audit 9/29/26, reply_voice) —
     the style examples, the edit note and auto-approve trust learn only the
-    owner's voice from it."""
+    owner's voice from it.
+
+    `approve_skipped`: the person pressed "Approve after all" on a reply
+    they could see was skipped (the web card, the phone's review screen).
+    Only then is a skipped reply claimed. Every other approve — a queued
+    offline replay, the lock-screen action, a bell row, Ask, the rule, a
+    bulk publish — claims only from ('drafted','pending'): an approve made
+    before a skip must never overturn it when it lands after (re-audit
+    10/8/26)."""
     ap = approver or {}
     who = (ap.get("user_id"), ap.get("role"), ap.get("via"))
     conn = get_conn(db_path)
     try:
         if publishable_only:
+            # A bulk publish bound to the words its card showed (Ask's
+            # proposal, the phone's Select confirm) holds them here too.
             cur = conn.execute(
                 "UPDATE reviews SET response_status='approved', approved_at=datetime('now'), "
                 "approved_by=?, approved_role=?, approved_via=? "
-                f"WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}",
-                who + (review_id, restaurant_id, bulk_publish_window()))
+                f"WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}"
+                + ("" if expected_draft is None else " AND draft_response IN (?, ?)"),
+                who + (review_id, restaurant_id, bulk_publish_window())
+                + (() if expected_draft is None else (expected_draft, expected_draft.strip())))
             conn.commit()
             return cur.rowcount == 1
         # A person may approve a reply they skipped earlier ("Approve after
-        # all" on the web card and the phone, parity audit 10/7/26 #91); it
-        # was refused here as "no drafted reply", so the button never worked.
-        # The auto-approve rule never approves what a person turned down.
-        _from = "('drafted','pending')" if ap.get("via") == "rule" else "('drafted','pending','skipped')"
+        # all" on the web card and the phone, parity audit 10/7/26 #91) —
+        # only by saying so (`approve_skipped`). The auto-approve rule never
+        # approves what a person turned down, whatever it passes.
+        _from = ("('drafted','pending','skipped')"
+                 if approve_skipped is True and ap.get("via") != "rule" else "('drafted','pending')")
         cur = conn.execute("""
             UPDATE reviews
             SET response_status='approved', approved_at=datetime('now'),
@@ -13770,15 +13791,39 @@ def review_post_connected(restaurant_id, conn=None) -> bool:
     return bool(row and row["t"])
 
 
+# How long a Google post that started and never recorded an answer counts
+# as still running: the post's own timeouts are seconds, so after this the
+# process that made it is taken to have died and Retry is offered again.
+REVIEW_POST_IN_FLIGHT_MINUTES = 2
+
+
+def review_post_in_flight(r: dict, now=None) -> bool:
+    """An approved reply whose Google post has started and not answered
+    (post_attempted_at within REVIEW_POST_IN_FLIGHT_MINUTES, no post_error)."""
+    started = r.get("post_attempted_at")
+    if not started or r.get("post_error") or (r.get("response_status") or "") != "approved":
+        return False
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        at = _dt.fromisoformat(str(started).replace("T", " ")[:19])
+    except ValueError:
+        return False
+    from datetime import timezone as _tz
+    return ((now or _dt.now(_tz.utc).replace(tzinfo=None)) - at) < _td(minutes=REVIEW_POST_IN_FLIGHT_MINUTES)
+
+
 def review_post_failed(r: dict, gbp_connected: bool) -> bool:
     """"Couldn't post to Google" (parity audit 10/7/26 #21), the one rule
     the web card and the phone both read: an approved Google reply on a
-    restaurant whose Business Profile is connected that never went live.
-    The post runs synchronously on approve (client_api._attempt_google_post),
-    so an approved Google reply with a connection is a finished failure, not
-    work in flight; without a connection it waits to post once connected."""
+    restaurant whose Business Profile is connected that is not live — and
+    not being posted right now (re-audit 10/8/26: a second inbox offered
+    Retry over a post still in flight, and Retry posted it twice). An
+    approved reply from before Google was connected is one too: nothing
+    posts it on its own, so the owner posts it from here. Without a
+    connection it waits for one."""
     return bool(gbp_connected and (r.get("response_status") or "") == "approved"
-                and (r.get("platform") or "") == "google")
+                and (r.get("platform") or "") == "google"
+                and not review_post_in_flight(r))
 
 
 def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, platform=None,

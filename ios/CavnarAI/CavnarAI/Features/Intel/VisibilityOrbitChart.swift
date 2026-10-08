@@ -9,6 +9,13 @@ struct VisibilityOrbitChart: View {
     /// and "not measured", never as a 0% ring (J10, CA1 I1).
     let score: Int?
     let runs: [AIVisibilityRun]
+    /// The score's honest bounds (`ai_score_low` / `ai_score_high`) and the
+    /// server's band in words (`ai_score_label`): VoiceOver says the range
+    /// and the band the card shows, never the point alone (re-audit
+    /// 10/8/26 — a handful of questions is a range, not a figure).
+    var low: Int? = nil
+    var high: Int? = nil
+    var band: String? = nil
 
     private var delta: Int? {
         guard runs.count >= 2 else { return nil }
@@ -28,14 +35,24 @@ struct VisibilityOrbitChart: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("AI visibility score")
-        .accessibilityValue(Self.spokenSummary(score: score, runs: runs))
+        .accessibilityValue(Self.spokenSummary(score: score, runs: runs, low: low, high: high, band: band))
     }
 
     /// The ring and the trend in a sentence. No measurement is said as
-    /// "not measured", never as zero.
-    static func spokenSummary(score: Int?, runs: [AIVisibilityRun]) -> String {
+    /// "not measured", never as zero; a score with bounds is said as its
+    /// range and band, as the card shows it.
+    static func spokenSummary(score: Int?, runs: [AIVisibilityRun], low: Int? = nil, high: Int? = nil,
+                              band: String? = nil) -> String {
         guard let score else { return "Not measured." }
-        var parts = ["\(score) out of 100"]
+        var parts: [String] = []
+        if let lo = low, let hi = high, hi > lo {
+            parts.append("Somewhere between \(lo) and \(hi) out of 100")
+        } else {
+            parts.append("\(score) out of 100")
+        }
+        if let b = band?.trimmingCharacters(in: .whitespacesAndNewlines), !b.isEmpty {
+            parts.append(b.prefix(1).uppercased() + b.dropFirst())
+        }
         if runs.count >= 2 {
             let vals = runs.map(\.aiScore)
             let delta = vals[vals.count - 1] - vals[vals.count - 2]

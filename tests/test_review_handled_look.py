@@ -29,7 +29,7 @@ def test_the_mark_button_reads_as_an_action_not_a_status():
 def test_a_skipped_card_offers_approve_only_as_a_secondary_action():
     sk = CARD[CARD.index("{% elif r.response_status=='skipped' %}"):]
     sk = sk[:sk.index("{% else %}")]
-    assert 'class="cbtn cbtn-secondary cbtn-sm" onclick="approveR({{ r.id }})">✓ Approve after all' in sk
+    assert 'class="cbtn cbtn-secondary cbtn-sm" onclick="approveR({{ r.id }},false,true)">✓ Approve after all' in sk
     assert "cbtn-primary" not in sk
     skip_js = DASH[DASH.index("function skipR(id){"):]
     skip_js = skip_js[:skip_js.index("\n}\n")]
@@ -38,7 +38,7 @@ def test_a_skipped_card_offers_approve_only_as_a_secondary_action():
 
 def test_in_place_changes_keep_the_look_the_server_draws():
     assert ".rv2-row.handled>*{opacity:.6;" in DASH and ".rv2-row.handled .rtext{display:-webkit-box;-webkit-line-clamp:3;" in DASH
-    appr = DASH[DASH.index("function approveR(id, confirmed){"):]
+    appr = DASH[DASH.index("function approveR(id, confirmed, skipped){"):]
     appr = appr[:appr.index("\n}\n")]
     assert appr.count("rvSetState(id,") == 3
     assert "rvClearState(id);" in DASH[DASH.index("function editApprovedR(id){"):]

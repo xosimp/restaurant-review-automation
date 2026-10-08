@@ -201,9 +201,13 @@ def test_a_person_may_approve_a_reply_they_skipped_but_the_rule_never_does(rid, 
     a = _review(rid, db_path, "g/skipped-a", status="skipped")
     b = _review(rid, db_path, "g/skipped-b", status="skipped")
     person = {"user_id": 7, "role": "principal", "via": "normal"}
-    assert models.claim_approval(a, rid, approver=person) is True
+    # Only by saying so ("Approve after all", re-audit 10/8/26): a plain
+    # approve — a queued replay, the lock screen, a bell row — leaves it.
+    assert models.claim_approval(a, rid, approver=person) is False
+    assert _rows(rid)[a]["response_status"] == "skipped"
+    assert models.claim_approval(a, rid, approver=person, approve_skipped=True) is True
     assert _rows(rid)[a]["response_status"] == "approved"
-    assert models.claim_approval(b, rid, approver=models.reply_approver(auto=True)) is False
+    assert models.claim_approval(b, rid, approver=models.reply_approver(auto=True), approve_skipped=True) is False
     assert _rows(rid)[b]["response_status"] == "skipped"
     # Nor in a bulk publish: BULK_PUBLISHABLE_SQL is drafted-only.
     assert models.claim_approval(b, rid, publishable_only=True, approver=person) is False

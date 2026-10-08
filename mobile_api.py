@@ -1757,7 +1757,8 @@ def mobile_approve_review(review_id, current_user):
     payload, status = _capi._do_approve(review_id, current_user["restaurant_id"],
                                         confirm_flagged=_body.get("confirm_flagged") is True,
                                         expected_draft=_body.get("expected_draft"), user=current_user,
-                                        expected_draft_hash=_body.get("expected_draft_hash"))
+                                        expected_draft_hash=_body.get("expected_draft_hash"),
+                                        approve_skipped=_body.get("approve_skipped") is True)
     return jsonify(**payload), status
 
 
@@ -1769,7 +1770,8 @@ def mobile_approve_all_reviews(current_user):
     Ask Cavnar's proposal all run the identical bulk-approve path."""
     data = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
-                                            review_ids=data.get("review_ids"), user=current_user)
+                                            review_ids=data.get("review_ids"), user=current_user,
+                                            review_hashes=data.get("review_hashes"))
     return jsonify(**payload), status
 
 
@@ -8850,5 +8852,14 @@ def mobile_web_analytics_sync(current_user):
 @mobile_bp.route("/marketing/website")
 @mobile_login_required
 def mobile_marketing_website(current_user):
+    payload, status = _capi._do_marketing_website(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/intel/website")
+@mobile_login_required
+def mobile_intel_website(current_user):
+    """Twin of /api/intel/website: the website card under Intel reads a
+    route gated as Intel, not Marketing (re-audit 10/8/26)."""
     payload, status = _capi._do_marketing_website(current_user)
     return jsonify(**payload), status

@@ -252,7 +252,9 @@ struct AIVisibilitySection: View {
             // The Orbit: today's score as a ring, every past run as a line.
             // A missing score is "not measured" on the ring too — never a
             // 0% ring (J10).
-            VisibilityOrbitChart(score: result.aiScore, runs: viewModel.history)
+            VisibilityOrbitChart(score: result.aiScore, runs: viewModel.history,
+                                 low: result.aiScoreLow, high: result.aiScoreHigh,
+                                 band: measured ? result.aiChipText : "An estimate, not a measurement")
                 .padding(.bottom, 14)
                 .opacity(measured ? 1 : 0.35)
             HStack(spacing: 0) {

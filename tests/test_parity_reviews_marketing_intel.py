@@ -166,7 +166,7 @@ def test_1_the_scheduler_rule_never_posts_a_flagged_draft(db_path, rid):
 
 def test_1_web_sends_the_confirm_only_after_asking():
     src = _read("templates", "dashboard.html")
-    start = src.index("function approveR(id, confirmed)")
+    start = src.index("function approveR(id, confirmed, skipped)")
     body = src[start:src.index("function rvReloadInbox", start)]
     assert "_revFlagOk(id,_flag)" in body
     assert "confirm_flagged:_conf" in body
@@ -187,7 +187,7 @@ def test_1_ios_follows_the_flag_and_confirms_before_posting():
     view = _swift("Reviews", "ReviewDetailView.swift")
     assert "if let reason = viewModel.flagReason" in view
     assert '"Post this reply anyway?"' in view
-    assert "viewModel.approve(confirmFlagged: true)" in view
+    assert "viewModel.approve(confirmFlagged: true," in view
     lst = _swift("Reviews", "ReviewsListView.swift")
     assert "detail.needsFlagConfirm" in lst
 
