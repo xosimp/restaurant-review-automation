@@ -51,6 +51,12 @@ struct CavnarCaveat: View {
         CavnarCaveat(title: "Older read", detail: note)
     }
 
+    /// A module read the server could not write, in the server's own words
+    /// (a budget stop, an outage, a refused read — InsightRefresh.follow).
+    static func readUnavailable(_ message: String) -> CavnarCaveat {
+        CavnarCaveat(title: "Read unavailable", detail: message)
+    }
+
     static func unverifiedFigures(_ figures: [String]) -> CavnarCaveat {
         let detail: String
         if figures.isEmpty {

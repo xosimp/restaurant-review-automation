@@ -99,6 +99,12 @@ struct ReviewsAnalyticsSection: View {
                     }
                 }
 
+                // A read the server could not write, in its own words
+                // (InsightRefresh.follow, re-audit 10/8/26 #3).
+                if let message = viewModel.insightError {
+                    CavnarCaveat.readUnavailable(message)
+                }
+
                 // The AI read itself. It was fetched on every open and then
                 // never rendered — so the app paid for a Haiku call, threw
                 // the answer away, and could still show the caveat above

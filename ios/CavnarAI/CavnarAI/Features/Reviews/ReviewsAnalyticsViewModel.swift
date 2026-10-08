@@ -60,6 +60,9 @@ final class ReviewsAnalyticsViewModel {
     /// The server is writing the first read for this data (parity #37):
     /// the read's skeleton stays up while the rest of the tab shows.
     var insightPending = false
+    /// The server's sentence when the read it was writing couldn't be
+    /// written (InsightRefresh.follow, re-audit 10/8/26 #3).
+    var insightError: String?
     var errorMessage: String?
     /// 30 / 90 / 180 — the same three windows as the web's analytics tab.
     /// Response performance and the topic grid take it; the 8-week
@@ -168,7 +171,8 @@ final class ReviewsAnalyticsViewModel {
         if !insightPending { applyInsight(first?.value) }
         isLoading = false
         if let state = first?.refresh, state.isWaiting {
-            await InsightRefresh.follow(Self.insightPath, from: state, client: client) {
+            await InsightRefresh.follow(Self.insightPath, from: state, client: client,
+                                        failed: { self.insightError = $0 }) {
                 (payload: InsightResponse) in applyInsight(payload)
             }
         }
@@ -179,6 +183,7 @@ final class ReviewsAnalyticsViewModel {
 
     private func applyInsight(_ insightPayload: InsightResponse?) {
         insight = insightPayload?.insight
+        insightError = nil
         unsupportedFigures = (insightPayload?.figuresVerified == false)
             ? (insightPayload?.unsupportedFigures ?? [])
             : []

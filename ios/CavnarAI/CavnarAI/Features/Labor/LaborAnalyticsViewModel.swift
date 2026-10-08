@@ -120,6 +120,9 @@ final class LaborAnalyticsViewModel {
     /// cached read up looking current (#37).
     private(set) var insightCachedAt: Date?
     private(set) var insightFetchFailed = false
+    /// The server's sentence when the read it was writing couldn't be
+    /// written (InsightRefresh.follow, re-audit 10/8/26 #3).
+    private(set) var insightError: String?
 
     /// "Older read" when the fetch failed and the read shown is this
     /// device's cached copy — unless the server already marked it stale
@@ -239,7 +242,8 @@ final class LaborAnalyticsViewModel {
         isLoadingInsight = first?.refresh?.isPending == true
         isLoading = false
         if let state = first?.refresh, state.isWaiting {
-            let shown = await InsightRefresh.follow(Self.insightPath, from: state, client: client) {
+            let shown = await InsightRefresh.follow(Self.insightPath, from: state, client: client,
+                                                    failed: { self.insightError = $0 }) {
                 (payload: LaborInsightPayload) in applyInsight(payload)
             }
             if !shown { insightFetchFailed = true }
@@ -255,5 +259,6 @@ final class LaborAnalyticsViewModel {
         cacheInsight(fresh.insight)
         insightCachedAt = nil
         insightFetchFailed = false
+        insightError = nil
     }
 }

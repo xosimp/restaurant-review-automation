@@ -123,16 +123,19 @@ struct ActionItem: Decodable, Identifiable {
     /// Where the item itself opens (action_queue.nav_for).
     let nav: String?
     /// How many the row stands for (the drafted replies waiting) — what
-    /// the widget reads from Home's own read (HomeReadShare).
+    /// the widget reads from Home's own read (HomeReadShare). Decoded from
+    /// the item's `count` (action_queue): left out of CodingKeys, it was
+    /// always nil, and the widget said 0 replies whenever Home's read lent
+    /// it the queue (re-audit 10/8/26 #2).
     var count: Int? = nil
     var id: String { key }
 
-    enum CodingKeys: String, CodingKey { case key, kind, title, detail, severity, action, nav }
+    enum CodingKeys: String, CodingKey { case key, kind, title, detail, severity, action, nav, count }
 
     init(key: String, kind: String, title: String, detail: String? = nil, severity: String = "watch",
-         action: Action? = nil, nav: String? = nil) {
+         action: Action? = nil, nav: String? = nil, count: Int? = nil) {
         self.key = key; self.kind = kind; self.title = title; self.detail = detail
-        self.severity = severity; self.action = action; self.nav = nav
+        self.severity = severity; self.action = action; self.nav = nav; self.count = count
     }
 
     init(from decoder: Decoder) throws {
@@ -144,6 +147,7 @@ struct ActionItem: Decodable, Identifiable {
         severity = ((try? c.decodeIfPresent(String.self, forKey: .severity)) ?? nil) ?? "watch"
         action = (try? c.decodeIfPresent(Action.self, forKey: .action)) ?? nil
         nav = (try? c.decodeIfPresent(String.self, forKey: .nav)) ?? nil
+        count = (try? c.decodeIfPresent(Int.self, forKey: .count)) ?? nil
     }
 
     /// The stored Ask proposal this row is, for key "ask:<id>".

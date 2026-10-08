@@ -119,6 +119,9 @@ final class MarketingAnalyticsViewModel {
         let diagnosis: LaborDiagnosis?
     }
     var isLoadingInsight = false
+    /// The server's sentence when the brief it was writing couldn't be
+    /// written (InsightRefresh.follow, re-audit 10/8/26 #3).
+    var insightError: String?
     var isLoading = false
     var isRefreshingMetrics = false
 
@@ -212,8 +215,9 @@ final class MarketingAnalyticsViewModel {
         }
         isLoading = false
         if let state = firstInsight?.refresh, state.isWaiting {
-            await InsightRefresh.follow(Self.insightPath, from: state, client: client) {
-                (fresh: AIInsight) in insight = fresh
+            await InsightRefresh.follow(Self.insightPath, from: state, client: client,
+                                        failed: { self.insightError = $0 }) {
+                (fresh: AIInsight) in insight = fresh; insightError = nil
             }
         }
         isLoadingInsight = false
