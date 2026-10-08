@@ -485,6 +485,10 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
             # never waits on a job nothing will finish.
             _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
             _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
+        finally:
+            # The owner who pressed may have left: their phone hears the
+            # draft landed (iOS parity #16).
+            notify_generation_watchers(job_id, restaurant_id)
     try:
         fut = _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
     except BaseException:
@@ -492,6 +496,80 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
         raise
     _GEN_SLOTS.attach(job_id, fut)
     return fut
+
+
+# Who asked for each running generation (iOS parity #16, 10/7/26): the
+# logins whose press started or joined it, told by push when the draft lands
+# — a draft takes minutes, and the owner is told they can leave. In memory
+# on purpose: a restart loses the job itself too, and the gunicorn worker
+# count is 1 (CLAUDE.md). {job_id: {user_id: may publish}}.
+_GEN_WATCHERS = {}
+_GEN_WATCHERS_LOCK = threading.Lock()
+
+
+def watch_generation(job_id, user) -> None:
+    """Remember that `user` (the route's current_user) pressed Generate for
+    `job_id` — a start or a join — so the finished draft is pushed to that
+    login alone, with whether it may send the week (SCHEDULE_PUBLISH, read
+    from the session's identity at the press)."""
+    user = user or {}
+    try:
+        uid = int(user.get("id") or 0)
+    except (TypeError, ValueError):
+        return
+    if not job_id or uid <= 0:
+        return
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    may = bool(user.get("is_admin")) or has_permission(user, SCHEDULE_PUBLISH)
+    with _GEN_WATCHERS_LOCK:
+        _GEN_WATCHERS.setdefault(str(job_id), {})[uid] = may
+
+
+def take_generation_watchers(job_id) -> dict:
+    """The logins waiting on `job_id` ({user_id: may publish}), forgotten as
+    they are handed out."""
+    with _GEN_WATCHERS_LOCK:
+        return _GEN_WATCHERS.pop(str(job_id), {})
+
+
+def notify_generation_watchers(job_id, restaurant_id, exclude=None) -> int:
+    """Push `schedule_drafted` to the logins who pressed for this job, once
+    it finished with a saved draft: the week opens in the editor
+    (`schedule_id`), and `one_tap_safe` says whether Send to staff may be
+    offered on the lock screen (strategy_routes.draft_one_tap_safe, checked
+    per login: only one who can publish). A failed or refused job pushes
+    nothing — the owner's own screen says why. Never raises; returns how
+    many logins were pushed."""
+    skip = {int(x) for x in (exclude or ())}
+    watchers = {u: may for u, may in take_generation_watchers(job_id).items() if u not in skip}
+    if not watchers:
+        return 0
+    try:
+        state = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
+        result = state.get("result") if isinstance(state.get("result"), dict) else {}
+        if state.get("status") != "done" or not result.get("ok") or not result.get("history_id"):
+            return 0
+        sid = int(result["history_id"])
+        from time_utils import mdy
+        week = (result.get("week_dates") or [None])[0] or result.get("week_start")
+        gaps = result.get("unwritten_dates") or []
+        title = (f"The week of {mdy(week)} is drafted" if week else "Your schedule is drafted") \
+            if not gaps else (f"The week of {mdy(week)} is partly drafted" if week else "Your schedule is partly drafted")
+        body = ("Review it and send when it looks right — nothing has gone to your staff yet." if not gaps else
+                f"{len(gaps)} day{'s' if len(gaps) != 1 else ''} couldn't be written — redo "
+                f"{'it' if len(gaps) == 1 else 'them'} before you send. Nothing has gone to your staff yet.")
+        import push
+        import strategy_routes as _sr
+        sent = 0
+        for uid in sorted(watchers):
+            safe = (not gaps) and _sr.draft_one_tap_safe(restaurant_id, sid, can_publish=watchers[uid])
+            push.fire_push(restaurant_id, "schedule_drafted", title, body,
+                           data={"schedule_id": sid, "one_tap_safe": bool(safe)}, user_ids={uid})
+            sent += 1
+        return sent
+    except Exception as e:
+        _ops.capture(e, job="schedule_drafted_push", context=f"restaurant_id={restaurant_id} job={job_id}")
+        return 0
 
 
 def generation_request(restaurant_id, week_start=None, dates=None, history_id=None, instruction=None,
