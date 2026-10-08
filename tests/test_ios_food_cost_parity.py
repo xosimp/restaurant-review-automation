@@ -38,7 +38,9 @@ def test_the_tracker_starts_from_the_saved_rows():
     assert '"/mobile/api/food-cost/tracker"' in src
     assert '"/mobile/api/food-cost/custom-item", method: .post' in src
     assert '"/mobile/api/food-cost/custom-item", method: .delete' in src
-    assert "var isReadOnly: Bool { fromPantry && !isEditing }" in src
+    # A ledger account is read-only until Edit prices; a synced one always
+    # (its prices are the inventory system's, parity audit #8, 10/7/26).
+    assert "var isReadOnly: Bool { isSynced || (fromPantry && !isEditing) }" in src
 
 
 def test_pending_invoices_reopen_and_every_page_is_read():

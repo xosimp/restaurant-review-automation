@@ -288,7 +288,7 @@ struct DishScorecardSheet: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Every dish with a recipe and a price: what it costs to make, what it sold, what guests said about it, and the move it calls for. Swipe a dish to reprice it or pass.")
+                    Text("Every dish with a recipe and a price: what it costs to make, what it sold, what guests said about it, and the move it calls for. Swipe a dish to reprice it, or to pass on its reprice.")
                         .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     if let note = card.note {
@@ -313,14 +313,14 @@ struct DishScorecardSheet: View {
                             .swipeActions(edge: .leading, allowsFullSwipe: false) { repriceAction(dish) }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 if viewModel.suggestion(for: dish)?.recKey != nil, !viewModel.passed.contains(dish.name) {
-                                    Button { passing = dish } label: { Label("Not for us", systemImage: "hand.raised") }
+                                    Button { passing = dish } label: { Label(RecAnswer.notForUs.label, systemImage: "hand.raised") }
                                         .tint(Color.cavnarInk3)
                                 }
                             }
                             .contextMenu {
                                 repriceAction(dish)
                                 if viewModel.suggestion(for: dish)?.recKey != nil, !viewModel.passed.contains(dish.name) {
-                                    Button { passing = dish } label: { Label("Not for us", systemImage: "hand.raised") }
+                                    Button { passing = dish } label: { Label(RecAnswer.notForUs.label, systemImage: "hand.raised") }
                                 }
                             }
                     }

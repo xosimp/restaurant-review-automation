@@ -790,7 +790,7 @@ struct DSRBlockBody: View {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     DSRKicker(text: "Top items", tone: .cavnarInk3)
-                    ForEach(Array(items.prefix(5).enumerated()), id: \.offset) { _, item in
+                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                         HStack {
                             Text(item.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2).lineLimit(1)
                             Spacer()
