@@ -1810,7 +1810,7 @@ breath two incommensurate sines.
   (`CavnarOrb` / `cavnar-orb.js`), compact and error states with the Cold
   Hearth. Web app (`static/ember-core.js`, a copy of the site's, held equal by
   `tests/test_public_site.py`; it registers `[data-core]` elements as they
-  appear): sign-in (above the card), Ask Cavnar AI before anything is asked
+  appear): sign-in (a 56px core in the card's head, beside the wordmark, so the form stays in the first screen), Ask Cavnar AI before anything is asked
   (`ASK_CORE`), and the whole-screen empty states (`ecEmptyCore`: Intel with no
   competitor data, the daily report not yet built or switched off,
   Recommendations, Schedule History). iOS (`EmberCore.metal` — the web shader
