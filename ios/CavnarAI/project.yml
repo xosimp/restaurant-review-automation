@@ -135,8 +135,12 @@ targets:
         # /.well-known/apple-app-site-association (app id
         # 8DW8XL63K6.ai.cavnar.CavnarAI). Automatic signing adds the
         # capability to the App ID on the next device build.
+        # webcredentials (iOS parity #57): passkeys for dashboard.cavnar.ai,
+        # the relying party the server names (passkeys.app_host) — the AASA
+        # the server already serves lists this app under webcredentials.
         com.apple.developer.associated-domains:
           - applinks:dashboard.cavnar.ai
+          - webcredentials:dashboard.cavnar.ai
         # Shared with the CavnarWidgets extension: the app writes the widget
         # snapshot here (Shared/WidgetSnapshot.swift). No token is shared.
         com.apple.security.application-groups:

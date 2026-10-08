@@ -33,6 +33,8 @@ struct AccountAlertsDetailView: View {
     @State private var nudge: EngagementSuggestion?
     @State private var testPushLabel: String?
     @State private var sendingTestPush = false
+    @State private var savingIssueTexts = false
+    @State private var showingAddTextContact = false
     private enum AlertsField: Hashable { case extraEmails, contactName(Int), contactPhone(Int) }
 
     /// Alert settings, alert contacts and the account's email preferences
@@ -108,9 +110,33 @@ struct AccountAlertsDetailView: View {
                 }
 
                 AccountSection(kicker: "What triggers an alert") {
+                    // The web's three (parity #86) — shown once the server
+                    // sends them, and only then saved.
+                    if draft.alertAnyReview != nil {
+                        AccountSwitchRow(label: "Any new review", isOn: optionalBool(\.alertAnyReview))
+                    }
+                    if draft.alertRespApproved != nil {
+                        AccountSwitchRow(label: "Reply approved & posted to Google", isOn: optionalBool(\.alertRespApproved))
+                    }
                     AccountSwitchRow(label: "1-star reviews", isOn: $draft.alert1star)
                     AccountSwitchRow(label: "2-star reviews", isOn: $draft.alert2star)
                     AccountSwitchRow(label: "5-star reviews", isOn: $draft.alert5star)
+                    if draft.alertRatingThreshold != nil {
+                        AccountSwitchRow(label: "Rating climbs above \(Self.starLabel(draft.alertRatingFloor ?? 4.0))",
+                                         isOn: optionalBool(\.alertRatingThreshold),
+                                         showsDivider: draft.alertRatingThreshold != true)
+                        if draft.alertRatingThreshold == true {
+                            AccountKVRow(label: "Rating to climb above") {
+                                Picker("", selection: Binding(
+                                    get: { draft.alertRatingFloor ?? 4.0 },
+                                    set: { Haptic.selection(); draft.alertRatingFloor = $0 }
+                                )) {
+                                    ForEach(Self.ratingOptions(draft.alertRatingFloor), id: \.self) { Text(Self.starLabel($0)).tag($0) }
+                                }
+                                .labelsHidden().tint(Color.cavnarEmber)
+                            }
+                        }
+                    }
                     AccountSwitchRow(label: "Health or safety mention", isOn: $draft.alertHealth)
                     AccountSwitchRow(label: "Negative review spike", isOn: $draft.alertNegSpike)
                     AccountSwitchRow(label: "Rating declining trend", isOn: $draft.alertNegativeTrend)
@@ -240,7 +266,9 @@ struct AccountAlertsDetailView: View {
                         AccountKVRow(label: "Send it at") {
                             Picker("", selection: Binding(get: { brief.hour },
                                                           set: { let before = brief; brief.hour = $0; saveBrief(rollback: before) })) {
-                                ForEach(4..<12, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
+                                // 4am to 1pm: every hour the server takes
+                                // (4 <= hour < LATEST_SEND_HOUR), as the web offers.
+                                ForEach(4...13, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
                             }
                             .labelsHidden().tint(Color.cavnarEmber)
                         }
@@ -458,6 +486,14 @@ struct AccountAlertsDetailView: View {
         .accountSheetChrome("Alerts")
         .keyboardDoneToolbar { focusedField = nil }
         .cavnarPostedOverlay(postedLabel) { dismiss() }
+        .sheet(isPresented: $showingAddTextContact) {
+            IssueTextContactSheet { updated in
+                routing = updated
+                // The person also joined the alert contacts: re-read them.
+                Task { await viewModel.load(); if let c = viewModel.summary?.alerts.contacts { contacts = c } }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .task {
             await PushManager.shared.refreshAuthorization()
             pushDenied = PushManager.shared.authorizationDenied
@@ -630,19 +666,28 @@ struct AccountAlertsDetailView: View {
         }
         var routing: [String: Route]
         var contacts: [Contact]
+        /// Texts on or off for new issues (Erik, 10/5/26): off, issues still
+        /// open and are assigned, and reach people by push and the bell.
+        /// Nil from an older server — the switch isn't drawn then.
+        var issueTexts: Bool?
 
-        private enum CodingKeys: String, CodingKey { case routing, contacts }
+        private enum CodingKeys: String, CodingKey { case routing, contacts; case issueTexts = "issue_texts" }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             routing = (try? c.decode([String: Route].self, forKey: .routing)) ?? [:]
             contacts = (try? c.decode([Contact].self, forKey: .contacts)) ?? []
+            issueTexts = c.setupBool(.issueTexts)
         }
     }
 
     private struct RoutingSetResponse: Decodable {
         let ok: Bool
         let routing: [String: IssueRouting.Route]?
+        let issueTexts: Bool?
+        enum CodingKeys: String, CodingKey { case ok, routing; case issueTexts = "issue_texts" }
     }
+
+    private struct IssueTextsBody: Encodable { let issue_texts: Bool }
 
     private struct RoutingBody: Encodable {
         let role: String
@@ -654,18 +699,34 @@ struct AccountAlertsDetailView: View {
     private func issueRoutingRows(_ r: IssueRouting) -> some View {
         let consented = r.contacts.filter { $0.smsConsent }
         routingPicker(r, role: "manager", label: "Issues go to", contacts: consented, showsDivider: true)
-        routingPicker(r, role: "escalation", label: "If nobody responds", contacts: consented, showsDivider: false)
+        if let on = r.issueTexts {
+            // The web's "Text them about new issues" (parity #44).
+            AccountSwitchRow(
+                label: "Text them about new issues",
+                detail: "Off: issues still open and are assigned, and reach you by push and the bell instead. Nobody is texted, an escalation included.",
+                isOn: Binding(get: { on }, set: { value in Task { await saveIssueTexts(value) } }),
+                busy: savingIssueTexts
+            )
+        }
+        routingPicker(r, role: "escalation", label: "If nobody responds", contacts: consented, showsDivider: true)
         Text(escalationNote(r))
             .font(.cavnarBody(14))
             .foregroundStyle(Color.cavnarInk3.opacity(0.8))
             .fixedSize(horizontal: false, vertical: true)
             .padding(.bottom, 6)
         if consented.isEmpty {
-            Text("Only alert contacts who agreed to texts can be picked. Add one under Alert contacts below.")
+            Text("Only someone who agreed to texts can be picked \u{2014} add them here, with their agreement.")
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 6)
+        }
+        // Someone new to text, added from the row itself with the consent
+        // the owner records (/issues/routing/contact — at most two people).
+        AccountActionRow(label: "Add someone to text",
+                         detail: "Their name, mobile number and that they agreed to texts.",
+                         symbol: "person.badge.plus", showsDivider: false) {
+            showingAddTextContact = true
         }
         if let routingError {
             Text(routingError).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
@@ -704,6 +765,23 @@ struct AccountAlertsDetailView: View {
         routing = try? await APIClient.shared.send("/mobile/api/issues/routing", hapticOnError: false)
     }
 
+    private func saveIssueTexts(_ on: Bool) async {
+        savingIssueTexts = true
+        routingError = nil
+        defer { savingIssueTexts = false }
+        do {
+            let r: RoutingSetResponse = try await APIClient.shared.send(
+                "/mobile/api/issues/routing", method: .post, body: IssueTextsBody(issue_texts: on))
+            if let updated = r.routing { routing?.routing = updated }
+            routing?.issueTexts = r.issueTexts ?? on
+            Haptic.selection()
+        } catch let error as APIClient.APIError {
+            routingError = error.message
+        } catch {
+            routingError = "Couldn't save that."
+        }
+    }
+
     private func saveRouting(role: String, contactId: Int?) async {
         routingError = nil
         do {
@@ -716,6 +794,24 @@ struct AccountAlertsDetailView: View {
         } catch {
             routingError = "Couldn't save who issues go to."
         }
+    }
+
+    /// A switch for one of the web's optional alert fields: its stored value
+    /// (on when nil is never reached — the row only shows once it's sent).
+    private func optionalBool(_ key: WritableKeyPath<AlertSettings, Bool?>) -> Binding<Bool> {
+        Binding(get: { draft[keyPath: key] ?? false }, set: { draft[keyPath: key] = $0 })
+    }
+
+    /// The web's 1–5 star box, as half-star steps.
+    static let ratingFloors: [Double] = [3.0, 3.5, 4.0, 4.2, 4.4, 4.5, 4.6, 4.8]
+
+    /// The steps, plus a stored floor that isn't one of them (set on the web).
+    static func ratingOptions(_ stored: Double?) -> [Double] {
+        Array(Set(ratingFloors + [stored ?? 4.0])).sorted()
+    }
+
+    static func starLabel(_ v: Double) -> String {
+        (v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)) + "\u{2605}"
     }
 
     private static func hourLabel(_ hour: Int) -> String {

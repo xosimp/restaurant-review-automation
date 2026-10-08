@@ -118,6 +118,92 @@ struct AccountCloseAccountView: View {
 }
 
 
+// MARK: - Delete my login (a teammate's)
+
+/// Account → Delete my login, for a login that isn't the account holder's
+/// (App Store Guideline 5.1.1(v), iOS parity #13). Close my account is the
+/// owner's — the service is under their signed agreement — so a manager or
+/// teammate could not delete the login they themselves signed in with.
+/// This removes it for real (POST /account/delete-login): signed out
+/// everywhere, their email, phone and passkeys cleared, the address free to
+/// be invited again. The restaurant's records stay the restaurant's.
+struct AccountDeleteLoginView: View {
+    let viewModel: AccountViewModel
+    @Environment(SessionStore.self) private var sessionStore
+    @State private var confirming = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    AccountHero(title: "Delete my login") {
+                        GlowBadge(systemImage: "person.crop.circle.badge.xmark", size: 64)
+                    } subtitle: {
+                        Text(viewModel.summary?.account.email ?? "Your sign-in")
+                    }
+
+                    AccountSection(kicker: "What happens") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            bullet("You're signed out on every device, right away.")
+                            bullet("Your email, phone, passkeys and remembered devices come off the login.")
+                            bullet("\(viewModel.summary?.profile.restaurantName ?? "The restaurant")'s own records — schedules, ratings, notes — stay theirs.")
+                            bullet("The owner can invite you again any time.")
+                        }
+                        .padding(.vertical, 9)
+                    }
+
+                    if let error = viewModel.deleteLoginError {
+                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Button(role: .destructive) {
+                        confirming = true
+                    } label: {
+                        Group {
+                            if viewModel.isDeletingLogin {
+                                CavnarShimmerText(text: "Deleting\u{2026}")
+                            } else {
+                                Text("Delete my login")
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isDeletingLogin))
+                    .disabled(viewModel.isDeletingLogin)
+                    .confirmationDialog("Delete your login?", isPresented: $confirming, titleVisibility: .visible) {
+                        Button("Delete my login", role: .destructive) {
+                            Task {
+                                if await viewModel.deleteOwnLogin() {
+                                    Haptic.success()
+                                    await sessionStore.logout()
+                                } else {
+                                    Haptic.error()
+                                }
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This can't be undone. You won't be able to sign in again unless the owner invites you.")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+            }
+            .accountSheetChrome("Delete My Login")
+        }
+    }
+
+    private func bullet(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle().fill(Color.cavnarEmber).frame(width: 5, height: 5)
+            Text(text).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+
 // MARK: - Pause
 
 /// Self-serve pause, above the cancel request. GET /mobile/api/account/pause

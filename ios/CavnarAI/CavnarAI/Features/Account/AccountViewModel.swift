@@ -522,17 +522,34 @@ final class AccountViewModel {
         }
     }
 
+    /// One failed or locked-out staff PIN (auth.get_pin_security_events) —
+    /// the web's "Recent failed PINs" (parity #70).
+    struct PinEvent: Decodable, Identifiable, Hashable {
+        let event: String
+        let name: String?
+        let createdAt: String
+        var id: String { createdAt + event + (name ?? "") }
+        var isLockout: Bool { event == "pin_locked" }
+        enum CodingKeys: String, CodingKey {
+            case event, name
+            case createdAt = "created_at"
+        }
+    }
+    var pinEvents: [PinEvent] = []
+
     private struct StaffListResponse: Decodable {
         let ok: Bool
         let staff: [StaffAccount]
         let joinCode: String?
         let portalURL: String?
         let unclaimed: [String]?
+        let pinEvents: [PinEvent]?
 
         enum CodingKeys: String, CodingKey {
             case ok, staff, unclaimed
             case joinCode = "join_code"
             case portalURL = "portal_url"
+            case pinEvents = "pin_events"
         }
     }
 
@@ -546,6 +563,7 @@ final class AccountViewModel {
             staffJoinCode = response.joinCode ?? ""
             staffPortalURL = response.portalURL ?? ""
             staffUnclaimed = response.unclaimed ?? []
+            pinEvents = response.pinEvents ?? []
         } catch {
             // Non-fatal — the sheet shows its empty state.
         }
@@ -707,37 +725,46 @@ final class AccountViewModel {
         }
     }
 
-    private struct AccessBody: Encodable {
-        let permission: String?
-        let enabled: Bool?
-        let morningBrief: Bool?
+    /// Only the keys being changed are encoded (nil is omitted): the route
+    /// acts on each key present, so a morning-brief tap never touches the
+    /// nightly report and the reverse.
+    struct AccessBody: Encodable, Equatable {
+        var permission: String? = nil
+        var enabled: Bool? = nil
+        var morningBrief: Bool? = nil
+        var nightlyReport: Bool? = nil
         enum CodingKeys: String, CodingKey {
             case permission, enabled
             case morningBrief = "morning_brief"
+            case nightlyReport = "nightly_report"
         }
     }
     private struct AccessResponse: Decodable {
         let ok: Bool
         let access: [String]?
         let morningBrief: Bool?
+        let nightlyReport: Bool?
         let error: String?
         enum CodingKeys: String, CodingKey {
             case ok, access, error
             case morningBrief = "morning_brief"
+            case nightlyReport = "nightly_report"
         }
     }
 
-    /// Open or close one area (food cost, comps & voids) to a manager, or
-    /// turn their morning brief on/off. Updates that row from the server's
-    /// answer rather than trusting the tap.
+    /// Open or close one area (food cost, comps & voids) to a manager, turn
+    /// their morning brief on/off, or leave them off the nightly sales report
+    /// (the web's "Nightly report" switch, parity #70). Updates that row from
+    /// the server's answer rather than trusting the tap.
     @discardableResult
     func setTeamAccess(_ userID: Int, permission: String? = nil, enabled: Bool? = nil,
-                       morningBrief: Bool? = nil) async -> Bool {
+                       morningBrief: Bool? = nil, nightlyReport: Bool? = nil) async -> Bool {
         teamAccessError = nil
         do {
             let r: AccessResponse = try await client.send(
                 "/mobile/api/account/team/\(userID)/access", method: .post,
-                body: AccessBody(permission: permission, enabled: enabled, morningBrief: morningBrief))
+                body: AccessBody(permission: permission, enabled: enabled, morningBrief: morningBrief,
+                                 nightlyReport: nightlyReport))
             guard r.ok else {
                 teamAccessError = r.error ?? "Couldn't update their access."
                 return false
@@ -745,6 +772,7 @@ final class AccountViewModel {
             if let i = teamMembers.firstIndex(where: { $0.id == userID }) {
                 teamMembers[i].access = r.access ?? []
                 teamMembers[i].morningBrief = r.morningBrief
+                if let nightly = r.nightlyReport { teamMembers[i].nightlyReport = nightly }
             }
             return true
         } catch let error as APIClient.APIError {
@@ -805,12 +833,12 @@ final class AccountViewModel {
         }
     }
 
-    private struct AlertContactBody: Encodable {
+    struct AlertContactBody: Encodable {
         let name: String
         let phone: String
     }
 
-    private struct AlertSettingsBody: Encodable {
+    struct AlertSettingsBody: Encodable {
         let alert1star: Bool
         let alert2star: Bool
         let alertHealth: Bool
@@ -839,8 +867,18 @@ final class AccountViewModel {
         let alertExtraEmails: String
         let pushSound: Bool
         let contacts: [AlertContactBody]
+        /// The web's four — sent only when the server sent them, so the
+        /// route's "only when sent" rule keeps an older payload's value.
+        var alertRatingThreshold: Bool? = nil
+        var alertRatingFloor: Double? = nil
+        var alertAnyReview: Bool? = nil
+        var alertRespApproved: Bool? = nil
 
         enum CodingKeys: String, CodingKey {
+            case alertRatingThreshold = "alert_rating_threshold"
+            case alertRatingFloor = "alert_rating_floor"
+            case alertAnyReview = "alert_any_review"
+            case alertRespApproved = "alert_resp_approved"
             case alertHealthBypassQuiet = "alert_health_bypass_quiet"
             case alertFoodWaste = "alert_food_waste"
             case alertAiVisibilityDrop = "alert_ai_visibility_drop"
@@ -876,7 +914,26 @@ final class AccountViewModel {
         isSavingAlerts = true
         saveAlertsError = nil
         defer { isSavingAlerts = false }
-        let body = AlertSettingsBody(
+        let body = Self.alertSettingsBody(settings, contacts: contacts)
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/account/alert-settings", method: .post, body: body
+            )
+            if response.ok {
+                await load()
+            } else {
+                saveAlertsError = response.error ?? "Couldn't save alert settings."
+            }
+        } catch let error as APIClient.APIError {
+            saveAlertsError = error.message
+        } catch {
+            saveAlertsError = "Couldn't save alert settings."
+        }
+    }
+
+    /// The body the Alerts sheet posts — pure, so its keys are pinned by a test.
+    static func alertSettingsBody(_ settings: AlertSettings, contacts: [AlertContact]) -> AlertSettingsBody {
+        var body = AlertSettingsBody(
             alert1star: settings.alert1star,
             alert2star: settings.alert2star,
             alertHealth: settings.alertHealth,
@@ -906,20 +963,11 @@ final class AccountViewModel {
             pushSound: settings.pushSound,
             contacts: contacts.map { AlertContactBody(name: $0.name, phone: $0.phone) }
         )
-        do {
-            let response: OKErrorResponse = try await client.send(
-                "/mobile/api/account/alert-settings", method: .post, body: body
-            )
-            if response.ok {
-                await load()
-            } else {
-                saveAlertsError = response.error ?? "Couldn't save alert settings."
-            }
-        } catch let error as APIClient.APIError {
-            saveAlertsError = error.message
-        } catch {
-            saveAlertsError = "Couldn't save alert settings."
-        }
+        body.alertRatingThreshold = settings.alertRatingThreshold
+        body.alertRatingFloor = settings.alertRatingFloor
+        body.alertAnyReview = settings.alertAnyReview
+        body.alertRespApproved = settings.alertRespApproved
+        return body
     }
 
     // Update email
@@ -1390,22 +1438,33 @@ final class AccountViewModel {
         return false
     }
 
-    private struct AutoApproveBody: Encodable {
+    /// Every key client_api._do_auto_approve reads — include_4star among
+    /// them: the shared body sets auto_approve_4star from it, so a body
+    /// without it switched the owner's 4-star rule off on every save
+    /// (parity #2). Pinned by AccountParityTests and tests/test_ios_account_parity.py.
+    struct AutoApproveBody: Encodable, Equatable {
         let enabled: Bool
         let paused: Bool
         let dailyCap: Int
         let earned: Bool
-        enum CodingKeys: String, CodingKey { case enabled, paused, earned; case dailyCap = "daily_cap" }
+        let include4star: Bool
+        enum CodingKeys: String, CodingKey {
+            case enabled, paused, earned
+            case dailyCap = "daily_cap"
+            case include4star = "include_4star"
+        }
     }
     var isSavingAutoApprove = false
     var autoApproveError: String?
 
-    func saveAutoApprove(enabled: Bool, paused: Bool, dailyCap: Int, earned: Bool = false) async -> Bool {
+    func saveAutoApprove(enabled: Bool, paused: Bool, dailyCap: Int, earned: Bool = false,
+                         include4star: Bool) async -> Bool {
         isSavingAutoApprove = true; autoApproveError = nil
         defer { isSavingAutoApprove = false }
         do {
             let response: OKErrorResponse = try await client.send("/mobile/api/account/auto-approve", method: .post,
-                                                                   body: AutoApproveBody(enabled: enabled, paused: paused, dailyCap: dailyCap, earned: earned))
+                                                                   body: AutoApproveBody(enabled: enabled, paused: paused, dailyCap: dailyCap,
+                                                                                         earned: earned, include4star: include4star))
             if response.ok { await load(); return true }
             autoApproveError = response.error ?? "Couldn't save that."
         } catch let error as APIClient.APIError {
@@ -1416,23 +1475,22 @@ final class AccountViewModel {
         return false
     }
 
-    /// `closures_base` is the list the sheet opened with: the server applies
-    /// only this sheet's own adds and removes, so a date added on the web
-    /// since the sheet opened is never written over (owner, 9/28/26).
-    private struct HoursBody: Encodable {
-        let open: [String: String]; let close: [String: String]; let closures: [String]; let closuresBase: [String]
-        enum CodingKeys: String, CodingKey { case open, close, closures, closuresBase = "closures_base" }
+    /// Open and close times only. Closed dates no longer ride on Save hours:
+    /// each add or remove is its own save (/account/closures, below), as on
+    /// the web — a list sent with Save could lose a date picked and not yet
+    /// saved, or one added elsewhere since (parity #7, owner edits never vanish).
+    struct HoursBody: Encodable, Equatable {
+        let open: [String: String]; let close: [String: String]
     }
     var isSavingHours = false
     var saveHoursError: String?
 
-    func saveHours(open: [String: String], close: [String: String], closures: [String], closuresBase: [String]) async -> Bool {
+    func saveHours(open: [String: String], close: [String: String]) async -> Bool {
         isSavingHours = true; saveHoursError = nil
         defer { isSavingHours = false }
         do {
             let response: OKErrorResponse = try await client.send("/mobile/api/account/hours", method: .post,
-                                                                   body: HoursBody(open: open, close: close, closures: closures,
-                                                                                  closuresBase: closuresBase))
+                                                                   body: HoursBody(open: open, close: close))
             if response.ok { await load(); return true }
             saveHoursError = response.error ?? "Couldn't save your hours."
         } catch let error as APIClient.APIError {
@@ -1441,6 +1499,60 @@ final class AccountViewModel {
             saveHoursError = "Couldn't save your hours."
         }
         return false
+    }
+
+    /// One closed date added or removed — {"add": iso} or {"remove": iso}.
+    struct ClosureChange: Encodable, Equatable {
+        var add: String? = nil
+        var remove: String? = nil
+    }
+    private struct ClosuresResponse: Decodable {
+        let ok: Bool
+        let closures: [String]?
+        let error: String?
+    }
+    var closureBusy: String?
+    var closureError: String?
+
+    /// Saves one closed date on its own and answers the list as the server
+    /// now holds it (dates added elsewhere included), nil when it failed.
+    func changeClosure(_ change: ClosureChange) async -> [String]? {
+        closureBusy = change.add ?? change.remove
+        closureError = nil
+        defer { closureBusy = nil }
+        do {
+            let r: ClosuresResponse = try await client.send("/mobile/api/account/closures", method: .post,
+                                                            body: change, retryTransient: false)
+            guard r.ok, let list = r.closures else {
+                closureError = r.error ?? "Couldn't save that date."
+                return nil
+            }
+            return list.filter { !$0.isEmpty }.sorted()
+        } catch let error as APIClient.APIError {
+            closureError = error.message
+        } catch {
+            closureError = "Couldn't reach the server \u{2014} that date isn't saved."
+        }
+        return nil
+    }
+
+    /// The opening hours Google Business lists, to fill the form with —
+    /// nothing is saved until the owner taps Save hours (parity #88).
+    struct GoogleHours: Decodable {
+        let ok: Bool
+        let open: [String: String]?
+        let close: [String: String]?
+        let error: String?
+    }
+
+    func hoursFromGoogle() async -> GoogleHours {
+        do {
+            return try await client.send("/mobile/api/account/hours/google", hapticOnError: false)
+        } catch let error as APIClient.APIError {
+            return GoogleHours(ok: false, open: nil, close: nil, error: error.message)
+        } catch {
+            return GoogleHours(ok: false, open: nil, close: nil, error: "Couldn't reach Google.")
+        }
     }
 
     private struct RetentionBody: Encodable { let months: Int }
@@ -1487,5 +1599,102 @@ final class AccountViewModel {
             reportBugError = "Couldn't send that."
         }
         return false
+    }
+
+    // MARK: - Staff sign-in notices (parity #70)
+
+    var isTogglingStaffSignIn = false
+
+    /// The web's "Tell me when someone opens the staff portal" — the
+    /// account holder's (/account/staff-signin-notify).
+    @discardableResult
+    func toggleStaffSignInNotify(_ enabled: Bool) async -> Bool {
+        isTogglingStaffSignIn = true
+        staffError = nil
+        defer { isTogglingStaffSignIn = false }
+        do {
+            _ = try await client.send("/mobile/api/account/staff-signin-notify", method: .post,
+                                      body: EnabledBody(enabled: enabled)) as APIClient.OKResponse
+            summary?.account.staffSignInNotify = enabled
+            return true
+        } catch {
+            staffError = Self.toggleFailure(error)
+            return false
+        }
+    }
+
+    // MARK: - POS Sync now, RPOWER disconnect (parity #80)
+
+    /// The provider whose sync is being started, and what the server said.
+    var syncingProvider: String?
+    var syncMessage: [String: String] = [:]
+
+    private struct SyncResponse: Decodable { let ok: Bool; let message: String?; let error: String? }
+
+    func syncNow(_ provider: String) async {
+        syncingProvider = provider
+        defer { syncingProvider = nil }
+        do {
+            let r: SyncResponse = try await client.send("/mobile/api/connections/\(provider)/sync", method: .post,
+                                                        retryTransient: false)
+            syncMessage[provider] = r.ok ? (r.message ?? "Sync started.") : (r.error ?? "Couldn't start a sync.")
+            if r.ok { Haptic.success() }
+        } catch let error as APIClient.APIError {
+            syncMessage[provider] = error.message
+        } catch {
+            syncMessage[provider] = "Couldn't start a sync."
+        }
+    }
+
+    var disconnectError: String?
+
+    func disconnectRPower() async {
+        disconnectError = nil
+        do {
+            let _: APIClient.OKResponse = try await client.send("/mobile/api/connections/rpower", method: .delete)
+            await load()
+        } catch let error as APIClient.APIError {
+            disconnectError = error.message
+        } catch {
+            disconnectError = "Couldn't disconnect RPOWER."
+        }
+    }
+
+    // MARK: - Delete my login (a teammate's own; parity #13)
+
+    var isDeletingLogin = false
+    var deleteLoginError: String?
+
+    /// True once the server removed this login — the caller then signs out.
+    func deleteOwnLogin() async -> Bool {
+        isDeletingLogin = true
+        deleteLoginError = nil
+        defer { isDeletingLogin = false }
+        do {
+            let r: APIClient.OKResponse = try await client.send("/mobile/api/account/delete-login", method: .post,
+                                                                retryTransient: false)
+            if r.ok { return true }
+            deleteLoginError = r.error ?? "Couldn't delete your login."
+        } catch let error as APIClient.APIError {
+            deleteLoginError = error.message
+        } catch {
+            deleteLoginError = "Couldn't delete your login."
+        }
+        return false
+    }
+
+    // MARK: - Security checkup and account health, scored on the server
+
+    var securitySummary: SecuritySummary?
+    var health: AccountHealth?
+
+    func loadSecuritySummary() async {
+        securitySummary = try? await client.send("/mobile/api/account/security-summary", hapticOnError: false)
+    }
+
+    func loadHealth() async {
+        if let h: AccountHealth = try? await client.send("/mobile/api/account/health", hapticOnError: false), h.ok {
+            health = h
+        }
     }
 }

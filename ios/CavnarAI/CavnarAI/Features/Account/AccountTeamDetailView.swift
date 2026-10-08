@@ -103,8 +103,15 @@ struct AccountTeamDetailView: View {
                                     }
                                 }
                                 accessRow(label: "Morning brief", on: member.morningBrief ?? false,
-                                          showsDivider: false) { newValue in
+                                          showsDivider: true) { newValue in
                                     Task { await viewModel.setTeamAccess(member.id, morningBrief: newValue) }
+                                }
+                                // The nightly Daily Sales Report — on for every
+                                // manager unless the owner leaves them off it
+                                // (the web's "Nightly report", parity #70).
+                                accessRow(label: "Nightly report", on: member.nightlyReport ?? true,
+                                          showsDivider: false) { newValue in
+                                    Task { await viewModel.setTeamAccess(member.id, nightlyReport: newValue) }
                                 }
                             }
                         }

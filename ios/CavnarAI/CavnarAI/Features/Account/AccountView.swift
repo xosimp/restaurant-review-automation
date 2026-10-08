@@ -51,7 +51,10 @@ struct AccountView: View {
                 .animation(.easeOut(duration: 0.25), value: viewModel.summary == nil)
             }
             .cavnarModuleBackground()
-            .cavnarEmberRefreshable { await viewModel.load() }
+            .cavnarEmberRefreshable {
+                await viewModel.load()
+                await viewModel.loadHealth()
+            }
             .navigationTitle("Account")
             // Inline only — the centered Clash Display title below is the
             // one that's drawn; the system's large top-left title doubled it.
@@ -62,8 +65,13 @@ struct AccountView: View {
             // sheets read its summary) — F3-15.
             .onChange(of: deepLinkRouter.pendingAccountSection) { _, _ in openLinkedSection() }
             .onChange(of: viewModel.summary != nil) { _, _ in openLinkedSection() }
+            // A sheet closing may have fixed a health item: read it again.
+            .onChange(of: anySheetOpen) { _, open in
+                if !open { Task { await viewModel.loadHealth() } }
+            }
             .task {
                 await viewModel.load()
+                await viewModel.loadHealth()
                 // Billing is the account owner's (403 owner_only otherwise).
                 if isOwner { await viewModel.loadBilling() }
                 // Resume an in-progress 2FA setup that a Face ID relock
@@ -155,8 +163,27 @@ struct AccountView: View {
     @ViewBuilder
     private func content(_ summary: AccountSummary) -> some View {
         heroIdentity(summary)
+        // Account health, the modules on the plan and the measured value —
+        // the web's Account overview, scored on the server (parity #89).
+        if let health = viewModel.health {
+            AccountHealthCard(health: health) { key in openHealthFix(key) }
+        }
         groupedSettings(summary)
         signOutSection
+    }
+
+    /// The health card's Fix link (and each item's row) opens the sheet
+    /// that fixes it; a teammate's people item has nothing to open.
+    private func openHealthFix(_ key: String) {
+        switch key {
+        case "profile": showingProfile = true
+        case "people": if isOwner { showingTeam = true }
+        case "integrations": showingConnections = true
+        case "notifications": showingAlerts = true
+        case "security": showingSecurity = true
+        case "subscription": if isOwner { showingBilling = true }
+        default: break
+        }
     }
 
     // MARK: - Hero identity
@@ -223,7 +250,14 @@ struct AccountView: View {
     @State private var showingHelp = false
     @State private var showingReportBug = false
     @State private var showingReferral = false
+    @State private var showingTargets = false
+    @State private var showingDeleteLogin = false
     @State private var prefs = AppPreferences.shared
+
+    private var anySheetOpen: Bool {
+        showingProfile || showingSecurity || showingAlerts || showingConnections || showingBilling
+            || showingTeam || showingStaff || showingTargets
+    }
     @State private var changelogBadge = ChangelogBadgeViewModel()
     // Reflects the actual system state (UIApplication.shared.alternateIconName),
     // not a preference of our own — this is the home-screen icon, which iOS
@@ -244,6 +278,14 @@ struct AccountView: View {
                     row("Automation & trust", systemImage: "sparkles.rectangle.stack")
                 } action: {
                     showingAutomation = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                // Labor, food and waste targets, revenue, pay by role and
+                // salaried staff — the web's Targets & pay rates (parity #27).
+                settingsRow {
+                    row("Targets & pay rates", systemImage: "target")
+                } action: {
+                    showingTargets = true
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 // What Cavnar AI remembers, who said it, who may read it,
@@ -268,6 +310,9 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showingAutomation) {
                 AccountAutomationView()
+            }
+            .sheet(isPresented: $showingTargets) {
+                AccountTargetsView()
             }
             .sheet(isPresented: $showingMemory) {
                 AccountMemoryView()
@@ -310,11 +355,10 @@ struct AccountView: View {
 
             group("Connections") {
                 settingsRow {
-                    let connectedCount = [
-                        summary.connections.googleBusiness, summary.connections.instagram,
-                        summary.connections.toast, summary.connections.square, summary.connections.clover,
-                    ].filter(\.connected).count
-                    row("Connected apps", systemImage: "link", trailing: "\(connectedCount) of 5")
+                    // Every connection, RPOWER and website analytics included
+                    // (parity #80: "X of 5" left them out).
+                    row("Connected apps", systemImage: "link",
+                        trailing: "\(summary.connections.connectedCount) of \(summary.connections.all.count)")
                 } action: {
                     showingConnections = true
                 }
@@ -398,12 +442,20 @@ struct AccountView: View {
                 } action: {
                     showingExportData = true
                 }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 if isOwner {
-                    Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                     settingsRow {
                         row("Close my account", systemImage: "xmark.circle")
                     } action: {
                         showingCloseAccount = true
+                    }
+                } else {
+                    // A teammate deletes their own login (Guideline
+                    // 5.1.1(v), parity #13); closing the account is the owner's.
+                    settingsRow {
+                        row("Delete my login", systemImage: "person.crop.circle.badge.xmark")
+                    } action: {
+                        showingDeleteLogin = true
                     }
                 }
             }
@@ -422,6 +474,9 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showingCloseAccount) {
                 AccountCloseAccountView(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingDeleteLogin) {
+                AccountDeleteLoginView(viewModel: viewModel)
             }
 
             group("App") {
@@ -469,11 +524,15 @@ struct AccountView: View {
                         openURL(url)
                     }
                 }
-                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
-                settingsRow {
-                    row("Refer a restaurant", systemImage: "gift")
-                } action: {
-                    showingReferral = true
+                // Referrals are the account holder's (/send-referral answers
+                // 403 to anyone else), as on the web.
+                if isOwner {
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                    settingsRow {
+                        row("Refer a restaurant", systemImage: "gift")
+                    } action: {
+                        showingReferral = true
+                    }
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 settingsRow {

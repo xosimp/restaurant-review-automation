@@ -75,9 +75,13 @@ struct AccountInfo: Decodable {
     let passwordChangedAt: String?
     let recoveryEmail: String?
     let recoveryEmailPending: String?
+    /// A push and a bell entry when an employee opens the staff app (the
+    /// web's switch; nil from an older server).
+    var staffSignInNotify: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case username, email
+        case staffSignInNotify = "staff_signin_notify"
         case recoveryEmail = "recovery_email"
         case recoveryEmailPending = "recovery_email_pending"
         case twoFAEnabled = "two_fa_enabled"
@@ -214,6 +218,9 @@ struct AccountConnections: Decodable {
     /// reading the rest of the product uses (pos_health.pos_sync_state).
     /// Absent on an older server.
     var rpower: ConnectionStatus? = nil
+    /// Website analytics (GA4 / Search Console) — counted with the rest
+    /// (parity #80). Nil on an older server.
+    var webAnalytics: ConnectionStatus? = nil
     var pos: POSSyncState? = nil
     /// DH4: the POS row's sentence from the registry, in the restaurant's
     /// clock (`pos_line`: {line, tone, state, provider, …}). Lenient; absent
@@ -225,8 +232,25 @@ struct AccountConnections: Decodable {
     enum CodingKeys: String, CodingKey {
         case googleBusiness = "google_business"
         case instagram, toast, square, clover, rpower, pos
+        case webAnalytics = "web_analytics"
         case posLineField = "pos_line"
     }
+
+    /// Every connection the account can hold, named, with whether it is on
+    /// — Google, Instagram & Facebook, each POS, website analytics. The
+    /// "Connected apps" count reads this (it left out RPOWER and website
+    /// analytics, "X of 5"); a row an older server omits is not counted.
+    var all: [(name: String, connected: Bool)] {
+        var rows: [(String, Bool)] = [
+            ("Google", googleBusiness.connected), ("Instagram", instagram.connected),
+            ("Toast", toast.connected), ("Square", square.connected), ("Clover", clover.connected),
+        ]
+        if let rpower { rows.append(("RPOWER", rpower.connected)) }
+        if let webAnalytics { rows.append(("Website analytics", webAnalytics.connected)) }
+        return rows.map { (name: $0.0, connected: $0.1) }
+    }
+
+    var connectedCount: Int { all.filter(\.connected).count }
 
     /// `{provider, connected, last_synced, age_days, error, state}`.
     struct POSSyncState: Decodable {
@@ -297,8 +321,19 @@ struct AlertSettings: Codable {
     var alertCompetitorMove: Bool
     var alertExtraEmails: String
     var pushSound: Bool
+    // The web's four (parity #86): a rating rise past a floor, any new
+    // review, a reply approved and posted. Nil from an older server — and
+    // then not sent, so a save never switches them off.
+    var alertRatingThreshold: Bool? = nil
+    var alertRatingFloor: Double? = nil
+    var alertAnyReview: Bool? = nil
+    var alertRespApproved: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
+        case alertRatingThreshold = "alert_rating_threshold"
+        case alertRatingFloor = "alert_rating_floor"
+        case alertAnyReview = "alert_any_review"
+        case alertRespApproved = "alert_resp_approved"
         case alertHealthBypassQuiet = "alert_health_bypass_quiet"
         case alertFoodWaste = "alert_food_waste"
         case alertAiVisibilityDrop = "alert_ai_visibility_drop"
@@ -341,7 +376,12 @@ struct AutoApproveSettings: Decodable {
     /// Extend the rule to 3★/4★ once the owner's own edit rate has earned
     /// it — measured server-side, never lower than 3★.
     let earned: Bool?
+    /// 4-star replies under the same cap and urgency gate (the web's
+    /// "Include 4-star reviews"). Read back so a save keeps it — the shared
+    /// body turns it off whenever include_4star is not sent (parity #2).
+    var include4star: Bool? = nil
     enum CodingKeys: String, CodingKey {
+        case include4star = "auto_approve_4star"
         case earned = "auto_approve_earned"
         case enabled = "auto_approve_5star"
         case dailyCap = "auto_approve_daily_cap"
@@ -459,6 +499,9 @@ struct TeamMember: Decodable, Identifiable {
     /// Whether this login's role can take grants (managers and teammates).
     let accessGrantable: Bool?
     var morningBrief: Bool?
+    /// Whether this login gets the nightly Daily Sales Report — on unless
+    /// the owner left them off it (nil from an older server: on).
+    var nightlyReport: Bool? = nil
     /// What the owner sees this login called ("Co-owner", "Manager", …).
     let serverRoleLabel: String?
     /// Whether an owner may change this login's role here.
@@ -471,6 +514,7 @@ struct TeamMember: Decodable, Identifiable {
         case isYou = "is_you"
         case accessGrantable = "access_grantable"
         case morningBrief = "morning_brief"
+        case nightlyReport = "nightly_report"
         case serverRoleLabel = "role_label"
         case roleEditable = "role_editable"
     }

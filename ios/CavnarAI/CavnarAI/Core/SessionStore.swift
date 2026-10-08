@@ -434,6 +434,41 @@ final class SessionStore {
         try await completeLogin(token: response.token, user: response.user)
     }
 
+    // MARK: - Passkeys (iOS parity #57)
+
+    private struct PasskeyOptionsResponse: Decodable {
+        let ok: Bool
+        let options: PasskeyAssertionOptions?
+        let error: String?
+    }
+
+    struct PasskeyVerifyBody: Encodable {
+        let credential: PasskeyCredentialJSON
+        let deviceId: String = Keychain.deviceIdentity()
+        enum CodingKeys: String, CodingKey { case credential; case deviceId = "device_id" }
+    }
+
+    /// The sign-in challenge (POST /mobile/api/passkey/options) — for the
+    /// AutoFill request the login field keeps pending, or the button.
+    func passkeySignInOptions() async throws -> PasskeyAssertionOptions {
+        let r: PasskeyOptionsResponse = try await client.send("/mobile/api/passkey/options", method: .post,
+                                                              hapticOnError: false, retryTransient: true)
+        guard r.ok, let options = r.options else {
+            throw APIClient.APIError(message: r.error ?? "Passkeys aren't available right now.")
+        }
+        return options
+    }
+
+    /// A passkey the device just signed with → the same {token, user} the
+    /// password sign-in hands back; the passkey is this sign-in's second
+    /// factor, as on the web.
+    func loginWithPasskey(_ credential: PasskeyCredentialJSON) async throws {
+        let response: AppleSignInResponse = try await client.send(
+            "/mobile/api/passkey/verify", method: .post, body: PasskeyVerifyBody(credential: credential),
+            retryTransient: false)
+        try await completeLogin(token: response.token, user: response.user)
+    }
+
     // MARK: - Self-serve signup + password reset
 
     struct RegisterBody: Encodable {

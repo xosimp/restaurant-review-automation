@@ -13,6 +13,7 @@ struct AccountMemoryView: View {
     @State private var viewModel = AccountMemoryViewModel()
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @FocusState private var focus: Field?
+    @State private var pendingDismiss: ArchivedFact?
 
     enum Field: Hashable { case fact }
 
@@ -56,6 +57,19 @@ struct AccountMemoryView: View {
             // on its own sensible default.
             .onChange(of: viewModel.draft.kind) { _, kind in
                 viewModel.draft.days = kind == "followup" ? 7 : 0
+            }
+            .confirmationDialog(
+                "Let this note go for good?",
+                isPresented: Binding(get: { pendingDismiss != nil }, set: { if !$0 { pendingDismiss = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Dismiss for good", role: .destructive) {
+                    guard let item = pendingDismiss else { return }
+                    Task { await viewModel.dismiss(item) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("It can\u{2019}t be put back after this.")
             }
         }
     }
@@ -146,6 +160,14 @@ struct AccountMemoryView: View {
                     }
                 }
                 Spacer(minLength: 8)
+                if fact.canPin && viewModel.busyId != fact.id {
+                    // Pinned out of the lane's eviction (the web's Pin).
+                    AccountActionChip(symbol: fact.pinned ? "pin.slash" : "pin",
+                                      tone: fact.pinned ? .cavnarEmber2 : .cavnarInk3,
+                                      accessibilityLabel: (fact.pinned ? "Unpin: " : "Pin: ") + fact.fact) {
+                        Task { await viewModel.pin(fact, pinned: !fact.pinned) }
+                    }
+                }
                 if fact.canForget {
                     if viewModel.busyId == fact.id {
                         CavnarShimmerLine(color: .cavnarRed).frame(width: 28)
@@ -167,6 +189,33 @@ struct AccountMemoryView: View {
                 }
             }
             .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            // Long-press for every action this login has on the fact: pin,
+            // which locations keep it, share, forget (parity #65).
+            .contextMenu {
+                if fact.canPin {
+                    Button { Task { await viewModel.pin(fact, pinned: !fact.pinned) } } label: {
+                        Label(fact.pinned ? "Unpin" : "Pin \u{2014} a full lane won\u{2019}t push it out",
+                              systemImage: fact.pinned ? "pin.slash" : "pin")
+                    }
+                }
+                if fact.canSetScope {
+                    Button { Task { await viewModel.setScope(fact, scope: fact.scope == "org" ? "location" : "org") } } label: {
+                        Label(fact.scope == "org" ? "This location only" : "Every location",
+                              systemImage: fact.scope == "org" ? "mappin" : "building.2")
+                    }
+                }
+                if fact.canForget && fact.audience == "principals" && !fact.fromLocation {
+                    Button { Task { await viewModel.share(fact) } } label: {
+                        Label("Share with the team", systemImage: "person.2")
+                    }
+                }
+                if fact.canForget {
+                    Button(role: .destructive) { Task { await viewModel.forget(fact) } } label: {
+                        Label("Forget", systemImage: "xmark")
+                    }
+                }
+            }
             if showsDivider { AccountRowDivider() }
         }
     }
@@ -201,6 +250,11 @@ struct AccountMemoryView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Restore: \(item.fact)")
+                                // Let it go for good — asked first (the web's Dismiss).
+                                AccountActionChip(symbol: "trash", tone: .cavnarRed,
+                                                  accessibilityLabel: "Dismiss for good: \(item.fact)") {
+                                    pendingDismiss = item
+                                }
                             }
                         }
                     }
@@ -455,13 +509,26 @@ struct MemoryFact: Codable, Hashable, Identifiable {
     var validUntilLabel: String? = nil
     var dueLabel: String? = nil
     var canForget: Bool = false
+    /// Pinned out of lane eviction — a full lane won't push it out (the
+    /// account holder's; at most a few of one kind).
+    var pinned: Bool = false
+    var canPin: Bool = false
+    /// "org" (every location of the group) or "location"; a group owner
+    /// may change it, on a fact kept here (memory re-audit PEOPLE-13).
+    var scope: String = "location"
+    var canSetScope: Bool = false
+    /// Another location's organisation-wide fact, shown here.
+    var fromLocation: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, fact, kind, author, audience, modules
+        case id, fact, kind, author, audience, modules, pinned, scope
         case createdOn = "created_on"
         case validUntilLabel = "valid_until_label"
         case dueLabel = "due_label"
         case canForget = "can_forget"
+        case canPin = "can_pin"
+        case canSetScope = "can_set_scope"
+        case fromLocation = "from_location"
     }
 
     init(id: Int, fact: String, kind: String = "context", author: String? = nil, audience: String = "team",
@@ -484,6 +551,11 @@ struct MemoryFact: Codable, Hashable, Identifiable {
         validUntilLabel = memText(c, .validUntilLabel)
         dueLabel = memText(c, .dueLabel)
         canForget = ((try? c.decodeIfPresent(Bool.self, forKey: .canForget)) ?? nil) ?? false
+        pinned = c.setupBool(.pinned) ?? false
+        canPin = c.setupBool(.canPin) ?? false
+        scope = memText(c, .scope) == "org" ? "org" : "location"
+        canSetScope = c.setupBool(.canSetScope) ?? false
+        fromLocation = c.setupInt(.fromLocation) != nil
     }
 
     /// "Erik, owner · Only owners · Labor, Food Cost · until 12/31/26 ·
@@ -497,6 +569,8 @@ struct MemoryFact: Codable, Hashable, Identifiable {
         if let due = dueLabel { parts.append("due " + due) }
         if let until = validUntilLabel { parts.append("until " + until) }
         if let on = createdOn { parts.append("added " + on) }
+        if scope == "org" { parts.append(fromLocation ? "All locations \u{2014} kept at another" : "All locations") }
+        if pinned { parts.append("Pinned") }
         return parts.isEmpty ? MemoryKind.singular(kind) : parts.joined(separator: " \u{00B7} ")
     }
 }
@@ -752,6 +826,47 @@ final class AccountMemoryViewModel {
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn\u{2019}t share that."
+        }
+    }
+
+    private struct PinBody: Encodable { let id: Int; let pinned: Bool }
+    private struct ScopeBody: Encodable { let id: Int; let scope: String }
+
+    /// Pinned out of lane eviction, or unpinned (/account/memory/pin).
+    func pin(_ fact: MemoryFact, pinned: Bool) async {
+        await act(fact.id, "/mobile/api/account/memory/pin", PinBody(id: fact.id, pinned: pinned),
+                  done: pinned ? "Pinned \u{2014} a full lane won\u{2019}t push it out" : "Unpinned",
+                  failure: "Couldn\u{2019}t save that.")
+    }
+
+    /// Kept for every location of the group, or this one only (/account/memory/scope).
+    func setScope(_ fact: MemoryFact, scope: String) async {
+        await act(fact.id, "/mobile/api/account/memory/scope", ScopeBody(id: fact.id, scope: scope),
+                  done: scope == "org" ? "Every location reads it now" : "This location only now",
+                  failure: "Couldn\u{2019}t change that.")
+    }
+
+    /// An archived fact let go for good (/account/memory/dismiss).
+    func dismiss(_ item: ArchivedFact) async {
+        await act(item.id, "/mobile/api/account/memory/dismiss", IdBody(id: item.id),
+                  done: "Dismissed", failure: "Couldn\u{2019}t dismiss that.")
+    }
+
+    private func act<B: Encodable & Sendable>(_ id: Int, _ path: String, _ body: B, done: String, failure: String) async {
+        guard busyId == nil else { return }
+        busyId = id
+        errorMessage = nil
+        defer { busyId = nil }
+        do {
+            let r: APIClient.OKResponse = try await client.send(path, method: .post, body: body, retryTransient: false)
+            guard r.ok else { errorMessage = r.error ?? failure; return }
+            Haptic.success()
+            posted = done
+            await load()
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = failure
         }
     }
 

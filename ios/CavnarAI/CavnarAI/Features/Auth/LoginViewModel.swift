@@ -37,6 +37,8 @@ final class LoginViewModel {
     private let sessionStore: SessionStore
     private let googleSignIn = GoogleSignInCoordinator()
     private let appleSignIn = AppleSignInCoordinator()
+    private let passkeys = PasskeyCoordinator()
+    private var autoFillTask: Task<Void, Never>?
 
     init(sessionStore: SessionStore) {
         self.sessionStore = sessionStore
@@ -75,6 +77,7 @@ final class LoginViewModel {
 
     func signInWithGoogle() async {
         guard !isLoading else { return }
+        stopPasskeyAutoFill()
         isLoading = true
         defer { isLoading = false }
         do {
@@ -98,8 +101,70 @@ final class LoginViewModel {
         }
     }
 
+    // MARK: - Passkeys (iOS parity #57)
+
+    /// Offers this phone's passkey in the QuickType bar over the username
+    /// field (AutoFill-assisted): the request waits until the person picks
+    /// it, signs in another way, or the screen goes. Silent on every
+    /// failure — the password form is right there.
+    func startPasskeyAutoFill() {
+        autoFillTask?.cancel()
+        autoFillTask = Task { [weak self] in
+            guard let self else { return }
+            guard let options = try? await sessionStore.passkeySignInOptions(), !Task.isCancelled else { return }
+            do {
+                let credential = try await passkeys.assert(options, autoFill: true)
+                await finishPasskey(credential)
+            } catch {
+                // Cancelled or unavailable — the form stands.
+            }
+        }
+    }
+
+    func stopPasskeyAutoFill() {
+        autoFillTask?.cancel()
+        autoFillTask = nil
+        passkeys.cancel()
+    }
+
+    /// "Sign in with a passkey": the system sheet, for a person who'd
+    /// rather tap than pick from the keyboard bar.
+    func signInWithPasskey() async {
+        guard !isLoading else { return }
+        stopPasskeyAutoFill()
+        do {
+            let options = try await sessionStore.passkeySignInOptions()
+            let credential = try await passkeys.assert(options)
+            await finishPasskey(credential)
+        } catch let error as PasskeyError {
+            if let message = error.message { errorMessage = message; Haptic.error() }
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            Haptic.error()
+        } catch {
+            errorMessage = "Couldn't sign in with a passkey. Try again."
+            Haptic.error()
+        }
+    }
+
+    private func finishPasskey(_ credential: PasskeyCredentialJSON) async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            try await sessionStore.loginWithPasskey(credential)
+            errorMessage = nil
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            Haptic.error()
+        } catch {
+            errorMessage = "Couldn't sign in with a passkey. Try again."
+            Haptic.error()
+        }
+    }
+
     func signInWithApple() async {
         guard !isLoading else { return }
+        stopPasskeyAutoFill()
         isLoading = true
         defer { isLoading = false }
         do {
