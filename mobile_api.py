@@ -229,6 +229,85 @@ def mobile_apple_signin():
     return jsonify(ok=True, token=token, user=_public_user(user))
 
 
+# ── Passkeys (iOS parity #57) ─────────────────────────────────────────────
+#
+# Bearer-token twins of the web's passkey routes, on the same bodies
+# (auth_routes._do_passkey_*), against passkeys.app_host() — the relying
+# party in the app's webcredentials entitlement. A passkey (device + Face ID,
+# Touch ID or passcode, user verification required) is this sign-in's
+# second factor, exactly as on the web; a Cavnar AI staff login is refused.
+
+@mobile_bp.route("/passkey/options", methods=["POST"])
+def mobile_passkey_login_options():
+    import passkeys
+    from auth_routes import _do_passkey_login_options
+    payload, status = _do_passkey_login_options(passkeys.app_host())
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/passkey/verify", methods=["POST"])
+def mobile_passkey_login_verify():
+    """{credential, device_id} -> the {token, user} /login hands back."""
+    import passkeys
+    from auth_routes import _passkey_signin_user
+    data = request.get_json(silent=True) or {}
+    user, refusal = _passkey_signin_user(data.get("credential"), passkeys.app_host())
+    if refusal:
+        return jsonify(**refusal[0]), refusal[1]
+    # The password path's gates (mobile_login): a turned-off login, and a
+    # sign-in reported as "not me" that burned the password until reset.
+    if not user or not user.get("is_active"):
+        return jsonify(ok=False, error="That login is turned off. Contact will@cavnar.ai."), 403
+    if user.get("must_reset_password"):
+        return jsonify(ok=False, error="This account needs a password reset before signing in — use Forgot password.",
+                       password_reset_required=True), 403
+    device_id = (data.get("device_id") or "").strip() or None
+    ip = _get_client_ip()
+    ua = request.headers.get("User-Agent", "Cavnar-iOS")
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id,
+                           restaurant_id=user["restaurant_id"], second_factor=True)
+    update_last_login(user["id"])
+    _send_login_notification(user, ip, ua)
+    return jsonify(ok=True, requires_2fa=False, token=token, user=_public_user(user), via="passkey")
+
+
+@mobile_bp.route("/passkeys", methods=["GET"])
+@mobile_login_required
+def mobile_passkeys_list(current_user):
+    from auth_routes import _do_passkeys_list
+    payload, status = _do_passkeys_list(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/passkeys/options", methods=["POST"])
+@mobile_login_required
+def mobile_passkeys_register_options(current_user):
+    """Adding one asks for the password first (or a sign-in moments ago)."""
+    import passkeys
+    from auth_routes import _do_passkey_register_options
+    payload, status = _do_passkey_register_options(current_user, request.get_json(silent=True) or {},
+                                                   passkeys.app_host())
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/passkeys", methods=["POST"])
+@mobile_login_required
+def mobile_passkeys_register(current_user):
+    import passkeys
+    from auth_routes import _do_passkey_register
+    payload, status = _do_passkey_register(current_user, request.get_json(silent=True) or {},
+                                           passkeys.app_host(), "iPhone")
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/passkeys/<int:passkey_id>/remove", methods=["POST"])
+@mobile_login_required
+def mobile_passkeys_remove(current_user, passkey_id):
+    from auth_routes import _do_passkey_remove
+    payload, status = _do_passkey_remove(current_user, passkey_id)
+    return jsonify(**payload), status
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────
 
 @mobile_bp.route("/login", methods=["POST"])
@@ -5854,6 +5933,8 @@ def _do_mobile_account(current_user):
         "last_login": current_user.get("last_login"),
         "password_changed_at": current_user.get("password_changed_at"),
         "password_strength": current_user.get("password_strength"),
+        # Staff sign-in notices (the web's switch; twin /account/staff-signin-notify).
+        "staff_signin_notify": bool(getattr(restaurant, "staff_signin_notify", 0)),
     }
     # A credential-pair POS (Toast/Square/Clover) can have its id fields set
     # and still not be working: Toast's connect route saves the three fields
@@ -5897,6 +5978,9 @@ def _do_mobile_account(current_user):
         "clover": _pos_row("clover", "clover_merchant_id"),
         # RPOWER (Simple EJ's) was missing from this list entirely.
         "rpower": _pos_row("rpower", "rpower_store_mid"),
+        # Website analytics (GA4 / Search Console): a connection like the
+        # others, so "Connected apps" counts every one (parity #80).
+        "web_analytics": _web_analytics_row(restaurant),
         "pos": _ph.pos_sync_state(restaurant),
     }
     # What the row SAYS, from the registry and in the restaurant's clock:
@@ -5950,6 +6034,12 @@ def _do_mobile_account(current_user):
             "alert_food_waste": bool(getattr(restaurant, "alert_food_waste", 0)),
             "alert_ai_visibility_drop": bool(getattr(restaurant, "alert_ai_visibility_drop", 0)),
             "alert_competitor_move": bool(getattr(restaurant, "alert_competitor_move", 1)),
+            # The web's four (parity #86): a rating rise past a floor, any new
+            # review, and a reply approved and posted. Saved only when sent.
+            "alert_rating_threshold": bool(getattr(restaurant, "alert_rating_threshold", 0)),
+            "alert_rating_floor": float(getattr(restaurant, "alert_rating_floor", None) or 4.0),
+            "alert_any_review": bool(getattr(restaurant, "alert_any_review", 0)),
+            "alert_resp_approved": bool(getattr(restaurant, "alert_resp_approved", 0)),
             "alert_extra_emails": getattr(restaurant, "alert_extra_emails", None) or "",
             "push_sound": bool(getattr(restaurant, "push_sound", 1) if getattr(restaurant, "push_sound", 1) is not None else 1),
         },
@@ -5957,6 +6047,9 @@ def _do_mobile_account(current_user):
     from models import count_auto_approved_today
     reviews_block = {
         "auto_approve_5star": bool(getattr(restaurant, "auto_approve_5star", 0)),
+        # Read back so the phone's save keeps it (parity #2): the shared body
+        # turns 4-star off whenever include_4star is not sent.
+        "auto_approve_4star": bool(getattr(restaurant, "auto_approve_4star", 0)),
         "auto_approve_earned": bool(getattr(restaurant, "auto_approve_earned", 0)),
         "auto_approve_daily_cap": int(getattr(restaurant, "auto_approve_daily_cap", 5) or 0),
         "auto_approve_paused": bool(getattr(restaurant, "auto_approve_paused", 0)),
@@ -5976,6 +6069,19 @@ def _do_mobile_account(current_user):
         "reviews": reviews_block,
         "data": data_block,
     }, 200
+
+
+def _web_analytics_row(restaurant):
+    """{connected, last_synced} for the account's GA4 / Search Console link,
+    on the rule web_analytics uses (a property id or a site URL)."""
+    try:
+        import web_analytics as _wa
+        connected = bool(_wa.clean_property_id(getattr(restaurant, "ga4_property_id", None))
+                         or _wa.clean_site_url(getattr(restaurant, "gsc_site_url", None)))
+    except Exception:
+        connected = False
+    return {"connected": connected,
+            "last_synced": getattr(restaurant, "web_analytics_synced_at", None) if connected else None}
 
 
 @mobile_bp.route("/account")
@@ -6352,6 +6458,39 @@ def mobile_disconnect_clover(current_user):
     return jsonify(ok=True)
 
 
+# Sync now (parity #80): twins of /api/<pos>/sync, each the web route's own
+# body — any login, as on the web, and the same manual-sync path the
+# console's button and the nightly sync use.
+_POS_SYNC_MODULES = {"toast": "toast_routes", "square": "square_routes",
+                     "clover": "clover_routes", "rpower": "rpower_routes"}
+
+
+@mobile_bp.route("/connections/<provider>/sync", methods=["POST"])
+@mobile_login_required
+def mobile_pos_sync(current_user, provider):
+    import importlib
+    mod = _POS_SYNC_MODULES.get(provider)
+    if not mod:
+        return jsonify(ok=False, error="There's no sync for that connection."), 404
+    payload, status = importlib.import_module(mod).do_sync(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/connections/rpower", methods=["DELETE"])
+@mobile_login_required
+def mobile_disconnect_rpower(current_user):
+    """Twin of /api/rpower/disconnect: principal only, as on the web. Connecting
+    again goes back through Cavnar AI — the token is Cavnar AI's."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the RPower connection")
+    if denied:
+        return denied
+    import rpower_routes
+    payload, status = rpower_routes.do_disconnect(current_user)
+    _log_account_event(current_user["restaurant_id"], "pos_disconnected", current_user, detail="RPOWER")
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/connections/google/authorize", methods=["GET"])
 @mobile_login_required
 def mobile_google_authorize(current_user):
@@ -6555,6 +6694,42 @@ def mobile_toggle_monthly_review(current_user):
     payload, status = _capi._do_monthly_review_pref(current_user["restaurant_id"],
                                                     request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/staff-signin-notify", methods=["POST"])
+@mobile_login_required
+def mobile_toggle_staff_signin_notify(current_user):
+    """Twin of /api/toggle-staff-signin-notify (client_api._do_staff_signin_notify)."""
+    payload, status = _capi._do_staff_signin_notify(current_user["restaurant_id"],
+                                                    request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/delete-login", methods=["POST"])
+@mobile_login_required
+def mobile_delete_own_login(current_user):
+    """Account -> Delete my login, a teammate's own (client_api
+    ._do_delete_own_login; Apple Guideline 5.1.1(v))."""
+    payload, status = _capi._do_delete_own_login(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/security-summary")
+@mobile_login_required
+def mobile_security_summary(current_user):
+    """Twin of /api/account/security-summary: the checkup scored once
+    (client_api._do_security_summary)."""
+    payload, status = _capi._do_security_summary(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/health")
+@mobile_login_required
+def mobile_account_health(current_user):
+    """Twin of /api/account/health (account_health.payload)."""
+    import account_health
+    payload = account_health.payload(current_user)
+    return jsonify(**payload), (200 if payload.get("ok") else 404)
 
 
 @mobile_bp.route("/account/team")
@@ -7030,7 +7205,8 @@ def mobile_set_team_access(current_user, user_id):
     except Exception:
         pass
     a = get_team_access(rid).get(user_id) or {}
-    return jsonify(ok=True, access=sorted(a.get("grants") or ()), morning_brief=bool(a.get("morning_brief")))
+    return jsonify(ok=True, access=sorted(a.get("grants") or ()), morning_brief=bool(a.get("morning_brief")),
+                   nightly_report=bool(a.get("nightly_report", True)))
 
 
 @mobile_bp.route("/account/send-test-digest", methods=["POST"])
@@ -7224,6 +7400,9 @@ def mobile_save_alert_settings(current_user):
     checked, bad = _capi._validated_alert_fields(data)
     if bad:
         return jsonify(ok=False, error=bad), 400
+    when_sent, bad = _capi._alert_fields_when_sent(data)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
 
     # A real error instead of silently dropping the extras — the client
     # already hides its own "+ Add" past 2, so this only fires for a
@@ -7275,10 +7454,10 @@ def mobile_save_alert_settings(current_user):
         "al_health_push": int(bool(data.get("al_health_push"))),
         "al_spike_push": int(bool(data.get("al_spike_push"))),
         "al_unres_push": int(bool(data.get("al_unres_push"))),
-        "alert_health_bypass_quiet": int(bool(data.get("alert_health_bypass_quiet"))),
-        "alert_food_waste": int(bool(data.get("alert_food_waste"))),
-        "alert_ai_visibility_drop": int(bool(data.get("alert_ai_visibility_drop"))),
-        "alert_extra_emails": _clean_email_list(data.get("alert_extra_emails")),
+        # Food waste, AI visibility, extra emails, health-through-quiet and
+        # the web's rating rise / any review / reply approved: each only when
+        # sent (client_api._alert_fields_when_sent, parity #86).
+        **when_sent,
         "push_sound": 0 if data.get("push_sound") is False else 1,
     }
     # Only when sent: this toggle defaults ON, and a build that predates it

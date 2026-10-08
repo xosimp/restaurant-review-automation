@@ -153,14 +153,21 @@ def disconnect_rpower(restaurant_id, current_user):
 def rpower_sync_client(current_user):
     """The account card's Sync button, like every other POS card's. Kicks a
     background sync of the owner's own connected store."""
+    payload, status = do_sync(current_user)
+    return jsonify(**payload), status
+
+
+def do_sync(current_user):
+    """Sync now — one body for the web card and the app's twin
+    (POST /mobile/api/connections/rpower/sync). Any login, as on the web."""
     import rpower
     rid = current_user["restaurant_id"]
     if not rpower.is_connected(rid):
-        return jsonify(ok=False, error="RPower isn't connected yet."), 400
+        return {"ok": False, "error": "RPower isn't connected yet."}, 400
     # The same path as the console's button and the nightly sync (#65).
     import scheduler
     scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")
-    return jsonify(ok=True, message="RPower sync started.")
+    return {"ok": True, "message": "RPower sync started."}, 200
 
 
 @rpower_bp.route("/api/rpower/disconnect", methods=["POST"])
@@ -173,11 +180,19 @@ def rpower_disconnect_client(current_user):
     denied = principal_only(current_user, "the RPower connection")
     if denied:
         return denied
+    payload, status = do_disconnect(current_user)
+    return jsonify(**payload), status
+
+
+def do_disconnect(current_user):
+    """The store's RPOWER link taken off — one body for the web card and the
+    app's twin (DELETE /mobile/api/connections/rpower). The caller has
+    already checked principal_only."""
     update_restaurant(current_user["restaurant_id"], {
         "rpower_token": None, "rpower_cg": None, "rpower_store_mid": None,
         "rpower_store_name": None, "rpower_verified_at": None,
         "rpower_sync_error": None, "rpower_last_synced": None})
-    return jsonify(ok=True, message="RPower disconnected.")
+    return {"ok": True, "message": "RPower disconnected."}, 200
 
 
 @rpower_bp.route("/api/rpower/status")

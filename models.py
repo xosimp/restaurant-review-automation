@@ -14427,6 +14427,9 @@ ACCOUNT_EVENT_TYPES = (
     "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
     "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",
     "team_member_invited", "team_member_revoked",
+    # A teammate deleted their own login (parity #13); the staff sign-in
+    # notice switched on or off (parity #70).
+    "login_deleted_by_holder", "staff_signin_notify_changed",
     "sessions_revoked_others", "trusted_device_revoked", "trusted_devices_cleared",
     "login_reported_not_me", "data_exported", "alert_settings_saved",
     "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
@@ -14458,6 +14461,9 @@ ACCOUNT_EVENT_LABELS = {
     "backup_codes_regenerated": "Backup codes regenerated",
     "team_member_invited": "Team member invited",
     "team_member_revoked": "Team member removed",
+    # `detail` carries the role of the login that was deleted.
+    "login_deleted_by_holder": "A teammate deleted their own login",
+    "staff_signin_notify_changed": "Staff sign-in notices changed",
     "sessions_revoked_others": "Signed out of other devices",
     "trusted_device_revoked": "Trusted device removed",
     "trusted_devices_cleared": "All trusted devices removed",
