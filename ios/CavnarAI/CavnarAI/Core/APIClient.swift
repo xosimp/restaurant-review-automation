@@ -168,6 +168,11 @@ actor APIClient {
     static let longCallResourceCap: TimeInterval = 150
 
     func setToken(_ token: String?) {
+        if token != self.token {
+            // Another session's conditional copies are never this one's.
+            conditionalMemo = [:]
+            conditionalMisses = []
+        }
         self.token = token
     }
 
@@ -231,6 +236,13 @@ actor APIClient {
     ) async throws -> (value: Response, body: Data) {
         var request = try buildRequest(path: path, method: method.rawValue, body: body, query: query)
         if let timeout { request.timeoutInterval = timeout }
+        // A conditional GET (parity #56): the copy this client holds of an
+        // ETagged read goes back as If-None-Match, and a 304 reuses it.
+        let held = method == .get ? conditionalCopy(for: request) : nil
+        if let held {
+            request.setValue(held.etag, forHTTPHeaderField: "If-None-Match")
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+        }
         let mayRetry = retryTransient ?? (method == .get)
         // The token this request carries. The actor is re-entrant across the
         // await below, so by the time the answer lands a different account
@@ -265,9 +277,82 @@ actor APIClient {
             throw classified
         }
 
-        let value: Response = try await finish(data: data, response: response, sentToken: sentToken,
+        var answered = data
+        if method == .get, let http = response as? HTTPURLResponse {
+            if http.statusCode == 304, let held {
+                // Unchanged: the body this client already holds is the answer.
+                answered = held.body
+            } else if (200..<300).contains(http.statusCode), sentToken == token {
+                rememberConditional(request: request, response: http, body: data)
+            }
+        }
+        let value: Response = try await finish(data: answered, response: response, sentToken: sentToken,
                                                hapticOnError: hapticOnError)
-        return (value, data)
+        return (value, answered)
+    }
+
+    // MARK: - Conditional GETs (parity #56)
+
+    /// An ETagged read this client holds: the tag and the exact body it
+    /// tagged. The session is ephemeral by design (no URLCache on disk,
+    /// audit 1.5), so the app keeps these itself — in memory, and in
+    /// SecureCache (complete file protection, purged on sign-out and on a
+    /// location switch) so a cold launch can revalidate too.
+    struct ConditionalCopy: Equatable, Sendable {
+        let etag: String
+        let body: Data
+    }
+
+    private var conditionalMemo: [String: ConditionalCopy] = [:]
+    /// Keys already looked for on disk and not there — so a route that never
+    /// sends an ETag costs one file read per launch, not one per request.
+    private var conditionalMisses: Set<String> = []
+
+    /// The SecureCache key for a request: the session's token and the full
+    /// URL (query included), hashed — one login's copy is never another's.
+    private func conditionalKey(_ request: URLRequest) -> String? {
+        guard let token, !token.isEmpty, let url = request.url?.absoluteString else { return nil }
+        let digest = SHA256.hash(data: Data((token + "|" + url).utf8)).map { String(format: "%02x", $0) }.joined()
+        return "etag." + digest.prefix(40)
+    }
+
+    private func conditionalCopy(for request: URLRequest) -> ConditionalCopy? {
+        guard let key = conditionalKey(request) else { return nil }
+        if let hit = conditionalMemo[key] { return hit }
+        if conditionalMisses.contains(key) { return nil }
+        guard let raw = SecureCache.read(key: key), let copy = Self.decodeConditional(raw) else {
+            conditionalMisses.insert(key)
+            return nil
+        }
+        conditionalMemo[key] = copy
+        return copy
+    }
+
+    private func rememberConditional(request: URLRequest, response: HTTPURLResponse, body: Data) {
+        guard let key = conditionalKey(request) else { return }
+        guard let etag = response.value(forHTTPHeaderField: "ETag"), !etag.isEmpty, !body.isEmpty else {
+            // The route stopped tagging (or never did): nothing to keep.
+            if conditionalMemo.removeValue(forKey: key) != nil { SecureCache.delete(key: key) }
+            conditionalMisses.insert(key)
+            return
+        }
+        let copy = ConditionalCopy(etag: etag, body: body)
+        guard conditionalMemo[key] != copy else { return }
+        conditionalMemo[key] = copy
+        conditionalMisses.remove(key)
+        SecureCache.write(Self.encodeConditional(copy), key: key)
+    }
+
+    /// `<etag>\n<body>` — an ETag never carries a newline.
+    nonisolated static func encodeConditional(_ copy: ConditionalCopy) -> Data {
+        Data((copy.etag + "\n").utf8) + copy.body
+    }
+
+    nonisolated static func decodeConditional(_ raw: Data) -> ConditionalCopy? {
+        guard let cut = raw.firstIndex(of: 0x0A), cut > raw.startIndex,
+              let etag = String(data: raw[raw.startIndex..<cut], encoding: .utf8) else { return nil }
+        let body = Data(raw[raw.index(after: cut)...])
+        return body.isEmpty ? nil : ConditionalCopy(etag: etag, body: body)
     }
 
     /// True only when this task was actually cancelled — its view went away.
@@ -391,8 +476,14 @@ actor APIClient {
     func awaitAIJob<Response: Decodable>(_ jobId: String, waitSeconds: Int? = nil) async throws -> Response {
         var deadline = Date().addingTimeInterval(TimeInterval((waitSeconds ?? 240) + 30))
         var misses = 0
+        var polls = 0
+        var secondsLeft: Int?
         while true {
-            try await Task.sleep(for: .milliseconds(1500))
+            // 1.5 s, then 3 s, then every 5 s (parity perf): a two-minute
+            // invoice read polled every 1.5 s was eighty requests and a
+            // radio kept awake for all of them.
+            try await Task.sleep(for: Self.pollDelay(after: polls, secondsLeft: secondsLeft))
+            polls += 1
             let polled: (value: AIJobPoll, body: Data)
             do {
                 polled = try await sendKeepingBody("/mobile/api/ai-jobs/\(jobId)", hapticOnError: false)
@@ -402,6 +493,7 @@ actor APIClient {
             }
             misses = 0
             if polled.value.status == "pending" {
+                secondsLeft = polled.value.secondsLeft
                 if let left = polled.value.secondsLeft, left > 0 {
                     deadline = max(deadline, Date().addingTimeInterval(TimeInterval(left + 30)))
                 }
@@ -417,6 +509,57 @@ actor APIClient {
                 throw APIError(kind: .decoding, message: "Couldn't understand the server's response.")
             }
         }
+    }
+
+    /// The poll cadence for work running off the request thread — an AI
+    /// job, a module read being written: 1.5 s, then 3 s, then every 5 s.
+    /// The job's own `seconds_left` (time to its deadline) caps the wait,
+    /// so the last poll is not slept past the moment the job is called
+    /// dead.
+    nonisolated static let pollSteps: [Double] = [1.5, 3, 5]
+
+    nonisolated static func pollDelay(after polls: Int, secondsLeft: Int? = nil) -> Duration {
+        var wait = pollSteps[min(max(polls, 0), pollSteps.count - 1)]
+        if let secondsLeft, secondsLeft > 0 {
+            wait = min(wait, max(1.5, Double(secondsLeft)))
+        }
+        return .milliseconds(Int(wait * 1000))
+    }
+
+    // MARK: - Module reads, stale-while-refresh (parity #37)
+
+    /// What a module read (Labor, Reviews, Marketing) asked with `async`
+    /// says about itself: `pending` (nothing stored yet — the fields carry
+    /// a placeholder), or `refreshing` (the last read, with its age, while
+    /// a newer one is written), and the job to poll by.
+    struct InsightRefreshState: Decodable, Sendable, Equatable {
+        var pending: Bool? = nil
+        var refreshing: Bool? = nil
+        var refreshJob: String? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case pending, refreshing
+            case refreshJob = "refresh_job"
+        }
+
+        /// A newer read is on its way: poll `refreshJob`.
+        var isWaiting: Bool { refreshJob != nil && (pending == true || refreshing == true) }
+        /// Nothing to show yet — the screen keeps its loading state.
+        var isPending: Bool { pending == true }
+    }
+
+    /// One read of a module insight route with `async=1` (and the job a
+    /// previous answer named): the decoded answer, its body, and whether a
+    /// newer read is being written. InsightRefresh.follow polls it.
+    func sendInsight<Response: Decodable>(
+        _ path: String, refreshJob: String? = nil, hapticOnError: Bool = false
+    ) async throws -> (value: Response, body: Data, refresh: InsightRefreshState?) {
+        var query = ["async": "1"]
+        if let refreshJob { query["refresh_job"] = refreshJob }
+        let answer: (value: Response, body: Data) = try await sendKeepingBody(
+            path, query: query, hapticOnError: hapticOnError)
+        let state = try? JSONDecoder.cavnar.decode(InsightRefreshState.self, from: answer.body)
+        return (answer.value, answer.body, state)
     }
 
     /// A session_expired answer describes the token that request carried.

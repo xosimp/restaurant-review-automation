@@ -43,6 +43,13 @@ struct AllClearRow: View {
 struct PulsingSwipeArrow: View {
     var size: CGFloat = 11
     @State private var start = Date()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Off screen (a tab away, a screen pushed over Home) it stops ticking.
+    @State private var onScreen = true
+
+    /// Resting (the chevron at its start, fully visible) under Reduce
+    /// Motion, off screen, and in Low Power Mode or heat (parity #83).
+    private var frozen: Bool { reduceMotion || !onScreen || CavnarEnvironment.shared.reducedActivity }
 
     // Wall-clock driven (TimelineView), not a PhaseAnimator — the phase
     // animator's own transaction could be interrupted by a tab switch or
@@ -51,14 +58,16 @@ struct PulsingSwipeArrow: View {
     // stuck: whatever frame this renders on, the position is just a
     // function of the current time.
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: frozen)) { timeline in
             let t = timeline.date.timeIntervalSince(start)
             // 0 -> 1 -> 0 over one 2.3s breath, ease-in-out shaped.
-            let phase = 0.5 - 0.5 * cos(t * 2 * .pi / 2.3)
+            let phase = frozen ? 0 : 0.5 - 0.5 * cos(t * 2 * .pi / 2.3)
             Image(systemName: "chevron.right")
                 .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(Color.cavnarEmber2.opacity(0.65 - 0.47 * phase))
                 .offset(x: (size * 0.45) * phase)
         }
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
     }
 }

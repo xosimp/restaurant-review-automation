@@ -1345,12 +1345,19 @@ struct CavnarEmptyHearth: View {
 
     @State private var pressed = false
     @State private var start = Date()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var onScreen = true
+
+    /// The breath is ambient: it rests (a cold ember) under Reduce Motion,
+    /// off screen, and in Low Power Mode or heat (parity #83). The press
+    /// still warms it.
+    private var resting: Bool { reduceMotion || !onScreen || CavnarEnvironment.shared.reducedActivity }
 
     var body: some View {
         VStack(spacing: 14) {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: resting)) { timeline in
                 let t = timeline.date.timeIntervalSince(start)
-                let breath = CGFloat(max(0, sin(t * 2 * .pi / 5.0))) * 0.28
+                let breath = resting ? 0 : CGFloat(max(0, sin(t * 2 * .pi / 5.0))) * 0.28
                 CavnarSealMark(
                     size: 64,
                     ringColor: Color.cavnarInk3.opacity(0.32),
@@ -1389,6 +1396,8 @@ struct CavnarEmptyHearth: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 44)
         .padding(.horizontal, 24)
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
     }
 }
 

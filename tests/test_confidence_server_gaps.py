@@ -15,7 +15,9 @@ def test_mobile_food_cost_carries_the_waste_state_and_recoverable_basis():
 
 def test_mobile_labor_insight_serves_the_stale_read_with_its_age():
     # One helper for both twins now (T9): client_api.labor_stale_read.
-    src = inspect.getsource(mobile_api.mobile_labor_insight)
+    # The synchronous body is _mobile_labor_insight_render since the route
+    # also answers stale-while-refresh (parity #37).
+    src = inspect.getsource(mobile_api._mobile_labor_insight_render)
     assert "labor_stale_read(rid)" in src and '**stale["state"]' in src
     import client_api
     helper = inspect.getsource(client_api._labor_read_age)

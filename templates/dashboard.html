@@ -2030,7 +2030,11 @@ function apiJson(r){
 function aiJobAwait(d, opts){
   if (!d || !d.job_id || d.ok === false) return Promise.resolve(d);
   opts = opts || {};
+  /* 1.5 -> 3 -> 5 s (parity #37/perf): a two-minute job polled every 1.5 s
+     was eighty requests. A caller that names its cadence keeps it. */
   var every = opts.every || 1500;
+  var steps = opts.every ? [opts.every] : [1500, 3000, 5000];
+  var polls = 0;
   var limit = Date.now() + ((d.wait_seconds || 240) + 30) * 1000;
   var misses = 0;
   return new Promise(function(resolve){
@@ -2040,7 +2044,8 @@ function aiJobAwait(d, opts){
         if (r && r.status === 'pending' && r.ok !== false) {
           if (r.seconds_left) limit = Math.max(limit, Date.now() + (r.seconds_left + 30) * 1000);
           if (Date.now() > limit) { resolve({ok: false, error: 'That is taking longer than it should. Try again in a moment.'}); return; }
-          setTimeout(poll, every);
+          polls++;
+          setTimeout(poll, steps[Math.min(polls, steps.length - 1)]);
           return;
         }
         resolve(r);
@@ -2056,6 +2061,35 @@ function aiJobAwait(d, opts){
   });
 }
 window.aiJobAwait = aiJobAwait;
+/* The poll cadence for work running off the request thread: 1.5 s, then
+   3 s, then every 5 s. */
+var AI_POLL_STEPS = [1500, 3000, 5000];
+/* A module read asked stale-while-refresh (insight_refresh, parity #37):
+   with async=1 a read that is being written answers at once - pending
+   (nothing stored yet: the panel keeps its loading state) or the last read
+   with its age (refreshing: shown, then replaced). Either carries
+   refresh_job, polled on AI_POLL_STEPS until the new read lands.
+   onAnswer(d, interim): interim is true for the older read shown while the
+   new one is written - not to be cached as the answer. */
+function insightSwr(url, onAnswer, onFail){
+  var polls = 0, started = Date.now();
+  function ask(job){
+    var u = url + (url.indexOf('?') < 0 ? '?' : '&') + 'async=1' + (job ? '&refresh_job=' + encodeURIComponent(job) : '');
+    fetch(u, {credentials: 'same-origin'}).then(apiJson).then(function(d){
+      var waiting = d && d.refresh_job && (d.pending || d.refreshing);
+      if (waiting && (Date.now() - started) < 180000) {
+        if (!d.pending) onAnswer(d, true);
+        setTimeout(function(){ ask(d.refresh_job); }, AI_POLL_STEPS[Math.min(polls, AI_POLL_STEPS.length - 1)]);
+        polls++;
+        return;
+      }
+      if (d && d.pending) { if (onFail) onFail(d); return; }
+      onAnswer(d, false);
+    }).catch(function(e){ if (onFail) onFail(e); });
+  }
+  ask(null);
+}
+window.insightSwr = insightSwr;
 /* A panel whose load failed says so in place of its "Loading…" (CLIENT-12,
    CLIENT-58): the server's own sentence when it sent one, never an empty box
    that reads as "nothing here" and never a placeholder left up forever. */
@@ -17993,7 +18027,7 @@ function loadReviewInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/review-insight').then(apiJson).then(function(d){
+  insightSwr('/api/review-insight', function(d, interim){
     // An error payload carries its message in insight: it is said as an
     // error - never tagged as a checked AI read, never cached for five
     // minutes as if it were one (B6 sub-audit).
@@ -18015,7 +18049,8 @@ function loadReviewInsight(){
        names, the trend's confidence, the diagnosis and its age — were shown
        once and then silently dropped for five minutes while the text they
        qualified kept rendering. */
-    cavSet('review_insight',JSON.stringify(d));cavSet('review_insight_at',String(Date.now()));
+    // An older read shown while the new one is written is not cached.
+    if(!interim){cavSet('review_insight',JSON.stringify(d));cavSet('review_insight_at',String(Date.now()));}
     el.classList.remove('insight-loading');
     typewriterEffect(el,processInsightHtml(html));
     applyInsightCaveats(el,d);
@@ -18023,7 +18058,7 @@ function loadReviewInsight(){
     renderSeverityStrip(d);
     renderReviewDiagnosis(d);
     renderInsightRecs(el,d.recs,'reviews');
-  }).catch(function(){
+  }, function(){
     el.classList.remove('insight-loading');
     el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
   });
@@ -21040,16 +21075,16 @@ function loadMktInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/mkt-insight').then(apiJson).then(function(d){
+  insightSwr('/api/mkt-insight', function(d, interim){
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
-    cavSet('mkt_brief',html);cavSet('mkt_brief_at',String(Date.now()));
-    cavSet('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[],stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||'',generated_at:d.generated_at||''}));
+    if(!interim){cavSet('mkt_brief',html);cavSet('mkt_brief_at',String(Date.now()));}
+    if(!interim)cavSet('mkt_brief_check',JSON.stringify({figures_verified:d.figures_verified,unsupported_figures:d.unsupported_figures||[],causes_verified:d.causes_verified,unsupported_causes:d.unsupported_causes||[],stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||'',generated_at:d.generated_at||''}));
     el.classList.remove('insight-loading');
     typewriterEffect(el,html);
     applyFigureCaveat(el,d);
     mktStaleCaveat(el,d);
     mktLoaded=true;
-  }).catch(function(){
+  }, function(){
     el.classList.remove('insight-loading');
     el.textContent='Marketing brief unavailable — check back shortly.';
     mktLoaded=false;
@@ -21293,20 +21328,22 @@ function loadLaborInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/labor-insight').then(apiJson).then(function(d){
+  insightSwr('/api/labor-insight', function(d, interim){
     var elLaborInsight=document.getElementById('labor-insight');
     if(elLaborInsight){
       var html=d.insight||'Analysis unavailable.';
       var ls=laborSplitUnverified(html);
       _laborInsightFull=ls.html;
       renderDiagnosis('lb2-diag',d.diagnosis);
-      cavSet('labor_insight',html);cavSet('labor_insight_at',String(Date.now()));
-      cavSet('labor_insight_meta',JSON.stringify({stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||'',generated_at:d.generated_at||''}));
+      if(!interim){
+        cavSet('labor_insight',html);cavSet('labor_insight_at',String(Date.now()));
+        cavSet('labor_insight_meta',JSON.stringify({stale:!!d.stale,stale_note:d.stale_note||'',as_of:d.as_of||'',generated_at:d.generated_at||''}));
+      }
       elLaborInsight.classList.remove('insight-loading');
       typewriterEffect(elLaborInsight,ls.html);
       laborApplyCaveats(elLaborInsight,ls.figs,d,ls.note);
     }
-  }).catch(function(){
+  }, function(){
     var elLaborErr=document.getElementById('labor-insight');
     if(elLaborErr){elLaborErr.classList.remove('insight-loading');elLaborErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });

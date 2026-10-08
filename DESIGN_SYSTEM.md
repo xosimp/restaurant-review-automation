@@ -900,6 +900,19 @@ Rules:
   1.8–6s. Easing `ease-in-out` or `cubic-bezier(.2,.9,.3,1)`.
 - Respect `prefers-reduced-motion` / `accessibilityReduceMotion` — every
   looping animation must have a still fallback.
+- **Ambient loops rest when nobody gains from them** (iOS parity #83): a
+  loop that decorates rather than reports — Home's obsidian field, the
+  swipe-hint chevron (`PulsingSwipeArrow`), the Cold Hearth's breath —
+  pauses its `TimelineView` (`paused:`) and draws its resting frame when
+  `CavnarEnvironment.shared.reducedActivity` is on (Low Power Mode, or
+  thermal state serious/critical), when it is off screen (`onAppear` /
+  `onDisappear`), and, for the full-screen field, when the scene is not
+  active. A "working" loop (04–07, the pull ember) keeps moving: frozen, it
+  reads as hung. A new ambient loop follows the same rule.
+- **Optional reads wait on a constrained link**: `CavnarEnvironment.
+  reducedNetwork` (Low Data Mode, a hotspot) skips work nobody asked for —
+  warming unopened tabs, the forced widget re-read — never what the owner
+  opened.
 - Inline web JS is **ES5 only**, including comments
   (`tests/test_frontend_rules.py`).
 

@@ -36,10 +36,20 @@ struct HomeObsidianField: View {
     var paused: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    /// False while Home is not on screen — another tab selected, a screen
+    /// pushed over it. A TimelineView keeps ticking for a view that is
+    /// merely hidden, so the field painted 30 frames a second nobody saw.
+    @State private var onScreen = true
 
     static let frameInterval: Double = 1.0 / 30.0
 
-    private var frozen: Bool { reduceMotion || paused }
+    /// Frozen on its resting frame under Reduce Motion, while a sheet is up,
+    /// off screen, with the app not active, and — parity #83 — in Low Power
+    /// Mode or when the phone runs hot (CavnarEnvironment.reducedActivity).
+    private var frozen: Bool {
+        reduceMotion || paused || !onScreen || scenePhase != .active || CavnarEnvironment.shared.reducedActivity
+    }
 
     var body: some View {
         ZStack {
@@ -58,6 +68,8 @@ struct HomeObsidianField: View {
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
     }
 }
 
