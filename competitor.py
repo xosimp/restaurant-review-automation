@@ -396,13 +396,23 @@ def remove_competitor_from_cache(restaurant_id: int, place_id: str) -> bool:
         return False
     competitors = blob.get("competitors", [])
     new_competitors = [c for c in competitors if c.get("place_id") != place_id]
-    if len(new_competitors) == len(competitors):
-        return False
+    changed = len(new_competitors) != len(competitors)
     blob["competitors"] = new_competitors
     # The read now stands for the owner's list without it, so a Refresh
     # right after a removal is served the stored read (#42), not a new run.
-    if isinstance(blob.get("custom_ids"), list):
+    # Also when the place was not in the comparison (an owner-added one the
+    # last run found closed): its id stayed in custom_ids, so the next run
+    # took the owner's list as changed and searched the neighbourhood again
+    # (re-audit P7).
+    if isinstance(blob.get("custom_ids"), list) and place_id in blob["custom_ids"]:
         blob["custom_ids"] = [p for p in blob["custom_ids"] if p != place_id]
+        changed = True
+    closed = blob.get("closed_custom")
+    if isinstance(closed, list) and any(isinstance(c, dict) and c.get("place_id") == place_id for c in closed):
+        blob["closed_custom"] = [c for c in closed if not (isinstance(c, dict) and c.get("place_id") == place_id)]
+        changed = True
+    if not changed:
+        return False
     update_restaurant(restaurant_id, {"competitor_intel": json.dumps(blob)})
     return True
 
@@ -976,11 +986,86 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         return ""
 
 
+# The competitor read's rules as one cached system block (AI cost audit
+# 10/7/26 #63, applied here in the re-audit, P9): the role, the guest-text
+# note, the layout of the message, the concept rules, the evidence rules,
+# the report's shape and its tone are the same for every restaurant, so
+# the Monday sweep's Message Batch reads one prefix at a tenth of the input
+# price after the first. They are the single prompt's rules word for word,
+# with the restaurant's name read as "the restaurant" (named in the
+# message) and the greeting given in the message. Above 1,024 tokens on
+# purpose: a shorter prefix is never cached (the section on how the
+# message is laid out is what carries it past the floor, and it is there
+# for the model's sake as much: the old prompt left the layout implicit).
+def _insight_system():
+    from competitor_intel_format import NOTHING_TO_ACT_ON
+    return f"""You are the Cavnar AI Consultant. Each message gives you one restaurant and the nearby competitors Google lists for it, with each competitor's recent customer reviews; you write that restaurant's competitive landscape snapshot.
+
+{UNTRUSTED_NOTE}
+
+HOW THE MESSAGE IS LAID OUT — everything in it is this one restaurant's own record:
+- RESTAURANT and TODAY: who the report is for and the date it is written on, then any upcoming holidays or events and, when one is on file, the week's weather forecast where the restaurant is, with how far to lean on it.
+- About the restaurant: its concept, what it is known for and where it is, as the owner described it — and, when there is any, WHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT: the owner's rules, the last read and its verdict, and the answers the owner gave to earlier advice.
+- Nearby competitors and their recent customer reviews: each competitor's Google rating and review count, its Google price level, how far away it is, how it was selected, a note when its rating rests on too few reviews to compare against, and up to five of its reviews — each with an id ("R1", "R2", …), its star rating and how long ago it was written.
+- GREETING: the line the report opens with, exactly as written.
+- DATA STATE, when present: how current each source behind the message is.
+
+CRITICAL RULES:
+- Only recommend actions that fit the restaurant's actual concept and cuisine
+- NEVER recommend menu items or food categories outside their concept (e.g. don't suggest a burger promotion to a breakfast cafe)
+- Focus on service quality, marketing angles, atmosphere, timing, and operational strengths
+- Recommendations must be something a manager could literally start THIS SHIFT with the staff, menu, and equipment the restaurant already has
+- NEVER recommend creating a new dish, adding a menu item, running a "promotion" or "campaign" with no specifics, redesigning the space, buying equipment, or hiring — these take weeks restaurants don't have and are not real advice
+- Every recommendation must name a specific, existing lever: a service script change, a staffing/timing adjustment, promoting an EXISTING dish or existing strength on social/signage, a direct fix to a named complaint from the competitor reviews in the message, or a specific way to win over customers unhappy with a named competitor
+
+EVIDENCE RULES — these bound what you may claim:
+- Each review carries how long ago it was written. A review over a year old is NOT evidence of what a competitor is doing now. Prefer recent ones, and if you cite an older one, say when it was ("last year", "two years ago").
+- Every competitor strength or weakness you state must trace to a review quoted in the message for THAT named competitor. Never attribute a complaint to a restaurant it was not written about.
+- Only name restaurants that appear in the competitor list in the message. Do not introduce any other business.
+- "How this one was selected" tells you how close a match each competitor is. One selected on a widened radius with no cuisine or price constraint is a weaker comparison — do not present it as a direct rival without saying so.
+- State no figure — a dollar amount, a percentage, a count — that does not appear in the message.
+
+Write a competitive intelligence report for the restaurant in this EXACT format with these EXACT headers, opening with the GREETING line from the message:
+
+<the GREETING line>
+
+WHAT COMPETITORS ARE DOING WELL:
+Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific strength — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R3]. A bullet with no review of that restaurant behind it must not be written.
+
+WHAT COMPETITORS ARE DOING POORLY:
+Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R4].
+
+(Do not write a price positioning section — it is computed from the price levels and added for you.)
+
+Recommendations:
+Write between ZERO and THREE, numbered "1.", "2.", "3.". Write one only where these reviews give a genuine, specific reason to act this week — never pad to three. Each is 15 words or fewer and ends with the ids of the competitor reviews it rests on, in square brackets, exactly as they appear in the message, e.g. [R2, R5]. A recommendation with no review behind it must not be written. Kinds that fit:
+- an operational or service fix using only what the restaurant already has — a specific script, timing, or staffing change
+- a specific EXISTING dish, deal, or strength to push harder in marketing/signage this week — never a new item
+- a specific tactic to win a named competitor's dissatisfied customers, tied to an actual complaint quoted in the message
+If nothing in these reviews is worth acting on, write exactly this one line under Recommendations and nothing else: {NOTHING_TO_ACT_ON}
+
+Tone: sharp, direct, trusted business advisor. Every line is a single punchy sentence, not a paragraph — cut qualifiers, cut context, cut anything that isn't the point itself. Name specific competitors and cite specific review themes anyway, just in fewer words. Always use $ signs before dollar amounts."""
+
+
+INSIGHT_SYSTEM = _insight_system()
+
+
 def _insight_request(prompt, route=None) -> dict:
     """The competitor read's request on `route` (the orchestrator's rung;
-    None = the call site's own model) — sent now or carried by a batch item."""
-    kw = dict(model=model_for("competitor_insight"), max_tokens=900, messages=[{"role": "user", "content": prompt}])
+    None = the call site's own model) — sent now or carried by a batch item.
+    The static rules ride in a cached system block (AI cost audit 10/7/26
+    #63, re-audit P9); `prompt` is the restaurant's own message."""
+    kw = dict(model=model_for("competitor_insight"), max_tokens=900,
+              system=[{"type": "text", "text": INSIGHT_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+              messages=[{"role": "user", "content": prompt}])
     return route.apply(kw) if route is not None else kw
+
+
+def insight_validation_text(prompt) -> str:
+    """What the model saw — the system block and the message — as one text:
+    the Response Validation Layer's context (a figure the read states must
+    appear in what it was handed), exactly as the single prompt was."""
+    return INSIGHT_SYSTEM + "\n\n" + (prompt or "")
 
 
 def _insight_text(msg, restaurant_id) -> str:
@@ -1131,53 +1216,19 @@ def _insight_prompt(restaurant_name, competitors, owner_name=None, restaurant_pr
         except Exception as _me:
             print(f"[Competitor] memory unavailable for {restaurant_id}: {_me}")
 
-    from competitor_intel_format import NOTHING_TO_ACT_ON
-    prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
-Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
-
-{UNTRUSTED_NOTE}
+    # The restaurant's own message (AI cost audit 10/7/26 #63, re-audit P9):
+    # who, when, the profile, the memory and the competitors with their
+    # reviews. Every rule is INSIGHT_SYSTEM, the cached system block.
+    prompt = f"""RESTAURANT: {restaurant_name}
+TODAY: {today_comp}{holiday_rec_context}{weather_ctx}
 
 About {restaurant_name}:
 {profile_context}{memory_ctx}
 
-CRITICAL RULES:
-- Only recommend actions that fit {restaurant_name}'s actual concept and cuisine
-- NEVER recommend menu items or food categories outside their concept (e.g. don't suggest a burger promotion to a breakfast cafe)
-- Focus on service quality, marketing angles, atmosphere, timing, and operational strengths
-- Recommendations must be something a manager could literally start THIS SHIFT with the staff, menu, and equipment {restaurant_name} already has
-- NEVER recommend creating a new dish, adding a menu item, running a "promotion" or "campaign" with no specifics, redesigning the space, buying equipment, or hiring — these take weeks restaurants don't have and are not real advice
-- Every recommendation must name a specific, existing lever: a service script change, a staffing/timing adjustment, promoting an EXISTING dish or existing strength on social/signage, a direct fix to a named complaint from the competitor reviews above, or a specific way to win over customers unhappy with a named competitor
-
 Nearby competitors and their recent customer reviews:
 {comp_summary}
 
-EVIDENCE RULES — these bound what you may claim:
-- Each review carries how long ago it was written. A review over a year old is NOT evidence of what a competitor is doing now. Prefer recent ones, and if you cite an older one, say when it was ("last year", "two years ago").
-- Every competitor strength or weakness you state must trace to a review quoted above for THAT named competitor. Never attribute a complaint to a restaurant it was not written about.
-- Only name restaurants that appear in the list above. Do not introduce any other business.
-- "How this one was selected" tells you how close a match each competitor is. One selected on a widened radius with no cuisine or price constraint is a weaker comparison — do not present it as a direct rival without saying so.
-- State no figure — a dollar amount, a percentage, a count — that does not appear above.
-
-Write a competitive intelligence report for {restaurant_name} in this EXACT format with these EXACT headers:
-
-{greeting}, here is your competitive landscape snapshot.
-
-WHAT COMPETITORS ARE DOING WELL:
-Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific strength — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R3]. A bullet with no review of that restaurant behind it must not be written.
-
-WHAT COMPETITORS ARE DOING POORLY:
-Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R4].
-
-(Do not write a price positioning section — it is computed from the price levels and added for you.)
-
-Recommendations:
-Write between ZERO and THREE, numbered "1.", "2.", "3.". Write one only where these reviews give a genuine, specific reason to act this week — never pad to three. Each is 15 words or fewer and ends with the ids of the competitor reviews it rests on, in square brackets, exactly as they appear above, e.g. [R2, R5]. A recommendation with no review behind it must not be written. Kinds that fit:
-- an operational or service fix using only what {restaurant_name} already has — a specific script, timing, or staffing change
-- a specific EXISTING dish, deal, or strength to push harder in marketing/signage this week — never a new item
-- a specific tactic to win a named competitor's dissatisfied customers, tied to an actual complaint quoted above
-If nothing in these reviews is worth acting on, write exactly this one line under Recommendations and nothing else: {NOTHING_TO_ACT_ON}
-
-Tone: sharp, direct, trusted business advisor. Every line is a single punchy sentence, not a paragraph — cut qualifiers, cut context, cut anything that isn't the point itself. Name specific competitors and cite specific review themes anyway, just in fewer words. Always use $ signs before dollar amounts."""
+GREETING — open the report with this line, exactly: {greeting}, here is your competitive landscape snapshot."""
 
     from ai_utils import with_data_state as _with_ds_ci
     _ready_ci = ready if ready is not None else _insight_readiness(restaurant_id)
@@ -1277,7 +1328,10 @@ def finish_competitor_insight(raw, prompt, competitors, restaurant_name="", own_
         # The forecast is the only registry-dated input here: an out-of-date
         # one needs disclosing only in a read that leans on it.
         registry_state = {k: v for k, v in registry_state.items() if k != "stale_sources"}
-    ctx = _intel_context(prompt, competitors, restaurant_name, restaurant_id, owner_name,
+    # The context is what the model saw: the cached rules and the message
+    # (#63) — a figure the rules carry backs a claim as it did when they
+    # were one prompt.
+    ctx = _intel_context(insight_validation_text(prompt), competitors, restaurant_name, restaurant_id, owner_name,
                          registry_state=registry_state)
     return _checked_intel(rv.enforce(text, ctx, marker=False), ctx, competitors, restaurant_name, own_price_level)
 
@@ -1742,13 +1796,26 @@ def _newest_ts(reviews):
     return best
 
 
-def _newer_reviews(latest, analysed) -> int:
-    """How many of the daily check's reviews are newer than every review the
-    last read was written from (#15: the one thing a read cannot already
-    know). A read written from no reviews counts every one."""
+def _newer_review_list(latest, analysed) -> list:
+    """The daily check's reviews newer than every review the last read was
+    written from (#15: the one thing a read cannot already know). A read
+    written from no reviews counts every one."""
     floor = _newest_ts(analysed)
-    return sum(1 for r in latest or [] if isinstance(r, dict) and isinstance(r.get("ts"), (int, float))
-               and (floor is None or r["ts"] > floor))
+    return [r for r in latest or [] if isinstance(r, dict) and isinstance(r.get("ts"), (int, float))
+            and (floor is None or r["ts"] > floor)]
+
+
+def _newer_reviews(latest, analysed) -> int:
+    """How many of the daily check's reviews are newer than the analysed set."""
+    return len(_newer_review_list(latest, analysed))
+
+
+def _stars(review):
+    """A stored review's star rating as a number, or None."""
+    try:
+        return float(review.get("rating"))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 def _custom_ids(restaurant) -> list:
@@ -1759,6 +1826,50 @@ def _custom_ids(restaurant) -> list:
         if pid and pid not in out:
             out.append(pid)
     return out
+
+
+def _paused_custom_ids(blob) -> set:
+    """Owner-added competitors the stored read found temporarily closed:
+    re-checked every run until they reopen, never counted toward the cap
+    (re-audit P7)."""
+    if not isinstance(blob, dict):
+        return set()
+    return {c.get("place_id") for c in blob.get("closed_custom") or []
+            if isinstance(c, dict) and c.get("place_id") and c.get("status") == "CLOSED_TEMPORARILY"}
+
+
+def _capped_custom_ids(restaurant, blob=None) -> list:
+    """The owner-added competitors a run reads, in order: every temporarily
+    closed one and the first CUSTOM_COMPETITORS_MAX of the rest."""
+    blob = _stored_blob(restaurant) if blob is None else blob
+    paused, out, n = _paused_custom_ids(blob), [], 0
+    for pid in _custom_ids(restaurant):
+        if pid in paused:
+            out.append(pid)
+        elif n < CUSTOM_COMPETITORS_MAX:
+            out.append(pid)
+            n += 1
+    return out
+
+
+def _drop_custom_competitors(restaurant_id, place_ids):
+    """Take permanently closed places off the owner's list, from the row as
+    it stands now (an add a moment ago is kept). Never raises."""
+    try:
+        from models import get_restaurant, update_restaurant
+        r = get_restaurant(restaurant_id)
+        keep = [p for p in _custom_ids(r) if p not in set(place_ids)] if r else None
+        if keep is not None:
+            update_restaurant(restaurant_id, {"custom_competitors": ",".join(keep)})
+    except Exception as e:
+        print(f"[Competitor] closed owner-added competitors not dropped for {restaurant_id}: {e}")
+
+
+def _custom_fields_fresh(entry) -> bool:
+    """Whether an owner-added competitor's Places content (vicinity, types,
+    price level) was read inside REDISCOVER_DAYS (re-audit P6)."""
+    age = _stamp_age_hours((entry or {}).get("custom_fields_at"))
+    return age is not None and age < REDISCOVER_DAYS * 24
 
 
 def _custom_signature(blob) -> set:
@@ -1975,13 +2086,12 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
         prev = _stored_blob(restaurant)
         prev_by_id = {c["place_id"]: c for c in prev.get("competitors") or []
                       if isinstance(c, dict) and c.get("place_id")}
-        custom_ids = _custom_ids(restaurant)
-        if len(custom_ids) > CUSTOM_COMPETITORS_MAX:
+        custom_ids = _capped_custom_ids(restaurant, prev)
+        if len(custom_ids) < len(_custom_ids(restaurant)):
             # The add routes refuse an eleventh; an admin-typed list longer
             # than that is read up to the cap, every one a Details call a run.
-            print(f"[Competitor] {len(custom_ids)} owner-added competitors for {restaurant_id}; "
+            print(f"[Competitor] {len(_custom_ids(restaurant))} owner-added competitors for {restaurant_id}; "
                   f"the first {CUSTOM_COMPETITORS_MAX} are read")
-            custom_ids = custom_ids[:CUSTOM_COMPETITORS_MAX]
         if rediscover is None:
             rediscover = _REDISCOVER.get() or _discovery_due(prev, custom_ids)
         _run_at = _now_stamp()
@@ -2040,6 +2150,7 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
 
         # Add any manually specified competitor Place IDs
         _closed_custom = []
+        _gone_custom = []
         if custom_ids:
             existing_ids = {c['place_id'] for c in competitors}
             for pid in custom_ids:
@@ -2048,6 +2159,15 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
                     # owner-added ones too): carried as it stands, no call.
                     _last_full = prev_by_id.get(pid)
                     _reviews, _at = _fresh_reviews(_last_full) if (_last_full or {}).get("custom") else (None, None)
+                    # Its vicinity, types and price level are Places content
+                    # (Google's 30-day limit): carried only while read inside
+                    # REDISCOVER_DAYS, else the one call below reads them
+                    # again — the daily check refreshes its reviews every
+                    # morning, so without this they were never refetched and
+                    # a changed price level never reached the read (re-audit
+                    # P6).
+                    if _reviews is not None and not _custom_fields_fresh(_last_full):
+                        _reviews = None
                     if _reviews is not None and _last_full.get("business_status", "OPERATIONAL") == "OPERATIONAL":
                         entry = {k: v for k, v in _last_full.items() if k not in _REVIEW_KEYS and k != "stale"}
                         entry.update(custom=True, match_basis="added by you", reviews=_reviews, reviews_at=_at)
@@ -2091,11 +2211,24 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
                                                          < MIN_REVIEWS_FOR_A_MEANINGFUL_RATING,
                                 "reviews": _reviews_from(d),
                                 "reviews_at": _run_at,
+                                # When the Places content above was read.
+                                "custom_fields_at": _run_at,
                             })
                         elif d.get("name"):
                             print(f"[Competitor] custom competitor {d['name']} is {_status} — skipped")
                             _closed_custom.append({"place_id": pid, "name": d["name"],
                                                    "status": _status})
+                            if _status == "CLOSED_PERMANENTLY":
+                                # No client shows closed_custom, so the owner
+                                # could not remove it: it held a place under
+                                # the cap and a Details call every run for
+                                # good (re-audit P7). Google says it will not
+                                # reopen, so it leaves the owner's list — the
+                                # closure is still recorded below, and shown
+                                # with the market's changes. A temporarily
+                                # closed one stays, re-checked each run until
+                                # it reopens, and counts toward nothing.
+                                _gone_custom.append(pid)
                     except Exception as ce:
                         print(f"[Competitor] Could not fetch custom competitor {pid}: {ce}")
                         # Our lookup failing is not the rival closing. It was
@@ -2104,9 +2237,18 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
                         # last known entry, marked as not refreshed.
                         _last = _previous_competitor(restaurant, pid)
                         if _last:
+                            _last = dict(_last)
+                            if not _custom_fields_fresh(_last):
+                                # Not past Google's 30 days on a failed lookup
+                                # either (re-audit P6).
+                                for _k in ("vicinity", "types", "price_level", "custom_fields_at"):
+                                    _last.pop(_k, None)
                             competitors.append(dict(_last, custom=True, stale=True,
                                                     match_basis="added by you — not refreshed this run"))
                             existing_ids.add(pid)
+            if _gone_custom:
+                _drop_custom_competitors(restaurant_id, _gone_custom)
+                custom_ids = [p for p in custom_ids if p not in _gone_custom]
 
         if not competitors:
             return {"ok": False, "error": "No nearby competitors found"}
@@ -2298,7 +2440,6 @@ def _submit_insight_batch(restaurant, competitors, profile, closed_custom, disco
         return None
     rid = restaurant.id
     try:
-        import uuid
         from datetime import datetime, timedelta
         import ai_batches
         import ai_orchestrator
@@ -2306,19 +2447,29 @@ def _submit_insight_batch(restaurant, competitors, profile, closed_custom, disco
         prompt, ready = _insight_prompt(restaurant.name, competitors, restaurant.owner_name, profile,
                                         getattr(restaurant, "timezone", None), rid, ready=_insight_readiness(rid))
         run_id = ai_orchestrator.new_run_id(BATCH_WORKFLOW)
-        cid = f"ci-{int(rid)}-{uuid.uuid4().hex[:12]}"
+        cid = batch_custom_id(rid)
         out = ai_batches.submit(BATCH_WORKFLOW, [{
             "custom_id": cid, "restaurant_id": rid, "action": "competitor_insight",
             "request": _insight_request(prompt, wf.route_for(wf.policy(BATCH_WORKFLOW), 0)), "readiness": ready,
             "callback": BATCH_CALLBACK, "correlation_id": run_id,
             "cutoff_at": datetime.utcnow() + timedelta(hours=BATCH_CUTOFF_HOURS),
+            # gathered_at: when these competitors and reviews were read —
+            # an answer that lands after a newer read was stored is dropped
+            # (on_insight_batch, re-audit P3).
             "context": {"run_id": run_id, "prompt": prompt, "competitors": competitors, "profile": profile,
+                        "gathered_at": _now_stamp(),
                         "closed_custom": closed_custom, "discovered_at": discovered_at,
                         "custom_ids": list(custom_ids or ()), "known_status": known_status,
                         "data_state": (ready or {}).get("data_state")}}])
         state = out.get(cid)
         if state == ai_batches.SUBMITTED:
             return {"ok": True, "batched": True, "competitors_analyzed": len(competitors)}
+        if state == ai_batches.DUPLICATE:
+            # This restaurant's read already went out today (the weekly pass
+            # and the daily check, or a pass re-run after a deploy): that
+            # item's callback writes the read; a second is never bought —
+            # nor, falling through, a synchronous one (re-audit P3).
+            return {"ok": True, "batched": True, "duplicate": True, "competitors_analyzed": len(competitors)}
         if state == ai_batches.BLOCKED:
             # A gate refused it (its callback recorded the attempt): the
             # synchronous call would have been refused the same way.
@@ -2331,6 +2482,25 @@ def _submit_insight_batch(restaurant, competitors, profile, closed_custom, disco
         except Exception:
             pass
         return None
+
+
+def batch_custom_id(restaurant_id, day=None) -> str:
+    """The batch item's id: one per restaurant per UTC day (re-audit P3). It
+    was random, so ai_batches.submit's duplicate check could never refuse a
+    second read of the same restaurant the same day."""
+    from datetime import datetime, timezone
+    day = day or datetime.now(timezone.utc).strftime("%Y%m%d")
+    return f"ci-{int(restaurant_id)}-{str(day).replace('-', '')}"
+
+
+def _written_since(restaurant, gathered_at) -> bool:
+    """True when the read stored now (competitor_updated_at) was written
+    after `gathered_at` — an owner's Refresh while the batched read was out.
+    False when either stamp is missing or unreadable."""
+    from time_utils import parse_stamp
+    stored = parse_stamp(getattr(restaurant, "competitor_updated_at", None) or None)
+    sent = parse_stamp(gathered_at) if gathered_at else None
+    return bool(stored and sent and stored > sent)
 
 
 def _record_attempt(restaurant_id, ok, error=None):
@@ -2362,6 +2532,15 @@ def on_insight_batch(item, message=None, error=None):
     try:
         if error is not None and not isinstance(error, ai_batches.BatchItemFailed):
             _record_attempt(rid, False, f"competitor read refused: {type(error).__name__}")
+            return
+        if _written_since(restaurant, ctx.get("gathered_at")):
+            # A newer read was stored while this one was out (the owner
+            # pressed Refresh at 7 on a 6am batch): it stands. Storing this
+            # one would put older reviews and figures over it and wipe the
+            # daily check's latest reviews (re-audit P3). The week has its
+            # read, so the attempt is a success; nothing is written now
+            # either — the synchronous fallback would buy the same staleness.
+            _record_attempt(rid, True)
             return
         if error is not None:
             insight = generate_competitor_insight(restaurant.name, competitors, owner_name=restaurant.owner_name,
@@ -2407,12 +2586,36 @@ def on_insight_batch(item, message=None, error=None):
 # rating when nothing fresher is on file. The stored comparison is updated
 # in place. The full analysis runs again the same morning only for what a
 # stored read cannot already say (AI cost audit 10/7/26 #14): a competitor
-# closed, reviews newer than the ones the read was written from (#15), or a
-# burst of new reviews. A rating move alone is not one of them — the new
-# figure is written into the comparison here, and a Claude read is not
-# bought to restate it.
+# closed, or new reviews that change what the read would say (#15) — a burst
+# of them, a new complaint, or a competitor's whole visible set turned over.
+# A rating move alone is not one of them — the new figure is written into
+# the comparison here, and a Claude read is not bought to restate it.
+#
+# The thresholds (re-audit P2, chosen 10/7/26): any one review newer than
+# the analysed set used to re-read. With a dozen tracked competitors one of
+# them gets a review most days, so the Sonnet read the Monday sweep buys
+# once a week was bought about seven times a week. A new review asks for a
+# read only when it is one the read is built to act on:
+#   * LOW_STAR — a new review at 2★ or below. "What competitors are doing
+#     poorly" and the win-their-unhappy-guests recommendations are built
+#     from exactly these; a new 5★ review changes neither section.
+#   * NEWER_TURNOVER — five newer reviews on one competitor: Google shows a
+#     place's newest five, so every review the read quoted for it has been
+#     replaced and its picture of that rival is out of date.
+#   * REVIEW_BURST — 15+ new reviews by count (unchanged).
+#   * a closure (unchanged).
+# And at most one review-triggered re-read per restaurant every
+# REANALYSE_MIN_DAYS (any read stored inside it — the Monday read, an
+# owner's Refresh — holds the next one): about two extra reads a week at
+# most, against seven. A closure is not held: a read that names a closed
+# rival as one to win customers from is wrong today, and closures are rare.
+# Whatever is held is still in `moved` and stays newer than the analysed
+# set, so the first morning past the hold asks again.
 RATING_MOVE = 0.1             # stars, either way — reported, not a reason to re-read
 REVIEW_BURST = 15             # new reviews since the last check
+LOW_STAR = 2                  # a new review at or below this asks for a new read
+NEWER_TURNOVER = 5            # newer reviews on one competitor that replace all it shows
+REANALYSE_MIN_DAYS = 3        # at most one review-triggered re-read per restaurant per this many days
 DAILY_CHECK_MAX = 15          # competitors re-read per restaurant per day
 
 
@@ -2425,12 +2628,22 @@ def _own_rating_fresh(restaurant, hours=OWN_RATING_FRESH_HOURS) -> bool:
     return age is not None and age < hours
 
 
+def reanalyse_held(restaurant, now=None) -> bool:
+    """Whether a review-triggered re-read waits (re-audit P2): a read was
+    stored inside the last REANALYSE_MIN_DAYS. A closure is never held."""
+    age = _stamp_age_hours(getattr(restaurant, "competitor_updated_at", None))
+    return age is not None and age < REANALYSE_MIN_DAYS * 24
+
+
 def check_ratings(restaurant_id: int) -> dict:
     """{"ok", "checked", "moved": [why...], "reanalyse": bool, "triggers":
-    [why...]} — re-read the stored competitors and, when nothing fresher is
-    on file, the restaurant's own rating. `moved` names every change the
-    morning found; `reanalyse` is True only for one in `triggers` (a
-    closure, newer reviews, a review burst — #14). Never raises."""
+    [why...], "held": bool} — re-read the stored competitors and, when
+    nothing fresher is on file, the restaurant's own rating. `moved` names
+    every change the morning found; `reanalyse` is True only for one in
+    `triggers` (a closure, a new low-star review, a competitor's newest five
+    all new, a review burst — #14, re-audit P2), and a review trigger only
+    once REANALYSE_MIN_DAYS have passed since the last read (`held` says it
+    waited). Never raises."""
     try:
         from models import get_restaurant, get_conn
         import models as _m
@@ -2439,7 +2652,7 @@ def check_ratings(restaurant_id: int) -> dict:
         blob = json.loads(raw) if raw else None
         if not blob or not blob.get("competitors"):
             return {"ok": False, "reason": "no competitor read to refresh yet"}
-        moved, triggers, checked = [], [], 0
+        moved, triggers, closures, checked = [], [], [], 0
         for c in blob["competitors"][:DAILY_CHECK_MAX]:
             pid = c.get("place_id")
             if not pid:
@@ -2474,16 +2687,22 @@ def check_ratings(restaurant_id: int) -> dict:
                 why = f"{c.get('name')}: {status.replace('_', ' ').lower()}"
                 moved.append(why)
                 triggers.append(why)
+                closures.append(why)
             if status:
                 # Kept whatever it says: the closure check reuses it (#41).
                 c["business_status"] = status
             if "reviews" in res:
                 latest = _reviews_from(res)
-                newer = _newer_reviews(latest, c.get("reviews"))
+                fresh = _newer_review_list(latest, c.get("reviews"))
+                newer = len(fresh)
                 if newer:
                     why = f"{c.get('name')}: {newer} review{'s' if newer != 1 else ''} since the last read"
                     moved.append(why)
-                    triggers.append(why)
+                    low = [x for x in fresh if _stars(x) is not None and _stars(x) <= LOW_STAR]
+                    if low:
+                        triggers.append(f"{c.get('name')}: a new {_stars(low[0]):g}★ review since the last read")
+                    elif newer >= NEWER_TURNOVER:
+                        triggers.append(why)
                 c["latest_reviews"], c["latest_reviews_at"] = latest, _now_stamp()
             if new_r is not None:
                 c["rating"] = new_r
@@ -2520,8 +2739,9 @@ def check_ratings(restaurant_id: int) -> dict:
                                                 at=restaurant_now(r, naive=True))
         except Exception as e:
             print(f"[competitor] market history not kept on the daily check: {e}")
+        held = bool(triggers) and not closures and reanalyse_held(r)
         return {"ok": True, "checked": checked, "moved": moved, "triggers": triggers,
-                "reanalyse": bool(triggers)}
+                "reanalyse": bool(closures) or (bool(triggers) and not held), "held": held}
     except Exception as e:
         print(f"[competitor] daily ratings check failed for {restaurant_id}: {e}")
         return {"ok": False, "reason": "the ratings check failed"}
@@ -2548,7 +2768,7 @@ def fresh_stored_read(restaurant_id, hours=REFRESH_FRESH_HOURS):
         age = _stamp_age_hours(getattr(r, "competitor_updated_at", None))
         if age is None or age >= hours:
             return None
-        if _custom_signature(blob) != set(_custom_ids(r)[:CUSTOM_COMPETITORS_MAX]):
+        if _custom_signature(blob) != set(_capped_custom_ids(r, blob)):
             return None
         hrs = int(age)
         when = "under an hour ago" if hrs < 1 else f"{hrs}h ago"

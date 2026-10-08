@@ -43,8 +43,9 @@ struct AIVisibilitySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
-            if viewModel.result == nil {
+            if viewModel.result == nil || viewModel.result?.isNotMeasured == true {
                 preCheckHero
+                storedState
                 checkButton
             } else if let result = viewModel.result {
                 if !result.ok {
@@ -82,11 +83,45 @@ struct AIVisibilitySection: View {
                     if let checklist = result.checklist {
                         roadmapSection(result, checklist: checklist)
                     }
+                    // A Check that did not run leaves the recorded one on
+                    // screen and says so here (re-audit P8).
+                    if let err = viewModel.checkError {
+                        Text(err)
+                            .font(.cavnarBody(14.5))
+                            .foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     checkButton
                 }
             }
         }
-        .task { await viewModel.loadHistory() }
+        // The recorded check first (re-audit P1: a GET, never a live run),
+        // then the history the Orbit draws.
+        .task {
+            await viewModel.loadStored()
+            await viewModel.loadHistory()
+        }
+    }
+
+    /// Under the pre-check hero: the recorded check loading, or the server's
+    /// "not measured yet" — never a 0 (re-audit P1).
+    @ViewBuilder
+    private var storedState: some View {
+        if viewModel.isLoadingStored {
+            CavnarShimmerLine()
+                .frame(width: 120)
+        } else if let reason = viewModel.notMeasuredReason ?? viewModel.result?.reason?.value {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "clock")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 2)
+                Text("Not measured yet. \(reason)")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private var checkButton: some View {

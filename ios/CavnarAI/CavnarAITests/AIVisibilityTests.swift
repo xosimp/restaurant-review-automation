@@ -52,4 +52,25 @@ final class AIVisibilityTests: XCTestCase {
         XCTAssertFalse(result.ok)
         XCTAssertNil(result.checklist)
     }
+
+    /// Re-audit P1/P8 (10/7/26): the GET on appear says "not measured yet"
+    /// with a reason and no score; a stored run says when it was measured.
+    func testDecodesNotMeasuredAndAStoredRun() throws {
+        let none = try JSONDecoder.cavnar.decode(AIVisibilityResult.self, from: Data("""
+        {"ok": true, "state": "not_measured", "measured": false, "ai_score": null, "queries": [],
+         "reason": "No AI visibility check is on record yet. The weekly check runs on Mondays; Check runs one now."}
+        """.utf8))
+        XCTAssertTrue(none.isNotMeasured)
+        XCTAssertNil(none.aiScore)
+        XCTAssertEqual(none.reason?.value?.hasPrefix("No AI visibility check"), true)
+        let stored = try JSONDecoder.cavnar.decode(AIVisibilityResult.self, from: Data("""
+        {"ok": true, "state": "partial", "measured": true, "partial": true, "ai_score": 40,
+         "answered_queries": 6, "total_queries": 8, "measured_at": "2026-10-05 12:00:00", "cached": true}
+        """.utf8))
+        XCTAssertFalse(stored.isNotMeasured)
+        XCTAssertFalse(stored.scoreIsMeasured)
+        XCTAssertNotNil(stored.measuredLine)
+        let older = try JSONDecoder.cavnar.decode(AIVisibilityResult.self, from: Data(#"{"ok": true}"#.utf8))
+        XCTAssertFalse(older.isNotMeasured)
+    }
 }

@@ -238,14 +238,18 @@ def test_a_rating_move_alone_updates_the_comparison_and_reads_nothing_again(db_p
     assert (c["rating"], c["review_count"], c["business_status"]) == (4.3, 302, "OPERATIONAL")
 
 
-def test_newer_reviews_are_carried_and_ask_for_a_new_read(db_path, monkeypatch):
+def test_newer_reviews_are_carried_and_only_a_new_complaint_asks_for_a_new_read(db_path, monkeypatch):
+    # Since re-audit P2 (10/7/26) one new 5★ review is reported, carried and
+    # NOT a reason to buy a new read — any newer review used to be, which
+    # re-read most restaurants every morning. A new review at 2★ or below is.
     rid = _tracked(db_path, [{"name": "Rec Haus", "place_id": "p1", "rating": 4.5, "review_count": 300,
                               "reviews": [{"text": "old", "ts": 1_700_000_000}]}])
     fake, calls = _fake_places({"p1": {"rating": 4.5, "user_ratings_total": 301, "business_status": "OPERATIONAL",
                                        "reviews": [_review(1_700_000_500, "New"), _review(1_699_000_000)]}})
     monkeypatch.setattr(competitor, "_places_request", fake)
     out = competitor.check_ratings(rid)
-    assert out["reanalyse"] is True and any("1 review since the last read" in t for t in out["triggers"])
+    assert out["reanalyse"] is False and out["triggers"] == []
+    assert any("1 review since the last read" in m for m in out["moved"])
     # The newest reviews ride on the same call (one Atmosphere SKU), newest first.
     (call,) = [c for c in calls if c[1] == "p1"]
     assert "reviews" in call[3]

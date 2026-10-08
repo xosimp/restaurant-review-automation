@@ -277,6 +277,20 @@ struct AIVisibilityResult: Decodable {
     /// absent on a fresh run and on an older server.
     var measuredAt: LenientText? = nil
     var cached: LenientFlag? = nil
+    /// "complete" | "partial" | "not_measured" (client_api._aivis_state) and
+    /// whether the payload is a measurement at all — a read with nothing
+    /// on record, or a check that got no answer, is `not_measured` and is
+    /// never drawn as a score (re-audit P1/P8). `reason` is the server's
+    /// sentence for it. Lenient; absent on an older server.
+    var state: LenientText? = nil
+    var measured: LenientFlag? = nil
+    var reason: LenientText? = nil
+
+    /// No check is on record (or the one asked for got no answer): the
+    /// pre-check screen, with `reason`, not a result.
+    var isNotMeasured: Bool {
+        state?.value == "not_measured" || measured?.value == false
+    }
 
     /// "Measured 9/21/26" — on the phone's calendar day, never ISO.
     var measuredLine: String? {
@@ -307,7 +321,7 @@ struct AIVisibilityResult: Decodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case ok, error, queries, checklist, partial, city, roadmap, cached
+        case ok, error, queries, checklist, partial, city, roadmap, cached, state, measured, reason
         case measuredAt = "measured_at"
         case restaurantName = "restaurant_name"
         case appearedCount = "appeared_count"
@@ -348,16 +362,44 @@ struct AIVisibilityResult: Decodable {
 final class AIVisibilityViewModel {
     var result: AIVisibilityResult?
     var isChecking = false
+    /// The recorded check is being read (on appear).
+    var isLoadingStored = false
+    /// Nothing on record yet: the server's sentence, shown on the pre-check
+    /// screen. Nil once a check is on screen.
+    var notMeasuredReason: String?
+    /// A Check that did not run (no answer at all, the budget, the rate
+    /// limit) — said under the last recorded check, which stays on screen.
+    var checkError: String?
 
     private let client: APIClient
+    private var storedLoaded = false
 
     init(client: APIClient = .shared) {
         self.client = client
     }
 
-    /// Deliberately NOT auto-loaded on screen appear — each check fires real,
-    /// billable Perplexity queries (same 3-call/60s limit the web route
-    /// shares), so this only runs when the owner explicitly asks for it.
+    /// The recorded check, on appear (re-audit P1). A GET never runs live
+    /// queries — it serves the newest stored run (the Monday job's, or the
+    /// owner's last Check), complete or partial and flagged, with when it
+    /// was measured, or says "not measured yet". The live, billable run is
+    /// only ever the Check button's POST (check()). The weekly run used to
+    /// be stored and never shown: the phone loaded only the history.
+    func loadStored() async {
+        guard !storedLoaded, !isChecking, result == nil else { return }
+        isLoadingStored = true
+        defer { isLoadingStored = false }
+        guard let stored: AIVisibilityResult = try? await client.send(
+            "/mobile/api/intel/ai-visibility", hapticOnError: false) else { return }
+        storedLoaded = true
+        // A Check pressed while this was in flight wins.
+        guard !isChecking, result == nil, stored.ok else { return }
+        if stored.isNotMeasured {
+            notMeasuredReason = stored.reason?.value ?? "No AI visibility check is on record yet."
+        } else {
+            result = stored
+        }
+    }
+
     var history: [AIVisibilityRun] = []
     private struct HistoryResponse: Decodable { let ok: Bool; let runs: [AIVisibilityRun] }
 
@@ -370,16 +412,28 @@ final class AIVisibilityViewModel {
 
     func check() async {
         isChecking = true
+        checkError = nil
         defer { isChecking = false }
         do {
             // POST runs every query live (a GET served the recorded run, so
             // Re-run came back instantly with the old answers). The run
             // takes tens of seconds; never retried on a guess - it is billed.
-            result = try await client.send("/mobile/api/intel/ai-visibility", method: .post,
-                                           timeout: 110, retryTransient: false)
+            let fresh: AIVisibilityResult = try await client.send("/mobile/api/intel/ai-visibility", method: .post,
+                                                                  timeout: 110, retryTransient: false)
+            if !fresh.ok, let last = result, last.ok, !last.isNotMeasured {
+                // Not a reading: the last recorded check stays (re-audit P8).
+                checkError = fresh.error ?? "Couldn't check AI visibility."
+            } else {
+                result = fresh
+                if fresh.ok { notMeasuredReason = nil }
+            }
             await loadHistory()
         } catch {
-            result = nil
+            if result == nil || result?.ok == false {
+                result = nil
+            } else {
+                checkError = "Couldn't reach Cavnar AI. The check below is the last one recorded."
+            }
         }
     }
 }

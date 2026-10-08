@@ -269,6 +269,7 @@ Changed or added by the AI cost audit (10/7/26):
 | `COMPETITOR_WORKERS` | `"3"` | scheduler.py — restaurants the weekly competitor analysis reads at once (AI cost audit 10/7/26 #55; was 1) |
 | `DAILY_ALERT_PASS_SECONDS` | `"600"` | notify.py |
 | `DIAGNOSES_BATCH_UNTIL` | `"5:30"` | scheduler.py — Chicago time after which the diagnoses' Message Batches are not sent (no time to land before the 6am pass; AI cost audit 10/7/26 #58) |
+| `DIAGNOSES_FALLBACK_LATEST` | `"6:45"` | scheduler.py — Chicago time at which the 6am diagnoses passes stop waiting for their own batch: from 6am each runs once nothing of its batch is still out, at the latest at this time (re-audit P5; the briefs wait for both, until `BRIEF_INPUT_WAIT_UNTIL_HOUR`) |
 | `DIAGNOSES_MAX_SECONDS` | `str(40 * 60` | scheduler.py |
 | `DIAGNOSES_WORKERS` | `"3"` | scheduler.py — restaurants the review and food cost diagnoses (and their batch planning) run at once (AI cost audit 10/7/26 #53; was 1) |
 | `DIGEST_MAX_SECONDS` | `str(20 * 60` | scheduler.py |

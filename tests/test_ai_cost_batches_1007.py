@@ -599,3 +599,50 @@ def test_a_batched_competitor_read_is_not_this_weeks_until_it_lands(db_path, mon
     monkeypatch.setattr(competitor, "run_competitor_analysis", lambda rid: seen.append(rid) or {"ok": True})
     scheduler.run_weekly_competitor_analysis(retry_only=True)
     assert seen == []
+
+
+# ── re-audit P3: one batched read per restaurant per day, never over a newer one ──
+
+def test_one_batched_read_per_restaurant_per_day_and_a_duplicate_buys_nothing(db, batches, monkeypatch):
+    monkeypatch.setattr(competitor, "ANTHROPIC_KEY", "x")
+    r = _restaurant(db)
+    with ai_utils.ai_context(trigger="scheduler"):
+        first = competitor._submit_insight_batch(r, json.loads(json.dumps(COMPS)), {}, [], None, [], {})
+        again = competitor._submit_insight_batch(r, json.loads(json.dumps(COMPS)), {}, [], None, [], {})
+    assert first["batched"] and not first.get("duplicate")
+    # Batched, so run_competitor_analysis returns it — no synchronous read.
+    assert again["ok"] and again["batched"] and again["duplicate"]
+    assert len(batches.created) == 1
+    (row,) = _rows(db, "SELECT custom_id, context_json FROM ai_batch_items WHERE workflow='competitor_insight'")
+    assert row["custom_id"] == competitor.batch_custom_id(r.id)
+    assert competitor.batch_custom_id(7, "2026-10-07") == "ci-7-20261007"
+    assert json.loads(row["context_json"])["gathered_at"], "the answer is checked against what was stored since"
+
+
+def _stamp_read(db, rid, when):
+    c = sqlite3.connect(db)
+    c.execute("UPDATE restaurants SET competitor_updated_at=? WHERE id=?", (when, rid))
+    c.commit()
+    c.close()
+
+
+def test_a_batched_read_landing_after_a_newer_read_is_dropped(db, monkeypatch):
+    r = _restaurant(db)
+    stored, attempts = [], []
+    monkeypatch.setattr(competitor, "finish_competitor_insight", lambda text, *a, **k: f"READ: {text}")
+    monkeypatch.setattr(competitor, "_store_analysis", lambda rest, comps, insight, *a: stored.append(insight))
+    monkeypatch.setattr(competitor, "_record_attempt", lambda rid, ok, error=None: attempts.append(ok))
+    monkeypatch.setattr(competitor, "generate_competitor_insight",
+                        lambda *a, **k: pytest.fail("a newer read stands: no synchronous read either"))
+    now = datetime.utcnow()
+    _stamp_read(db, r.id, (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S+00:00"))
+    sent = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    item = {"restaurant_id": r.id, "context": {"prompt": "P", "competitors": COMPS, "run_id": "run:ci:9",
+                                              "gathered_at": sent}}
+    competitor.on_insight_batch(item, message=_msg("Rival A is slow."))
+    competitor.on_insight_batch(item, error=ai_batches.BatchItemFailed("cutoff"))
+    assert stored == [] and attempts == [True, True]
+    # Gathered after the stored read: it is the newer one, and is stored.
+    item["context"].update(gathered_at=now.strftime("%Y-%m-%dT%H:%M:%S+00:00"), run_id="run:ci:10")
+    competitor.on_insight_batch(item, message=_msg("Rival A is slow."))
+    assert stored == ["READ: Rival A is slow."]

@@ -5695,8 +5695,12 @@ def mobile_add_competitor(current_user):
         # Every tracked competitor is a Google lookup on every read; ten
         # added by hand is the cap (AI cost audit 10/7/26 #40). The web's
         # /api/intel/add-competitor runs this same body.
-        from competitor import CUSTOM_COMPETITORS_MAX
-        if len(existing) >= CUSTOM_COMPETITORS_MAX:
+        # One the last read found temporarily closed is not counted: no
+        # client lists it, so it could not be removed to make room
+        # (re-audit P7). A permanently closed one has left the list.
+        from competitor import CUSTOM_COMPETITORS_MAX, _paused_custom_ids, _stored_blob
+        paused = _paused_custom_ids(_stored_blob(restaurant))
+        if len([p for p in existing if p not in paused]) >= CUSTOM_COMPETITORS_MAX:
             return jsonify(ok=False, error=f"You're already tracking {CUSTOM_COMPETITORS_MAX} competitors "
                                            f"you added. Remove one to add another."), 400
         existing.append(place_id)

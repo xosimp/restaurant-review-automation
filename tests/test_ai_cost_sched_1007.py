@@ -664,3 +664,57 @@ def test_a_batched_food_cost_diagnosis_is_stored_and_then_reused(db, monkeypatch
     monkeypatch.setattr(ai_utils, "get_client", lambda *a, **k: object())
     again = fci.diagnose(rid)
     assert calls == [] and again.get("cause") == stored["cause"], "the batched read was paid for twice"
+
+
+# ── re-audit P5: a 6am pass waits for its own batch, then collects first ────
+
+def test_a_fallback_pass_waits_for_its_batch_until_the_latest_time(monkeypatch):
+    import ai_batches
+    from datetime import datetime as _dt
+    out = {"food_cost_diagnosis": ["fd-1"]}
+    monkeypatch.setattr(ai_batches, "open_items", lambda wf, r=None: list(out.get(wf, [])))
+    assert scheduler.DIAGNOSES_FALLBACK_LATEST == (6, 45)
+    assert scheduler.DIAGNOSES_FALLBACK_LATEST > scheduler.DIAGNOSES_BATCH_UNTIL
+    assert scheduler._batch_waited("food_cost_diagnosis", _dt(2026, 10, 7, 6, 10)) is False
+    assert scheduler._batch_waited("food_cost_diagnosis", _dt(2026, 10, 7, 6, 45)) is True
+    assert scheduler._batch_waited("review_diagnosis", _dt(2026, 10, 7, 6, 0)) is True, "nothing out: run now"
+
+    def _broken(*a, **k):
+        raise RuntimeError("no table")
+    monkeypatch.setattr(ai_batches, "open_items", _broken)
+    assert scheduler._batch_waited("food_cost_diagnosis", _dt(2026, 10, 7, 6, 0)) is True
+
+
+def test_both_fallback_gates_wait_on_their_own_workflow():
+    import food_cost_intelligence as fci
+    import review_intelligence as ri
+    loop = _loop_src()
+
+    def gate(job):
+        i = loop.index(f'claim_period("{job}"')
+        return loop[loop.rindex("if ", 0, i):i]
+    assert f'_batch_waited("{ri.BATCH_WORKFLOW}", now)' in gate("review_diagnoses")
+    assert f'_batch_waited("{fci.BATCH_WORKFLOW}", now)' in gate("food_cost_diagnoses")
+    # The briefs still wait for both passes to settle — never read early.
+    assert ("review_diagnoses", 6) in scheduler.BRIEF_INPUTS
+    assert ("food_cost_diagnoses", 6) in scheduler.BRIEF_INPUTS
+
+
+def test_the_food_fallback_collects_before_it_cancels(db, monkeypatch):
+    import ai_batches
+    import food_cost_intelligence as fci
+    rid = _rid(db, "Collect Co", module_inventory=1)
+    order = []
+    monkeypatch.setattr(ai_batches, "run_collector", lambda *a, **k: order.append("collect") or {})
+    monkeypatch.setattr(ai_batches, "open_items", lambda wf, r=None: order.append(("open", r)) or ["fd-1"])
+    monkeypatch.setattr(ai_batches, "cancel", lambda wf, cid: order.append(("cancel", cid)) or True)
+    monkeypatch.setattr(fci, "diagnose", lambda r: order.append(("diagnose", r)) or {})
+    monkeypatch.setattr(scheduler, "_ai_budget_spent", lambda r: False)
+    scheduler.run_food_cost_diagnoses()
+    assert order[0] == "collect" and order.index("collect") < order.index(("cancel", "fd-1"))
+    assert ("diagnose", rid) in order
+
+
+def test_the_review_fallback_collects_first_too():
+    src = inspect.getsource(scheduler.run_review_diagnoses)
+    assert src.index('_collect_before_cancelling("review_diagnoses")') < src.index("_cancel_open_batch_items(")

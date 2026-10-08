@@ -3293,11 +3293,7 @@ def run_weekly_competitor_analysis(retry_only=False):
                 if r.google_place_id and r.id and is_full_tier(r) and in_service(r)]
     # A restaurant whose batched read is still out is not read again: the
     # retry pass would pay for the Places fan-out and a second model call.
-    try:
-        import ai_batches as _aib
-        eligible = [r for r in eligible if not _aib.open_items("competitor_insight", r.id)]
-    except Exception:
-        pass
+    eligible = [r for r in eligible if not _competitor_batch_open(r.id)]
     # Every pass, not only the retry: a restaurant already analysed this
     # week is not analysed again — a pass re-run after a deploy used to buy
     # the same Places and Claude calls twice (#137).
@@ -3311,6 +3307,17 @@ def run_weekly_competitor_analysis(retry_only=False):
     counts.update(attempted=counts["analysed"] + counts["failed"] + _batched, ok=counts["analysed"] + _batched,
                   skipped=before - len(eligible), hit_bound=bool(hit_bound))
     return counts
+
+
+def _competitor_batch_open(restaurant_id) -> bool:
+    """Whether this restaurant's batched competitor read is still out — the
+    weekly pass's skip, shared with the daily check (re-audit P3)."""
+    try:
+        import ai_batches as _aib
+        import competitor as _comp
+        return bool(_aib.open_items(_comp.BATCH_WORKFLOW, restaurant_id))
+    except Exception:
+        return False
 
 
 _COMPETITOR_DAILY_CURSOR_KEY = "competitor_daily_cursor"
@@ -3327,7 +3334,8 @@ def run_daily_competitor_ratings():
     {attempted, ok, failed, skipped, hit_bound, reanalysed}."""
     import competitor
     from models import get_all_restaurants, in_service, is_full_tier
-    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "reanalysed": 0}
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "reanalysed": 0,
+              "batched": 0}
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     eligible = []
     for r in get_all_restaurants():
@@ -3335,6 +3343,12 @@ def run_daily_competitor_ratings():
             continue
         if str(getattr(r, "competitor_updated_at", "") or "")[:10] == today:
             counts["skipped"] += 1          # the full read ran today already
+            continue
+        if _competitor_batch_open(r.id):
+            # Its batched read (the Monday sweep's) is still out: a check now
+            # would re-read the same places and, on a trigger, send a second
+            # read that the first one's answer then overwrites (re-audit P3).
+            counts["skipped"] += 1
             continue
         eligible.append(r.id)
 
@@ -3352,9 +3366,18 @@ def run_daily_competitor_ratings():
         counts["ok"] += 1
         if res.get("reanalyse"):
             full = competitor.run_competitor_analysis(rid) or {}
-            if full.get("ok") is not False:
+            if full.get("batched"):
+                # Out as a batch item: its callback (competitor.on_insight_
+                # batch) records the outcome when it lands — as the weekly
+                # pass treats it. Recording success here counted a read that
+                # had not happened, and one that later failed (re-audit P3).
+                counts["batched"] += 1
+            elif full.get("ok") is not False:
                 counts["reanalysed"] += 1
                 _record(rid, "competitor", True, provider="places")
+            else:
+                _record(rid, "competitor", False, error=full.get("error") or "competitor analysis failed",
+                        provider="places")
 
     if eligible:
         _done, hit = resumable_sweep(_COMPETITOR_DAILY_CURSOR_KEY, sorted(eligible), _one,
@@ -3726,6 +3749,7 @@ def run_food_cost_diagnoses():
     """
     from models import get_conn, get_restaurant
     import food_cost_intelligence as fci
+    _collect_before_cancelling("food_cost_diagnoses")
     conn = get_conn()
     rows = conn.execute(
         "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()
@@ -3819,6 +3843,47 @@ def _clock(raw, default):
 DIAGNOSES_BATCH_UNTIL = _clock(os.getenv("DIAGNOSES_BATCH_UNTIL", "5:30"), (5, 30))
 REVIEW_DIAGNOSES_BATCH_CURSOR_KEY = "review_diagnoses_batch_cursor"
 FOOD_COST_DIAGNOSES_BATCH_CURSOR_KEY = "food_cost_diagnoses_batch_cursor"
+
+# How long a 6am fallback pass waits for its own batch (re-audit P5). The
+# food cost batch goes out once the 5am snapshots are in — often 30 to 60
+# minutes before 6 — and a batch is answered "within the hour as a rule",
+# so the 6am pass cancelled batches still running; a cancelled batch's
+# finished requests are billed all the same, and the synchronous call made
+# for them on top cost 1.5x the plain call. So from 6am the pass runs as
+# soon as nothing of its workflow is still out (the collector, every five
+# minutes, hands each answer to its callback; the pass then reuses them by
+# the evidence hash), and at DIAGNOSES_FALLBACK_LATEST (Chicago) whatever
+# is out is collected one last time and cancelled. The briefs never read
+# early: they wait for both passes to settle (BRIEF_INPUTS) — at most until
+# BRIEF_INPUT_WAIT_UNTIL_HOUR, as before. A restaurant whose 7am brief
+# falls at 6am Chicago (Eastern) waits for the pass on a morning its batch
+# is slow; nothing is read before the diagnoses settle.
+DIAGNOSES_FALLBACK_LATEST = _clock(os.getenv("DIAGNOSES_FALLBACK_LATEST", "6:45"), (6, 45))
+
+
+def _batch_waited(workflow, now) -> bool:
+    """Whether a 6am fallback pass may start: nothing of `workflow` is still
+    out in a batch, or it is DIAGNOSES_FALLBACK_LATEST (Chicago). True when
+    the batch table cannot be read — the pass is the fallback."""
+    if (now.hour, now.minute) >= DIAGNOSES_FALLBACK_LATEST:
+        return True
+    try:
+        import ai_batches
+        return not ai_batches.open_items(workflow)
+    except Exception:
+        return True
+
+
+def _collect_before_cancelling(job):
+    """One collector pass right before a fallback cancels what is still out
+    (re-audit P5): a batch that ended since the last five-minute pass hands
+    its answers to their callbacks — already billed — instead of being
+    cancelled and bought again synchronously. Never raises."""
+    try:
+        import ai_batches
+        ai_batches.run_collector()
+    except Exception as e:
+        log.warning(f"{job}: batch collector before the fallback failed: {e}")
 
 
 def _cancel_open_batch_items(workflow, restaurant_id):
@@ -3936,6 +4001,7 @@ def run_review_diagnoses():
     """
     from models import get_conn, get_restaurant
     import review_intelligence as ri
+    _collect_before_cancelling("review_diagnoses")
     conn = get_conn()
     rows = conn.execute(
         "SELECT id FROM restaurants WHERE module_reviews=1 AND " + _served_client_sql()
@@ -5408,8 +5474,11 @@ def scheduler_loop():
 
             # 6am+ — the diagnoses: what the batches above did not land is
             # written synchronously here, before the briefs and the digest
-            # read them (#58). Each after its own batch has been sent.
+            # read them (#58). Each after its own batch has been sent, and
+            # once that batch has landed or DIAGNOSES_FALLBACK_LATEST has
+            # come (_batch_waited, re-audit P5).
             if _due(now, 6) and _ops.settled("review_diagnoses_batch", _d) and \
+                    _batch_waited("review_diagnosis", now) and \
                     _ops.claim_period("review_diagnoses", str(today)):
                 log.info("Running review root-cause diagnoses...")
                 if not _ops.run_in_lane("sweep", "review_diagnoses", run_review_diagnoses):
@@ -5417,6 +5486,7 @@ def scheduler_loop():
 
             if _due(now, 6) and _ops.settled("food_cost_snapshots", _d) and \
                     _ops.settled("food_cost_diagnoses_batch", _d) and \
+                    _batch_waited("food_cost_diagnosis", now) and \
                     _ops.claim_period("food_cost_diagnoses", str(today)):
                 log.info("Running food cost root-cause diagnoses...")
                 if not _ops.run_in_lane("sweep", "food_cost_diagnoses", run_food_cost_diagnoses):

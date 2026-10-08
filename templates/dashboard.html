@@ -14270,7 +14270,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="in2-pre" id="aiv-idle">
       <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?</h2>
         <p>This runs real guest-style queries through one AI search system — Perplexity's live web search — and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.</p>
-        <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div></div>
+        <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div>
+        <div class="meta" id="aiv-stored-state" hidden></div></div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="cbtn cbtn-primary cbtn-lg" style="white-space:nowrap">Check AI visibility</button>
     </div>
     <div class="in2-pre" id="aiv-loading" style="display:none;justify-content:center;align-items:center;text-align:center;flex-direction:column;gap:6px">
@@ -17838,6 +17839,10 @@ window.switchIntelTab = function(tab) {
   // window 'load' handler that normally hydrates _aivData has run.
   if(!_aivData){try{var _c=cavGet('aiv_cache'),_ca=parseInt(cavGet('aiv_cache_at')||'0',10);if(_c&&_ca&&(Date.now()-_ca)<4*60*60*1000)_aivData=JSON.parse(_c);}catch(e){}}
   if(_aivData&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display==='none'){renderAIVisibility(_aivData);}
+  // Then the recorded check from the server (re-audit P1): the weekly run
+  // was stored and served by GET, and nothing on the page ever asked for
+  // it, so an owner saw "Check AI visibility" and paid for a live run.
+  aivLoadStored();
 };
 
 // Three panels now, not two — the queue is its own place because "what is
@@ -29878,6 +29883,41 @@ function aivLoadingHide() {
   if (c && c._orb && window.CavnarOrb) { try { CavnarOrb.destroy(c._orb); } catch (e) {} }
   if (host) host.innerHTML = '';
 }
+// The recorded check (re-audit P1): GET serves the newest stored run —
+// complete or partial, flagged, with when it was measured — or says
+// "not measured yet" (state not_measured) and never runs one. Asked once a
+// page load; a Check pressed meanwhile wins. A missing measurement stays
+// the idle state with the server's words, never a 0.
+var _aivStoredAsked = false;
+function aivStoredNote(html) {
+  var el = document.getElementById('aiv-stored-state'); if (!el) return;
+  el.innerHTML = html || '';
+  el.hidden = !html;
+}
+function aivLoadStored() {
+  var btn = document.getElementById('aiv-run-btn');
+  if (_aivStoredAsked || (btn && btn.disabled)) return;
+  _aivStoredAsked = true;
+  if (!_aivData) aivStoredNote('<span class="dr-pulse"><i></i></span>');
+  fetch('/api/ai-visibility', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    var b = document.getElementById('aiv-run-btn');
+    if (b && b.disabled) return;
+    if (!d || !d.ok) { aivStoredNote(''); _aivStoredAsked = false; return; }
+    if (d.state === 'not_measured' || d.measured === false) {
+      // Nothing on record (or past AIVIS_SERVE_MAX_DAYS): the server is
+      // the record, so a session copy is not shown over it.
+      _aivData = null; cavDel('aiv_cache'); cavDel('aiv_cache_at');
+      document.getElementById('aiv-results').style.display = 'none';
+      document.getElementById('aiv-idle').style.display = '';
+      aivStoredNote('<b>Not measured yet.</b> ' + _escHtml(String(d.reason || 'No AI visibility check is on record.')));
+      _aivFitBody();
+      return;
+    }
+    aivStoredNote('');
+    _aivData = d;
+    renderAIVisibility(d);
+  }).catch(function() { aivStoredNote(''); _aivStoredAsked = false; });
+}
 function runAIVisibility(btn) {
   var _aivB = document.getElementById('aiv-body');
   var _aivArrow = document.getElementById('aiv-collapse-arrow');
@@ -29886,7 +29926,9 @@ function runAIVisibility(btn) {
     _aivB.style.opacity = '1';
     if (_aivArrow) _aivArrow.style.transform = '';
   }
+  var _aivPrev = _aivData;
   _aivData = null;
+  aivStoredNote('');
   if (btn) { btn.textContent = 'Checking...'; btn.disabled = true; }
   document.getElementById('aiv-idle').style.display = 'none';
   document.getElementById('aiv-results').style.display = 'none';
@@ -29905,9 +29947,18 @@ function runAIVisibility(btn) {
     clearInterval(ticker);
     aivLoadingHide();
     if (!d.ok) {
+      // A check that did not run (no answer at all, the budget, the rate
+      // limit) is not a reading: the last recorded one stays on screen, and
+      // the idle state keeps its Check button (re-audit P8). It used to
+      // replace the idle block, button and all, with the error.
+      if (_aivPrev) {
+        _aivData = _aivPrev;
+        renderAIVisibility(_aivPrev);
+      } else {
+        document.getElementById('aiv-idle').style.display = '';
+        aivStoredNote('<span style="color:var(--red)">' + _escHtml(String(d.error || 'Unknown error')) + '</span>');
+      }
       if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
-      document.getElementById('aiv-idle').style.display = 'block';
-      document.getElementById('aiv-idle').innerHTML = '<div style="color:var(--red);font-size:13px;text-align:center">Error: ' + _escHtml(String(d.error || 'Unknown error')) + '</div>';
       _aivFitBody();
       toast('AI check failed: ' + (d.error || 'Unknown error'), 'error');
       return;
@@ -29917,9 +29968,10 @@ function runAIVisibility(btn) {
     renderAIVisibility(d);
   }).catch(function() {
     clearInterval(ticker);
-    if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
     aivLoadingHide();
-    document.getElementById('aiv-idle').style.display = 'block';
+    if (_aivPrev) { _aivData = _aivPrev; renderAIVisibility(_aivPrev); }
+    else { document.getElementById('aiv-idle').style.display = ''; }
+    if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
     _aivFitBody();
     toast('Request failed — try again','error');
   });
@@ -30345,10 +30397,10 @@ window.addEventListener('load', function(){
   // against each other and corrupts the result.
   var _activePanel = _switchedViaParam ? null : document.querySelector('.panel.active');
   if (_activePanel) { animateBars(_activePanel.id); animateStatNums(_activePanel.id); }
-  // Keep cached AI visibility data in memory (so "Re-run" knows a prior
-  // scan exists) without auto-rendering it on load — the tab should
-  // always start at the idle "Check Visibility" state, never silently
-  // pre-populate results the client never actually requested this load.
+  // Keep this session's copy of the AI visibility check in memory; the
+  // Intel opener (switchIntelTab) paints it and then asks the server for
+  // the recorded check (aivLoadStored, re-audit P1) — the weekly run is
+  // the owner's, and it was never shown.
   try {
     var aivCached = cavGet('aiv_cache');
     var aivCachedAt = parseInt(cavGet('aiv_cache_at') || '0', 10);
@@ -34115,8 +34167,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var runs=((d.ok&&d.runs)||[]).slice().reverse();  // oldest → newest
       window._aivRuns=runs;
       var lr=document.getElementById('in2-last-run');if(lr&&runs.length){var L=runs[runs.length-1];lr.innerHTML=' · last check <span class="hb-num">'+Math.round(L.ai_score||0)+'%</span> on <span class="hb-num">'+(window.CavnarCharts?CavnarCharts.mdy(String(L.created_at||'').slice(0,10)):fmtDate(L.created_at))+'</span> · '+runs.length+' run'+(runs.length===1?'':'s')+' so far';}
-      var score=_aivData?Math.round(_aivData.ai_score||0):(runs.length?Math.round(runs[runs.length-1].ai_score||0):null);
-      if(score!==null&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display!=='none')renderVisibilityOrbit(score,runs);
+      var score=_aivData?(_aivData.ai_score==null?null:Math.round(_aivData.ai_score)):(runs.length?Math.round(runs[runs.length-1].ai_score||0):null);
+      if((score!==null||_aivData)&&document.getElementById('aiv-results')&&document.getElementById('aiv-results').style.display!=='none')renderVisibilityOrbit(score,runs);
     });
   };
   // Visibility Orbit — today's score as a ring with an orbiting hot dot, and
@@ -34132,7 +34184,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // and sit centred in it, with room under the figure above.
     var H=200,cy=100,R=68;
     var W=hasTrend?440:220,cx=hasTrend?88:(W/2);
-    var circ=2*Math.PI*R,frac=Math.max(0,Math.min(1,(score||0)/100));
+    // A missing measurement is a dash on an empty ring, never 0 (re-audit P1).
+    var hasScore=(score!==null&&score!==undefined);
+    var circ=2*Math.PI*R,frac=hasScore?Math.max(0,Math.min(1,score/100)):0;
     var s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><linearGradient id="in2og" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8956a"/><stop offset="1" stop-color="#c84b2f"/></linearGradient><filter id="in2of" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter><linearGradient id="in2lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c84b2f" stop-opacity=".3"/><stop offset="1" stop-color="#c84b2f" stop-opacity="0"/></linearGradient></defs>';
     s+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="currentColor" stroke-opacity=".08" stroke-width="10"/>';
     if(frac>0){
@@ -34141,7 +34195,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     var ang=-Math.PI/2+2*Math.PI*frac,dx=cx+R*Math.cos(ang),dy=cy+R*Math.sin(ang);
     s+='<circle class="hb-hot" cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="12" fill="#e8956a" fill-opacity=".3" style="transform-box:fill-box;transform-origin:center;opacity:0;transition:opacity .5s 1.5s" data-tip="1"/><circle cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="5" fill="#f2b183" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" style="opacity:0;transition:opacity .5s 1.5s" data-tip="1"/>';
-    s+='<text x="'+cx+'" y="'+(cy+8)+'" text-anchor="middle" font-size="34" font-weight="700" fill="currentColor" id="in2-orbit-n">'+Math.round(score||0)+'</text><text x="'+cx+'" y="'+(cy+28)+'" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".55">AI VISIBILITY</text>';
+    s+='<text x="'+cx+'" y="'+(cy+8)+'" text-anchor="middle" font-size="34" font-weight="700" fill="currentColor" id="in2-orbit-n">'+(hasScore?Math.round(score):'\u2014')+'</text><text x="'+cx+'" y="'+(cy+28)+'" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".55">AI VISIBILITY</text>';
     if(hasTrend){
       var L=cx+R+40,Rr=W-8,T=40,B=H-34;
       var n=runs.length,vals=runs.map(function(r){return +r.ai_score||0;}),lo=Math.max(0,Math.min.apply(null,vals)-10),hi=Math.min(100,Math.max.apply(null,vals)+10),rng=Math.max(1,hi-lo);

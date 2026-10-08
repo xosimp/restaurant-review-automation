@@ -7438,8 +7438,11 @@ def _city_from_place_id(place_id: str) -> str:
 # process dict above is gone after every deploy, and each deploy re-bought
 # the same Places Details answer. Keyed on the Place ID it was read for, so
 # a corrected ID reads again; re-read past this age in case Google's own
-# address for the listing changed.
-AIVIS_CITY_REFRESH_DAYS = 90
+# address for the listing changed. Inside Google's 30-day limit on keeping
+# Places content (the city and state come from the listing's
+# address_components; only the Place ID may be kept indefinitely) — it was
+# 90 days (re-audit P6). competitor.REDISCOVER_DAYS keeps the same margin.
+AIVIS_CITY_REFRESH_DAYS = 28
 
 
 def _aivis_city(r) -> str:
@@ -8541,8 +8544,16 @@ def _do_ai_visibility_inner(rid, force=False):
     except Exception as _he:
         print(f"[aivis] history write failed for rid={rid}: {_he}")
 
+    # Nothing came back at all (a Perplexity outage, every question 429):
+    # not a run and not a measurement (re-audit P8). It used to come back
+    # ok, partial and measured, so the weekly job recorded a partial run and
+    # never a failure, and both clients drew "partial check — 0 of 8
+    # questions came back" as if it were a reading. Now: ok False with the
+    # reason, state "not_measured", measured False — the weekly job captures
+    # it as a failure, and the last stored run is still what a read serves.
+    _outage = not answered
     _payload = {
-        "ok": True,
+        "ok": not _outage,
         # Which system was asked, and with what model. A score from one
         # vendor was being presented as "AI search" generally.
         "platform": AIVIS_PLATFORM,
@@ -8556,12 +8567,12 @@ def _do_ai_visibility_inner(rid, force=False):
         # below total_queries the run is partial: show the score as an
         # estimate, not a measurement, and say why.
         "answered_queries": len(discovery),
-        "partial": len(answered) < len(queries),
+        "partial": bool(answered) and len(answered) < len(queries),
         # What the run is and which questions did not come back (#9, #10),
         # added beside `partial`: the clients decode `partial`, and a stored
         # partial run's missing questions are what the next run re-asks.
-        "state": "complete" if _complete else "partial",
-        "measured": True,
+        "state": "complete" if _complete else ("not_measured" if _outage else "partial"),
+        "measured": not _outage,
         "failed_queries": _failed_qs,
         # How many answers this run kept from this week's stored partial
         # run instead of asking again (0 on a fresh run).
@@ -8634,6 +8645,9 @@ def _do_ai_visibility_inner(rid, force=False):
         "resp_rate": resp_rate,
         "listing_read": _listing["listing_read"],
     }
+    if _outage:
+        _payload["error"] = (f"{AIVIS_PLATFORM} didn't answer any question this time — this is not a reading "
+                             "of your visibility. Try again shortly.")
     # A complete run is cached; a partial one only when it was stored — it
     # is then what every read serves anyway, flagged partial (`state`,
     # `partial`, claim_kinds) and never compared (AI cost audit 10/7/26 #10).
