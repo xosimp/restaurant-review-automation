@@ -6247,6 +6247,34 @@ def consume_login_report(token: str, db_path: str = DB_PATH) -> dict | None:
     user_id = row["user_id"]
     conn.execute("UPDATE login_reports SET used_at=datetime('now') WHERE token IN (?, ?)",
                  (hash_session_token(token), token))
+    user = _sign_out_everywhere(conn, user_id)
+    conn.commit()
+    conn.close()
+    return dict(user) if user else None
+
+
+def report_not_me(user_id: int, db_path: str = DB_PATH) -> dict | None:
+    """'This wasn't me' from the app's own sign-in push (parity audit #55):
+    the same as the email's link (consume_login_report), for the login the
+    phone is signed in as — every session revoked, this one included, every
+    trusted device forgotten, sign-in refused until the password is reset.
+    The login's unused email links are spent with it: one report. Returns
+    the user row, or None for an unknown login."""
+    conn = get_conn(db_path)
+    try:
+        user = _sign_out_everywhere(conn, int(user_id))
+        if user:
+            conn.execute("UPDATE login_reports SET used_at=datetime('now') WHERE user_id=? AND used_at IS NULL",
+                         (int(user_id),))
+        conn.commit()
+    finally:
+        conn.close()
+    return dict(user) if user else None
+
+
+def _sign_out_everywhere(conn, user_id):
+    """The one revoke behind both ways of saying "this wasn't me". The
+    caller commits."""
     conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (user_id,))
     user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
@@ -6255,9 +6283,7 @@ def consume_login_report(token: str, db_path: str = DB_PATH) -> dict | None:
         conn.execute("UPDATE restaurants SET two_fa_device_token=NULL WHERE id=?", (user["restaurant_id"],))
         import models as _models_inv
         _models_inv._invalidate_request_cache(user["restaurant_id"])
-    conn.commit()
-    conn.close()
-    return dict(user) if user else None
+    return user
 
 
 def clear_must_reset_password(user_id: int, db_path: str = DB_PATH):

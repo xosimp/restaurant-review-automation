@@ -404,7 +404,8 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
     out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
                                      acknowledge=acknowledge)
     if out.get("needs_ack"):
-        _tell_owner_schedule_held(restaurant_id, payload, out.get("new_blockers") or out.get("blockers") or [], db_path)
+        _tell_owner_schedule_held(restaurant_id, payload, out.get("new_blockers") or out.get("blockers") or [], db_path,
+                                  keys=_send_now_keys(payload, out))
         out = dict(out, ok=False, error="The week was not sent: " + "; ".join((out.get("new_blockers")
                                                                              or out.get("blockers") or [])[:3]) + ".")
     return out
@@ -435,21 +436,41 @@ def _run_schedule_changes_send(restaurant_id, payload, db_path):
     if out.get("needs_ack"):
         held = out.get("new_blockers") or out.get("blockers") or []
         _tell_owner_schedule_held(restaurant_id, payload, held, db_path,
-                                  title="Your schedule changes were not sent")
+                                  title="Your schedule changes were not sent", keys=_send_now_keys(payload, out))
         out = dict(out, ok=False, error="The changes were not sent: " + "; ".join(held[:3]) + ".")
     return out
 
 
-def _tell_owner_schedule_held(restaurant_id, payload, blockers, db_path, title=None):
+def _send_now_keys(payload, out):
+    """The blocker keys a "Send now" on the held-week push acknowledges
+    (parity audit #55): every blocker of the week — the ones the person
+    acknowledged when they queued it, and the ones that held it, which the
+    push names. None when the push cannot name every one that held it (more
+    than three), or the gate's items are missing: then there is no Send now,
+    only the week to open."""
+    items = out.get("blocker_items") or []
+    held = out.get("new_blockers") or out.get("blockers") or []
+    if not items or len(held) > 3:
+        return None
+    keys = [str(b.get("key")) for b in items if b.get("key")]
+    return keys if len(keys) == len(items) else None
+
+
+def _tell_owner_schedule_held(restaurant_id, payload, blockers, db_path, title=None, keys=None):
     """A queued publish the gate held at send time. The owner was told
-    "goes to staff at 11am"; without this the week simply never arrived."""
+    "goes to staff at 11am"; without this the week simply never arrived.
+    `keys` (_send_now_keys) rides the push as `blocker_keys`, which is what
+    gives it a "Send now" (push.CATEGORY_PUBLISH_HELD)."""
     title = title or "Next week's schedule was not sent"
     body = ("It was held when its send time came: " + "; ".join(blockers[:3])
             + ". Review it on the Labor tab and send it yourself.")
+    data = {"schedule_id": payload.get("schedule_id")}
+    if keys is not None:
+        data["blocker_keys"] = list(keys)
     try:
         import strategy_jobs
         strategy_jobs._reach(restaurant_id, "schedule_publish_held", title, body,
-                             {"schedule_id": payload.get("schedule_id")}, db_path,
+                             data, db_path,
                              subject=title)
     except Exception as e:
         import ops

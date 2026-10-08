@@ -59,14 +59,20 @@ def module_of(nav_path) -> str:
 # Ask-type rows (briefs, the month's review) carry the question the alert
 # stands for, so the bell opens Ask on it the way a push does on iOS.
 _ALERT_NAV = {
-    "labor_over": "labor", "labor_reminder": "labor", "coverage": "labor/schedule",
+    # Overtime and "waiting on you" are Labor sections of their own (iOS
+    # LaborFocus .overtime / .waiting); the push opens the same place
+    # (push.nav_for reads this map — parity audit #49).
+    "labor_over": "labor/overtime", "labor_reminder": "labor/waiting", "coverage": "labor/schedule",
     "schedule_drafted": "labor/schedule", "schedule_publish_pending": "labor/schedule",
     "schedule_publish_held": "labor/schedule", "shift_request": "labor/requests", "employee_message": "labor/inbox",
     "food_waste": "inventory", "price_spike": "inventory/invoices", "critical_low": "inventory/order",
     "order_send_pending": "inventory/order", "order_send_held": "inventory/order",
     "order_send_voided": "inventory/order",
     "ai_visibility_drop": "intel", "competitor_move": "intel",
-    "demand_opportunity": "marketing", "review_request_nudge": "reviews", "while_away": "reviews",
+    # A quiet night opens Marketing's opportunity feed, where its Fill card
+    # is (the web's data-nav="marketing/opportunities"); its push adds the
+    # drafted post's id (push.nav_for — parity audit #22).
+    "demand_opportunity": "marketing/opportunities", "review_request_nudge": "reviews", "while_away": "reviews",
     "dsr": "dsr",
     # Issues render in Home's Needs attention card (iOS opens Home too).
     "issue": "issue", "issue_escalated": "issue",

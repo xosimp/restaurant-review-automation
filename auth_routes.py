@@ -1414,6 +1414,26 @@ h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.6;color:#cdbfa9
 .cbtn{display:inline-block;margin-top:8px;padding:12px 20px;border:0;border-radius:10px;background:#D4583A;color:#fff;font-size:15px;font-weight:700;cursor:pointer}</style></head><body><div class="card">%s</div></body></html>"""
 
 
+def not_me_aftercare(user) -> str:
+    """After a "this wasn't me" (the email's link, or the sign-in push's
+    button — mobile_api.mobile_not_me): email the login a password-reset link
+    and log it for the restaurant. Returns the address written to. Never
+    raises."""
+    email = user.get("email") or ""
+    try:
+        from models import create_reset_token, log_event
+        from emails import send_password_reset_email
+        rt = create_reset_token(email)
+        if rt:
+            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{rt}",
+                                      restaurant_id=user.get("restaurant_id"))
+        if user.get("restaurant_id"):
+            log_event(user["restaurant_id"], "login_reported_not_me", {"actor": user.get("username")})
+    except Exception as _e:
+        print(f"[NotMe] reset email error: {_e}")
+    return email
+
+
 @auth_bp.route("/auth/not-me/<token>", methods=["GET", "POST"])
 def login_not_me(token):
     """The login email's 'This wasn't me' button. Signs the account out
@@ -1434,18 +1454,7 @@ def login_not_me(token):
     user = consume_login_report(token)
     if not user:
         return page % "<h1>That link has expired</h1><p>It was already used, or it's more than 7 days old. If you still don't recognize a sign-in, use <a href='/forgot-password'>Forgot password</a> to reset your password now.</p>", 410
-    email = user.get("email") or ""
-    try:
-        from models import create_reset_token, log_event
-        from emails import send_password_reset_email
-        rt = create_reset_token(email)
-        if rt:
-            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{rt}",
-                                      restaurant_id=user.get("restaurant_id"))
-        if user.get("restaurant_id"):
-            log_event(user["restaurant_id"], "login_reported_not_me", {"actor": user.get("username")})
-    except Exception as _e:
-        print(f"[NotMe] reset email error: {_e}")
+    email = not_me_aftercare(user)
     return page % ("<h1>You're signed out everywhere</h1><p>Every device has been signed out and every remembered device forgotten. "
                    "Nobody can sign in again until the password is reset — we've emailed a reset link to <strong>%s</strong>.</p>"
                    "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>" % (_esc_nm(email),))

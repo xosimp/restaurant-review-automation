@@ -460,6 +460,15 @@ def _give_up(r, reason, db_path=DB_PATH, now=None, attempts=None):
         _fall_back(r, r["assignee_name"] or "the assigned manager", reason, db_path)
 
 
+def _issue_url(issue_id, restaurant_id) -> str:
+    """The dashboard link that opens one issue (`?nav=issue/<id>&loc=<rid>`,
+    the alert links' shape — notify.alert_url), which the app opens too."""
+    import nav as _nav
+    from urllib.parse import quote
+    return (f"{_base_url()}/?nav={quote(_nav.path('issue', int(issue_id)), safe='/')}"
+            f"&loc={int(restaurant_id)}")
+
+
 def _fall_back(r, who, reason, db_path=DB_PATH):
     """Push and email the owner that `who` could not be texted about issue
     `r`. Never raises. Loss issues are never pushed beyond the logins
@@ -490,7 +499,9 @@ def _fall_back(r, who, reason, db_path=DB_PATH):
                 sections=[emails.report_paragraph(_h.escape(r["title"])),
                           emails.report_paragraph(_h.escape(f"The text to {who} did not go through: {reason}. "
                                                             "Nobody has been told about this issue yet."))],
-                cta_label="Open the issue", cta_url=f"{_base_url()}/?tab=home")
+                # The issue itself, at its location (nav.py; parity audit
+                # #1) — ?tab=home opened Home's top, and in Safari.
+                cta_label="Open the issue", cta_url=_issue_url(r["id"], rid))
             emails.deliver(email_type="send_issue_fallback_email", restaurant_id=rid, payload={
                 "from": emails.sender("client"), "to": [to],
                 "subject": f"{title} — {place}", "preheader": str(r["title"])[:120], "html": html})

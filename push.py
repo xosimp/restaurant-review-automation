@@ -535,6 +535,15 @@ CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # no extra button: the tap opens it
 CATEGORY_REVIEW_DRAFTED = "CAVNAR_REVIEW_DRAFTED"   # Approve & post · Edit
 CATEGORY_UNDOABLE = "CAVNAR_UNDOABLE"               # Undo · Review
 CATEGORY_REQUEST = "CAVNAR_REQUEST"                 # Approve · Deny
+# Parity audit 10/7/26 (#35, #55): a recommendation answered from the lock
+# screen, and the types that used to arrive with no button at all.
+CATEGORY_REC = "CAVNAR_REC"                   # Done · Not for us (background)
+CATEGORY_REC_ASK = "CAVNAR_REC_ASK"           # Done · Not for us · Ask about this
+CATEGORY_PUBLISH_HELD = "CAVNAR_PUBLISH_HELD" # Send now (background) · Review
+CATEGORY_STOCK = "CAVNAR_STOCK"               # Draft order (opens the order)
+CATEGORY_LOGIN = "CAVNAR_LOGIN"               # This wasn't me (background)
+CATEGORY_CONNECTION = "CAVNAR_CONNECTION"     # Reconnect (opens integrations)
+CATEGORY_DSR = "CAVNAR_DSR"                   # Ask about last night
 _BRIEF_TYPES = {"morning_brief", "intraday_pulse", "closing_summary",
                 "weekly_review", "monthly_review", "daily_briefing"}
 _ISSUE_TYPES = {"issue", "issue_escalated", "coverage", "critical_low"}
@@ -548,6 +557,30 @@ def _category(alert_type, data) -> str:
         return CATEGORY_UNDOABLE
     if alert_type == "shift_request" and data.get("request_id") and data.get("request_kind"):
         return CATEGORY_REQUEST
+    # A reply that already went out is news: no Reply button on it.
+    if alert_type == "resp_approved":
+        return ""
+    # Send now acknowledges exactly the blockers the push named
+    # (delayed._tell_owner_schedule_held), so it needs both.
+    if alert_type == "schedule_publish_held" and data.get("schedule_id") \
+            and isinstance(data.get("blocker_keys"), list):
+        return CATEGORY_PUBLISH_HELD
+    if alert_type == "critical_low":
+        return CATEGORY_STOCK
+    # "This wasn't me" only on the signed-in login's own notice.
+    if alert_type == "login" and data.get("login_user_id"):
+        return CATEGORY_LOGIN
+    if alert_type in ("connection_lost", "data_source_down"):
+        return CATEGORY_CONNECTION
+    if alert_type == "dsr":
+        return CATEGORY_DSR
+    # A recommendation the app may answer (rec_delivery.answerable): Done and
+    # Not for us from the lock screen. A review alert keeps its own buttons —
+    # the reply is the thing to do about it — and an issue or a coverage gap
+    # keeps the issue's (CATEGORY_ISSUE).
+    if data.get("answerable") and data.get("rec_key") and not data.get("review_id") \
+            and alert_type not in _ISSUE_TYPES:
+        return CATEGORY_REC_ASK if (alert_type in _BRIEF_TYPES or data.get("ask_prompt")) else CATEGORY_REC
     if alert_type in _BRIEF_TYPES or data.get("ask_prompt"):
         return CATEGORY_BRIEF
     if alert_type in _ISSUE_TYPES:
@@ -564,18 +597,74 @@ def _review_draft_ready(restaurant_id, review_id, db_path=DB_PATH) -> bool:
     """Whether this review has a reply that one tap may publish — the same
     rule the Home "Publish N replies" button and approve-all apply. Never
     raises (False)."""
+    return _publishable_draft(restaurant_id, review_id, db_path) is not None
+
+
+def _publishable_draft(restaurant_id, review_id, db_path=DB_PATH):
+    """The reply text one tap may publish (_review_draft_ready's rule), or
+    None when there is none. Never raises (None)."""
     try:
         from models import BULK_PUBLISHABLE_SQL, bulk_publish_window
         conn = get_conn(db_path)
         try:
             row = conn.execute(
-                f"SELECT 1 FROM reviews WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}",
+                f"SELECT draft_response FROM reviews WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}",
                 (int(review_id), int(restaurant_id), bulk_publish_window())).fetchone()
         finally:
             conn.close()
-        return row is not None
+        return None if row is None else (row["draft_response"] or "")
     except Exception:
-        return False
+        return None
+
+
+# The drafted reply rides an Approve & post push, so the notification's own
+# view (the app's content extension) shows what one tap publishes (parity
+# audit #36). APNs refuses a payload over 4096 bytes and the draft is the one
+# field that can be long: it is clipped here and, if the whole payload is
+# still too big, cut further at delivery (_fit_payload). `draft_complete`
+# says whether the text is the whole reply — only then does the phone send
+# it back as `expected_draft` with the approve.
+PUSH_DRAFT_MAX_CHARS = 900
+APNS_MAX_PAYLOAD_BYTES = 4096
+_ELLIPSIS = "\u2026"
+
+
+def _draft_fields(draft) -> dict:
+    exact = str(draft or "").strip()
+    if not exact:
+        return {}
+    if len(exact) <= PUSH_DRAFT_MAX_CHARS:
+        return {"draft": exact, "draft_complete": True}
+    return {"draft": exact[:PUSH_DRAFT_MAX_CHARS - 1].rstrip() + _ELLIPSIS, "draft_complete": False}
+
+
+def _fit_payload(payload) -> bytes:
+    """The payload's bytes, never over APNS_MAX_PAYLOAD_BYTES: the draft is
+    shortened (nothing else is touched), and dropped when even a short one
+    does not fit. Mutates `payload` to match what is returned."""
+    def enc():
+        return json.dumps(payload, separators=(",", ":")).encode()
+    out = enc()
+    cav = payload.get("cavnar") or {}
+    if len(out) <= APNS_MAX_PAYLOAD_BYTES or not cav.get("draft"):
+        return out
+    text = str(cav["draft"])
+    if text.endswith(_ELLIPSIS):
+        text = text[:-1]
+    lo, hi, best = 0, len(text), None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        cav["draft"], cav["draft_complete"] = text[:mid].rstrip() + _ELLIPSIS, False
+        if len(enc()) <= APNS_MAX_PAYLOAD_BYTES:
+            best, lo = mid, mid + 1
+        else:
+            hi = mid - 1
+    if best is None or best < 40:
+        cav.pop("draft", None)
+        cav.pop("draft_complete", None)
+    else:
+        cav["draft"], cav["draft_complete"] = text[:best].rstrip() + _ELLIPSIS, False
+    return enc()
 
 
 def staff_tab(alert_type, data=None) -> str:
@@ -622,6 +711,12 @@ def nav_for(alert_type, data=None) -> str:
         # The question itself rides as ask_prompt; repeating it URL-encoded
         # here would spend the 4KB APNs budget twice.
         return nav.path("ask")
+    if alert_type == "demand_opportunity":
+        # The opportunity feed's Fill card for the night (?card=, the web's
+        # own card focus) and the post drafted for it (parity audit #22):
+        # "marketing" opened Marketing's top and the draft id went unread.
+        return nav.path("marketing", "opportunities", card=data.get("card"),
+                        post_draft_id=data.get("post_draft_id"))
     if alert_type == "shift_request":
         if data.get("request_id") and data.get("request_kind"):
             return nav.path("request", f"{data['request_kind']}-{data['request_id']}")
@@ -634,8 +729,12 @@ def nav_for(alert_type, data=None) -> str:
         return nav.path("inventory", "order")
     if alert_type in ("issue", "issue_escalated") and data.get("issue_id"):
         return nav.path("issue", data["issue_id"])
-    if alert_type in ("login", "staff_signin"):
-        return nav.path("account", "security")
+    # Everything else opens where its bell row does (nav.for_notification's
+    # map): a staff sign-in on People, a price spike on Invoices, overtime on
+    # Labor's overtime, a lost connection on Integrations — the push and the
+    # bell disagreed on all of these (parity audit #49).
+    if alert_type in nav._ALERT_NAV:
+        return nav._ALERT_NAV[alert_type]
     module = module_of(alert_type)
     return nav.path({"competitor": "intel", "food": "inventory"}.get(module, module))
 
@@ -893,7 +992,7 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
         "aps": aps,
         "cavnar": {"alert_type": alert_type, "priority": priority, **(data or {})},
     }
-    payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    payload_bytes = _fit_payload(payload)
     environment = device_token_row["environment"]
     url = f"https://{_apns_host(environment)}/3/device/{device_token_row['apns_token']}"
     expiry = int(time.time()) + _EXPIRY_SECONDS.get(priority, 12 * 3600)
@@ -1344,7 +1443,12 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     # lock screen (read once here, not per device), and every push carries
     # where it opens (nav.py) — friction audit #3/#22.
     if data.get("review_id") and "draft_ready" not in data:
-        data["draft_ready"] = _review_draft_ready(restaurant_id, data["review_id"], db_path)
+        draft = _publishable_draft(restaurant_id, data["review_id"], db_path)
+        data["draft_ready"] = draft is not None
+        # What Approve & post would publish, for the notification's own view
+        # (parity audit #36).
+        if draft is not None:
+            data.update(_draft_fields(draft))
     try:
         data.setdefault("nav", nav_for(alert_type, data))
     except Exception as e:

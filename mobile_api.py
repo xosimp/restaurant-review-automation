@@ -1926,6 +1926,56 @@ def mobile_mark_notification_opened(current_user):
     return jsonify(ok=True)
 
 
+@mobile_bp.route("/recs/link-open", methods=["POST"])
+@mobile_login_required
+def mobile_rec_link_open(current_user):
+    """A dashboard link that names a recommendation (?rec=&src=[&rid=]) opened
+    in the app instead of the browser (universal links, parity audit #1).
+    The web records it as the page loads (hosted_dashboard.index); this is
+    the same body, rec_delivery.record_link_open — once per key, surface,
+    login and local day, on the location the link names when this login may
+    see it."""
+    import rec_delivery
+    data = request.get_json(silent=True) or {}
+    args = {k: str(data.get(k) or "")[:160] for k in ("rec", "src", "rid")}
+    if not args["rec"].strip():
+        return jsonify(ok=False, error="rec is required"), 400
+    return jsonify(ok=True, recorded=bool(rec_delivery.record_link_open(current_user, args)))
+
+
+@mobile_bp.route("/account/not-me", methods=["POST"])
+@mobile_login_required
+def mobile_not_me(current_user):
+    """"This wasn't me" on the sign-in push (parity audit #55): the email
+    link's action (auth_routes.login_not_me — auth.report_not_me, then
+    auth_routes.not_me_aftercare) for the login this phone is signed in as.
+    Signs it out everywhere, this phone included, forgets every remembered
+    device, refuses sign-in until the password is reset, and emails a reset
+    link. Only for the sign-in the push was about (`login_user_id`, which
+    the push carries): a notice about another login is answered from that
+    login's own email. Never through view-as: support does not lock an owner
+    out."""
+    from permissions import acting_via
+    if acting_via(current_user):
+        return jsonify(ok=False, error="Support can't report a sign-in for the owner."), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        named = int(data.get("login_user_id") or 0)
+    except (TypeError, ValueError):
+        named = 0
+    if not named or named != int(current_user.get("id") or 0):
+        return jsonify(ok=False, error="That sign-in was another login's. Use the link in its email."), 409
+    from auth import report_not_me
+    user = report_not_me(current_user["id"])
+    if not user:
+        return jsonify(ok=False, error="That login no longer exists."), 404
+    import auth_routes
+    email = auth_routes.not_me_aftercare(user)
+    return jsonify(ok=True, signed_out=True,
+                   message=("Signed out everywhere. Nobody can sign in until the password is reset"
+                            + (f" — the link is on its way to {email}." if email else ".")))
+
+
 # The push surfaces a tap can be an "opened" on, and the surface a push type
 # is when an older app (or payload) does not say. The morning brief's taps
 # were all filed as alert_push (#7).
