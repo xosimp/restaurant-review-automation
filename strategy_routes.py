@@ -1038,7 +1038,11 @@ def _do_auto_draft_get(u):
     wd = auto_draft_weekday(r)
     return {"ok": True, "enabled": bool(getattr(r, "auto_draft_schedule", 0)),
             "weekday": wd, "day": WEEKDAY_NAMES[wd], "publish_day": WEEKDAY_NAMES[auto_publish_weekday(r)],
-            "external_tool": getattr(r, "external_scheduling_tool", None) or ""}, 200
+            "external_tool": getattr(r, "external_scheduling_tool", None) or "",
+            # Whether this login may switch it (the POST's own check): a
+            # login that cannot is shown the state, never a switch that
+            # answers 403 (re-audit 10/8/26 #12).
+            "can_edit": bool(_may_draft(u))}, 200
 
 
 def _weekday_arg(v, allowed):
@@ -1093,7 +1097,9 @@ def _do_auto_publish_get(u):
     return {"ok": True, "enabled": bool(getattr(r, "auto_publish_schedule", 0)),
             "day": WEEKDAY_NAMES[auto_publish_weekday(r)], "draft_day": WEEKDAY_NAMES[auto_draft_weekday(r)],
             "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN,
-            "armed": bool(getattr(r, "auto_publish_schedule", 0)) and trust >= SCHEDULE_PUBLISH_TRUST_MIN}, 200
+            "armed": bool(getattr(r, "auto_publish_schedule", 0)) and trust >= SCHEDULE_PUBLISH_TRUST_MIN,
+            # The publish permission the POST takes (re-audit 10/8/26 #12).
+            "can_edit": bool(_may_publish(u))}, 200
 
 
 def _may_publish(u):
@@ -1691,7 +1697,17 @@ def _do_covers_get(u):
     import covers
     # What the POS counted on nights nobody entered (U2-18) - offered, never
     # written until the owner takes it.
-    return {"ok": True, "days": covers.recent(_rid(u)), "pos_offers": covers.pos_offers(_rid(u))}, 200
+    # The night a count is for by default: the restaurant's business date
+    # (time_utils.business_date — still last night before its day starts),
+    # never the phone's own calendar day (re-audit 10/8/26 #6).
+    try:
+        from models import get_restaurant
+        from time_utils import business_date, restaurant_now_by_id
+        _bd = business_date(get_restaurant(_rid(u)), restaurant_now_by_id(_rid(u), naive=True)).isoformat()
+    except Exception:
+        _bd = _local_today(u).isoformat()
+    return {"ok": True, "days": covers.recent(_rid(u)), "pos_offers": covers.pos_offers(_rid(u)),
+            "business_date": _bd}, 200
 
 
 def _do_covers_save(u):
@@ -6416,10 +6432,19 @@ def _do_publish_check(u):
             import ops
             ops.capture(_lx, job="likely_to_change", context=f"restaurant_id={rid}")
     from permissions import has_permission, SCHEDULE_PUBLISH
+    _can_publish = bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)
     # `blocker_items` carries each blocker's key: the client sends back
     # `acknowledge: [keys it showed]`, so a blocker that appears between
     # this read and the press is not acknowledged by it (F2-9).
-    return {"ok": True, "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
+    return {"ok": True,
+            # The server's own one-tap verdict (draft_one_tap_safe — the
+            # unattended gate: no blocker, soft flag or unread note, this
+            # login may send, somebody it reaches). Waiting on you's Send
+            # and the drafted push's Send to staff read it rather than
+            # re-deriving it from `blockers`, which missed the soft flags
+            # and notes (re-audit 10/8/26 #1).
+            "one_tap_safe": bool(not row["published_at"] and not row["superseded_by"]
+                                 and draft_one_tap_safe(rid, row["id"], can_publish=_can_publish)), "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
             "published_at": row["published_at"], "blockers": blockers,
             "blocker_keys": [b["key"] for b in items], "blocker_items": items, "reach": summary,
             # What is worth a look but never holds the send (SQ-29: the
@@ -6431,7 +6456,7 @@ def _do_publish_check(u):
             # 10/4/26 UI-3): the sheet says why instead of offering Send.
             "superseded_by": row["superseded_by"],
             "replaced_reason": __import__("schedule_versions").replaced_error(row),
-            "can_publish": bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)}, 200
+            "can_publish": _can_publish}, 200
 
 
 # ── The owner's own targets and rates (Friction audit #26) ───────────────────

@@ -409,6 +409,30 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
     # those; an older row carrying acknowledge=True is read the same way it
     # was queued. Auto-publish acknowledged nothing, and the soft flags a
     # person decides (HOLD_UNATTENDED) hold it too.
+    # A one-tap Send (re-audit 10/8/26 #1) was never read on a sheet: when
+    # its window ends it goes only if the unattended gate still passes —
+    # a soft flag or note that came up in the window holds it like a
+    # blocker, and the owner is told.
+    if payload.get("one_tap") and payload.get("schedule_id"):
+        import strategy_routes as _sr_1t
+        conn = get_conn(db_path)
+        try:
+            _st = conn.execute("SELECT published_at, superseded_by FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (payload["schedule_id"], restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        # Already sent or replaced: _publish_schedule's own answer says so.
+        if _st and not _st["published_at"] and not _st["superseded_by"] \
+                and not _sr_1t.draft_one_tap_safe(restaurant_id, payload["schedule_id"]):
+            from client_api import publish_review
+            try:
+                review = publish_review(restaurant_id, payload["schedule_id"], unattended=True) or {}
+            except Exception:
+                review = {}
+            held = ([b["text"] for b in review.get("blockers") or []] + list(review.get("soft") or [])) \
+                or ["something to read came up since it was queued"]
+            _tell_owner_schedule_held(restaurant_id, payload, held, db_path, keys=None)
+            return {"ok": False, "error": "The week was not sent: " + "; ".join(held[:3]) + "."}
     ack = payload.get("acknowledge")
     if isinstance(ack, list):
         acknowledge = ack
