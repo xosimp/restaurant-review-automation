@@ -77,24 +77,61 @@ enum ScheduleWeekMath {
     static func hoursText(_ h: Double) -> String {
         h == h.rounded() ? String(Int(h)) : String(format: "%.1f", h)
     }
+
+    /// The weekday a row falls on: its own day, else its date's.
+    static func dayName(of row: ScheduleRow) -> String? {
+        if let day = row.day, !day.isEmpty { return day }
+        return row.date.flatMap(LaborViewModel.weekdayName)
+    }
+
+    /// One cell of the iPad week grid (#99): this person's shifts on this
+    /// day, earliest first (the person's rows are already in day order).
+    static func shifts(_ person: PersonWeek, on day: String) -> [ScheduleRow] {
+        person.rows.filter { dayName(of: $0) == day }
+    }
 }
 
 /// The week as a strip of day chips over one day's page, or everyone's
 /// week. Swipe the page sideways for the next or previous day. `dayContent`
 /// draws a day (LaborView's editable rows, or History's read-only ones).
 struct ScheduleWeekPager<DayContent: View>: View {
-    enum Mode: String, CaseIterable, Hashable { case day = "By day", person = "By person" }
+    enum Mode: String, CaseIterable, Hashable { case week = "Week", day = "By day", person = "By person" }
+
+    /// The segments on offer. The person × day grid (#99) needs an iPad's
+    /// regular width; the phone keeps By day / By person.
+    static func modes(wide: Bool) -> [Mode] {
+        wide ? [.week, .day, .person] : [.day, .person]
+    }
+
+    /// What is drawn: the one picked, else the grid on a wide screen and
+    /// the day pager on a phone — and never the grid once the width
+    /// narrows (Split View), which falls back to the day pager.
+    static func resolvedMode(_ chosen: Mode?, wide: Bool) -> Mode {
+        guard let chosen else { return wide ? .week : .day }
+        return modes(wide: wide).contains(chosen) ? chosen : .day
+    }
 
     let days: [ScheduleDayPage]
     let rows: [ScheduleRow]
     @Binding var selectedDay: String?
-    @ViewBuilder let dayContent: (ScheduleDayPage) -> DayContent
     /// A shift tapped in a person's week opens its day here.
     var onPickShift: ((ScheduleRow) -> Void)? = nil
+    /// A shift tapped in the iPad week grid: Labor's editor opens it in
+    /// ShiftEditSheet. Nil (History, a replaced copy): the tap opens its day.
+    var onEditShift: ((ScheduleRow) -> Void)? = nil
+    // Last, so a caller's trailing closure is the day's page.
+    @ViewBuilder let dayContent: (ScheduleDayPage) -> DayContent
 
-    @State private var mode: Mode = .day
+    @State private var chosenMode: Mode?
     @State private var person: PersonWeek?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var wide: Bool { CavnarLayout.isWide(sizeClass) }
+    private var mode: Mode { Self.resolvedMode(chosenMode, wide: wide) }
+    private var modeBinding: Binding<Mode> {
+        Binding(get: { mode }, set: { chosenMode = $0 })
+    }
 
     private var current: ScheduleDayPage? {
         days.first { $0.day == selectedDay } ?? days.first
@@ -102,8 +139,17 @@ struct ScheduleWeekPager<DayContent: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            CavnarSegmentedControl(selection: $mode, options: Mode.allCases) { $0.rawValue }
-            if mode == .day {
+            CavnarSegmentedControl(selection: modeBinding, options: Self.modes(wide: wide)) { $0.rawValue }
+            if mode == .week {
+                ScheduleWeekGrid(days: days, rows: rows) { row in
+                    if let onEditShift {
+                        onEditShift(row)
+                    } else if let day = ScheduleWeekMath.dayName(of: row) {
+                        chosenMode = .day
+                        selectedDay = day
+                    }
+                }
+            } else if mode == .day {
                 dayStrip
                 if let page = current {
                     dayContent(page)
@@ -128,7 +174,7 @@ struct ScheduleWeekPager<DayContent: View>: View {
             PersonWeekSheet(person: p) { row in
                 person = nil
                 if let day = row.day ?? row.date.flatMap(LaborViewModel.weekdayName) {
-                    mode = .day
+                    chosenMode = .day
                     selectedDay = day
                 }
                 onPickShift?(row)
@@ -247,6 +293,143 @@ struct ScheduleWeekPager<DayContent: View>: View {
     }
 }
 
+// MARK: - The week as a grid (iPad, parity audit #99)
+
+/// Everyone × every day on an iPad's regular width — the web's week grid
+/// as a read view. Each shift is a chip (times in the number face, the
+/// role under it, amber when the rules check flagged it); a tap edits it
+/// in ShiftEditSheet (Labor) or opens its day (History). Wider than the
+/// column? It scrolls sideways; the names stay readable.
+struct ScheduleWeekGrid: View {
+    let days: [ScheduleDayPage]
+    let rows: [ScheduleRow]
+    var onTap: (ScheduleRow) -> Void
+
+    static let nameWidth: CGFloat = 150
+    static let dayWidth: CGFloat = 112
+
+    var body: some View {
+        let people = ScheduleWeekMath.people(rows)
+        VStack(alignment: .leading, spacing: 0) {
+            if people.isEmpty {
+                Text("Nobody is on this week yet.")
+                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Grid(alignment: .topLeading, horizontalSpacing: 6, verticalSpacing: 8) {
+                        GridRow {
+                            Text("WHO")
+                                .font(.cavnarBody(11, weight: 700))
+                                .tracking(0.8)
+                                .foregroundStyle(Color.cavnarEmber)
+                                .frame(width: Self.nameWidth, alignment: .leading)
+                            ForEach(days) { page in dayHeader(page) }
+                        }
+                        ForEach(people) { person in
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                                .gridCellUnsizedAxes(.horizontal)
+                            GridRow(alignment: .top) {
+                                personCell(person)
+                                ForEach(days) { page in
+                                    dayCell(person: person, day: page.day)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .cavnarCard()
+    }
+
+    private func dayHeader(_ page: ScheduleDayPage) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(page.short.uppercased())
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(0.8)
+                .foregroundStyle(Color.cavnarEmber)
+            HStack(spacing: 5) {
+                Text(page.dateLabel)
+                    .font(.cavnarNumber(13, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+                if page.notWritten {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.cavnarAmber)
+                } else {
+                    Text("\(page.count)")
+                        .font(.cavnarNumber(11, weight: 600))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+            }
+        }
+        .frame(width: Self.dayWidth, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(page.day) \(page.date.map(CavnarDate.mdy) ?? ""), "
+                            + (page.notWritten ? "not written" : "\(page.count) shifts"))
+    }
+
+    private func personCell(_ person: PersonWeek) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(person.name)
+                .font(.cavnarBody(14, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+                .lineLimit(2)
+            (Text(ScheduleWeekMath.hoursText(person.hours)).font(.cavnarNumber(13, weight: 700))
+             + Text("h").font(.cavnarNumber(11, weight: 600)))
+                .foregroundStyle(person.hours > 40 ? Color.cavnarRed : Color.cavnarInk3)
+        }
+        .frame(width: Self.nameWidth, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func dayCell(person: PersonWeek, day: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(ScheduleWeekMath.shifts(person, on: day)) { row in
+                shiftChip(row, person: person.name, day: day)
+            }
+        }
+        .frame(width: Self.dayWidth, alignment: .topLeading)
+    }
+
+    private func shiftChip(_ row: ScheduleRow, person: String, day: String) -> some View {
+        let flagged = row.needsReview == true
+        let tone: Color = flagged ? .cavnarAmber : .cavnarEmber
+        return Button {
+            Haptic.light()
+            onTap(row)
+        } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(row.shiftStart ?? "")\u{2013}\(row.shiftEnd ?? "")")
+                    .font(.cavnarNumber(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if let role = row.role, !role.isEmpty {
+                    Text(role)
+                        .font(.cavnarBody(11))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(width: Self.dayWidth, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tone.opacity(0.14)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(tone.opacity(0.45), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarHoverCard(cornerRadius: 8)
+        .accessibilityLabel("\(person), \(day), \(row.shiftStart ?? "") to \(row.shiftEnd ?? "")"
+                            + (row.role.map { ", \($0)" } ?? "") + (flagged ? ", needs review" : ""))
+    }
+}
+
 /// One person's week: each shift by day, their hours and days on.
 struct PersonWeekSheet: View {
     let person: PersonWeek
@@ -312,6 +495,7 @@ struct PersonWeekSheet: View {
             .accountSheetChrome(person.name)
         }
         .presentationDetents([.medium, .large])
+        .cavnarFormSheet()
     }
 
     private func stat(_ value: String, _ label: String, tone: Color) -> some View {

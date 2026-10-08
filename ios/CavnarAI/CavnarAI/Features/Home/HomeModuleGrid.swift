@@ -92,6 +92,12 @@ struct HomeModuleGrid: View {
     @State private var clock = CavnarEntranceClock()
     // Which tile is showing its tap flash right now — see tap(_:) below.
     @State private var flashingKey: String?
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// A tile's narrowest width: 150 on the phone (two across), 200 on an
+    /// iPad's regular width so a wide screen gets bigger tiles rather than
+    /// a row of seven slivers (parity audit #99).
+    static func minimumTileWidth(wide: Bool) -> CGFloat { wide ? 200 : 150 }
 
     /// Trouble first (density #31): bad, then warn, then good, then the
     /// untoned — stable within each, so the server's order still holds
@@ -111,7 +117,8 @@ struct HomeModuleGrid: View {
     }
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.minimumTileWidth(wide: CavnarLayout.isWide(sizeClass))),
+                                     spacing: 10)], spacing: 10) {
             ForEach(Array(Self.sorted(modules).enumerated()), id: \.element.id) { index, module in
                 // A Button calling back into the parent's NavigationPath,
                 // not a NavigationLink — keeps the haptic on a deterministic
@@ -124,6 +131,7 @@ struct HomeModuleGrid: View {
                         .cavnarTileFlash(flashingKey == module.id)
                 }
                 .buttonStyle(.plain)
+                .cavnarHoverCard()
                 .cavnarRowEntrance(index: index, clock: clock)
             }
             ForEach(Array(comingSoon.enumerated()), id: \.element.id) { index, module in

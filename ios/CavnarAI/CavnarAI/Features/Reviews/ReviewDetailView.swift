@@ -71,6 +71,8 @@ struct ReviewDetailView: View {
                 actionButtons
             }
             .padding(20)
+            // A readable column on an iPad (#99); the phone is unchanged.
+            .cavnarReadableWidth()
         }
         // A fresh scroll for each reply queue mode moves on to.
         .id(viewModel.review.id)

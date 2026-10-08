@@ -48,6 +48,8 @@ struct AccountView: View {
                     }
                 }
                 .padding(20)
+                // Account's groups read as one column on an iPad (#99).
+                .cavnarReadableWidth()
                 .animation(.easeOut(duration: 0.25), value: viewModel.summary == nil)
             }
             .cavnarModuleBackground()

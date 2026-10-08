@@ -36,6 +36,7 @@ struct IntelView: View {
     @State private var viewModel = IntelViewModel()
     @State private var aiVisibilityViewModel = AIVisibilityViewModel()
     @State private var subTab: IntelSubTab = .competitors
+    @Environment(\.horizontalSizeClass) private var sizeClass
     /// Where the link that opened this was pointing (ModuleRoute's section
     /// and item): the AI-visibility tab, or a competitor opened in the list.
     let focusSection: String?
@@ -759,12 +760,29 @@ struct IntelView: View {
                     .transition(.opacity)
             }
             let shown = summary.competitors.filter { $0.placeId != pendingRemoval?.placeId }
-            VStack(spacing: 0) {
-                ForEach(Array(shown.enumerated()), id: \.element.id) { index, c in
-                    competitorRow(c, ownRating: summary.ownRating)
-                    if index < shown.count - 1 {
-                        Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
-                            .padding(.leading, 14)
+            if CavnarLayout.isWide(sizeClass) {
+                // Two columns on an iPad (#99), a hairline under every row
+                // but the last pair's.
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 24, alignment: .top),
+                                    GridItem(.flexible(), alignment: .top)], spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, c in
+                        VStack(spacing: 0) {
+                            competitorRow(c, ownRating: summary.ownRating)
+                            if index < shown.count - (shown.count.isMultiple(of: 2) ? 2 : 1) {
+                                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
+                                    .padding(.leading, 14)
+                            }
+                        }
+                    }
+                }
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, c in
+                        competitorRow(c, ownRating: summary.ownRating)
+                        if index < shown.count - 1 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
+                                .padding(.leading, 14)
+                        }
                     }
                 }
             }

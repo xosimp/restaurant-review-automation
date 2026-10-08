@@ -575,7 +575,11 @@ private struct AccountSheetChrome: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // On an iPad (#99): a readable column when pushed onto a wide
+            // screen, and a centred form when presented as a sheet.
+            .cavnarReadableWidth()
             .cavnarModuleBackground()
+            .cavnarFormSheet()
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar(title) }

@@ -83,34 +83,21 @@ struct FoodCostAnalyticsSection: View {
                     // The recoverable gauge that stood here is gone from this
                     // page (density #25): it drew the hero's recoverable
                     // figure a third time against the monthly projection.
-                    if !analytics.wasteItems.isEmpty {
-                        WasteLedgerChart(
-                            kicker: "Top waste offenders", title: "Waste Ledger",
-                            // total_waste_cost_week covers every item;
-                            // waste_items is only those above their category
-                            // tolerance, capped at six. The two branches of
-                            // one label used to compute different numbers, so
-                            // the fallback is the server's own flagged total.
-                            headline: "This week · $\(Int((analytics.wasteItemsTotal ?? analytics.wasteItems.reduce(0) { $0 + $1.wasteCost }).rounded()).formatted()) flagged",
-                            rows: analytics.wasteItems.map {
-                                WasteLedgerChart.Row(id: $0.id, name: $0.item, value: $0.wasteCost, detail: String(format: "%.0f%% waste", $0.wastePct))
-                            }
-                        )
-                    }
-                    if !analytics.overstock.isEmpty {
-                        WasteLedgerChart(
-                            kicker: "Overstocked", title: "Tied-Up Capital",
-                            // The server's total over every overstocked
-                            // item — the list here is truncated to five.
-                            headline: "$\(Int((analytics.overstockTotal ?? analytics.overstock.reduce(0) { $0 + $1.overstockCost }).rounded()).formatted()) sitting on shelves",
-                            rows: analytics.overstock.map {
-                                WasteLedgerChart.Row(
-                                    id: $0.id, name: $0.item, value: $0.overstockCost,
-                                    detail: [$0.currentStock, $0.parLevel].compactMap { $0 }.count == 2 ? "\(Int($0.currentStock ?? 0)) / \(Int($0.parLevel ?? 0)) par" : nil
-                                )
-                            },
-                            tint: Color.cavnarAmber
-                        )
+                    // The two ledgers side by side on an iPad when both have
+                    // rows (#99); stacked, as ever, on the phone.
+                    if !analytics.wasteItems.isEmpty && !analytics.overstock.isEmpty {
+                        CavnarTwoUp {
+                            wasteLedger(analytics)
+                        } trailing: {
+                            overstockLedger(analytics)
+                        }
+                    } else {
+                        if !analytics.wasteItems.isEmpty {
+                            wasteLedger(analytics)
+                        }
+                        if !analytics.overstock.isEmpty {
+                            overstockLedger(analytics)
+                        }
                     }
                     if !analytics.priceWatch.isEmpty {
                         priceWatchDetail(analytics.priceWatch)
@@ -784,6 +771,39 @@ struct FoodCostAnalyticsSection: View {
                     animatedValue = newValue
                 }
         }
+    }
+
+    // MARK: - The two ledgers
+
+    private func wasteLedger(_ analytics: FoodCostAnalytics) -> some View {
+        WasteLedgerChart(
+            kicker: "Top waste offenders", title: "Waste Ledger",
+            // total_waste_cost_week covers every item;
+            // waste_items is only those above their category
+            // tolerance, capped at six. The two branches of
+            // one label used to compute different numbers, so
+            // the fallback is the server's own flagged total.
+            headline: "This week · $\(Int((analytics.wasteItemsTotal ?? analytics.wasteItems.reduce(0) { $0 + $1.wasteCost }).rounded()).formatted()) flagged",
+            rows: analytics.wasteItems.map {
+                WasteLedgerChart.Row(id: $0.id, name: $0.item, value: $0.wasteCost, detail: String(format: "%.0f%% waste", $0.wastePct))
+            }
+        )
+    }
+
+    private func overstockLedger(_ analytics: FoodCostAnalytics) -> some View {
+        WasteLedgerChart(
+            kicker: "Overstocked", title: "Tied-Up Capital",
+            // The server's total over every overstocked
+            // item — the list here is truncated to five.
+            headline: "$\(Int((analytics.overstockTotal ?? analytics.overstock.reduce(0) { $0 + $1.overstockCost }).rounded()).formatted()) sitting on shelves",
+            rows: analytics.overstock.map {
+                WasteLedgerChart.Row(
+                    id: $0.id, name: $0.item, value: $0.overstockCost,
+                    detail: [$0.currentStock, $0.parLevel].compactMap { $0 }.count == 2 ? "\(Int($0.currentStock ?? 0)) / \(Int($0.parLevel ?? 0)) par" : nil
+                )
+            },
+            tint: Color.cavnarAmber
+        )
     }
 
     // MARK: - Stat strip — borderless, hairline dividers instead of tiles
