@@ -436,7 +436,10 @@ main{position:relative;z-index:1}
 #thread .track{fill:none;stroke:rgba(240,235,224,.08);stroke-width:1.2;stroke-dasharray:2 7}
 #thread .lit{fill:none;stroke:var(--ember2);stroke-width:1.6;stroke-linecap:round;opacity:.9}
 #thread .br{fill:none;stroke:var(--ember2);stroke-width:1.4;stroke-linecap:round;opacity:.85;transition:stroke-dashoffset 1s var(--ease)}
-#thread .head{transition:opacity .3s ease}
+/* the head: fixed on the reading line (60% down the screen), on the rail */
+.thread-head{position:fixed;left:0;top:0;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;pointer-events:none;z-index:0;opacity:0;transition:opacity .25s ease;
+  background:radial-gradient(circle,#fff4e8 0%,#f2b183 30%,rgba(200,75,47,0) 70%)}
+.thread-head.on{opacity:1}
 /* The Schedule Generator builds as you scroll: on a desktop tall enough to
    hold it, the section pins and the scroll scrubs the build (and unbuilds it
    on the way back); on a phone it scrubs as the board crosses the screen. */

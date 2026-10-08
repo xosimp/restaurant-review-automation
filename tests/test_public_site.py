@@ -161,4 +161,9 @@ def test_the_scroll_story_runs_natively_and_rests_for_reduced_motion():
     assert "if (reduce) apply(1);" in js, "reduced motion shows the finished week"
     assert "var readY = reduce ? 1e9" in js, "reduced motion shows the thread drawn"
     assert "inner.offsetHeight <= window.innerHeight - 96" in js, "pins only when it fits"
+    # the head is a fixed, composited element (drawn in the page and moved by
+    # script it showed twice on a fast scroll), and the rail stops where the
+    # last branch bends, so nothing pokes past the curve (10/8/26)
+    assert ".thread-head{position:fixed;" in css and "head.className = 'thread-head'" in js
+    assert "i === taps.length - 1 && t.d ? t.y - 16 : t.y" in js
     assert "=>" not in js

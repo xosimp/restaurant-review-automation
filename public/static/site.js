@@ -376,24 +376,28 @@
     var mk = function (tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var a in attrs) e.setAttribute(a, attrs[a]); parent.appendChild(e); return e; };
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('id', 'thread'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
-    var defs = mk('defs', {}, svg), rg = mk('radialGradient', { id: 'thr-dot' }, defs);
-    mk('stop', { offset: '0', 'stop-color': '#fff4e8' }, rg);
-    mk('stop', { offset: '.3', 'stop-color': '#f2b183', 'stop-opacity': '.9' }, rg);
-    mk('stop', { offset: '1', 'stop-color': '#c84b2f', 'stop-opacity': '0' }, rg);
     var gT = mk('g', {}, svg), gL = mk('g', {}, svg), gB = mk('g', {}, svg);
-    var head = mk('circle', { r: 9, fill: 'url(#thr-dot)', 'class': 'head', opacity: 0 }, svg);
     document.body.appendChild(svg);
+    // The head sits on the reading line, a fixed spot on the screen: a fixed
+    // element the browser composites itself. Drawn in the page and moved by
+    // script it rode the scroll for a frame before snapping back, so a fast
+    // scroll showed it twice (10/8/26).
+    var head = document.createElement('div');
+    head.className = 'thread-head'; head.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(head);
+    var railTop = 0, railEnd = 0;
     var segs = [], brs = [];
     var abs = function (el) { var r = el.getBoundingClientRect(); return { x: r.left + window.pageXOffset, y: r.top + window.pageYOffset, w: r.width, h: r.height }; };
     var phone = function () { return window.innerWidth < 760; };
     var update = function () {
-      var readY = reduce ? 1e9 : window.pageYOffset + window.innerHeight * 0.6, hx = null, hy = 0;
+      var readY = reduce ? 1e9 : window.pageYOffset + window.innerHeight * 0.6;
       segs.forEach(function (sg) {
         var f = Math.max(0, Math.min(1, (readY - sg.y1) / Math.max(1, sg.y2 - sg.y1)));
         if (Math.abs(f - sg.f) > 0.0005) { sg.el.setAttribute('stroke-dashoffset', (sg.L * (1 - f)).toFixed(1)); sg.f = f; }
-        if (f > 0 && f < 1) { var pt = sg.el.getPointAtLength(sg.L * f); hx = pt.x; hy = pt.y; }
       });
-      if (hx === null) head.setAttribute('opacity', 0); else { head.setAttribute('cx', hx.toFixed(1)); head.setAttribute('cy', hy.toFixed(1)); head.setAttribute('opacity', 1); }
+      // shown only while the reading line is on the straight rail
+      var on = !reduce && readY > railTop && readY < railEnd;
+      if (on !== head._on) { head._on = on; head.classList.toggle('on', on); }
       brs.forEach(function (b) {
         var on = readY >= b.y;
         if (on === b.on) return;
@@ -419,7 +423,14 @@
         return { y: y, d: d, name: el.getAttribute('data-core') };
       }).sort(function (p, q) { return p.y - q.y; });
       var parts = [{ d: 'M' + sx + ' ' + sy + ' C' + sx + ' ' + (sy + 90) + ' ' + rx + ' ' + (y0 - 90) + ' ' + rx + ' ' + y0, y1: sy, y2: y0 }], prev = y0;
-      taps.forEach(function (t) { if (t.y > prev + 1) { parts.push({ d: 'M' + rx + ' ' + prev + ' V' + t.y, y1: prev, y2: t.y }); prev = t.y; } });
+      taps.forEach(function (t, i) {
+        // the rail ends where the last branch's curve begins, so nothing
+        // pokes past the bend (10/8/26)
+        var end = i === taps.length - 1 && t.d ? t.y - 16 : t.y;
+        if (end > prev + 1) { parts.push({ d: 'M' + rx + ' ' + prev + ' V' + end, y1: prev, y2: end }); prev = end; }
+      });
+      railTop = y0; railEnd = prev;
+      head.style.transform = 'translate3d(' + rx.toFixed(1) + 'px,' + (window.innerHeight * 0.6).toFixed(1) + 'px,0)';
       gT.innerHTML = ''; gL.innerHTML = ''; gB.innerHTML = '';
       segs = parts.map(function (pt) {
         mk('path', { d: pt.d, 'class': 'track' }, gT);
