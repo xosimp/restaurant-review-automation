@@ -100,16 +100,16 @@ final class TeamOpsParityTests: XCTestCase {
     func testATypedReplyAnswersTheThreadOrTheTeammateInTheBackground() throws {
         let staff = try XCTUnwrap(PushManager.backgroundAction(
             for: PushManager.replyMessageAction, cavnar: ["alert_type": "employee_message", "thread_id": 7],
-            typedText: "  See you at 4  "))
+            userText: "  See you at 4  "))
         XCTAssertEqual(staff.path, "/mobile/api/labor/inbox/threads/7/reply")
         XCTAssertEqual(try object(XCTUnwrap(staff.payload)) as NSDictionary, ["body": "See you at 4"])
         let mate = try XCTUnwrap(PushManager.backgroundAction(
             for: PushManager.replyMessageAction, cavnar: ["alert_type": "team_message", "sender_id": "3"],
-            typedText: "Yes"))
+            userText: "Yes"))
         XCTAssertEqual(mate.path, "/mobile/api/team/messages")
         XCTAssertEqual(try object(XCTUnwrap(mate.payload)) as NSDictionary, ["recipient_id": 3, "body": "Yes"])
         XCTAssertNil(PushManager.backgroundAction(for: PushManager.replyMessageAction,
-                                                  cavnar: ["alert_type": "team_message", "sender_id": 3], typedText: "  "),
+                                                  cavnar: ["alert_type": "team_message", "sender_id": 3], userText: "  "),
                      "an empty reply sends nothing")
         XCTAssertTrue(PushManager.needsAppUnlock(mate, passcodeSet: true), "a reply is outward: the app passcode guards it")
     }
