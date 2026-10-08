@@ -49,7 +49,7 @@ from dataclasses import dataclass, field, replace
 # Bumped when any default below changes: every ai_runs row records the policy
 # version it ran under, so the learner never compares runs across a change it
 # cannot see.
-POLICY_VERSION = "2026-10-07.3"
+POLICY_VERSION = "2026-10-07.4"
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
@@ -110,6 +110,12 @@ class Policy:
     caps: Caps = field(default_factory=Caps)
     batch: bool = False          # may run through Message Batches (unattended)
     delivery: str = "interactive"   # interactive | background | batch
+    # A cheaper first rung than the call site ran on before this registry
+    # ships to the canary restaurants first (AI_CANARY_RESTAURANTS): every
+    # other restaurant starts one rung up — the previous model's tier — until
+    # the console turns the canary off for the workflow (context re-audit
+    # 10/7/26 #3). See canary_start.
+    canary: bool = False
     note: str = ""
 
 
@@ -173,7 +179,7 @@ POLICIES = {p.workflow: p for p in (
     _p("ask_summary", "cfo", "ask_summary", ladder=("T1",), reviewer="rules",
        caps=Caps(calls=1, usd=0.02, seconds=30), delivery="background"),
     # ── analyst ─────────────────────────────────────────────────────────
-    _p("labor_insight", "analyst", "labor_insight", ladder=("T1", "T2"),
+    _p("labor_insight", "analyst", "labor_insight", ladder=("T1", "T2"), canary=True,
        escalate_on=_ESC_COPY + ("validation_withhold",), max_escalations=1,
        caps=Caps(calls=2, usd=0.05, seconds=45),
        context=_ANALYST_CTX + ("labor_trend", "memory")),
@@ -199,7 +205,7 @@ POLICIES = {p.workflow: p for p in (
     # ── reviews ─────────────────────────────────────────────────────────
     _p("review_analysis", "reviews", "review_analysis", ladder=("T1",),
        caps=Caps(calls=1, usd=0.01, seconds=60), delivery="background"),
-    _p("draft_response", "reviews", "drafter", ladder=("T1", "T2"),
+    _p("draft_response", "reviews", "drafter", ladder=("T1", "T2"), canary=True,
        escalate_on=_ESC_COPY, max_escalations=1, reviewer="owner", reviewer_unattended="haiku_gate",
        shadow_rate=0.1, caps=Caps(calls=3, usd=0.05, seconds=60), delivery="background",
        context=("profile", "owner_rules"),
@@ -239,14 +245,14 @@ POLICIES = {p.workflow: p for p in (
     _p("recipe_draft", "documents", "recipes", ladder=("T2",), reviewer="owner", batch=True,
        caps=Caps(calls=1, usd=0.05, seconds=120), delivery="background"),
     # ── staff ───────────────────────────────────────────────────────────
-    _p("task_sheet_starter", "staff", "task_sheets", ladder=("T1", "T2"),
+    _p("task_sheet_starter", "staff", "task_sheets", ladder=("T1", "T2"), canary=True,
        escalate_on=_ESC_COPY, max_escalations=1, reviewer="owner",
        caps=Caps(calls=2, usd=0.05, seconds=60)),
     _p("staff_brief", "staff", "staff_brief", ladder=("T1",), reviewer="owner",
        caps=Caps(calls=1, usd=0.01, seconds=60), delivery="background"),
     _p("staff_translation", "staff", "staff_translation", ladder=("T1",), reviewer="rules",
        caps=Caps(calls=1, usd=0.01, seconds=60)),
-    _p("staff_answer", "staff", "staff_answer", ladder=("T1", "T2"),
+    _p("staff_answer", "staff", "staff_answer", ladder=("T1", "T2"), canary=True,
        escalate_on=_ESC_COPY + ("not_found", "reviewer_flag"), max_escalations=1, reviewer="haiku_gate",
        caps=Caps(calls=4, usd=0.06, seconds=45), context=("profile", "owner_rules"),
        note="read by staff with no manager between; 'ask your manager' is the safe fallback"),
@@ -267,7 +273,7 @@ POLICIES = {p.workflow: p for p in (
 # be overridden; anything else in a stored override is ignored, so a typo in
 # the console can never change a policy's identity.
 OVERRIDABLE = ("ladder", "escalate_on", "max_escalations", "reviewer", "reviewer_unattended",
-               "shadow_rate", "batch", "caps")
+               "shadow_rate", "batch", "caps", "canary")
 
 
 def _coerce(name, value, base):
@@ -294,7 +300,7 @@ def _coerce(name, value, base):
         if not 0.0 <= r <= 1.0:
             raise ValueError("shadow_rate is between 0 and 1")
         return r
-    if name == "batch":
+    if name in ("batch", "canary"):
         return bool(value)
     if name == "caps":
         d = dict(value or {})
@@ -384,6 +390,60 @@ class Route:
             else:
                 out.pop("output_config", None)
         return out
+
+
+# ── the canary ─────────────────────────────────────────────────────────────
+#
+# The orchestration design shipped a routing change behind a per-workflow
+# flag with a canary restaurant first; four workflows went Haiku-first for
+# everyone on day one instead (context re-audit 10/7/26 #3). A policy with
+# `canary` set starts on its cheap first rung only for the restaurants named
+# in AI_CANARY_RESTAURANTS (default "4", Simple EJ's Demo); every other
+# restaurant starts one rung up, on the tier of the model the call site ran
+# before the registry. The console turns `canary` off for a workflow (an
+# override) once the learner's numbers on the canary look right, and then
+# every restaurant starts at the bottom. ai_runs.canary records which a run
+# was: 1 on the cheap start, 0 held back, NULL for a workflow not canaried.
+CANARY_ENV = "AI_CANARY_RESTAURANTS"
+CANARY_DEFAULT = "4"
+
+
+CANARY_ALL = "*"
+
+
+def canary_restaurants() -> frozenset:
+    """The restaurant ids AI_CANARY_RESTAURANTS names (comma-separated;
+    empty: none; "*": every restaurant — the canary over for every
+    workflow at once). A value that is not an id is ignored."""
+    out = set()
+    for part in str(os.getenv(CANARY_ENV, CANARY_DEFAULT) or "").split(","):
+        part = part.strip()
+        if part == CANARY_ALL:
+            return frozenset((CANARY_ALL,))
+        if part.isdigit():
+            out.add(int(part))
+    return frozenset(out)
+
+
+def canary_start(pol: Policy, restaurant_id, start: str | None = None):
+    """(start, canary) for one run of `pol`. A policy without `canary` (or
+    with a ladder that has no rung above its first) is (start, None),
+    unchanged. A canary restaurant is (start, True): the ladder as written.
+    Any other restaurant is (start, False) with a start at the bottom rung
+    moved one up — a pre-router's own higher start is kept."""
+    ladder = list(pol.ladder)
+    if not pol.canary or len(ladder) < 2 or DEFAULT in ladder:
+        return start, None
+    try:
+        rid = int(restaurant_id) if restaurant_id is not None else None
+    except (TypeError, ValueError):
+        rid = None
+    names = canary_restaurants()
+    if CANARY_ALL in names or (rid is not None and rid in names):
+        return start, True
+    if not start or start not in ladder or start == ladder[0]:
+        start = ladder[1]
+    return start, False
 
 
 def route_for(pol: Policy, step: int = 0, start: str | None = None) -> Route:

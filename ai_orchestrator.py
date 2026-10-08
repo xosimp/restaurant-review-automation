@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS ai_runs (
     outcome_quality REAL,
     outcome_detail TEXT,
     outcome_at TEXT,
-    shadow_of TEXT
+    shadow_of TEXT,
+    canary INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_ai_runs_wf_created ON ai_runs(workflow, created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_runs_subject ON ai_runs(workflow, restaurant_id, subject);
@@ -151,6 +152,11 @@ def init_ai_orchestration(db_path=None):
     conn = _conn(db_path)
     try:
         conn.executescript(_SCHEMA)
+        # ai_runs.canary (context re-audit 10/7/26 #3): 1 a canary run on the
+        # cheap first rung, 0 held back a rung, NULL a workflow not canaried.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_runs)").fetchall()}
+        if "canary" not in cols:
+            conn.execute("ALTER TABLE ai_runs ADD COLUMN canary INTEGER")
         # Run cost is read from the ledger by correlation id (one run, one
         # id). ai_usage is created by ai_utils at boot just before this; on
         # a database where it is not there yet the index waits for the next boot.
@@ -312,7 +318,8 @@ def _spent(run_id, db_path=None):
 
 
 def _record(rr: RunResult, pol, *, restaurant_id, subject, unattended, start_tier, steps, started,
-            reviewer, reviewer_score, reviewer_notes, context, parent, trigger, db_path, shadow_of=None):
+            reviewer, reviewer_score, reviewer_notes, context, parent, trigger, db_path, shadow_of=None,
+            canary=None):
     cost, tin, tout, _calls = _spent(rr.run_id, db_path)
     try:
         conn = _conn(db_path)
@@ -322,7 +329,7 @@ def _record(rr: RunResult, pol, *, restaurant_id, subject, unattended, start_tie
                 "policy_version, overridden, subject, \"trigger\", unattended, start_tier, final_tier, final_model, "
                 "attempts, escalations, steps_json, status, verdict, reasons, reviewer, reviewer_score, "
                 "reviewer_notes, latency_ms, cost_usd, input_tokens, output_tokens, context_json, finished_at, "
-                "shadow_of) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?)",
+                "shadow_of, canary) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?)",
                 (rr.run_id, parent, restaurant_id, rr.workflow, pol.agent, wf.POLICY_VERSION,
                  1 if rr.workflow in overrides(db_path) else 0, (str(subject)[:120] if subject else None),
                  trigger, 1 if unattended else 0, start_tier, rr.tier, rr.model, rr.attempts, rr.escalations,
@@ -330,7 +337,8 @@ def _record(rr: RunResult, pol, *, restaurant_id, subject, unattended, start_tie
                  json.dumps(rr.verdict.reasons[:6])[:1000] if rr.verdict.reasons else None,
                  reviewer, reviewer_score, (reviewer_notes or "")[:500] or None,
                  int((time.time() - started) * 1000), round(cost, 6), tin, tout,
-                 json.dumps(context)[:2000] if context else None, shadow_of))
+                 json.dumps(context)[:2000] if context else None, shadow_of,
+                 None if canary is None else (1 if canary else 0)))
             conn.commit()
         finally:
             conn.close()
@@ -385,6 +393,9 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                 reviewer_score=None, reviewer_notes=None, context=context,
                 parent=(parent or {}).get("run_id"), trigger=trigger, db_path=db_path)
         raise RunRefused(f"{workflow} would run {depth} workflows deep (max {MAX_DEPTH})")
+    # A canaried workflow starts one rung up outside the canary restaurants
+    # (ai_workflows.canary_start, context re-audit 10/7/26 #3).
+    start, canary = wf.canary_start(pol, restaurant_id, start)
     n_rungs = wf.rungs(pol, start)
     # The rung a pre-router moved the run to; None when it starts at the bottom
     # (the learner's escalation rate reads runs that started there).
@@ -465,7 +476,7 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
     _record(rr, pol, restaurant_id=restaurant_id, subject=subject, unattended=unattended, start_tier=start,
             steps=steps, started=started, reviewer=reviewer_mode if reviewer_mode not in ("rules", "none") else None,
             reviewer_score=reviewer_score, reviewer_notes=reviewer_notes, context=context,
-            parent=(parent or {}).get("run_id"), trigger=trigger, db_path=db_path)
+            parent=(parent or {}).get("run_id"), trigger=trigger, db_path=db_path, canary=canary)
     # A shadow reviewer scores a sample of passing runs off the request path.
     if (rr.ok and review is not None and reviewer_mode in ("owner", "rules", "haiku_shadow")
             and pol.shadow_rate > 0 and random.random() < pol.shadow_rate):

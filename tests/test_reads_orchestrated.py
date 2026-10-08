@@ -40,6 +40,15 @@ from models import Restaurant, create_restaurant
 
 
 @pytest.fixture(autouse=True)
+def _every_restaurant_on_the_canary(monkeypatch):
+    """These tests hold each ladder as written; a canaried workflow starts on
+    its cheap rung only for AI_CANARY_RESTAURANTS (context re-audit 10/7/26
+    #3, held in tests/test_context_reaudit_1007.py), so every restaurant here
+    is a canary restaurant."""
+    monkeypatch.setenv("AI_CANARY_RESTAURANTS", "*")
+
+
+@pytest.fixture(autouse=True)
 def _db(db_path, monkeypatch):
     real = models.get_conn
 

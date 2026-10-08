@@ -734,9 +734,13 @@ def test_an_answer_cites_lines_from_the_store_not_the_model(client, monkeypatch)
                              "line": "Phones stay in the locker during service."}]
     # The first rung of the staff_answer policy (T1 since the AI orchestration,
     # 10/7/26 — it was the call site's own Sonnet); T2 only on escalation.
+    # T1 only for a canary restaurant (context re-audit 10/7/26 #3): this one
+    # is not, so it starts on T2, the model it ran before.
     import ai_workflows
+    pol = ai_workflows.POLICIES["staff_answer"]
+    start, canary = ai_workflows.canary_start(pol, rid)
     assert model.calls[0]["action"] == "staff_answer" and \
-        model.calls[0]["model"] == ai_workflows.route_for(ai_workflows.POLICIES["staff_answer"], 0).model
+        model.calls[0]["model"] == ai_workflows.route_for(pol, 0, start).model
 
 
 @pytest.mark.parametrize("reply,reason", [
