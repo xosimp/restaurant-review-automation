@@ -293,7 +293,8 @@ def test_the_cavnar_read_card_is_on_the_reviews_tab():
     assert 'id="review-insight"' in panel
     assert 'class="lb2-ai"' in panel
     fn = _fn("loadReviewInsight")
-    assert "fetch('/api/review-insight')" in fn
+    # Since the parity round the read goes through insightSwr (stale-while-refresh, #37).
+    assert "insightSwr('/api/review-insight'" in fn
     # Every caveat the server attaches rides on it — unverified figures,
     # unverified names and staleness now go through one call.
     assert "applyInsightCaveats(el,d)" in fn

@@ -618,8 +618,8 @@ CATEGORY_MESSAGE = "CAVNAR_MESSAGE"                 # Reply (typed in place)
 CATEGORY_LINEUP = "CAVNAR_LINEUP"                   # Approve · Open
 # Parity audit 10/7/26 (#35, #55): a recommendation answered from the lock
 # screen, and the types that used to arrive with no button at all.
-CATEGORY_REC = "CAVNAR_REC"                   # Done · Not for us (background)
-CATEGORY_REC_ASK = "CAVNAR_REC_ASK"           # Done · Not for us · Ask about this
+CATEGORY_REC = "CAVNAR_REC"                   # Done · Pass (background)
+CATEGORY_REC_ASK = "CAVNAR_REC_ASK"           # Done · Pass · Ask about this
 CATEGORY_PUBLISH_HELD = "CAVNAR_PUBLISH_HELD" # Send now (background) · Review
 CATEGORY_STOCK = "CAVNAR_STOCK"               # Draft order (opens the order)
 CATEGORY_LOGIN = "CAVNAR_LOGIN"               # This wasn't me (background)
@@ -663,7 +663,7 @@ def _category(alert_type, data) -> str:
     if alert_type == "dsr":
         return CATEGORY_DSR
     # A recommendation the app may answer (rec_delivery.answerable): Done and
-    # Not for us from the lock screen. A review alert keeps its own buttons —
+    # Pass from the lock screen. A review alert keeps its own buttons —
     # the reply is the thing to do about it — and an issue or a coverage gap
     # keeps the issue's (CATEGORY_ISSUE).
     if data.get("answerable") and data.get("rec_key") and not data.get("review_id") \

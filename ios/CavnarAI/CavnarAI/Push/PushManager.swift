@@ -306,7 +306,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         let openLineup = UNNotificationAction(identifier: openAction, title: "Open", options: [.foreground])
         // Parity audit #35 / #55.
         let done = UNNotificationAction(identifier: recDoneAction, title: "Done", options: [.authenticationRequired])
-        let notForUs = UNNotificationAction(identifier: recNotForUsAction, title: "Not for us",
+        let notForUs = UNNotificationAction(identifier: recNotForUsAction, title: "Pass",
                                             options: [.authenticationRequired])
         let sendNow = UNNotificationAction(identifier: sendNowAction, title: "Send now",
                                            options: [.authenticationRequired])
@@ -415,7 +415,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         /// `/labor/publish-schedule` — the week and the blocker keys the push
         /// named (client_api._publish_schedule_request).
         case publish(scheduleId: Int, acknowledge: [String])
-        /// `/recs/event` — Done or Not for us.
+        /// `/recs/event` — Done or Pass.
         case recAnswer(APIClient.RecEventBody)
         /// `/account/not-me` — the login the sign-in was.
         case notMe(loginUserId: Int)
@@ -507,7 +507,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                     body: .approve(expectedDraft: reply),
                                     savesDraft: SavedDraft(path: "/mobile/api/reviews/\(id)/save-draft", text: reply))
         case recDoneAction, recNotForUsAction:
-            // Done / Not for us on a recommendation the app may answer
+            // Done / Pass on a recommendation the app may answer
             // (push.py `answerable` + `rec_key`, #35) — POST /recs/event,
             // the cards' own body.
             guard cavnar["answerable"] as? Bool == true || (cavnar["answerable"] as? NSNumber)?.boolValue == true,
