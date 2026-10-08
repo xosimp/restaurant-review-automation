@@ -18,7 +18,11 @@ struct LaborWaitingOnYou: View {
     var onOpenRequests: () -> Void
     /// Opens the send sheet on a drafted week (its blockers and contacts).
     var onOpenDraft: (Int) -> Void = { _ in }
+    /// Opens the drafted week in the editor (iOS parity #5) — Review it.
+    var onOpenWeek: (Int) -> Void = { _ in }
     @State private var person: PersonSheetTarget?
+    /// The one-tap send, asked first (an outward send is never one tap).
+    @State private var confirmingSend: (id: Int, label: String)?
 
     private var pendingTimeOff: [TimeOffRequest] { viewModel.timeOff.filter { $0.status == "pending" } }
     private var pendingShifts: [ShiftRequest] { setupViewModel.pendingRequests }
@@ -140,15 +144,21 @@ struct LaborWaitingOnYou: View {
             HStack(spacing: 10) {
                 Button {
                     Haptic.light()
-                    onOpenDraft(id)
-                } label: { Text(oneTap ? "Review it" : "Review and send").frame(maxWidth: .infinity) }
+                    onOpenWeek(id)
+                } label: { Text("Review it").frame(maxWidth: .infinity) }
                 .buttonStyle(CavnarSecondaryButtonStyle())
+                if !oneTap {
+                    Button {
+                        Haptic.light()
+                        onOpenDraft(id)
+                    } label: { Text("Send\u{2026}").frame(maxWidth: .infinity) }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
                 if oneTap {
                     Button {
                         Haptic.light()
-                        Task {
-                            if await viewModel.sendDraft(id) { onOpenDraft(id) }
-                        }
+                        confirmingSend = (id, (reach?.reachable ?? 0) > 0 ? "Send to \(reach?.reachable ?? 0) staff"
+                                                                         : "Publish to the staff portal")
                     } label: {
                         Group {
                             if viewModel.isSendingDraft {
@@ -168,6 +178,18 @@ struct LaborWaitingOnYou: View {
         .padding(12)
         .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .confirmationDialog("Send the week of \(CavnarDate.mdy(draft.weekStart ?? ""))?",
+                            isPresented: Binding(get: { confirmingSend != nil }, set: { if !$0 { confirmingSend = nil } }),
+                            titleVisibility: .visible) {
+            Button(confirmingSend?.label ?? "Send") {
+                guard let send = confirmingSend else { return }
+                confirmingSend = nil
+                Task { if await viewModel.sendDraft(send.id) { onOpenDraft(send.id) } }
+            }
+            Button("Cancel", role: .cancel) { confirmingSend = nil }
+        } message: {
+            Text("Each person on it hears about their shifts. Nothing for the publish check to flag.")
+        }
     }
 
     /// "Mon 9/28/26" from an ISO date.

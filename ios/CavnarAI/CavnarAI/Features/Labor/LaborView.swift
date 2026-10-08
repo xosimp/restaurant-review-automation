@@ -57,6 +57,25 @@ struct LaborView: View {
     /// A person a review line named (an unmatched name's suggestion).
     @State private var reviewPerson: PersonSheetTarget?
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
+    /// What the next draft is built to, in the Generate card (iOS parity
+    /// #46): the labor target, the build notes and their rules, the
+    /// weekly automation.
+    @State private var buildSettings = ScheduleBuildSettings()
+    @State private var showingNotesSheet = false
+    /// Tonight's covers (iOS parity #69).
+    @State private var covers = CoversModel()
+    /// The day the week's pager shows (iOS parity #48).
+    @State private var pagerDay: String?
+    /// A week asked to open while the one on screen holds unsaved edits —
+    /// the screen asks before it is replaced (iOS parity #5).
+    @State private var pendingOpenWeek: Int?
+    /// Where to scroll next (a week opened, the scorecard's View).
+    @State private var scrollTarget: String?
+    /// Scheduling setup opened on a section a link named (#49).
+    @State private var setupFocusNotes = false
+    @State private var setupOpenClosers = false
+    /// The week as a PDF to post or print, drawn once the rows settle.
+    @State private var schedulePDF: URL?
 
     struct DraftToSend: Identifiable {
         let id: Int
@@ -102,8 +121,20 @@ struct LaborView: View {
                                                       setupViewModel.requestsExpanded = true
                                                       scrollToReveal(Self.requestsID, proxy: proxy)
                                                   },
-                                                  onOpenDraft: { draftToSend = DraftToSend(id: $0) })
+                                                  onOpenDraft: { draftToSend = DraftToSend(id: $0) },
+                                                  onOpenWeek: { requestOpenWeek($0) })
                                 .id(Self.waitingID)
+                                if let id = viewModel.openingWeekId {
+                                    CavnarShimmerText(text: "Opening the week\u{2026}")
+                                        .font(.cavnarBody(13.5, weight: 600))
+                                        .accessibilityLabel("Opening week \(id)")
+                                }
+                                if let error = viewModel.openWeekError {
+                                    Text(error)
+                                        .font(.cavnarBody(14))
+                                        .foregroundStyle(Color.cavnarRed)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                                 // What the team memory asks the owner — stale
                                 // notes, a person listed twice, a guest naming
                                 // someone — answered in Scheduling setup.
@@ -128,6 +159,8 @@ struct LaborView: View {
                                     scrollToReveal(Self.requestsID, proxy: proxy)
                                 }
                                 .id(Self.requestsID)
+                                // Tonight's covers, entered at close (#69).
+                                CoversTile(model: covers)
                                 // "Where the money went" was removed (owner,
                                 // 9/26/26), as on the web: the Staffing board
                                 // below carries the same days.
@@ -226,6 +259,8 @@ struct LaborView: View {
                     await setupViewModel.loadRoster()
                     await setupViewModel.loadSignals()
                     await teamMemory.load()
+                    await covers.load()
+                    await buildSettings.load(weekStart: viewModel.generateWeek.weekStart)
                 }
                 // A push or card about a request, the schedule or overtime
                 // opens its section and scrolls to it once the page is in.
@@ -233,13 +268,19 @@ struct LaborView: View {
                     guard loaded else { return }
                     revealFocus(proxy: proxy)
                 }
+                .onChange(of: scrollTarget) { _, target in
+                    guard let target else { return }
+                    scrollTarget = nil
+                    scrollToReveal(target, proxy: proxy)
+                }
             }
         }
         .cavnarModuleBackground()
         .sheet(item: $focusPerson) { target in PersonSheet(target: target) }
         .sheet(isPresented: $showingSetup, onDismiss: { setupFocusPerson = nil }) {
             LaborSetupSheet(viewModel: viewModel, setupViewModel: setupViewModel, teamMemory: teamMemory,
-                            focusPerson: $setupFocusPerson)
+                            focusPerson: $setupFocusPerson, focusNotes: $setupFocusNotes,
+                            openClosers: $setupOpenClosers)
         }
         // The ribbon itself always shows once there's a hero card, even
         // with zero upcoming events — the panel's own empty-state copy
@@ -349,7 +390,10 @@ struct LaborView: View {
             }
         }
         .sheet(isPresented: $showingScheduleHistory) {
-            ScheduleHistoryView()
+            ScheduleHistoryView(onOpenWeek: { id in
+                showingScheduleHistory = false
+                requestOpenWeek(id)
+            })
         }
         .sheet(isPresented: $showingTaskSheets) {
             TaskSheetsScreen()
@@ -396,6 +440,7 @@ struct LaborView: View {
             await setupViewModel.loadSignals()
         }
         .task { await teamMemory.load() }
+        .task { await buildSettings.load(weekStart: viewModel.generateWeek.weekStart) }
         // The week on screen's sections and each server's usual one (H2-2) —
         // for a week restored from the cache or reopened, not only a fresh one.
         .task(id: viewModel.scheduleResult?.historyId) { await viewModel.loadSections() }
@@ -410,7 +455,29 @@ struct LaborView: View {
             PublishScheduleSheet(scheduleId: draft.id)
         }
         .sheet(item: $editingShift) { mode in
-            ShiftEditSheet(mode: mode, viewModel: viewModel)
+            ShiftEditSheet(mode: mode, viewModel: viewModel, roster: setupViewModel.activeRoster)
+        }
+        .sheet(isPresented: $showingNotesSheet) { ScheduleNotesSheet(settings: buildSettings) }
+        .sheet(isPresented: $viewModel.showingDraftSummary) {
+            if let result = viewModel.scheduleResult {
+                ScheduleSummarySheet(
+                    result: result,
+                    onView: { scrollTarget = Self.scheduleID },
+                    onWarnings: { scrollTarget = Self.reviewID },
+                    onPublish: { after { showingPublishSchedule = true } },
+                    onOptimize: viewModel.weekReadOnlyReason == nil ? { Task { await viewModel.optimize() } } : nil)
+            }
+        }
+        .confirmationDialog("Open another week?",
+                            isPresented: Binding(get: { pendingOpenWeek != nil }, set: { if !$0 { pendingOpenWeek = nil } }),
+                            titleVisibility: .visible) {
+            Button("Open it \u{2014} drop my unsaved edits", role: .destructive) {
+                if let id = pendingOpenWeek { openWeekNow(id) }
+                pendingOpenWeek = nil
+            }
+            Button("Keep editing this week", role: .cancel) { pendingOpenWeek = nil }
+        } message: {
+            Text("The week on screen has edits that haven\u{2019}t saved yet.")
         }
         .confirmationDialog(removingRow.map { "Take \($0.employee ?? "this person")\u{2019}s \($0.day ?? "") \($0.shiftStart ?? "") shift off the week?" } ?? "",
                             isPresented: Binding(get: { removingRow != nil }, set: { if !$0 { removingRow = nil } }),
@@ -552,6 +619,15 @@ struct LaborView: View {
                 // How current the sales are, the budget's caveat, and the
                 // owner's words for this draft (E, C2-3).
                 GenerateWeekNotes(viewModel: viewModel)
+                // Another week is being built (a 409): that week, and a way
+                // to follow it (iOS parity #15).
+                if let busy = viewModel.busyRun {
+                    GenerationBusyCard(busy: busy, onFollow: { Task { await viewModel.followBusyRun() } },
+                                       onDismiss: { viewModel.busyRun = nil })
+                }
+                // The target, the notes the draft reads and the weekly
+                // automation, where the draft is made (#46).
+                GenerateBuildRows(settings: buildSettings, onOpenNotes: { showingNotesSheet = true })
             }
 
             // "Building the Week" — shifts fill a 7-day grid while an ember
@@ -573,7 +649,9 @@ struct LaborView: View {
                     }
                     // What it is actually doing, rather than sixty seconds
                     // of a spinner. Every line is a real stage of the run.
-                    ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true)
+                    ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true,
+                                          startedAt: viewModel.generationStartedAt,
+                                          typical: viewModel.generationTypical)
                     // The one real measure of how far it has got: the days
                     // its answer has finished (schedule-status `progress`,
                     // AI cost audit 10/7/26 #36) — the web says the same.
@@ -585,6 +663,18 @@ struct LaborView: View {
                             .foregroundStyle(Color.cavnarInk2)
                             .accessibilityLabel(line)
                             .transition(.opacity)
+                    }
+                    // How long it usually takes here, measured; whether this
+                    // one is running long and when it stops at the latest;
+                    // that the owner can leave (the web's renderScheduleEta).
+                    if let started = viewModel.generationStartedAt {
+                        TimelineView(.periodic(from: .now, by: 1)) { tl in
+                            HomeMixedText.make(GenerationCopy.etaLine(elapsed: tl.date.timeIntervalSince(started),
+                                                                      typical: viewModel.generationTypical,
+                                                                      until: viewModel.generationUntil),
+                                               size: 13, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
                 .padding(.top, 10)
@@ -635,7 +725,7 @@ struct LaborView: View {
                 Text("Sample data")
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarAmber)
-                Text("These are example figures, not your restaurant's. Upload your shifts CSV under Account to see your own numbers.")
+                Text("These are example figures, not your restaurant's. Connect your POS, or upload a shifts CSV on the web (Labor \u{2192} Schedule Studio), to see your own numbers.")
                     .font(.cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -736,9 +826,9 @@ struct LaborView: View {
                 .foregroundStyle(Color.cavnarEmber)
             Group {
                 if !info.isLive {
-                    Text("Showing sample data for illustration — upload your shifts CSV in Account for real numbers.")
+                    Text("Showing sample data for illustration \u{2014} connect your POS, or upload a shifts CSV on the web, for real numbers.")
                 } else if info.stale {
-                    Text("Shift data is from \(info.rangeText) — \(info.daysOld) days old. Upload a fresher CSV for current numbers.")
+                    Text("Shift data is from \(info.rangeText) \u{2014} \(info.daysOld) days old. Upload a fresher shifts CSV on the web for current numbers.")
                 } else {
                     Text("Based on shift data from \(info.rangeText).")
                 }
@@ -878,8 +968,25 @@ struct LaborView: View {
             showingSetup = true
         case .schedule:
             viewModel.scheduleResultExpanded = true
-            // No draft yet: the top of Labor, where the week is built.
-            if viewModel.scheduleResult?.ok == true { scrollToReveal(Self.scheduleID, proxy: proxy) }
+            // schedule/<id> (the drafted push, History, a held send) opens
+            // that week in the editor (iOS parity #5).
+            if let id = focusItem.flatMap(Int.init), id > 0 {
+                requestOpenWeek(id)
+            } else if viewModel.scheduleResult?.ok == true {
+                // No draft yet: the top of Labor, where the week is built.
+                scrollToReveal(Self.scheduleID, proxy: proxy)
+            }
+        case .notes:
+            // Scheduling notes live in Scheduling setup (#49).
+            teamMemory.isExpanded = true
+            setupFocusNotes = true
+            showingSetup = true
+        case .closers:
+            setupViewModel.rosterExpanded = true
+            setupOpenClosers = true
+            showingSetup = true
+        case .tasks:
+            showingTaskSheets = true
         case .ratings:
             if sessionStore.currentUser?.isOwner == true { showingMeasuredRatings = true }
         case .intel:
@@ -1147,8 +1254,63 @@ struct LaborView: View {
                         .buttonStyle(CavnarSecondaryButtonStyle())
                         .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
                     }
+                    // A PDF to post on the wall or print (the web's Print).
+                    if let pdf = schedulePDF {
+                        ShareLink(item: pdf, preview: SharePreview("Schedule PDF", image: Image(systemName: "doc.richtext"))) {
+                            Label("PDF", systemImage: "printer")
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
+                    }
+                }
+                if result.historyId != nil {
+                    Button {
+                        Haptic.light()
+                        viewModel.showingDraftSummary = true
+                    } label: {
+                        Label("The week at a glance", systemImage: "square.grid.2x2")
+                            .font(.cavnarBody(13.5, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
+        }
+        .task(id: Self.pdfKey(result)) {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            schedulePDF = SchedulePDF.file(for: result)
+        }
+    }
+
+    /// Changes whenever the rows do, so the PDF is redrawn after an edit.
+    static func pdfKey(_ result: GeneratedSchedule) -> String {
+        "\(result.historyId ?? 0)|\(result.version ?? 0)|" + (result.previewRows ?? []).map(\.signature).joined(separator: ";")
+    }
+
+    /// Open a week in the editor, asking first when the one on screen holds
+    /// an edit no save has stored.
+    private func requestOpenWeek(_ id: Int) {
+        if viewModel.hasLocalEdits, viewModel.scheduleResult?.historyId != id {
+            pendingOpenWeek = id
+        } else {
+            openWeekNow(id)
+        }
+    }
+
+    private func openWeekNow(_ id: Int) {
+        subTab = .overview
+        Task {
+            if await viewModel.openWeek(id) { scrollTarget = Self.scheduleID }
+        }
+    }
+
+    /// A second sheet from this screen waits for the first to go.
+    private func after(_ action: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            action()
         }
     }
 
@@ -1323,8 +1485,18 @@ struct LaborView: View {
                     }
                 }
             }
-            ForEach(orderedDays, id: \.self) { day in
-                scheduleDayGroup(day: day, rows: grouped[day] ?? [], emptyDate: unwritten[day])
+            // A page per day under a strip of day chips, or everyone's week
+            // (iOS parity #48) — the web's grid and list, phone-shaped.
+            ScheduleWeekPager(
+                days: orderedDays.map { day in
+                    ScheduleDayPage(day: day, date: grouped[day]?.first?.date ?? unwritten[day],
+                                    count: grouped[day]?.count ?? 0,
+                                    notWritten: (grouped[day] ?? []).isEmpty && unwritten[day] != nil)
+                },
+                rows: recognized,
+                selectedDay: $pagerDay
+            ) { page in
+                scheduleDayGroup(day: page.day, rows: grouped[page.day] ?? [], emptyDate: unwritten[page.day])
             }
             if !unrecognized.isEmpty {
                 needsReviewGroup(unrecognized)
@@ -1826,14 +1998,10 @@ private struct PulsingSparkleIcon: View {
 private struct ScheduleLoadingText: View {
     let color: Color
 
-    // "Usually takes..." was 25–35s, set before this was measured against
-    // a real server log — an actual generation (full shift history + YoY +
-    // weather + the PAR-reconciliation prompt) took ~71s end to end.
-    // Rounded up rather than quoting a precise range that varies run to
-    // run.
+    // No time claim here: a week takes minutes now, and how long it usually
+    // takes is the measured line under the steps (iOS parity #15).
     private static let messages = [
         "Reviewing your sales & shift history…",
-        "Usually takes about a minute…",
         "Balancing coverage across the week…",
         "Checking for overtime risk…",
         "Weighing upcoming events & weather…",
@@ -1910,6 +2078,9 @@ private struct ShimmerText: View {
 /// — every spelling the server, the web and older builds use, folded to one.
 enum LaborFocus: Equatable {
     case waiting, requests, timeOff, team, overtime, availability, schedule, ratings, intel, learned
+    // Scheduling notes, the closer cleanup and the task sheets (iOS parity
+    // #49): action_queue's "labor/notes" and the web's own sections.
+    case notes, closers, tasks
 
     init?(section: String) {
         switch section.lowercased() {
@@ -1924,6 +2095,9 @@ enum LaborFocus: Equatable {
         case "ratings": self = .ratings
         case "intel": self = .intel
         case "learned", "schedule-memory", "memory": self = .learned
+        case "notes", "staff-notes", "staff_notes", "scheduling-notes": self = .notes
+        case "closers", "closer": self = .closers
+        case "tasks", "task-sheets", "task_sheets", "tasksheets": self = .tasks
         default: return nil
         }
     }
@@ -1942,6 +2116,9 @@ private struct LaborSetupSheet: View {
     let teamMemory: TeamMemoryViewModel
     /// A "person/<key>" link's person, opened over the roster.
     @Binding var focusPerson: PersonSheetTarget?
+    /// labor/notes and labor/closers (#49): scrolled to, or opened, once.
+    @Binding var focusNotes: Bool
+    @Binding var openClosers: Bool
     @Environment(\.dismiss) private var dismiss
 
     private static let rosterID = "setup-roster"
@@ -1956,7 +2133,8 @@ private struct LaborSetupSheet: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        RosterSection(viewModel: setupViewModel) { reveal(Self.rosterID, proxy) }
+                        RosterSection(viewModel: setupViewModel, onExpand: { reveal(Self.rosterID, proxy) },
+                                      openClosers: $openClosers)
                             .id(Self.rosterID)
                         TeamMemorySection(viewModel: teamMemory,
                                           names: setupViewModel.roster.map(\.name)) { reveal(Self.notesID, proxy) }
@@ -1982,6 +2160,11 @@ private struct LaborSetupSheet: View {
                     .padding(20)
                 }
                 .scrollDismissesKeyboard(.immediately)
+                .onAppear {
+                    guard focusNotes else { return }
+                    focusNotes = false
+                    reveal(Self.notesID, proxy)
+                }
             }
             .cavnarModuleBackground()
             .toolbarBackground(.hidden, for: .navigationBar)

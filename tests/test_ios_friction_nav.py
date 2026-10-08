@@ -49,7 +49,8 @@ def test_module_screens_receive_their_focus():
     assert "cavnarShowsLocationTitle, true" in dest
     labor = _src("Features/Labor/LaborView.swift")
     assert "revealFocus(proxy: proxy)" in labor
-    assert "ScheduleHistoryView()" in labor
+    # History opens a week in Labor's own editor (iOS parity #5, 10/7/26).
+    assert "ScheduleHistoryView(onOpenWeek:" in labor
 
 
 def test_a_deep_link_starts_a_fresh_modules_stack():

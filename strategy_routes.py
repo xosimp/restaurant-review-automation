@@ -6274,6 +6274,38 @@ def _open_draft_id(rid, today):
     return row["id"] if row else None
 
 
+def draft_one_tap_safe(rid, schedule_id, can_publish=True) -> bool:
+    """Whether a drafted week may go out from one tap — the push's "Send to
+    staff" (iOS parity #16) and Waiting on you's Send: unsent, not replaced,
+    nothing the publish gate would ask about, and somebody it reaches. The
+    same rule LaborWaitingOnYou applies to publish-check's answer; the
+    publish route still checks again when the button is pressed. Never
+    raises (False)."""
+    if not can_publish or not schedule_id:
+        return False
+    try:
+        from client_api import publish_review
+        from labor import employees_in_schedule
+        from models import get_conn as _gc
+        import people
+        conn = _gc()
+        try:
+            row = conn.execute("SELECT id, published_at, superseded_by, schedule_csv FROM schedule_history "
+                               "WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+        finally:
+            conn.close()
+        if not row or row["published_at"] or row["superseded_by"]:
+            return False
+        if (publish_review(rid, row["id"]) or {}).get("blockers"):
+            return False
+        reach = people.reach_summary(people.reach(rid, employees_in_schedule(row["schedule_csv"] or "")))
+        return int(reach.get("total") or 0) > 0
+    except Exception as e:
+        import ops
+        ops.capture(e, job="draft_one_tap_safe", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+        return False
+
+
 def _do_publish_check(u):
     """What pressing Send would do, before it is pressed: the week, the
     blockers the publish gate would ask about, and who each channel reaches.

@@ -177,10 +177,7 @@ struct TaskSheetsScreen: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("View", selection: $view) {
-                    ForEach(View3.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
+                CavnarSegmentedControl(selection: $view, options: View3.allCases) { $0.rawValue }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
                 switch view {
@@ -229,7 +226,7 @@ private struct TSDayView: View {
             .padding(20)
         }
         .task(id: day) { await load() }
-        .refreshable { await load() }
+        .cavnarEmberRefreshable { await load() }
     }
 
     @ViewBuilder
@@ -315,8 +312,9 @@ private struct TSReadOnlySheet: View {
                 Text("\(sheet.done)/\(sheet.total)").font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk2)
             }
             Text(meta).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3).padding(.top, 3)
-            ProgressView(value: Double(sheet.done), total: Double(max(sheet.total, 1)))
-                .tint(bad ? Color.cavnarRed : Color.cavnarGreen)
+            // The web's .ts-bar: ember, red when missed, partial or overdue
+            // — never a system ProgressView.
+            TSProgressBar(done: sheet.done, total: sheet.total, bad: bad)
                 .padding(.vertical, 10)
             ForEach(sheet.lines) { l in
                 HStack(alignment: .top, spacing: 10) {
@@ -333,9 +331,13 @@ private struct TSReadOnlySheet: View {
                         }
                         if l.done {
                             Text("\(l.completedBy ?? "Someone") · \(StaffSheetFormat.clock(l.completedAt))"
-                                 + (l.proofValue.map { " · \(l.proofLabel.map { $0 + ": " } ?? "")\($0)" } ?? "")
-                                 + (l.photo != nil ? " · photo" : ""))
+                                 + (l.proofValue.map { " · \(l.proofLabel.map { $0 + ": " } ?? "")\($0)" } ?? ""))
                                 .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            // The proof photo itself, tap for full screen
+                            // (iOS parity #50) — it read " · photo".
+                            if let token = l.photo, !token.isEmpty {
+                                TSProofThumb(token: token, caption: l.label)
+                            }
                         } else if let due = l.dueAt {
                             Text("Due \(StaffSheetFormat.clock(due))").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                         }
@@ -498,7 +500,7 @@ private struct TSEditorList: View {
         }
         .scrollContentBackground(.hidden)
         .task { await load() }
-        .refreshable { await load() }
+        .cavnarEmberRefreshable { await load() }
         .sheet(isPresented: $creating) {
             TSNewSheet(kinds: data?.shiftKinds ?? [], codes: data?.jobCodes ?? []) { await load() }
         }
@@ -639,7 +641,8 @@ private struct TSSheetEditor: View {
                             HStack {
                                 Text(d.label).font(.cavnarBody(14.5))
                                 Spacer()
-                                Button("Add") { Task { await addDraft(i) } }.buttonStyle(.bordered).tint(Color.cavnarEmber)
+                                Button("Add") { Task { await addDraft(i) } }
+                                    .buttonStyle(CavnarChipButtonStyle(tone: .cavnarEmber))
                             }
                         }
                     }
@@ -823,5 +826,156 @@ private struct TSLineForm: View {
         let f: [String: String] = ["label": label, "section": section, "due_offset_min": due, "proof": proof,
                                    "proof_label": proofLabel, "min_value": minV, "max_value": maxV, "critical": critical ? "1" : "0"]
         if let e = await onSave(f) { error = e } else { dismiss() }
+    }
+}
+
+
+// MARK: - Progress and proof photos (iOS parity, 10/7/26)
+
+/// A sheet's progress: the ember capsule StaffEmberProgressBar draws, red
+/// when the sheet was missed, left partial or is overdue (the web's .ts-bar).
+private struct TSProgressBar: View {
+    let done: Int
+    let total: Int
+    let bad: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var fraction: CGFloat { total > 0 ? min(1, max(0, CGFloat(done) / CGFloat(total))) : 0 }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.cavnarPaper3.opacity(0.7))
+                Capsule()
+                    .fill(bad ? LinearGradient(colors: [Color.cavnarRed, Color.cavnarRed.opacity(0.8)],
+                                               startPoint: .leading, endPoint: .trailing)
+                              : LinearGradient(colors: [Color.cavnarEmber, Color.cavnarEmber2],
+                                               startPoint: .leading, endPoint: .trailing))
+                    .frame(width: fraction > 0 ? max(6, geo.size.width * fraction) : 0)
+            }
+        }
+        .frame(height: 6)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: fraction)
+        .accessibilityLabel("\(done) of \(total) lines done")
+    }
+}
+
+/// A proof photo's bytes for the owner (GET /mobile/api/task-sheets/photo/
+/// <token>, this restaurant's only): the stored session's bearer, an
+/// ephemeral session (nothing on disk) pinned on the production host, and a
+/// named timeout. Kept in memory for the screen's life.
+enum OwnerProofPhoto {
+    @MainActor private static var cache: [String: UIImage] = [:]
+
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        config.waitsForConnectivity = false
+        let delegate = AppEnvironment.isProductionHost ? PinnedSessionDelegate() : nil
+        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+    }()
+
+    /// Tokens are URL-safe base64; anything else is not one of ours.
+    static func isToken(_ token: String) -> Bool {
+        !token.isEmpty && token.count <= 200
+            && token.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+    }
+
+    @MainActor
+    static func image(_ token: String) async -> UIImage? {
+        if let hit = cache[token] { return hit }
+        guard isToken(token), let bearer = Keychain.get(Keychain.Key.sessionToken) else { return nil }
+        var request = URLRequest(url: AppEnvironment.baseURL.appendingPathComponent("/mobile/api/task-sheets/photo/" + token))
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        guard let (data, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let image = UIImage(data: data) else { return nil }
+        cache[token] = image
+        return image
+    }
+}
+
+/// The line's proof photo as a thumbnail; a tap shows it full screen.
+private struct TSProofThumb: View {
+    let token: String
+    let caption: String
+    @State private var image: UIImage?
+    @State private var failed = false
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            guard image != nil else { return }
+            Haptic.light()
+            showing = true
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.cavnarPaper3.opacity(0.5))
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else if failed {
+                    Image(systemName: "photo").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.cavnarInk3)
+                } else {
+                    CavnarSkeletonBar(height: 3).frame(width: 30)
+                }
+            }
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 4)
+        .accessibilityLabel(failed ? "Proof photo couldn't load" : "Proof photo for \(caption) \u{2014} opens full screen")
+        .task(id: token) {
+            image = await OwnerProofPhoto.image(token)
+            failed = image == nil
+        }
+        .fullScreenCover(isPresented: $showing) {
+            TSPhotoViewer(image: image, caption: caption)
+        }
+    }
+}
+
+private struct TSPhotoViewer: View {
+    let image: UIImage?
+    let caption: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var scale: CGFloat = 1
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.cavnarPaper.ignoresSafeArea()
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .scaleEffect(scale)
+                    .gesture(MagnificationGesture().onChanged { scale = max(1, min(4, $0)) }
+                        .onEnded { _ in if scale < 1.05 { scale = 1 } })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityLabel("Proof photo for \(caption)")
+            }
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color.cavnarInk)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Color.cavnarPaper2))
+            }
+            .buttonStyle(.plain)
+            .padding(16)
+            .accessibilityLabel("Close")
+        }
+        .overlay(alignment: .bottom) {
+            Text(caption)
+                .font(.cavnarBody(14, weight: 600))
+                .foregroundStyle(Color.cavnarInk2)
+                .padding(16)
+        }
     }
 }

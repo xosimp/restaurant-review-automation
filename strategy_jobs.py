@@ -1352,9 +1352,12 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     # than raising, so the push below must wait on that verdict — telling
     # an owner a draft is waiting when none was saved is worse than silence.
     state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
+    import schedule_engine as _watch
     if state.get("status") != "done":
+        _watch.take_generation_watchers(job_id)
         return
     _bump("drafted")
+    told = set()
     try:
         import notify, push
         # The owner's task, not the line cook's: a teammate with the app
@@ -1380,11 +1383,26 @@ def _draft_one(r, db_path, _se, _bump, period=None):
         body = ("Review it and publish when it looks right — nothing has gone to your staff yet." if not gaps else
                 f"{len(gaps)} day{'s' if len(gaps) != 1 else ''} couldn't be written — redo "
                 f"{'it' if len(gaps) == 1 else 'them'} before you publish. Nothing has gone to your staff yet.")
+        # The week itself (iOS parity #5/#16): the push opens it in the
+        # editor, and offers Send to staff from the lock screen only when the
+        # week could go out in one tap — the audience can all publish.
+        _res = state.get("result") if isinstance(state.get("result"), dict) else {}
+        _sid = _res.get("history_id")
+        _data = {}
+        if _sid:
+            import strategy_routes as _sr_safe
+            _data = {"schedule_id": int(_sid),
+                     "one_tap_safe": bool(not gaps and _sr_safe.draft_one_tap_safe(r.id, int(_sid)))}
         push.fire_push(r.id, "schedule_drafted",
                        "Next week's schedule is drafted" if not gaps else "Next week's schedule is partly drafted",
-                       body, data={}, db_path=db_path, user_ids=audience)
+                       body, data=_data, db_path=db_path, user_ids=audience)
+        told = set(audience)
     except Exception as e:
         ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
+    finally:
+        # An owner whose press joined this run is told once — by the push
+        # above when they were in its audience, else by their own.
+        _watch.notify_generation_watchers(job_id, r.id, exclude=told)
 
 
 AUTO_DRAFT_CURSOR_KEY = "auto_draft_schedule_cursor"

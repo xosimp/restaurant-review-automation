@@ -535,6 +535,14 @@ CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # no extra button: the tap opens it
 CATEGORY_REVIEW_DRAFTED = "CAVNAR_REVIEW_DRAFTED"   # Approve & post · Edit
 CATEGORY_UNDOABLE = "CAVNAR_UNDOABLE"               # Undo · Review
 CATEGORY_REQUEST = "CAVNAR_REQUEST"                 # Approve · Deny
+# A drafted week (iOS parity #16, 10/7/26): Review opens it in the editor;
+# Send to staff is offered only on a payload the server marked one_tap_safe
+# (no warnings, the login can publish, someone to reach — Waiting on you's
+# rule), and the publish route checks again when it is pressed.
+CATEGORY_SCHEDULE = "CAVNAR_SCHEDULE"               # Review · Send to staff
+# The same push when one tap is not safe: Review only (a category's buttons
+# are fixed on the phone, so the server picks the one without Send).
+CATEGORY_SCHEDULE_REVIEW = "CAVNAR_SCHEDULE_REVIEW"  # Review
 _BRIEF_TYPES = {"morning_brief", "intraday_pulse", "closing_summary",
                 "weekly_review", "monthly_review", "daily_briefing"}
 _ISSUE_TYPES = {"issue", "issue_escalated", "coverage", "critical_low"}
@@ -548,6 +556,8 @@ def _category(alert_type, data) -> str:
         return CATEGORY_UNDOABLE
     if alert_type == "shift_request" and data.get("request_id") and data.get("request_kind"):
         return CATEGORY_REQUEST
+    if alert_type == "schedule_drafted" and data.get("schedule_id"):
+        return CATEGORY_SCHEDULE if data.get("one_tap_safe") is True else CATEGORY_SCHEDULE_REVIEW
     if alert_type in _BRIEF_TYPES or data.get("ask_prompt"):
         return CATEGORY_BRIEF
     if alert_type in _ISSUE_TYPES:
@@ -626,7 +636,8 @@ def nav_for(alert_type, data=None) -> str:
         if data.get("request_id") and data.get("request_kind"):
             return nav.path("request", f"{data['request_kind']}-{data['request_id']}")
         return nav.path("labor", "requests")
-    if alert_type == "schedule_publish_held" and data.get("schedule_id"):
+    if alert_type in ("schedule_publish_held", "schedule_drafted") and data.get("schedule_id"):
+        # The drafted week itself, opened in the editor (iOS parity #5).
         return nav.path("schedule", data["schedule_id"])
     if alert_type in ("schedule_drafted", "schedule_publish_held", "coverage"):
         return nav.path("labor", "schedule")

@@ -9,6 +9,15 @@ struct ScheduleHistoryEntry: Codable, Identifiable, Hashable {
     let hoursScheduled: Double?
     let hoursBudget: Double?
     let laborTarget: Double?
+    // What the list says about each week, as the web's History does (iOS
+    // parity, 10/7/26): sent or a draft or replaced, its quality and the
+    // server's one-line summary. All lenient; absent on an older server.
+    var publishedAt: String? = nil
+    var supersededBy: Int? = nil
+    var qualityScore: LenientDouble? = nil
+    var qualityBand: String? = nil
+    var summaryLine: String? = nil
+    var editedAt: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -18,6 +27,38 @@ struct ScheduleHistoryEntry: Codable, Identifiable, Hashable {
         case hoursScheduled = "hours_scheduled"
         case hoursBudget = "hours_budget"
         case laborTarget = "labor_target"
+        case publishedAt = "published_at"
+        case supersededBy = "superseded_by"
+        case qualityScore = "quality_score"
+        case qualityBand = "quality_band"
+        case summaryLine = "summary_line"
+        case editedAt = "edited_at"
+    }
+
+    /// "Sent", "Draft" or "Replaced" — the web's pill.
+    var state: String {
+        if let p = publishedAt, !p.isEmpty { return "Sent" }
+        if (supersededBy ?? 0) > 0 { return "Replaced" }
+        return "Draft"
+    }
+}
+
+extension ScheduleHistoryEntry {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        generatedAt = (try? c.decodeIfPresent(String.self, forKey: .generatedAt)) ?? ""
+        weekStart = try? c.decodeIfPresent(String.self, forKey: .weekStart)
+        weekEnd = try? c.decodeIfPresent(String.self, forKey: .weekEnd)
+        hoursScheduled = try? c.decodeIfPresent(Double.self, forKey: .hoursScheduled)
+        hoursBudget = try? c.decodeIfPresent(Double.self, forKey: .hoursBudget)
+        laborTarget = try? c.decodeIfPresent(Double.self, forKey: .laborTarget)
+        publishedAt = try? c.decodeIfPresent(String.self, forKey: .publishedAt)
+        supersededBy = try? c.decodeIfPresent(Int.self, forKey: .supersededBy)
+        qualityScore = try? c.decodeIfPresent(LenientDouble.self, forKey: .qualityScore)
+        qualityBand = try? c.decodeIfPresent(String.self, forKey: .qualityBand)
+        summaryLine = try? c.decodeIfPresent(String.self, forKey: .summaryLine)
+        editedAt = try? c.decodeIfPresent(String.self, forKey: .editedAt)
     }
 }
 

@@ -3311,9 +3311,14 @@ def mobile_generate_schedule(current_user):
             # The owner now waits on it: a queued auto-draft goes ahead as a
             # press, never timing out on them (re-audit 10/7/26 #1).
             _se.promote_generation(_running)
+            # This login hears when it lands, too (iOS parity #16).
+            _se.watch_generation(_running, current_user)
             return jsonify(ok=True, job_id=_running, joined=True, wait_seconds=_schedule_wait(_running, rid),
                            typical=_se.typical_generation_seconds(rid))
-        return jsonify(ok=False, busy=True, running=_running_req,
+        # The run in the way, with its job: a client can show that week being
+        # built and follow it rather than only refusing (iOS parity, 10/7/26).
+        return jsonify(ok=False, busy=True, running=_running_req, job_id=_running,
+                       wait_seconds=_schedule_wait(_running, rid), typical=_se.typical_generation_seconds(rid),
                        error=_se.busy_message(_running_req)), 409
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
@@ -3325,6 +3330,7 @@ def mobile_generate_schedule(current_user):
         return jsonify(ok=False, busy=True, running=_busy.request, error=_se.busy_message(_busy.request)), 409
     if joined:
         _se.promote_generation(job_id)
+        _se.watch_generation(job_id, current_user)
         return jsonify(ok=True, job_id=job_id, joined=True, wait_seconds=_schedule_wait(job_id, rid),
                        typical=_se.typical_generation_seconds(rid))
     # The owner throwing a draft away is the strongest "no" there is, and it
@@ -3350,6 +3356,10 @@ def mobile_generate_schedule(current_user):
     # 10/3/26 P-39); the owner who pressed Generate stays the actor on every
     # model call the job makes (submit_generation takes the attribution here,
     # #148).
+    # The login that pressed is pushed when the draft lands — a week takes
+    # minutes, and the page says they can leave (iOS parity #16). Watched
+    # before the job is queued, so a fast job never finishes unwatched.
+    _se.watch_generation(job_id, current_user)
     _se.submit_generation(job_id, rid, **_job_kw)
     try:
         import schedule_versions as _sv_rej

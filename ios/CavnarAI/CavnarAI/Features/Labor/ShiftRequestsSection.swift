@@ -10,6 +10,12 @@ struct ShiftRequestsSection: View {
 
     // The request an Approve is choosing a replacement for.
     @State private var choosingFor: ShiftRequest?
+    /// Post a shift, offer one, take one off, a swap agreed in person
+    /// (iOS parity #25) — each outward move confirmed.
+    @State private var posting = false
+    @State private var offering: ShiftRequest?
+    @State private var cancelling: ShiftRequest?
+    @State private var agreeing: ShiftRequest?
 
     var body: some View {
         CavnarDropdown(
@@ -42,6 +48,20 @@ struct ShiftRequestsSection: View {
                         openBlock
                     }
                 }
+                if viewModel.canEditRoster {
+                    Button {
+                        Haptic.light()
+                        posting = true
+                    } label: {
+                        Label("Post a shift", systemImage: "plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
+                if let notice = viewModel.openShiftNotice {
+                    HomeMixedText.make(notice, size: 13.5, weight: 600, color: .cavnarGreen)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if let error = viewModel.requestError {
                     Text(error)
@@ -57,6 +77,30 @@ struct ShiftRequestsSection: View {
         }
         .sheet(item: $choosingFor) { req in
             ReplacementPickerSheet(viewModel: viewModel, request: req)
+        }
+        .sheet(isPresented: $posting) { OpenShiftPostSheet(viewModel: viewModel) }
+        .sheet(item: $offering) { shift in OpenShiftOfferSheet(viewModel: viewModel, shift: shift) }
+        .confirmationDialog(cancelling.map { "Take \($0.whenLabel) off the open board?" } ?? "",
+                            isPresented: Binding(get: { cancelling != nil }, set: { if !$0 { cancelling = nil } }),
+                            titleVisibility: .visible) {
+            Button("Take it off", role: .destructive) {
+                if let c = cancelling { Task { await viewModel.cancelOpenShift(c.id) } }
+                cancelling = nil
+            }
+            Button("Cancel", role: .cancel) { cancelling = nil }
+        } message: {
+            Text("Whoever it was offered to, and the teammates told about it, hear it\u{2019}s gone.")
+        }
+        .confirmationDialog(agreeing.map { "\($0.targetName ?? "The colleague") agreed in person?" } ?? "",
+                            isPresented: Binding(get: { agreeing != nil }, set: { if !$0 { agreeing = nil } }),
+                            titleVisibility: .visible) {
+            Button("Yes \u{2014} swap the shifts") {
+                if let a = agreeing { Task { await viewModel.colleagueAgreed(a.id) } }
+                agreeing = nil
+            }
+            Button("Cancel", role: .cancel) { agreeing = nil }
+        } message: {
+            Text("For someone who isn\u{2019}t on the app. The approved swap goes ahead and both shifts move.")
         }
     }
 
@@ -89,11 +133,28 @@ struct ShiftRequestsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 6)
-                if req.status != "pending" {
+                if req.isSwap && req.status == "approved" {
+                    Text("Waiting on \(req.targetName ?? "the colleague")")
+                        .font(.cavnarBody(12.5, weight: 700))
+                        .foregroundStyle(Color.cavnarAmber)
+                } else if req.status != "pending" {
                     Text(statusLabel(req.status))
                         .font(.cavnarBody(12.5, weight: 700))
                         .foregroundStyle(statusTone(req.status))
                 }
+            }
+            if req.isSwap && req.status == "approved" && viewModel.canEditRoster {
+                Button {
+                    Haptic.light()
+                    agreeing = req
+                } label: {
+                    Text("They agreed in person")
+                        .font(.cavnarBody(13.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 36)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.requestBusyId == req.id)
             }
             if req.status == "pending" {
                 HStack(spacing: 10) {
@@ -168,24 +229,55 @@ struct ShiftRequestsSection: View {
                     .tracking(1.1)
                     .foregroundStyle(Color.cavnarAmber)
             }
-            Text("Approved and posted to the portal — nobody has claimed these yet.")
+            Text("On the open board in the Cavnar AI app until somebody picks it up.")
                 .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 6) {
                 ForEach(viewModel.openShifts) { shift in
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HomeMixedText.make(shift.whenLabel, size: 14.5, weight: 600, color: .cavnarInk)
-                            if let name = shift.employeeName, !name.isEmpty {
-                                Text("was \(name)'s")
+                    let asked = viewModel.shiftOffers.filter { $0.requestId == shift.id }.map(\.name)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HomeMixedText.make(shift.whenLabel, size: 14.5, weight: 600, color: .cavnarInk)
+                                Text(((shift.employeeName ?? "").isEmpty ? "extra shift" : "was \(shift.employeeName ?? "")\u{2019}s")
+                                     + " \u{00B7} " + (asked.isEmpty ? "nobody has claimed it yet"
+                                                       : "offered to \(asked.joined(separator: ", ")) \u{00B7} waiting on an answer"))
                                     .font(.cavnarBody(13))
                                     .foregroundStyle(Color.cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                        }
+                        if viewModel.canEditRoster {
+                            HStack(spacing: 16) {
+                                Button {
+                                    Haptic.light()
+                                    offering = shift
+                                } label: {
+                                    Text("Offer it").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                                        .frame(minHeight: 36)
+                                }
+                                .buttonStyle(.plain)
+                                Button {
+                                    Haptic.light()
+                                    cancelling = shift
+                                } label: {
+                                    Text("Take it off").font(.cavnarBody(13.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                                        .frame(minHeight: 36)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(viewModel.requestBusyId == shift.id)
                             }
                         }
-                        Spacer()
                     }
                     .padding(.vertical, 4)
+                    .contextMenu {
+                        if viewModel.canEditRoster {
+                            Button { offering = shift } label: { Label("Offer it to someone", systemImage: "person.badge.plus") }
+                            Button(role: .destructive) { cancelling = shift } label: { Label("Take it off", systemImage: "xmark") }
+                        }
+                    }
                 }
             }
         }

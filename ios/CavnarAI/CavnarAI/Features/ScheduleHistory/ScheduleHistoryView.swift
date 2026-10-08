@@ -6,6 +6,11 @@ import SwiftUI
 /// even if a view-state bug hides it there.
 struct ScheduleHistoryView: View {
     @State private var viewModel = ScheduleHistoryViewModel()
+    /// Opens a week in Labor's editor (iOS parity #5). Labor passes its own;
+    /// from Account the sheet closes and the app goes to schedule/<id>.
+    var onOpenWeek: ((Int) -> Void)? = nil
+    @Environment(\.dismiss) private var dismissSheet
+    @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     // Parses generated_at as UTC (SQLite's datetime('now') is UTC); it is
     // shown on the restaurant's clock, M/D/YY (CLIENT-45).
@@ -104,7 +109,7 @@ struct ScheduleHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar("Schedule History") }
         .navigationDestination(item: $selectedEntry) { entry in
-            ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
+            ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry), onOpenWeek: openWeek)
         }
         .task { await viewModel.load() }
         .cavnarEmberRefreshable { await viewModel.load() }
@@ -135,11 +140,32 @@ struct ScheduleHistoryView: View {
         }
     }
 
+    private func openWeek(_ id: Int) {
+        if let onOpenWeek {
+            onOpenWeek(id)
+        } else {
+            dismissSheet()
+            if let nav = NavPath("schedule/\(id)") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { deepLinkRouter.open(nav) }
+            }
+        }
+    }
+
     private func weekLabel(_ entry: ScheduleHistoryEntry) -> String {
         guard let start = entry.weekStart, let end = entry.weekEnd, !start.isEmpty, !end.isEmpty else {
             return "Generated schedule"
         }
         return CavnarDate.mdyRange(start, end)
+    }
+
+    /// "Sent 10/9/26 · 6:45pm" in green, "Draft" in ember, "Replaced" muted.
+    private func statePill(_ entry: ScheduleHistoryEntry) -> some View {
+        let tone: Color = entry.state == "Sent" ? .cavnarGreen : (entry.state == "Draft" ? .cavnarEmber2 : .cavnarInk3)
+        let text = entry.state == "Sent" ? "Sent " + CavnarDate.mdyTime(entry.publishedAt ?? "") : entry.state
+        return HomeMixedText.make(text, size: 11.5, weight: 700, color: tone)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tone.opacity(0.12)))
     }
 
     @ViewBuilder
@@ -148,17 +174,28 @@ struct ScheduleHistoryView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(weekLabel(entry))
                     .font(.cavnarBody(14, weight: 700))
-                if let generated = Self.generatedAtParser.date(from: entry.generatedAt) {
+                if let line = entry.summaryLine, !line.isEmpty {
+                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk3)
+                        .lineLimit(2)
+                } else if let generated = Self.generatedAtParser.date(from: entry.generatedAt) {
                     Text("Generated \(CavnarDate.mdyTime(generated, in: RestaurantClock.timeZone))")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                 }
+                statePill(entry)
             }
             Spacer()
-            if let scheduled = entry.hoursScheduled {
-                Text("\(scheduled.commaFormatted)h")
-                    .font(.cavnarNumber(14, weight: 700))
-                    .foregroundStyle(Color.cavnarInk2)
+            VStack(alignment: .trailing, spacing: 2) {
+                if let q = entry.qualityScore?.value {
+                    Text("\(Int(q.rounded()))")
+                        .font(.cavnarNumber(17, weight: 700))
+                        .foregroundStyle(entry.qualityBand == "excellent" ? Color.cavnarGreen : Color.cavnarInk)
+                    Text("quality").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                } else if let scheduled = entry.hoursScheduled {
+                    Text("\(scheduled.commaFormatted)h")
+                        .font(.cavnarNumber(14, weight: 700))
+                        .foregroundStyle(Color.cavnarInk2)
+                }
             }
             // Manual chevron — now that the row is a Button rather than a
             // NavigationLink, there's no free system disclosure indicator

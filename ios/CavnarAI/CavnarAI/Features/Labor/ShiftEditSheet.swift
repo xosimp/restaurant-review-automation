@@ -6,6 +6,11 @@ import SwiftUI
 /// labor/schedule/score (LaborViewModel.rescoreQuality), the same route the
 /// web's Save uses. Building a week stays desktop-first; this is for the
 /// fix on the floor ("Sam starts at 5, not 4").
+///
+/// iOS parity #45 (10/7/26): a shift is added for anyone on the roster, not
+/// only people already on the week, with the role they work (the roster's,
+/// or another they have worked lately), and an existing shift can move to
+/// another day — the Day picker is the phone's twin of the web grid's drag.
 struct ShiftEditSheet: View {
     enum Mode: Identifiable {
         case edit(ScheduleRow)
@@ -20,12 +25,16 @@ struct ShiftEditSheet: View {
 
     let mode: Mode
     let viewModel: LaborViewModel
+    /// Everyone active on the roster, with their roles (Scheduling setup's
+    /// roster) — the Who picker's list. Empty: the people on the week.
+    var roster: [RosterMember] = []
 
     @Environment(\.dismiss) private var dismiss
     @State private var start = Date()
     @State private var end = Date()
     @State private var date = ""
     @State private var employee = ""
+    @State private var role = ""
     @State private var error: String?
     @State private var saving = false
 
@@ -36,13 +45,34 @@ struct ShiftEditSheet: View {
         Array(Set(rows.compactMap { $0.date.map { String($0.prefix(10)) } })).sorted()
     }
 
-    /// Everyone on the week, with the role they work on it.
+    /// Everyone who can be put on a shift: the roster (active), else the
+    /// people already on the week.
     private var people: [String] {
-        Array(Set(rows.compactMap { ($0.employee ?? "").isEmpty ? nil : $0.employee })).sorted()
+        let onWeek = Array(Set(rows.compactMap { ($0.employee ?? "").isEmpty ? nil : $0.employee }))
+        let fromRoster = roster.map(\.name)
+        var seen = Set<String>()
+        return (fromRoster + onWeek).filter { seen.insert($0.lowercased()).inserted }
+            .sorted { $0.lowercased() < $1.lowercased() }
     }
 
     private func roleOf(_ name: String) -> String? {
-        rows.first { ($0.employee ?? "").lowercased() == name.lowercased() && !($0.role ?? "").isEmpty }?.role
+        if let m = roster.first(where: { $0.name.lowercased() == name.lowercased() }), let r = m.role, !r.isEmpty {
+            return r
+        }
+        return rows.first { ($0.employee ?? "").lowercased() == name.lowercased() && !($0.role ?? "").isEmpty }?.role
+    }
+
+    /// The roles a person works: the roster's, the others worked lately, and
+    /// any on this week — most-worked first.
+    private func rolesOf(_ name: String) -> [String] {
+        var out: [String] = []
+        if let m = roster.first(where: { $0.name.lowercased() == name.lowercased() }) {
+            out = ([m.role ?? ""] + (m.recentRoles ?? [])).filter { !$0.isEmpty }
+        }
+        for r in rows where (r.employee ?? "").lowercased() == name.lowercased() {
+            if let role = r.role, !role.isEmpty, !out.contains(role) { out.append(role) }
+        }
+        return out
     }
 
     private var title: String {
@@ -57,9 +87,21 @@ struct ShiftEditSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if case .edit(let row) = mode {
-                        HomeMixedText.make([row.day ?? "", CavnarDate.mdy(row.date ?? ""), row.role ?? ""]
+                        HomeMixedText.make([row.role ?? "", "was " + [row.day ?? "", CavnarDate.mdy(row.date ?? "")]
+                                                .filter { !$0.isEmpty }.joined(separator: " ")]
                                             .filter { !$0.isEmpty }.joined(separator: " · "),
                                            size: 15, weight: 600, color: .cavnarInk2)
+                        // Move it to another day of the week (#45).
+                        VStack(spacing: 0) {
+                            pickerRow("Day") {
+                                Picker("Day", selection: $date) {
+                                    ForEach(weekDates, id: \.self) { d in
+                                        Text(LaborWaitingOnYou.dayLabel(d)).tag(d)
+                                    }
+                                }
+                            }
+                        }
+                        .cavnarCard()
                     } else {
                         VStack(spacing: 0) {
                             pickerRow("Day") {
@@ -75,8 +117,17 @@ struct ShiftEditSheet: View {
                                     ForEach(people, id: \.self) { Text($0).tag($0) }
                                 }
                             }
+                            if rolesOf(employee).count > 1 {
+                                Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                                pickerRow("Role") {
+                                    Picker("Role", selection: $role) {
+                                        ForEach(rolesOf(employee), id: \.self) { Text($0).tag($0) }
+                                    }
+                                }
+                            }
                         }
                         .cavnarCard()
+                        .onChange(of: employee) { _, name in role = roleOf(name) ?? "" }
                     }
                     VStack(spacing: 0) {
                         pickerRow("Starts") {
@@ -139,10 +190,12 @@ struct ShiftEditSheet: View {
         case .edit(let row):
             start = dateFor(row.shiftStart) ?? dateFor("4:00pm")!
             end = dateFor(row.shiftEnd) ?? dateFor("10:00pm")!
+            date = String((row.date ?? "").prefix(10))
         case .add:
             let first = rows.first
             date = weekDates.first ?? ""
             employee = people.first ?? ""
+            role = roleOf(employee) ?? ""
             start = dateFor(first?.shiftStart) ?? dateFor("4:00pm")!
             end = dateFor(first?.shiftEnd) ?? dateFor("10:00pm")!
         }
@@ -169,14 +222,19 @@ struct ShiftEditSheet: View {
         }
         switch mode {
         case .edit(let row):
-            if let refusal = await viewModel.editShiftTimes(rowId: row.id, start: s, end: e) {
+            let moved = !date.isEmpty && date != String((row.date ?? "").prefix(10))
+            let refusal = moved
+                ? await viewModel.moveShift(rowId: row.id, to: date, start: s, end: e)
+                : await viewModel.editShiftTimes(rowId: row.id, start: s, end: e)
+            if let refusal {
                 error = refusal
             } else {
                 dismiss()
             }
         case .add:
             guard !date.isEmpty else { error = "Pick a day."; return }
-            if let refusal = await viewModel.addShift(date: date, employee: employee, role: roleOf(employee),
+            if let refusal = await viewModel.addShift(date: date, employee: employee,
+                                                      role: role.isEmpty ? roleOf(employee) : role,
                                                       start: s, end: e) {
                 error = refusal
             } else {

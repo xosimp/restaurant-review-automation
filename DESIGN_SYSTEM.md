@@ -1463,6 +1463,21 @@ row.
 answer shows the server's `message` — what the answer does — in place of
 the buttons.
 
+### The schedule on iOS (parity round, 10/7/26)
+
+The Studio's capabilities in phone shapes (`Features/Labor/ScheduleWeekViews.swift`,
+`ScheduleBuildSettings.swift`, `LaborOpsViews.swift`); the web keeps its
+drag-and-drop grid and bulk edits.
+
+| Piece | iOS | Web twin |
+|---|---|---|
+| Week | `ScheduleWeekPager`: a `CavnarSegmentedControl` (By day / By person), a strip of 54×62 day chips (weekday kicker, M/D in the number face, the shift count or an amber ⚠ for a day not written; the picked one ember-tinted with an ember edge), then that day's page; a sideways swipe or the VoiceOver actions move a day. By person: rows by hours (past 40h in red), a tap opens `PersonWeekSheet` (hours, days on, shifts by day; a shift opens its day). Labor's editor and History share it | The week grid and list |
+| Scorecard | `ScheduleSummarySheet` + `ScheduleTileCard`: kicker "SCHEDULE COMPLETE", Clash "The week is built", six tiles in two columns (quality, labor %, coverage, overtime, warnings — a tap opens them — and "Under your recent labor", tagged "Projection · not yet earned", never "savings"); "—" with why when unmeasured. View the schedule (primary), Optimize again, Publish. Opens when a draft lands; History shows the same tiles | `ssRenderSummary` |
+| Generate card rows | `GenerateBuildRows`: the labor target with −/+ round steppers (saves 800ms after the last step), "How you like the week built" (opens `ScheduleNotesSheet`: the notes, each sentence as Cavnar AI reads it, Make it a rule → `NoteRuleForm`), the draft day in the switch's sentence with `AccountStateSwitch`, auto-publish (turning it on asks first) | The Studio's Setup and AI tabs |
+| Generation copy | `ScheduleProgressSteps` on the job's own clock stretched to `typical`, the days drafted, and `GenerationCopy.etaLine` ("usually about N min", "taking longer than usual … stops by h:mm", "you can leave"); a 409 is `GenerationBusyCard` with Watch it | `renderScheduleEta` |
+| PDF | `SchedulePDF`: a page per day on light paper (the tokens in the light appearance), an ink table header, alternate rows on Paper2, "Printed M/D/YY" and "n of N"; shared with `ShareLink` | Print (`data-print`) |
+| Covers | `CoversTile`: a card with the night (`CavnarDateChip`), a number-pad field, Save (secondary) | `#lb2-covers` |
+
 ### Schedule fix round (web, 10/4/26 — UI wave W1)
 
 The Studio's generate screen, the draft, the review, the publish check,
