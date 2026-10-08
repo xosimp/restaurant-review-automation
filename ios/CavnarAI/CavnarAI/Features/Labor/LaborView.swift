@@ -451,6 +451,19 @@ struct LaborView: View {
         // The week on screen's sections and each server's usual one (H2-2) —
         // for a week restored from the cache or reopened, not only a fresh one.
         .task(id: viewModel.scheduleResult?.historyId) { await viewModel.loadSections() }
+        // What is on screen, for the drafted push's banner: watching the
+        // week land here is the news already (ScheduleDraftWatch).
+        .onAppear {
+            ScheduleDraftWatch.shared.laborOnScreen = true
+            ScheduleDraftWatch.shared.onScreenScheduleId = viewModel.scheduleResult?.historyId
+        }
+        .onDisappear {
+            ScheduleDraftWatch.shared.laborOnScreen = false
+            ScheduleDraftWatch.shared.onScreenScheduleId = nil
+        }
+        .onChange(of: viewModel.scheduleResult?.historyId) { _, id in
+            ScheduleDraftWatch.shared.onScreenScheduleId = id
+        }
         .sheet(isPresented: $showingPublishSchedule, onDismiss: { Task { await viewModel.loadDraftCheck() } }) {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,

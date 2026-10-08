@@ -175,7 +175,9 @@ struct MarketingView: View {
         .navigationTitle("Marketing")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar("Marketing") }
-        .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
+        // Three tabs: back from Campaigns or Analytics returns to Content,
+        // never out of Marketing (parity follow-up 10/7/26).
+        .cavnarTabSwipeNavigation($subTab, tabs: MarketingSubTab.allCases)
         .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
         .task { await opportunities.load() }

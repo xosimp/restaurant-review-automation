@@ -960,6 +960,26 @@ extension View {
     }
 }
 
+/// Where back and the two swipes go across a module's sub-tabs, first tab
+/// first. Back (the chevron, or swipe right) from any tab but the first
+/// returns to the FIRST — never the module's parent; only from the first
+/// does back leave. Swipe right is back; swipe left moves one tab on. Marketing's three tabs
+/// (Content · Campaigns · Analytics) left the module from Campaigns, which
+/// the two-tab version read as the primary tab (parity follow-up 10/7/26).
+enum CavnarTabSwipe {
+    /// The tab back lands on, or nil to leave the module.
+    static func back<Tab: Equatable>(from selection: Tab, tabs: [Tab]) -> Tab? {
+        guard let first = tabs.first, selection != first else { return nil }
+        return first
+    }
+
+    /// The tab a swipe left lands on, or nil on the last.
+    static func next<Tab: Equatable>(from selection: Tab, tabs: [Tab]) -> Tab? {
+        guard let i = tabs.firstIndex(of: selection) else { return tabs.first }
+        return i + 1 < tabs.count ? tabs[i + 1] : nil
+    }
+}
+
 /// Replaces cavnarEmberBackButton() for a module screen that has a
 /// Tracker/Inbox/Overview + Analytics CavnarSegmentedControl — ties the
 /// sub-tab switch into the same "back" vocabulary as real navigation
@@ -982,21 +1002,21 @@ extension View {
 private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
     @Environment(\.dismiss) private var dismiss
     @Binding var selection: Tab
-    let primaryTab: Tab
-    let secondaryTab: Tab
+    /// The sub-tabs in order; the first is the one back leaves from.
+    let tabs: [Tab]
 
-    private var isOnSecondary: Bool { selection == secondaryTab }
+    private var isOffPrimary: Bool { CavnarTabSwipe.back(from: selection, tabs: tabs) != nil }
 
     func body(content: Content) -> some View {
         content
             .navigationBarBackButtonHidden(true)
-            .background(InteractivePopGestureEnabler(isEnabled: !isOnSecondary).frame(width: 0, height: 0))
+            .background(InteractivePopGestureEnabler(isEnabled: !isOffPrimary).frame(width: 0, height: 0))
             .toolbar {
                 cavnarToolbarItem(placement: .navigation) {
                     Button {
                         Haptic.light()
-                        if isOnSecondary {
-                            withAnimation(.easeInOut(duration: 0.2)) { selection = primaryTab }
+                        if let first = CavnarTabSwipe.back(from: selection, tabs: tabs) {
+                            withAnimation(.easeInOut(duration: 0.2)) { selection = first }
                         } else {
                             dismiss()
                         }
@@ -1020,12 +1040,13 @@ private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
                 DragGesture(minimumDistance: 40)
                     .onEnded { value in
                         guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                        if value.translation.width < -60, selection != secondaryTab {
+                        if value.translation.width < -60, let next = CavnarTabSwipe.next(from: selection, tabs: tabs) {
                             Haptic.light()
-                            withAnimation(.easeInOut(duration: 0.2)) { selection = secondaryTab }
-                        } else if value.translation.width > 60, isOnSecondary {
+                            withAnimation(.easeInOut(duration: 0.2)) { selection = next }
+                        } else if value.translation.width > 60,
+                                  let first = CavnarTabSwipe.back(from: selection, tabs: tabs) {
                             Haptic.light()
-                            withAnimation(.easeInOut(duration: 0.2)) { selection = primaryTab }
+                            withAnimation(.easeInOut(duration: 0.2)) { selection = first }
                         }
                     }
             )
@@ -1034,7 +1055,13 @@ private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
 
 extension View {
     func cavnarTabSwipeNavigation<Tab: Equatable>(_ selection: Binding<Tab>, primaryTab: Tab, secondaryTab: Tab) -> some View {
-        modifier(CavnarTabSwipeNavigation(selection: selection, primaryTab: primaryTab, secondaryTab: secondaryTab))
+        modifier(CavnarTabSwipeNavigation(selection: selection, tabs: [primaryTab, secondaryTab]))
+    }
+
+    /// Three or more sub-tabs, in order: back from any but the first
+    /// returns to the first (CavnarTabSwipe).
+    func cavnarTabSwipeNavigation<Tab: Equatable>(_ selection: Binding<Tab>, tabs: [Tab]) -> some View {
+        modifier(CavnarTabSwipeNavigation(selection: selection, tabs: tabs))
     }
 }
 

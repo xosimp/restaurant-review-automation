@@ -188,7 +188,9 @@ final class NotificationsListViewModel {
     /// the owner hasn't seen (F3-10).
     func approvable(_ item: NotificationItem) -> Bool {
         guard answered[item.id] == nil, let id = item.reviewId,
-              let draft = item.draft, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              let draft = item.draft, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              // A clipped reply was never read whole here: open the review.
+              item.draftComplete != false else {
             return false
         }
         if let can = item.canApprove { return can }
@@ -220,13 +222,38 @@ final class NotificationsListViewModel {
     }
 
 
+    /// What an approve from a row sends: the reply the row showed — its
+    /// text when the row carried it whole (`expected_draft`), and its
+    /// fingerprint (`expected_draft_hash`). Changed since, and the route
+    /// posts nothing (409 draft_changed).
+    struct ApproveBody: Encodable, Equatable {
+        var expectedDraft: String?
+        var expectedDraftHash: String?
+        enum CodingKeys: String, CodingKey {
+            case expectedDraft = "expected_draft"
+            case expectedDraftHash = "expected_draft_hash"
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(expectedDraft, forKey: .expectedDraft)
+            try c.encodeIfPresent(expectedDraftHash, forKey: .expectedDraftHash)
+        }
+    }
+
+    nonisolated static func approveBody(_ item: NotificationItem) -> ApproveBody {
+        let whole = item.draftComplete == true ? item.draft : nil
+        let hash = item.draftHash.flatMap { $0.isEmpty ? nil : $0 }
+        return ApproveBody(expectedDraft: whole, expectedDraftHash: hash)
+    }
+
     func approve(_ item: NotificationItem) async {
         guard let reviewId = item.reviewId else { return }
         busyRowId = item.id
         rowError = nil
         defer { busyRowId = nil }
         do {
-            let r: ReviewPostOutcome = try await client.send("/mobile/api/reviews/\(reviewId)/approve", method: .post)
+            let r: ReviewPostOutcome = try await client.send("/mobile/api/reviews/\(reviewId)/approve",
+                                                             method: .post, body: Self.approveBody(item))
             if r.ok {
                 approvableReviewIds.remove(reviewId)
                 await markOpened(item)

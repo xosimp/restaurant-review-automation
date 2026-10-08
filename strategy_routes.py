@@ -3522,8 +3522,11 @@ def _do_shift_requests_list(u):
     # `offers`: shifts offered to one named person, still waiting on them
     # (H2) — an open shift offered only by name is in `open` with
     # offer_only = 1.
+    # `can_decide`: SCHEDULE_DRAFT, the gate every write below holds (decide,
+    # post, offer, take off, agreed in person) — the phone gated those on
+    # the roster's can_edit (TEAM_RATE), which is looser (parity follow-up).
     return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u)),
-            "offers": _sq_req.live_offers(_rid(u))}, 200
+            "offers": _sq_req.live_offers(_rid(u)), "can_decide": _may_draft(u)}, 200
 
 
 def _do_shift_request_decide(u, request_id):

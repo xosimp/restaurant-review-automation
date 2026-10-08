@@ -2469,7 +2469,7 @@ def _notification_ref(data) -> dict:
 
 
 def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
-           lines=None, email_type=None, rec=None, permissions=None, deciders=False):
+           lines=None, email_type=None, rec=None, permissions=None, deciders=False, email=True):
     """Push to the people who have the app, email the ones who don't.
 
     morning_brief.deliver established this — push OR email, never both,
@@ -2482,6 +2482,10 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     so it goes to every console login holding `permissions`, whether or not
     their brief is on — a GM who turned the brief off never heard "Dana
     asked to drop Friday" (F2-6).
+
+    `email=False`: push only, never the email fallback — for a notice whose
+    own card is on the web already (tonight's lineup brief waiting: it was
+    emailed to every approver without the app on every draft).
 
     Returns the number of people reached.
     """
@@ -2529,7 +2533,7 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     # by email the people with no phone. Nobody: no row, no slot spent.
     pushed = deliverable_audience(restaurant_id, {u["id"] for u in people if devices.get(u["id"])},
                                   db_path, alert_type=alert_type)
-    emailable = [u for u in people if not devices.get(u["id"]) and u.get("email")]
+    emailable = [u for u in people if not devices.get(u["id"]) and u.get("email")] if email else []
     if not pushed and not emailable:
         return 0
     alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path,

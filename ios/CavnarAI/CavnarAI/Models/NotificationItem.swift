@@ -34,6 +34,13 @@ struct NotificationItem: Codable, Identifiable {
     /// row before Approve can publish it.
     var canApprove: Bool? = nil
     var draft: String? = nil
+    /// Whether `draft` is the whole reply (the row carries the first 600
+    /// characters), and the stored reply's fingerprint (models.draft_hash).
+    /// An approve from the row sends both back, so a reply changed after
+    /// the row was read is never posted (409 draft_changed). A clipped one
+    /// is approved from its review, never the row.
+    var draftComplete: Bool? = nil
+    var draftHash: String? = nil
     /// The review's own words, and whether it has been answered since.
     var snippet: String? = nil
     var resolved: Bool? = nil
@@ -56,6 +63,8 @@ struct NotificationItem: Codable, Identifiable {
         case restaurantId = "restaurant_id"
         case alertId = "id"
         case canApprove = "can_approve"
+        case draftComplete = "draft_complete"
+        case draftHash = "draft_hash"
         case delayedActionId = "delayed_action_id"
         case canUndo = "can_undo"
         case resolvesOnOpen = "resolves_on_open"

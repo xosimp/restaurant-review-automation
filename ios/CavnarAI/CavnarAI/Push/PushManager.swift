@@ -59,6 +59,9 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         /// The push's own "Ask about this" button: send the question, not
         /// just fill it in (friction audit #15).
         var askAutoSend = false
+        /// An operator page (`platform_alert`, admins only): what its sheet
+        /// shows — the lines and when it went out.
+        var platformAlert: PlatformAlert? = nil
 
         @MainActor
         func deliver(to router: DeepLinkRouter) {
@@ -66,7 +69,7 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                          alertId: alertId, recKey: recKey,
                                          module: module, restaurantId: restaurantId,
                                          businessDate: businessDate, surface: surface,
-                                         nav: nav, askAutoSend: askAutoSend)
+                                         nav: nav, askAutoSend: askAutoSend, platformAlert: platformAlert)
         }
     }
 
@@ -89,6 +92,10 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     nonisolated private static let reviewCategory = "CAVNAR_REVIEW"
     nonisolated private static let briefCategory  = "CAVNAR_BRIEF"
     nonisolated private static let issueCategory  = "CAVNAR_ISSUE"
+    /// A shift to cover (push.CATEGORY_COVERAGE — a coverage gap or a
+    /// no-show): Ask someone to cover · Resolved. Every other issue gets
+    /// CAVNAR_ISSUE, Resolved only (parity follow-up 10/7/26).
+    nonisolated private static let coverageCategory = "CAVNAR_COVERAGE"
     /// The actionable kinds (friction audit #22): the button does the work
     /// in the background, behind the phone's own unlock, and nothing opens.
     nonisolated private static let reviewDraftedCategory = "CAVNAR_REVIEW_DRAFTED"
@@ -349,6 +356,8 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: issueCategory, actions: Self.issueActions,
                                    intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: coverageCategory, actions: Self.coverageActions,
+                                   intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: messageCategory, actions: [replyMessage],
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: lineupCategory, actions: [approveLineup, openLineup],
@@ -356,13 +365,19 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         ]
     }
 
-    /// The issue category's two buttons (parity audit #11). Neither opens
+    /// A shift to cover's two buttons (parity audit #11). Neither opens
     /// the app; both need the phone unlocked. "Ask someone to cover" texts
     /// the issue's next suggested cover and then says who was asked.
-    nonisolated static var issueActions: [UNNotificationAction] {
+    nonisolated static var coverageActions: [UNNotificationAction] {
         [UNNotificationAction(identifier: askCoverAction, title: "Ask someone to cover",
-                              options: [.authenticationRequired]),
-         UNNotificationAction(identifier: resolveIssueAction, title: "Resolved",
+                              options: [.authenticationRequired])] + issueActions
+    }
+
+    /// Every other issue: Resolved only. "Ask someone to cover" sat here
+    /// too and, on anything but a shift, could only answer "This issue
+    /// isn't a shift to cover" (parity follow-up 10/7/26).
+    nonisolated static var issueActions: [UNNotificationAction] {
+        [UNNotificationAction(identifier: resolveIssueAction, title: "Resolved",
                               options: [.authenticationRequired])]
     }
 
@@ -800,8 +815,9 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                 return
             }
             guard let name = issue.nextCoverToAsk else {
-                // The category is every issue's (push._ISSUE_TYPES); only a
-                // shift to cover has anyone to ask.
+                // Only CAVNAR_COVERAGE offers the button now (a coverage
+                // gap or a no-show); an older server's CAVNAR_ISSUE still
+                // reaches here for any issue, and is told so.
                 let why = (issue.kind == "coverage" || issue.kind == "no_show")
                     ? "Everyone suggested has been asked \u{2014} tap to open the issue."
                     : "This issue isn\u{2019}t a shift to cover \u{2014} tap to open it."
@@ -1032,9 +1048,14 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // The bell's count moves with the banner, not at the next launch
         // (parity audit #81). Only Cavnar AI's own pushes; a local notice
         // this class posted carries no "cavnar" payload.
-        if Self.cavnarPayload(notification.request.content.userInfo) != nil {
-            await MainActor.run { self.onForegroundPush?() }
+        guard let cavnar = Self.cavnarPayload(notification.request.content.userInfo) else {
+            return [.banner, .sound, .list]
         }
+        await MainActor.run { self.onForegroundPush?() }
+        // The drafted week the owner is watching land on Labor: the screen
+        // already shows it, so no banner over it (parity follow-up 10/7/26).
+        let watch = await MainActor.run { ScheduleDraftWatch.shared.snapshot }
+        if Self.suppressesBanner(cavnar, watch: watch) { return [] }
         return [.banner, .sound, .list]
     }
 
@@ -1116,7 +1137,8 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
                       askPrompt: lastNight ? Self.lastNightQuestion(cavnar) : askPrompt, alertId: alertId,
                       recKey: recKey, module: module, restaurantId: restaurantId,
                       businessDate: businessDate, surface: surface, nav: nav,
-                      askAutoSend: actionIdentifier == Self.askAction || lastNight)
+                      askAutoSend: actionIdentifier == Self.askAction || lastNight,
+                      platformAlert: alertType == "platform_alert" ? PlatformAlert(cavnar: cavnar) : nil)
         await MainActor.run {
             guard let router else {
                 heldTap = tap
@@ -1124,6 +1146,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             }
             tap.deliver(to: router)
         }
+    }
+
+    /// Whether a push that arrives while the app is open is shown: not the
+    /// `schedule_drafted` push for the generation the owner is watching on
+    /// Labor (ScheduleDraftWatch).
+    nonisolated static func suppressesBanner(_ cavnar: [String: Any], watch: ScheduleDraftWatch.Snapshot) -> Bool {
+        ScheduleDraftWatch.isWatching(cavnar, watch)
     }
 
     /// `cavnar["nav"]` (push.nav_for), bounded; nil when absent or empty.

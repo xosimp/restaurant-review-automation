@@ -166,10 +166,12 @@ final class HomeAskParityTests: XCTestCase {
         XCTAssertEqual(cover.path, "/mobile/api/issues/42/ask-cover")
         XCTAssertEqual(cover.asksCoverForIssue, 42)
         XCTAssertNil(PushManager.backgroundAction(for: PushManager.resolveIssueAction, cavnar: [:]))
-        let titles = PushManager.issueActions.map(\.title)
-        XCTAssertEqual(titles, ["Ask someone to cover", "Resolved"])
-        XCTAssertTrue(PushManager.issueActions.allSatisfy { $0.options.contains(.authenticationRequired)
-            && !$0.options.contains(.foreground) })
+        // A shift to cover asks and resolves; any other issue only resolves
+        // (CAVNAR_COVERAGE / CAVNAR_ISSUE, parity follow-up 10/7/26).
+        XCTAssertEqual(PushManager.coverageActions.map(\.title), ["Ask someone to cover", "Resolved"])
+        XCTAssertEqual(PushManager.issueActions.map(\.title), ["Resolved"])
+        XCTAssertTrue((PushManager.coverageActions + PushManager.issueActions).allSatisfy {
+            $0.options.contains(.authenticationRequired) && !$0.options.contains(.foreground) })
     }
 
     // MARK: #19 / #90 — dates the owner reads

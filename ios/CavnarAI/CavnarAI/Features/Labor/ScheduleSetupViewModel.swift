@@ -1095,6 +1095,12 @@ final class ScheduleSetupViewModel {
     var ignoredSuggestions: Set<String> = []
     var choices: RosterChoices?
     var canEditRoster = true
+    /// Whether this login may answer and post shifts — the server's
+    /// SCHEDULE_DRAFT (`can_decide` on the shift-request list). The open-
+    /// shift and decide controls used canEditRoster, the roster's TEAM_RATE
+    /// gate, which is looser: a login could press them and be refused.
+    /// False until the list says otherwise.
+    var canDecideShifts = false
     var isLoadingRoster = false
     var rosterError: String?
     // Whose settings are mid-flight, so only that person's controls dim.
@@ -2333,12 +2339,19 @@ final class ScheduleSetupViewModel {
     var requestWarning: String?
     var pendingRequests: [ShiftRequest] { shiftRequests.filter { $0.status == "pending" } }
 
-    private struct RequestsResponse: Decodable {
+    struct RequestsResponse: Decodable {
         let ok: Bool
         let requests: [ShiftRequest]?
         let open: [ShiftRequest]?
         var offers: [ShiftOffer]? = nil
         let error: String?
+        /// SCHEDULE_DRAFT — the server's gate on every shift-request write
+        /// (decide, post, offer, take off, agreed in person).
+        var canDecide: Bool? = nil
+        enum CodingKeys: String, CodingKey {
+            case ok, requests, open, offers, error
+            case canDecide = "can_decide"
+        }
     }
 
     private struct DecideBody: Encodable {
@@ -2353,6 +2366,10 @@ final class ScheduleSetupViewModel {
         let warning: String?
     }
 
+    /// The list's own answer; an older server that sends none keeps the
+    /// controls hidden rather than offering a refusal.
+    nonisolated static func canDecide(_ r: RequestsResponse) -> Bool { r.canDecide ?? false }
+
     func loadShiftRequests() async {
         isLoadingRequests = shiftRequests.isEmpty && openShifts.isEmpty
         defer { isLoadingRequests = false }
@@ -2362,6 +2379,7 @@ final class ScheduleSetupViewModel {
             shiftRequests = r.requests ?? []
             openShifts = r.open ?? []
             shiftOffers = r.offers ?? []
+            canDecideShifts = Self.canDecide(r)
             requestError = nil
             if !pendingRequests.isEmpty { requestsExpanded = true }
         } catch is CancellationError {

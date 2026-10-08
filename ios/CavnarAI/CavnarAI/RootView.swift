@@ -126,6 +126,8 @@ struct RootView: View {
             // (SessionScope.activeRestaurantId) — never 0, which skipped the
             // switch and opened the alert inside the wrong location.
             deepLinkRouter.activeRestaurantId = { session.currentUser?.restaurantId ?? SessionScope.activeRestaurantId }
+            // The platform sheet is an admin's only (nil until /me answers).
+            deepLinkRouter.isAdminSession = { session.currentUser.map(\.isAdmin) }
             let router = deepLinkRouter
             deepLinkRouter.switchLocation = { target in
                 let switcher = LocationSwitcherViewModel()
@@ -676,6 +678,17 @@ struct RootView: View {
             PendingActionSheet(actionId: ref.id)
                 .presentationDetents([.medium])
                 .cavnarFormSheet()
+        }
+        // "Platform needs you" (an operator page, admin/platform): shown
+        // only to an admin session — held while /me is unanswered, dropped
+        // for anyone else (parity follow-up 10/7/26).
+        .sheet(item: Binding(get: { sessionStore.currentUser?.isAdmin == true ? deepLinkRouter.pendingPlatformAlert : nil },
+                             set: { deepLinkRouter.pendingPlatformAlert = $0 })) { alert in
+            PlatformAlertSheet(alert: alert)
+                .presentationDetents([.medium, .large])
+        }
+        .onChange(of: sessionStore.currentUser?.isAdmin) { _, isAdmin in
+            if isAdmin == false { deepLinkRouter.dropPlatformAlertForNonAdmin() }
         }
         // An Ask proposal left open (the command sheet's Waiting on you):
         // its confirm card again, read back without a model call (F3-2).
