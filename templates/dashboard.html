@@ -10243,7 +10243,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   <div class="rv2-why" id="rv-why" hidden></div>
   <div id="rv-inbox-header"></div>
   <div id="rv-inbox-reviews" class="rv2-inbox" data-nav="reviews/inbox">
-    <div class="hb-sh"><div><div class="k rv2-kicks"><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/inbox">Inbox</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button></div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="hb-sh"><div><div class="k rv2-kicks"><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/inbox">Inbox</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" onclick="rvKwJump()">Search phrases</button></div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
     <div class="toolbar">
       <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
       <div class="filter-pills">
@@ -11002,6 +11002,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
    Its tab bar covers the full width from the very top, so nothing scrolling
    under it shows above or beside it. */
 .ss .sw-right{padding-top:0}
+/* The right column collapses to a strip (owner, 10/9/26): the schedule takes
+   the width; the strip reopens it. Remembered per browser (ssRightCollapse). */
+.ss-rtabs .ss-rcollapse{margin-left:auto;align-self:center;color:var(--ink3)}
+.ss-rexpand{display:none}
+.ss .sw-grid.ss-rcollapsed{grid-template-columns:minmax(0,1fr) 46px;transition:grid-template-columns .22s ease}
+.ss .sw-grid.ss-rcollapsed>.sw-right{padding:0;overflow:hidden}
+.ss .sw-grid.ss-rcollapsed>.sw-right>*{display:none!important}
+.ss .sw-grid.ss-rcollapsed>.sw-right>.ss-rexpand{display:flex!important;flex-direction:column;align-items:center;gap:12px;width:100%;height:auto;min-height:220px;padding:14px 0;border-radius:18px;color:var(--ink2);font-size:12.5px;font-weight:600}
+.ss-rexpand-l{writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.12em;text-transform:uppercase;font-size:11px;color:var(--ember)}
+.ss-rexpand-n{font-size:13px;color:var(--ink)}
+@media (max-width:1320px){.ss-rtabs .ss-rcollapse{display:none}.ss .sw-grid.ss-rcollapsed{grid-template-columns:minmax(0,1fr)}.ss .sw-grid.ss-rcollapsed>.sw-right>*{display:revert!important}.ss .sw-grid.ss-rcollapsed>.sw-right>.ss-rexpand{display:none!important}}
 .ss .sw-right .ss-rtabs{margin:0 -18px;padding:12px 18px 8px;top:0}
 .ss .sw-idle{margin-top:24px}
 .ss .lb2-preview{border-radius:18px}
@@ -12432,10 +12443,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
 
     <aside class="sw-side sw-right" id="sw-right" aria-label="How the week scores" data-tab="overview">
+      <!-- Collapsed (owner, 10/9/26: "if a manager wants to see more of the
+           screen for the full schedule"): a slim strip that opens it again. -->
+      <button type="button" class="cbtn cbtn-text ss-rexpand" onclick="ssRightCollapse(false)" aria-label="Show the score, fixes and shift details" title="Show the insights"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="ss-rexpand-l">Insights</span><span class="ss-rexpand-n hb-num" id="ss-rexpand-n"></span></button>
       <div class="ss-rtabs" role="tablist" aria-label="Insights">
         <button type="button" role="tab" class="on" data-ss-rtab="overview" aria-selected="true">Overview</button>
         <button type="button" role="tab" data-ss-rtab="fix" aria-selected="false">Fix <span class="ss-badge" id="ss-fix-n" hidden></span></button>
         <button type="button" role="tab" data-ss-rtab="shift" aria-selected="false">Shift</button>
+        <button type="button" class="cbtn cbtn-icon cbtn-text cbtn-sm ss-rcollapse" onclick="ssRightCollapse(true)" aria-label="Hide this column to give the schedule the full width" title="Hide this column"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
       <div class="sw-rhint" id="sw-rhint">Open or generate a week to see its score, warnings, coverage and cost here.</div>
       <section class="sw-sec" data-sw="quality" data-ss-of="overview">
@@ -19969,6 +19984,9 @@ function rvKwSend(body){
     .then(apiJson).then(done).catch(function(){if(body)toast('Could not save that','error');});
 }
 function rvLoadKeywords(){rvKwSend(null);}
+// The header's "Search phrases" link (owner, 10/9/26: easy to find): down
+// to the section, the cursor in its box.
+window.rvKwJump=function(){var b=document.getElementById('rv-keywords');if(!b)return;b.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(function(){var i=document.getElementById('rv-kw-in');if(i)try{i.focus({preventScroll:true});}catch(e){i.focus();}},450);};
 window.rvKwAdd=function(ev){if(ev)ev.preventDefault();var i=document.getElementById('rv-kw-in'),v=i?String(i.value||'').trim():'';if(!v)return;i.value='';rvKwSend({add:v});};
 document.addEventListener('click',function(e){var b=e.target&&e.target.closest?e.target.closest('[data-kw-rm]'):null;if(b)rvKwSend({remove:b.getAttribute('data-kw-rm')});});
 function rvLoadWhy(){
@@ -26815,6 +26833,22 @@ document.addEventListener('change', function (ev) {
   if (p && !p.hidden) ssLoadForecast();
   var pa = document.querySelector('[data-ss-panel="ai"]');
   if (pa && !pa.hidden) ssLoadNoteRules();
+});
+// Hide or show the right column (owner, 10/9/26). Remembered in this
+// browser only - a per-viewer convenience; the page works without it.
+function ssRightCollapse(on) {
+  var r = document.getElementById('sw-right'), g = r && r.parentNode; if (!g) return;
+  if (g.classList) g.classList[on ? 'add' : 'remove']('ss-rcollapsed');
+  try { localStorage.setItem('cavnar_ss_right', on ? 'collapsed' : 'open'); } catch (e) {}
+  // The week's Shift Quality on the strip, so it is never out of sight.
+  var n = document.getElementById('ss-rexpand-n'), q = (typeof _quality !== 'undefined' && _quality) ? _quality.score : null;
+  if (n) n.textContent = on && q != null ? String(Math.round(q)) : '';
+  setTimeout(function () { if (window.ssDock) ssDock(); }, 260);
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var v = null;
+  try { v = localStorage.getItem('cavnar_ss_right'); } catch (e) { v = null; }
+  if (v === 'collapsed') ssRightCollapse(true);
 });
 function ssRightTab(tab) {
   var r = document.getElementById('sw-right'); if (!r) return;

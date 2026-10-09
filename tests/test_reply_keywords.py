@@ -62,3 +62,9 @@ def test_both_routes_exist_and_the_drafter_uses_it():
     assert '@mobile_bp.route("/reviews/keywords"' in (root / "mobile_api.py").read_text()
     d = (root / "drafter.py").read_text()
     assert "{keyword_note}" in d and "_rk.check(draft, _kw_all, rating" in d
+
+
+def test_the_reviews_header_links_down_to_the_search_phrases():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "templates" / "dashboard.html").read_text()
+    assert 'onclick="rvKwJump()">Search phrases</button>' in src and "window.rvKwJump=function()" in src

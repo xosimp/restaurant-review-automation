@@ -251,3 +251,13 @@ def test_the_bell_refresh_lands_in_place_and_never_replays_the_rows():
     assert "if (list._nbHtml !== html) {" in fn
     assert "if (!_animate) list.classList.remove('hp-enter');" in fn
     assert fn.index("list._nbHtml !== html") < fn.index("list.innerHTML = html;")
+
+
+def test_the_studio_right_column_collapses_and_reopens():
+    """Owner, 10/9/26: a manager can hide the right column to give the
+    schedule the full width, and reopen it from a slim strip."""
+    assert 'onclick="ssRightCollapse(true)"' in SRC and 'onclick="ssRightCollapse(false)"' in SRC
+    assert ".ss .sw-grid.ss-rcollapsed{grid-template-columns:minmax(0,1fr) 46px" in SRC
+    fn = SRC[_at("function ssRightCollapse(on) {"):]
+    fn = fn[:fn.index("\n}")]
+    assert "localStorage.setItem('cavnar_ss_right'" in fn and "try {" in fn
