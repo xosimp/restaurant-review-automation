@@ -5294,6 +5294,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # same on every call of the generation (a slice writes its own dates;
     # the fixed rows of the others are its weekly hours and handovers too).
     _manager_block = _skel.prompt_block(_pins, plan=manager_plan)
+    # The standing positions (schedule_dedicated) the plan placed: fixed rows
+    # code adds, said once beside the managers' block.
+    try:
+        import schedule_dedicated as _ded
+        _standing_block = _ded.prompt_block((manager_plan or {}).get("dedicated"))
+    except Exception:
+        _standing_block = ""
     _manager_names = _skel.priority_line(_pins, plan=manager_plan)
     if _manager_names and not rules_block:
         # PRIORITIES 1a is a standing instruction (the same for every
@@ -5402,7 +5409,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 + _demand_block + yoy_block + _weather_block + _prior_schedule_block + par_block + role_rates_block
                 + _headcount_block + _section_block + _daypart_block + _delivery_block + _role_minimums_extra
                 + _noshows_block)
-    week_text = (_week_head + _owner_block + (_manager_block or "") + (rules_block or "") + _roster_block
+    week_text = (_week_head + _owner_block + (_manager_block or "") + (_standing_block or "") + (rules_block or "") + _roster_block
                  + _staff_notes_block + _strength_block + _profile_block + _context + (extra_blocks or ""))
     request_text = (_request_head.lstrip("\n") + _requirements_block + _slice_budget + _seam_block
                     + (call_notes or "") + _focus_block)

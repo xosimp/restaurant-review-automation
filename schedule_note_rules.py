@@ -445,8 +445,21 @@ def read_notes(restaurant_id, text, week_start=None, db_path=DB_PATH) -> list:
     for r in note_rules(restaurant_id, week_start=week_start, db_path=db_path):
         for src in [r.get("source_text")] + list(r.get("more_sources") or []):
             active.setdefault(_key(src), r)
+    # The restaurant's standing positions (schedule_dedicated): a sentence
+    # waiving one is read as that, not as "not checked" (Anthony, 10/9/26).
+    standing = []
+    try:
+        import schedule_dedicated as _ded
+        from models import get_restaurant
+        standing = _ded.rules_of(get_restaurant(restaurant_id, db_path=db_path))
+    except Exception:
+        standing = []
     out = []
     for s in _sentences(text):
+        waived = _waiver_words(s, standing) if standing else ""
+        if waived:
+            out.append({"text": " ".join(str(s).split()), "kind": "waiver", "why": waived})
+            continue
         item = read_sentence(s, roles, names)
         hit = active.get(_key(s))
         if hit:
@@ -455,6 +468,25 @@ def read_notes(restaurant_id, text, week_start=None, db_path=DB_PATH) -> list:
                 item["stale"] = hit["stale"]
         out.append(item)
     return out
+
+
+def _waiver_words(sentence, standing) -> str:
+    """"Lets the bar-tables bartender (tables 201–205) off on Tuesday night"
+    when the sentence waives a standing position, else ""."""
+    import schedule_dedicated as _ded
+    ws = _ded.waivers(sentence, standing)
+    if not ws:
+        return ""
+    by = {}
+    for w in ws:
+        by.setdefault(w["rule"], []).append((w["day"], w["part"]))
+    bits = []
+    for i, slots in by.items():
+        rule = standing[i]
+        when = ", ".join(f"{d} {_ded.PART_WORDS[p]}" for d, p in slots)
+        bits.append(f"No {rule['label']} {rule['family']} on {when} — a standing position, let off by this note "
+                    f"for every draft while the note stays.")
+    return " ".join(bits)
 
 
 def _key(text):

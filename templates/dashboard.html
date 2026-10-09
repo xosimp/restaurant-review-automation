@@ -26564,6 +26564,10 @@ function snrHtml(d) {
     } else if (x.kind === 'unchecked') {
       h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not checked.</b> ' + _escHtml(x.why || '') + ' The draft aims for it; check the draft against it yourself.</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-open="' + i + '">Make a minimum from it</button></div><div data-snr-slot="' + i + '"></div>') + '</div>';
+    } else if (x.kind === 'waiver') {
+      // A standing position waived by this note (schedule_dedicated: the
+      // bar-tables bartender, Anthony 10/9/26).
+      h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>Allowance:</b> ' + _escHtml(x.why || '') + '</div></div>';
     } else if (x.kind === 'person') {
       h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>About one person.</b> ' + _escHtml(x.why || '') + '</div>'
         + '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" onclick="swOpenTeam(\'notes\')">Scheduling notes in Labor →</button></div></div>';

@@ -860,7 +860,7 @@ def failed_plan(c, error=None) -> dict:
 
 
 def plan_for_generation(restaurant_id, c, week_dates, shifts=None, roster_roles=None, dates=None,
-                        prior_rows=None, db_path=None) -> dict:
+                        prior_rows=None, db_path=None, waive_text=None) -> dict:
     """The plan a generation hands the model: the week (or a redo's
     `dates`, with the kept days' rows as `prior_rows`), read against the
     restaurant's published weeks and punches."""
@@ -868,8 +868,29 @@ def plan_for_generation(restaurant_id, c, week_dates, shifts=None, roster_roles=
     if not week_dates:
         return failed_plan(c)
     history = history_rows(restaurant_id, week_dates[0], shifts=shifts, db_path=db_path)
-    return plan_manager_coverage(c, sorted(set(dates)) if dates else week_dates, history=history,
+    plan = plan_manager_coverage(c, sorted(set(dates)) if dates else week_dates, history=history,
                                  prior_rows=prior_rows, roster_roles=roster_roles)
+    # The restaurant's standing positions (schedule_dedicated: Simple EJ's
+    # bar-tables bartender every night and weekend day), placed after the
+    # managers and pinned the same way; a manager's note can waive a slot.
+    try:
+        import schedule_dedicated as _ded
+        rest = _models_mod.get_restaurant(restaurant_id, **({"db_path": db_path} if db_path else {}))
+        rules = _ded.rules_of(rest)
+        if rules:
+            text = "\n".join(t for t in (getattr(rest, "sched_notes", None) or "", waive_text or "") if t)
+            dplan = _ded.plan(c, sorted(set(dates)) if dates else week_dates, rules, history=history,
+                              roster_roles=roster_roles, prior_rows=list(prior_rows or []) + list(plan.get("rows") or []),
+                              waived=_ded.waivers(text, rules))
+            plan["dedicated"] = dplan
+            plan["rows"] = list(plan.get("rows") or []) + dplan["rows"]
+    except Exception as exc:
+        import ops
+        ops.capture(exc, job="schedule_dedicated", context=f"restaurant {restaurant_id}")
+        plan["dedicated"] = {"rows": [], "waived": [], "rules": [],
+                             "unfilled": [{"date": week_dates[0], "part": "night", "label": "Standing positions",
+                                           "why": f"they couldn't be planned this time ({type(exc).__name__})"}]}
+    return plan
 
 
 # ── what the model is told, and the merge of its answer ────────────────────
@@ -1109,7 +1130,11 @@ def mark_pins(rows, sent=None) -> list:
         src = sent[i] if i < len(sent) and isinstance(sent[i], dict) else r
         why = str(src.get("_pin_reason") or r.get("_pin_reason") or "").strip()[:200] or None
         pinned = PLAN_SOURCE in (str(src.get("_pinned") or "").strip(), str(r.get("_pinned") or "").strip())
-        if is_plan_note(r.get("notes")):
+        if not pinned and "Cavnar AI: standing position" in str(r.get("notes") or ""):
+            # A standing position's row (schedule_dedicated) keeps its own pin.
+            r["_pinned"] = "dedicated"
+            r["_pin_reason"] = str(r.get("notes") or "").split(" — ")[0][:200]
+        elif is_plan_note(r.get("notes")):
             pinned = True
             why = why or plan_reason(r.get("notes"))
         elif pinned:
@@ -1198,6 +1223,9 @@ def review_lines(plan, gaps=None) -> list:
     for s in ((plan or {}).get("skipped") or [])[:3]:
         out.append(f"{s['employee']}'s standing shift on {_weekday(s['date'])} {mdy(s['date'])} wasn't used — "
                    f"{s['why']}.")
+    if (plan or {}).get("dedicated"):
+        import schedule_dedicated as _ded
+        out.extend(_ded.review_lines(plan["dedicated"]))
     return out
 
 
@@ -1210,7 +1238,12 @@ def payload(plan) -> dict:
         "shifts": [{"date": r["date"], "day": r.get("day"), "employee": r["employee"], "role": r.get("role"),
                     "shift_start": r["shift_start"], "shift_end": r["shift_end"],
                     "hours": _rules.row_hours(r), "source": r.get("_plan_source"), "reason": r.get("_pin_reason")}
-                   for r in plan.get("rows") or []],
+                   for r in _plan_rows(plan.get("rows"))],
+        # The standing positions' rows (schedule_dedicated), never listed as
+        # manager shifts.
+        "standing": [{"date": r["date"], "employee": r["employee"], "role": r.get("role"),
+                      "shift_start": r["shift_start"], "shift_end": r["shift_end"], "label": r.get("_pin_reason")}
+                     for r in ((plan.get("dedicated") or {}).get("rows") or [])],
         "windows": {d: {k: w.get(k) for k in ("from", "to", "source")} for d, w in (plan.get("windows") or {}).items()},
         "uncovered": [{k: u.get(k) for k in ("date", "day", "from", "to", "minutes", "why")}
                       for u in plan.get("uncovered") or []],

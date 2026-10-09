@@ -1940,7 +1940,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     try:
         manager_plan = _skeleton.plan_for_generation(
             restaurant_id, constraints, next_week_dates, shifts=shifts,
-            roster_roles={n: r for n, r in roster_pairs}, dates=dates, prior_rows=prior_rows)
+            roster_roles={n: r for n, r in roster_pairs}, dates=dates, prior_rows=prior_rows,
+            waive_text=instruction)
     except Exception as _sfx:
         _soft_fail('manager_plan', _sfx, restaurant_id)
         manager_plan = _skeleton.failed_plan(constraints, _sfx)
