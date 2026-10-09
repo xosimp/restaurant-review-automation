@@ -6158,6 +6158,61 @@ def _do_dsr_budget_prefill(u):
     return {"ok": True, **out}, 200
 
 
+def _do_dsr_budget_week_get(u):
+    """The Budget tab's week (owner, 10/9/26): ?start=YYYY-MM-DD (default
+    next week's first night). Each night's saved budget beside Cavnar AI's
+    suggestion - net from the report-basis forecast, gross from this
+    restaurant's own gross-to-net, a measured confidence % - the totals, the
+    mode and the weekly split. Owner view only, like the budget. Nothing is
+    written here."""
+    from dsr import budget_plan
+    from datetime import timedelta as _td_bw
+    refused = _dsr_owner_only(u)
+    if refused:
+        return refused
+    import closeout
+    from models import get_restaurant as _gr_bw
+    r = _gr_bw(_rid(u))
+    today = closeout.business_date_for(r)
+    start = _dsr_day(request.args.get("start")) if request.args.get("start") else None
+    if request.args.get("start") and start is None:
+        return {"ok": False, "error": "The start date must be YYYY-MM-DD."}, 400
+    if start is None:
+        dow = getattr(r, "fiscal_week_start_dow", None)
+        want = 0 if dow is None else int(dow)
+        this_start = today - _td_bw(days=(today.weekday() - want) % 7)
+        start = this_start + _td_bw(days=7)
+    return {"ok": True, **budget_plan.week_view(_rid(u), start, today=today), "today": today.isoformat()}, 200
+
+
+def _do_dsr_budget_week_set(u):
+    """Weekly mode's Save - {start, net, gross}: one figure for the week,
+    split across its nights by the restaurant's weekday mix and written as
+    each night's budget (a blank figure clears it). Owner view only."""
+    from dsr import budget_plan
+    refused = _dsr_owner_only(u)
+    if refused:
+        return refused
+    body = _body()
+    start = _dsr_day(body.get("start"))
+    if start is None:
+        return {"ok": False, "error": "The start date must be YYYY-MM-DD."}, 400
+    net, err = _dsr_money(body.get("net"), "Net")
+    if err:
+        return {"ok": False, "error": err}, 400
+    gross, err = _dsr_money(body.get("gross"), "Gross")
+    if err:
+        return {"ok": False, "error": err}, 400
+    import closeout
+    from models import get_restaurant as _gr_bs
+    try:
+        saved = budget_plan.save_week(_rid(u), start, net=net, gross=gross, updated_by=u.get("id"),
+                                      today=closeout.business_date_for(_gr_bs(_rid(u))))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, "saved": saved}, 200
+
+
 def _do_dsr_category(u):
     """Map a POS department to a DSR category — {pos_name, category}. One of
     Erik's six (matched case-insensitively) or the owner's own label; never
@@ -6247,6 +6302,7 @@ def _dsr_settings_payload(r):
             "dsr_gross_basis": getattr(r, "dsr_gross_basis", None) or "items",
             "dsr_deadline_hour": 4 if hour is None else int(hour),
             "dsr_late_night_hour": getattr(r, "dsr_late_night_hour", None),
+            "dsr_budget_mode": getattr(r, "dsr_budget_mode", None) if getattr(r, "dsr_budget_mode", None) in ("day", "week") else "day",
             "calendar_label": fiscal.label(r, closeout.business_date_for(r))}
 
 
@@ -6369,6 +6425,12 @@ def _do_dsr_settings_set(u):
             if not 18 <= h <= 23:
                 return {"ok": False, "error": "Late night starts between 6pm and 11pm."}, 400
             fields["dsr_late_night_hour"] = h
+    if "dsr_budget_mode" in body:
+        # How the owner budgets (10/9/26): a figure per night, or one for
+        # the week split by the restaurant's own weekday mix.
+        if body.get("dsr_budget_mode") not in ("day", "week"):
+            return {"ok": False, "error": "Budget by day or by week."}, 400
+        fields["dsr_budget_mode"] = body["dsr_budget_mode"]
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
     # Periods are whole weeks: a year start that isn't the week's first day
@@ -7130,6 +7192,8 @@ _ROUTES = [
     ("/dsr/week.xlsx", ["GET"], _do_dsr_week_xlsx, "dsr_week_xlsx"),
     ("/dsr/budget", ["POST"], _do_dsr_budget, "dsr_budget"),
     ("/dsr/budget/prefill", ["GET"], _do_dsr_budget_prefill, "dsr_budget_prefill"),
+    ("/dsr/budget/week", ["GET"], _do_dsr_budget_week_get, "dsr_budget_week_get"),
+    ("/dsr/budget/week", ["POST"], _do_dsr_budget_week_set, "dsr_budget_week_set"),
     ("/dsr/category", ["POST"], _do_dsr_category, "dsr_category"),
     ("/dsr/settings", ["GET"], _do_dsr_settings_get, "dsr_settings_get"),
     ("/dsr/settings", ["POST"], _do_dsr_settings_set, "dsr_settings_set"),

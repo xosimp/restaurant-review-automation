@@ -798,7 +798,8 @@ SAME_NEWS = {"publish_drafts": "no_response"}
 # whose view permission may hide it.
 HOME_SETUP_KEYS = {"google_not_connected": "reviews", "reviews_stale": "reviews", "toast_sync": "labor",
                    "pos_sync": "labor",
-                   "inventory_stale": "food", "post_failed": "marketing", "social_not_connected": "marketing"}
+                   "inventory_stale": "food", "post_failed": "marketing", "social_not_connected": "marketing",
+                   "budget_next_week": "dsr"}
 # Attention items and cards that state a FACT about what is on file — the
 # setup and health nudges, reviews and drafts waiting, a response rate, the
 # items below par, the people over 40 hours — not advice whose support can
@@ -1718,6 +1719,32 @@ def _build(current_user, present=True, reads=None):
                          evidence=(f"sales through {_pos_reg['as_of']}" if _pos_reg.get("as_of")
                                    else "no sales on file"),
                          provider=_pos_state.get("provider"))
+
+    # ── Next week's budget (owner, 10/9/26) ─────────────────────────────────
+    # From Thursday, when the daily report is on and next week has no budget
+    # on any night, the owner's view gets one row: the Budget tab opens on
+    # next week with Cavnar AI's suggestion beside each night. A fact about
+    # what is on file, never a recommendation (no confidence, no ledger).
+    try:
+        from dsr import access as _dsr_access
+        if (getattr(restaurant, "dsr_enabled", 1) and _dsr_access.view_for(current_user) == _dsr_access.OWNER
+                and local_now.weekday() >= 3):
+            from dsr.store import budgets_for as _budgets_for, list_reports as _list_reports
+            _dow = getattr(restaurant, "fiscal_week_start_dow", None)
+            _want = 0 if _dow is None else int(_dow)
+            _today = local_now.date()
+            _next = _today - timedelta(days=(_today.weekday() - _want) % 7) + timedelta(days=7)
+            # Only where the nightly report is actually running: a budget
+            # with no report to read it against is a chore with no payoff.
+            if _list_reports(rid, limit=1) and not _budgets_for(rid, _next, _next + timedelta(days=6)):
+                from time_utils import mdy as _mdy_b
+                add_attn("budget_next_week", "watch", f"Set next week's budget — week of {_mdy_b(_next)}",
+                         "No budget is on file for next week, so each night's report can't say how it did against one. "
+                         "Cavnar AI suggests a figure for every night.",
+                         "dsr", "Set the budget", action="open_module")
+                attention[-1]["action"]["nav"] = f"dsr/budget/{_next.isoformat()}"
+    except Exception as _e_bud:
+        print(f"[home_brief] budget nudge skipped for {rid}: {_e_bud}")
 
     # ── Labor ───────────────────────────────────────────────────────────────
     if "labor" in active_keys:

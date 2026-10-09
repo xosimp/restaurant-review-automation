@@ -593,6 +593,7 @@ class Restaurant:
     # night" in the report's dayparts, not the POS's Lunch/Dinner tag; None
     # keeps the POS tags (dsr.block_service, Erik 10/2/26: 10pm).
     dsr_late_night_hour: Optional[int] = None
+    dsr_budget_mode: Optional[str] = None      # 'day' | 'week' - how the owner budgets (10/9/26); None reads as day
     # Toast opt-in invite texts (guest_marketing.run_toast_optin_invites):
     # off until the owner turns them on in Campaigns -> Settings, which is
     # also their acknowledgement of the sentence beside the switch (MB-3).
@@ -1805,6 +1806,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "dsr_notify", "INTEGER DEFAULT 0"),
         ("restaurants", "dsr_gross_basis", "TEXT DEFAULT 'items'"),
         ("restaurants", "dsr_late_night_hour", "INTEGER"),
+        ("restaurants", "dsr_budget_mode", "TEXT"),
         # Toast opt-in invites: owner switch + acknowledgement (MB-3, 9/28/26).
         ("restaurants", "optin_invites_enabled", "INTEGER DEFAULT 0"),
         ("restaurants", "optin_invites_ack_at", "TEXT"),
@@ -4929,7 +4931,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","issue_texts","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
         "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_competitor_move","alert_extra_emails","push_sound",
-        "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","fiscal_years_json","dsr_enabled","dsr_deadline_hour","dsr_notify","dsr_gross_basis","dsr_late_night_hour",
+        "fiscal_week_start_dow","fiscal_year_start","fiscal_period_scheme","fiscal_years_json","dsr_enabled","dsr_deadline_hour","dsr_notify","dsr_gross_basis","dsr_late_night_hour","dsr_budget_mode",
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
@@ -5669,6 +5671,7 @@ def _restaurant_from_row(row) -> Restaurant:
         dsr_notify=row["dsr_notify"] if "dsr_notify" in row.keys() and row["dsr_notify"] is not None else 0,
         dsr_gross_basis=row["dsr_gross_basis"] if "dsr_gross_basis" in row.keys() and row["dsr_gross_basis"] else "items",
         dsr_late_night_hour=row["dsr_late_night_hour"] if "dsr_late_night_hour" in row.keys() else None,
+        dsr_budget_mode=row["dsr_budget_mode"] if "dsr_budget_mode" in row.keys() else None,
         optin_invites_enabled=(row["optin_invites_enabled"] if "optin_invites_enabled" in row.keys()
                                and row["optin_invites_enabled"] is not None else 0),
         optin_invites_ack_at=row["optin_invites_ack_at"] if "optin_invites_ack_at" in row.keys() else None,

@@ -7626,6 +7626,21 @@ svg:hover .hb-xh{opacity:1}
 .dr-grid tfoot tr+tr td{border-top:1px solid var(--hb-line2);font-weight:500;color:var(--ink2)}
 .dr-grid tfoot td.day small{display:block;font-weight:400;font-size:11.5px;color:var(--ink3)}
 .dr-bud{margin-top:16px}
+.drb-top{display:flex;flex-wrap:wrap;gap:18px 32px;align-items:flex-start;justify-content:space-between}
+.drb-mode{display:flex;align-items:center;gap:8px}.drb-mode .k,.drb-sum .k{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+.drb-mode [aria-pressed="true"]{border-color:var(--ember);color:var(--ink)}
+.drb-sum{display:flex;flex-wrap:wrap;gap:16px 40px}.drb-sum .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--ink);margin-top:4px}
+.drb-sum .v small{font-size:13px;color:var(--ink3);font-weight:500}.drb-sum .s{font-size:14px;color:var(--ink2);margin-top:2px}
+.drb-conf{display:inline-block;margin-top:6px;font-size:13px;color:var(--ink2)}.drb-conf.off{color:var(--ink3)}
+.drb-grid{display:grid;grid-template-columns:minmax(110px,.9fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(0,2fr) auto;gap:10px 14px;align-items:center}
+.drb-grid .h{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.drb-grid .d{font-size:15px;color:var(--ink)}.drb-grid .d b{font-weight:600;margin-right:4px}
+.drb-grid .sg{font-size:15px;color:var(--ink);min-width:0}.drb-grid .sg small{display:block;font-size:13px;color:var(--ink2);line-height:1.4;margin-top:2px}
+.drb-wrow{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:flex-end;margin:6px 0 12px}.drb-wrow label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--ink2)}
+.drb-sgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin-top:12px}.drb-sgrid .d{font-size:13px;color:var(--ink2)}.drb-sgrid .v{font-size:15px;color:var(--ink);grid-row:2}
+.drb-bar{position:sticky;bottom:0;z-index:4;display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:16px;padding:12px 0;background:linear-gradient(180deg,transparent,var(--bg-base) 40%)}
+.drb-bar .ac-status{margin-right:auto;font-size:14px;color:var(--ink2)}
+@media (max-width:760px){.drb-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.drb-grid .h{display:none}.drb-grid .d{grid-column:1/-1;margin-top:10px}.drb-grid .sg{grid-column:1/-1}.drb-sgrid{grid-template-columns:repeat(4,minmax(0,1fr))}.drb-sgrid .v{grid-row:auto}}
 .dr-bud-grid{display:grid;grid-template-columns:130px minmax(0,160px) minmax(0,160px);gap:8px 12px;align-items:center;margin-top:12px}
 /* Budget prefill row (U2-11): the sources, then the editable grid below. */
 .dr-bud-pre{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}
@@ -7664,6 +7679,8 @@ svg:hover .hb-xh{opacity:1}
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="night" aria-pressed="false">Night</button>
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="week" aria-pressed="false">Week</button>
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="period" aria-pressed="false">Period</button>
+      {# Budget (owner, 10/9/26): next week's figures beside Cavnar AI's. #}
+      <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="budget" aria-pressed="false">Budget</button>
     </div>
     <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-print="dr-root" title="Print this report, or save it as a PDF from the print dialog">Print</button>
   </div>
@@ -7816,6 +7833,7 @@ svg:hover .hb-xh{opacity:1}
     show();setViews(kind);window.scrollTo(0,0);
     if(kind==='list')return loadList(null);
     if(kind==='week'||kind==='period')return loadGrid(kind,date);
+    if(kind==='budget')return loadBudget(date);
     return loadNight(date,st.version);
   };
   // ── every report, newest first (the Reports tab, owner 9/30/26) ─────────
@@ -7867,7 +7885,7 @@ svg:hover .hb-xh{opacity:1}
     e.preventDefault();t.disabled=true;loadList(t.getAttribute('data-dr-older'));
   });
   function route(){
-    var m=/^#dsr(?:\/(week|period|list))?(?:\/(\d{4}-\d{2}-\d{2}))?\/?$/.exec(window.location.hash||'');
+    var m=/^#dsr(?:\/(week|period|list|budget))?(?:\/(\d{4}-\d{2}-\d{2}))?\/?$/.exec(window.location.hash||'');
     if(!m)return false;
     var kind=m[1]||'night',date=m[2]||null;
     if(active()&&st.kind===kind&&st.date===date)return true;
@@ -7881,12 +7899,124 @@ svg:hover .hb-xh{opacity:1}
   // tick finds the page inactive).
   if(window.cavNavRegister)cavNavRegister('dsr',function(p){
     var r=p.rest.slice(0),kind='night',date=null;
-    if(r[0]==='week'||r[0]==='period'||r[0]==='night'||r[0]==='list')kind=r.shift();
+    if(r[0]==='week'||r[0]==='period'||r[0]==='night'||r[0]==='list'||r[0]==='budget')kind=r.shift();
     if(r[0]&&/^\d{4}-\d{2}-\d{2}$/.test(r[0]))date=r[0];
     if(active()&&st.kind===kind&&st.date===date)return true;
     window.dsrOpen(kind,date);return true;
   });
   document.addEventListener('visibilitychange',function(){if(!document.hidden&&st.tick)st.tick();});
+
+  // ── Budget: next week's figures beside Cavnar AI's (owner, 10/9/26) ─────
+  // GET /api/dsr/budget/week (dsr/budget_plan). By day: a net and a gross
+  // per night, each beside the suggestion with its basis; "Use" copies one,
+  // "Use all" every one; nothing is saved until Save. By week: one figure,
+  // split across the nights by the restaurant's own weekday mix, the split
+  // shown before it saves. A suggestion is never a budget until saved.
+  var BUD=null;
+  function loadBudget(start){
+    var tk=st.token,b=body();if(!b)return;b.innerHTML=loading('Loading the budget');
+    return get('/api/dsr/budget/week'+(start?'?start='+encodeURIComponent(start):'')).then(function(d){
+      if(tk!==st.token)return;
+      if(!d||!d.ok){
+        if(d&&(d.http_status===403||d.status===403)){b.innerHTML='<div class="dr-head"><div><div class="hb-kicker">Budget</div><h1 class="hb-h1">The budget is the owner’s</h1></div></div><section class="hb-card"><div class="hb-empty">'+esc(d.error||'Only the account owner sets the budget.')+'</div></section>';return;}
+        loadFailed(b,d);return;}
+      BUD=d;st.date=d.start;b.innerHTML=budgetHtml(d);
+    }).catch(function(){if(tk===st.token)loadFailed(b,null);});
+  }
+  function budSplit(total,days,mix){
+    var out={},s=0,i,w,run=0,last=null;if(!isNum(total))return out;
+    for(i=0;i<days.length;i++)s+=mix[days[i].weekday]||0;
+    if(s<=0)return out;
+    for(i=0;i<days.length;i++){w=mix[days[i].weekday]||0;if(w<=0)continue;
+      var v=Math.round(total*w/s/10)*10;out[days[i].date]=v;run+=v;last=days[i].date;}
+    if(last)out[last]=Math.round((out[last]+(total-run))*100)/100;
+    return out;
+  }
+  function budConf(sg){
+    if(!sg)return '';
+    return isNum(sg.confidence_pct)?'<span class="drb-conf" title="'+esc(sg.confidence_basis||'')+'">'+hn(sg.confidence_pct+'%')+' confidence</span>'
+      :'<span class="drb-conf off" title="'+esc(sg.confidence_basis||'')+'">— confidence</span>';
+  }
+  function budgetHtml(d){
+    var days=d.days||[],sg=d.suggest||{},bd=d.budget||{},wk=d.mode==='week',i,x,h;
+    h='<div class="dr-head"><div><div class="hb-kicker">Budget</div><h1 class="hb-h1">Week of '+hn(esc(md(d.start)))+' – '+hn(esc(md(d.end)))+'</h1>'
+      +'<div class="dr-meta">Your figures beside Cavnar AI’s suggestion for each night. Nothing is saved until you press Save.</div></div>'
+      +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="budget" data-date="'+esc(addDays(d.start,-7))+'">&larr; Week before</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="budget" data-date="'+esc(addDays(d.start,7))+'">Week after &rarr;</button></div></div>';
+    h+='<section class="hb-card drb-top"><div class="drb-mode" role="group" aria-label="Budget by">'
+      +'<span class="k">Budget by</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="day" aria-pressed="'+(wk?'false':'true')+'">Day</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="week" aria-pressed="'+(wk?'true':'false')+'">Week</button></div>'
+      +'<div class="drb-sum"><div><div class="k">Your budget</div><div class="v">'+hn(esc(money(bd.net)))+' <small>net</small></div><div class="s">'+(isNum(bd.gross)?hn(esc(money(bd.gross)))+' gross':'No gross set')+'</div></div>'
+      +'<div><div class="k">Cavnar AI suggests</div><div class="v">'+hn(esc(money(sg.net)))+' <small>net</small></div><div class="s">'+(isNum(sg.gross)?hn(esc(money(sg.gross)))+' gross':esc(sg.gross_basis||''))+'</div>'+budConf(sg)+'</div></div></section>';
+    if(wk){
+      var tn=isNum(bd.net)?bd.net:'',tg=isNum(bd.gross)?bd.gross:'';
+      h+='<section class="hb-card drb-week"><div class="hb-h3"><span>The week’s figure</span></div>'
+        +'<div class="drb-wrow"><label>Net<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" id="drb-wnet" value="'+esc(tn)+'"></label>'
+        +'<label>Gross<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" id="drb-wgross" value="'+esc(tg)+'"></label>'
+        +(isNum(sg.net)?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-drb="use-week">Use Cavnar AI’s '+hn(esc(money(sg.net)))+'</button>':'')+'</div>'
+        +'<div class="hb-empty">'+(d.mix&&Object.keys(d.mix).length?'Split across the nights by '+esc(d.mix_basis||'your weekday mix')+'. A night your mix has no share of gets nothing.':'There isn’t enough sales history yet to split a week across its nights — budget by day until there is.')+'</div>'
+        +'<div class="drb-split" id="drb-split">'+budSplitHtml(d,tn===''?null:+tn)+'</div></section>';
+    }else{
+      h+='<section class="hb-card drb-days"><div class="drb-grid"><span class="h">Night</span><span class="h">Your net</span><span class="h">Your gross</span><span class="h">Cavnar AI suggests</span><span class="h"></span>';
+      for(i=0;i<days.length;i++){x=days[i];var s=x.suggest;
+        h+='<span class="d"><b>'+esc(x.weekday.slice(0,3))+'</b> '+hn(esc(md(x.date)))+'</span>'
+          +'<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" aria-label="Net budget '+esc(md(x.date))+'" data-drb-net="'+esc(x.date)+'" value="'+(isNum(x.budget_net)?x.budget_net:'')+'">'
+          +'<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" aria-label="Gross budget '+esc(md(x.date))+'" data-drb-gross="'+esc(x.date)+'" value="'+(isNum(x.budget_gross)?x.budget_gross:'')+'">'
+          +'<span class="sg">'+(s?hn(esc(money(s.net)))+' net'+(isNum(s.gross)?' · '+hn(esc(money(s.gross)))+' gross':'')+'<small>'+esc(s.basis||'')+'</small>':'<small>'+esc(x.why_none||'No suggestion for this night')+'</small>')+'</span>'
+          +'<span>'+(s?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-drb="use" data-date="'+esc(x.date)+'">Use</button>':'')+'</span>';}
+      h+='</div></section>';
+    }
+    h+='<div class="drb-bar"><span class="ac-status" id="drb-status"></span>'
+      +(!wk&&isNum(sg.net)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="use-all">Use all suggestions</button>':'')
+      +'<button type="button" class="cbtn cbtn-primary cbtn-sm" data-drb="save">Save budget</button></div>';
+    return h;
+  }
+  function budSplitHtml(d,total){
+    var days=d.days||[],sp=budSplit(total,days,d.mix||{}),h='<div class="drb-sgrid">',i,x;
+    for(i=0;i<days.length;i++){x=days[i];
+      h+='<span class="d"><b>'+esc(x.weekday.slice(0,3))+'</b> '+hn(esc(md(x.date)))+'</span><span class="v">'+(has(sp,x.date)?hn(esc(money(sp[x.date]))):'—')+'</span>';}
+    return h+'</div>';
+  }
+  function budVal(inp){var v=String(inp&&inp.value||'').replace(/[$,\s]/g,'');if(v==='')return null;var n=Number(v);return isFinite(n)&&n>=0?n:NaN;}
+  function budSave(btn){
+    if(!BUD)return;var s=el('drb-status'),wk=BUD.mode==='week',done=typeof cbtnBusy==='function'?cbtnBusy(btn,'Saving'):function(){};
+    var req;
+    if(wk){var n=budVal(el('drb-wnet')),g=budVal(el('drb-wgross'));
+      if(n!==n||g!==g){done();if(s)s.textContent='Budgets are dollar amounts, $0 or more.';return;}
+      req=post('/api/dsr/budget/week',{start:BUD.start,net:n,gross:g});}
+    else{var days=[],i,bad=false;
+      for(i=0;i<BUD.days.length;i++){var dt=BUD.days[i].date,nn=budVal(document.querySelector('[data-drb-net="'+dt+'"]')),gg=budVal(document.querySelector('[data-drb-gross="'+dt+'"]'));
+        if(nn!==nn||gg!==gg){bad=true;break;}days.push({date:dt,net:nn,gross:gg});}
+      if(bad){done();if(s)s.textContent='Budgets are dollar amounts, $0 or more.';return;}
+      req=post('/api/dsr/budget',{days:days});}
+    req.then(function(r){done();
+      if(!r||!r.ok){if(s)s.textContent=(r&&r.error)||'Couldn’t save the budget.';return;}
+      if(typeof toast==='function')toast('Budget saved','success');loadBudget(BUD.start);
+    }).catch(function(){done();if(s)s.textContent='The answer didn’t arrive — reload to see what saved.';});
+  }
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-drb]'):null;if(!t||t.disabled||!BUD)return;
+    var a=t.getAttribute('data-drb'),i,x;e.preventDefault();
+    if(a==='use'){var dt=t.getAttribute('data-date');for(i=0;i<BUD.days.length;i++){x=BUD.days[i];if(x.date===dt&&x.suggest){
+        var ni=document.querySelector('[data-drb-net="'+dt+'"]'),gi=document.querySelector('[data-drb-gross="'+dt+'"]');
+        if(ni)ni.value=x.suggest.net;if(gi&&isNum(x.suggest.gross))gi.value=x.suggest.gross;}}}
+    else if(a==='use-all'){for(i=0;i<BUD.days.length;i++){x=BUD.days[i];if(!x.suggest)continue;
+        var n2=document.querySelector('[data-drb-net="'+x.date+'"]'),g2=document.querySelector('[data-drb-gross="'+x.date+'"]');
+        if(n2)n2.value=x.suggest.net;if(g2&&isNum(x.suggest.gross))g2.value=x.suggest.gross;}
+      var s=el('drb-status');if(s)s.textContent='Filled in — check them, then Save.';}
+    else if(a==='use-week'){var wn=el('drb-wnet'),wg=el('drb-wgross'),sg=BUD.suggest||{};
+      if(wn&&isNum(sg.net))wn.value=sg.net;if(wg&&isNum(sg.gross))wg.value=sg.gross;
+      var sp=el('drb-split');if(sp)sp.innerHTML=budSplitHtml(BUD,isNum(sg.net)?sg.net:null);}
+    else if(a==='mode'){var m=t.getAttribute('data-mode');if(m===BUD.mode)return;
+      post('/api/dsr/settings',{dsr_budget_mode:m}).then(function(r){
+        if(!r||!r.ok){var s2=el('drb-status');if(s2)s2.textContent=(r&&r.error)||'Couldn’t change how you budget.';return;}
+        loadBudget(BUD.start);});}
+    else if(a==='save')budSave(t);
+  });
+  document.addEventListener('input',function(e){
+    if(!BUD||!e.target||e.target.id!=='drb-wnet')return;
+    var sp=el('drb-split'),v=budVal(e.target);if(sp)sp.innerHTML=budSplitHtml(BUD,v===v?v:null);
+  });
 
   // ── one night ────────────────────────────────────────────────────────────
   function loadNight(date,version){
@@ -9151,7 +9281,8 @@ svg:hover .hb-xh{opacity:1}
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,-7)+'">&larr; Week before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,7)+'">Week after &rarr;</button>'
       +'<a class="cbtn cbtn-secondary cbtn-sm" href="/api/dsr/week.xlsx?date='+esc(g.start)+'" download>Export to Excel</a>'
-      +(owner?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-dr="bud-open" aria-expanded="false" aria-controls="dr-bud">Edit budget</button>':'')+'</div></div>';
+      // The week's budget lives on the Budget tab now (owner, 10/9/26).
+      +(owner?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-dr="open" data-kind="budget" data-date="'+esc(g.start)+'">Edit budget</button>':'')+'</div></div>';
     h+=gridSummary(g,owner,'week');
     h+='<div class="dr-gridbox fc2-table-scroll"><table class="dr-grid" data-sortable="dsr-week"><thead>'+groupRow(cols,true,true)+'<tr><th class="day l">Day</th>';
     for(var i=0;i<cols.length;i++)h+='<th>'+esc(cols[i].h)+'</th>';
@@ -9314,6 +9445,7 @@ svg:hover .hb-xh{opacity:1}
   // grid to a night, the grid's latest measured night; from a night to a
   // grid, the grid holding that night.
   function viewDate(kind){
+    if(kind==='budget')return null;
     if(kind!=='night')return st.date||(st.grid&&st.grid.end)||null;
     var g=st.grid;
     if(st.kind!=='night'&&g&&g.days){for(var i=g.days.length-1;i>=0;i--)if(g.days[i].status)return g.days[i].date;return null;}
@@ -15592,6 +15724,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
              EJ's by hand on 10/2 and had no field. #}
           <div class="ac-row"><div class="l"><b>Late night starts at</b><span>Checks opened from this hour, or after midnight, are their own Late night line beside lunch and dinner. Off keeps your POS&rsquo;s own meal periods.</span></div>
             <div class="c"><select class="ac-select" id="as-dsr-late" onchange="saveDsrSetting('dsr_late_night_hour')" aria-label="Late night starts at"><option value="">Off</option><option value="18">6 pm</option><option value="19">7 pm</option><option value="20">8 pm</option><option value="21">9 pm</option><option value="22">10 pm</option><option value="23">11 pm</option></select></div></div>
+          {# How the owner budgets (10/9/26): per night, or one figure for the
+             week split by the restaurant's own weekday mix. #}
+          <div class="ac-row"><div class="l"><b>Budget by</b><span>A net and gross for each night, or one figure for the week that Cavnar AI splits across the nights by your usual weekday mix. Either way Cavnar AI suggests the figures on the Budget tab.</span></div>
+            <div class="c ac-inline"><select class="ac-select" id="as-dsr-budmode" onchange="saveDsrSetting('dsr_budget_mode')" aria-label="Budget by"><option value="day">Day</option><option value="week">Week</option></select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="if(window.cavNav)cavNav('dsr/budget');else location.hash='#dsr/budget';">Open the budget</button></div></div>
           <div class="ac-row as-dsr-years"><div class="l"><b>Years that run differently</b><span>A 53-week year, or any year your accounting system splits its own way. Every other year follows the start and periods above, counted on from the end of the last one listed here.</span>
               <div id="as-dsr-years" class="as-dsr-ylist"></div></div>
             <div class="c ac-inline"><input class="ac-input" type="date" id="as-dsr-ystart" aria-label="That year starts" style="width:160px"><input class="ac-input" type="text" id="as-dsr-ylen" inputmode="numeric" maxlength="60" placeholder="4,4,5,4,4,5,4,4,5,4,5,5" aria-label="That year's period lengths" style="width:200px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="dsrAddYear()">Add year</button></div></div>
@@ -28921,6 +29057,8 @@ function loadDsrSettings() {
     _dsrShowScheme(s.fiscal_period_scheme || '4x13');
     var late = document.getElementById('as-dsr-late');
     if (late) late.value = s.dsr_late_night_hour == null ? '' : String(s.dsr_late_night_hour);
+    var bm = document.getElementById('as-dsr-budmode');
+    if (bm) bm.value = s.dsr_budget_mode === 'week' ? 'week' : 'day';
     var gb = document.getElementById('as-dsr-gross');
     if (gb) gb.value = s.dsr_gross_basis === 'all' ? 'all' : 'items';
     _dsrYears = s.fiscal_years || [];
@@ -29044,6 +29182,7 @@ function saveDsrSetting(field) {
   else if (field === 'dsr_notify') v = document.getElementById('as-dsr-notify').checked;
   else if (field === 'dsr_deadline_hour') v = parseInt(document.getElementById('as-dsr-deadline').value, 10);
   else if (field === 'dsr_late_night_hour') { v = document.getElementById('as-dsr-late').value; v = v === '' ? null : parseInt(v, 10); }
+  else if (field === 'dsr_budget_mode') v = document.getElementById('as-dsr-budmode').value;
   else if (field === 'fiscal_week_start_dow') v = parseInt(document.getElementById('as-dsr-dow').value, 10);
   else if (field === 'fiscal_year_start') v = document.getElementById('as-dsr-year').value || '';
   else if (field === 'fiscal_period_scheme') {

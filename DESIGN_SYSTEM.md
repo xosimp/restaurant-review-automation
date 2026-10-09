@@ -1249,6 +1249,20 @@ Every block keeps its empty state; a quiet day is a short page.
 
 ## 12. Reusable components
 
+**Budget (10/9/26).** A fifth view beside All reports, Night, Week and
+Period (`#dsr/budget/YYYY-MM-DD`, owner view only; opens on next week). A
+`.drb-top` card: "Budget by" Day | Week (the setting `dsr_budget_mode`, also
+in Account → Daily report) and two figures, "Your budget" and "Cavnar AI
+suggests" (net in the number face, gross under it, the measured confidence %
+or "— confidence" with its basis as the title). By day: `.drb-grid`, one row
+per night — date, your net, your gross, the suggestion with its basis line
+in Ink2, and a text "Use"; "Use all suggestions" fills every box. By week:
+one net and gross, "Use Cavnar AI's $X", and the split across the nights
+shown live as you type (`.drb-sgrid`). A sticky `.drb-bar` holds the status
+and the primary Save; nothing is saved before it. Home's Needs you carries
+"Set next week's budget" from Thursday while next week is empty (owner view,
+reports running). The Week view's "Edit budget" opens this tab.
+
 **Reports (9/30/26).** The top-level Reports tab, beside Home, opens the
 daily report panel on its list (`#dsr/list`): one `.dr-list-row` per night
 (weekday and M/D/YY, the scorecard verdict and score in its tone, net, the
