@@ -45,7 +45,16 @@ struct MarketingView: View {
     @State private var subTab: MarketingSubTab = .content
     @State private var showingPreview = false
     @State private var showingSchedule = false
-    @State private var schedulePlatform = "instagram"
+    /// Every channel Schedule queues the post to (re-audit 10/8/26 H4).
+    @State private var schedulePlatforms: [String] = []
+    /// A generate waiting on "Replace your edited post?" (M7).
+    @State private var pendingGenerate: PendingGenerate?
+    /// "Plan a new week?" before seven ideas are replaced (L5).
+    @State private var confirmingNewWeek = false
+    /// The composer and the week sit behind their own disclosures, so the
+    /// Content tab has one next move on its first screen (M15).
+    @State private var showingComposer = false
+    @State private var showingWeek = false
     /// The confirm before "Post to all connected" publishes (Friction #41).
     @State private var confirmingPostAll = false
     @State private var shelfDestination: MarketingShelfDestination?
@@ -89,7 +98,11 @@ struct MarketingView: View {
                             // owner, approvable here (readability #19) — the
                             // Drafts screen was the only place to do it.
                             waitingPostsRow
-                            MarketingOpportunitySection(viewModel: opportunities, draftingKey: nil) { card in
+                            // The next best move is the screen's one primary:
+                            // a post waiting on an approve, else the top
+                            // opportunity (re-audit 10/8/26 M15).
+                            MarketingOpportunitySection(viewModel: opportunities,
+                                                        leadsTheScreen: compose.drafts.first(where: \.canApprove) == nil) { card in
                                 draftFromCard(card)
                             }
                             .id(Self.opportunitiesAnchor)
@@ -124,12 +137,35 @@ struct MarketingView: View {
             // blocks. Only on Content, only where a channel is connected.
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if subTab == .content && viewModel.hasDraft && viewModel.canPostSomewhere {
-                    CavnarPinnedBar {
-                        composeActions
-                        if viewModel.isGooglePost {
-                            googlePublish
-                        } else {
-                            socialPublish
+                    if canPublish {
+                        CavnarPinnedBar {
+                            composeActions
+                            if viewModel.isGooglePost {
+                                googlePublish
+                            } else {
+                                socialPublish
+                            }
+                        }
+                    } else {
+                        // A teammate whose login may not publish (may_publish)
+                        // saves it for the owner — Post and Schedule would
+                        // only be refused (re-audit 10/8/26 M4).
+                        CavnarPinnedBar(note: "Only the owner can post or schedule from here.") {
+                            Button {
+                                Haptic.light()
+                                Task { await saveDraftForOwner() }
+                            } label: {
+                                Group {
+                                    if compose.isSavingDraft {
+                                        CavnarShimmerText(text: "Saving\u{2026}", color: .white)
+                                    } else {
+                                        Text("Save for the owner to send")
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: compose.isSavingDraft))
+                            .disabled(compose.isSavingDraft)
                         }
                     }
                 }
@@ -185,7 +221,8 @@ struct MarketingView: View {
             }
         }
         .sheet(item: $studioSeed) { seed in
-            CampaignStudioView(seed: seed, connected: viewModel.channels, isOwner: isOwner) {
+            CampaignStudioView(seed: seed, connected: viewModel.channels, isOwner: isOwner,
+                               canPublish: canPublish) {
                 Task {
                     async let a: Void = campaigns.load()
                     async let b: Void = opportunities.load(quiet: true)
@@ -211,9 +248,29 @@ struct MarketingView: View {
             focusApplied = true
             await applyFocus()
         }
-        // New copy is a new draft, not an edit of the one last opened.
-        .onChange(of: viewModel.isGenerating) { _, generating in
-            if generating { compose.savedDraftID = nil }
+        // New copy is a new draft, not an edit of the one last opened —
+        // once it lands; a generate that fails keeps the draft and its id.
+        .onChange(of: viewModel.generatedCount) { _, _ in
+            compose.savedDraftID = nil
+        }
+        .confirmationDialog("Replace your edited post?",
+                            isPresented: Binding(get: { pendingGenerate != nil },
+                                                 set: { if !$0 { pendingGenerate = nil } }),
+                            titleVisibility: .visible, presenting: pendingGenerate) { pending in
+            Button("Write a new one", role: .destructive) {
+                Task { await pending.run() }
+            }
+            Button("Keep mine", role: .cancel) {}
+        } message: { _ in
+            Text("Cavnar AI writes a new post in place of the one you edited. You can undo it once.")
+        }
+        .confirmationDialog("Plan a new week?", isPresented: $confirmingNewWeek, titleVisibility: .visible) {
+            Button("Plan a new week", role: .destructive) {
+                Task { await viewModel.generateCalendar() }
+            }
+            Button("Keep this week", role: .cancel) {}
+        } message: {
+            Text("Seven new ideas replace this week\u{2019}s. Posts you already wrote stay in Drafts.")
         }
         // The content tab's one outcome figure reads the 30-day window —
         // the window alone, not the whole Analytics load (which records the
@@ -261,14 +318,14 @@ struct MarketingView: View {
         #endif
         .sheet(isPresented: $showingPreview) {
             MarketingPreviewSheet(
-                platform: viewModel.isGooglePost ? "google" : "instagram",
+                platform: previewPlatform,
                 text: viewModel.draft,
                 ctaType: viewModel.isGooglePost ? viewModel.googleCTA.rawValue : nil,
                 viewModel: compose)
         }
         .sheet(isPresented: $showingSchedule) {
             MarketingScheduleSheet(
-                platform: schedulePlatform, text: viewModel.draft, topic: viewModel.topic,
+                platforms: schedulePlatforms, text: viewModel.draft, topic: viewModel.topic,
                 contentType: viewModel.selectedType,
                 ctaType: viewModel.isGooglePost ? viewModel.googleCTA.rawValue : nil,
                 ctaURL: viewModel.isGooglePost ? viewModel.googleCTALink : nil,
@@ -494,12 +551,54 @@ struct MarketingView: View {
 
     // MARK: - Generator
 
+    /// Open while there is a draft or one is being written; otherwise the
+    /// owner opens it (M15).
+    private var composerOpen: Bool { showingComposer || viewModel.hasDraft || viewModel.isGenerating }
+
     @ViewBuilder
     private var composerCard: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
-            Text("Write a post")
-                .cavnarText(.label)
+            disclosureHeader("Write a post", isOpen: composerOpen,
+                             locked: viewModel.hasDraft || viewModel.isGenerating) {
+                showingComposer.toggle()
+            }
+            if composerOpen {
+                composerBody
+            }
+        }
+        .animation(.easeOut(duration: 0.3), value: viewModel.isGenerating)
+        .cavnarCard()
+    }
 
+    /// A section's own header that opens and closes it: the label, then a
+    /// chevron; 44pt. `locked` keeps it open (a draft is on screen).
+    private func disclosureHeader(_ title: String, isOpen: Bool, locked: Bool = false,
+                                  toggle: @escaping () -> Void) -> some View {
+        Button {
+            guard !locked else { return }
+            Haptic.light()
+            withAnimation(.cavnarEase(0.22)) { toggle() }
+        } label: {
+            HStack(spacing: CavnarSpace.xs) {
+                Text(title).cavnarText(.label)
+                Spacer(minLength: 0)
+                if !locked {
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(isOpen ? 180 : 0))
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(locked ? "" : (isOpen ? "Expanded" : "Collapsed"))
+    }
+
+    @ViewBuilder
+    private var composerBody: some View {
             TextField("Topic — optional, e.g. fall truffle menu", text: $viewModel.topic)
                 .cavnarTextFieldStyle()
                 .focused($focusedField, equals: .topic)
@@ -515,7 +614,7 @@ struct MarketingView: View {
                 // hugging pill resized on every change and dragged the
                 // chevron with it. See CavnarSplitButton.fillsWidth.
                 fillsWidth: true,
-                action: { Task { await viewModel.generate() } }
+                action: { requestGenerate { await viewModel.generate() } }
             ) {
                 ForEach(viewModel.socialContentTypes) { type in
                     Button {
@@ -558,9 +657,6 @@ struct MarketingView: View {
                 // Where it goes; Post and Schedule are pinned at the bottom.
                 publishSection
             }
-        }
-        .animation(.easeOut(duration: 0.3), value: viewModel.isGenerating)
-        .cavnarCard()
     }
 
     /// Editable, because it has to be. Three of the six content types are
@@ -633,6 +729,7 @@ struct MarketingView: View {
     /// behind "More" (readability round #56) — four buttons of one weight
     /// sat between the words and Post. A grid's .flexible() columns are
     /// equal by definition, so a label that changes never re-splits the row.
+    @ViewBuilder
     private var draftActions: some View {
         HStack(spacing: CavnarSpace.xs) {
             actionCell("Preview", systemImage: "eye") {
@@ -640,7 +737,7 @@ struct MarketingView: View {
             }
             actionCell("Regenerate", systemImage: "arrow.triangle.2.circlepath",
                        disabled: viewModel.isGenerating) {
-                Task { await viewModel.generate() }
+                requestGenerate { await viewModel.generate() }
             }
             Menu {
                 Button {
@@ -673,6 +770,56 @@ struct MarketingView: View {
             .accessibilityLabel("More: copy or save the draft")
         }
         .animation(.easeOut(duration: 0.2), value: viewModel.didCopyDraft)
+        // The draft a regenerate replaced, one tap back (M7).
+        if viewModel.replacedDraft != nil && !viewModel.isGenerating {
+            Button {
+                viewModel.undoRegenerate()
+            } label: {
+                Label("Undo \u{2014} bring back the last draft", systemImage: "arrow.uturn.backward")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// A generate that would replace the owner's edits asks first (M7).
+    private func requestGenerate(_ run: @escaping @MainActor () async -> Void) {
+        if viewModel.draftHasEdits {
+            pendingGenerate = PendingGenerate(run: run)
+        } else {
+            Task { await run() }
+        }
+    }
+
+    /// Preview where it would go first: Google for a Google post, else the
+    /// first channel switched on (M9) — it was always Instagram.
+    private var previewPlatform: String {
+        if viewModel.isGooglePost { return "google" }
+        if let first = viewModel.socialTargets(hasMedia: compose.media != nil).first { return first.lowercased() }
+        return viewModel.channels.instagram ? "instagram" : "facebook"
+    }
+
+    /// The channels Schedule queues to — the same targets Post would use.
+    private var scheduleTargets: [String] {
+        viewModel.isGooglePost ? ["google"]
+            : viewModel.socialTargets(hasMedia: compose.media != nil).map { $0.lowercased() }
+    }
+
+    /// Who may post or schedule: the Campaigns overview's word, else the
+    /// login's own (may_publish).
+    private var canPublish: Bool {
+        campaigns.overview?.canPublish ?? (sessionStore.currentUser?.mayPublishMarketing ?? false)
+    }
+
+    /// A teammate's "Save for the owner to send": the draft, saved.
+    private func saveDraftForOwner() async {
+        await compose.saveDraft(body: viewModel.draft, topic: viewModel.topic,
+                                contentType: viewModel.selectedType,
+                                draftRef: viewModel.draftRef, contentLogId: viewModel.contentLogId)
+        if compose.draftError == nil { Haptic.success() }
     }
 
     private func actionCell(_ title: String, systemImage: String, tint: Color? = nil,
@@ -695,16 +842,24 @@ struct MarketingView: View {
     @ViewBuilder
     private var composeActions: some View {
         if viewModel.canPostSomewhere {
+            // Every selected channel, one scheduled post each — and only
+            // when Post itself could go (re-audit 10/8/26 H4): it used to
+            // queue Instagram whenever Instagram was connected, switched
+            // off, photo or not.
+            let targets = scheduleTargets
+            let blocked = targets.isEmpty || viewModel.isOverLimit
+                || (viewModel.isGooglePost && viewModel.alreadyPosted(to: "Google"))
             Button {
-                schedulePlatform = viewModel.isGooglePost
-                    ? "google" : (viewModel.channels.instagram ? "instagram" : "facebook")
+                Haptic.light()
+                schedulePlatforms = targets
                 showingSchedule = true
             } label: {
                 Text("Schedule")
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
-            .buttonStyle(CavnarSecondaryButtonStyle())
+            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: blocked))
+            .disabled(blocked)
         }
     }
 
@@ -763,7 +918,7 @@ struct MarketingView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Instagram").cavnarText(.label)
                         if !hasMedia {
-                            Text("Needs a photo — add one above.").cavnarText(.caption)
+                            Text("Needs a photo — add one above.").cavnarText(.caption, color: .cavnarAmber)
                         } else if viewModel.alreadyPosted(to: "Instagram") {
                             Text("Posted").cavnarText(.caption, color: .cavnarGreen)
                         }
@@ -890,17 +1045,20 @@ struct MarketingView: View {
     @ViewBuilder
     private var weekSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("This week")
-                    .cavnarText(.label)
-                Spacer()
-                if let range = weekRangeLabel {
-                    Text(range).font(.cavnarNumber(CavnarType.caption, weight: 500)).foregroundStyle(Color.cavnarInk3)
+            HStack(alignment: .center, spacing: 10) {
+                disclosureHeader("This week", isOpen: showingWeek || viewModel.isGeneratingCalendar,
+                                 locked: viewModel.isGeneratingCalendar) {
+                    showingWeek.toggle()
                 }
-                if !viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
+                if let range = weekRangeLabel {
+                    Text(range).font(.cavnarNumber(CavnarType.caption, weight: 500)).foregroundStyle(Color.cavnarInk2)
+                        .fixedSize()
+                }
+                if showingWeek && !viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
+                    // Seven ideas replaced at once: asked first (L5).
                     Button {
                         Haptic.light()
-                        Task { await viewModel.generateCalendar() }
+                        confirmingNewWeek = true
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.cavnar(.secondary))
@@ -909,18 +1067,13 @@ struct MarketingView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Plan a new week")
-                    ShareLink(item: viewModel.calendarCSV,
-                              preview: SharePreview("Content calendar")) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.cavnar(.secondary))
-                            .foregroundStyle(Color.cavnarEmber)
-                            .cavnarHitTarget()
-                    }
                 }
             }
             .padding(.horizontal, 4)
 
-            if viewModel.isGeneratingCalendar {
+            if !showingWeek && !viewModel.isGeneratingCalendar {
+                EmptyView()
+            } else if viewModel.isGeneratingCalendar {
                 // Planning a week of ideas is the model deciding what to do,
                 // which is what `solving` depicts. It takes real seconds, so
                 // it needs actual motion, not a label inside a dead button.
@@ -947,6 +1100,9 @@ struct MarketingView: View {
                 if let idea = focusedIdea {
                     focusCard(idea)
                 }
+                // The week as a spreadsheet is the web's (W5).
+                CavnarWebLinkRow(title: "Content calendar", subtitle: "Download the week as a spreadsheet",
+                                 path: "marketing", actionLabel: "Open on the web")
             }
 
             if let error = viewModel.calendarError {
@@ -1021,7 +1177,9 @@ struct MarketingView: View {
                 }
                 .foregroundStyle(idea.written ? Color.cavnarGreen : Color.cavnarEmber2)
             }
-            .frame(width: 46, height: 74)
+            .padding(.vertical, CavnarSpace.xxs)
+            // Grows with the text size instead of clipping it (L12).
+            .frame(minWidth: 46, minHeight: 74)
             .background {
                 if selected {
                     LinearGradient(colors: [Color.cavnarEmber.opacity(0.28), Color.cavnarEmber.opacity(0.08)],
@@ -1063,26 +1221,23 @@ struct MarketingView: View {
             HStack(spacing: 10) {
                 Button {
                     Haptic.light()
-                    Task { await write(idea) }
+                    requestGenerate { await write(idea) }
                 } label: {
+                    // Secondary: the screen's one primary is its next
+                    // best move (M15); grows with the text size (L12).
                     Group {
                         if viewModel.isGenerating {
                             CavnarShimmerText(text: "Writing…")
                         } else if justWrote {
                             Label("Written", systemImage: "checkmark")
+                                .foregroundStyle(Color.cavnarGreen)
                         } else {
                             Text("Write this")
                         }
                     }
-                    .font(.cavnar(.label))
-                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(justWrote ? Color.cavnarGreen : Color.cavnarEmber)
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
-                    .shadow(color: (justWrote ? Color.cavnarGreen : Color.cavnarEmber).opacity(0.32), radius: 13, y: 10)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.isGenerating))
                 .disabled(viewModel.isGenerating)
                 .animation(.easeOut(duration: 0.2), value: justWrote)
 
@@ -1092,7 +1247,7 @@ struct MarketingView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber2)
-                        .frame(width: 50, height: 50)
+                        .frame(minWidth: 50, minHeight: 50)
                         .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                             .strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1.5))
                 }
@@ -1187,6 +1342,7 @@ extension MarketingView: MarketingFocusTarget {
         }
         viewModel.draft = draft.body
         viewModel.hasDraft = true
+        viewModel.markDraftBaseline()
         if let type = draft.contentType { viewModel.selectedType = type }
         viewModel.topic = draft.topic ?? ""
         // Its id and photo too: Save updates this draft, and
@@ -1368,6 +1524,12 @@ struct MarketingFocus: Equatable {
 extension MarketingFocus.Plan {
     @MainActor
     func apply(to target: some MarketingFocusTarget) async { await MarketingFocus.apply(self, to: target) }
+}
+
+/// A generate held behind "Replace your edited post?" (re-audit 10/8/26 M7):
+/// what runs once the owner says to write a new one.
+struct PendingGenerate {
+    let run: @MainActor () async -> Void
 }
 
 /// What landing on a Marketing focus needs of the screen — MarketingView,

@@ -45,19 +45,9 @@ struct ReviewsAnalyticsSection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: CavnarSpace.l) {
-                Picker("Period", selection: Binding(
-                    get: { viewModel.windowDays },
-                    set: { days in
-                        guard days != viewModel.windowDays else { return }
-                        Haptic.light()
-                        Task { await viewModel.setWindow(days) }
-                    })) {
-                    Text("30 days").tag(30)
-                    Text("90 days").tag(90)
-                    Text("6 months").tag(180)
-                }
-                .pickerStyle(.segmented)
-
+                // The period picker lives in the topics card, the one thing
+                // it moves (re-audit 10/8/26 M12) — at the top it read as if
+                // the read, the cause and the money moved with it.
                 // The restaurant's own read first, its money figure next,
                 // the cause, the topics, and How you compare LAST (density
                 // #34) — a peer's number before your own read the wrong way
@@ -159,89 +149,147 @@ struct ReviewsAnalyticsSection: View {
     // MARK: - The AI read
 
     /// The endpoint writes 3-4 prefixed lines (📊 this week / ⚠️ watch /
-    /// ✅ do today / 🔮 next week). Each becomes its own row with a symbol.
-    /// Trimmed for the phone (readability round #59): a claim tag only on a
-    /// line that is inferred or a forecast (a measured line needs no
-    /// label); the confidence and the answer row only on the action line;
-    /// ONE forecast, at Secondary, tagged.
+    /// ✅ do today / 🔮 next week, and 🔍 why from a stored diagnosis).
+    /// One answer card (re-audit 10/8/26 M10/M11): the rating's move (or the
+    /// week's line) as the headline, one sentence under it, the cause, and
+    /// the one action with its answer row — then the rest of the read behind
+    /// "Show the full read". When the diagnosis card renders, it carries the
+    /// cause and the action: the read's 🔍 line and its own action line drop,
+    /// so the cause and the action are each said once.
     private func insightCard(_ insight: String) -> some View {
         let lines = insight
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+        let read = Self.answerParts(lines: lines, trendSentence: viewModel.ratingTrend?.sentence,
+                                    hasDiagnosis: viewModel.diagnosis != nil)
+        let actionRec = read.action.flatMap { Self.rec(for: $0, in: viewModel.insightRecs) }
         let placed = Self.actionRecs(viewModel.insightRecs, lines: lines)
         let hasForecastLine = lines.contains { Self.parseInsightLine($0).isForecast }
-        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
-            CavnarKicker("Cavnar AI\u{2019}s read on your reviews")
-            // Which way the rating is moving, and how steady that is — the
-            // trend's measured strength rides the confidence line.
-            ratingTrendLine
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                let parsed = Self.parseInsightLine(line)
-                let claim = Self.claimKey(forInsightLine: line).flatMap { viewModel.claimKinds[$0] }
-                if parsed.isForecast {
-                    forecastRow(parsed.text)
-                } else {
-                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Image(systemName: parsed.symbol)
-                                .font(.cavnar(.caption))
-                                .foregroundStyle(parsed.tint)
-                                .accessibilityHidden(true)
-                            CavnarMixedText(parsed.text, role: .body)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel(parsed.text)
-                        // Inferred / forecast — what kind of statement this
-                        // line is (claim_kinds), only where it is not simply
-                        // measured.
-                        if Self.tagsClaim(claim) {
-                            ClaimKindTag(kind: claim)
-                                .padding(.leading, 22)
-                        }
-                        // The answer row sits under the action line only —
-                        // matched by the text the server keyed.
-                        if Self.isActionLine(line), let rec = Self.rec(for: line, in: viewModel.insightRecs) {
-                            recControls(rec)
+        // Keyed recs no line carries keep their controls — unless the
+        // diagnosis card is the one action on screen.
+        let unplaced = viewModel.diagnosis == nil
+            ? viewModel.insightRecs.filter { r in !placed.contains { $0.key == r.key } } : []
+        return CavnarAnswerCard(
+            kicker: "Cavnar AI\u{2019}s read on your reviews",
+            headline: read.headline,
+            summary: read.summary,
+            cause: read.why,
+            isHypothesis: viewModel.causesUnverified,
+            detailLabel: "Show the full read"
+        ) {
+            if let action = read.action {
+                let text = Self.parseInsightLine(action).text
+                (Text("Do this: ").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
+                    + HomeMixedText.make(text, role: .body))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let rec = actionRec {
+                    recControls(rec, indent: 0)
+                }
+            }
+        } detail: {
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                // How steady the rating's move is — its measured strength.
+                ratingTrendStrength
+                ForEach(Array(read.rest.enumerated()), id: \.offset) { _, line in
+                    let parsed = Self.parseInsightLine(line)
+                    let claim = Self.claimKey(forInsightLine: line).flatMap { viewModel.claimKinds[$0] }
+                    if parsed.isForecast {
+                        forecastRow(parsed.text)
+                    } else {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Image(systemName: parsed.symbol)
+                                    .font(.cavnar(.caption))
+                                    .foregroundStyle(parsed.tint)
+                                    .accessibilityHidden(true)
+                                CavnarMixedText(parsed.text, role: .body)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(parsed.text)
+                            // Inferred / forecast — only where the line is
+                            // not simply measured.
+                            if Self.tagsClaim(claim) {
+                                ClaimKindTag(kind: claim)
+                                    .padding(.leading, 22)
+                            }
                         }
                     }
                 }
-            }
-            // The computed forecast (H8), when the passage carries no
-            // forecast of its own — one forecast on the card, never two.
-            if !hasForecastLine, let forecast = viewModel.ratingForecast?.line {
-                forecastRow(forecast)
-            }
-            // A keyed line the passage no longer carries verbatim (the
-            // model's line was reworded on the way through), or one keyed to
-            // a line that is not the action line, keeps its controls.
-            ForEach(viewModel.insightRecs.filter { r in !placed.contains { $0.key == r.key } }) { rec in
-                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.cavnar(.caption))
-                            .foregroundStyle(Color.cavnarGreen)
-                            .accessibilityHidden(true)
-                        CavnarMixedText(rec.text, role: .body)
+                // The computed forecast (H8), when the passage carries no
+                // forecast of its own — one forecast on the card, never two.
+                if !hasForecastLine, let forecast = viewModel.ratingForecast?.line {
+                    forecastRow(forecast)
+                }
+                // A keyed line the passage no longer carries verbatim keeps
+                // its controls.
+                ForEach(unplaced) { rec in
+                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarGreen)
+                                .accessibilityHidden(true)
+                            CavnarMixedText(rec.text, role: .body)
+                        }
+                        recControls(rec)
                     }
-                    recControls(rec)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard(.ai)
+    }
+
+    /// The read split for the answer card: the headline (the rating's move,
+    /// else the week's line), one sentence, the cause (the 🔍 line — only
+    /// with no diagnosis card), the action line (only with no diagnosis
+    /// card), and everything else for "Show the full read".
+    struct AnswerParts: Equatable {
+        var headline: String
+        var summary: String?
+        var why: String?
+        var action: String?
+        var rest: [String]
+    }
+
+    static func answerParts(lines: [String], trendSentence: String?, hasDiagnosis: Bool) -> AnswerParts {
+        var rest = lines
+        func take(_ key: String) -> String? {
+            guard let i = rest.firstIndex(where: { claimKey(forInsightLine: $0) == key }) else { return nil }
+            return rest.remove(at: i)
+        }
+        let whyIndex = rest.firstIndex { $0.hasPrefix("🔍") }
+        let why = whyIndex.map { rest.remove(at: $0) }
+        let action = take("do_today")
+        let thisWeek = take("this_week")
+        let headline: String
+        var summary: String?
+        if let trend = trendSentence?.trimmingCharacters(in: .whitespaces), !trend.isEmpty {
+            headline = trend
+            summary = thisWeek.map { parseInsightLine($0).text } ?? take("watch").map { parseInsightLine($0).text }
+        } else if let thisWeek {
+            headline = parseInsightLine(thisWeek).text
+            summary = take("watch").map { parseInsightLine($0).text }
+        } else if !rest.isEmpty {
+            headline = parseInsightLine(rest.removeFirst()).text
+        } else {
+            headline = action.map { parseInsightLine($0).text } ?? ""
+        }
+        return AnswerParts(headline: headline, summary: summary,
+                           why: hasDiagnosis ? nil : why.map { parseInsightLine($0).text },
+                           action: hasDiagnosis ? nil : action,
+                           rest: rest)
     }
 
     /// The action line's own confidence (E13), not the rating trend's, and
     /// Done / Not for us.
     @ViewBuilder
-    private func recControls(_ rec: ReviewInsightRec) -> some View {
+    private func recControls(_ rec: ReviewInsightRec, indent: CGFloat = 22) -> some View {
         if let c = rec.confidenceDetail {
             ConfidenceLine(confidence: c, recKey: rec.key, surface: "reviews", module: "reviews")
-                .padding(.leading, 22)
+                .padding(.leading, indent)
         }
         RecAnswerRow(key: rec.key, surface: "reviews")
-            .padding(.leading, 22)
+            .padding(.leading, indent)
     }
 
     /// A forecast: Secondary, tagged so it never reads as a measurement.
@@ -459,10 +507,34 @@ struct ReviewsAnalyticsSection: View {
             let m = e.module.replacingOccurrences(of: "_", with: " ")
             module = m.prefix(1).uppercased() + m.dropFirst()
         }
-        let metric = e.metric
-            .replacingOccurrences(of: "_pct", with: " %")
-            .replacingOccurrences(of: "_", with: " ")
-        return "\(module) \u{00B7} \(metric): \(e.value)"
+        let (metric, unit) = metricWords(e.metric)
+        return "\(module) \u{00B7} \(metric): \(e.value)\(unit)"
+    }
+
+    /// A metric key in an owner's words, and its unit: "avg_ticket_time_min"
+    /// → ("Average ticket time", " min"), "labor_pct" → ("Labor", "%")
+    /// (re-audit 10/8/26 L15 — the raw key read "avg ticket time min: 12").
+    static func metricWords(_ raw: String) -> (String, String) {
+        var words = raw.replacingOccurrences(of: "_", with: " ")
+            .lowercased()
+            .split(separator: " ")
+            .map(String.init)
+        var unit = ""
+        if words.count > 1, let last = words.last {
+            switch last {
+            case "min", "mins", "minutes": unit = " min"; words.removeLast()
+            case "pct", "percent", "%": unit = "%"; words.removeLast()
+            case "hrs", "hr", "hours": unit = " h"; words.removeLast()
+            case "usd", "dollars": unit = ""; words.removeLast()
+            default: break
+            }
+        }
+        let expand = ["avg": "average", "qty": "quantity", "ot": "overtime", "num": "number of",
+                      "cnt": "count", "pos": "sales", "ttl": "total", "foh": "front of house",
+                      "boh": "back of house", "pm": "PM", "am": "AM"]
+        let sentence = words.map { expand[$0] ?? $0 }.joined(separator: " ")
+        guard let first = sentence.first else { return (raw, unit) }
+        return (first.uppercased() + sentence.dropFirst(), unit)
     }
 
     /// A cited review as its guest's first name and stars ("Maria ★★") —
@@ -540,20 +612,15 @@ struct ReviewsAnalyticsSection: View {
         return nil
     }
 
-    /// The rating's direction as a sentence, and under it the trend's
-    /// measured strength as a confidence line (a meter and the real %),
-    /// where a confidence is read everywhere else (readability round).
+    /// The rating trend's measured strength as a confidence line (a meter
+    /// and the real %) — the trend's sentence is the read's headline.
     @ViewBuilder
-    private var ratingTrendLine: some View {
-        if let sentence = viewModel.ratingTrend?.sentence {
+    private var ratingTrendStrength: some View {
+        if viewModel.ratingTrend?.sentence != nil {
             let strength = viewModel.ratingTrend?.trendStrengthPct
             VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                    CavnarMixedText(sentence, role: .label)
-                    Spacer(minLength: 0)
-                    if Self.tagsClaim(viewModel.claimKinds["rating_trend"]) {
-                        ClaimKindTag(kind: viewModel.claimKinds["rating_trend"])
-                    }
+                if Self.tagsClaim(viewModel.claimKinds["rating_trend"]) {
+                    ClaimKindTag(kind: viewModel.claimKinds["rating_trend"])
                 }
                 if let label = Self.trendStrengthLabel(strength), let pct = strength {
                     HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
@@ -623,9 +690,17 @@ struct ReviewsAnalyticsSection: View {
     @ViewBuilder
     private var topTopics: some View {
         let top = Array(viewModel.heatmap.filter { $0.count > 0 }.sorted { $0.count > $1.count }.prefix(3))
-        if !top.isEmpty {
+        // A period with nothing in it keeps the card (and its period
+        // control), so the owner can switch back.
+        if !top.isEmpty || viewModel.windowDays != ReviewsAnalyticsViewModel.defaultWindowDays {
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 CavnarKicker("What guests talk about")
+                topicPeriod
+                if top.isEmpty {
+                    Text(viewModel.isLoadingTopics ? " " : "No topics mentioned in this period.")
+                        .cavnarText(.secondary)
+                        .frame(minHeight: 44, alignment: .leading)
+                }
                 VStack(spacing: 0) {
                     ForEach(Array(top.enumerated()), id: \.element.id) { index, entry in
                         NavigationLink {
@@ -649,6 +724,25 @@ struct ReviewsAnalyticsSection: View {
         } else {
             CavnarWebLinkRow(title: "Full analysis", path: "reviews/analytics", actionLabel: "Open on the web")
         }
+    }
+
+    /// The period the topic rows cover — the one thing on this tab it moves
+    /// (re-audit 10/8/26 M12), in the house segmented control.
+    private var topicPeriod: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            Text("Mentions over the last")
+                .cavnarText(.caption, color: .cavnarInk2)
+            CavnarSegmentedControl(selection: Binding(
+                get: { viewModel.windowDays },
+                set: { days in
+                    guard days != viewModel.windowDays else { return }
+                    Haptic.light()
+                    Task { await viewModel.setWindow(days) }
+                }), options: [30, 90, 180]) { days in
+                    days == 180 ? "6 months" : "\(days) days"
+                }
+        }
+        .padding(.bottom, CavnarSpace.xxs)
     }
 
     private func topicRow(_ entry: TopicHeatmapEntry) -> some View {

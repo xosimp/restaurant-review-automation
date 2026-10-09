@@ -19,6 +19,10 @@ struct GuestTextClubView: View {
     @State private var search = ""
     /// How many matching guests are on screen; "Show more" adds a page.
     @State private var shown = GuestTextClubView.pageSize
+    /// The guest list is folded until asked for — the join link, the QR
+    /// code and Add guest are what the phone is for; the full list is the
+    /// web's (re-audit 10/8/26 W7).
+    @State private var showingGuests = false
     @FocusState private var focusedField: ClubField?
 
     static let pageSize = 25
@@ -165,7 +169,27 @@ struct GuestTextClubView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add a guest")
             }
-            if viewModel.contacts.count > Self.pageSize {
+            if !viewModel.contacts.isEmpty {
+                Button {
+                    Haptic.light()
+                    withAnimation(.cavnarEase(0.22)) { showingGuests.toggle() }
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs + 2) {
+                        Text(showingGuests ? "Hide the guests" : "Show the guests")
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .rotationEffect(.degrees(showingGuests ? 180 : 0))
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(showingGuests ? "Expanded" : "Collapsed")
+            }
+            if showingGuests && viewModel.contacts.count > Self.pageSize {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(Color.cavnarInk3)
                     TextField("Search guests", text: $search)
@@ -203,6 +227,8 @@ struct GuestTextClubView: View {
                 Text("Nobody has joined yet. Share the QR code above where guests can scan it.")
                     .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if !showingGuests {
+                EmptyView()
             } else if list.isEmpty {
                 Text("No guest matches \u{201C}\(search)\u{201D}.")
                     .cavnarText(.body)
@@ -233,6 +259,8 @@ struct GuestTextClubView: View {
                     .buttonStyle(.plain)
                 }
             }
+            CavnarWebLinkRow(title: "All guests", subtitle: "Search and tidy the whole list on the web",
+                             path: "marketing/guests", actionLabel: "Open on the web")
         }
         .cavnarCard()
     }
@@ -259,15 +287,20 @@ struct GuestTextClubView: View {
             VStack(alignment: .trailing, spacing: 0) {
                 // Starts the post-visit review-request countdown. The route
                 // existed; nothing in the app could call it.
+                // Rests for a moment after a tap, and says "Visit marked"
+                // only once the server took it (re-audit 10/8/26 L2) — every
+                // tap used to count a visit and buzz success either way.
+                let marked = viewModel.visitMarked.contains(contact.id)
                 Button {
                     Task { await viewModel.markVisit(contact) }
                 } label: {
-                    Text("Mark visit")
+                    Text(marked ? "Visit marked" : "Mark visit")
                         .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
+                        .foregroundStyle(marked ? Color.cavnarGreen : Color.cavnarEmber2)
                         .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
+                .disabled(marked || viewModel.markingVisit.contains(contact.id))
                 Button {
                     Haptic.selection()
                     contactToDelete = contact
@@ -326,6 +359,11 @@ private struct AddGuestContactSheet: View {
                         icon: "phone", placeholder: "Phone", text: $phone, keyboardType: .phonePad,
                         focus: $focusedField, field: .phone
                     )
+                    // Adding a number is not consent (re-audit 10/8/26 L16).
+                    Text("An added guest can\u{2019}t be texted until they join with your link or QR code themselves.")
+                        .cavnarText(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, -14)
 
                     // Plain full-width buttons, not a width-matched pair —
                     // see SendReviewRequestSheet's identical comment; same

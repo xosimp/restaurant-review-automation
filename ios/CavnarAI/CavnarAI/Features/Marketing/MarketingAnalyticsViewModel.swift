@@ -234,10 +234,27 @@ final class MarketingAnalyticsViewModel {
     /// 60 seconds while it is open; the app never asked at all, so the metrics
     /// an owner saw the evening they posted were whatever the nightly job had
     /// last written — which is to say, zero.
+    /// Why the period the owner picked couldn't load, or nil.
+    var windowError: String?
+
+    /// A period that fails to load keeps the figures and the period on
+    /// screen and says so (re-audit 10/8/26 L17) — a failure used to blank
+    /// the stats with no word why.
     func setWindow(_ days: Int) async {
+        let previous = windowDays
         windowDays = days
-        window = try? await client.send("/mobile/api/marketing/performance-window",
-                                        query: ["days": String(days)])
+        windowError = nil
+        do {
+            let fresh: MarketingWindow = try await client.send("/mobile/api/marketing/performance-window",
+                                                               query: ["days": String(days)], hapticOnError: false)
+            window = fresh
+        } catch let error as APIClient.APIError {
+            windowDays = previous
+            windowError = error.message
+        } catch {
+            windowDays = previous
+            windowError = "Couldn\u{2019}t load the last \(days) days."
+        }
     }
 
     func refresh() async {

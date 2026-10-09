@@ -494,6 +494,69 @@ final class ReviewsListViewModel {
         await reload()
     }
 
+    /// What a swipe's approve did (re-audit 10/8/26 H1).
+    enum QuickApproveOutcome: Equatable {
+        /// Live on Google.
+        case posted
+        /// Approved, not live: a Yelp or other site's reply, or a Google one
+        /// waiting on the connection or refused by Google (the reloaded row's
+        /// pill says which).
+        case approved
+        /// Held for a read — flagged since the list loaded, or by the
+        /// public-reply check — with the sentence to show.
+        case held(String)
+        /// Rewritten since the confirm showed it; not posted.
+        case changed
+        case failed(String)
+    }
+
+    /// A swipe's Approve, after its confirm: the approve-all route pinned to
+    /// this one reply and the words the confirm showed (`review_hashes`), so
+    /// it is held to everything a bulk publish is — drafter.check_reply on
+    /// the words, BULK_PUBLISHABLE_SQL on the row, `bulk_approved` (never
+    /// `approved_as_is`, which feeds auto-approve trust) on the action.
+    func quickApprove(_ review: Review) async -> QuickApproveOutcome {
+        guard !isBulkWorking, let body = Self.bulkApproveBodies([review]).first else {
+            return .failed("Couldn\u{2019}t approve \u{2014} open it to try again.")
+        }
+        isBulkWorking = true
+        defer { isBulkWorking = false }
+        let outcome: QuickApproveOutcome
+        do {
+            let r: BulkPublishResult = try await client.send(
+                "/mobile/api/reviews/approve-all", method: .post, body: body, retryTransient: false)
+            outcome = Self.quickOutcome(r)
+        } catch let error as APIClient.APIError {
+            outcome = .failed(error.mayHaveReachedServer
+                ? "We lost the connection, so this reply may already be approved. Pull to refresh before trying again."
+                : error.message)
+        } catch {
+            outcome = .failed("Couldn\u{2019}t approve \u{2014} open it to try again.")
+        }
+        switch outcome {
+        case .posted:
+            markCompleted(reviewID: review.id, status: "posted")
+            Haptic.success()
+        case .approved:
+            markCompleted(reviewID: review.id, status: "approved")
+            Haptic.success()
+        default:
+            break
+        }
+        // The row's real state (a Google post that failed, a hold the check
+        // just wrote) and the chips' counts, from the server.
+        await reload()
+        return outcome
+    }
+
+    /// One reply's approve-all answer, read as the swipe's outcome.
+    static func quickOutcome(_ r: BulkPublishResult) -> QuickApproveOutcome {
+        if r.approved > 0 { return r.posted > 0 ? .posted : .approved }
+        if (r.changed ?? 0) > 0 { return .changed }
+        if r.failed > 0 { return .failed("Couldn\u{2019}t approve \u{2014} open it to try again.") }
+        return .held("Read this one first: Cavnar AI held it for a read. Open it to post.")
+    }
+
     /// The bar's Skip, after its confirm: the single skip route in turn.
     func bulkSkip() async {
         let ids = bulkSkippable

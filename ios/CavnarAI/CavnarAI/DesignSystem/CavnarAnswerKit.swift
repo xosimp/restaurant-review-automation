@@ -387,6 +387,7 @@ extension CavnarAnswerCard where Actions == EmptyView, Detail == EmptyView {
 /// inventory/pars, inventory/menu, inventory/waste, inventory/count,
 /// marketing/opportunities, marketing/guests, marketing/newsletter,
 /// marketing/website, intel/visibility, inventory/margins,
+/// marketing/attribution (the Analytics tab's "What posts did to sales"),
 /// reviews/inbox, reviews/analytics, home/results, account/overview,
 /// account/restaurant, account/notifications (alert rules),
 /// account/automation, account/integrations, account/people,

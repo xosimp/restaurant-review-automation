@@ -95,20 +95,30 @@ final class ReviewDetailViewModel {
 
     func loadGoogleConnection() async {
         guard review.platform == "google" else { return }
-        if let cached = Self.googleConnectedCache, Date().timeIntervalSince(cached.at) < 600 {
-            googleConnected = cached.value
-            return
+        if let connected = await Self.googleConnection(client: client) {
+            googleConnected = connected
+        }
+    }
+
+    /// Whether Google Business is connected, from the ten-minute cache or
+    /// the account — nil when unknown. The inbox's approve confirm reads it
+    /// too, to say where each reply goes.
+    static func googleConnection(client: APIClient = .shared) async -> Bool? {
+        if let cached = googleConnectedCache, Date().timeIntervalSince(cached.at) < 600 {
+            return cached.value
         }
         guard let probe: AccountConnectionsProbe = try? await client.send("/mobile/api/account", hapticOnError: false),
-              let connected = probe.connections?.googleBusiness?.connected else { return }
-        Self.googleConnectedCache = (connected, Date())
-        googleConnected = connected
+              let connected = probe.connections?.googleBusiness?.connected else { return nil }
+        googleConnectedCache = (connected, Date())
+        return connected
     }
 
     init(review: Review, client: APIClient = .shared) {
         self.review = review
         self.currentStatus = review.responseStatus
         self.editedDraft = review.draftResponse ?? ""
+        self.lastWrittenDraft = review.draftResponse ?? ""
+        self.openedWithOwnEdits = review.draftEditedFlag == true
         self.client = client
         self.flagReason = review.draftIsFlagged
             ? (review.draftReviewReason ?? Self.defaultFlagReason) : nil
@@ -232,11 +242,20 @@ final class ReviewDetailViewModel {
         }
     }
 
-    /// DELETE /mobile/api/templates/<id>; gone from the picker at once.
-    func deleteTemplate(_ template: ResponseTemplate) async {
-        templates.removeAll { $0.id == template.id }
-        let _: APIClient.OKResponse? = try? await client.send(
-            "/mobile/api/templates/\(template.id)", method: .delete, hapticOnError: false)
+    /// DELETE /mobile/api/templates/<id>, asked first by the picker. The
+    /// template leaves the list only once the server says it is gone — it
+    /// used to vanish at once and come back on the next open when the
+    /// delete had failed (re-audit 10/8/26 L3).
+    func deleteTemplate(_ template: ResponseTemplate) async -> Bool {
+        do {
+            let response: APIClient.OKResponse = try await client.send(
+                "/mobile/api/templates/\(template.id)", method: .delete, hapticOnError: false)
+            guard response.ok else { return false }
+            templates.removeAll { $0.id == template.id }
+            return true
+        } catch {
+            return false
+        }
     }
 
     func applyTemplate(_ template: ResponseTemplate) {
@@ -328,9 +347,11 @@ final class ReviewDetailViewModel {
             postFailedOnGoogle = !response.posted && response.failedOnGoogle
             finalStatus = status
             currentStatus = status
-            // A failed post keeps the owner on this screen, where the retry
-            // is, instead of popping back to the list as a plain success.
-            didComplete = (response.shortfall == nil)
+            // A post Google refused keeps the owner on this screen, where
+            // the retry is, instead of popping back to the list as a plain
+            // success. A Yelp reply or one waiting on the Google connection
+            // is a finished approve and moves on (re-audit 10/8/26 H2).
+            didComplete = response.advancesQueue
         } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer && approveSkipped {
             // "Approve after all" is never queued: a replay carries no
             // approve_skipped, so the server would leave the skip standing.
@@ -423,6 +444,18 @@ final class ReviewDetailViewModel {
     /// web asks for an explicit click for exactly that reason.
     var needsDraft: Bool { editedDraft.isEmpty }
 
+    /// The draft as Cavnar AI last wrote it, and whether the words on screen
+    /// are the owner's own — edited here, or saved edited before this screen
+    /// opened (reviews.draft_edited). A regenerate asks before it replaces
+    /// them (re-audit 10/8/26 M8): it used to swap them out with no way back.
+    private var lastWrittenDraft: String
+    private var openedWithOwnEdits: Bool
+    var replyHasOwnEdits: Bool {
+        let shown = editedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !shown.isEmpty else { return false }
+        return openedWithOwnEdits || shown != lastWrittenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Note: this route (like save-draft below) always answers HTTP 200 and
     /// signals failure only via the `ok`/`error` fields in the body — mirrors
     /// client_api.py's regenerate_draft(), which never sets an error status.
@@ -443,6 +476,8 @@ final class ReviewDetailViewModel {
             )
             if response.ok, let draft = response.draft {
                 editedDraft = draft
+                lastWrittenDraft = draft
+                openedWithOwnEdits = false
                 applyFlag(response)
                 announceDraft(draft)
             } else {

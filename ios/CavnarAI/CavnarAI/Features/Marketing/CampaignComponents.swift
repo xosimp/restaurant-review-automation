@@ -92,6 +92,8 @@ struct SendGateSheet: View {
     var onEdit: () -> Void
     var onDiscard: () -> Void
     @Environment(\.dismiss) private var dismiss
+    /// "Discard it" asks first — the draft is gone after it (L4).
+    @State private var confirmingDiscard = false
 
     var body: some View {
         NavigationStack {
@@ -113,9 +115,9 @@ struct SendGateSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .cavnarCard()
                     }
+                    // Ink2, readable (re-audit 10/8/26 M14), above the buttons.
                     Text("Nothing went out. It reaches every guest in the audience and can\u{2019}t be recalled, so it was held for you to look at.")
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     VStack(spacing: 10) {
                         Button {
@@ -128,8 +130,7 @@ struct SendGateSheet: View {
                         .buttonStyle(CavnarPrimaryButtonStyle())
                         Button(role: .destructive) {
                             Haptic.light()
-                            onDiscard()
-                            dismiss()
+                            confirmingDiscard = true
                         } label: {
                             Text("Discard it").frame(maxWidth: .infinity)
                         }
@@ -140,6 +141,16 @@ struct SendGateSheet: View {
                 .padding(20)
             }
             .accountSheetChrome("Held back")
+            .confirmationDialog(flag.channel == "email" ? "Discard this email?" : "Discard this text?",
+                                isPresented: $confirmingDiscard, titleVisibility: .visible) {
+                Button("Discard it", role: .destructive) {
+                    onDiscard()
+                    dismiss()
+                }
+                Button("Keep it", role: .cancel) {}
+            } message: {
+                Text("Its words are cleared from the Studio. Nothing was sent.")
+            }
         }
         .presentationDetents([.medium, .large])
     }

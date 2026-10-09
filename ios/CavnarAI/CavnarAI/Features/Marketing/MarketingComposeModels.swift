@@ -139,8 +139,16 @@ struct MarketingDraft: Decodable, Identifiable {
     /// than failing the whole drafts list.
     var isExpired: Bool { status == "expired" }
 
-    /// Approve is offered only on a live, not-yet-approved draft.
-    var canApprove: Bool { !isApproved && !isExpired }
+    /// A guest text or an email (loyalty_nudge, guest_sms, weekly_email):
+    /// sent from the Campaign Studio, never approved — the server refuses
+    /// the approve, since nothing would publish after it.
+    var isGuestMessage: Bool { MarketingContentType.guestChannel(of: contentType ?? "") != nil }
+
+    /// Approve is offered only on a live, not-yet-approved POST (re-audit
+    /// 10/8/26 M3): a text or an email draft showed as "A post waiting for
+    /// you" with an Approve the server always refused; it opens in
+    /// Campaigns instead.
+    var canApprove: Bool { !isApproved && !isExpired && !isGuestMessage }
 
     /// Opening it in the composer is the path to posting, scheduling or
     /// sending — none of which an expired draft may take.

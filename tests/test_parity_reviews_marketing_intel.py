@@ -188,8 +188,11 @@ def test_1_ios_follows_the_flag_and_confirms_before_posting():
     assert "if let reason = viewModel.flagReason" in view
     assert '"Post this reply anyway?"' in view
     assert "viewModel.approve(confirmFlagged: true," in view
+    # The swipe goes through the bulk route pinned to its one reply (re-audit
+    # 10/8/26 H1): a draft flagged since the list loaded is held there and
+    # the row says to read it first.
     lst = _swift("Reviews", "ReviewsListView.swift")
-    assert "detail.needsFlagConfirm" in lst
+    assert "viewModel.quickApprove(review)" in lst and "case .held(let why):" in lst
 
 
 # ── 2. iOS search reaches the whole inbox ───────────────────────────────────
@@ -384,7 +387,12 @@ def test_8b_ios_saves_and_deletes_review_templates(phone, rid):
     vm = _swift("Reviews", "ReviewDetailViewModel.swift")
     assert '"/mobile/api/templates", method: .post' in vm
     assert '"/mobile/api/templates/\\(template.id)", method: .delete' in vm
-    assert 'Button("Save as template")' in _swift("Reviews", "ReviewDetailView.swift")
+    # Saving a reply as a template is the web's now (re-audit 10/8/26 W2):
+    # the picker says where; applying and deleting (behind a confirm, gone
+    # only once the server says so) stay on the phone.
+    view = _swift("Reviews", "ReviewDetailView.swift")
+    assert 'path: "reviews/inbox"' in view and "TemplatePickerSheet(" in view
+    assert '"Delete template"' in view
 
 
 def test_8c_review_request_message_on_web_and_stats_on_ios():

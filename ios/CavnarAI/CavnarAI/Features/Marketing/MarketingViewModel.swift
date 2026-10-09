@@ -240,6 +240,50 @@ final class MarketingViewModel {
     var generateError: String?
     private var lastGeneratedTopic = ""
 
+    /// The draft as it was written (or opened) — what "edited" is measured
+    /// against, so a regenerate over the owner's words asks first (re-audit
+    /// 10/8/26 M7).
+    private(set) var draftBaseline = ""
+    var draftHasEdits: Bool {
+        hasDraft && draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            != draftBaseline.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The draft a regenerate replaced, for Undo — its words and the keys
+    /// it was measured by.
+    struct DraftSnapshot: Equatable {
+        let draft: String
+        let baseline: String
+        let tags: PostTags?
+        let contentLogId: Int?
+        let draftRef: Int?
+    }
+    private(set) var replacedDraft: DraftSnapshot?
+    /// Bumped each time a new draft lands — the screen forgets the saved
+    /// draft it held only then, not when a generate starts (a failed one
+    /// keeps the old draft and its id).
+    private(set) var generatedCount = 0
+
+    /// The words on screen are now the starting point (a saved draft opened
+    /// from the shelf).
+    func markDraftBaseline() {
+        draftBaseline = draft
+        replacedDraft = nil
+    }
+
+    /// Puts back the draft the last regenerate replaced.
+    func undoRegenerate() {
+        guard let snap = replacedDraft else { return }
+        draft = snap.draft
+        draftBaseline = snap.baseline
+        draftTags = snap.tags
+        contentLogId = snap.contentLogId
+        draftRef = snap.draftRef
+        hasDraft = true
+        replacedDraft = nil
+        Haptic.light()
+    }
+
     // Social posting. The image is no longer a URL the owner types — it's a
     // photo they picked, uploaded by MarketingComposeViewModel, whose public
     // URL is handed in at post time.
@@ -450,15 +494,14 @@ final class MarketingViewModel {
     }
     var draftTags: PostTags?
 
+    /// The draft on screen stays until the new one lands (re-audit 10/8/26
+    /// M7): a failed generate used to leave the owner with nothing — their
+    /// edits wiped before the call. A replaced draft is kept for Undo.
     func generate(fromCalendar: Bool = false) async {
         isGenerating = true
         generateError = nil
         postedPlatform = nil
         postError = nil
-        draft = ""
-        hasDraft = false
-        contentLogId = nil
-        draftRef = nil
         defer { isGenerating = false }
         let requestedTopic = topic
         do {
@@ -471,11 +514,18 @@ final class MarketingViewModel {
                 timeout: MarketingViewModel.generationTimeout
             )
             if response.ok, let content = response.content {
+                let previous = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                replacedDraft = hasDraft && !previous.isEmpty
+                    ? DraftSnapshot(draft: draft, baseline: draftBaseline, tags: draftTags,
+                                    contentLogId: contentLogId, draftRef: draftRef)
+                    : nil
                 draft = content
+                draftBaseline = content
                 hasDraft = true
                 draftTags = response.tags
                 contentLogId = response.contentLogId
                 draftRef = response.draftRef
+                generatedCount += 1
                 lastGeneratedTopic = requestedTopic
             } else {
                 generateError = response.error ?? "Couldn't generate content."

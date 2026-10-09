@@ -1908,6 +1908,9 @@ UNREADABLE_OK = {
     ("ReviewsListViewModel.swift", "bulkApprove"): "each chunk is a BulkApproveBody from bulkApproveBodies "
                                                    "(review_ids, limit, review_hashes) — pinned key by key in "
                                                    "ReviewsIntelParityTests.testBulkApproveSendsReviewIdsInChunksOfTwentyFive",
+    ("ReviewsListViewModel.swift", "quickApprove"): "a swipe's approve is bulkApproveBodies([review]) - the same "
+                                                    "BulkApproveBody (review_ids, limit, review_hashes) the bulk "
+                                                    "approve sends, pinned to one reply (re-audit 10/8/26 H1)",
     ("PendingWriteQueue.swift", "drain"): "the offline queue replays the path, method and body it was given",
     ("PendingWriteQueue.swift", "enqueue"): "the offline queue replays the path, method and body it was given",
     ("TaskSheetsScreen.swift", "add"): "the line's fields are TSLineForm.save()'s [String: String] literal "

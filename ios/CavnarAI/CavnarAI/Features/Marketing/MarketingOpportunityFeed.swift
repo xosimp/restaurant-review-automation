@@ -142,8 +142,12 @@ final class MarketingOpportunityViewModel {
 /// the swipe hint is said once per device.
 struct MarketingOpportunitySection: View {
     let viewModel: MarketingOpportunityViewModel
-    /// The card whose "Draft it" is drafting, if any — every other waits.
-    var draftingKey: String?
+    /// False when another block on the screen holds its one primary — a
+    /// post waiting on an approve (re-audit 10/8/26 M15): then even the
+    /// first card's "Draft it" is secondary. ("Draft it" opens the Studio,
+    /// which drafts there, so the feed has no drafting state of its own —
+    /// L7: the draftingKey it took was always nil.)
+    var leadsTheScreen: Bool = true
     var onDraft: (MarketingOpportunity) -> Void
 
     @State private var rowHeights: [String: CGFloat] = [:]
@@ -191,7 +195,7 @@ struct MarketingOpportunitySection: View {
                     ForEach(Array(cards.enumerated()), id: \.element.id) { i, card in
                         Group {
                             if isOpen(card, index: i) {
-                                cardView(card, primary: i == 0)
+                                cardView(card, primary: i == 0 && leadsTheScreen)
                             } else {
                                 compactRow(card)
                             }
@@ -310,7 +314,6 @@ struct MarketingOpportunitySection: View {
 
     private func cardView(_ card: MarketingOpportunity, primary: Bool) -> some View {
         let focused = viewModel.focusedKey == card.key
-        let drafting = draftingKey == card.key
         let hasFacts = card.stakeLine != nil || !card.facts.isEmpty
         let showingFacts = detailKeys.contains(card.key)
         return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
@@ -379,17 +382,10 @@ struct MarketingOpportunitySection: View {
                 viewModel.recordOpened(card.key)
                 onDraft(card)
             } label: {
-                Group {
-                    if drafting {
-                        CavnarShimmerText(text: "Drafting\u{2026}", color: primary ? .white : .cavnarInk)
-                    } else {
-                        Text("Draft it \u{2192}")
-                    }
-                }
-                .frame(maxWidth: .infinity)
+                Text("Draft it \u{2192}")
+                    .frame(maxWidth: .infinity)
             }
             .modifier(OpportunityDraftButtonStyle(primary: primary))
-            .disabled(draftingKey != nil)
             .accessibilityLabel("Draft it: \(card.title)")
         }
         .padding(CavnarSpace.m)

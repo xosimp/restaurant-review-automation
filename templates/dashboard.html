@@ -14228,8 +14228,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div id="mkt-web-body"><div class="hb-load mkt-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="48" height="48" style="width:48px;height:48px"></canvas><span>Reading your website…</span></div></div>
     </section>
 
-    <!-- What posts did to the till. Correlational, and said so. -->
-    <div class="hb-card" id="mkt-attr-card" style="display:none;margin-bottom:16px;padding:20px 22px">
+    <!-- What posts did to the till. Correlational, and said so. data-nav:
+         the phone's "What posts did to sales" opens marketing/attribution
+         here - cavNavSection switches to this tab and waits for the card
+         loadMktAttribution un-hides. -->
+    <div class="hb-card" id="mkt-attr-card" data-nav="marketing/attribution" style="display:none;margin-bottom:16px;padding:20px 22px">
       <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales</div>
       <div id="mkt-attr-body" style="font-size:15px;color:var(--ink2);line-height:1.6"></div>
     </div>

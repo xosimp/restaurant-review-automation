@@ -22,23 +22,22 @@ struct ReviewsListView: View {
     /// A review the loaded page doesn't hold (older, or another filter) —
     /// fetched by id rather than silently not opening.
     @State private var fetchedReviewId: Int?
-    /// The row whose swipe-approve failed, with the server's sentence.
-    @State private var rowError: (id: Int, message: String)?
+    /// What a swipe-approve did to its row, in a sentence: a failure (red)
+    /// or the next step for a reply that is approved but not live (ink).
+    @State private var rowNote: (id: Int, message: String, isError: Bool)?
     @State private var approvingRowId: Int?
     @State private var postedLabel: String?
     @State private var focusConsumed = false
-    /// Select mode (parity audit 10/7/26 #34): a box on every review still
-    /// waiting on a decision, and a bar to approve or skip the ticked ones.
-    @State private var editMode: EditMode = .inactive
-    @State private var confirmingBulkApprove = false
-    /// The replies the bulk confirm lists — Approve posts exactly these.
-    @State private var bulkConfirmReviews: [Review] = []
-    @State private var bulkConfirmHeld = 0
-    @State private var confirmingBulkSkip = false
-    /// "Publish N ready": Home's publish confirm, from the inbox header.
+    /// The review a swipe's Approve is confirming: the whole reply, where it
+    /// goes, then Approve (re-audit 10/8/26 H1). The row shows two lines of
+    /// it; one tap used to publish it to Google unread.
+    @State private var swipeConfirm: Review?
+    /// "Publish N ready": Home's publish confirm, from the inbox chips.
     @State private var showingPublishReady = false
-
-    private var isSelecting: Bool { editMode.isEditing }
+    /// Search sits behind the toolbar's magnifier until it is wanted
+    /// (re-audit 10/8/26 M16) — it cost a row above the first review.
+    @State private var showingSearch = false
+    @FocusState private var searchFocused: Bool
 
     init(initialFilter: String? = nil, focusReviewId: Int? = nil) {
         self.initialFilter = initialFilter
@@ -69,26 +68,30 @@ struct ReviewsListView: View {
         .toolbar { cavnarTitleToolbar("Reviews") }
         .cavnarTabSwipeNavigation($subTab, primaryTab: .inbox, secondaryTab: .analytics)
         .toolbar {
-            if subTab == .inbox && viewModel.reviews.contains(where: ReviewsListViewModel.isSelectable) {
+            // Select mode's bulk approve / skip is the web's now (re-audit
+            // 10/8/26 W3): "Publish N ready" covers approving many here.
+            if subTab == .inbox {
                 cavnarToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         Haptic.light()
                         withAnimation(.easeOut(duration: 0.2)) {
-                            if isSelecting {
-                                editMode = .inactive
-                                viewModel.selection.removeAll()
+                            if showingSearch {
+                                showingSearch = false
+                                viewModel.searchText = ""
                             } else {
-                                editMode = .active
+                                showingSearch = true
+                                searchFocused = true
                             }
                         }
                     } label: {
-                        Text(isSelecting ? "Done" : "Select")
-                            .font(.cavnar(.label))
+                        Image(systemName: showingSearch ? "xmark" : "magnifyingglass")
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
-                            .frame(minHeight: 44)
+                            .cavnarToolbarIconGlass()
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint(isSelecting ? "Leaves Select mode" : "Choose several reviews to approve or skip")
+                    .tint(nil)
+                    .accessibilityLabel(showingSearch ? "Close search" : "Search reviews")
                 }
             }
             cavnarToolbarItem(placement: .navigationBarTrailing) {
@@ -112,6 +115,7 @@ struct ReviewsListView: View {
                 }
                 .buttonStyle(.plain)
                 .tint(nil)
+                .accessibilityLabel("Ask a guest for a review")
             }
         }
         .sheet(isPresented: $showingSendRequest) {
@@ -125,34 +129,15 @@ struct ReviewsListView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        // The bar's two outward actions ask first: never one tap from a
-        // list. Approve lists the replies themselves, in the words that
-        // would post (re-audit 10/8/26 — words, not a count).
-        .sheet(isPresented: $confirmingBulkApprove) {
-            BulkApproveConfirmSheet(reviews: bulkConfirmReviews, held: bulkConfirmHeld,
-                                    isWorking: viewModel.isBulkWorking) {
-                let shown = bulkConfirmReviews
-                Task {
-                    await viewModel.bulkApprove(shown: shown)
-                    editMode = .inactive
-                }
+        // A swipe's Approve asks first: the whole reply in the words that
+        // would post, and where it goes (re-audit 10/8/26 H1, M1).
+        .sheet(item: $swipeConfirm) { review in
+            BulkApproveConfirmSheet(reviews: [review], held: 0,
+                                    isWorking: approvingRowId != nil) {
+                quickApprove(review)
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
-        }
-        .confirmationDialog(
-            "Skip \(viewModel.bulkSkippable.count) \(viewModel.bulkSkippable.count == 1 ? "review" : "reviews")?",
-            isPresented: $confirmingBulkSkip, titleVisibility: .visible
-        ) {
-            Button("Skip \(viewModel.bulkSkippable.count)", role: .destructive) {
-                Task {
-                    await viewModel.bulkSkip()
-                    editMode = .inactive
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Nothing is posted; each can still be approved or undone from its review.")
         }
         .navigationDestination(item: $deepLinkedReview) { review in
             ReviewDetailView(
@@ -269,17 +254,8 @@ struct ReviewsListView: View {
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: CavnarSpace.xs, trailing: 16))
-                            // The inbox's one bulk action, behind Home's own
-                            // confirm card.
-                            if let ready = stats.publishable, ready > 0, !isSelecting {
-                                HStack {
-                                    Spacer(minLength: 0)
-                                    publishReadyPill(ready)
-                                }
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: CavnarSpace.xs, trailing: 16))
-                            }
+                            // "Publish N ready" rides the chip row below
+                            // (re-audit 10/8/26 M16).
                         }
                     }
                     Section {
@@ -343,28 +319,15 @@ struct ReviewsListView: View {
                     // used for deep links fires the haptic AND navigates
                     // reliably, since there's only ever one gesture involved.
                     Button {
-                        if isSelecting {
-                            // Select mode: a tap ticks the review instead of
-                            // opening it; answered ones have no box.
-                            guard ReviewsListViewModel.isSelectable(review) else { return }
-                            Haptic.selection()
-                            viewModel.toggleSelection(review)
-                            return
-                        }
                         Haptic.light()
                         deepLinkedReview = review
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .center, spacing: 10) {
-                                if isSelecting {
-                                    selectionMark(for: review)
-                                }
-                                ReviewRow(review: review, showsChevron: !isSelecting)
-                                    .opacity(approvingRowId == review.id ? 0.5 : 1)
-                            }
-                            if let rowError, rowError.id == review.id {
-                                Text(rowError.message)
-                                    .cavnarText(.caption, color: .cavnarRedText)
+                            ReviewRow(review: review)
+                                .opacity(approvingRowId == review.id ? 0.5 : 1)
+                            if let rowNote, rowNote.id == review.id {
+                                Text(rowNote.message)
+                                    .cavnarText(.secondary, color: rowNote.isError ? .cavnarRedText : .cavnarInk2)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -378,11 +341,14 @@ struct ReviewsListView: View {
                     // (friction audit #21). A flagged, urgent or old draft
                     // has no swipe: it keeps the read-first rule. Not a FULL
                     // swipe: one flick published to Google with nothing in
-                    // between (F3-14) — the button is the decision.
+                    // between (F3-14). The swipe opens the confirm with the
+                    // whole reply and where it goes (re-audit 10/8/26 H1);
+                    // the confirm's button is the decision.
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if !isSelecting && ReviewsListViewModel.canQuickApprove(review) {
+                        if ReviewsListViewModel.canQuickApprove(review) && approvingRowId == nil {
                             Button {
-                                quickApprove(review)
+                                Haptic.light()
+                                swipeConfirm = review
                             } label: {
                                 Label("Approve", systemImage: "checkmark")
                             }
@@ -419,16 +385,6 @@ struct ReviewsListView: View {
         .overlay {
             if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingOrb() }
         }
-        .environment(\.editMode, $editMode)
-        // Select mode's bar, where the thumb is: what the ticked reviews can
-        // become, each behind its own confirm.
-        .safeAreaInset(edge: .bottom) {
-            if isSelecting {
-                bulkBar
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(.easeOut(duration: 0.2), value: isSelecting)
         .cavnarEmberRefreshable { await viewModel.reload() }
         // Each chip is answered by the server over the whole inbox, not by
         // filtering the page already on the phone.
@@ -438,78 +394,6 @@ struct ReviewsListView: View {
             guard viewModel.inboxOpened else { return }
             Task { await viewModel.reload() }
         }
-    }
-
-    /// The tick in Select mode — a filled ember circle when chosen, an empty
-    /// ring when it can be, nothing (a spacer) for an answered review.
-    @ViewBuilder
-    private func selectionMark(for review: Review) -> some View {
-        let on = viewModel.selection.contains(review.id)
-        if ReviewsListViewModel.isSelectable(review) {
-            Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(on ? Color.cavnarEmber : Color.cavnarInk3)
-                .frame(width: 28)
-                .accessibilityLabel(on ? "Selected" : "Not selected")
-        } else {
-            Color.clear.frame(width: 28, height: 22)
-        }
-    }
-
-    static func bulkApproveMessage(held: Int) -> String {
-        "Each goes out as written."
-            + (held > 0 ? " The other \(held) stay for you to read one at a time \u{2014} a flagged or urgent reply, or one already decided, is approved on its own." : "")
-    }
-
-    /// "3 selected", why some can't go in bulk, then Approve N · Skip N.
-    private var bulkBar: some View {
-        let n = viewModel.selection.count
-        let ap = viewModel.bulkApprovable.count
-        let sk = viewModel.bulkSkippable.count
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HomeMixedText.make(n == 0 ? "Tap the reviews to act on" : "\(n) selected", role: .label)
-                Spacer(minLength: 0)
-                if viewModel.isBulkWorking {
-                    CavnarWorkingLine(width: 60)
-                }
-            }
-            if n > 0 {
-                HomeMixedText.make(viewModel.bulkHeld > 0
-                                   ? "\(viewModel.bulkHeld) \(viewModel.bulkHeld == 1 ? "isn\u{2019}t" : "aren\u{2019}t") ready to post in bulk \u{2014} read \(viewModel.bulkHeld == 1 ? "it" : "them") one at a time."
-                                   : "Every selected reply is ready to post.",
-                                   role: .caption, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 10) {
-                Button {
-                    Haptic.light()
-                    bulkConfirmReviews = viewModel.bulkApprovableReviews
-                    bulkConfirmHeld = viewModel.bulkHeld
-                    confirmingBulkApprove = true
-                } label: {
-                    HomeMixedText.make("Approve \(ap)", role: .label, color: .white, numberColor: .white)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: ap == 0 || viewModel.isBulkWorking))
-                .disabled(ap == 0 || viewModel.isBulkWorking)
-                Button {
-                    Haptic.light()
-                    confirmingBulkSkip = true
-                } label: {
-                    HomeMixedText.make("Skip \(sk)", role: .label)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle())
-                .disabled(sk == 0 || viewModel.isBulkWorking)
-                .opacity(sk == 0 ? 0.6 : 1)
-            }
-        }
-        .padding(.horizontal, CavnarSpace.gutter)
-        .padding(.top, CavnarSpace.s)
-        .padding(.bottom, CavnarSpace.xs)
-        .background(Color.cavnarPaper2.opacity(0.97))
-        .overlay(alignment: .top) { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
     }
 
     /// "Publish 4 ready" — every reply one bulk publish may post, behind
@@ -532,12 +416,14 @@ struct ReviewsListView: View {
 
     private var inboxFilters: some View {
         VStack(spacing: 10) {
+            if showingSearch || !viewModel.searchText.isEmpty {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Color.cavnarInk3)
                 TextField("Search reviews", text: Binding(
                     get: { viewModel.searchText }, set: { viewModel.searchText = $0 }))
                     .font(.cavnar(.body))
                     .autocorrectionDisabled()
+                    .focused($searchFocused)
                 if !viewModel.searchText.isEmpty {
                     Button {
                         Haptic.light()
@@ -555,9 +441,15 @@ struct ReviewsListView: View {
             .background(Color.cavnarPaper2)
             .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
             .clipShape(Capsule())
+            }
 
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
+                    // The inbox's one bulk action leads the chips, behind
+                    // Home's own confirm card (M16).
+                    if let ready = viewModel.stats?.publishable, ready > 0 {
+                        publishReadyPill(ready)
+                    }
                     ForEach(ReviewInboxFilter.allCases) { f in
                         let on = viewModel.filter == f
                         let n = viewModel.count(for: f)
@@ -622,36 +514,45 @@ struct ReviewsListView: View {
     /// A trailing swipe on a reply that may be published unread (the same
     /// bar as Home's "Publish N replies": drafted, not flagged, not urgent).
     /// Flagged drafts keep the read-first rule and have no swipe.
+    ///
+    /// After its confirm, the swipe goes through the bulk route pinned to
+    /// this one reply and the words the confirm showed (re-audit 10/8/26
+    /// H1): the server runs the public-reply check a bulk publish runs
+    /// (drafter.check_reply), holds a flagged or rewritten draft, and records
+    /// it as bulk-approved — nobody read it on its own screen, so it never
+    /// counts toward auto-approve trust.
     private func quickApprove(_ review: Review) {
         guard approvingRowId == nil else { return }
         approvingRowId = review.id
-        rowError = nil
+        rowNote = nil
         Task {
-            let detail = ReviewDetailViewModel(review: review)
-            await detail.approve()
+            let outcome = await viewModel.quickApprove(review)
             approvingRowId = nil
-            if detail.hasQueuedWrite {
-                // Offline: queued behind the banner, honestly labelled.
-                viewModel.markCompleted(reviewID: review.id, status: "pending-sync")
-            } else if detail.didComplete, let status = detail.finalStatus {
-                viewModel.markCompleted(reviewID: review.id, status: status)
-                postedLabel = status == "posted" ? "Reply posted to \(review.platformDisplayName)" : "Reply approved"
-            } else if detail.needsFlagConfirm {
-                // Flagged since the list loaded: the server refused it
-                // unread. It is read, and confirmed, on its own screen.
-                rowError = (review.id, "Read this one first: it \(detail.flagReason ?? ReviewDetailViewModel.defaultFlagReason). Open it to post.")
-            } else if let status = detail.finalStatus, detail.postFailure != nil {
-                // Approved but the post failed: the row says so, and the
-                // detail screen has the retry. Only a Google refusal is a
-                // failed post; not connected yet is "will post once
-                // connected" (the server's post_failed rule).
-                viewModel.markCompleted(reviewID: review.id,
-                                        status: detail.postFailedOnGoogle ? "approved-failed" : status)
-                rowError = (review.id, detail.postFailure ?? "Approved, but it didn't post — open it to retry.")
-            } else {
-                rowError = (review.id, detail.errorMessage ?? "Couldn't approve — open it to try again.")
+            switch outcome {
+            case .posted:
+                postedLabel = "Reply posted to \(review.platformDisplayName)"
+            case .approved:
+                // Approved, not live: where it goes next, in ink — a Yelp
+                // reply is a finished approve, not a failure (M2). A Google
+                // reply whose post failed shows "Couldn't post" on its pill.
+                rowNote = (review.id, Self.approvedNote(review), false)
+            case .held(let why):
+                // Held for a read since the list loaded: it is read, and
+                // confirmed, on its own screen.
+                rowNote = (review.id, why, true)
+            case .changed:
+                rowNote = (review.id, "This reply changed since you read it, so it wasn\u{2019}t posted. Open it to read the current one.", true)
+            case .failed(let why):
+                rowNote = (review.id, why, true)
             }
         }
+    }
+
+    /// The row's line under a reply that was approved but isn't live.
+    static func approvedNote(_ review: Review) -> String {
+        review.platform == "google"
+            ? "Approved \u{00B7} not on Google yet \u{2014} open it to post."
+            : "Approved \u{00B7} post it on \(review.platformDisplayName) \u{2014} open it to copy the reply."
     }
 }
 

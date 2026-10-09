@@ -100,13 +100,31 @@ struct SendReviewRequestSheet: View {
     // closes itself (see cavnarPostedOverlay).
     @State private var postedLabel: String?
 
+    private var hasEmail: Bool { !email.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var hasPhone: Bool { !phone.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The number that goes to the server: only with the consent ticked.
+    /// A number without it is never sent — with an email the request goes
+    /// by email alone (re-audit 10/8/26 H7), so Send never waits on a
+    /// consent attestation the owner can't make.
+    private var phoneToSend: String { smsConsent ? phone : "" }
+
     private var canSend: Bool {
         if viewModel.isSending { return false }
-        if email.isEmpty && phone.isEmpty { return false }
-        // A phone number without consent has nowhere to go — the server
-        // refuses it, so don't let the button pretend otherwise.
-        if !phone.trimmingCharacters(in: .whitespaces).isEmpty && !smsConsent { return false }
+        if !hasEmail && !hasPhone { return false }
+        // A phone number without consent and no email has nowhere to go —
+        // the server refuses it, so don't let the button pretend otherwise.
+        if !hasEmail && !smsConsent { return false }
         return true
+    }
+
+    /// Why Send is off, or what it will do without the text — said, not
+    /// left for the owner to guess (H7).
+    private var sendNote: String? {
+        guard hasPhone, !smsConsent else { return nil }
+        return hasEmail
+            ? "Sends by email only \u{2014} the number isn\u{2019}t texted unless this guest agreed to it."
+            : "Tick consent to text, or clear the number and add an email to send by email."
     }
 
     var body: some View {
@@ -130,7 +148,11 @@ struct SendReviewRequestSheet: View {
                         GuestContactPicker(isPresented: $showingContacts) { pick in
                             if !pick.name.isEmpty { name = pick.name }
                             email = pick.email
-                            phone = pick.phone
+                            // A contact with an email is asked by email: their
+                            // number isn't filled in, so nothing asks the
+                            // owner to vouch for texting consent (H7). Only a
+                            // contact with no email brings the number.
+                            phone = pick.email.trimmingCharacters(in: .whitespaces).isEmpty ? pick.phone : ""
                             // A new number has not agreed to anything.
                             smsConsent = false
                         }
@@ -188,6 +210,12 @@ struct SendReviewRequestSheet: View {
                         Text(error).cavnarText(.secondary, color: .cavnarRedText)
                     }
 
+                    if let sendNote {
+                        Text(sendNote)
+                            .cavnarText(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     // Plain full-width buttons, not a width-matched pair —
                     // that PreferenceKey width-matching mechanism doesn't
                     // reliably resolve when the sheet sits in this app's
@@ -198,7 +226,7 @@ struct SendReviewRequestSheet: View {
                     VStack(spacing: 10) {
                         Button {
                             Task {
-                                await viewModel.send(name: name, email: email, phone: phone,
+                                await viewModel.send(name: name, email: email, phone: phoneToSend,
                                                      message: message, smsConsent: smsConsent)
                                 if viewModel.didSend {
                                     Haptic.success()

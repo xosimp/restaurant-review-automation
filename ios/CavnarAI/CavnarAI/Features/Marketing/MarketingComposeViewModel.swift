@@ -21,6 +21,9 @@ final class MarketingComposeViewModel {
     // Preview
     var preview: MarketingPreview?
     var isPreviewing = false
+    /// Why the preview couldn't load (re-audit 10/8/26 M9) — the sheet says
+    /// so with a retry instead of standing empty.
+    var previewError: String?
 
     // Queue
     var scheduled: [ScheduledPost] = []
@@ -168,11 +171,21 @@ final class MarketingComposeViewModel {
             return
         }
         isPreviewing = true
+        previewError = nil
         defer { isPreviewing = false }
-        preview = try? await client.send(
-            "/mobile/api/marketing/preview", method: .post,
-            body: PreviewBody(platform: platform, body: body, mediaId: media?.id, ctaType: ctaType)
-        )
+        do {
+            preview = try await client.send(
+                "/mobile/api/marketing/preview", method: .post,
+                body: PreviewBody(platform: platform, body: body, mediaId: media?.id, ctaType: ctaType),
+                hapticOnError: false
+            )
+        } catch let error as APIClient.APIError {
+            preview = nil
+            previewError = error.message
+        } catch {
+            preview = nil
+            previewError = "Couldn\u{2019}t load the preview."
+        }
     }
 
     // MARK: - Queue
@@ -270,9 +283,22 @@ final class MarketingComposeViewModel {
         scheduled = response?.posts ?? []
     }
 
+    /// Cancels a scheduled post; a refusal or a dropped connection is said
+    /// in `scheduleError` (re-audit 10/8/26 M18) — it used to fail silently
+    /// and leave the post going out.
     func cancel(_ post: ScheduledPost) async {
-        _ = try? await client.send("/mobile/api/marketing/schedule/\(post.id)",
-                                   method: .delete) as OKResponse
+        scheduleError = nil
+        do {
+            let response: OKResponse = try await client.send("/mobile/api/marketing/schedule/\(post.id)",
+                                                             method: .delete)
+            if !response.ok {
+                scheduleError = response.error ?? "Couldn\u{2019}t cancel that post \u{2014} it\u{2019}s still scheduled."
+            }
+        } catch let error as APIClient.APIError {
+            scheduleError = error.message
+        } catch {
+            scheduleError = "Couldn\u{2019}t cancel that post \u{2014} it\u{2019}s still scheduled."
+        }
         await loadScheduled()
     }
 
@@ -372,10 +398,23 @@ final class MarketingComposeViewModel {
         }
     }
 
+    /// The draft leaves the list only once the server says it is gone
+    /// (re-audit 10/8/26 L1); otherwise `draftError` says why.
     func deleteDraft(_ draft: MarketingDraft) async {
-        if savedDraftID == draft.id { savedDraftID = nil }
-        _ = try? await client.send("/mobile/api/marketing/drafts/\(draft.id)",
-                                   method: .delete) as OKResponse
-        drafts.removeAll { $0.id == draft.id }
+        draftError = nil
+        do {
+            let response: OKResponse = try await client.send("/mobile/api/marketing/drafts/\(draft.id)",
+                                                             method: .delete)
+            guard response.ok else {
+                draftError = response.error ?? "Couldn\u{2019}t delete that draft."
+                return
+            }
+            if savedDraftID == draft.id { savedDraftID = nil }
+            drafts.removeAll { $0.id == draft.id }
+        } catch let error as APIClient.APIError {
+            draftError = error.message
+        } catch {
+            draftError = "Couldn\u{2019}t delete that draft."
+        }
     }
 }
