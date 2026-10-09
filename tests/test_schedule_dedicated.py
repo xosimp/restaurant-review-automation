@@ -99,3 +99,9 @@ def test_the_ai_tab_reads_a_waiver_as_an_allowance(db_path):
     out = snr.read_notes(rid, "No bar tables bartender Tuesday night. Keep the patio open.", db_path=db_path)
     assert out[0]["kind"] == "waiver" and "Tuesday night" in out[0]["why"]
     assert out[1]["kind"] != "waiver"
+
+
+def test_clock_in_times_become_quarter_hours():
+    hist = [{"date": "2026-10-05", "employee": "X", "role": "Bartender PM", "shift_start": "3:56pm",
+             "shift_end": "11:17pm"}]
+    assert ded._usual(hist, "bartender", "Monday", "night") == ("Bartender PM", 16 * 60, 23 * 60 + 15)

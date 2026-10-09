@@ -141,7 +141,10 @@ def _usual(history, family, day, part):
         spans = [s for s in spans if s]
         if not spans or not role:
             return None
-        return role, int(sk._median([s[0] for s in spans])), int(sk._median([s[1] for s in spans]))
+        # Clock-in medians (3:56pm) written as a schedule writes them: the
+        # nearest quarter hour.
+        q = lambda m: int(round(float(m) / 15.0)) * 15  # noqa: E731
+        return role, q(sk._median([s[0] for s in spans])), q(sk._median([s[1] for s in spans]))
 
     mine = [r for r in history or [] if family in str(r.get("role") or "").lower() and _part_of(r) == part]
     same_day = [r for r in mine if sk._weekday(r.get("date")) == day]
