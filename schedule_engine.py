@@ -176,6 +176,14 @@ class ScheduleGenerationError(ValueError):
     "try again" — never its exception text or a traceback (DATA-46)."""
 
 
+class ScheduleStopped(ScheduleGenerationError):
+    """The owner pressed Stop (10/9/26): the job row is no longer pending, so
+    no further model call starts and nothing is saved."""
+
+
+STOPPED_MESSAGE = "Stopped — nothing was saved."
+
+
 class GenerationClock:
     """One generation's wall clock (P-22). `deadline` is when the job must
     be finished or failed; `model_deadline` is when the last model call must
@@ -249,6 +257,11 @@ class GenerationClock:
 
     def model_seconds_left(self) -> float:
         return self.model_deadline - time.time()
+
+    def stopped(self) -> bool:
+        """Whether the owner stopped this generation (or a poll called it
+        dead): its job row is no longer pending (ops.job_still_pending)."""
+        return bool(self.job_id) and not _ops.job_still_pending(self.job_id)
 
     def seconds_left(self) -> float:
         return self.deadline - time.time()
@@ -2538,6 +2551,10 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         need = MIN_CALL_SECONDS
         if _call_measured(costs):
             need = max(need, call_seconds(task_rows(t), costs, headroom=False, contract=contract))
+        # Stopped by the owner (10/9/26): no further paid call starts; the
+        # job's row already says "Stopped", and nothing is saved.
+        if clock is not None and clock.stopped():
+            raise ScheduleStopped(STOPPED_MESSAGE)
         if calls >= call_cap or (clock is not None and clock.model_seconds_left() < need):
             why = "calls" if calls >= call_cap else "time"
             for task in [t] + queue:

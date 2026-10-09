@@ -5874,6 +5874,13 @@ def follow_generation_json(current_user):
     return _m("mobile_follow_generation")(current_user)
 
 
+@client_bp.route("/api/generate-schedule/stop", methods=["POST"])
+@login_required
+def stop_generation_json(current_user):
+    """Web twin — the one body is mobile_api.mobile_stop_generation."""
+    return _m("mobile_stop_generation")(current_user)
+
+
 @client_bp.route("/api/schedule-status/<job_id>", methods=["GET"])
 @login_required
 def schedule_status(current_user, job_id):

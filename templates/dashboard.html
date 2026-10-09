@@ -10892,6 +10892,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
    the heading, its lines left-aligned inside it (owner, 10/6/26), and how
    long a week really takes under them. */
 .sched-steps{width:max-content;max-width:100%;margin:20px auto 0}
+.sched-stop-row{display:flex;justify-content:center;margin-top:14px}
 .sched-eta{max-width:560px;margin:16px auto 0;text-align:center;font-size:13px;line-height:1.55;color:var(--ink3)}
 .sched-eta b{color:var(--ink);font-weight:600}
 .sched-eta .hb-num{font-family:'Space Grotesk',sans-serif}
@@ -23752,7 +23753,10 @@ function generateSchedule(btn, opts) {
   var _wkLabel = body.dates ? ('Redoing ' + body.dates.length + ' day' + (body.dates.length === 1 ? '' : 's') + ' of the draft')
                : (body.week_start ? 'Building the week of ' + mdy(body.week_start) : "Building next week's schedule");
   _wk.innerHTML = cavnarWeekHtml(_wkLabel)
-    + '<div id="sched-steps" class="sched-steps"></div><div id="sched-eta" class="sched-eta" aria-live="polite"></div>';
+    + '<div id="sched-steps" class="sched-steps"></div><div id="sched-eta" class="sched-eta" aria-live="polite"></div>'
+    // Stop (owner, 10/9/26: Generate pressed by accident) - live once the
+    // job has an id; nothing is saved and no further model call starts.
+    + '<div class="sched-stop-row"><button type="button" class="cbtn cbtn-secondary cbtn-sm" id="sched-stop-btn" disabled>Stop generating</button></div>';
   // In the schedule workspace it takes the week's own column (the centre
   // panel), where the draft will appear; elsewhere it follows the actions row.
   // The Schedule Studio's Build stage when it is there; the workspace
@@ -23780,6 +23784,31 @@ function generateSchedule(btn, opts) {
       }
       var jobId = startData.job_id;
       scheduleTiming(_schedStart, startData.typical, startData.wait_seconds);
+      var _stopBtn = document.getElementById('sched-stop-btn');
+      if (_stopBtn) {
+        _stopBtn.disabled = false;
+        _stopBtn.onclick = function() {
+          _stopBtn.disabled = true; _stopBtn.textContent = 'Stopping\u2026';
+          fetch('/api/generate-schedule/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({job_id: jobId})})
+            .then(apiJson)
+            .then(function(r) {
+              if (r && r.ok && r.stopped) {
+                clearTimeout(_hardTimeout);
+                clearInterval(_elapsedTimer);
+                clearInterval(_schedPollInterval);
+                _schedPollInterval = null;
+                _schedReset(btn);
+                toast('Stopped \u2014 nothing was saved', 'success');
+                return;
+              }
+              // Already finished: the next poll brings the draft in.
+              _stopBtn.textContent = 'Stop generating';
+              toast((r && r.error) || 'Couldn\u2019t stop it \u2014 try again.', r && r.ok ? 'success' : 'error');
+              _stopBtn.disabled = !(r && !r.ok);
+            })
+            .catch(function() { _stopBtn.disabled = false; _stopBtn.textContent = 'Stop generating'; toast('Couldn\u2019t reach the server to stop it.', 'error'); });
+        };
+      }
       // One generation at a time per restaurant: a second press joins the
       // one already running rather than paying for a second model call.
       if (startData.joined) {

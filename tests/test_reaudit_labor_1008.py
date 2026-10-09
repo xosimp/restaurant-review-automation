@@ -308,3 +308,42 @@ def test_a_press_whose_job_could_not_be_queued_is_not_left_watched(db, monkeypat
     assert se._GEN_WATCHERS == {}
     running, _ = ops.running_job("schedule", rid)
     assert running is None
+
+
+# ── Stop generating (owner, 10/9/26) ────────────────────────────────────────
+
+def test_stopping_a_running_generation_ends_it_saves_nothing_and_frees_the_restaurant(db, monkeypatch):
+    rid = _rid(db)
+    c, h, _ = _client(db, rid, monkeypatch)
+    ops.claim_async_job("oops-run", "schedule", rid)
+    r = c.post("/mobile/api/labor/generate-schedule/stop", headers=h, json={"job_id": "oops-run"})
+    assert r.status_code == 200 and r.get_json()["stopped"] is True
+    job = ops.read_async_job("oops-run", restaurant_id=rid)
+    assert job["status"] == "error" and job["result"]["stopped"] is True
+    assert job["result"]["error"] == se.STOPPED_MESSAGE
+    assert not ops.job_still_pending("oops-run")
+    assert ops.running_job("schedule", rid) == (None, None)            # another Generate may start
+    # A second press finds it already over and changes nothing.
+    again = c.post("/mobile/api/labor/generate-schedule/stop", headers=h, json={"job_id": "oops-run"}).get_json()
+    assert again["ok"] is True and again["stopped"] is False
+
+
+def test_another_restaurants_run_cannot_be_stopped(db, monkeypatch):
+    rid = _rid(db)
+    c, h, _ = _client(db, rid, monkeypatch)
+    other = _rid(db)
+    ops.claim_async_job("their-run", "schedule", other)
+    assert c.post("/mobile/api/labor/generate-schedule/stop", headers=h, json={"job_id": "their-run"}).status_code == 404
+    assert ops.job_still_pending("their-run")
+
+
+def test_a_stopped_run_starts_no_further_model_call(monkeypatch):
+    clock = se.GenerationClock(job_id="x")
+    monkeypatch.setattr(ops, "job_still_pending", lambda j: False)
+    assert clock.stopped() is True
+    monkeypatch.setattr(ops, "job_still_pending", lambda j: True)
+    assert clock.stopped() is False
+    assert se.GenerationClock(job_id=None).stopped() is False
+    src = open(se.__file__).read()
+    loop = src[src.index("        # Stopped by the owner (10/9/26)"):]
+    assert loop.index("raise ScheduleStopped(STOPPED_MESSAGE)") < loop.index("generate_optimized_schedule(")

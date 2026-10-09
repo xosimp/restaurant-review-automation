@@ -3702,6 +3702,34 @@ def mobile_follow_generation(current_user):
                    typical=_se.typical_generation_seconds(rid))
 
 
+@mobile_bp.route("/labor/generate-schedule/stop", methods=["POST"])
+@mobile_login_required
+def mobile_stop_generation(current_user):
+    """Stop a running generation (owner, 10/9/26: Generate pressed by
+    accident). Body: job_id. The job is finished as stopped at once — every
+    poll reads "Stopped — nothing was saved.", the restaurant may start
+    another, and the run itself starts no further model call and saves
+    nothing (schedule_engine.ScheduleStopped; a call already in flight
+    finishes and is discarded). Only a pending schedule job of this
+    restaurant; the ONE body, /api/generate-schedule/stop is its twin."""
+    rid = current_user["restaurant_id"]
+    from permissions import has_permission, SCHEDULE_DRAFT
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
+        return jsonify(ok=False, error="Your login can view labor but not draft a schedule."), 403
+    import ops as _ops
+    import schedule_engine as _se
+    body = request.get_json(silent=True) or {}
+    job_id = str(body.get("job_id") or "").strip()[:64]
+    job = _ops.read_async_job(job_id, restaurant_id=rid) if job_id else None
+    if not job:
+        return jsonify(ok=False, error="That generation isn't running any more."), 404
+    if job.get("status") != "pending":
+        return jsonify(ok=True, stopped=False, status=job.get("status"),
+                       error="It had already finished — check the draft or Schedule History."), 200
+    _ops.finish_async_job(job_id, "error", {"ok": False, "stopped": True, "error": _se.STOPPED_MESSAGE})
+    return jsonify(ok=True, stopped=True, job_id=job_id)
+
+
 @mobile_bp.route("/labor/schedule-status/<job_id>")
 @mobile_login_required
 def mobile_schedule_status(job_id, current_user):
