@@ -21,7 +21,7 @@ APP = os.path.join(ROOT, "ios", "CavnarAI", "CavnarAI")
 FEATURES = os.path.join(APP, "Features")
 
 # Today's count after phase 1 (10/8/26). It may only go down.
-BASELINE = 2891
+BASELINE = 86
 
 _LITERAL_HELPER = re.compile(r"\bcavnar(?:Body|Headline|Number)\(\s*-?\d+(?:\.\d+)?\s*[,)]")
 _MAKE = "HomeMixedText.make("
