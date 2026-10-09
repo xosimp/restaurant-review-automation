@@ -10,11 +10,11 @@ struct TwoFactorView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.cavnarPaper.ignoresSafeArea()
+        // Scrolls, with Verify pinned in thumb reach (iOS re-audit L1): at
+        // the largest text sizes with the keyboard up, the fixed column
+        // pushed Verify off the screen.
+        ScrollView {
             VStack(spacing: 24) {
-                Spacer()
-
                 VStack(spacing: 8) {
                     Text(viewModel.heading)
                         .font(.cavnarHeadline(CavnarText.title.size))
@@ -76,21 +76,6 @@ struct TwoFactorView: View {
                 }
 
                 VStack(spacing: 12) {
-                    Button {
-                        Task { await viewModel.submit() }
-                    } label: {
-                        Group {
-                            if viewModel.isLoading {
-                                CavnarShimmerText(text: "Verifying…")
-                            } else {
-                                Text("Verify")
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
-                    .disabled(!viewModel.canSubmit)
-
                     if !viewModel.useBackupCode && !viewModel.usesAuthenticatorApp {
                         Button {
                             Task { await viewModel.resend() }
@@ -117,13 +102,31 @@ struct TwoFactorView: View {
                     }
                     .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
+                    .frame(minHeight: 44)
                     .padding(.top, 4)
                 }
-
-                Spacer()
-                Spacer()
             }
-            .padding(28)
+            .padding(.horizontal, 28)
+            .padding(.top, 48)
+            .padding(.bottom, 28)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(Color.cavnarPaper.ignoresSafeArea())
+        .cavnarPinnedBar {
+            Button {
+                Task { await viewModel.submit() }
+            } label: {
+                Group {
+                    if viewModel.isLoading {
+                        CavnarShimmerText(text: "Verifying…")
+                    } else {
+                        Text("Verify")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
+            .disabled(!viewModel.canSubmit)
         }
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDoneToolbar { isCodeFocused = false; isBackupFocused = false }

@@ -376,7 +376,9 @@ final class ConfidenceDisplayTests: XCTestCase {
                 {"type": "answer", "answer": "a", \(field) "modules_consulted": ["labor"], "unverified_figures": []}
                 """)
             XCTAssertEqual(e.evidence.modules, ["labor"], name)
-            let expectsLine = name == "string" || name == "k1"
+            // Only a measured % draws a line; a legacy band word never does
+            // (iOS re-audit L4).
+            let expectsLine = name == "k1"
             XCTAssertEqual(e.evidence.confidenceLabel != nil, expectsLine, name)
         }
         let k1 = try decode(APIClient.SSEEvent.self, """
@@ -389,11 +391,12 @@ final class ConfidenceDisplayTests: XCTestCase {
             {"type": "answer", "answer": "a", "meta": {"confidence": \(Self.k1)}}
             """)
         XCTAssertEqual(nested.evidence.confidence?.pct, 72)
-        // Low is amber, never red (CA4 F9).
+        // Low is amber, never red (CA4 F9) — and a legacy "low" with no %
+        // draws no line on an Ask answer (L4).
         let low = try decode(APIClient.SSEEvent.self, #"{"type": "answer", "answer": "a", "confidence": "low"}"#)
-        XCTAssertEqual(low.evidence.confidenceLabel, "Low confidence")
+        XCTAssertNil(low.evidence.confidenceLabel)
         XCTAssertEqual(ConfidenceDisplay(try XCTUnwrap(low.evidence.confidence)).tone.color, .cavnarAmber)
-        XCTAssertFalse(low.evidence.isEmpty)
+        XCTAssertTrue(low.evidence.isEmpty)
         // A legacy "high" with no modules draws nothing, as before; "unknown" never does.
         XCTAssertTrue(try decode(APIClient.SSEEvent.self, #"{"type": "answer", "confidence": "high"}"#).evidence.isEmpty)
         let unknown = try decode(APIClient.SSEEvent.self, #"{"type": "answer", "confidence": "unknown"}"#)

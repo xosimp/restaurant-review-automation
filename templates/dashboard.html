@@ -2612,6 +2612,13 @@ cavNavRegister('location', function (p) {
   window.switchLocation(id);
   return true;
 });
+/* All locations: Home in its group scope, where "How your locations
+   compare" lives - the iPhone's web link (iOS re-audit M15). */
+cavNavRegister('locations', function () {
+  cavNavOpenModule('home');
+  if (typeof window.hbScope === 'function' && (typeof window.hbScopeNow !== 'function' || window.hbScopeNow() !== 'group')) window.hbScope('group');
+  return true;
+});
 /* An issue lives in Home's Needs attention card (iOS opens Home too). The
    card fills after the brief, so wait for the row a moment. */
 cavNavRegister('issue', function (p) {
@@ -42225,6 +42232,9 @@ function sfw2RuleCheck(chk) {
     }
     return false;
   };
+  /* ?nav=dna - the iPhone's "See it on the web" row (iOS re-audit M18) -
+     opens this page over the dashboard. */
+  if (window.cavNavRegister) cavNavRegister('dna', function () { window.dnaOpen(); return true; });
   window.dnaClose = function (opts) {
     opts = opts || {};
     var el = document.getElementById('dna');

@@ -87,19 +87,25 @@ struct LocationGroupBrief: Decodable {
         }
     }
 
-    /// Food cost's recoverable dollars — an OPPORTUNITY, never a saving —
-    /// and how many items are critically low; nil without live inventory.
+    /// Food cost: the measured % of sales and its target when the ledger
+    /// has them (iOS re-audit M14), the recoverable dollars — an
+    /// OPPORTUNITY, never a saving — and how many items are critically low;
+    /// nil without live inventory.
     struct Inventory: Decodable {
         let recoverable: Double
         var criticalLow: Int = 0
+        var pct: Double? = nil
+        var target: Double? = nil
         enum CodingKeys: String, CodingKey {
-            case recoverable
+            case recoverable, pct, target
             case criticalLow = "critical_low"
         }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             recoverable = try c.decode(Double.self, forKey: .recoverable)
             criticalLow = ((try? c.decodeIfPresent(Int.self, forKey: .criticalLow)) ?? nil) ?? 0
+            pct = (try? c.decodeIfPresent(Double.self, forKey: .pct)) ?? nil
+            target = (try? c.decodeIfPresent(Double.self, forKey: .target)) ?? nil
         }
     }
 
@@ -278,12 +284,18 @@ enum LocationGroupFormat {
         return (figure, bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} "))
     }
 
-    /// "$1,240/mo" opportunity and "2 low"; "—" without live inventory.
+    /// "34.2%" food cost and "vs 30% target · $1,240/mo could recover ·
+    /// 2 low" (iOS re-audit M14): the figure is the measured %, "—" when
+    /// the ledger has none — never the opportunity, which reads like money
+    /// already measured. "—" without live inventory.
     static func foodCost(_ i: LocationGroupBrief.Inventory?) -> (figure: String, detail: String?) {
         guard let i else { return (dash, nil) }
-        var detail = "opportunity"
-        if i.criticalLow > 0 { detail += " \u{00B7} \(i.criticalLow) low" }
-        return ("$" + i.recoverable.commaFormatted + "/mo", detail)
+        var bits: [String] = []
+        if let t = i.target, t.isFinite, i.pct != nil { bits.append(String(format: "vs %g%% target", t)) }
+        if i.recoverable > 0 { bits.append("$" + i.recoverable.commaFormatted + "/mo could recover") }
+        if i.criticalLow > 0 { bits.append("\(i.criticalLow) low") }
+        let figure = i.pct.flatMap { $0.isFinite ? String(format: "%.1f%%", $0) : nil } ?? dash
+        return (figure, bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} "))
     }
 
     /// "2h ago" from the server's UTC stamp; "—" when nobody has signed in.

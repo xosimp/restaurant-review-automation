@@ -34,6 +34,9 @@ struct HomeRecommendations: View {
     /// and the undo that brings it back — the web's "Restore hidden".
     var restorable: HomeDismissedRec? = nil
     var onRestore: ((HomeDismissedRec) async -> Bool)? = nil
+    /// Opens every row's Details at once — the single-card sheet a Needs
+    /// you row opens (H7).
+    var startsExpanded = false
 
     @State private var toast: String?
     /// Keys answered in this session, so the card drops out without a
@@ -86,6 +89,7 @@ struct HomeRecommendations: View {
                          skipLabel: askingWhyIsHide ? "Just hide it for two weeks" : nil,
                          onSkip: askingWhyIsHide ? { answerWhy(kind: "recommendation", reason: nil) } : nil,
                          onPick: { reason in answerWhy(kind: "not_for_us", reason: reason) })
+        .onAppear { if startsExpanded { expanded = Set(recommendations.map(\.key)) } }
         .alert("What else could explain it", isPresented: Binding(
             get: { explaining != nil }, set: { if !$0 { explaining = nil } })) {
             Button("OK", role: .cancel) {}
@@ -202,6 +206,12 @@ struct HomeRecommendations: View {
                                            color: .cavnarInk2, numberColor: .cavnarInk)
                             .lineLimit(2)
                     }
+                    // How sure, as a measured %, on the row (iOS re-audit
+                    // M13) — no longer behind Details.
+                    if let c = rec.confidence {
+                        ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home",
+                                       compact: true)
+                    }
                     // Advice that pulls against other advice: a decision,
                     // so it stays on the row (DS §12).
                     if let conflict = rec.conflict {
@@ -247,11 +257,6 @@ struct HomeRecommendations: View {
     @ViewBuilder
     private func details(_ rec: HomeRecommendation) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // How sure, with "Why?" — in Details on a phone (10/8/26).
-            if let c = rec.confidence {
-                ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home",
-                               compact: true)
-            }
             if rec.modelWritten == true {
                 Text("Written by Cavnar AI from your numbers").cavnarText(.caption)
             }

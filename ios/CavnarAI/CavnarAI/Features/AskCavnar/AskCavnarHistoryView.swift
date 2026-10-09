@@ -11,6 +11,8 @@ struct AskCavnarHistoryView: View {
     let viewModel: AskCavnarViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var deleteFailed = false
+    /// The chat whose Delete is asking first (M6).
+    @State private var deleting: AskConversation?
 
     var body: some View {
         Group {
@@ -72,15 +74,13 @@ struct AskCavnarHistoryView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 5, leading: 20, bottom: 5, trailing: 20))
-                    // Permanent — no undo. A full swipe commits, same as
-                    // Mail/Messages; the row leaves immediately and only
-                    // comes back if the server refuses.
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    // Permanent — no undo — so it asks first (iOS re-audit
+                    // M6): no full swipe, and the swipe's Delete opens a
+                    // confirm naming the chat.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             Haptic.light()
-                            Task {
-                                if await !viewModel.delete(conversation) { deleteFailed = true }
-                            }
+                            deleting = conversation
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -93,7 +93,7 @@ struct AskCavnarHistoryView: View {
                     }
                 }
             } header: {
-                CavnarKicker("\(viewModel.conversations.count) \(viewModel.conversations.count == 1 ? "conversation" : "conversations") · swipe left to delete")
+                CavnarKicker("\(viewModel.conversations.count) \(viewModel.conversations.count == 1 ? "conversation" : "conversations")")
                     .padding(.bottom, 2)
                     // Matches the rows' own leading inset (20, set below)
                     // exactly, rather than relying on the list style's
@@ -105,6 +105,18 @@ struct AskCavnarHistoryView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .animation(.easeOut(duration: 0.2), value: viewModel.conversations)
+        .confirmationDialog(deleting.map { "Delete \u{201C}\($0.title)\u{201D}?" } ?? "",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { conversation in
+            Button("Delete chat", role: .destructive) {
+                Task {
+                    if await !viewModel.delete(conversation) { deleteFailed = true }
+                }
+            }
+            Button("Keep it", role: .cancel) {}
+        } message: { _ in
+            Text("This chat is removed for good. It can\u{2019}t be undone.")
+        }
     }
 }
 
@@ -117,7 +129,8 @@ private struct ConversationRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(conversation.title)
                     .cavnarText(.label)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 6)
                 if isOpen {
                     AccountPill(text: "Open")

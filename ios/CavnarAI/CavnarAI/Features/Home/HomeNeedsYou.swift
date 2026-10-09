@@ -32,6 +32,11 @@ struct HomeNeedsYou: View {
     var quick: [HomeQuickAction] = []
     /// Brief lines that carry their own action (the rest stay in the brief).
     var briefActions: [HomeDayViewModel.BriefLine] = []
+    /// The open recommendations, less the one Today's focus leads with —
+    /// decisions, so rows here, never inside the closed More group (iOS
+    /// re-audit H7, DESIGN_SYSTEM §12). Their record stays in More.
+    var recommendations: [HomeRecommendation] = []
+    var assignees: [HomeAssignee] = []
     let day: HomeDayViewModel
     let followThrough: HomeFollowThroughViewModel
     var busyPublishing: Bool = false
@@ -50,6 +55,10 @@ struct HomeNeedsYou: View {
     var onOpenPath: (NavPath) -> Void = { _ in }
     var onOpenModule: (String) -> Void = { _ in }
     var onChanged: () -> Void = {}
+    /// The list's count, whenever it changes — the Home tab's badge (H8).
+    var onCount: (Int) -> Void = { _ in }
+    /// A recommendation answer's sentence, for the screen's posted check.
+    var onPosted: (String) -> Void = { _ in }
     /// An issue a push named (parity audit #11): scrolled to and pulsed.
     var focusIssue: HomeIssueFocus? = nil
     var onFocus: (Int) -> Void = { _ in }
@@ -65,6 +74,17 @@ struct HomeNeedsYou: View {
     @State private var openLine: HomeDayViewModel.BriefLine?
     @State private var note: String?
     @State private var expanded = false
+    /// Recommendations answered here, dropped before the reload lands.
+    @State private var answeredRecs: Set<String> = []
+    /// The recommendation whose Not for us (or second Hide) is asking why.
+    @State private var recAskingWhy: HomeRecommendation?
+    @State private var recAskingWhyIsHide = false
+    @State private var showingRecWhy = false
+    /// A recommendation's full card (why, what it rests on, the other
+    /// answers), opened from its row.
+    @State private var recDetail: HomeRecommendation?
+    /// A request's Deny, asking first (M4).
+    @State private var denying: HomeDenyAsk?
 
     /// The scroll id HomeView's tab badge scrolls to.
     static let anchor = "home-needs-you"
@@ -80,7 +100,8 @@ struct HomeNeedsYou: View {
         HomeNeedsYouEntry.ranked(
             attention: items, issues: day.visibleIssues, stillOpen: followThrough.actions,
             brief: briefActions, proposed: followThrough.proposedGoals, missed: followThrough.missedGoals,
-            checkIns: followThrough.checkInsDue, loss: followThrough.lossFlags, quick: quick)
+            checkIns: followThrough.checkInsDue, loss: followThrough.lossFlags, quick: quick,
+            recommendations: recommendations.filter { !answeredRecs.contains($0.key) })
     }
 
     var body: some View {
@@ -125,8 +146,30 @@ struct HomeNeedsYou: View {
             }
         }
         .id(Self.anchor)
-        .onChange(of: all.count) { _, count in
+        .onChange(of: all.count, initial: true) { _, count in
             if count <= cap { expanded = false }
+            onCount(count)
+        }
+        .recReasonDialog(isPresented: $showingRecWhy,
+                         title: recAskingWhyIsHide ? "You\u{2019}ve hidden this before \u{2014} why?"
+                                                   : "Why isn\u{2019}t it for you?",
+                         message: "Tell Cavnar AI why, so it stops suggesting it.",
+                         skipLabel: recAskingWhyIsHide ? "Just hide it for two weeks" : nil,
+                         onSkip: recAskingWhyIsHide ? { answerRecWhy(kind: "recommendation", reason: nil) } : nil,
+                         onPick: { reason in answerRecWhy(kind: "not_for_us", reason: reason) })
+        .confirmationDialog(denying.map { "Deny \u{201C}\($0.item.title)\u{201D}?" } ?? "",
+                            isPresented: Binding(get: { denying != nil }, set: { if !$0 { denying = nil } }),
+                            titleVisibility: .visible, presenting: denying) { ask in
+            Button(ask.step.label, role: .destructive) { perform(ask.step, on: ask.item) }
+            Button("Not yet", role: .cancel) {}
+        } message: { ask in
+            Text(ask.item.detail.map { $0 + " \u{2014} they\u{2019}re told it was declined." }
+                 ?? "They\u{2019}re told it was declined.")
+        }
+        .sheet(item: $recDetail, onDismiss: onChanged) { rec in
+            HomeRecommendationSheet(rec: rec, viewModel: followThrough, assignees: assignees,
+                                    onOpenModule: { module in recDetail = nil; onOpenModule(module) },
+                                    onChanged: onChanged)
         }
         .modifier(HomeNeedsYouChrome(
             day: day, followThrough: followThrough, openIssue: $openIssue, askingCover: $askingCover,
@@ -181,6 +224,7 @@ struct HomeNeedsYou: View {
             case .checkIn(let outcome): checkInRow(outcome)
             case .loss(let flag, let first): lossRow(flag, showsNote: first)
             case .quick(let q): quickRow(q)
+            case .recommendation(let rec): recommendationRow(rec)
             }
             if showsDivider {
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
@@ -197,14 +241,22 @@ struct HomeNeedsYou: View {
 
     private func attentionRow(_ item: NeedsAttentionItem) -> some View {
         let busy = busyPublishing && item.isPublishAction
+        // A cross-module link the owner can answer (M20): its confirm step
+        // (Done / Not for us) is the row's answer; Evidence is secondary.
+        let linkKey = item.action == "link_evidence"
+            ? HomeFollowThroughViewModel.linkAnswerKey(followThrough.link(for: item)) : nil
         return HomeNeedsYouRow(
             tone: Self.tone(item), title: item.title, why: item.detail.isEmpty ? nil : item.detail,
-            primary: item.cta.map { HomeNeedsYouPrimary(label: $0, busy: busy) { onPrimary(item) } },
+            primary: linkKey != nil ? nil
+                : item.cta.map { HomeNeedsYouPrimary(label: $0, busy: busy) { onPrimary(item) } },
             swipe: item.dismissable == true && onDismiss != nil
                 ? HomeSwipeAction(label: "Not today", systemImage: "moon", tint: .cavnarInk3) {
                     onDismiss?(item, "snooze")
                 } : nil
         ) {
+            if linkKey != nil {
+                Button { onPrimary(item) } label: { Label("See the evidence", systemImage: "doc.text.magnifyingglass") }
+            }
             if let secondary = item.secondary {
                 Button { onSecondary(item) } label: { Label(secondary, systemImage: "arrow.up.right") }
             }
@@ -223,6 +275,12 @@ struct HomeNeedsYou: View {
             RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer, compact: true)
             if let conflict = item.conflict {
                 RecConflictPanel(conflict: conflict, onSettled: onChanged)
+            }
+            if let linkKey {
+                RecAnswerRow(key: linkKey, surface: "home", module: "home",
+                             answers: [.completed, .notForUs],
+                             onAnswered: { _ in onChanged() })
+                HomeNeedsYouTextLink(label: "See the evidence") { onPrimary(item) }
             }
         }
     }
@@ -289,7 +347,7 @@ struct HomeNeedsYou: View {
             onTap: item.destination.map { nav -> () -> Void in { onOpenPath(nav) } },
             swipe: alt.map { a in
                 HomeSwipeAction(label: a.label, systemImage: HomeFollowThrough.altGlyph(a),
-                                tint: HomeFollowThrough.altTint(a)) { perform(a, on: item) }
+                                tint: HomeFollowThrough.altTint(a)) { performAlt(a, on: item) }
             } ?? HomeSwipeAction(label: "Not today", systemImage: "moon", tint: .cavnarInk3) {
                 Task { await followThrough.snooze(item) }
             }
@@ -299,7 +357,7 @@ struct HomeNeedsYou: View {
             }
             if let alt {
                 Button(role: HomeFollowThrough.altTint(alt) == .cavnarRed ? .destructive : nil) {
-                    perform(alt, on: item)
+                    performAlt(alt, on: item)
                 } label: { Label(alt.label, systemImage: HomeFollowThrough.altGlyph(alt)) }
             }
             Button { Task { await followThrough.snooze(item) } } label: { Label("Not today", systemImage: "moon") }
@@ -419,6 +477,139 @@ struct HomeNeedsYou: View {
             Button { onQuick(q) } label: { Label(q.label, systemImage: "arrow.up.right") }
         } accessory: {
             EmptyView()
+        }
+    }
+
+    /// An open recommendation (H7): what to do, the dollars at stake (else
+    /// why), ONE answer as the primary — Reprice, Measure it or Done, the
+    /// card's own rule — and how sure on the row (M13). Not for us, Hide,
+    /// Assign and the rest are in "…"; a tap opens the full card.
+    private func recommendationRow(_ rec: HomeRecommendation) -> some View {
+        let primary = HomeRecommendations.primaryAnswer(rec)
+        let measuring = followThrough.tracked.contains(rec.key)
+        let label: String = {
+            switch primary {
+            case .reprice: return rec.action?.label ?? "Reprice"
+            case .track: return measuring ? "Measuring" : "Measure it"
+            case .done: return "Done"
+            }
+        }()
+        return HomeNeedsYouRow(
+            tone: .cavnarAmber, title: rec.title,
+            why: HomeRecommendations.stake(rec) ?? rec.why,
+            primary: (primary == .track && measuring) ? nil
+                : HomeNeedsYouPrimary(label: label) { answerRec(rec, primary) },
+            onTap: {
+                RecEvidenceLog.viewed(key: rec.key, surface: "home", module: "home")
+                recDetail = rec
+            },
+            swipe: HomeSwipeAction(label: "Hide", systemImage: "eye.slash", tint: .cavnarInk3) { hideRec(rec) }
+        ) {
+            Button { recDetail = rec } label: { Label("Details", systemImage: "text.alignleft") }
+            if primary != .done {
+                Button { submitRec(rec, kind: "done") } label: { Label("Done", systemImage: "checkmark") }
+            }
+            if primary != .track, rec.metric != nil, !measuring {
+                Button { answerRec(rec, .track) } label: { Label("Measure it", systemImage: "gauge.with.dots.needle.33percent") }
+            }
+            Button {
+                recAskingWhy = rec
+                recAskingWhyIsHide = false
+                showingRecWhy = true
+            } label: { Label(RecAnswer.notForUs.label, systemImage: "xmark") }
+            Button { hideRec(rec) } label: { Label("Hide for two weeks", systemImage: "eye.slash") }
+            ForEach(assignees) { person in
+                Button {
+                    Task {
+                        if let said = await followThrough.assign(rec, to: person) {
+                            answeredRecs.insert(rec.key)
+                            onPosted(said)
+                            onChanged()
+                        }
+                    }
+                } label: { Label("Assign to \(person.name)", systemImage: "person.badge.plus") }
+            }
+            if let module = rec.module {
+                Button { onOpenModule(module) } label: {
+                    Label("Open \(module == "inventory" ? "Food Cost" : module.capitalized)", systemImage: "arrow.up.right")
+                }
+            }
+            Button { ask("Should I do this: \(rec.title)") } label: {
+                Label("Ask Cavnar AI", systemImage: "sparkles")
+            }
+        } accessory: {
+            // What another module knows against it and what was said
+            // before — they change the answer, so they stay on the row.
+            if let caution = rec.caution {
+                RecCautionLine(text: caution)
+            }
+            RecMemoryNote(previous: rec.previousAnswer, delegate: rec.delegateAnswer,
+                          retest: rec.retest == true, compact: true)
+            if let conflict = rec.conflict {
+                RecConflictPanel(conflict: conflict, onSettled: onChanged)
+            }
+            // How sure, as a measured %, on the row (M13).
+            if let c = rec.confidence {
+                ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: "home", compact: true)
+            }
+        }
+    }
+
+    private func answerRec(_ rec: HomeRecommendation, _ primary: HomeRecommendations.PrimaryAnswer) {
+        switch primary {
+        case .reprice:
+            Task {
+                if let said = await followThrough.reprice(rec) {
+                    answeredRecs.insert(rec.key)
+                    onPosted(said)
+                    onChanged()
+                }
+            }
+        case .track:
+            Task {
+                if let said = await followThrough.track(rec) { withAnimation { note = said } }
+            }
+        case .done:
+            submitRec(rec, kind: "done")
+        }
+    }
+
+    /// Hide for two weeks — the second hide asks why first, as the card did.
+    private func hideRec(_ rec: HomeRecommendation) {
+        if (rec.timesHidden ?? 0) >= 1 {
+            recAskingWhy = rec
+            recAskingWhyIsHide = true
+            showingRecWhy = true
+        } else {
+            submitRec(rec, kind: "recommendation")
+        }
+    }
+
+    private func answerRecWhy(kind: String, reason: RecReason?) {
+        guard let rec = recAskingWhy else { return }
+        recAskingWhy = nil
+        submitRec(rec, kind: kind, reasonCode: reason?.code)
+    }
+
+    private func submitRec(_ rec: HomeRecommendation, kind: String, reasonCode: String? = nil) {
+        Haptic.light()
+        Task {
+            if let said = await followThrough.answer(rec, kind: kind, reasonCode: reasonCode) {
+                withAnimation(.cavnarEase(0.25)) { _ = answeredRecs.insert(rec.key) }
+                onPosted(said)
+                onChanged()
+            }
+        }
+    }
+
+    /// A row's second answer. A deny (a time-off or shift request) asks
+    /// first, naming the request (iOS re-audit M4): approving is the row's
+    /// primary; saying no to a person is never one stray tap.
+    private func performAlt(_ step: ActionItem.Step, on item: ActionItem) {
+        if HomeFollowThrough.altTint(step) == .cavnarRed {
+            denying = HomeDenyAsk(item: item, step: step)
+        } else {
+            perform(step, on: item)
         }
     }
 
@@ -611,6 +802,8 @@ enum HomeNeedsYouEntry: Identifiable {
     /// The flag, and whether it is the first (which carries the note).
     case loss(HomeFollowThroughViewModel.LossSignals.Flag, Bool)
     case quick(HomeQuickAction)
+    /// An open recommendation, answerable in place (H7).
+    case recommendation(HomeRecommendation)
 
     static func issueId(_ id: Int) -> String { "issue:\(id)" }
 
@@ -625,14 +818,15 @@ enum HomeNeedsYouEntry: Identifiable {
         case .checkIn(let o): return "checkin:\(o.id)"
         case .loss(let f, _): return "loss:" + f.id
         case .quick(let q): return "quick:" + q.id
+        case .recommendation(let r): return "rec:" + r.key
         }
     }
 
     /// Lower is higher on the list. Needs attention keeps the server's own
     /// urgency order at the top (and so the first four are exactly what
     /// home_brief records as shown); then a high-severity issue, what was
-    /// left open, the brief's own actions, other issues, decisions on
-    /// goals, check-ins, flags worth a look, and shortcuts last.
+    /// left open, the brief's own actions, other issues, the open
+    /// recommendations (H7), decisions on goals, check-ins, flags worth a look, and shortcuts last.
     var rank: Int {
         switch self {
         case .attention: return 0
@@ -643,6 +837,7 @@ enum HomeNeedsYouEntry: Identifiable {
         case .checkIn: return 60
         case .loss: return 70
         case .quick: return 80
+        case .recommendation: return 45
         }
     }
 
@@ -650,7 +845,8 @@ enum HomeNeedsYouEntry: Identifiable {
                        stillOpen: [ActionItem] = [], brief: [HomeDayViewModel.BriefLine] = [],
                        proposed: [ProposedGoal] = [], missed: [ProposedGoal] = [],
                        checkIns: [RecOutcome] = [], loss: [HomeFollowThroughViewModel.LossSignals.Flag] = [],
-                       quick: [HomeQuickAction] = []) -> [HomeNeedsYouEntry] {
+                       quick: [HomeQuickAction] = [],
+                       recommendations: [HomeRecommendation] = []) -> [HomeNeedsYouEntry] {
         var all: [HomeNeedsYouEntry] = attention.map { .attention($0) }
         all += issues.map { .issue($0) }
         all += stillOpen.map { .stillOpen($0) }
@@ -660,6 +856,7 @@ enum HomeNeedsYouEntry: Identifiable {
         all += checkIns.map { .checkIn($0) }
         all += loss.enumerated().map { .loss($0.element, $0.offset == 0) }
         all += quick.map { .quick($0) }
+        all += recommendations.map { .recommendation($0) }
         // One item, once: a key two sources share is drawn by the first.
         var seen = Set<String>()
         let unique = all.filter { seen.insert($0.id).inserted }
@@ -772,6 +969,62 @@ struct HomeNeedsYouRow<Menu: View, Accessory: View>: View {
         }
         .padding(.vertical, CavnarSpace.s)
         .homeSwipeAction(swipe)
+    }
+}
+
+/// A request's Deny waiting on its confirm (M4).
+struct HomeDenyAsk {
+    let item: ActionItem
+    let step: ActionItem.Step
+}
+
+/// A row's secondary as a plain ember text link — "See the evidence" under
+/// a cross-module link's Done / Not for us (M20). 44pt.
+struct HomeNeedsYouTextLink: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            HStack(spacing: CavnarSpace.xxs) {
+                Text(label)
+                    .cavnarText(.label, color: .cavnarEmber2)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// One recommendation's full card in a sheet, opened from its Needs you
+/// row (H7): why, what it rests on, what happens if it is ignored, and
+/// every answer — the same card Home's recommendations grid drew.
+struct HomeRecommendationSheet: View {
+    let rec: HomeRecommendation
+    let viewModel: HomeFollowThroughViewModel
+    var assignees: [HomeAssignee] = []
+    var onOpenModule: (String) -> Void
+    var onChanged: () -> Void = {}
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                HomeRecommendations(recommendations: [rec], viewModel: viewModel, assignees: assignees,
+                                    onOpenModule: onOpenModule, onChanged: onChanged,
+                                    startsExpanded: true)
+                    .padding(CavnarSpace.gutter)
+            }
+            .background(Color.cavnarPaper.ignoresSafeArea())
+            .accountSheetChrome("Recommendation")
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

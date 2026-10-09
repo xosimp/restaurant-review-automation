@@ -217,14 +217,10 @@ struct AskCavnarView: View {
             // Idle orb — a slow breathing ring while nothing is in flight;
             // its reserved `listening` wave while the mic is live.
             CavnarOrb(state: voice.isListening ? .listening : .breathing, size: 40, paused: motionPaused)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Ask Cavnar AI")
-                    .cavnarText(.headline)
-                Text("Your restaurant intelligence consultant")
-                    .cavnarText(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
+            // The title only (iOS re-audit L3): the tagline under it told
+            // the owner nothing they could act on.
+            Text("Ask Cavnar AI")
+                .cavnarText(.headline)
             Spacer(minLength: CavnarSpace.xs)
             if inputFocused {
                 // Fixed top-right, not a .keyboard-placement toolbar item —
@@ -281,24 +277,48 @@ struct AskCavnarView: View {
                 if index > 0 {
                     Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
                 }
-                HStack(alignment: .top, spacing: 10) {
-                    Circle()
-                        .fill(severityTone(item.severity))
-                        .frame(width: 7, height: 7)
-                        .padding(.top, 7)
-                    VStack(alignment: .leading, spacing: 2) {
-                        CavnarMixedText(item.title ?? "", role: .label)
-                        if let detail = item.detail, !detail.isEmpty {
-                            CavnarMixedText(detail, role: .secondary)
+                // A tap asks about it (iOS re-audit L2) — the briefing
+                // named what needs the owner, then gave no way in.
+                Button {
+                    Haptic.light()
+                    viewModel.question = Self.briefingQuestion(item)
+                    Task { await viewModel.submit() }
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(severityTone(item.severity))
+                            .frame(width: 7, height: 7)
+                            .padding(.top, 7)
+                        VStack(alignment: .leading, spacing: 2) {
+                            CavnarMixedText(item.title ?? "", role: .label)
+                            if let detail = item.detail, !detail.isEmpty {
+                                CavnarMixedText(detail, role: .secondary)
+                            }
                         }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .padding(.top, 4)
+                            .accessibilityHidden(true)
                     }
-                    Spacer(minLength: 0)
+                    .padding(.vertical, 10)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
-                .padding(.vertical, 10)
+                .buttonStyle(.plain)
+                .disabled(viewModel.isLoading)
+                .accessibilityHint("Asks Cavnar AI about this")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, CavnarSpace.xs)
+    }
+
+    /// What a briefing row asks when tapped: its own title, as a question.
+    static func briefingQuestion(_ item: AskOpening.Item) -> String {
+        let title = (item.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "What needs my attention today?" : "Tell me more about this: \(title)"
     }
 
     private func briefingSubtitle(_ opening: AskOpening) -> String? {
@@ -341,9 +361,11 @@ struct AskCavnarView: View {
             // Before anything is asked the screen shows Cavnar AI itself: the
             // Ember Core, large and breathing (10/8/26; the web's Ask panel
             // does the same). The dotted orb stays for working and loading.
-            EmberCoreView(size: 96)
-                .padding(.top, 28)
-                .padding(.bottom, 14)
+            // ~56pt (L2): at 96pt with 42pt of padding the core pushed the
+            // briefing below the fold.
+            EmberCoreView(size: 56)
+                .padding(.top, CavnarSpace.m)
+                .padding(.bottom, CavnarSpace.xxs)
             if let opening = viewModel.opening, let headline = opening.headline {
                 briefing(opening, headline: headline)
             } else {
@@ -687,6 +709,43 @@ private struct ChatBubble: View {
 /// with, and the lines the action list already shows taken out (#33, #34).
 /// Pure, so the rules are pinned by tests.
 enum AskAnswerText {
+    /// The answer with the iPhone contract's scaffolding taken out (iOS
+    /// re-audit H1): a bare "---" rule line is never drawn as text, and a
+    /// "Follow-ups: a | b | c" line becomes the questions themselves — the
+    /// "Ask next" chips — never a line of prose. The server strips both for
+    /// a new answer; a reopened older turn, the streamed preview and an
+    /// older server still carry them.
+    static func scaffoldingStripped(_ text: String) -> (text: String, followUps: [String]) {
+        var kept: [String] = []
+        var ups: [String] = []
+        for line in text.components(separatedBy: "\n") {
+            if line.range(of: #"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$"#, options: .regularExpression) != nil {
+                kept.append("")
+                continue
+            }
+            if let r = line.range(of: #"^\s*(?:[-*•]\s+)?\**\s*(?:follow[- ]?ups?|ask next)\s*(?::\s*\**|\**\s*:)\s*"#,
+                                  options: [.regularExpression, .caseInsensitive]) {
+                if ups.isEmpty {
+                    let rest = String(line[r.upperBound...])
+                    ups = rest.components(separatedBy: "|")
+                        .map { $0.replacingOccurrences(of: "**", with: "")
+                            .trimmingCharacters(in: CharacterSet(charactersIn: " -–—\t")) }
+                        .filter { $0.count >= 8 && $0.count <= 140 }
+                    ups = Array(ups.prefix(3))
+                }
+                continue
+            }
+            kept.append(line)
+        }
+        var out: [String] = []
+        for line in kept {
+            let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
+            if blank, let last = out.last, last.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+            out.append(line)
+        }
+        return (out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), ups)
+    }
+
     /// The text without any line that is one of `actions` (a suggestion the
     /// answer's own "Worth doing" list or the card shows): each action
     /// appears once, as the thing to answer, never again in the prose.
@@ -833,7 +892,7 @@ private struct AskCardAnswer: View {
     /// is answered once, where it is listed.
     private var detailText: String? {
         guard let d = message.detail else { return nil }
-        let t = AskAnswerText.removingLines(d, matching: message.suggestions.map(\.text) + [card.action ?? ""])
+        let t = AskAnswerText.removingLines(AskAnswerText.scaffoldingStripped(d).text, matching: message.suggestions.map(\.text) + [card.action ?? ""])
         return t.isEmpty ? nil : t
     }
 
@@ -946,6 +1005,11 @@ private struct AskPlainAnswer: View {
                     if let evidence = message.evidence {
                         AskEvidenceDetail(evidence: evidence)
                     }
+                    // Rated from inside the fold, as a card answer is
+                    // (iOS re-audit L5).
+                    if message.messageId != nil {
+                        AskFeedbackRow(message: message, viewModel: viewModel)
+                    }
                 }
                 AskDisclosureToggle(label: "Full answer \u{00B7} \(CavnarMarkdown.parse(parts.rest).count) more",
                                     isExpanded: $expanded)
@@ -967,17 +1031,29 @@ private struct AskPlainAnswer: View {
             if !message.suggestions.isEmpty {
                 AskSuggestionsBlock(suggestions: message.suggestions)
             }
+            // The answer's own follow-ups as chips, never a "Follow-ups:" line (H1).
+            if !message.followUps.isEmpty {
+                AskFollowUps(questions: message.followUps, viewModel: viewModel)
+            }
             // What it read and what the owner passed on before: proof, one
             // tap away (#35) — inside "Full answer" when the answer folds.
-            if !folds, let evidence = message.evidence, evidence.hasDetail {
+            // "Was this useful?" sits behind the same tap (L5) — it was on
+            // the face of every plain answer.
+            let hasSources = message.evidence?.hasDetail == true
+            if !folds, hasSources || message.messageId != nil {
                 if showingSources {
-                    AskEvidenceDetail(evidence: evidence)
-                        .transition(.opacity)
+                    VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                        if hasSources, let evidence = message.evidence {
+                            AskEvidenceDetail(evidence: evidence)
+                        }
+                        if message.messageId != nil {
+                            AskFeedbackRow(message: message, viewModel: viewModel)
+                        }
+                    }
+                    .transition(.opacity)
                 }
-                AskDisclosureToggle(label: "What this rests on", isExpanded: $showingSources)
-            }
-            if message.messageId != nil {
-                AskFeedbackRow(message: message, viewModel: viewModel)
+                AskDisclosureToggle(label: hasSources ? "What this rests on" : "Rate this answer",
+                                    isExpanded: $showingSources)
             }
         }
     }
@@ -1153,7 +1229,7 @@ private struct LoadingBubble: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 10) {
                 if !preview.isEmpty {
-                    TypewriterText(fullText: preview, size: CavnarText.body.size, color: Color.cavnarInk,
+                    TypewriterText(fullText: AskAnswerText.scaffoldingStripped(preview).text, size: CavnarText.body.size, color: Color.cavnarInk,
                                    lineSpacing: 5, startRevealed: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else if let label {
@@ -1358,7 +1434,7 @@ struct ProposalCard: View {
     // `Phase`, not `State`: a nested type named State shadows SwiftUI's
     // @State wrapper and the file stops compiling.
     @State private var phase: Phase = .pending
-    private enum Phase { case pending, working, done, failed, uncertain }
+    private enum Phase { case pending, working, done, dismissed, failed, uncertain }
     /// Why the last Confirm didn't go through, in the server's words.
     @State private var failure: String?
     /// "Not now" asks why first — the six one-tap reasons every Not for us
@@ -1422,6 +1498,11 @@ struct ProposalCard: View {
                 if let warning = doneWarning, !warning.isEmpty {
                     CavnarMixedText(warning, role: .secondary, color: .cavnarAmber)
                 }
+            case .dismissed:
+                // Nothing was sent: said plainly in Ink2, no check (H2).
+                Text("Not sent")
+                    .cavnarText(.label, color: .cavnarInk2)
+                    .accessibilityLabel("Not sent. You passed on this for now.")
             case .working:
                 // CavnarShimmerText takes text + color only (see ViewModifiers);
                 // it sets its own type. Same call shape as AddCompetitorSheet.
@@ -1488,8 +1569,10 @@ struct ProposalCard: View {
                          onPick: { reason in dismissNow(reason) })
     }
 
+    /// "Not now" is a decision NOT to act — never the green "Done" a
+    /// confirmed send shows (iOS re-audit H2).
     private func dismissNow(_ reason: RecReason?) {
-        phase = .done
+        phase = .dismissed
         Task { await viewModel?.dismiss(proposal, reasonCode: reason) }
     }
 }

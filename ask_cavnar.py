@@ -2569,9 +2569,138 @@ def _card_follow_ups(value, bad) -> list:
     return out
 
 
-def answer_card(answer, meta=None) -> tuple:
+def answer_card(answer, meta=None, lead_only=False) -> tuple:
     """(card, detail) for an answer written to the iPhone contract, else
     (None, None). Pure; never raises.
+
+    `lead_only` is the phone's fallback (iOS re-audit H1, 10/8/26): the
+    contract lets the model leave Cause / Do first / Expect out, and an
+    answer that did — or that put a prose line in its lead — was no card,
+    so the phone drew the raw text with "Follow-ups: a | b" and "---" in
+    it. With `lead_only` such an answer is a headline-and-summary card
+    (`lead_only: True` on it): the follow-ups still lift off, and every
+    other lead line — prose, and any labelled line, so a cause the Cause
+    check never read cannot reach the card — opens the detail in its own
+    words. A card the contract read accepts comes back exactly as without
+    the flag. The phone's routes pass it (client_api._ask_with_card); the
+    web's never do.
+    """
+    card, detail = _answer_card_strict(answer, meta)
+    if card is not None or not lead_only:
+        return card, detail
+    return _answer_card_lead_only(answer, meta)
+
+
+def _card_lead(answer):
+    """(lines, separator index, lead lines) of an answer, or None when it
+    has no "---" line near the top or a lead longer than the contract's."""
+    text = str(answer or "").replace("\r\n", "\n")
+    if not text.strip() or text.strip() == ASK_REFUSED_ANSWER:
+        return None
+    lines = text.split("\n")
+    sep = next((i for i, ln in enumerate(lines[:_CARD_MAX_LEAD_LINES * 3]) if _CARD_SEPARATOR.match(ln)), None)
+    if sep is None:
+        return None
+    lead = [ln for ln in lines[:sep] if ln.strip()]
+    if not lead or len(lead) > _CARD_MAX_LEAD_LINES:
+        return None
+    return lines, sep, lead
+
+
+def _card_label_of(line):
+    """(card key, value) for a labelled lead line, else (None, None)."""
+    hit = _CARD_LABEL.match(line)
+    key = _CARD_LABELS.get(re.sub(r"\s+", " ", hit.group(1).strip().lower())) if hit else None
+    return (key, hit.group(2)) if key else (None, None)
+
+
+def _answer_card_lead_only(answer, meta=None) -> tuple:
+    """answer_card's `lead_only` read: the headline and the one sentence
+    (their own labels, else the first two unlabelled lines), the follow-ups
+    lifted off, and every other lead line back at the top of the detail,
+    word for word, in the lead's order."""
+    try:
+        parsed = _card_lead(answer)
+        if parsed is None:
+            return None, None
+        lines, sep, lead = parsed
+        m = meta or {}
+        bad = [str(u) for u in (m.get("unverified_all") or m.get("unverified_figures") or []) if str(u).strip()]
+        labelled, plain = {}, []
+        for i, ln in enumerate(lead):
+            key, value = _card_label_of(ln)
+            if key in ("headline", "summary", "follow_ups") and key not in labelled:
+                labelled[key] = (i, value)
+            elif key is None:
+                plain.append(i)
+        used = {v[0] for v in labelled.values()}
+        if "headline" in labelled:
+            headline = _card_clean(labelled["headline"][1])
+        elif plain:
+            first = plain.pop(0)
+            used.add(first)
+            headline = _card_clean(lead[first])
+        else:
+            return None, None
+        if not headline or len(headline) > _CARD_MAX_HEADLINE:
+            return None, None
+        if "summary" in labelled:
+            summary = _card_clean(labelled["summary"][1])
+        elif plain:
+            second = plain.pop(0)
+            used.add(second)
+            summary = _card_clean(lead[second])
+        else:
+            summary = ""
+        if len(summary) > _CARD_MAX_FIELD:
+            return None, None
+        back = "\n".join(ln for i, ln in enumerate(lead) if i not in used).strip()
+        rest = "\n".join(lines[sep + 1:]).strip()
+        detail = "\n\n".join(x for x in (back, rest) if x)
+        card = {
+            "headline": headline,
+            "summary": summary or None,
+            "cause": None,
+            "cause_flagged": False,
+            "action": None,
+            "action_key": None,
+            "outcome": None,
+            "follow_ups": _card_follow_ups((labelled.get("follow_ups") or (None, None))[1], bad),
+            "lead_only": True,
+        }
+        return card, (detail or None)
+    except Exception as e:
+        print(f"[ask_cavnar] lead-only answer card unavailable: {e}")
+        return None, None
+
+
+def strip_card_scaffolding(answer) -> tuple:
+    """(text, follow_ups): an answer with the iPhone contract's scaffolding
+    taken out — every "Follow-ups: a | b" line (its questions returned as
+    the list) and every bare "---" rule — so no phone ever shows either as
+    words (iOS re-audit H1, 10/8/26). Everything else is left as written.
+    Pure; never raises."""
+    try:
+        text = str(answer or "").replace("\r\n", "\n")
+        kept, ups = [], []
+        for ln in text.split("\n"):
+            if _CARD_SEPARATOR.match(ln):
+                kept.append("")                  # the rule still ends a paragraph
+                continue
+            key, value = _card_label_of(ln)
+            if key == "follow_ups":
+                if not ups:
+                    ups = _card_follow_ups(value, [])
+                continue
+            kept.append(ln)
+        out = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+        return out, ups
+    except Exception:
+        return str(answer or ""), []
+
+
+def _answer_card_strict(answer, meta=None) -> tuple:
+    """answer_card's contract read: the labelled lead, or no card.
 
     `card` is {headline, summary, cause, cause_flagged, action, action_key,
     outcome, follow_ups}: the lead's lines, cleaned of markdown and nothing

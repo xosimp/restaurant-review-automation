@@ -241,7 +241,10 @@ def test_ios_refreshes_the_card_after_a_profile_save_and_shows_the_local_date():
     card = _read("ios", "CavnarAI", "CavnarAI", "Features", "Home", "HowYouCompareCard.swift")
     assert "func reloadAll()" in card and '"% STRENGTH"' not in card and "% STRENGTH\")" not in card
     assert "onOpenModule" in card
-    assert "HomeBenchmarkStrip(onOpenModule:" in _read("ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeView.swift")
+    # Home's benchmarks moved to the web's Results (iOS re-audit M16, "Web
+    # explains. iPhone decides."); the card itself still refreshes above.
+    home = _read("ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeView.swift")
+    assert "HomeBenchmarkStrip(onOpenModule:" not in home and 'path: "home/results"' in home
 
 
 def test_web_shows_the_confirmed_date_on_the_owners_own_day():

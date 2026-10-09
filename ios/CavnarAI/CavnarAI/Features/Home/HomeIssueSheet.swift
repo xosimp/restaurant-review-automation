@@ -27,13 +27,33 @@ struct HomeIssueSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     if issue.status != "resolved" {
-                        Button {
-                            Haptic.light()
-                            onResolve(issue)
-                        } label: {
-                            Text("Resolve").frame(maxWidth: .infinity)
+                        // A shift to cover leads with the ask, as its Home
+                        // row does (iOS re-audit M10); Resolve is secondary.
+                        if let cover = firstCover {
+                            Button {
+                                Haptic.light()
+                                asking = HomeDayViewModel.CoverAsk(issue: issue, name: cover)
+                            } label: {
+                                Text("Ask \(HomeDayViewModel.firstName(cover)) to cover").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarPrimaryButtonStyle())
+                            .disabled(busy)
+                            Button {
+                                Haptic.light()
+                                onResolve(issue)
+                            } label: {
+                                Text("Resolve").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                        } else {
+                            Button {
+                                Haptic.light()
+                                onResolve(issue)
+                            } label: {
+                                Text("Resolve").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarPrimaryButtonStyle())
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle())
                     }
                     coverSection
                     handSection
@@ -123,12 +143,18 @@ struct HomeIssueSheet: View {
         }
     }
 
-    /// One button per suggested cover nobody has asked yet.
+    /// The first suggested cover nobody has asked yet — the primary.
+    private var firstCover: String? {
+        issue.isGroup ? nil : issue.coversToAsk.first
+    }
+
+    /// One button per OTHER suggested cover nobody has asked yet (the first
+    /// is the primary above).
     @ViewBuilder
     private var coverSection: some View {
-        let covers = issue.isGroup ? [] : issue.coversToAsk
+        let covers = issue.isGroup || issue.status == "resolved" ? [] : Array(issue.coversToAsk.dropFirst())
         if !covers.isEmpty {
-            AccountSection(kicker: "Ask someone to cover") {
+            AccountSection(kicker: "Or ask someone else") {
                 ForEach(Array(covers.enumerated()), id: \.element) { index, name in
                     Button {
                         Haptic.light()

@@ -203,16 +203,18 @@ struct DNAChip: View {
         HStack(spacing: 6) {
             if let icon {
                 Image(systemName: DNAIcon.symbol(icon))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(watch ? Color.cavnarAmber : Color.cavnarEmber2)
+                    .accessibilityHidden(true)
             }
             Text(label)
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(earned ? Color.cavnarInk : Color.cavnarInk2)
-                .lineLimit(1)
+                .cavnarText(.caption, color: earned ? .cavnarInk : .cavnarInk2)
+                .lineLimit(2)
         }
         .padding(.horizontal, 11)
-        .frame(height: 30)
+        .padding(.vertical, 5)
+        // Grows with the text (L10): a fixed 30pt chip clipped a long trait.
+        .frame(minHeight: 30)
         .background(
             Capsule().fill(watch ? Color.cavnarAmber.opacity(0.1)
                            : (earned ? Color.cavnarEmber.opacity(0.13) : Color.white.opacity(0.03)))
@@ -247,13 +249,13 @@ struct DNARing: View {
                     Text(label)
                         .font(.cavnarNumber(size * 0.22, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
-                        .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(0.85)
                         .lineLimit(1)
                 }
                 if let caption {
                     Text(caption)
                         .font(.cavnarBody(max(9, size * 0.12), weight: 500))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                 }
             }
             .padding(6)
@@ -282,9 +284,9 @@ struct DNAGauge: View {
         VStack(alignment: .leading, spacing: 6) {
             if let label {
                 HStack {
-                    Text(label).font(.cavnarBody(12, weight: 500)).foregroundStyle(Color.cavnarInk2)
+                    Text(label).cavnarText(.caption, color: .cavnarInk2)
                     Spacer()
-                    Text(format(value)).font(.cavnarNumber(12.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    HomeMixedText.make(format(value), role: .caption, color: .cavnarInk)
                 }
             }
             GeometryReader { g in
@@ -311,8 +313,7 @@ struct DNAGauge: View {
                 Spacer()
                 Text(format(hi))
             }
-            .font(.cavnarBody(11, weight: 500))
-            .foregroundStyle(Color.cavnarInk3)
+            .cavnarText(.caption, color: .cavnarInk2)
         }
         .onAppear { withAnimation(.easeOut(duration: 1.2).delay(0.1)) { shown = true } }
     }
@@ -331,14 +332,16 @@ struct DNASplitBar: View {
                 ZStack(alignment: .leading) {
                     HStack(spacing: 0) {
                         Text("Mon\u{2013}Thu \(a)%")
-                            .font(.cavnarBody(11.5, weight: 500))
-                            .foregroundStyle(Color.cavnarInk2)
+                            .cavnarText(.caption, color: .cavnarInk2)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                             .padding(.leading, 10)
                             .frame(width: w * split, height: 34, alignment: .leading)
                             .background(Color.white.opacity(0.07))
                         Text("Fri\u{2013}Sun \(b)%")
-                            .font(.cavnarBody(11.5, weight: 700))
-                            .foregroundStyle(Color.cavnarPaper)
+                            .cavnarText(.caption, color: .cavnarPaper)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                             .padding(.trailing, 10)
                             .frame(width: w * (1 - split), height: 34, alignment: .trailing)
                             .background(LinearGradient(colors: [.cavnarEmber, .cavnarEmber2], startPoint: .leading, endPoint: .trailing))
@@ -355,8 +358,7 @@ struct DNASplitBar: View {
                 Spacer()
                 Text("Fri to Sun")
             }
-            .font(.cavnarBody(11, weight: 500))
-            .foregroundStyle(Color.cavnarInk3)
+            .cavnarText(.caption, color: .cavnarInk2)
         }
         .onAppear { withAnimation(.cavnarEase(1.1).delay(0.1)) { shown = true } }
         .accessibilityElement(children: .ignore)
@@ -461,11 +463,11 @@ struct DNARadar: View {
                         let q = point(i, R + 30, c)
                         VStack(spacing: 1) {
                             Text(axes[i].label)
-                                .font(.cavnarBody(10.5, weight: 500))
-                                .foregroundStyle(axes[i].score == nil ? Color.cavnarInk3 : Color.cavnarInk2)
-                            Text(axes[i].score.map(String.init) ?? "learning")
-                                .font(.cavnarNumber(11.5, weight: 600))
-                                .foregroundStyle(axes[i].score == nil ? Color.cavnarInk3 : Color.cavnarInk)
+                                .cavnarText(.caption, color: .cavnarInk2)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.85)
+                            HomeMixedText.make(axes[i].score.map(String.init) ?? "learning", role: .caption,
+                                               color: axes[i].score == nil ? .cavnarInk2 : .cavnarInk)
                         }
                         .multilineTextAlignment(.center)
                         .frame(width: 92)
@@ -613,7 +615,7 @@ struct DNACapLabel: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 6) {
             configuration.icon.font(.system(size: 7)).foregroundStyle(Color.cavnarEmber)
-            configuration.title.font(.cavnarBody(11.5, weight: 500)).foregroundStyle(Color.cavnarInk3)
+            configuration.title.cavnarText(.caption, color: .cavnarInk2)
         }
     }
 }
@@ -682,36 +684,35 @@ struct DNATraitCard: View {
                     .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(tint.opacity(0.14)))
                     .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).strokeBorder(tint.opacity(0.3), lineWidth: 1))
                 Spacer()
-                Text(trait.isWatch ? "WATCH" : "TRAIT")
-                    .font(.cavnarBody(10.5, weight: 700))
-                    .tracking(1.3)
-                    .foregroundStyle(trait.isWatch ? Color.cavnarAmber : Color.cavnarInk3)
+                Text(trait.isWatch ? "Watch" : "Trait")
+                    .cavnarText(.tag, color: trait.isWatch ? .cavnarAmber : .cavnarInk2)
             }
             Text(trait.name)
-                .font(.cavnarHeadline(21, weight: .medium))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.headline)
                 .padding(.top, 14)
+            // One figure size on every trait card (iOS re-audit H9): figureM,
+            // never 52/40pt per trait.
             Text(trait.figure)
-                .font(.cavnarNumber(featured ? 52 : 40, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-                .minimumScaleFactor(0.6)
+                .cavnarText(.figureM)
+                .minimumScaleFactor(0.85)
                 .lineLimit(1)
                 .padding(.top, 6)
             Text(trait.figureLabel)
-                .font(.cavnarBody(12.5, weight: 500))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
                 .padding(.top, 2)
             viz.padding(.top, 16)
-            DNAFigureText.make(trait.sentence, font: .cavnarBody(14.5), base: .cavnarInk2,
-                               figureFont: .cavnarNumber(14.5, weight: 600), figure: .cavnarInk)
-                .lineSpacing(3)
+            DNAFigureText.make(trait.sentence, font: .cavnar(.secondary), base: .cavnarInk2,
+                               figureFont: .cavnarNumber(CavnarText.secondary.size, weight: 600,
+                                                         relativeTo: CavnarText.secondary.textStyle),
+                               figure: .cavnarInk)
+                .lineSpacing(CavnarText.secondary.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 14)
             if let st = trait.strength {
                 HStack(spacing: 10) {
-                    Text(trait.isWatch ? "How strongly" : "Strength").font(.cavnarBody(11.5, weight: 500)).foregroundStyle(Color.cavnarInk3)
+                    Text(trait.isWatch ? "How strongly" : "Strength").cavnarText(.caption, color: .cavnarInk2)
                     DNAMeter(value: st, tint: tint)
-                    Text("\(st)").font(.cavnarNumber(12, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                    HomeMixedText.make("\(st)", role: .caption, color: .cavnarInk2)
                 }
                 .padding(.top, 14)
             }
@@ -769,7 +770,7 @@ struct DNATraitCard: View {
     private func ringRow(_ f: Double, _ label: String, _ note: String) -> some View {
         HStack(spacing: 14) {
             DNARing(fraction: f, size: 64, label: label)
-            Text(note).font(.cavnarBody(12.5, weight: 500)).foregroundStyle(Color.cavnarInk3).fixedSize(horizontal: false, vertical: true)
+            Text(note).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -780,27 +781,30 @@ struct DNATraitCard: View {
                 withAnimation(.cavnarEase()) { open.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Text("How it was measured").font(.cavnarBody(13, weight: 600))
-                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).rotationEffect(.degrees(open ? 180 : 0))
+                    Text("How it was measured").font(.cavnar(.label))
+                    Image(systemName: "chevron.down").font(.cavnar(.caption)).rotationEffect(.degrees(open ? 180 : 0))
+                        .accessibilityHidden(true)
                 }
                 .foregroundStyle(Color.cavnarEmber2)
                 .frame(minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             if open {
-                Text("Earned by: " + trait.rule)
-                    .font(.cavnarBody(12, weight: 500))
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarMixedText("Earned by: " + trait.rule, role: .secondary)
                 ForEach(trait.dims, id: \.self) { key in
                     if let d = dna.dimensions.first(where: { $0.key == key }) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                Text(d.label).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text(d.label).cavnarText(.secondary, color: .cavnarInk)
                                 Spacer()
-                                Text(d.figure).font(.cavnarNumber(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                HomeMixedText.make(d.figure, role: .secondary, color: .cavnarInk)
                             }
-                            if let b = d.basis { HomeMixedText.make(b, size: 11.5, weight: 500, color: .cavnarInk3).fixedSize(horizontal: false, vertical: true) }
-                            if let t = d.trendLine { HomeMixedText.make(t, size: 11.5, weight: 600, color: d.trendTone) }
+                            if let b = d.basis { CavnarMixedText(b, role: .caption, color: .cavnarInk2) }
+                            if let t = d.trendLine {
+                                CavnarMixedText(t, role: .caption,
+                                                color: d.trendTone == .cavnarInk3 ? .cavnarInk2 : d.trendTone)
+                            }
                             if d.history.count >= 2 {
                                 DNASparkline(points: d.history, tone: d.trendTone == .cavnarInk3 ? .cavnarEmber2 : d.trendTone).frame(height: 40)
                             }
@@ -833,8 +837,13 @@ struct DNAMeter: View {
     }
 }
 
-// MARK: - Home: the DNA card, under the day card
+// MARK: - Home: the DNA row, inside More
 
+/// Restaurant DNA on Home (iOS re-audit H6, 10/8/26): one compact row in
+/// More — it carries no decision, so it never outshouts the ones above it.
+/// The full screen is unchanged. A profile still forming shows nothing on
+/// Home (it was a permanent card for every new account); a /dna failure is
+/// one line with a retry, never a silent gap (L16).
 struct DNAHomeCard: View {
     let model: RestaurantDNAViewModel
     let onOpen: () -> Void
@@ -843,67 +852,52 @@ struct DNAHomeCard: View {
         Group {
             if let d = model.dna, let p = d.profile {
                 if p.available, let s = d.story {
-                    card(s)
-                } else if !p.available {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("RESTAURANT DNA").font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.6).foregroundStyle(Color.cavnarEmber)
-                        Text("Your DNA is still forming.").font(.cavnarHeadline(19, weight: .medium)).foregroundStyle(Color.cavnarInk)
-                        if let why = p.whyNot { Text(why).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3) }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .cavnarCard()
+                    row(s)
                 }
             } else if model.isLoading {
-                CavnarSkeletonLines(widths: [0.3, 0.85, 0.55], lineHeight: 13, spacing: 12).cavnarCard()
+                CavnarSkeletonLines(widths: [0.6], lineHeight: 13, spacing: 8)
+                    .padding(.vertical, CavnarSpace.xs)
+            } else if model.errorMessage != nil {
+                Button {
+                    Haptic.light()
+                    Task { await model.load() }
+                } label: {
+                    HStack(spacing: CavnarSpace.xs) {
+                        Text("Restaurant DNA couldn\u{2019}t load").cavnarText(.secondary)
+                        Text("Try again").cavnarText(.label, color: .cavnarEmber2)
+                        Spacer(minLength: 0)
+                    }
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
             }
         }
         .task { if model.dna == nil { await model.load() } }
     }
 
-    private func card(_ s: RestaurantDNA.Story) -> some View {
+    private func row(_ s: RestaurantDNA.Story) -> some View {
         let o = s.observed
         return Button {
             Haptic.light()
             onOpen()
         } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 16) {
-                    DNARadar(axes: s.axes, mini: true).frame(width: 84, height: 84)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("RESTAURANT DNA").font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.6).foregroundStyle(Color.cavnarEmber)
-                        DNAFigureText.make(s.headParts.head, font: .cavnarHeadline(18, weight: .medium), base: .cavnarInk,
-                                           figureFont: .cavnarHeadline(18, weight: .medium), figure: .cavnarEmber2)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            HStack(alignment: .center, spacing: CavnarSpace.s) {
+                DNARadar(axes: s.axes, mini: true)
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Restaurant DNA").cavnarText(.label)
+                    CavnarMixedText("\(o?.measured ?? 0) of \(o?.of ?? 0) measured \u{00B7} \(s.traits.count) trait\(s.traits.count == 1 ? "" : "s") earned",
+                                    role: .secondary)
+                        .lineLimit(2)
                 }
-                AccountFlowLayout(spacing: 6, lineSpacing: 6) {
-                    ForEach(s.orderedTraits.prefix(4)) { t in DNAChip(label: t.name, icon: t.icon, earned: true, watch: t.isWatch) }
-                    if s.traits.count > 4 { DNAChip(label: "+\(s.traits.count - 4) more") }
-                }
-                HStack {
-                    DNARing(fraction: Double(o?.coveragePct ?? 0) / 100, size: 46, label: "\(o?.measured ?? 0)/\(o?.of ?? 0)")
-                    Text("measured, \(o?.learning ?? 0) still learning")
-                        .font(.cavnarBody(12.5, weight: 500))
-                        .foregroundStyle(Color.cavnarInk3)
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Text("Explore").font(.cavnarBody(13.5, weight: 700))
-                        Image(systemName: "arrow.right").font(.system(size: 12, weight: .bold))
-                    }
-                    .foregroundStyle(Color.cavnarEmber2)
-                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .accessibilityHidden(true)
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(LinearGradient(colors: [Color.cavnarEmber.opacity(0.14), Color.white.opacity(0.02)],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Color.cavnarEmber.opacity(0.32), lineWidth: 1))
-            .shadow(color: Color.cavnarEmber.opacity(0.18), radius: 24, y: 12)
-            .contentShape(Rectangle())
+            .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityHint("Opens your Restaurant DNA")

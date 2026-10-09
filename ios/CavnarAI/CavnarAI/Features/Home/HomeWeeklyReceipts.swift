@@ -18,26 +18,24 @@ struct HomeWeeklyReceipts: View {
                     ForEach(receipts) { receipt in
                         HStack(alignment: .firstTextBaseline, spacing: 9) {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarGreen)
-                            (HomeMixedText.make(receipt.emphasis, size: CavnarType.caption, weight: 700, color: .cavnarInk)
+                                .accessibilityHidden(true)
+                            // The secondary role, not caption (iOS re-audit L9): a
+                            // list the owner reads.
+                            (HomeMixedText.make(receipt.emphasis, role: .secondary, color: .cavnarInk)
                              + Text(verbatim: " ")
-                             + HomeMixedText.make(receipt.text, size: CavnarType.caption, weight: 600, color: .cavnarInk2))
+                             + HomeMixedText.make(receipt.text, role: .secondary, color: .cavnarInk2))
+                                .lineSpacing(CavnarText.secondary.lineSpacing)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    shape.fill(
-                        LinearGradient(
-                            colors: [Color(red: 0.082, green: 0.082, blue: 0.090), Color(red: 0.059, green: 0.059, blue: 0.063)],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                )
-                .overlay(shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+                // The card tokens (L9), not literal colours.
+                .background(shape.fill(Color.cavnarPaper2.opacity(0.85)))
+                .overlay(shape.strokeBorder(Color.cavnarPaper3, lineWidth: 1))
                 .shadow(color: .black.opacity(0.5), radius: 14, x: 0, y: 10)
             }
         }

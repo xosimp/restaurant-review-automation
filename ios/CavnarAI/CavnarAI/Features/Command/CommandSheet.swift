@@ -223,18 +223,49 @@ struct CommandSheet: View {
             } else if viewModel.waiting.isEmpty && viewModel.pendingSends.isEmpty {
                 Text("Nothing waiting on you.")
                     .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
             } else {
                 VStack(spacing: 8) {
+                    // What is about to go out keeps its Undo here: it is
+                    // minutes from leaving, not a decision on a list.
                     ForEach(viewModel.pendingSends, id: \.id) { send in
                         pendingSendRow(send)
                     }
-                    ForEach(viewModel.waiting) { item in
-                        waitingRow(item)
+                    // The decisions themselves live in ONE list, Home's
+                    // Needs you (iOS re-audit M3): one row that goes there.
+                    if !viewModel.waiting.isEmpty {
+                        needsYouRow(count: viewModel.waiting.count)
                     }
                 }
             }
         }
+    }
+
+    /// "3 waiting on you · Open Needs you" — a deep link to Home's list.
+    private func needsYouRow(count: Int) -> some View {
+        Button {
+            Haptic.light()
+            go("home/needs")
+        } label: {
+            HStack(spacing: CavnarSpace.s) {
+                VStack(alignment: .leading, spacing: 2) {
+                    CavnarMixedText("\(count) waiting on you", role: .label, color: .cavnarInk)
+                    Text("Open Needs you on Home").cavnarText(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .accessibilityHidden(true)
+            }
+            .padding(12)
+            .frame(minHeight: 44)
+            .background(Color.white.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens Needs you on Home")
     }
 
     private func pendingSendRow(_ send: PendingSendActivities.PendingAction) -> some View {
@@ -245,11 +276,11 @@ struct CommandSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 HomeMixedText.make(title, size: CavnarType.body, weight: 700, color: .cavnarInk)
                 if let outcome = viewModel.rowOutcome[key] {
-                    Text(outcome).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
+                    Text(outcome).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2)
                 } else if let fire = CavnarISODate.parse(send.executeAt) {
                     (Text("Goes out in ").font(.cavnar(.caption))
                      + Text(fire, style: .relative).font(.cavnarNumber(CavnarType.caption, weight: 600)))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                 }
             }
             Spacer(minLength: 6)
@@ -264,64 +295,6 @@ struct CommandSheet: View {
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 .disabled(busy)
-            }
-        }
-        .padding(12)
-        .background(Color.white.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private func waitingRow(_ item: CommandWaitingItem) -> some View {
-        let busy = viewModel.rowBusy.contains(item.key)
-        return VStack(alignment: .leading, spacing: 8) {
-            Button {
-                Haptic.light()
-                if let path = item.destination { go(path.raw) }
-            } label: {
-                HStack(alignment: .top, spacing: 10) {
-                    Circle()
-                        .fill(item.severity == "critical" ? Color.cavnarRed
-                              : (item.severity == "important" ? Color.cavnarAmber : Color.cavnarInk3))
-                        .frame(width: 7, height: 7)
-                        .padding(.top, 6)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HomeMixedText.make(item.title, size: CavnarType.body, weight: 700, color: .cavnarInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let outcome = viewModel.rowOutcome[item.key] {
-                            Text(outcome).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarGreen)
-                        } else if let detail = item.detail {
-                            HomeMixedText.make(detail, size: CavnarType.caption, color: .cavnarInk3)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .padding(.top, 5)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if item.request != nil, viewModel.rowOutcome[item.key] == nil {
-                HStack(spacing: 10) {
-                    Button {
-                        Haptic.light()
-                        Task { await viewModel.decide(item, approve: false) }
-                    } label: { Text("Deny").frame(maxWidth: .infinity) }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                    .disabled(busy)
-                    Button {
-                        Haptic.light()
-                        Task { await viewModel.decide(item, approve: true) }
-                    } label: {
-                        Group {
-                            if busy { CavnarShimmerText(text: "Deciding…") } else { Text("Approve") }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                    .disabled(busy)
-                }
             }
         }
         .padding(12)
@@ -436,7 +409,7 @@ struct CommandSheet: View {
                         .lineLimit(2)
                 }
                 if let subtitle {
-                    HomeMixedText.make(subtitle, size: CavnarType.caption, color: .cavnarInk3)
+                    HomeMixedText.make(subtitle, size: CavnarType.caption, color: .cavnarInk2)
                         .lineLimit(1)
                 }
             }

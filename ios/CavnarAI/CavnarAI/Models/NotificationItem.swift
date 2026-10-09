@@ -55,9 +55,17 @@ struct NotificationItem: Codable, Identifiable {
     /// An urgent row whose subject the server cannot read: opening it is
     /// handling it, so `resolved` follows the open (as the server counts).
     var resolvesOnOpen: Bool? = nil
+    /// The location a group-scope row is about (the server names it only
+    /// when the login sees more than one) — said on the row (iOS re-audit H4).
+    var location: String? = nil
+    /// Where Approve publishes: "google" for a Google review at a location
+    /// with Business Profile connected, else nil (approve only marks it) —
+    /// the confirm names it (M5).
+    var postsTo: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case type, label, priority, urgent, unread, module, nav, draft, snippet, resolved
+        case type, label, priority, urgent, unread, module, nav, draft, snippet, resolved, location
+        case postsTo = "posts_to"
         case firedAt = "fired_at"
         case reviewId = "review_id"
         case restaurantId = "restaurant_id"
@@ -85,6 +93,13 @@ struct NotificationItem: Codable, Identifiable {
     /// bell's red count mean (the web bell's `urgent && !resolved`).
     var needsYou: Bool { isUrgent && resolved != true }
     var isUnread: Bool { unread ?? false }
+
+    /// "1-star review \u00B7 Lakeview" — the label, and the location when the
+    /// list spans more than one (H4).
+    var title: String {
+        guard let location, !location.isEmpty else { return label }
+        return label + " \u{00B7} " + location
+    }
 
     var id: String { alertId.map { "alert-\($0)" } ?? "\(type)-\(firedAt)" }
 

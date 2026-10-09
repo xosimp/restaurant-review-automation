@@ -262,7 +262,10 @@ def test_the_plain_route_forwards_the_surface_and_returns_the_card(db_path, monk
     monkeypatch.setattr(ask_cavnar, "ask_with_tools", fake_ask)
     payload, status = client_api._do_ask_cavnar(rid, "How do I get labor down?", user_id=7, surface="ios")
     assert status == 200 and got.get("surface") == "ios"
-    assert payload["answer"] == ANSWER, "the whole text, unchanged, for older builds"
+    # The phone's text comes without the contract's scaffolding (iOS re-audit
+    # H1); the stored turn keeps it as written.
+    assert payload["answer"] == ask_cavnar.strip_card_scaffolding(ANSWER)[0]
+    assert payload["follow_ups"] == payload["card"]["follow_ups"]
     assert payload["card"]["action"] == "Cut one closer to 10pm on Tuesday and Wednesday."
     assert payload["detail"] == DETAIL
     # The Do first line is answerable, under the key the card names.
@@ -379,3 +382,83 @@ def test_siri_speaks_the_card():
     siri = _swift("Core", "CavnarAppIntents.swift")
     assert "card: r.card?.card, confidence: r.confidenceDetail" in siri
     assert "static func spokenLead(" in siri
+
+
+# ── iOS re-audit H1: an answer that skipped the labelled lines ────────────
+
+SKIPPED = ("Reviews are steady at 4.6 stars this month.\n"
+           "Two 2-star reviews from Saturday are still unanswered.\n"
+           "Follow-ups: Which reviews mention wait times? | How did last month compare?\n"
+           "---\n"
+           "The detail.")
+
+
+def test_the_phone_gets_a_headline_card_when_the_labelled_lines_are_left_out():
+    assert ask_cavnar.answer_card(SKIPPED, {}) == (None, None), "the contract read is unchanged"
+    card, detail = ask_cavnar.answer_card(SKIPPED, {}, lead_only=True)
+    assert card["headline"] == "Reviews are steady at 4.6 stars this month."
+    assert card["summary"] == "Two 2-star reviews from Saturday are still unanswered."
+    assert card["follow_ups"] == ["Which reviews mention wait times?", "How did last month compare?"]
+    assert card["lead_only"] is True and card["cause"] is None and card["action"] is None
+    assert detail == "The detail."
+
+
+def test_a_lead_only_card_puts_prose_and_labelled_lines_back_into_the_detail():
+    text = ("Labor ran 31%.\nThat matters.\nA third prose line.\nCause: because of the rain.\n"
+            "Follow-ups: What about Friday nights? | How is overtime trending?\n---\nDetail.")
+    card, detail = ask_cavnar.answer_card(text, {}, lead_only=True)
+    assert card["headline"] == "Labor ran 31%." and card["summary"] == "That matters."
+    # A cause the Cause check never read never reaches the card; its words stay.
+    assert card["cause"] is None
+    assert detail == "A third prose line.\nCause: because of the rain.\n\nDetail."
+    assert "Follow-ups" not in detail
+
+
+def test_a_contract_card_is_the_same_with_or_without_lead_only():
+    assert ask_cavnar.answer_card(ANSWER, {}, lead_only=True) == ask_cavnar.answer_card(ANSWER, {})
+
+
+def test_scaffolding_is_stripped_and_the_follow_ups_lifted():
+    text, ups = ask_cavnar.strip_card_scaffolding(SKIPPED)
+    assert "---" not in text and "Follow-ups" not in text
+    assert text == ("Reviews are steady at 4.6 stars this month.\n"
+                    "Two 2-star reviews from Saturday are still unanswered.\n\nThe detail.")
+    assert ups == ["Which reviews mention wait times?", "How did last month compare?"]
+    # A markdown table's rule row is not a scaffolding line.
+    table = "| a | b |\n|---|---|\n| 1 | 2 |"
+    assert ask_cavnar.strip_card_scaffolding(table)[0] == table
+    assert ask_cavnar.strip_card_scaffolding(None) == ("", [])
+
+
+def test_the_phone_payload_never_carries_the_scaffolding(db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **k: (SKIPPED, False, [], {"card": None}))
+    payload, _ = client_api._do_ask_cavnar(rid, "Reviews?", user_id=7, surface="ios")
+    assert payload["card"]["headline"].startswith("Reviews are steady")
+    assert payload["detail"] == "The detail."
+    assert "---" not in payload["answer"] and "Follow-ups" not in payload["answer"]
+    assert payload["follow_ups"] == ["Which reviews mention wait times?", "How did last month compare?"]
+    # Reopened, the same card and the same detail.
+    out, _ = client_api._do_get_ask_conversation(rid, payload["conversation_id"], viewer_id=7)
+    answer = out["messages"][-1]
+    assert answer["meta"]["card"] == payload["card"] and answer["detail"] == "The detail."
+    # A plain answer with no rule still loses its Follow-ups line on the phone.
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **k: (
+        "Reviews look steady.\nFollow-ups: What changed last week? | Any 1-star reviews?", False, [], {}))
+    payload, _ = client_api._do_ask_cavnar(rid, "Reviews?", user_id=7, surface="ios")
+    assert payload["card"] is None and payload["answer"] == "Reviews look steady."
+    assert payload["follow_ups"] == ["What changed last week?", "Any 1-star reviews?"]
+
+
+def test_the_web_payload_is_unchanged(db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **k: (SKIPPED, False, [], {"card": None}))
+    payload, _ = client_api._do_ask_cavnar(rid, "Reviews?", user_id=7)
+    assert payload["card"] is None and payload["answer"] == SKIPPED and "follow_ups" not in payload
+
+
+def test_the_phone_never_draws_a_rule_or_a_follow_ups_line():
+    view = _swift("Features", "AskCavnar", "AskCavnarView.swift")
+    vm = _swift("Features", "AskCavnar", "AskCavnarViewModel.swift")
+    assert "static func scaffoldingStripped(" in view + vm
+    assert "AskAnswerText.scaffoldingStripped(" in view

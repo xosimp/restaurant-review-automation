@@ -57,6 +57,10 @@ final class DeepLinkRouter {
     /// its notification row, a Still-open row (parity audit #11). HomeView
     /// consumes it: Home scrolls to the issue and pulses it once.
     var pendingIssueId: Int?
+    /// Home's "Needs you" list, asked for from the bell or the command
+    /// sheet — the one act-on list (iOS re-audit M3). Set with
+    /// `pendingTab = .home`; HomeView scrolls to the list and clears it.
+    var pendingNeedsYou = false
     /// An operator page to show in "Platform needs you" — `admin/platform`
     /// from a `platform_alert` push (admins only). RootView presents
     /// PlatformAlertSheet for it, and only to an admin session.
@@ -210,6 +214,9 @@ final class DeepLinkRouter {
             pendingTab = .home
             pendingModuleKey = nil
             pendingModuleRoute = nil
+            // "home/needs": Home's Needs you list, from the bell and the
+            // command sheet (iOS re-audit M3).
+            if nav.rest.first == "needs" { pendingNeedsYou = true }
         case "issue":
             // The issue itself, not Home's top: Home scrolls to it (parity
             // audit #11). The id was dropped, so an issue push landed on

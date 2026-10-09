@@ -26,13 +26,23 @@ struct HomeOneThingCard: View {
     /// Something changed server-side (a conflict settled) — reload Home.
     var onChanged: () -> Void = {}
     @State private var toast: String?
+    @State private var answering = false
     @Environment(DeepLinkRouter.self) private var router
 
     var body: some View {
-        switch lead {
-        case .attention(let item)?: attentionCard(item)
-        case .recommendation(let rec)?: recommendationCard(rec)
-        default: findingCard
+        Group {
+            switch lead {
+            case .attention(let item)?: attentionCard(item)
+            case .recommendation(let rec)?: recommendationCard(rec)
+            default: findingCard
+            }
+        }
+        // The answer's sentence is a confirmation, not a fixture (iOS
+        // re-audit L7): it clears after a few seconds.
+        .task(id: toast) {
+            guard toast != nil else { return }
+            try? await Task.sleep(for: .seconds(4))
+            withAnimation(.cavnarEase(0.3)) { toast = nil }
         }
     }
 
@@ -132,20 +142,52 @@ struct HomeOneThingCard: View {
             if let dollars {
                 figure(dollars, basis: rec.dollarsBasis)
             }
-            // "Measure it" only on a card that names a metric — one that
-            // doesn't can't be measured before and after.
-            if rec.metric != nil {
-                primaryButton(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it") {
+            // The decision leads (iOS re-audit L7): the card's own action
+            // (Reprice) or Done. "Measure it" — only on a card that names a
+            // metric, one that doesn't can't be measured before and after —
+            // is the secondary beside it.
+            if let a = rec.action, a.kind == "reprice" {
+                primaryButton(a.label ?? "Reprice", working: answering) {
                     Task {
-                        if let message = await viewModel.track(rec) { withAnimation { toast = message } }
+                        answering = true
+                        defer { answering = false }
+                        if let message = await viewModel.reprice(rec) {
+                            withAnimation(.cavnarEase(0.25)) { toast = message }
+                            onChanged()
+                        }
                     }
                 }
-                .disabled(viewModel.tracked.contains(rec.key))
             } else {
-                primaryButton("Walk me through it") { ask("Walk me through this: \(rec.title)") }
+                primaryButton("Done", working: answering) {
+                    Task {
+                        answering = true
+                        defer { answering = false }
+                        if let message = await viewModel.answer(rec, kind: "done") {
+                            withAnimation(.cavnarEase(0.25)) { toast = message }
+                            onChanged()
+                        }
+                    }
+                }
+            }
+            if rec.metric != nil {
+                Button {
+                    Haptic.light()
+                    Task {
+                        if let message = await viewModel.track(rec) {
+                            withAnimation(.cavnarEase(0.25)) { toast = message }
+                        }
+                    }
+                } label: {
+                    Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(viewModel.tracked.contains(rec.key))
+                .accessibilityHint("Takes a baseline now and measures the result in a few weeks")
             }
             if let toast {
                 Text(toast).cavnarText(.secondary, color: .cavnarGreen)
+                    .transition(.opacity)
             }
         } detail: {
             VStack(alignment: .leading, spacing: CavnarSpace.s) {
@@ -157,11 +199,10 @@ struct HomeOneThingCard: View {
                 if let conflict = rec.conflict {
                     RecConflictPanel(conflict: conflict, onSettled: onChanged)
                 }
+                // Done is the face's primary (L7); Not for us stays here.
                 RecAnswerRow(key: rec.key, surface: "home", module: rec.module ?? "home",
-                             answers: [.completed, .notForUs])
-                if rec.metric != nil {
-                    HomeAskLink(question: "Walk me through this: \(rec.title)", label: "Ask Cavnar AI")
-                }
+                             answers: [.notForUs], onAnswered: { _ in onChanged() })
+                HomeAskLink(question: "Walk me through this: \(rec.title)", label: "Ask Cavnar AI")
             }
             .onAppear { RecEvidenceLog.viewed(key: rec.key, surface: "home", module: rec.module ?? "home") }
         }

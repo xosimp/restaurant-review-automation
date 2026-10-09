@@ -746,10 +746,14 @@ actor APIClient {
         var detail: String? = nil
         var depth: String? = nil
         var validation: AskValidation? = nil
+        /// The answer's follow-up questions, lifted off its text by the server
+        /// (iOS re-audit H1) — the card's own when it has one.
+        var followUps: [String]? = nil
 
         enum CodingKeys: String, CodingKey {
             case type, label, state, answer, text, truncated, proposals, error, confidence, suggestions, meta
             case card, detail, depth, validation
+            case followUps = "follow_ups"
             case declinedRepeats = "declined_repeats"
             case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"

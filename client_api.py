@@ -3279,20 +3279,45 @@ def _ask_meta(meta):
     }
 
 
-def _ask_with_card(answer, meta):
+def _ask_with_card(answer, meta, surface=None):
     """`meta` with the iPhone card (ask_cavnar.answer_card) when the turn
     did not already read it (`_finish` does, after validation, with the
     Cause line's own check) — set before the turn is stored, so a reopened
-    chat has the same card. Never raises."""
+    chat has the same card. On the phone (`surface` "ios") an answer that
+    left the labelled lines out still gets its headline-and-summary card
+    (`lead_only`, iOS re-audit H1). Never raises."""
     meta = dict(meta or {})
-    if "card" not in meta:
-        try:
-            import ask_cavnar as _ac_card
-            meta["card"], meta["detail"] = _ac_card.answer_card(answer, meta)
-        except Exception as e:
-            print(f"[ask] answer card unavailable: {e}")
-            meta["card"], meta["detail"] = None, None
+    try:
+        import ask_cavnar as _ac_card
+        if "card" not in meta:
+            meta["card"], meta["detail"] = _ac_card.answer_card(answer, meta, lead_only=(surface == "ios"))
+        elif surface == "ios" and not meta.get("card"):
+            meta["card"], meta["detail"] = _ac_card.answer_card(answer, meta, lead_only=True)
+    except Exception as e:
+        print(f"[ask] answer card unavailable: {e}")
+        meta.setdefault("card", None)
+        meta.setdefault("detail", None)
     return meta
+
+
+def _ask_surface_fields(answer, meta, surface=None):
+    """What the phone's answer replaces on the wire (iOS re-audit H1): the
+    `answer` with the contract's scaffolding taken out — no "Follow-ups:"
+    line, no bare "---" — and its follow-ups as `follow_ups` (the card's
+    own when there is one). The stored turn keeps the text as written, so a
+    reopened chat re-reads the same card. The web's payload is unchanged."""
+    if surface != "ios":
+        return {}
+    try:
+        import ask_cavnar as _ac_strip
+        text, ups = _ac_strip.strip_card_scaffolding(answer)
+        card = (meta or {}).get("card")
+        if isinstance(card, dict) and card.get("follow_ups"):
+            ups = list(card["follow_ups"])
+        return {"answer": text or answer, "follow_ups": ups}
+    except Exception as e:
+        print(f"[ask] answer scaffolding not stripped: {e}")
+        return {"follow_ups": []}
 
 
 def _ask_uid(user):
@@ -3373,7 +3398,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
             answer, truncated, proposals, meta = ask_with_tools(
                 restaurant, question, history=history, user=user, screen=screen, conversation_id=conversation_id,
                 **({'brief': True} if brief else {}), **({"surface": surface} if surface else {}))
-        meta = _ask_with_card(answer, meta)
+        meta = _ask_with_card(answer, meta, surface)
 
         message_id = None
         try:
@@ -3418,7 +3443,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         return {"ok": True, "answer": answer, "truncated": truncated,
                 "proposals": proposals or [], "conversation_id": conversation_id,
                 "message_id": message_id, "suggestions": suggestions,
-                **_ask_meta(meta)}, 200
+                **_ask_meta(meta), **_ask_surface_fields(answer, meta, surface)}, 200
     except Exception as e:
         from ai_utils import AIBudgetExceeded, AIBusy, AIRefused, user_facing_error
         msg, status = user_facing_error(e)
@@ -3513,7 +3538,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 on_sentence=_ac_stream.sentence_events(events.put),
                 **({"brief": True} if brief else {}), **({"surface": surface} if surface else {}))
             # The iPhone card rides the `answer` event and the stored turn.
-            meta = _ask_with_card(answer, meta)
+            meta = _ask_with_card(answer, meta, surface)
             mid = None
             try:
                 import ask_cavnar as _ac_props
@@ -3531,7 +3556,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                         "truncated": truncated, "proposals": proposals or [],
                         "conversation_id": cid, "message_id": mid,
                         "suggestions": _ac_sug.record_suggestions(rid, answer, meta, user_id=uid),
-                        **_ask_meta(meta)})
+                        **_ask_meta(meta), **_ask_surface_fields(answer, meta, surface)})
             # After the answer is on its way: fold the turns that scrolled out
             # of the replayed window into the chat's rolling summary (memory
             # audit 9/29/26, conversations). Only when enough are new.
@@ -3670,7 +3695,8 @@ def _do_get_ask_conversation(restaurant_id, conversation_id, viewer_id=None):
         if (m.get("meta") or {}).get("card"):
             try:
                 import ask_cavnar as _ac_reopen
-                m["detail"] = _ac_reopen.answer_card(m.get("content"), m["meta"])[1]
+                m["detail"] = _ac_reopen.answer_card(m.get("content"), m["meta"],
+                                                       lead_only=bool(m["meta"]["card"].get("lead_only")))[1]
             except Exception:
                 m["detail"] = None
     return {"ok": True, "conversation": convo, "messages": messages}, 200
@@ -9829,7 +9855,8 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
                        a.ref_kind, a.ref_id,
                        rv.text AS review_text, rv.rating AS review_rating,
                        rv.response_status AS review_status, rv.deleted_at AS review_deleted,
-                       rv.draft_response AS review_draft, rv.draft_needs_review AS review_flagged
+                       rv.draft_response AS review_draft, rv.draft_needs_review AS review_flagged,
+                       rv.platform AS review_platform
                 FROM alert_log a
                 LEFT JOIN reviews rv ON rv.id=a.review_id AND rv.restaurant_id=a.restaurant_id
                 WHERE a.restaurant_id IN ({marks})
@@ -9860,6 +9887,22 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
         superseded = _superseded_rows(rows)
         many = len(ids) > 1
         items = []
+        # Where an approve from the row publishes (iOS re-audit M5): Google,
+        # for a Google review at a location with Business Profile connected
+        # — the phone's confirm names it. Read once per location.
+        google_live = {}
+
+        def _posts_to(row):
+            if row["review_platform"] != "google":
+                return None
+            rid_ = int(row["restaurant_id"])
+            if rid_ not in google_live:
+                try:
+                    from gmb import is_connected
+                    google_live[rid_] = bool(is_connected(rid_))
+                except Exception:
+                    google_live[rid_] = False
+            return "google" if google_live[rid_] else None
         for r in rows:
             module = _NOTIFICATION_MODULE.get(r["alert_type"], "reviews")
             if not sees_alert(viewer, r["alert_type"]):
@@ -9902,6 +9945,10 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
                                     and int(r["restaurant_id"]) == int(restaurant_id)),
                 "draft": ((r["review_draft"] or "")[:600] or None)
                          if (r["review_id"] and r["review_status"] == "drafted" and not r["review_flagged"]) else None,
+                # "google" when Approve publishes there (M5); null when it
+                # only marks the reply approved.
+                "posts_to": (_posts_to(r) if (r["review_id"] and r["review_status"] == "drafted"
+                                              and not r["review_flagged"]) else None),
                 # Whether `draft` is the whole reply, and its fingerprint
                 # (models.draft_hash): an approve from the row sends it back
                 # (`expected_draft_hash`), so a reply edited or regenerated
