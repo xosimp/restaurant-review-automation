@@ -223,6 +223,19 @@ final class CampaignsTabViewModel {
     }
 }
 
+/// "New campaign" is the Create card's primary unless a win-back
+/// suggestion leads the card, whose "Use this" is then (re-audit L6).
+private struct CampaignCreateButtonStyle: ViewModifier {
+    let primary: Bool
+    func body(content: Content) -> some View {
+        if primary {
+            content.buttonStyle(CavnarPrimaryButtonStyle())
+        } else {
+            content.buttonStyle(CavnarSecondaryButtonStyle())
+        }
+    }
+}
+
 struct CampaignsTabSection: View {
     let viewModel: CampaignsTabViewModel
     /// Whether this login may send, stop or retry (the server's
@@ -349,7 +362,14 @@ struct CampaignsTabSection: View {
     /// Content tab writes posts only, the Text Club no longer has its own
     /// composer (readability round 10/8/26 #57).
     private var createCard: some View {
-        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+        // A win-back Cavnar AI suggests leads the card when there is one
+        // (re-audit 10/8/26 L6) — it sat under the ideas, last.
+        let suggesting = viewModel.winback != nil && !viewModel.winbackDismissed
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            if let w = viewModel.winback {
+                winbackRow(w)
+                    .padding(.bottom, CavnarSpace.xs)
+            }
             CavnarKicker("Create")
             Text("What should this campaign do?")
                 .cavnarText(.headline)
@@ -362,7 +382,7 @@ struct CampaignsTabSection: View {
             } label: {
                 Label("New campaign", systemImage: "sparkles").frame(maxWidth: .infinity)
             }
-            .buttonStyle(CavnarPrimaryButtonStyle())
+            .modifier(CampaignCreateButtonStyle(primary: !suggesting))
             ForEach(CampaignStudioView.ideas, id: \.label) { idea in
                 Button {
                     Haptic.light()
@@ -381,9 +401,6 @@ struct CampaignsTabSection: View {
                 }
                 .buttonStyle(.plain)
             }
-            if let w = viewModel.winback {
-                winbackRow(w)
-            }
         }
         .cavnarCard(.ai)
     }
@@ -399,11 +416,12 @@ struct CampaignsTabSection: View {
                                    role: .label)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 16) {
+                    // The card's one primary while it is suggested.
                     Button {
                         Haptic.light()
                         onOpenStudio(StudioSeed(winback: w))
                     } label: { Text("Use this") }
-                    .buttonStyle(CavnarSoftButtonStyle())
+                    .buttonStyle(CavnarPrimaryButtonStyle())
                     Button {
                         Haptic.light()
                         askingWinbackReason = true
@@ -422,7 +440,6 @@ struct CampaignsTabSection: View {
                 }
             }
         }
-        .padding(.top, 6)
     }
 
     // MARK: - What went out
@@ -554,8 +571,11 @@ struct CampaignsTabSection: View {
             metricRow([("Texted", "\(c.sentCount)", Color.cavnarInk),
                        c.failedCount > 0 ? ("Failed", "\(c.failedCount)", Color.cavnarRedText) : nil,
                        ("Tapped", c.linkToken != nil ? "\(c.clicks)" : "no link", Color.cavnarEmber2),
-                       ("Came back", c.visitsMatched.map { "\($0)" } ?? (c.attributionThrough != nil ? "0" : "\u{2026}"),
+                       // Still inside its window: "measuring", never an
+                       // ellipsis that reads as loading (L18).
+                       ("Came back", c.visitsMatched.map { "\($0)" } ?? (c.attributionThrough != nil ? "0" : "measuring"),
                         Color.cavnarGreen)])
+            reuseRow(again: StudioSeed(reuseText: c), improve: StudioSeed(reuseText: c, improve: true))
             if canPublish, c.isOpen {
                 Button(role: .destructive) {
                     Haptic.light()
@@ -600,6 +620,7 @@ struct CampaignsTabSection: View {
                        n.pending > 0 ? ("Queued", "\(n.pending)", Color.cavnarInk2) : nil,
                        ("Opens recorded", n.opened.map { "\($0)" } ?? "not tracked", Color.cavnarEmber2),
                        ("Clicks recorded", n.clicked.map { "\($0)" } ?? "not tracked", Color.cavnarGreen)])
+            reuseRow(again: StudioSeed(reuseEmail: n), improve: StudioSeed(reuseEmail: n, improve: true))
             if n.opened != nil || n.resultsAsOf != nil {
                 Text((n.opened != nil ? "Opens include Apple Mail auto-opens." : "")
                      + (n.resultsAsOf.map { (n.opened != nil ? " " : "") + "Figures as of \(CampaignDates.label($0))." } ?? ""))
@@ -627,6 +648,38 @@ struct CampaignsTabSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2)
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    /// "Use again" and "Improve with Cavnar AI" on the row itself (re-audit
+    /// 10/8/26 L19) — they lived only in the long-press menu.
+    private func reuseRow(again: StudioSeed, improve: StudioSeed) -> some View {
+        HStack(spacing: CavnarSpace.m) {
+            Button {
+                Haptic.light()
+                onOpenStudio(again)
+            } label: {
+                Label("Use again", systemImage: "arrow.uturn.right")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button {
+                Haptic.light()
+                onOpenStudio(improve)
+            } label: {
+                Label("Improve with Cavnar AI", systemImage: "sparkles")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+        }
     }
 
     private func metricRow(_ maybe: [(String, String, Color)?]) -> some View {
@@ -695,21 +748,16 @@ struct CampaignsTabSection: View {
         return NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: CavnarSpace.m) {
-                    Text("The rules every campaign follows").cavnarText(.headline)
-                    settingRow("clock", "Sending hours",
-                               SMSWindow.range(o?.window).map { "\($0), your time" } ?? "\u{2014}", always: true)
-                    settingRow("arrow.triangle.2.circlepath", "Spacing",
-                               "One text per guest every \(mktPlural(o?.minDaysBetween ?? viewModel.ledger?.minDaysBetween ?? 3, "day"))",
-                               always: true)
-                    settingRow("hand.raised", "Opt-outs", "STOP and HELP are handled for you", always: true)
-                    if let l = viewModel.ledger {
-                        settingRow("checkmark.shield", "Consent",
-                                   "\(l.textable) opted in \u{00B7} \(l.noConsent) without consent \u{00B7} \(l.unsubscribed) unsubscribed")
-                    }
+                    // The invite switch is the phone's; the rules every
+                    // campaign follows — sending hours, spacing, opt-outs,
+                    // consent counts, the mailing address — are read on the
+                    // web (re-audit 10/8/26 W10). Nothing about them changed.
+                    Text("Review-link invites").cavnarText(.headline)
                     invitesRow
-                    settingRow("envelope", "Email", "Unsubscribe link on every email", always: true)
-                    settingRow("mappin.and.ellipse", "Mailing address",
-                               (o?.mailingAddressSet ?? false) ? "On file \u{2014} printed on every email" : "Asked for on your first email")
+                    CavnarWebLinkRow(title: "The rules every campaign follows",
+                                     subtitle: SMSWindow.range(o?.window).map { "Texts go out \($0), your time; STOP and HELP are handled for you" }
+                                         ?? "Sending hours, spacing, opt-outs and consent",
+                                     path: "marketing/guests", actionLabel: "Open on the web")
                 }
                 .padding(CavnarSpace.gutter)
             }

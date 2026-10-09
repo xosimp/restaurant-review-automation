@@ -6,9 +6,10 @@ struct ReviewDetailView: View {
     @State private var showingTemplates = false
     @State private var showingRetractConfirm = false
     @State private var showingDeleteConfirm = false
-    @State private var showingSaveTemplate = false
-    @State private var templateName = ""
-    @State private var templateNote: String?
+    /// ↻ over the owner's own words asks first (re-audit 10/8/26 M8).
+    @State private var confirmingRegenerate = false
+    /// "Post to Google" on an approved reply that never went out (H3).
+    @State private var confirmingPostToGoogle = false
     @State private var postedOverlayLabel: String?
     // "Fix tags" (memory round, 9/29/26): the sheet, and the tags the
     // server answered with once corrected.
@@ -133,14 +134,8 @@ struct ReviewDetailView: View {
                             Label(retagged == nil ? "Fix tags" : "Fix tags again", systemImage: "tag")
                         }
                     }
-                    if !isFinal && !viewModel.editedDraft.isEmpty && !viewModel.isAnsweredElsewhere {
-                        Button("Save as template") {
-                            Haptic.light()
-                            templateName = ""
-                            templateNote = nil
-                            showingSaveTemplate = true
-                        }
-                    }
+                    // Saving a reply as a template is the web's (re-audit
+                    // 10/8/26 W2): the picker says where; applying one stays.
                     Divider()
                     Button(role: .destructive) {
                         showingDeleteConfirm = true
@@ -182,9 +177,7 @@ struct ReviewDetailView: View {
             // full 1.6s posted moment plays only on the last one (#21).
             if status == "posted" || status == "approved", let next = nextReview {
                 let answered = viewModel.review.id
-                let label = status == "posted"
-                    ? "Posted to \(viewModel.review.platformDisplayName)" : "Approved"
-                quickCheckLabel = label
+                quickCheckLabel = Self.doneLabel(status: status, review: viewModel.review)
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(450))
                     onAdvanced?(status, answered)
@@ -201,9 +194,7 @@ struct ReviewDetailView: View {
                 // "Posted" — the ember leaves the draft, travels the wire,
                 // and lands as a checkmark before this screen goes away.
                 // Only ever on the real 200 (didComplete), never optimistic.
-                postedOverlayLabel = status == "posted"
-                    ? "Reply posted to \(viewModel.review.platformDisplayName)"
-                    : "Reply approved"
+                postedOverlayLabel = Self.doneLabel(status: status, review: viewModel.review)
             } else {
                 onCompleted(status)
                 dismiss()
@@ -271,18 +262,38 @@ struct ReviewDetailView: View {
                 viewModel.applyTemplate(template)
                 showingTemplates = false
             }, onDelete: { template in
-                Task { await viewModel.deleteTemplate(template) }
+                await viewModel.deleteTemplate(template)
             })
         }
-        .alert("Save as template", isPresented: $showingSaveTemplate) {
-            TextField("e.g. Positive 5-star standard", text: $templateName)
-            Button("Save template") {
-                let name = templateName
-                Task { templateNote = await viewModel.saveAsTemplate(title: name) ?? "Template saved" }
+        .confirmationDialog(
+            "Replace your edited reply?",
+            isPresented: $confirmingRegenerate,
+            titleVisibility: .visible
+        ) {
+            Button("Write a new reply", role: .destructive) {
+                Task { await viewModel.regenerateDraft() }
+            }
+            Button("Keep my reply", role: .cancel) {}
+        } message: {
+            Text("Cavnar AI writes a fresh reply in place of the one on screen. Your edits aren\u{2019}t kept.")
+        }
+        .confirmationDialog(
+            "Post this reply to Google?",
+            isPresented: $confirmingPostToGoogle,
+            titleVisibility: .visible
+        ) {
+            Button("Post to Google") {
+                Task {
+                    if await viewModel.retryPost() {
+                        onCompleted(viewModel.currentStatus)
+                    } else {
+                        onCompleted(viewModel.listStatus)
+                    }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Name it so you\u{2019}ll recognise it in Templates.")
+            Text("It goes live on your Google Business Profile under your name, as written above.")
         }
         .confirmationDialog(
             "Post this reply anyway?",
@@ -314,6 +325,15 @@ struct ReviewDetailView: View {
         } message: {
             Text("This reply is currently live on your Google Business Profile. Retracting removes it from Google immediately.")
         }
+    }
+
+    /// What an approve did, in words that match where the reply went: live
+    /// on Google, waiting on the Google connection, or approved for the
+    /// owner to post on Yelp or another site.
+    static func doneLabel(status: String, review: Review) -> String {
+        if status == "posted" { return "Reply posted to \(review.platformDisplayName)" }
+        if review.platform == "google" { return "Reply approved \u{00B7} not on Google yet" }
+        return "Approved \u{00B7} post it on \(review.platformDisplayName)"
     }
 
     /// The platform, not the author — the author's name heads the screen
@@ -547,7 +567,11 @@ struct ReviewDetailView: View {
                     }
                     Button {
                         Haptic.light()
-                        Task { await viewModel.regenerateDraft() }
+                        if viewModel.replyHasOwnEdits {
+                            confirmingRegenerate = true
+                        } else {
+                            Task { await viewModel.regenerateDraft() }
+                        }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.cavnar(.body))
@@ -652,12 +676,6 @@ struct ReviewDetailView: View {
                     .onChange(of: viewModel.editedDraft) { _, _ in
                         viewModel.scheduleDraftSave()
                     }
-                // "Save as template" is in the ••• menu; what it did is
-                // said here, under the reply it saved.
-                if let note = templateNote {
-                    Text(note)
-                        .cavnarText(.caption, color: note == "Template saved" ? .cavnarGreen : .cavnarRedText)
-                }
             }
         }
     }
@@ -839,12 +857,40 @@ struct ReviewDetailView: View {
     private var approvedNextStep: some View {
         let r = viewModel.review
         if r.platform == "google" {
-            if !viewModel.postFailedOnGoogle {
-                // Nothing posts it on its own once Google is connected; the
-                // card's Retry posting does then (re-audit 10/8/26).
-                Label("Post it once Google is connected", systemImage: "clock")
-                    .cavnarText(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if !viewModel.postFailedOnGoogle && !viewModel.isSubmitting {
+                // Nothing posts it on its own once Google is connected. With
+                // Google connected the reply posts from here, behind a
+                // confirm (the server's retry-post takes any approved Google
+                // reply); without, the way to connect (re-audit 10/8/26 H3).
+                if viewModel.googleConnected == true {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                        Text("Approved, not on Google yet.")
+                            .cavnarText(.secondary)
+                        Button {
+                            Haptic.light()
+                            confirmingPostToGoogle = true
+                        } label: {
+                            Label("Post to Google", systemImage: "paperplane")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.editedDraft.isEmpty))
+                        .disabled(viewModel.editedDraft.isEmpty)
+                    }
+                } else if viewModel.googleConnected == false {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                        Text("Approved. It posts once Google Business is connected.")
+                            .cavnarText(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            Haptic.light()
+                            if let nav = NavPath("account/integrations") { router.open(nav) }
+                        } label: {
+                            Label("Connect Google in Account", systemImage: "link")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    }
+                }
             }
         } else if !viewModel.isSubmitting {
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
@@ -961,8 +1007,11 @@ struct ReviewDetailView: View {
                     CavnarShimmerText(text: viewModel.approveLabel == "Approve & post" ? "Posting…" : "Approving…",
                                       color: Color.cavnarInk)
                 } else if nextReview != nil {
-                    // Approves this one, then opens the next reply waiting.
-                    Text("Approve & next")
+                    // Approves this one, then opens the next reply waiting —
+                    // named by where it goes, like the single button
+                    // (re-audit 10/8/26 H2): "Approve & post · next" only
+                    // when it posts to Google.
+                    Text(viewModel.approveLabel + " \u{00B7} next")
                 } else {
                     // Named by where it goes (readability round #54): "Approve
                     // & post" only for a Google review with Google connected —
@@ -1001,32 +1050,49 @@ struct ReviewDetailView: View {
 private struct TemplatePickerSheet: View {
     let templates: [ResponseTemplate]
     let onSelect: (ResponseTemplate) -> Void
-    var onDelete: ((ResponseTemplate) -> Void)? = nil
+    /// Deletes on the server; true once it is gone.
+    var onDelete: ((ResponseTemplate) async -> Bool)? = nil
     @Environment(\.dismiss) private var dismiss
-    /// Deleted here, so the row leaves at once (the parent's list is a copy).
+    /// Deleted here, so the row leaves once the server confirms (the
+    /// parent's list is a copy).
     @State private var removed: Set<Int> = []
+    /// The swipe's Delete asks first (re-audit 10/8/26 L3).
+    @State private var confirmingDelete: ResponseTemplate?
+    @State private var deleteError: String?
 
     var body: some View {
         NavigationStack {
-            List(templates.filter { !removed.contains($0.id) }) { template in
-                Button {
-                    onSelect(template)
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(template.title).cavnarText(.label)
-                        Text(template.body).cavnarText(.secondary).lineLimit(2)
-                    }
+            List {
+                if let deleteError {
+                    Text(deleteError)
+                        .cavnarText(.secondary, color: .cavnarRedText)
+                        .listRowBackground(Color.clear)
                 }
-                .swipeActions(edge: .trailing) {
-                    if let onDelete {
-                        Button(role: .destructive) {
-                            removed.insert(template.id)
-                            onDelete(template)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
+                ForEach(templates.filter { !removed.contains($0.id) }) { template in
+                    Button {
+                        onSelect(template)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(template.title).cavnarText(.label)
+                            Text(template.body).cavnarText(.secondary).lineLimit(2)
+                        }
+                    }
+                    .swipeActions(edge: .trailing) {
+                        if onDelete != nil {
+                            Button(role: .destructive) {
+                                confirmingDelete = template
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
                     }
                 }
+                // New templates are saved from a reply on the web — the
+                // phone applies them (re-audit 10/8/26 W2).
+                CavnarWebLinkRow(title: "New templates",
+                                 subtitle: "Save a reply as a template from the web inbox",
+                                 path: "reviews/inbox", actionLabel: "Open on the web")
+                    .listRowBackground(Color.clear)
             }
             .scrollContentBackground(.hidden)
             .cavnarModuleBackground()
@@ -1036,6 +1102,28 @@ private struct TemplatePickerSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+            }
+            .confirmationDialog(
+                "Delete \u{201C}\(confirmingDelete?.title ?? "this template")\u{201D}?",
+                isPresented: Binding(get: { confirmingDelete != nil },
+                                     set: { if !$0 { confirmingDelete = nil } }),
+                titleVisibility: .visible,
+                presenting: confirmingDelete
+            ) { template in
+                Button("Delete template", role: .destructive) {
+                    guard let onDelete else { return }
+                    Task {
+                        if await onDelete(template) {
+                            removed.insert(template.id)
+                            deleteError = nil
+                        } else {
+                            deleteError = "Couldn\u{2019}t delete \u{201C}\(template.title)\u{201D} \u{2014} try again."
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("It leaves your templates on the web and here. Replies already sent don\u{2019}t change.")
             }
         }
     }

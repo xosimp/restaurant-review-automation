@@ -118,10 +118,17 @@ struct MarketingPhotoPicker: View {
                     }
                     Spacer()
                     Button {
+                        Haptic.light()
                         viewModel.clearMedia()
                     } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(Color.cavnarInk3)
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
+                            // 44pt to hit, a label to hear (re-audit 10/8/26 L10).
+                            .cavnarHitTarget()
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove photo")
                 }
             }
 
@@ -217,6 +224,21 @@ struct MarketingPreviewSheet: View {
                         counts(preview)
                     } else if viewModel.isPreviewing {
                         CavnarWorkingLine().padding(.vertical, 30)
+                    } else if let error = viewModel.previewError {
+                        // A preview that couldn't load says so, with the way
+                        // to try again — it used to be an empty sheet (M9).
+                        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                            Text(error)
+                                .cavnarText(.secondary, color: .cavnarRedText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.loadPreview(platform: platform, body: text, ctaType: ctaType) }
+                            } label: {
+                                Text("Try again").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                        }
                     }
                 }
                 .padding(20)
@@ -283,24 +305,18 @@ struct MarketingPreviewSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 
+    /// One line, not three tiles (re-audit 10/8/26 W11): "212 of 2,200
+    /// characters · 4 hashtags", red when over.
     private func counts(_ preview: MarketingPreview) -> some View {
-        HStack(spacing: 0) {
-            tile(value: "\(preview.characters)", label: "Characters",
-                 tint: preview.overLimit ? Color.cavnarRed : Color.cavnarInk)
-            Divider()
-            tile(value: preview.limit.map { "\($0)" } ?? "—", label: "Limit", tint: Color.cavnarInk)
-            Divider()
-            tile(value: "\(preview.hashtagCount)", label: "Hashtags", tint: Color.cavnarInk)
-        }
-        .cavnarCard()
+        CavnarMixedText(Self.countLine(preview), role: .secondary,
+                        color: preview.overLimit ? .cavnarRedText : .cavnarInk2)
     }
 
-    private func tile(value: String, label: String, tint: Color) -> some View {
-        VStack(spacing: 4) {
-            Text(value).cavnarText(.figureM, color: tint)
-            Text(label).cavnarText(.caption)
-        }
-        .frame(maxWidth: .infinity)
+    static func countLine(_ preview: MarketingPreview) -> String {
+        let chars = preview.limit.map { "\(preview.characters.formatted()) of \($0.formatted()) characters" }
+            ?? "\(preview.characters.formatted()) characters"
+        let tags = "\(preview.hashtagCount) \(preview.hashtagCount == 1 ? "hashtag" : "hashtags")"
+        return "\(chars) \u{00B7} \(tags)"
     }
 }
 
@@ -309,7 +325,9 @@ struct MarketingPreviewSheet: View {
 /// Pick a slot. Everything this module did was generate-now/post-now, and an
 /// owner does admin at 11pm for a post that belongs on Tuesday at lunch.
 struct MarketingScheduleSheet: View {
-    let platform: String
+    /// Every channel the post goes to (re-audit 10/8/26 H4): the selected
+    /// targets, not "Instagram if connected" — one scheduled post each.
+    let platforms: [String]
     let text: String
     let topic: String
     let contentType: String?
@@ -319,6 +337,13 @@ struct MarketingScheduleSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var when = Date().addingTimeInterval(3600)
     @State private var clock = RestaurantClock.timeZone
+    /// Channels already scheduled by this sheet, so a retry after one
+    /// failed never schedules the others twice.
+    @State private var done: Set<String> = []
+
+    private var destinations: String {
+        MarketingViewModel.channelList(platforms.map { $0 == "google" ? "Google" : $0.capitalized })
+    }
 
     /// "Chicago", from the zone's identifier.
     private var clockName: String {
@@ -330,7 +355,7 @@ struct MarketingScheduleSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Cavnar AI will publish this to \(platform.capitalized) for you. Times are your restaurant's own clock (\(clockName)).")
+                    Text("Cavnar AI will publish this to \(destinations) for you. Times are your restaurant's own clock (\(clockName)).")
                         .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -345,10 +370,22 @@ struct MarketingScheduleSheet: View {
 
                     Button {
                         Task {
-                            await viewModel.schedule(platform: platform, body: text, topic: topic,
-                                                     contentType: contentType, ctaType: ctaType,
-                                                     ctaURL: ctaURL, at: when)
-                            if viewModel.scheduleError == nil { dismiss() }
+                            var failures: [String] = []
+                            for platform in platforms where !done.contains(platform) {
+                                await viewModel.schedule(platform: platform, body: text, topic: topic,
+                                                         contentType: contentType, ctaType: ctaType,
+                                                         ctaURL: ctaURL, at: when)
+                                if let error = viewModel.scheduleError {
+                                    failures.append("\(platform.capitalized): \(error)")
+                                } else {
+                                    done.insert(platform)
+                                }
+                            }
+                            if failures.isEmpty {
+                                dismiss()
+                            } else {
+                                viewModel.scheduleError = failures.joined(separator: "\n")
+                            }
                         }
                     } label: {
                         if viewModel.isScheduling {
@@ -357,8 +394,8 @@ struct MarketingScheduleSheet: View {
                             Text("Schedule it").frame(maxWidth: .infinity)
                         }
                     }
-                    .buttonStyle(CavnarPrimaryButtonStyle())
-                    .disabled(viewModel.isScheduling)
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScheduling || platforms.isEmpty))
+                    .disabled(viewModel.isScheduling || platforms.isEmpty)
 
                     if let error = viewModel.scheduleError {
                         Text(error).cavnarText(.secondary, color: .cavnarRedText)
@@ -399,6 +436,12 @@ struct MarketingQueueView: View {
         let wentOut = Self.wentOut(viewModel.scheduled)
         ScrollView {
             VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                // A cancel that didn't go through, said (re-audit M18).
+                if let error = viewModel.scheduleError {
+                    Text(error)
+                        .cavnarText(.secondary, color: .cavnarRedText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 CavnarKicker("Upcoming")
                 if upcoming.isEmpty {
                     Text("Nothing scheduled. Write a post, then choose Schedule instead of posting it now.")
@@ -577,7 +620,9 @@ struct MarketingDraftsView: View {
                         Haptic.selection()
                         onUse(draft)
                     } label: {
-                        Text("Open").frame(maxWidth: .infinity)
+                        // A text or an email opens in the Campaign Studio,
+                        // where it is sent (M3).
+                        Text(draft.isGuestMessage ? "Open in Campaigns" : "Open").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarSecondaryButtonStyle())
                 }

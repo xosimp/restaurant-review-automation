@@ -12,6 +12,11 @@ struct MarketingAnalyticsSection: View {
 
     /// The caveat banners behind the one-line summary.
     @State private var showingCaveats = false
+    /// The stats tile, the platform bars and the top post, behind "See the
+    /// numbers" — the outcome line stays on top (re-audit 10/8/26 W9).
+    @State private var showingNumbers = false
+    /// The ring and the platform labels grow with the text size (L13).
+    @ScaledMetric(relativeTo: .body) private var ringSize: CGFloat = 78
 
     var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
@@ -32,6 +37,13 @@ struct MarketingAnalyticsSection: View {
             } else {
                 CachedDataNotice(text: viewModel.stalenessNotice)
                 periodSwitcher
+                // A period that couldn't load says so; the figures on
+                // screen stay (L17).
+                if let error = viewModel.windowError {
+                    Text(error)
+                        .cavnarText(.secondary, color: .cavnarRedText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 // "Metrics synced 9/21/26" — only when it is news: amber
                 // when the nightly pull is stale or failing (DH4-8), so a
                 // flat week reads as what it is.
@@ -39,28 +51,48 @@ struct MarketingAnalyticsSection: View {
                     ServerStatusCaption(status: sync)
                 }
                 if let window = viewModel.window {
-                    statsTile(window)
-                    // Why there's no +/−% beside the figures (F2) — a
-                    // blank change is "too few posts", never "no change".
-                    if let note = window.changeNote, !note.isEmpty {
-                        CavnarMixedText(note + ".", role: .caption)
+                    // The outcome, in one line: reach against the period
+                    // before, toned — the Content tab's own rule.
+                    let outcome = MarketingView.outcome(window)
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        HomeMixedText.make(outcome.headline, role: .figureM, color: .cavnarInk, numberColor: .cavnarInk)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                        if let change = outcome.change {
+                            CavnarMixedText(change, role: .secondary, color: outcome.tone)
+                        }
                     }
-                    if !window.byPlatform.isEmpty {
-                        platformBars(window)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                    numbersToggle
+                    if showingNumbers {
+                        statsTile(window)
+                        // Why there's no +/−% beside the figures (F2) — a
+                        // blank change is "too few posts", never "no change".
+                        if let note = window.changeNote, !note.isEmpty {
+                            CavnarMixedText(note + ".", role: .caption)
+                        }
+                        if !window.byPlatform.isEmpty {
+                            platformBars(window)
+                        }
+                        topPostCard
                     }
                 } else if viewModel.performance != nil {
                     Text("No published post metrics yet.")
                         .cavnarText(.body)
                         .cavnarCard()
+                    topPostCard
                 }
-                topPostCard
                 // What a post did to the till — same weekday, before vs
                 // after, by kind, occasion and dish — on the web (#60's
                 // rule: wide tables and multi-row analysis are the web's).
                 if viewModel.attribution != nil {
+                    // marketing/attribution lands on the web's Analytics tab
+                    // at the card itself (re-audit 10/8/26 M6) — "marketing"
+                    // opened Content.
                     CavnarWebLinkRow(title: "What posts did to sales",
                                      subtitle: "Same weekday, before vs after \u{2014} by post, kind, occasion and dish",
-                                     path: "marketing", actionLabel: "Open on the web")
+                                     path: "marketing/attribution", actionLabel: "Open on the web")
                 }
                 // How you compare — the Benchmark Engine's card (#23).
                 HowYouCompareCard(module: "marketing")
@@ -139,21 +171,18 @@ struct MarketingAnalyticsSection: View {
                 CavnarMixedText(insight.intro, role: .lead)
                     .padding(.bottom, insight.recommendations.isEmpty ? 0 : 12)
 
-                ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text("\(index + 1)")
-                            .cavnarText(.figureS, color: .cavnarEmber2)
-                        VStack(alignment: .leading, spacing: 6) {
-                            CavnarMixedText(rec, role: .body)
-                            // Done / Not for us / Track — for a line the
-                            // server keyed (insight_rec_keys, index-aligned).
-                            if let key = insight.recKey(at: index) {
-                                RecAnswerRow(key: key, surface: "marketing")
-                            }
+                // The top move, then the rest behind "+N more" (re-audit
+                // 10/8/26 M17). The brief carries no per-move confidence or
+                // outcome, so none is shown — never one invented.
+                if let first = insight.recommendations.first {
+                    moveRow(first, index: 0, insight: insight, lead: insight.recommendations.count > 1)
+                }
+                if insight.recommendations.count > 1 {
+                    CavnarMoreDisclosure(hiddenCount: insight.recommendations.count - 1) {
+                        ForEach(Array(insight.recommendations.enumerated().dropFirst()), id: \.offset) { index, rec in
+                            moveRow(rec, index: index, insight: insight, lead: false)
                         }
                     }
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 // ONE forecast: the figure computed in Python (H8) — last
@@ -178,6 +207,49 @@ struct MarketingAnalyticsSection: View {
         .background(Color.cavnarEmber.opacity(0.12))
         .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+    }
+
+    /// One move of the brief, numbered, with its Done / Not for us / Track
+    /// for a line the server keyed (insight_rec_keys, index-aligned). The
+    /// first, when others follow, is "Do this first".
+    private func moveRow(_ rec: String, index: Int, insight: AIInsight, lead: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("\(index + 1)")
+                .cavnarText(.figureS, color: .cavnarEmber2)
+            VStack(alignment: .leading, spacing: 6) {
+                if lead {
+                    CavnarKicker("Do this first")
+                }
+                CavnarMixedText(rec, role: .body)
+                if let key = insight.recKey(at: index) {
+                    RecAnswerRow(key: key, surface: "marketing")
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "See the numbers" — the tile, the platforms and the top post (W9).
+    private var numbersToggle: some View {
+        Button {
+            Haptic.light()
+            withAnimation(.cavnarEase(0.22)) { showingNumbers.toggle() }
+        } label: {
+            HStack(spacing: CavnarSpace.xxs + 2) {
+                Text(showingNumbers ? "Hide the numbers" : "See the numbers")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                Image(systemName: "chevron.down")
+                    .font(.cavnar(.caption))
+                    .rotationEffect(.degrees(showingNumbers ? 180 : 0))
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Color.cavnarEmber2)
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(showingNumbers ? "Expanded" : "Collapsed")
     }
 
     // MARK: - Period
@@ -244,7 +316,7 @@ struct MarketingAnalyticsSection: View {
             bigStat(window.reach.formatted(), "Reach", window.change.reach)
             bigStat(window.engagement.formatted(), "Engagement", window.change.engagement)
             rateRing(window.engagementRate)
-                .frame(width: 96)
+                .frame(minWidth: ringSize + 18)
         }
         .cavnarGlossyCard()
     }
@@ -288,7 +360,7 @@ struct MarketingAnalyticsSection: View {
                 Text("Rate").cavnarText(.caption)
             }
         }
-        .frame(width: 78, height: 78)
+        .frame(width: ringSize, height: ringSize)
         .padding(.vertical, 5)
     }
 
@@ -302,10 +374,14 @@ struct MarketingAnalyticsSection: View {
 
             ForEach(window.byPlatform) { platform in
                 HStack(spacing: 10) {
+                    // Sized by its words, so a long name or a large text
+                    // size isn't cut to "Instag…" (L13); the bar gives way.
                     Text(platform.label)
                         .cavnarText(.secondary)
                         .lineLimit(1)
-                        .frame(width: 82, alignment: .leading)
+                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 72, alignment: .leading)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule().fill(Color.cavnarPaper3)
@@ -319,7 +395,8 @@ struct MarketingAnalyticsSection: View {
                     Text(platform.reach > 0 ? platform.reach.formatted() : "—")
                         .font(.cavnarNumber(CavnarType.secondary, weight: 500))
                         .foregroundStyle(Color.cavnarInk2)
-                        .frame(width: 52, alignment: .trailing)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 44, alignment: .trailing)
                 }
             }
         }

@@ -91,7 +91,8 @@ struct ReviewRetagSheet: View {
                 }
                 .padding(20)
             }
-            .accountSheetChrome("Fix tags")
+            // Back and swipe-down ask before unsaved tags are lost (L9).
+            .accountSheetChrome("Fix tags", isDirty: !changes.isEmpty && !busy)
         }
         .onAppear {
             guard !seeded else { return }
@@ -129,6 +130,10 @@ struct ReviewRetagSheet: View {
                 .background(Capsule().fill(on ? Color.cavnarEmber.opacity(0.16) : Color.white.opacity(0.04)))
                 .overlay(Capsule().strokeBorder(on ? Color.cavnarEmber.opacity(0.45) : Color.white.opacity(0.08),
                                                 lineWidth: 1))
+                // The chip stays its size; the tap area is 44pt (re-audit
+                // 10/8/26 L9).
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])

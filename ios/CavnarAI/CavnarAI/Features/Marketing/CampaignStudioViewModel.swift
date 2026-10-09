@@ -538,9 +538,20 @@ final class CampaignStudioViewModel {
 
     // MARK: - Create and draft
 
+    /// Unsent work on screen: a drafted or edited channel nobody has sent —
+    /// what Back and swipe-down ask about before it is lost (re-audit
+    /// 10/8/26 H6).
+    var hasUnsentWork: Bool {
+        builderOpen && results.isEmpty && !sending && StudioChannel.allCases.contains { hasDraft($0) }
+    }
+
     /// Every channel on drafts at once from the goal; the first answer with
     /// a plan sets the goal, tone, audience and weekday.
-    func create() async {
+    ///
+    /// `redraft`: "Redraft all…" on an open builder (re-audit 10/8/26 H5) —
+    /// after its confirm, every channel is written again, but the photo and
+    /// an audience the owner picked stay; only the words are replaced.
+    func create(redraft: Bool = false) async {
         guard !isBusy, !sending else { return }
         let goalText = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !goalText.isEmpty else {
@@ -551,8 +562,13 @@ final class CampaignStudioViewModel {
         var chans = shownChannels
         if chans.isEmpty { on.insert(.text); chans = [.text] }
         let keepRec = recKey, keepFor = recFor
-        resetDraft()
+        let keepSegment = redraft && ownerPickedSegment ? segment : nil
+        resetDraft(keepPhoto: redraft)
         recKey = keepRec; recFor = keepFor
+        if let keepSegment {
+            segment = keepSegment
+            ownerPickedSegment = true
+        }
         activePrompt = String(goalText.prefix(280))
         chanSet = true
         builderOpen = true
@@ -676,7 +692,7 @@ final class CampaignStudioViewModel {
 
     /// A fresh start for every way in, so nothing of the last campaign
     /// rides along (CS-16, CS-9). Drafts still in flight are dropped.
-    func resetDraft() {
+    func resetDraft(keepPhoto: Bool = false) {
         for k in StudioChannel.allCases { seq[k] = (seq[k] ?? 0) + 1 }
         busy = []; errors = [:]
         type = "general"; goal = ""; targetDay = nil; planned = false; pickedByAI = false; ownerPickedSegment = false
@@ -686,7 +702,7 @@ final class CampaignStudioViewModel {
         subject = ""; preheader = ""; headline = ""; letter = ""; buttonLabel = ""; buttonURL = ""
         previewTask?.cancel(); previewHTML = nil
         caption = ""
-        photos.clearMedia()
+        if !keepPhoto { photos.clearMedia() }
         results = []; gateFlags = []; outcomeUnknown = false
     }
 

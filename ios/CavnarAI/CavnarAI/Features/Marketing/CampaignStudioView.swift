@@ -1,7 +1,10 @@
 import SwiftUI
 
+/// The fields on the phone, in keyboard order. The preheader, letter and
+/// button fields are the web's (re-audit 10/8/26 W6), so the keyboard's
+/// Next never lands on a field that isn't on screen.
 private enum StudioField: Hashable, CaseIterable {
-    case prompt, message, link, subject, headline, preheader, letter, button, buttonLink, caption
+    case prompt, message, link, subject, headline, caption
 }
 
 /// The Campaign Studio, as a sheet (parity audit #30). One goal — typed,
@@ -14,6 +17,10 @@ struct CampaignStudioView: View {
     let seed: StudioSeed
     var connected: MarketingChannels?
     var isOwner: Bool
+    /// Whether this login may send (may_publish): a teammate who can't
+    /// drafts and reviews here, and the send says it is the owner's
+    /// (re-audit 10/8/26 M4).
+    var canPublish: Bool = true
     /// Told after a send, so the screen under the sheet re-reads.
     var onSent: () -> Void = {}
 
@@ -24,6 +31,8 @@ struct CampaignStudioView: View {
     /// #61): a channel shows as guests will get it; "Edit" opens its fields.
     @State private var editing: Set<StudioChannel> = []
     @FocusState private var focused: StudioField?
+    /// "Replace your edits?" before Redraft all writes every channel again.
+    @State private var confirmingRedraft = false
 
     /// The web's four idea chips, word for word.
     static let ideas: [(label: String, prompt: String)] = [
@@ -66,7 +75,17 @@ struct CampaignStudioView: View {
                     focusTarget = nil
                 }
             }
-            .accountSheetChrome("Campaign Studio")
+            // A drafted, unsent campaign asks before Back or a swipe drops
+            // it (re-audit 10/8/26 H6).
+            .accountSheetChrome("Campaign Studio", isDirty: vm.hasUnsentWork)
+            .confirmationDialog("Replace your edits?", isPresented: $confirmingRedraft, titleVisibility: .visible) {
+                Button("Redraft every channel", role: .destructive) {
+                    Task { await vm.create(redraft: true) }
+                }
+                Button("Keep my drafts", role: .cancel) {}
+            } message: {
+                Text("Cavnar AI writes the text, the email and the post again from the goal. Your photo and the audience you picked stay.")
+            }
             .keyboardNavToolbar($focused)
             .cavnarEmberRefreshable { await vm.load(connected: connected) }
             .task {
@@ -88,6 +107,16 @@ struct CampaignStudioView: View {
 
     @State private var focusTarget: StudioChannel?
 
+    /// The goal's Create, or — with drafts on screen — Redraft all behind
+    /// "Replace your edits?" (H5).
+    private func createOrConfirm() {
+        if vm.builderOpen && vm.hasUnsentWork {
+            confirmingRedraft = true
+        } else {
+            Task { await vm.create(redraft: vm.builderOpen) }
+        }
+    }
+
     // MARK: - Goal
 
     private var goalCard: some View {
@@ -100,7 +129,7 @@ struct CampaignStudioView: View {
                 .cavnarTextFieldStyle()
                 .focused($focused, equals: .prompt)
                 .submitLabel(.go)
-                .onSubmit { Task { await vm.create() } }
+                .onSubmit { createOrConfirm() }
                 .onChange(of: vm.prompt) { _, text in
                     if text.count > 280 { vm.prompt = String(text.prefix(280)) }
                 }
@@ -127,21 +156,43 @@ struct CampaignStudioView: View {
                 }
                 .scrollIndicators(.hidden)
             }
-            Button {
-                focused = nil
-                Task { await vm.create() }
-            } label: {
-                Group {
-                    if vm.isBusy {
-                        CavnarShimmerText(text: "Drafting\u{2026}")
-                    } else {
-                        Label(vm.builderOpen ? "Draft again" : "Create", systemImage: "sparkles")
+            // Create is the primary until the builder is open; then the
+            // pinned "Review and send" is, and this is a secondary
+            // "Redraft all…" behind its confirm (re-audit 10/8/26 H5).
+            if vm.builderOpen {
+                Button {
+                    focused = nil
+                    Haptic.light()
+                    createOrConfirm()
+                } label: {
+                    Group {
+                        if vm.isBusy {
+                            CavnarShimmerText(text: "Drafting\u{2026}")
+                        } else {
+                            Label("Redraft all\u{2026}", systemImage: "arrow.triangle.2.circlepath")
+                        }
                     }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: vm.isBusy || vm.sending))
+                .disabled(vm.isBusy || vm.sending)
+            } else {
+                Button {
+                    focused = nil
+                    Task { await vm.create() }
+                } label: {
+                    Group {
+                        if vm.isBusy {
+                            CavnarShimmerText(text: "Drafting\u{2026}")
+                        } else {
+                            Label("Create", systemImage: "sparkles")
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: vm.isBusy || vm.sending))
+                .disabled(vm.isBusy || vm.sending)
             }
-            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: vm.isBusy || vm.sending))
-            .disabled(vm.isBusy || vm.sending)
 
             if !vm.builderOpen {
                 VStack(alignment: .leading, spacing: 8) {
@@ -491,38 +542,24 @@ struct CampaignStudioView: View {
                         .cavnarText(.secondary)
                 }
             } else {
+                // The phone reviews the subject and the headline — what the
+                // inbox shows — and reads the letter; the full email editor
+                // and its rendered preview are the web's (re-audit 10/8/26
+                // W6: six fields and a 520pt render on a phone).
                 labeledField("Subject", text: $vm.subject, field: .subject, limit: 140)
-                Group {
-                    if let html = vm.previewHTML {
-                        NewsletterWebPreview(html: html)
-                            .frame(height: 520)
-                            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                    } else if vm.hasDraft(.email) {
-                        CavnarSkeletonLines(widths: [1.0, 0.85, 0.9, 0.6])
-                            .padding(.vertical, 12)
-                    } else {
-                        Text("The email shows here as guests get it, once it\u{2019}s drafted.")
-                            .cavnarText(.secondary)
+                labeledField("Headline", text: $vm.headline, field: .headline, limit: 120)
+                if vm.hasDraft(.email) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Letter").cavnarText(.caption)
+                        Text(vm.letter.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .cavnarText(.body)
+                            .lineLimit(8)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                labeledField("Headline", text: $vm.headline, field: .headline, limit: 120)
-                labeledField("Inbox preview line", text: $vm.preheader, field: .preheader, limit: 140)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Letter").cavnarText(.caption)
-                    TextEditor(text: $vm.letter)
-                        .font(.cavnar(.body))
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 140)
-                        .padding(10)
-                        .background(Color.cavnarPaper2)
-                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                        .focused($focused, equals: .letter)
-                        .onChange(of: vm.letter) { _, _ in vm.schedulePreview() }
-                        .disabled(vm.sending)
-                }
-                labeledField("Button", text: $vm.buttonLabel, field: .button, limit: 40, placeholder: "Book a table")
-                labeledField("Button link", text: $vm.buttonURL, field: .buttonLink, limit: 500, placeholder: "https://",
-                             url: true)
+                CavnarWebLinkRow(title: "The whole email",
+                                 subtitle: "The letter, the button and how it looks, on the web",
+                                 path: "marketing/newsletter", actionLabel: "Open on the web")
             }
         }
         .onChange(of: vm.subject) { _, _ in vm.schedulePreview() }
@@ -614,9 +651,10 @@ struct CampaignStudioView: View {
     /// opens the send's own confirm — the two-press send is unchanged.
     private var sendBar: some View {
         let state = vm.checks
-        return CavnarPinnedBar(note: vm.outcomeUnknown
-                               ? "The answer was lost, so the send stays off \u{2014} check Campaigns sent before sending again."
-                               : nil) {
+        let note: String? = vm.outcomeUnknown
+            ? "The answer was lost, so the send stays off \u{2014} check Campaigns sent before sending again."
+            : (canPublish ? nil : "Only the owner can send a campaign \u{2014} ask them to send it from Campaigns.")
+        return CavnarPinnedBar(note: note) {
             Button {
                 focused = nil
                 Haptic.light()
@@ -627,8 +665,9 @@ struct CampaignStudioView: View {
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
             }
-            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: state.ready.isEmpty || vm.sending || vm.outcomeUnknown))
-            .disabled(state.ready.isEmpty || vm.sending || vm.outcomeUnknown)
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: state.ready.isEmpty || vm.sending || vm.outcomeUnknown
+                                                  || !canPublish))
+            .disabled(state.ready.isEmpty || vm.sending || vm.outcomeUnknown || !canPublish)
         }
     }
 }
@@ -746,6 +785,14 @@ struct CampaignReviewSheet: View {
                             .cavnarCard()
                     }
                     if !didSend || vm.results.contains(where: { !$0.good }) && !vm.outcomeUnknown && !state.ready.isEmpty {
+                        // Said before the press, at a size to read (re-audit
+                        // 10/8/26 M14): it sat under the button in Ink3.
+                        if !didSend {
+                            Text("A text or an email reaches every guest in the audience and can\u{2019}t be recalled. "
+                                 + (vm.sendingNow ? "" : "Texts are queued and go at \(vm.opensAt)."))
+                                .cavnarText(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         Button {
                             Haptic.light()
                             Task {
@@ -768,13 +815,6 @@ struct CampaignReviewSheet: View {
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: state.ready.isEmpty || vm.sending))
                         .disabled(state.ready.isEmpty || vm.sending)
-                        if !didSend {
-                            Text("A text or an email reaches every guest in the audience and can\u{2019}t be recalled. "
-                                 + (vm.sendingNow ? "" : "Texts are queued and go at \(vm.opensAt)."))
-                                .font(.cavnarBody(CavnarType.caption))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
                     }
                     if didSend {
                         Button {

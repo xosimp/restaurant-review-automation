@@ -4,10 +4,7 @@ import Observation
 @Observable
 @MainActor
 final class ReviewsAnalyticsViewModel {
-    var performance: ResponsePerformance?
     var heatmap: [TopicHeatmapEntry] = []
-    var sentimentWeeks: [SentimentWeek] = []
-    var topicWeeks: TopicWeeks?
     var insight: String?
     /// Set when the backend flagged figures in `insight` it could not trace
     /// back to this restaurant's data — the view renders a caveat above it
@@ -65,14 +62,24 @@ final class ReviewsAnalyticsViewModel {
     var insightError: String?
     var errorMessage: String?
     /// 30 / 90 / 180 — the same three windows as the web's analytics tab.
-    /// Response performance and the topic grid take it; the 8-week
-    /// sentiment river and the insight are fixed-window by design.
-    var windowDays = 90
+    /// Only the topic rows take it (the period control sits in their card);
+    /// the read, the diagnosis and the revenue range are fixed-window by
+    /// design (re-audit 10/8/26 M12).
+    static let defaultWindowDays = 90
+    var windowDays = ReviewsAnalyticsViewModel.defaultWindowDays
+    var isLoadingTopics = false
 
+    /// A new period re-reads the topic rows only — it used to reload the
+    /// whole tab, the read included.
     func setWindow(_ days: Int) async {
         guard days != windowDays else { return }
         windowDays = days
-        await load()
+        isLoadingTopics = true
+        defer { isLoadingTopics = false }
+        let r: DataResponse<[TopicHeatmapEntry]>? = try? await client.send(
+            "/mobile/api/reviews/topic-heatmap", query: ["days": "\(days)"])
+        // A failed read keeps the rows on screen rather than blanking them.
+        if let r { heatmap = r.data ?? [] }
     }
 
     private let client: APIClient
@@ -148,24 +155,19 @@ final class ReviewsAnalyticsViewModel {
         defer { isLoading = false }
 
         let window = ["days": "\(windowDays)"]
-        async let performanceResult: DataResponse<ResponsePerformance>? = try? client.send(
-            "/mobile/api/reviews/response-performance", query: window
-        )
+        // Response performance, the sentiment river and the weekly topic
+        // grid are the web's (Full analysis); nothing here renders them, so
+        // they are no longer fetched on every open (re-audit 10/8/26 M13).
         async let heatmapResult: DataResponse<[TopicHeatmapEntry]>? = try? client.send(
             "/mobile/api/reviews/topic-heatmap", query: window
         )
-        async let weeksResult: WeeksResponse? = try? client.send("/mobile/api/reviews/sentiment-trend")
         // Asked stale-while-refresh (parity #37): a read the server has not
         // written for this data answers at once — pending, or the last read
         // with its age — and is followed below, after the rest is on screen.
         async let insightResult: (value: InsightResponse, body: Data, refresh: APIClient.InsightRefreshState?)? =
             try? client.sendInsight(Self.insightPath)
-        async let topicWeeksResult: DataResponse<TopicWeeks>? = try? client.send("/mobile/api/reviews/topic-weeks")
 
-        performance = await performanceResult?.data
         heatmap = await heatmapResult?.data ?? []
-        sentimentWeeks = await weeksResult?.weeks ?? []
-        topicWeeks = await topicWeeksResult?.data
         let first = await insightResult
         insightPending = first?.refresh?.isPending == true
         if !insightPending { applyInsight(first?.value) }

@@ -304,11 +304,41 @@ final class GuestTextClubViewModel {
     /// (guest_marketing.run_review_request_followups). The route existed;
     /// the app had no way to call it, so a guest with no natural scan moment
     /// never triggered one.
+    /// Contacts whose visit was just marked: the row says "Visit marked"
+    /// and its button rests for a few seconds (re-audit 10/8/26 L2).
+    var visitMarked: Set<Int> = []
+    /// A mark-visit in flight, so a second tap sends nothing.
+    var markingVisit: Set<Int> = []
+
+    /// Marks one visit. Success is said only when the server took it; a
+    /// refusal or a dropped connection is said in `errorMessage`.
     func markVisit(_ contact: GuestContact) async {
-        _ = try? await client.send(
-            "/mobile/api/guest-contacts/\(contact.id)/mark-visit", method: .post
-        ) as OKErrorResponse
+        guard !markingVisit.contains(contact.id), !visitMarked.contains(contact.id) else { return }
+        markingVisit.insert(contact.id)
+        defer { markingVisit.remove(contact.id) }
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/guest-contacts/\(contact.id)/mark-visit", method: .post
+            )
+            guard response.ok else {
+                errorMessage = response.error ?? "Couldn\u{2019}t mark that visit."
+                return
+            }
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return
+        } catch {
+            errorMessage = "Couldn\u{2019}t mark that visit."
+            return
+        }
         Haptic.success()
+        errorMessage = nil
+        visitMarked.insert(contact.id)
+        let id = contact.id
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            self?.visitMarked.remove(id)
+        }
         await load()
     }
 

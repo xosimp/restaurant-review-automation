@@ -13,7 +13,24 @@ struct FilteredReviewsView: View {
 
     var body: some View {
         Group {
-            if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
+            if viewModel.reviews.isEmpty && !viewModel.isLoading, let error = viewModel.errorMessage {
+                // A failed load is not an empty list (re-audit 10/8/26 M5):
+                // it rendered a blank List with nothing to retry.
+                VStack(spacing: CavnarSpace.s) {
+                    Text(error)
+                        .cavnarText(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.load(category: category, platform: platform) }
+                    } label: {
+                        Text("Retry").frame(minWidth: 120)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
+                .padding(.horizontal, CavnarSpace.xl)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
                 CavnarEmptyHearth(
                     title: "No \(title) reviews",
                     message: "Nothing in this category yet."
@@ -26,7 +43,8 @@ struct FilteredReviewsView: View {
                             onCompleted: { status in viewModel.markCompleted(reviewID: review.id, status: status) }
                         )
                     } label: {
-                        ReviewRow(review: review)
+                        // The NavigationLink draws its own chevron.
+                        ReviewRow(review: review, showsChevron: false)
                     }
                     .listRowBackground(Color.clear)
                     .listRowSeparatorTint(Color.cavnarPaper3)

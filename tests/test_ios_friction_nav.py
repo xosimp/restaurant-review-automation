@@ -108,7 +108,9 @@ def test_ask_about_this_sends():
 def test_review_queue_mode():
     detail = _src("Features/Reviews/ReviewDetailView.swift")
     assert ".safeAreaInset(edge: .bottom)" in detail
-    assert '"Approve & next"' in detail
+    # Queue mode names where the reply goes (re-audit 10/8/26 H2):
+    # "Approve & post · next" only when it posts to Google.
+    assert 'viewModel.approveLabel + " \\u{00B7} next"' in detail
     lst = _src("Features/Reviews/ReviewsListView.swift")
     assert ".swipeActions(edge: .trailing" in lst
     assert "ReviewsListViewModel.canQuickApprove(review)" in lst

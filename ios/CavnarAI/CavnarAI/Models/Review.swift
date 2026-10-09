@@ -24,6 +24,9 @@ struct Review: Codable, Identifiable, Hashable {
     // number where a Bool was declared failed the entire review list.
     @LenientBool var draftNeedsReview: Bool?
     let draftReviewReason: String?
+    /// The owner changed the drafted reply by hand (reviews.draft_edited) —
+    /// a regenerate asks before it replaces their words (re-audit M8).
+    @LenientBool var draftEditedFlag: Bool?
     // When the guest edited their own review after leaving it, and what they
     // first rated. A one-star raised to five used to stay a one-star here
     // forever, because the fetch was insert-only.
@@ -123,6 +126,7 @@ struct Review: Codable, Identifiable, Hashable {
         case responseStatus = "response_status"
         case draftNeedsReview = "draft_needs_review"
         case draftReviewReason = "draft_review_reason"
+        case draftEditedFlag = "draft_edited"
         case editedAt = "edited_at"
         case originalRating = "original_rating"
     }
@@ -307,6 +311,13 @@ struct ReviewPostOutcome: Decodable, Equatable {
         if let postStatus { return postStatus == "failed" }
         return !(postError ?? "").trimmingCharacters(in: .whitespaces).isEmpty
     }
+
+    /// The approve is finished and the screen may move on: everything but a
+    /// post Google actually refused, which keeps the owner where Retry is
+    /// (re-audit 10/8/26 H2). A Yelp reply (`not_google`) or a Google reply
+    /// waiting on the connection (`not_connected`) is a finished approve —
+    /// the queue used to stall on both.
+    var advancesQueue: Bool { ok && !failedOnGoogle }
 
     /// Why it isn't live, in the server's words when it gave them; nil when
     /// it posted, or when an older server said nothing either way.
