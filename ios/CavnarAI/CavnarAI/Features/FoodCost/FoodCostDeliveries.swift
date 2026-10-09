@@ -117,6 +117,50 @@ final class DeliveriesViewModel {
         }
     }
 
+    // MARK: - Received as ordered, with a short Undo (re-audit F11)
+
+    /// How long "Received as ordered" waits before it posts, so Undo can
+    /// stop it: it puts every line into stock on one tap.
+    static let undoSeconds: Double = 4
+    /// Orders waiting out their Undo window.
+    var pendingReceive: Set<Int> = []
+    private var pendingTasks: [Int: Task<Void, Never>] = [:]
+
+    func receiveAsOrdered(_ order: PurchaseOrder) {
+        guard pendingTasks[order.id] == nil, !receiving.contains(order.id), !queued.contains(order.id) else { return }
+        errors[order.id] = nil
+        pendingReceive.insert(order.id)
+        pendingTasks[order.id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(DeliveriesViewModel.undoSeconds))
+            guard !Task.isCancelled, let self else { return }
+            await self.commitPending(order)
+        }
+    }
+
+    func undoReceive(_ order: PurchaseOrder) {
+        pendingTasks[order.id]?.cancel()
+        pendingTasks[order.id] = nil
+        pendingReceive.remove(order.id)
+    }
+
+    private func commitPending(_ order: PurchaseOrder) async {
+        pendingTasks[order.id] = nil
+        guard pendingReceive.remove(order.id) != nil else { return }
+        await receive(order, withLines: false)
+    }
+
+    /// The list is going off screen: a receive waiting out its Undo goes
+    /// now rather than being lost with the screen.
+    func commitPendingReceives() {
+        let due = orders.filter { pendingReceive.contains($0.id) }
+        for order in due {
+            pendingTasks[order.id]?.cancel()
+            pendingTasks[order.id] = nil
+            pendingReceive.remove(order.id)
+            Task { await self.receive(order, withLines: false) }
+        }
+    }
+
     /// `withLines`: the quantities typed under "Some were short"; without
     /// them every line is received as ordered.
     func receive(_ order: PurchaseOrder, withLines: Bool) async {
@@ -232,6 +276,8 @@ struct DeliveriesSection: View {
         .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
             Task { await viewModel.refreshQueued() }
         }
+        // Undo is a window, never a cancel: closing the list commits.
+        .onDisappear { viewModel.commitPendingReceives() }
     }
 
     private func orderRow(_ order: PurchaseOrder) -> some View {
@@ -253,11 +299,26 @@ struct DeliveriesSection: View {
                         .cavnarText(.caption, color: .cavnarInk2)
                 }
             }
-            if !order.isReceived {
+            if !order.isReceived && viewModel.pendingReceive.contains(order.id) {
+                // A short Undo before every line goes into stock (F11).
+                HStack(spacing: CavnarSpace.s) {
+                    Text("Receiving as ordered\u{2026}").cavnarText(.label)
+                    Spacer(minLength: CavnarSpace.xs)
+                    Button {
+                        Haptic.light()
+                        viewModel.undoReceive(order)
+                    } label: {
+                        Text("Undo").frame(minWidth: 88)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .accessibilityHint("Stops \(order.poNumber) being received")
+                }
+                .frame(minHeight: 44)
+            } else if !order.isReceived {
                 HStack(spacing: 10) {
                     Button {
                         Haptic.light()
-                        Task { await viewModel.receive(order, withLines: false) }
+                        viewModel.receiveAsOrdered(order)
                     } label: {
                         Group {
                             if viewModel.receiving.contains(order.id) && viewModel.shortOpen != order.id {

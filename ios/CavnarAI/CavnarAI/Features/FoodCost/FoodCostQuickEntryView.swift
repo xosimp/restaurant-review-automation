@@ -16,7 +16,6 @@ struct FoodCostQuickEntryView: View {
     /// Orders sent and not yet received — the action row's Receive chip.
     @State private var deliveries = DeliveriesViewModel()
     @State private var subTab: FoodCostSubTab = .analytics
-    @State private var showSuccessToast = false
     @State private var showingTrackerHelp = false
     /// The action row's sheet (Friction audit #28).
     @State private var actionSheet: FoodCostAction?
@@ -106,7 +105,6 @@ struct FoodCostQuickEntryView: View {
                 }
             }
         }
-        .overlay(alignment: .top) { successToast }
         .sheet(item: $actionSheet, onDismiss: {
             // A send, a receive or a count can change what is waiting.
             Task { await deliveries.load() }
@@ -164,39 +162,16 @@ struct FoodCostQuickEntryView: View {
         }
     }
 
-    @ViewBuilder
-    private var successToast: some View {
-        if showSuccessToast {
-            HStack(spacing: CavnarSpace.xs) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Color.cavnarGreen)
-                    .accessibilityHidden(true)
-                Text("This week's prices saved").cavnarText(.label)
-            }
-            .padding(.horizontal, CavnarSpace.m)
-            .padding(.vertical, CavnarSpace.s)
-            .background(Color.cavnarGreenBg)
-            .overlay(
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(Color.cavnarGreen.opacity(0.55), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-            .shadow(color: .black.opacity(0.35), radius: 16, x: 0, y: 6)
-            .padding(.top, CavnarSpace.xs)
-            .transition(.asymmetric(
-                insertion: .move(edge: .top).combined(with: .opacity),
-                removal: .opacity
-            ))
-        }
-    }
-
     // MARK: - Tracker
 
     /// A plain list of this week's key ingredient prices (iOS readability
     /// round, 10/8/26): it was a fixed-height three-card carousel inside
     /// the page's own scroll, padded 300pt at the bottom for the keyboard,
     /// with a 3-second press-and-hold to submit.
+    private static let resultAnchor = "tracker-result"
+
     private var tracker: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: CavnarSpace.l) {
                 trackerIntro
@@ -247,13 +222,20 @@ struct FoodCostQuickEntryView: View {
 
                 if viewModel.didSubmit {
                     VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                        CavnarKicker("This week\u{2019}s result", tint: .cavnarGreen)
+                        CavnarKicker("This week\u{2019}s prices saved", tint: .cavnarGreen)
                         resultSummary
                     }
                     .cavnarCard()
+                    .id(Self.resultAnchor)
                 }
             }
             .padding(CavnarSpace.gutter)
+        }
+        // The save's one confirmation, brought into view as it lands.
+        .onChange(of: viewModel.didSubmit) { _, saved in
+            guard saved else { return }
+            withAnimation(.cavnarEase(0.4)) { proxy.scrollTo(Self.resultAnchor, anchor: .bottom) }
+        }
         }
         .scrollDismissesKeyboard(.interactively)
         .toolbar {
@@ -264,7 +246,7 @@ struct FoodCostQuickEntryView: View {
         // A ledger account submits only after Edit prices, as the web hides
         // its submit until then.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !viewModel.isReadOnly {
+            if showsSaveBar {
                 CavnarPinnedBar { saveBar }
             }
         }
@@ -323,14 +305,17 @@ struct FoodCostQuickEntryView: View {
         }
     }
 
-    /// Save, then a short Undo window before it sends; Saved once it has.
+    /// The bar goes once the save has landed: the result card is the one
+    /// confirmation (re-audit F9 — a toast, a "Saved" bar and the card used
+    /// to say it three times).
+    private var showsSaveBar: Bool {
+        !viewModel.isReadOnly && !(viewModel.didSubmit && pendingSave == nil && !viewModel.isSubmitting)
+    }
+
+    /// Save, then a short Undo window before it sends.
     @ViewBuilder
     private var saveBar: some View {
-        if viewModel.didSubmit && pendingSave == nil && !viewModel.isSubmitting {
-            Label("Saved", systemImage: "checkmark.circle.fill")
-                .cavnarText(.label, color: .cavnarGreen)
-                .frame(maxWidth: .infinity, minHeight: 44)
-        } else if pendingSave != nil || viewModel.isSubmitting {
+        if pendingSave != nil || viewModel.isSubmitting {
             HStack(spacing: CavnarSpace.s) {
                 if viewModel.isSubmitting {
                     CavnarShimmerText(text: "Saving\u{2026}", color: Color.cavnarInk)
@@ -371,9 +356,6 @@ struct FoodCostQuickEntryView: View {
             pendingSave = nil
             guard viewModel.didSubmit else { return }
             Haptic.success()
-            withAnimation(.cavnarEase(0.4)) { showSuccessToast = true }
-            try? await Task.sleep(nanoseconds: 2_800_000_000)
-            withAnimation(.easeOut(duration: 0.4)) { showSuccessToast = false }
         }
     }
 

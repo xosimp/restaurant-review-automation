@@ -195,7 +195,12 @@ def test_older_diagnoses_lose_their_controls():
 def test_a_guarded_reprice_steps_down_and_says_why():
     fc = _swift("Features/FoodCost/FoodCostAnalyticsSection.swift")
     assert 'CavnarCaveat(title: "Fix the plate before the price", detail: g.text)' in fc
-    assert "RepriceButtonStyle(guarded: s.repriceGuard != nil" in fc
+    # Re-audit F1/F5 (10/8/26): every reprice is a secondary and asks before
+    # it changes the menu; a guarded one still says "Set anyway".
+    row = fc[fc.index("private func repriceRow("):fc.index("private func scorecardRepriceRow(")]
+    assert '"Set anyway: "' in row and "CavnarPrimaryButtonStyle" not in row
+    assert "confirmingReprice = PendingReprice(suggestion: s, chosen: nil)" in row
+    assert "viewModel.applyReprice(" not in row, "a menu price is never set on one tap"
     assert "s.typicalLine" in fc and "s.valueNote" in fc
     assert "parSection(viewModel.parSuggestions)" in fc and 'answers: [.notForUs]' in fc
 

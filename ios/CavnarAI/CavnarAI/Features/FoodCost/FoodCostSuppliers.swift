@@ -119,15 +119,15 @@ final class SupplierOverviewViewModel {
     }
 }
 
-/// Who you order from (iOS readability round, 10/8/26): the suppliers and
-/// how many items each fills, the ingredients with no supplier yet — each
-/// one picked here, so its order has somewhere to go — and every
-/// ingredient's supplier, with bulk assign, on the web.
+/// Who you order from (re-audit F17, 10/8/26): the suppliers and how many
+/// items each fills, and the ingredients with no supplier yet, named — so
+/// the owner knows an order has nowhere to go. Choosing or adding a
+/// supplier is a form, and it is the web's: one link opens it there.
 struct SupplierOverviewSheet: View {
     @State private var viewModel = SupplierOverviewViewModel()
-    @State private var newFor: String?
-    @State private var newName = ""
-    @State private var newEmail = ""
+
+    /// Names shown before "+N more".
+    private static let unassignedShown = 5
 
     var body: some View {
         NavigationStack {
@@ -137,13 +137,6 @@ struct SupplierOverviewSheet: View {
                     let sups = SupplierOverviewViewModel.suppliers(items)
                     let un = SupplierOverviewViewModel.unassigned(items)
                     header(sups: sups, unassigned: un.count)
-                    if let line = viewModel.doneLine {
-                        CavnarMixedText(line, role: .body, color: .cavnarGreen)
-                    }
-                    if let error = viewModel.errorMessage {
-                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                     if viewModel.sheet.isLoading && items.isEmpty {
                         CavnarSkeletonLines(widths: [1, 0.8, 0.9, 0.6]).cavnarCard()
                     } else if items.isEmpty {
@@ -151,40 +144,31 @@ struct SupplierOverviewSheet: View {
                     } else {
                         if !un.isEmpty {
                             AccountSection(kicker: "Without a supplier") {
-                                ForEach(Array(un.enumerated()), id: \.element.id) { i, it in
-                                    ingredientRow(it, sups: sups, showsDivider: i < un.count - 1)
+                                ForEach(Array(un.prefix(Self.unassignedShown).enumerated()), id: \.element.id) { i, it in
+                                    ingredientRow(it, showsDivider: i < min(un.count, Self.unassignedShown) - 1)
+                                }
+                                if un.count > Self.unassignedShown {
+                                    CavnarMoreDisclosure(hiddenCount: un.count - Self.unassignedShown) {
+                                        ForEach(Array(un.dropFirst(Self.unassignedShown))) { it in
+                                            ingredientRow(it, showsDivider: false)
+                                        }
+                                    }
                                 }
                             }
                         }
-                        CavnarWebLinkRow(title: "Every ingredient\u{2019}s supplier",
-                                         subtitle: "Change any of them, or assign many at once",
-                                         path: "inventory/order")
+                        CavnarWebLinkRow(title: viewModel.sheet.isSynced ? "Every ingredient\u{2019}s supplier"
+                                                                           : "Assign suppliers",
+                                         subtitle: viewModel.sheet.isSynced
+                                            ? "As your inventory system has them"
+                                            : "Pick or add a supplier for any ingredient, or many at once",
+                                         path: "inventory/order",
+                                         actionLabel: viewModel.sheet.isSynced ? "Open on the web" : "Edit on the web")
                     }
                 }
                 .padding(CavnarSpace.gutter)
             }
             .accountSheetChrome("Suppliers")
             .task { await viewModel.load() }
-            .alert("New supplier", isPresented: Binding(get: { newFor != nil }, set: { if !$0 { newFor = nil } })) {
-                TextField("Supplier name", text: $newName)
-                TextField("orders@supplier.com", text: $newEmail)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                Button("Save supplier") {
-                    guard let ing = newFor else { return }
-                    let s = SupplierRef(name: newName.trimmingCharacters(in: .whitespaces),
-                                        email: newEmail.trimmingCharacters(in: .whitespaces), count: 0)
-                    newFor = nil
-                    guard !s.name.isEmpty, !s.email.isEmpty else {
-                        viewModel.errorMessage = "A name and the email the order goes to."
-                        return
-                    }
-                    Task { await viewModel.assign(ing, to: s) }
-                }
-                Button("Cancel", role: .cancel) { newFor = nil }
-            } message: {
-                Text(newFor.map { "Who \($0) is ordered from, and where its order is emailed." } ?? "")
-            }
         }
     }
 
@@ -217,48 +201,15 @@ struct SupplierOverviewSheet: View {
         .cavnarCard()
     }
 
-    private func ingredientRow(_ it: CountSheetItem, sups: [SupplierRef], showsDivider: Bool) -> some View {
-        let current = sups.first { $0.email.lowercased() == (it.supplierEmail ?? "").lowercased() }
-        return VStack(spacing: 0) {
+    /// An ingredient with no supplier: its name and unit, read-only.
+    private func ingredientRow(_ it: CountSheetItem, showsDivider: Bool) -> some View {
+        VStack(spacing: 0) {
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(it.name).cavnarText(.body, color: .cavnarInk)
-                    if let u = it.unit, !u.isEmpty { Text(u).cavnarText(.caption) }
-                }
+                Text(it.name).cavnarText(.body, color: .cavnarInk)
                 Spacer(minLength: CavnarSpace.xs)
-                if viewModel.sheet.isSynced {
-                    Text(current?.name ?? DSRFormat.dash).cavnarText(.secondary)
-                } else if viewModel.busy.contains(it.name) {
-                    CavnarShimmerText(text: "Saving", color: .cavnarInk)
-                } else {
-                    Menu {
-                        ForEach(sups) { s in
-                            Button {
-                                guard s != current else { return }
-                                Task { await viewModel.assign(it.name, to: s) }
-                            } label: {
-                                if s == current { Label(s.name, systemImage: "checkmark") } else { Text(s.name) }
-                            }
-                        }
-                        Button("New supplier\u{2026}") {
-                            newName = ""
-                            newEmail = ""
-                            newFor = it.name
-                        }
-                        if current != nil {
-                            Button("No supplier", role: .destructive) { Task { await viewModel.assign(it.name, to: nil) } }
-                        }
-                    } label: {
-                        HStack(spacing: CavnarSpace.xxs) {
-                            Text(current?.name ?? "Pick").font(.cavnar(.label))
-                            Image(systemName: "chevron.up.chevron.down").font(.cavnar(.caption))
-                        }
-                        .foregroundStyle(current == nil ? Color.cavnarAmber : Color.cavnarEmber2)
-                        .frame(minHeight: 44)
-                    }
-                }
+                if let u = it.unit, !u.isEmpty { Text(u).cavnarText(.caption) }
             }
-            .padding(.vertical, 4)
+            .frame(minHeight: 44)
             if showsDivider { AccountRowDivider() }
         }
     }

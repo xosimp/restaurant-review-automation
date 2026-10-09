@@ -249,7 +249,7 @@ struct MenuMarginsSheet: View {
             }
             Spacer(minLength: CavnarSpace.xs)
             VStack(alignment: .trailing, spacing: 2) {
-                Text(Self.pct(item.foodCostPct ?? 0))
+                Text(item.foodCostPct.map(Self.pct) ?? DSRFormat.dash)
                     .cavnarText(.figureS, color: bandTextColor(item.costBand))
                 Text("food cost").cavnarText(.caption)
             }
@@ -260,9 +260,9 @@ struct MenuMarginsSheet: View {
     }
 
     private func costLine(_ item: MenuMarginItem) -> String {
-        let cost = Self.money(item.plateCost ?? 0)
-        let price = Self.money(item.sellPrice ?? 0)
-        let margin = Self.money(item.margin ?? 0)
+        let cost = item.plateCost.map(Self.money) ?? DSRFormat.dash
+        let price = item.sellPrice.map(Self.money) ?? DSRFormat.dash
+        let margin = item.margin.map(Self.money) ?? DSRFormat.dash
         return "\(cost) cost · \(price) price · \(margin) margin"
     }
 
@@ -281,7 +281,7 @@ struct MenuMarginsSheet: View {
                         HStack(spacing: CavnarSpace.s) {
                             Text(item.name).cavnarText(.body, color: .cavnarInk)
                             Spacer(minLength: CavnarSpace.xs)
-                            CavnarMixedText("\(Self.money(item.plateCost ?? 0)) cost", role: .caption)
+                            CavnarMixedText("\(item.plateCost.map(Self.money) ?? DSRFormat.dash) cost", role: .caption)
                                 .cavnarSensitive()
                             Image(systemName: "chevron.right")
                                 .font(.cavnar(.caption))
@@ -372,7 +372,7 @@ private struct MenuPriceSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("What does \(item.name) sell for? The plate costs \(String(format: "$%.2f", item.plateCost ?? 0)) to make, so the price is what turns that into a margin.")
+                    Text(item.plateCost.map { "What does \(item.name) sell for? The plate costs \(String(format: "$%.2f", $0)) to make, so the price is what turns that into a margin." } ?? "What does \(item.name) sell for? The price is what turns its plate cost into a margin.")
                         .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
 

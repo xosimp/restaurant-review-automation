@@ -19,9 +19,6 @@ struct AccountConnectionsDetailView: View {
     /// owner's (403 owner_only for a teammate): a teammate sees the status,
     /// not a button that is refused.
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
-    @State private var showingWebsiteConnect = false
-    /// The Intel card's own model, so the connect sheet is the one Intel uses.
-    @State private var websiteModel = WebsiteAnalyticsViewModel()
     /// A disconnect waiting on its confirm: what it disconnects and how.
     @State private var pendingDisconnect: (name: String, action: () async -> Void)?
 
@@ -383,25 +380,14 @@ struct AccountConnectionsDetailView: View {
                         statusText: wa.connected ? wa.lastSyncedText : nil,
                         tone: nil) {
                 // Connecting it is the owner's (the route answers 403
-                // owner_only to anyone else): the Intel connect sheet, here
-                // too (re-audit 10/8/26, #18).
+                // owner_only to anyone else). The property IDs and the
+                // service-account steps are a setup form, and that is the
+                // web's — Intel's Online tab says so too (re-audit I12).
                 if isOwner {
-                    Button {
-                        Haptic.light()
-                        showingWebsiteConnect = true
-                    } label: {
-                        Text(wa.connected ? "Manage the connection" : "Connect my website").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    CavnarWebLinkRow(title: wa.connected ? "Manage the connection" : "Connect my website",
+                                     subtitle: "Google Analytics and Search Console",
+                                     path: "account/integrations", actionLabel: "Set up on the web")
                 }
-            }
-            .sheet(isPresented: $showingWebsiteConnect, onDismiss: {
-                // Connected or disconnected there: the count and this row re-read.
-                Task { await viewModel.load() }
-            }) {
-                WebsiteConnectSheet(viewModel: websiteModel)
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
             }
         }
     }

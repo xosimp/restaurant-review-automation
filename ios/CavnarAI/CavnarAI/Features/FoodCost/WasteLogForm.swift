@@ -387,8 +387,9 @@ struct WasteLogForm: View {
     private var whyStep: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             CavnarKicker("Why")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: CavnarSpace.xs) {
+            // Every reason in view, wrapping (re-audit F14): a sideways
+            // scroll hid "Sent back" and "Other" off the edge.
+            AccountFlowLayout(spacing: CavnarSpace.xs, lineSpacing: CavnarSpace.xs) {
                     ForEach(WasteLogViewModel.reasons, id: \.key) { r in
                         let on = viewModel.reason == r.key
                         Button {
@@ -406,7 +407,6 @@ struct WasteLogForm: View {
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
-                }
             }
         }
     }

@@ -211,8 +211,31 @@ struct IntelRecommendation: Decodable, Identifiable, Equatable {
     let key: String?
     let text: String
     let cites: [Cite]?
+    /// The line's measured confidence (client_api.intel_recs_payload,
+    /// read_line_confidence) — shown on ConfidenceLine as sent, never
+    /// invented on the phone (re-audit I7). Nil from an older server.
+    var confidence: TrustConfidence? = nil
 
     var id: String { key ?? text }
+
+    enum CodingKeys: String, CodingKey { case key, text, cites, confidence }
+
+    init(key: String?, text: String, cites: [Cite]?, confidence: TrustConfidence? = nil) {
+        self.key = key
+        self.text = text
+        self.cites = cites
+        self.confidence = confidence
+    }
+
+    /// The text is the one field that must be there; a confidence of an
+    /// unexpected shape is dropped, never the whole recommendation.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = (try? c.decodeIfPresent(String.self, forKey: .key)) ?? nil
+        text = try c.decode(String.self, forKey: .text)
+        cites = (try? c.decodeIfPresent([Cite].self, forKey: .cites)) ?? nil
+        confidence = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)) ?? nil
+    }
 
     /// A competitor review the recommendation rests on (its R-number ref,
     /// whose it is, the stars, Google's relative time and the text).
