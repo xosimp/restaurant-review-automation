@@ -19953,8 +19953,9 @@ function rvKwRender(d){
 }
 function rvKwSend(body){
   function done(d){if(!d||!d.ok){toast((d&&d.error)||'Could not save that','error');return;}rvKwRender(d);if(body)toast('Saved','success');}
-  if(body){jsend('/api/reviews/keywords',body,done);return;}
-  fetch('/api/reviews/keywords',{credentials:'same-origin'}).then(apiJson).then(done).catch(function(){});
+  // window.fetch carries the CSRF header (_csrf_fetch.html).
+  fetch('/api/reviews/keywords',body?{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{credentials:'same-origin'})
+    .then(apiJson).then(done).catch(function(){if(body)toast('Could not save that','error');});
 }
 function rvLoadKeywords(){rvKwSend(null);}
 window.rvKwAdd=function(ev){if(ev)ev.preventDefault();var i=document.getElementById('rv-kw-in'),v=i?String(i.value||'').trim():'';if(!v)return;i.value='';rvKwSend({add:v});};
