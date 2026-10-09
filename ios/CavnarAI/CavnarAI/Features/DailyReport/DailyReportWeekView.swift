@@ -225,13 +225,17 @@ struct DSRWeekTable {
     /// The phone's default columns (10/8/26), in this order — each only when
     /// the full table has it (a manager has no budget, a login without
     /// labor no Labor %).
-    static let compactTitles = ["Net", "vs last yr", "vs budget", "Labor %"]
+    /// Labor is the owner's with-salaries figure when the grid carries it,
+    /// else hourly (10/9/26).
+    static let compactTitles = ["Net", "vs last yr", "vs budget", "With salaries", "Hourly %"]
 
     /// The table cut to `compactTitles`, narrower so a phone shows it whole;
     /// every row keeps one cell per column.
     func compact() -> DSRWeekTable {
-        let picks: [Int] = Self.compactTitles.compactMap { t in columns.firstIndex { $0.title == t } }
-        let narrow: [String: CGFloat] = ["Net": 84, "vs last yr": 72, "vs budget": 74, "Labor %": 64]
+        let hasAllIn = columns.contains { $0.title == "With salaries" }
+        let titles = Self.compactTitles.filter { !(hasAllIn && $0 == "Hourly %") }
+        let picks: [Int] = titles.compactMap { t in columns.firstIndex { $0.title == t } }
+        let narrow: [String: CGFloat] = ["Net": 84, "vs last yr": 72, "vs budget": 74, "With salaries": 74, "Hourly %": 64]
         let cols = picks.map { i in Column(title: columns[i].title, width: narrow[columns[i].title] ?? columns[i].width,
                                            numeric: columns[i].numeric) }
         let rows = rows.map { r in
@@ -263,7 +267,12 @@ struct DSRWeekTable {
                      Column(title: "vs budget", width: 78)]
         }
         cols += [Column(title: "Last year", width: 86), Column(title: "vs last yr", width: 78)]
-        if labor { cols += [Column(title: "Labor %", width: 68)] }
+        // Hourly and, for the owner, with salaries (10/9/26).
+        let allIn = labor && budget && (grid.days.contains { $0.salariedTotalPct != nil }
+                                        || grid.totals?.salariedTotalPct != nil
+                                        || grid.weeks.contains { $0.totals?.salariedTotalPct != nil })
+        if labor { cols += [Column(title: "Hourly %", width: 68)] }
+        if allIn { cols += [Column(title: "With salaries", width: 84)] }
         cols += [Column(title: "Notes", width: 230, numeric: false)]
         columns = cols
 
@@ -284,6 +293,7 @@ struct DSRWeekTable {
             if budget { cells += [money(t.budgetGross), money(t.budgetNet), change(t.vsBudgetNetPct)] }
             cells += [money(t.lastYearNet), change(t.vsLastYearNetPct)]
             if labor { cells += [pct(t.laborPct)] }
+            if allIn { cells += [pct(t.salariedTotalPct)] }
             let measured = t.daysMeasured ?? 0
             cells += [note(measured >= 7 ? CavnarDate.mdyRange(w.start, w.end)
                            : "\(measured) of 7 days measured")]
@@ -298,6 +308,7 @@ struct DSRWeekTable {
             if budget { cells += [money(d.budgetGross), money(d.budgetNet), change(d.vsBudgetNetPct)] }
             cells += [money(d.lastYearNet), change(d.vsLastYearNetPct)]
             if labor { cells += [pct(d.laborPct)] }
+            if allIn { cells += [pct(d.salariedTotalPct)] }
             cells += [note(d.notes)]
             return Row(id: d.date, label: d.displayLabel, opens: d.status == nil ? nil : d.date,
                        provisional: d.provisional == true || d.status == "provisional", isTotal: false, cells: cells)
@@ -310,6 +321,7 @@ struct DSRWeekTable {
             if budget { cells += [money(t.budgetGross), money(t.budgetNet), change(t.vsBudgetNetPct)] }
             cells += [money(t.lastYearNet), change(t.vsLastYearNetPct)]
             if labor { cells += [pct(t.laborPct)] }
+            if allIn { cells += [pct(t.salariedTotalPct)] }
             cells += [note(text)]
             return Row(id: id, label: label, opens: nil, provisional: false, isTotal: true, cells: cells)
         }

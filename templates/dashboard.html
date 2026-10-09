@@ -9216,7 +9216,10 @@ svg:hover .hb-xh{opacity:1}
     c.push({h:'Last year',k:'last_year_net',t:'money',g:'ly'},{h:'vs LY',k:'vs_last_year_net',t:'delta',g:'ly',pk:'vs_last_year_net_pct'});
     // A login without Labor has the labor figures stripped (access.redact_grid):
     // no column of dashes that reads as "not measured".
-    if((g.withheld||[]).indexOf('labor')<0)c.push({h:'Labor %',k:'labor_pct',t:'pct',g:'lab'});
+    // Hourly and with salaries side by side for the owner (owner, 10/9/26);
+    // a manager's grid has no salaries (access OWNER_ONLY_PREFIXES).
+    if((g.withheld||[]).indexOf('labor')<0){c.push({h:'Hourly labor %',k:'labor_pct',t:'pct',g:'lab'});
+      if(owner)c.push({h:'Salaries',k:'salaried_cost',t:'money',g:'lab'},{h:'Labor % with salaries',k:'salaried_total_pct',t:'pct',g:'lab',strong:1});}
     return c;
   }
   var GROUP={cat:'Sales by category',tot:'Sales',bud:'Budget',ly:'Last year',lab:'Labor',note:'The day'};

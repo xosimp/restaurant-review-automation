@@ -266,11 +266,19 @@ def _dsr_yesterday_line(night):
         hourly = night.get("labor_hourly_pct")
         # All-in for the owner, salaries included, the hourly part beside it
         # so the two figures can't be mistaken for each other (10/9/26).
-        text += f"; labor {night['labor_pct']:.1f}%" + (" with salaries" if hourly is not None else "")
+        # Every labor figure says what it counts (owner, 10/9/26): the
+        # owner's is with salaries, the hourly part beside it; anyone else's
+        # is hourly staff only and is labelled so.
+        if hourly is not None:
+            text += f"; labor with salaries {night['labor_pct']:.1f}%"
+        elif night.get("salaries_on_file", True):
+            text += f"; hourly labor {night['labor_pct']:.1f}% (salaries not included)"
+        else:
+            text += f"; labor {night['labor_pct']:.1f}%"
         if night.get("labor_target_pct") is not None:
             text += f" against a {night['labor_target_pct']:g}% target"
         if hourly is not None:
-            text += f" ({hourly:.1f}% hourly staff alone)"
+            text += f" (hourly staff alone {hourly:.1f}%)"
     text += "."
     if night.get("provisional"):
         text += " Provisional — some data was still syncing."

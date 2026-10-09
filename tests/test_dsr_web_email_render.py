@@ -261,10 +261,10 @@ def test_the_email_starting_labor_target_is_not_red():
              "detail": {"target_source": "default"}}
     p = {"business_date": "2026-09-19", "view": "owner", "facts": {"blocks": {"labor": labor}}}
     d = deliver.digest(p, SimpleNamespace(id=7, name="X", location_name=None))
-    assert [s["tone"] for s in d["stats"] if s["label"].startswith("Labor")] == ["warn"]
+    assert [s["tone"] for s in d["stats"] if "labor" in s["label"].lower()] == ["warn"]
     labor["detail"]["target_source"] = "set"
     d = deliver.digest(p, SimpleNamespace(id=7, name="X", location_name=None))
-    assert [s["tone"] for s in d["stats"] if s["label"].startswith("Labor")] == ["bad"]
+    assert [s["tone"] for s in d["stats"] if "labor" in s["label"].lower()] == ["bad"]
 
 
 def test_the_email_tomorrow_carries_its_date():

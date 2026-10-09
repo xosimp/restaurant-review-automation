@@ -41,7 +41,8 @@ LAST_YEAR_DAYS = 364                 # same weekday, 52 weeks back
 # "tax": sales tax collected, its own column (Erik, 10/5/26: "separate sales
 # tax because it all goes to 1 account") - never in net, in gross only on
 # the "everything rung" basis (block_sales.GROSS_BASES).
-_NUMERIC = ("gross", "net", "tax", "budget_gross", "budget_net", "last_year_net", "labor_cost")
+_NUMERIC = ("gross", "net", "tax", "budget_gross", "budget_net", "last_year_net", "labor_cost",
+            "salaried_cost", "salaried_total_cost")
 
 
 def _d(day):
@@ -171,6 +172,12 @@ def _totals(rows, cats):
     t["vs_last_year_net_pct"] = _pct_change(nl, ll) if both_ly else None
     t["labor_pct"] = (round(sum(r["labor_cost"] for r in both_labor) / sum(r["net"] for r in both_labor) * 100, 1)
                       if both_labor else None)
+    # The owner's labor with salaries in, over the same nights (owner,
+    # 10/9/26: hourly and with-salaries side by side by day, week and
+    # period). "salaried" keys are the owner's (access.OWNER_ONLY_PREFIXES).
+    both_all = [r for r in both_labor if r.get("salaried_total_cost") is not None]
+    t["salaried_total_pct"] = (round(sum(r["salaried_total_cost"] for r in both_all)
+                                     / sum(r["net"] for r in both_all) * 100, 1) if both_all else None)
     # A total row compares the SAME days on both sides: vs_X == net - X
     # (NS3 H6, R11). Budget and last year used to sum all seven days while
     # net summed the three measured, so mid-week read "Net $30,000, Budget
@@ -262,6 +269,13 @@ def _rows(restaurant, start, end, db_path):
     # when pay changes (models.recost_labor_history — a manager made
     # salaried leaves hourly labor), where the night's report froze it.
     recost = _recosted_labor(rid, start, end, db_path)
+    # Each night's share of the salaries: the share its report froze
+    # (labor.salaried_cost), else today's (models.salaried_day_share).
+    try:
+        from models import salaried_day_share
+        day_share = float(salaried_day_share(restaurant) or 0) or None
+    except Exception:
+        day_share = None
     from time_utils import mdy
     rows = []
     for d in days:
@@ -292,6 +306,13 @@ def _rows(restaurant, start, end, db_path):
             "labor_pct": (round(recost[d] / float(net) * 100, 1) if d in recost and net else m.get("labor.pct")),
             "weather": weather, "event": event, "influence": influence,
         }
+        sal = m.get("labor.salaried_cost") if m.get("labor.salaried_cost") else day_share
+        if row["labor_cost"] is not None and sal:
+            row["salaried_cost"] = round(sal, 2)
+            row["salaried_total_cost"] = round(row["labor_cost"] + sal, 2)
+            row["salaried_total_pct"] = round(row["salaried_total_cost"] / float(net) * 100, 1) if net else None
+        else:
+            row["salaried_cost"] = row["salaried_total_cost"] = row["salaried_total_pct"] = None
         row["vs_budget_net"] = _diff(net, row["budget_net"])
         row["vs_budget_net_pct"] = _pct_change(net, row["budget_net"])
         row["vs_last_year_net"] = _diff(net, ly)

@@ -83,7 +83,7 @@ final class DSRReadabilityTests: XCTestCase {
         let owner = try JSONDecoder.cavnar.decode(DSRWeekResponse.self,
                                                   from: JSONSerialization.data(withJSONObject: all["owner"]!)).week
         let compact = DSRWeekTable(grid: owner).compact()
-        XCTAssertEqual(compact.columns.map(\.title), ["Net", "vs last yr", "vs budget", "Labor %"])
+        XCTAssertEqual(compact.columns.map(\.title), ["Net", "vs last yr", "vs budget", "Hourly %"])
         XCTAssertTrue(compact.rows.allSatisfy { $0.cells.count == compact.columns.count })
         XCTAssertEqual(compact.rows.count, DSRWeekTable(grid: owner).rows.count)
     }

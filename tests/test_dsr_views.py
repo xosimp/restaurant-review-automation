@@ -261,14 +261,17 @@ def test_the_week_workbook_is_the_grid_s_layout(db):
     header = [cells[f"{xlsx.col_letter(i)}2"][0] for i in range(len(xlsx.columns(grid)) + 4)]
     assert header == ["Day", "Food", "Liquor", "Beer", "Wine", "Retail", "NA Beverage", "Gross", "Net", "Sales tax",
                       "Budget gross", "Budget net", "vs Budget", "vs Budget %", "Last year", "vs LY", "vs LY %",
-                      "Labor %", "Weather", "Event", "Influence"]
+                      "Hourly labor %", "Salaries", "Labor % with salaries", "Weather", "Event", "Influence"]
     col = {h: xlsx.col_letter(i) for i, h in enumerate(header)}
     assert cells["A3"][0] == "Wed 9/16/26" and cells["A9"][0] == "Tue 9/22/26"
     assert cells[col["Net"] + "3"] == (5000.0, xlsx.STYLES["money"])
     assert cells[col["Budget net"] + "3"] == (5200.0, xlsx.STYLES["money"])
     assert cells[col["vs Budget"] + "3"] == (-200.0, xlsx.STYLES["delta"])
     assert cells[col["vs Budget %"] + "3"] == (-0.038, xlsx.STYLES["pct"])
-    assert cells[col["Labor %"] + "3"] == (0.28, xlsx.STYLES["pct"])
+    assert cells[col["Hourly labor %"] + "3"] == (0.28, xlsx.STYLES["pct"])
+    # With salaries in (owner, 10/9/26): never below the hourly figure.
+    ws = cells.get(col["Labor % with salaries"] + "3")
+    assert ws is None or ws[0] >= 0.28
     assert col["Net"] + "4" not in cells                             # Thursday wasn't measured: empty
     assert cells["A10"] == ("Week total", xlsx.STYLES["bold"])
     assert cells[col["Net"] + "10"] == (5000.0, xlsx.STYLES["money_bold"])
@@ -286,6 +289,7 @@ def test_the_manager_workbook_has_no_budget(db):
     header = [v for ref, (v, _st) in cells.items() if ref[1:] == "2"]
     assert header[:1] == ["Day"] and "Net" in header and "Last year" in header
     assert not [h for h in header if "Budget" in h]
+    assert not [h for h in header if "salar" in h.lower()]          # salaries are the owner's
     assert 5200.0 not in {v for v, _st in cells.values()} and 5500.0 not in {v for v, _st in cells.values()}
 
 
@@ -471,3 +475,24 @@ def test_sales_tax_is_its_own_column_summed_over_the_week():
     assert t["tax"] == 28.5 and t["tax_days"] == 2, "an unmeasured night is left out, never $0"
     heads = [h for h, _k, _t in xlsx.columns({"categories": [], "withheld": []})]
     assert heads[heads.index("Net") + 1] == "Sales tax"
+
+
+def test_the_week_shows_hourly_and_with_salaries_side_by_side_for_the_owner_only(db):
+    # Owner, 10/9/26: Erik wants hourly labor and labor with salaries by day,
+    # week and period. Each night carries its share of the salaries; the
+    # totals are over the same nights; a manager's grid has neither.
+    from dsr import access
+    from models import update_restaurant, get_restaurant
+    r = _ejs(db)
+    update_restaurant(r.id, {"salaried_staff_json": '[{"name": "Erik Baylis", "annual": 72800}]'}, db_path=db)
+    r = get_restaurant(r.id, db_path=db)
+    _night(db, r.id, WED, 5000.0, 5300.0, {"Food": 5000.0})
+    g = rollup.week(r, WED)
+    wed = [d for d in g["days"] if d["date"] == WED.isoformat()][0]
+    if wed["labor_cost"] is not None:
+        assert wed["salaried_total_cost"] == round(wed["labor_cost"] + wed["salaried_cost"], 2)
+        assert wed["salaried_total_pct"] >= wed["labor_pct"]
+        assert g["totals"]["salaried_total_pct"] == wed["salaried_total_pct"]
+    mgr = access.redact_grid(g, {"role": "manager"})
+    assert not [k for d in mgr["days"] for k in d if k.startswith("salaried")]
+    assert not [k for k in mgr["totals"] if k.startswith("salaried")]

@@ -208,7 +208,9 @@ def columns(grid):
     cols += [("Last year", "last_year_net", "money"), ("vs LY", "vs_last_year_net", "delta"),
              ("vs LY %", "vs_last_year_net_pct", "pct")]
     if "labor" not in withheld:
-        cols += [("Labor %", "labor_pct", "pct")]
+        cols += [("Hourly labor %", "labor_pct", "pct")]
+        if owner:
+            cols += [("Salaries", "salaried_cost", "money"), ("Labor % with salaries", "salaried_total_pct", "pct")]
     return cols
 
 

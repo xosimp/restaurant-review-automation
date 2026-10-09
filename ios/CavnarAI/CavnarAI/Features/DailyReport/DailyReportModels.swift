@@ -1141,6 +1141,8 @@ struct DSRGridDay: Decodable, Identifiable {
     let lastYearSource: String?
     let laborCost: Double?
     let laborPct: Double?
+    /// The owner's labor with salaries in (10/9/26); absent for a manager.
+    let salariedTotalPct: Double?
     let weather: String?
     let event: String?
     let influence: String?
@@ -1157,6 +1159,7 @@ struct DSRGridDay: Decodable, Identifiable {
         case lastYearSource = "last_year_source"
         case laborCost = "labor_cost"
         case laborPct = "labor_pct"
+        case salariedTotalPct = "salaried_total_pct"
         case vsBudgetNetPct = "vs_budget_net_pct"
         case vsLastYearNetPct = "vs_last_year_net_pct"
     }
@@ -1178,6 +1181,7 @@ struct DSRGridDay: Decodable, Identifiable {
         lastYearSource = try c.decodeIfPresent(String.self, forKey: .lastYearSource)
         laborCost = try c.decodeIfPresent(Double.self, forKey: .laborCost)
         laborPct = try c.decodeIfPresent(Double.self, forKey: .laborPct)
+        salariedTotalPct = try c.decodeIfPresent(Double.self, forKey: .salariedTotalPct)
         weather = try c.decodeIfPresent(String.self, forKey: .weather)
         event = try c.decodeIfPresent(String.self, forKey: .event)
         influence = try c.decodeIfPresent(String.self, forKey: .influence)
@@ -1215,6 +1219,8 @@ struct DSRGridTotals: Decodable {
     let lastYearNet: Double?
     let laborCost: Double?
     let laborPct: Double?
+    /// The owner's labor with salaries in (10/9/26); absent for a manager.
+    let salariedTotalPct: Double?
     let cats: [String: Double?]
     let daysMeasured: Int?
     let vsBudgetNetPct: Double?
@@ -1229,6 +1235,7 @@ struct DSRGridTotals: Decodable {
         case lastYearNet = "last_year_net"
         case laborCost = "labor_cost"
         case laborPct = "labor_pct"
+        case salariedTotalPct = "salaried_total_pct"
         case daysMeasured = "days_measured"
         case vsBudgetNetPct = "vs_budget_net_pct"
         case vsLastYearNetPct = "vs_last_year_net_pct"
@@ -1243,6 +1250,7 @@ struct DSRGridTotals: Decodable {
         lastYearNet = try c.decodeIfPresent(Double.self, forKey: .lastYearNet)
         laborCost = try c.decodeIfPresent(Double.self, forKey: .laborCost)
         laborPct = try c.decodeIfPresent(Double.self, forKey: .laborPct)
+        salariedTotalPct = try c.decodeIfPresent(Double.self, forKey: .salariedTotalPct)
         cats = (try c.decodeIfPresent([String: Double?].self, forKey: .cats)) ?? [:]
         daysMeasured = try c.decodeIfPresent(Int.self, forKey: .daysMeasured)
         vsBudgetNetPct = try c.decodeIfPresent(Double.self, forKey: .vsBudgetNetPct)

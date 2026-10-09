@@ -293,8 +293,20 @@ def last_night(restaurant_id, today, user=None, db_path=None):
             "labor_pct": (lm["salaried_total_pct"] if _num(lm.get("salaried_total_pct"))
                           else lm.get("pct") if _num(lm.get("pct")) else None),
             "labor_hourly_pct": lm.get("pct") if _num(lm.get("pct")) and _num(lm.get("salaried_total_pct")) else None,
+            # Whether anyone is salaried here: with nobody salaried, hourly
+            # labor IS the labor and is not labelled as missing salaries.
+            "salaries_on_file": _salaries_on_file(restaurant_id, db_path),
             "labor_target_pct": lm.get("target_pct") if _num(lm.get("target_pct")) else None,
             "missing": facts.get("missing") or []}
+
+
+def _salaries_on_file(restaurant_id, db_path=None) -> bool:
+    try:
+        from models import get_restaurant, salaried_staff
+        r = get_restaurant(restaurant_id, db_path) if db_path else get_restaurant(restaurant_id)
+        return bool(salaried_staff(r)) if r else False
+    except Exception:
+        return True
 
 
 # How many of the report's unanswered priorities the morning brief carries.
