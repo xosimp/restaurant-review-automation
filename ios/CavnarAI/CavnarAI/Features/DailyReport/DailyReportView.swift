@@ -3,13 +3,15 @@ import SwiftUI
 /// One night's Daily Sales Report — pushed from Home's "Last night" card,
 /// the list of nights, or a tapped `dsr` push.
 ///
-/// Read top to bottom in under two minutes: the morning read, what went
-/// well and what needs attention, the call-outs, tomorrow's actions — then
-/// each block of the night as a card that shows one headline line
-/// collapsed and its detail on tap, ending on the manager's close-out in
-/// their own words. While the night is still being built the stage list
-/// ticks through (polling /status every 5s); Close day starts it now, and
-/// the owner can re-run a finished night.
+/// "Web explains. iPhone decides." (iOS readability round, 10/8/26): the
+/// score, then the one thing to do, then the night in one sentence with
+/// the rest a tap away; the remaining priorities, the day after, four key
+/// numbers, and each block of the night as a card that shows one line
+/// collapsed and its detail on tap. While the night is still being built
+/// the stage list ticks through (polling /status every 5s); Close day
+/// starts it now, and the owner can re-run a finished night. Previous /
+/// next night and Share sit in thumb reach at the bottom, and a sideways
+/// swipe moves between nights.
 ///
 /// Renders only what the payload has: a block the login may not read isn't
 /// in it, an owner-only line isn't either, and a null figure is a dash.
@@ -37,6 +39,8 @@ struct DailyReportView: View {
     @State private var mapping: DSRBlock.Unmapped?
     @State private var showingSettings = false
     @State private var clock = CavnarEntranceClock()
+    /// The hour chart's scrub, so a drag along it never swipes the night.
+    @State private var scrub = DSRScrubState()
 
     init(date: String?, follow: DSRFollow? = nil) {
         _viewModel = State(initialValue: DailyReportViewModel(businessDate: date, follow: follow))
@@ -48,7 +52,7 @@ struct DailyReportView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: CavnarSpace.m) {
                 header
                 if viewModel.isLoading && viewModel.report == nil && viewModel.checklist == nil {
                     loadingCard
@@ -65,13 +69,19 @@ struct DailyReportView: View {
                     if let report = viewModel.report { reportBody(report) }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-            .padding(.bottom, 80)
+            .padding(.horizontal, CavnarSpace.gutter)
+            .padding(.top, CavnarSpace.xs)
+            .padding(.bottom, CavnarSpace.xl)
             // The night reads as one column on an iPad (#99).
             .cavnarReadableWidth()
         }
+        .environment(scrub)
+        // A sideways swipe moves between nights (10/8/26). Simultaneous, so
+        // the page still scrolls; never from the screen's left edge (the
+        // back swipe) nor while the hour chart is being scrubbed.
+        .simultaneousGesture(nightSwipe)
         .cavnarEmberRefreshable { await viewModel.load() }
+        .cavnarPinnedBar { nightBar }
         .cavnarModuleBackground()
         .navigationTitle("Daily report")
         .navigationBarTitleDisplayMode(.inline)
@@ -103,6 +113,19 @@ struct DailyReportView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("The week")
+            }
+            // Versions, how the day was closed and Re-run — what the header
+            // used to carry (10/8/26).
+            if hasMoreMenu {
+                cavnarToolbarItem(placement: .topBarTrailing) {
+                    Menu { moreMenu } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarToolbarIconGlass()
+                    }
+                    .accessibilityLabel("More about this night")
+                }
             }
         }
         .cavnarEmberBackButton()
@@ -139,24 +162,27 @@ struct DailyReportView: View {
 
     // MARK: - Header
 
+    /// The night's name, its fiscal week, and a status only when the night
+    /// is not Final (10/8/26: no kicker repeating the screen's title; the
+    /// version and how the day was closed are in the toolbar's "…").
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            DSRKicker(text: "Daily sales report")
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
             title
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+                .accessibilityAddTraits(.isHeader)
             if let fiscal = viewModel.report?.fiscal?.label ?? viewModel.report?.facts.fiscal?.label {
-                HomeMixedText.make(fiscal, size: 14, color: .cavnarInk3)
+                HomeMixedText.make(fiscal, role: .secondary)
             }
-            HStack(spacing: 10) {
-                if viewModel.report != nil || viewModel.checklist != nil || viewModel.runStarted {
-                    DSRStatusPill(phase: viewModel.phase)
-                }
-                versionControl
-                if let closed = closedByLine {
-                    Text(closed).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3).lineLimit(1)
-                }
+            if showsStatus {
+                DSRStatusPill(phase: viewModel.phase)
+                    .padding(.top, CavnarSpace.xxs)
             }
-            dayStepper
         }
+    }
+
+    private var showsStatus: Bool {
+        (viewModel.report != nil || viewModel.checklist != nil || viewModel.runStarted) && viewModel.phase != .final
     }
 
     /// The night before or after `iso` — nil for a night after `today` (on
@@ -173,49 +199,75 @@ struct DailyReportView: View {
         return out > today ? nil : out
     }
 
-    /// Previous / next night in place, and the report as text to send to a
-    /// partner (friction audit #50, U3-15) — comparing Friday with Saturday
-    /// was back, list, row; sharing was a screenshot.
-    @ViewBuilder
-    private var dayStepper: some View {
+    /// The nights either side of the one on screen.
+    private var neighbours: (previous: String?, next: String?) {
         let today = CavnarDate.isoDay(Date(), in: RestaurantClock.timeZone)
         let current = viewModel.report?.businessDate ?? viewModel.businessDate
-        let previous = Self.adjacentNight(current, by: -1, today: today)
-        let next = Self.adjacentNight(current, by: 1, today: today)
-        HStack(spacing: 8) {
-            stepButton("Previous night", systemImage: "chevron.left", to: previous)
-            stepButton("Next night", systemImage: "chevron.right", to: next)
-            Spacer(minLength: 0)
-            if let text = shareText {
-                ShareLink(item: text) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-            }
-        }
+        return (Self.adjacentNight(current, by: -1, today: today), Self.adjacentNight(current, by: 1, today: today))
     }
 
-    private func stepButton(_ label: String, systemImage: String, to date: String?) -> some View {
+    /// Previous / next night and the report as text to send to a partner
+    /// (friction audit #50, U3-15), pinned in thumb reach (10/8/26).
+    @ViewBuilder
+    private var nightBar: some View {
+        let n = neighbours
+        stepButton(n.previous, forward: false)
+        Spacer(minLength: 0)
+        if let text = shareText {
+            ShareLink(item: text) {
+                Label("Share", systemImage: "square.and.arrow.up")
+                    .font(.cavnarBody(CavnarType.body, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarHitTarget()
+            }
+        }
+        Spacer(minLength: 0)
+        stepButton(n.next, forward: true)
+    }
+
+    private func stepButton(_ date: String?, forward: Bool) -> some View {
         Button {
-            guard let date else { return }
-            Haptic.selection()
-            expanded = ["sales"]
-            viewModel = DailyReportViewModel(businessDate: date)
-            Task { await viewModel.load() }
+            go(to: date)
         } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(date == nil ? Color.cavnarInk3.opacity(0.4) : Color.cavnarEmber2)
-                .frame(width: 44, height: 44)
-                .background(Color.cavnarEmber.opacity(date == nil ? 0.04 : 0.12), in: Circle().inset(by: 5))
-                .contentShape(Rectangle())
+            HStack(spacing: CavnarSpace.xxs) {
+                if !forward { Image(systemName: "chevron.left").font(.cavnar(.secondary)) }
+                Text(date.flatMap { DSRFormat.weekday($0) } ?? (forward ? "Next" : "Previous"))
+                    .font(.cavnarBody(CavnarType.body, weight: 700))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                if forward { Image(systemName: "chevron.right").font(.cavnar(.secondary)) }
+            }
+            .foregroundStyle(Color.cavnarEmber2)
+            .cavnarHitTarget()
         }
         .buttonStyle(.plain)
+        // No night after tonight: the control isn't there (a dimmed label
+        // would be Ink3 on a button).
+        .opacity(date == nil ? 0 : 1)
         .disabled(date == nil)
-        .accessibilityLabel(label)
+        .accessibilityHidden(date == nil)
+        .accessibilityLabel(forward ? "Next night" : "Previous night")
+    }
+
+    private func go(to date: String?) {
+        guard let date else { return }
+        Haptic.selection()
+        expanded = []
+        showingAllKPIs = false
+        showingAllPriorities = false
+        viewModel = DailyReportViewModel(businessDate: date)
+        Task { await viewModel.load() }
+    }
+
+    private var nightSwipe: some Gesture {
+        DragGesture(minimumDistance: 30, coordinateSpace: .global)
+            .onEnded { v in
+                guard !scrub.recentlyScrubbed, v.startLocation.x > 32 else { return }
+                let dx = v.translation.width, dy = v.translation.height
+                guard abs(dx) > 90, abs(dx) > abs(dy) * 2 else { return }
+                let n = neighbours
+                go(to: dx < 0 ? n.next : n.previous)
+            }
     }
 
     /// The night as text: the date, the morning read, what went well and
@@ -239,51 +291,69 @@ struct DailyReportView: View {
         return lines.count > 1 ? lines.joined(separator: "\n") : nil
     }
 
-    /// "Tuesday 9/22/26" — the weekday in Clash, the date in the number face.
+    /// "Tuesday 9/22/26" — the weekday in Clash, the date in the number face,
+    /// both at the Title role.
     private var title: Text {
+        let dateFont = Font.cavnarNumber(CavnarText.title.size, weight: 600, relativeTo: CavnarText.title.textStyle)
         guard let date = viewModel.businessDate else {
-            return Text(viewModel.displayDate).font(.cavnarHeadline(27)).foregroundStyle(Color.cavnarInk)
+            return Text(viewModel.displayDate).font(.cavnar(.title)).foregroundColor(.cavnarInk)
         }
         let weekday = DSRFormat.weekday(date).map { "\($0) " } ?? ""
-        return Text(weekday).font(.cavnarHeadline(27)).foregroundStyle(Color.cavnarInk)
-            + Text(viewModel.displayDate).font(.cavnarNumber(26, weight: 600)).foregroundStyle(Color.cavnarInk)
+        return Text(weekday).font(.cavnar(.title)).foregroundColor(.cavnarInk)
+            + Text(viewModel.displayDate).font(dateFont).foregroundColor(.cavnarInk)
     }
 
+    /// How the day was closed, in an owner's words.
     private var closedByLine: String? {
         switch viewModel.checklist?.closedBy ?? viewModel.report?.checklist?.closedBy {
         // dsr.pipeline's closed_by: pos / close_time / manual / deadline.
-        case "pos": return "Closed by the POS"
+        case "pos": return "Closed when the register closed"
         case "manual": return "Closed by hand"
         case "close_time": return "Closed at closing time"
-        case "deadline": return "Closed at the deadline"
+        case "deadline": return "Closed at the report deadline"
         default: return nil
         }
     }
 
+    private var hasMoreMenu: Bool {
+        (viewModel.report?.versions.count ?? 0) > 1 || closedByLine != nil || viewModel.canRerun
+    }
+
+    /// "Latest, built 9/23/26 · 7:10am · Final" — never "Version 2 of 3".
+    private func versionLabel(_ v: DSRVersion, latest: Int) -> String {
+        let built = v.createdAt.map { CavnarDate.mdyTimeLocal($0, in: RestaurantClock.timeZone) }
+        let which = v.version == latest ? "Latest" : "Earlier"
+        return which + (built.map { ", built \($0)" } ?? "") + " \u{00B7} " + v.phase.label
+    }
+
     @ViewBuilder
-    private var versionControl: some View {
+    private var moreMenu: some View {
         if let report = viewModel.report, report.versions.count > 1 {
-            let showing = viewModel.selectedVersion ?? report.versions.map(\.version).max() ?? report.version ?? 1
-            Menu {
+            let latest = report.versions.map(\.version).max() ?? report.version ?? 1
+            let showing = viewModel.selectedVersion ?? latest
+            Section("Versions of this night") {
                 ForEach(report.versions.sorted { $0.version > $1.version }) { v in
                     Button {
                         Task { await viewModel.selectVersion(v.version) }
                     } label: {
                         if v.version == showing {
-                            Label("Version \(v.version) · \(v.phase.label)", systemImage: "checkmark")
+                            Label(versionLabel(v, latest: latest), systemImage: "checkmark")
                         } else {
-                            Text("Version \(v.version) · \(v.phase.label)")
+                            Text(versionLabel(v, latest: latest))
                         }
                     }
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    HomeMixedText.make("Version \(showing) of \(report.versions.count)", size: 12.5, weight: 700,
-                                       color: .cavnarEmber2)
-                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.cavnarEmber2)
-                }
             }
-            .accessibilityLabel("Version \(showing) of \(report.versions.count). Choose a version")
+        }
+        if let closed = closedByLine {
+            Section { Text(closed) }
+        }
+        if viewModel.canRerun {
+            Button {
+                confirmingRerun = true
+            } label: {
+                Label("Re-run this night", systemImage: "arrow.clockwise")
+            }
         }
     }
 
@@ -298,8 +368,8 @@ struct DailyReportView: View {
     }
 
     private func errorCard(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(message).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            Text(message).cavnarText(.body, color: .cavnarRedText)
             Button("Try again") { Task { await viewModel.load() } }
                 .buttonStyle(CavnarSecondaryButtonStyle())
         }
@@ -307,19 +377,17 @@ struct DailyReportView: View {
     }
 
     private var progressCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DSRKicker(text: viewModel.isStarting ? "Starting" : "Building the report")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker(viewModel.isStarting ? "Starting" : "Building the report")
             Text((viewModel.isStarting ? nil : viewModel.checklist?.statusLabel) ?? "Starting the night")
-                .font(.cavnarHeadline(19))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.headline)
                 .fixedSize(horizontal: false, vertical: true)
             // While a re-run's new version hasn't appeared, the stage list
             // on hand is the finished one's — not what is running.
             DSRProgressChecklist(checklist: viewModel.isStarting ? nil : viewModel.checklist,
                                  starting: viewModel.isStarting)
             if viewModel.pollGaveUp {
-                Text("Still going. Pull down to check again.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                Text("Still going. Pull down to check again.").cavnarText(.secondary)
             }
             closeDayControl
         }
@@ -327,13 +395,11 @@ struct DailyReportView: View {
     }
 
     private var nothingYetCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             Text(viewModel.businessDate == nil ? "No daily reports yet" : "Nothing for \(viewModel.displayDate) yet")
-                .font(.cavnarHeadline(19))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.headline)
             Text("The report builds itself after close. Close the day to build it now.")
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
             closeDayControl
         }
@@ -356,7 +422,7 @@ struct DailyReportView: View {
             .disabled(viewModel.isSubmitting)
         }
         if let error = viewModel.actionError {
-            Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+            Text(error).cavnarText(.secondary, color: .cavnarRedText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -365,20 +431,20 @@ struct DailyReportView: View {
 
     @ViewBuilder
     private func reportBody(_ report: DSRReport) -> some View {
+        let actions = report.narrative?.actionsTomorrow ?? []
         if !report.facts.missing.isEmpty {
-            CavnarCaveat(title: report.phase == .provisional ? "Provisional — still missing" : "Still missing",
-                         detail: report.facts.missing.joined(separator: " "))
+            CavnarCaveat(title: "Still missing", detail: report.facts.missing.joined(separator: " "))
         }
-        // SCORE FIRST (owner decision 9/25/26, density #2; DESIGN_SYSTEM.md
-        // §12): the score card is the hero — verdict, score, net and net
-        // against budget — then the summary in a few sentences, 3 wins and
-        // 3 risks, the top 3 of tomorrow's priorities, tomorrow, 4–6 KPIs
-        // with the rest behind "All KPIs", then the blocks (closed) and how
-        // the night was built. A manager's view has no scorecard: the
-        // operations summary leads, then the shift, the priorities, and
-        // the numbers.
+        // SCORE FIRST (owner decision 9/25/26; DESIGN_SYSTEM.md §12), then
+        // the one thing to do (10/8/26), then the summary — its first
+        // sentence, the rest a tap away — and the night's risks and wins in
+        // one card, the remaining priorities, the day after, four KPIs, the
+        // blocks (closed) and how the night was checked. A manager's view
+        // has no scorecard: the operations summary leads, then the shift,
+        // the one thing, the priorities, and the numbers.
         if let card = report.scorecard {
             DSRScorecardCard(card: card, sales: report.facts.blocks["sales"])
+            if let first = actions.first { DSRDoThisToday(action: first) }
         }
         leadCard(report)
         if let card = report.scorecard {
@@ -387,70 +453,75 @@ struct DailyReportView: View {
         if !report.isOwnerView, let shift = report.shift {
             DSRShiftCard(shift: shift, dayName: DSRFormat.weekday(report.businessDate))
         }
-        if report.scorecard == nil, let n = report.narrative {
-            if !n.wentWell.isEmpty {
-                titledCard("Went well") { DSRLineList(lines: n.wentWell, dot: .cavnarGreen) }
-            }
-            if !n.needsAttention.isEmpty {
-                titledCard("Needs attention") { DSRLineList(lines: n.needsAttention, dot: .cavnarAmber) }
+        if report.scorecard == nil {
+            if let first = actions.first { DSRDoThisToday(action: first) }
+            if let n = report.narrative, !(n.wentWell.isEmpty && n.needsAttention.isEmpty) {
+                DSRWinsRisksCard(riskTitle: "Needs attention", risks: n.needsAttention.map(\.text),
+                                 winTitle: "Went well", wins: n.wentWell.map(\.text))
             }
         }
-        if let n = report.narrative { narrativeSections(n, report: report) }
+        if let n = report.narrative { priorities(n, report: report) }
         if let t = report.tomorrow {
-            DSRTomorrowCard(tomorrow: t, recommendation: staffingRecommendation(report.narrative))
+            DSRTomorrowCard(tomorrow: t, staffingPointer: staffingPointer(report))
             // The day after's labor % and the week's overtime, while the
             // schedule can still change (parity audit #33).
             DSRTomorrowLaborCard(tomorrow: t, isOwner: report.isOwnerView)
         }
 
-        // 4–6 KPIs (the owner's `kpis_headline`: without the score's four
+        // Four KPIs (the owner's `kpis_headline`: without the score's four
         // components), every KPI behind "All KPIs" — for a manager, labor
         // against target leads (it is in `kpis`), then Operations.
         let split = Self.kpiSplit(top: report.topKPIs, all: report.kpis, showingAll: showingAllKPIs)
-        DSRKPIGrid(kicker: "Top KPIs", title: "The numbers, with direction", kpis: split.shown)
+        DSRKPIGrid(title: "Key numbers", kpis: split.shown)
         if split.hidden > 0 || showingAllKPIs {
-            disclosureButton(showingAllKPIs ? "Top KPIs only" : "All KPIs (\(report.kpis.count))",
+            disclosureButton(showingAllKPIs ? "Key numbers only" : "All numbers (\(report.kpis.count))",
                              open: showingAllKPIs) { showingAllKPIs.toggle() }
         }
         if !report.isOwnerView {
-            DSRKPIGrid(kicker: "Service", title: "Operations", kpis: report.operations)
+            DSRKPIGrid(title: "Operations", kpis: report.operations)
         }
         DSRInsightsGrid(insights: report.insights)
 
-        if !report.displayedBlocks.isEmpty {
-            HomeSectionHeader(kicker: "The night", title: "Block by block")
-                .padding(.top, 8)
-            ForEach(Array(report.displayedBlocks.enumerated()), id: \.element.name) { index, entry in
+        // Each measured block as a card; a block the night has no row for
+        // is one caption line, not a card of its own (10/8/26).
+        let blocks = report.displayedBlocks.filter { $0.block != DSRBlock.notCollected }
+        if !blocks.isEmpty {
+            DSRSectionTitle(title: "The night, block by block")
+            ForEach(Array(blocks.enumerated()), id: \.element.name) { index, entry in
                 blockCard(entry.name, entry.block)
                     .cavnarRowEntrance(index: index, clock: clock)
             }
         }
-
-        if let y = report.yesterday, !y.items.isEmpty {
-            DSRYesterdayCard(yesterday: y)
-        }
-        // How the night was built: the verification footer (kept of
-        // checked, dropped, estimates counted apart) sits with the blocks
-        // it describes now, not between Tomorrow and the numbers.
-        if let footer = report.narrative?.verification?.footer {
-            HomeMixedText.make(footer, size: 12, color: .cavnarInk3)
+        if !report.notCollectedTitles.isEmpty {
+            HomeMixedText.make("Not collected this night: \(DSRText.list(report.notCollectedTitles))",
+                               role: .caption, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+
+        // How far to trust it: yesterday's calls graded, and the summary's
+        // check against the night's facts — a line and a chip, each opening
+        // its detail (10/8/26).
+        if let y = report.yesterday, !y.items.isEmpty {
+            DSRYesterdayLine(yesterday: y)
+        }
+        if let v = report.narrative?.verification, !v.ownerLines.isEmpty {
+            DSRVerificationChip(verification: v)
         }
         // A block this login's view leaves out is SAID, not silently
         // missing — "withheld" is not "absent" (D3-13).
         if let line = report.withheldLine {
             Text(line)
-                .font(.cavnarBody(13))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
 
         footer(report)
     }
 
-    /// Top KPIs shown before "All KPIs" (density #2: 4–6).
-    static let kpisShown = 6
-    /// Tomorrow's priorities shown before "All priorities" (density #2).
+    /// Top KPIs shown before "All KPIs" (10/8/26: four slim tiles).
+    static let kpisShown = 4
+    /// Priorities on screen before "All priorities": the first in "Do this
+    /// today" and two in the list (density #2).
     static let prioritiesShown = 3
 
     /// The KPIs drawn, and how many more "All KPIs" would add: the top
@@ -466,48 +537,48 @@ struct DailyReportView: View {
             Haptic.light()
             withAnimation(.easeOut(duration: 0.2)) { toggle() }
         } label: {
-            HStack(spacing: 5) {
-                Text(label).font(.cavnarBody(CavnarType.secondary, weight: 700))
-                Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .bold))
+            HStack(spacing: CavnarSpace.xxs + 2) {
+                HomeMixedText.make(label, role: .label, color: .cavnarEmber2)
+                Image(systemName: "chevron.down")
+                    .font(.cavnar(.caption))
+                    .rotationEffect(.degrees(open ? 180 : 0))
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
             }
             .foregroundStyle(Color.cavnarEmber2)
+            .cavnarHitTarget()
         }
         .buttonStyle(.plain)
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
     }
 
     @ViewBuilder
     private func leadCard(_ report: DSRReport) -> some View {
         let kicker = report.isOwnerView ? "Executive summary" : "Operations summary"
         if let summary = report.narrative?.executiveSummary {
-            VStack(alignment: .leading, spacing: 10) {
-                DSRKicker(text: kicker)
-                HomeMixedText.make(summary.text, size: 16.5, weight: 500, color: .cavnarInk)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    // The night in sentences: the one DSR block that is
-                    // read, not scanned, so it follows the phone's text size
-                    // past the app's cap. The KPI tiles stay capped.
-                    .cavnarReadingSize()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cavnarCard(.ai)
+            DSRLeadCard(kicker: kicker, text: summary.text)
         } else if report.phase.isTerminal {
             Text(noSummaryLine(report))
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()
         }
     }
 
-    /// The staffing action among tomorrow's priorities, shown as Tomorrow's
-    /// "AI recommendation" (the same rule as the web).
-    private func staffingRecommendation(_ n: DSRNarrative?) -> String? {
+    /// "Staffing for Friday: see priority 2 above" — Tomorrow points at the
+    /// staffing action among the priorities, never says it a second time
+    /// (10/8/26; the web's rule). Nil when no priority is about staffing.
+    private func staffingPointer(_ report: DSRReport) -> String? {
         let words = ["staff", "schedul", "labor", "shift", "cover"]
-        return n?.actionsTomorrow.first { a in
-            let s = ((a.kind ?? "") + " " + a.text).lowercased()
-            return words.contains { s.contains($0) }
-        }?.text
+        guard let actions = report.narrative?.actionsTomorrow,
+              let i = actions.firstIndex(where: { a in
+                  let s = ((a.kind ?? "") + " " + a.text).lowercased()
+                  return words.contains { s.contains($0) }
+              }) else { return nil }
+        let day = report.tomorrow?.weekday ?? DSRFormat.weekday(report.businessDate, offset: 1)
+        let target = i == 0 ? "the first priority above" : "priority \(i + 1) above"
+        return "Staffing" + (day.map { " for \($0)" } ?? "") + ": see " + target
     }
 
     private func noSummaryLine(_ report: DSRReport) -> String {
@@ -517,106 +588,31 @@ struct DailyReportView: View {
         return "No written summary for this night. Every figure below is still measured."
     }
 
-    /// Tomorrow's priorities (the narrative's ranked actions) and the
-    /// verification footer; the lead, lists and insights render above.
+    /// The priorities after the first (which leads as "Do this today"):
+    /// two on screen, collapsed to their line, the rest one tap away.
     @ViewBuilder
-    private func narrativeSections(_ n: DSRNarrative, report: DSRReport) -> some View {
-        if !n.actionsTomorrow.isEmpty {
-            titledCard(report.scorecard?.labels["priorities"]
-                       ?? DSRFormat.weekday(report.businessDate, offset: 1).map { "\($0)'s priorities" }
-                       ?? "Next priorities") {
-                VStack(alignment: .leading, spacing: 14) {
-                    // The top 3 visible (density #2); the rest one tap away.
-                    let actions = showingAllPriorities ? n.actionsTomorrow
-                                                       : Array(n.actionsTomorrow.prefix(Self.prioritiesShown))
-                    ForEach(Array(actions.enumerated()), id: \.element.id) { i, action in
-                        HStack(alignment: .top, spacing: 12) {
-                            Text("\(i + 1)")
-                                .font(.cavnarNumber(16, weight: 700))
-                                .foregroundStyle(Color.cavnarEmber2)
-                                .frame(width: 18, alignment: .leading)
-                            VStack(alignment: .leading, spacing: 6) {
-                                HomeMixedText.make(action.text, size: 15, weight: 700, color: .cavnarInk)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                if let why = action.why {
-                                    HomeMixedText.make(why, size: 13.5, color: .cavnarInk3)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                // What another module knows against it (a
-                                // trim on a night guests complained about
-                                // service — M3's trim guard).
-                                if let caution = action.caution {
-                                    RecCautionLine(text: caution)
-                                }
-                                let chips = [action.urgencyLabel, action.effortLabel].compactMap { $0 }
-                                if !chips.isEmpty {
-                                    AccountFlowLayout(spacing: 6) {
-                                        ForEach(Array(chips.enumerated()), id: \.offset) { j, chip in
-                                            // The urgency is a status: amber for today, ink
-                                            // otherwise — never the ember (B4 L7).
-                                            AccountChip(text: chip, muted: true,
-                                                        tint: (j == 0 && action.urgencyLabel != nil)
-                                                            ? DailyReportView.urgencyTint(action.urgency) : nil)
-                                        }
-                                    }
-                                }
-                                // "Today" the cited facts didn't carry, moved
-                                // and said why (H13).
-                                if let moved = action.urgencyAdjustedLine {
-                                    HomeMixedText.make(moved + ".", size: 12.5, color: .cavnarInk3)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                // The dollars, calibrated by measured results
-                                // when the server corrected them (F6).
-                                if let dollars = action.dollarsLine {
-                                    HomeMixedText.make(dollars, size: 13, weight: 600, color: .cavnarInk2)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                // How sure, from the facts it cites (K1).
-                                if let c = action.confidence {
-                                    ConfidenceLine(confidence: c, recKey: action.answerKey,
-                                                   surface: "dsr", module: action.answerModule)
-                                }
-                                // Done / Not for us / Track, as on the web
-                                // (rec-ROI #9). An answered action keeps its
-                                // line — the report is a record — and drops
-                                // the controls.
-                                // Advice it pulls against, settled once
-                                // (memory round 9/29/26, lever_conflicts).
-                                // The report is a stored record, so the
-                                // choice shapes the next one; this one
-                                // keeps its line and shows the server's
-                                // sentence in place of the buttons.
-                                if let conflict = action.conflict, action.answered != true {
-                                    RecConflictPanel(conflict: conflict)
-                                }
-                                if action.showsAnswers, let key = action.answerKey {
-                                    RecAnswerRow(key: key, surface: "dsr", module: action.answerModule)
-                                        .padding(.top, 2)
-                                }
-                            }
-                            Spacer(minLength: 0)
-                        }
-                    }
-                    if n.actionsTomorrow.count > Self.prioritiesShown {
-                        disclosureButton(showingAllPriorities ? "Top 3 only"
-                                                              : "All \(n.actionsTomorrow.count) priorities",
-                                         open: showingAllPriorities) { showingAllPriorities.toggle() }
-                    }
+    private func priorities(_ n: DSRNarrative, report: DSRReport) -> some View {
+        let rest = Array(n.actionsTomorrow.dropFirst())
+        if !rest.isEmpty {
+            let cap = Self.prioritiesShown - 1
+            let shown = showingAllPriorities ? rest : Array(rest.prefix(cap))
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                Text(report.scorecard?.labels["priorities"]
+                     ?? DSRFormat.weekday(report.businessDate, offset: 1).map { "\($0)'s priorities" }
+                     ?? "Next priorities")
+                    .cavnarText(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(Array(shown.enumerated()), id: \.element.id) { i, action in
+                    DSRPriorityRow(number: i + 2, action: action)
+                    if i < shown.count - 1 { AccountRowDivider() }
+                }
+                if rest.count > cap {
+                    CavnarMoreToggle(hiddenCount: rest.count - cap, isExpanded: $showingAllPriorities)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard()
         }
-        // The verification footer (kept of checked, dropped, estimates
-        // counted apart) is drawn with the blocks, "how the night was built".
-    }
-
-    private func titledCard<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.cavnarHeadline(CavnarType.section)).foregroundStyle(Color.cavnarInk)
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard()
     }
 
     private func blockCard(_ name: String, _ block: DSRBlock) -> some View {
@@ -633,14 +629,14 @@ struct DailyReportView: View {
 
     @ViewBuilder
     private func footer(_ report: DSRReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // A night that couldn't finish, or finished provisional: "Try
-            // again now" for any console login, as on the web (D3-9).
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // A night that couldn't finish, or finished with data missing:
+            // "Try again now" for any console login, as on the web (D3-9).
             if viewModel.phase == .failed || viewModel.phase == .provisional {
                 closeDayControl
             }
             if let why = report.checklist?.rerun?.reason ?? viewModel.checklist?.rerun?.reason, !why.isEmpty {
-                Text(why).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                Text(why).cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if viewModel.canRerun {
@@ -656,20 +652,328 @@ struct DailyReportView: View {
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 .disabled(viewModel.isSubmitting)
                 if !showsProgress, !viewModel.canCloseDay, let error = viewModel.actionError {
-                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             NavigationLink(value: DailyReportRoute.week(date: viewModel.businessDate)) {
                 HStack(spacing: 6) {
-                    Text("See the week").font(.cavnarBody(14, weight: 700))
-                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
+                    Text("See the week").font(.cavnarBody(CavnarType.body, weight: 700))
+                    Image(systemName: "chevron.right").font(.cavnar(.caption))
                 }
                 .foregroundStyle(Color.cavnarEmber2)
+                .cavnarHitTarget()
             }
             .buttonStyle(.plain)
         }
         .padding(.top, 6)
+    }
+}
+
+// MARK: - The night's lead
+
+/// The executive summary (10/8/26, readability item 14): its first sentence
+/// is the headline; the rest shows three lines with "Read more". Only the
+/// opened text follows the phone's text size past the app's cap — the
+/// collapsed card stays in proportion with the cards around it.
+struct DSRLeadCard: View {
+    let kicker: String
+    let text: String
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Three body lines on a phone hold about this many characters.
+    static let clampAfter = 140
+
+    var body: some View {
+        let parts = DSRText.split(text)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker(kicker)
+            CavnarMixedText(parts.first, role: .lead)
+                .accessibilityAddTraits(.isHeader)
+            if let rest = parts.rest {
+                if expanded {
+                    CavnarMixedText(rest, role: .body)
+                        // The night in sentences, opened: read, not scanned,
+                        // so it follows the phone's text size past the cap.
+                        .cavnarReadingSize()
+                        .transition(reduceMotion ? .identity : .opacity)
+                } else {
+                    HomeMixedText.make(rest, role: .body)
+                        .cavnarText(.body)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if rest.count > Self.clampAfter {
+                    Button {
+                        Haptic.light()
+                        if reduceMotion { expanded.toggle() } else {
+                            withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() }
+                        }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs + 2) {
+                            Text(expanded ? "Show less" : "Read more")
+                                .font(.cavnarBody(CavnarType.body, weight: 700))
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .rotationEffect(.degrees(expanded ? 180 : 0))
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard(.ai)
+    }
+}
+
+// MARK: - Priorities
+
+/// The urgency chip and the dollars, on one line under an action.
+struct DSRActionChips: View {
+    let action: DSRAction
+
+    var body: some View {
+        if action.urgencyLabel != nil || action.dollarsLine != nil {
+            AccountFlowLayout(spacing: CavnarSpace.xs) {
+                if let urgency = action.urgencyLabel {
+                    // The urgency is a status: amber for today, ink
+                    // otherwise — never the ember (B4 L7).
+                    AccountChip(text: urgency, muted: true, tint: DailyReportView.urgencyTint(action.urgency))
+                }
+                // The dollars, calibrated by measured results when the
+                // server corrected them (F6).
+                if let dollars = action.dollarsLine {
+                    HomeMixedText.make(dollars, role: .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
+/// What a priority holds behind its tap: what another module knows against
+/// it, the urgency move, the effort, how sure, advice it pulls against, and
+/// Done / Not for us / Track.
+struct DSRActionDetail: View {
+    let action: DSRAction
+    /// The confidence line is drawn by the caller (the answer card shows
+    /// it above the fold).
+    var showsConfidence = true
+    var showsAnswers = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            // What another module knows against it (a trim on a night
+            // guests complained about service — M3's trim guard).
+            if let caution = action.caution {
+                RecCautionLine(text: caution)
+            }
+            // "Today" the cited facts didn't carry, moved (H13).
+            if let moved = action.urgencyAdjustedLine {
+                HomeMixedText.make(moved + ".", role: .caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let effort = action.effortLabel {
+                Text(effort).cavnarText(.caption, color: .cavnarInk2)
+            }
+            // How sure, from the facts it cites (K1).
+            if showsConfidence, let c = action.confidence {
+                ConfidenceLine(confidence: c, recKey: action.answerKey, surface: "dsr", module: action.answerModule)
+            }
+            // Advice it pulls against, settled once (memory round 9/29/26,
+            // lever_conflicts). The report is a stored record, so the
+            // choice shapes the next one.
+            if let conflict = action.conflict, action.answered != true {
+                RecConflictPanel(conflict: conflict)
+            }
+            // Done / Not for us / Track, as on the web (rec-ROI #9). An
+            // answered action keeps its line — the report is a record —
+            // and drops the controls.
+            if showsAnswers, action.showsAnswers, let key = action.answerKey {
+                RecAnswerRow(key: key, surface: "dsr", module: action.answerModule)
+                    .padding(.top, 2)
+            }
+        }
+    }
+}
+
+/// The first priority, right under the score (10/8/26, readability item
+/// 15): the action, its one-line why, urgency and dollars, how sure, and
+/// the answer row; the rest of its reasoning behind "See the evidence".
+struct DSRDoThisToday: View {
+    let action: DSRAction
+
+    /// "Do this today" only when it is for today — a this-week action is
+    /// "Do this first", never called today's.
+    static func kicker(_ a: DSRAction) -> String {
+        switch a.urgency?.lowercased() {
+        case "before_service", "today": return "Do this today"
+        default: return "Do this first"
+        }
+    }
+
+    private var whyRest: String? { action.why.flatMap { DSRText.split($0).rest } }
+
+    private var hasDetail: Bool {
+        whyRest != nil || action.caution != nil || action.urgencyAdjustedLine != nil
+            || action.effortLabel != nil || (action.conflict != nil && action.answered != true)
+    }
+
+    private var confidence: ConfidenceLine? {
+        action.confidence.map {
+            ConfidenceLine(confidence: $0, recKey: action.answerKey, surface: "dsr", module: action.answerModule)
+        }
+    }
+
+    var body: some View {
+        if hasDetail {
+            CavnarAnswerCard(kicker: Self.kicker(action), headline: action.text, summary: action.whyFirstSentence,
+                             confidence: confidence) {
+                actions
+            } detail: {
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                    if let rest = whyRest {
+                        CavnarMixedText(rest, role: .secondary)
+                    }
+                    DSRActionDetail(action: action, showsConfidence: false, showsAnswers: false)
+                }
+            }
+        } else {
+            CavnarAnswerCard(kicker: Self.kicker(action), headline: action.text, summary: action.whyFirstSentence,
+                             confidence: confidence) {
+                actions
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        DSRActionChips(action: action)
+        if action.showsAnswers, let key = action.answerKey {
+            RecAnswerRow(key: key, surface: "dsr", module: action.answerModule)
+        }
+    }
+}
+
+/// One of the remaining priorities (10/8/26, readability item 16):
+/// collapsed it is the action, two lines of why, the urgency and the
+/// dollars; a tap opens the rest — and the answer row, so Done / Not for
+/// us / Track stay one tap away.
+struct DSRPriorityRow: View {
+    let number: Int
+    let action: DSRAction
+    @State private var open = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            Button {
+                Haptic.light()
+                if reduceMotion { open.toggle() } else { withAnimation(.easeOut(duration: 0.22)) { open.toggle() } }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
+                    Text("\(number)")
+                        .font(.cavnar(.figureS))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(width: 20, alignment: .leading)
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        CavnarMixedText(action.text, role: .label)
+                        if let why = action.why {
+                            HomeMixedText.make(why, role: .secondary)
+                                .lineLimit(open ? nil : 2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        DSRActionChips(action: action)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .rotationEffect(.degrees(open ? 180 : 0))
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(open ? "Hides the detail" : "Shows how sure, the effort and the answers")
+            if open {
+                DSRActionDetail(action: action)
+                    .padding(.leading, 32)
+                    .transition(reduceMotion ? .identity : .opacity)
+            }
+        }
+    }
+}
+
+// MARK: - The check
+
+/// "Checked against the night's facts" — a chip that opens what the check
+/// kept and left out, in an owner's words (10/8/26: the footer sentence
+/// read like a test log).
+struct DSRVerificationChip: View {
+    let verification: DSRVerification
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            showing = true
+        } label: {
+            HStack(spacing: CavnarSpace.xs) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarGreen)
+                    .accessibilityHidden(true)
+                Text("Checked against the night\u{2019}s facts")
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, CavnarSpace.s)
+            .padding(.vertical, CavnarSpace.xs)
+            .background(Capsule().fill(Color.cavnarGreen.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Color.cavnarGreen.opacity(0.3), lineWidth: 1))
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Shows how the written summary was checked")
+        .sheet(isPresented: $showing) {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CavnarSpace.m) {
+                        Text("Before you see it, Cavnar AI checks every figure in the written summary against the night\u{2019}s own numbers. A line that doesn\u{2019}t match is left out.")
+                            .cavnarText(.body)
+                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                            ForEach(Array(verification.ownerLines.enumerated()), id: \.offset) { _, line in
+                                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
+                                    Image(systemName: "checkmark")
+                                        .font(.cavnar(.secondary))
+                                        .foregroundStyle(Color.cavnarGreen)
+                                        .accessibilityHidden(true)
+                                    CavnarMixedText(line, role: .body)
+                                }
+                            }
+                        }
+                        .cavnarCard()
+                    }
+                    .padding(CavnarSpace.gutter)
+                }
+                .accountSheetChrome("How the summary was checked")
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
     }
 }
 
@@ -713,11 +1017,10 @@ struct DSRBlockBody: View {
     private var sales: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                DSRKicker(text: "Net sales")
+                CavnarKicker("Net sales")
+                // FigureL: the score above is the screen's one FigureXL.
                 Text(DSRFormat.money(m("net")))
-                    .font(.cavnarNumber(40, weight: 600))
-                    .foregroundStyle(m("net") == nil ? Color.cavnarInk3 : Color.cavnarInk)
-                    .cavnarNumberGlow()
+                    .cavnarText(.figureL, color: m("net") == nil ? Color.cavnarInk3 : Color.cavnarInk)
                     .cavnarSensitive()
                 if let line = joined([
                     // An "all" gross the POS couldn't complete says so
@@ -729,18 +1032,19 @@ struct DSRBlockBody: View {
                     m("guests").map { "\(DSRFormat.count($0)) guests" },
                     m("avg_ticket").map { "\(DSRFormat.money($0)) avg check" },
                 ]) {
-                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk3)
+                    HomeMixedText.make(line, role: .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 // The night's target is the owner's nightly-sales goal when
                 // no budget was entered — said as their goal (M5).
                 if let goal = block.budgetGoalLabel {
-                    HomeMixedText.make(goal, size: 13.5, color: .cavnarInk3)
+                    HomeMixedText.make(goal, role: .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let budget = joined([
                     block.has("budget_net") ? "\(DSRFormat.money(m("budget_net"))) net" : nil,
                     block.has("budget_gross") ? "\(DSRFormat.money(m("budget_gross"))) gross" : nil,
                 ]) {
-                    HomeMixedText.make("Budget " + budget, size: 13.5, color: .cavnarInk3)
+                    HomeMixedText.make("Budget " + budget, role: .secondary)
                 }
             }
 
@@ -749,15 +1053,15 @@ struct DSRBlockBody: View {
                 VStack(spacing: 0) {
                     ForEach(Array(comparisons.enumerated()), id: \.offset) { i, c in
                         HStack {
-                            Text(c.label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                            Text(c.label).cavnarText(.body)
                             Spacer()
                             Text(DSRFormat.signedPct(c.pct))
-                                .font(.cavnarNumber(14, weight: 700))
+                                .font(.cavnarNumber(CavnarType.body, weight: 700))
                                 .foregroundStyle(DSRFormat.tone(c.pct))
                             Text(DSRFormat.money(c.base))
-                                .font(.cavnarNumber(14))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .frame(width: 76, alignment: .trailing)
+                                .font(.cavnarNumber(CavnarType.secondary))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .frame(width: 80, alignment: .trailing)
                         }
                         .padding(.vertical, 8)
                         .accessibilityElement(children: .combine)
@@ -768,17 +1072,17 @@ struct DSRBlockBody: View {
             // What the forecast rested on, each measured effect named — or
             // why there is no forecast comparison tonight (M5).
             if let basis = block.forecastBasis {
-                HomeMixedText.make("Forecast: " + basis, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make("Forecast: " + basis, role: .caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let reason = block.forecastMissingReason {
-                HomeMixedText.make("No forecast comparison: " + reason, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make("No forecast comparison: " + reason, role: .caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             let cats = block.categories
             if !cats.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    DSRKicker(text: "By category", tone: .cavnarInk3)
+                    CavnarKicker("By category")
                     DSRCategoryBars(categories: cats)
                 }
             }
@@ -787,43 +1091,15 @@ struct DSRBlockBody: View {
             let hours = block.hourly
             if !hours.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    DSRKicker(text: "By hour", tone: .cavnarInk3)
+                    CavnarKicker("By hour")
                     DSRHourlyBars(hours: hours)
                 }
             }
 
-            let items = block.topItems
-            if !items.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    DSRKicker(text: "Top items", tone: .cavnarInk3)
-                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                        HStack {
-                            Text(item.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2).lineLimit(1)
-                            Spacer()
-                            Text(DSRFormat.count(item.qty)).font(.cavnarNumber(14)).foregroundStyle(Color.cavnarInk3)
-                            Text(DSRFormat.money(item.net)).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                .frame(width: 76, alignment: .trailing)
-                        }
-                    }
-                }
-            }
+            itemList("Top items", block.topItems)
             // The night's slowest sellers, as the web's "Slowest" table
             // (parity audit #33).
-            let slow = block.slowestItems
-            if !slow.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    DSRKicker(text: "Slowest", tone: .cavnarInk3)
-                    ForEach(Array(slow.enumerated()), id: \.offset) { _, item in
-                        HStack {
-                            Text(item.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2).lineLimit(1)
-                            Spacer()
-                            Text(DSRFormat.count(item.qty)).font(.cavnarNumber(14)).foregroundStyle(Color.cavnarInk3)
-                            Text(DSRFormat.money(item.net)).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                .frame(width: 76, alignment: .trailing)
-                        }
-                    }
-                }
-            }
+            itemList("Slowest", block.slowestItems)
 
             // Discounts always; comps, voids and refunds only when this
             // login may see them (the server drops them otherwise).
@@ -837,8 +1113,26 @@ struct DSRBlockBody: View {
             if !loss.isEmpty { DSRTileRow(tiles: loss) }
 
             if let note = block.definitionNote {
-                HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make(note, role: .caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func itemList(_ title: String, _ items: [DSRBlock.Item]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                CavnarKicker(title)
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(item.name).cavnarText(.body).lineLimit(1)
+                        Spacer()
+                        Text(DSRFormat.count(item.qty)).font(.cavnarNumber(CavnarType.secondary)).foregroundStyle(Color.cavnarInk2)
+                        Text(DSRFormat.money(item.net)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            .frame(width: 80, alignment: .trailing)
+                    }
+                }
             }
         }
     }
@@ -854,25 +1148,25 @@ struct DSRBlockBody: View {
                 ForEach(un) { u in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(u.department).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk2)
-                                Text(u.newIn == nil ? "unmapped" : "new").font(.cavnarBody(11.5, weight: 700))
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(u.department).cavnarText(.label)
+                                Text(u.newIn == nil ? "Not in a category" : "New")
+                                    .font(.cavnarBody(CavnarType.caption, weight: 700))
                                     .foregroundStyle(Color.cavnarAmber)
                             }
-                            HomeMixedText.make(DSRCategoryMapSheet.why(u), size: 12, color: .cavnarInk3)
+                            HomeMixedText.make(DSRCategoryMapSheet.why(u), role: .caption, color: .cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 8)
-                        Text(DSRFormat.money(u.net)).font(.cavnarNumber(13.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(DSRFormat.money(u.net)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
                         if isOwner, let onMap {
                             Button {
                                 Haptic.light()
                                 onMap(u)
                             } label: {
-                                Text(u.newIn == nil ? "Map it" : "Place it").font(.cavnarBody(13.5, weight: 700))
+                                Text(u.newIn == nil ? "Map it" : "Place it").font(.cavnarBody(CavnarType.secondary, weight: 700))
                                     .foregroundStyle(Color.cavnarEmber2)
-                                    .frame(minHeight: 44)
-                                    .contentShape(Rectangle())
+                                    .cavnarHitTarget()
                             }
                             .buttonStyle(.plain)
                         }
@@ -880,7 +1174,7 @@ struct DSRBlockBody: View {
                 }
                 if let gap = block.unallocated {
                     HomeMixedText.make("\(DSRFormat.money(gap)) of net isn\u{2019}t in any department on the POS.",
-                                       size: 12.5, color: .cavnarInk3)
+                                       role: .caption, color: .cavnarInk2)
                 }
             }
         }
@@ -905,15 +1199,13 @@ struct DSRBlockBody: View {
     private var labor: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(DSRFormat.pct(m("pct")))
-                    .font(.cavnarNumber(34, weight: 600))
-                    .foregroundStyle(laborTone)
+                Text(DSRFormat.pct(m("pct"))).cavnarText(.figureL, color: laborTone)
                 if let line = joined([
                     "of net sales",
                     m("target_pct").map { "target \(DSRFormat.pct($0))" },
                     m("vs_target_pts").map { DSRFormat.signedPoints($0) },
                 ]) {
-                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk3)
+                    HomeMixedText.make(line, role: .secondary)
                 }
             }
             // The web's labor tiles, in its order and words (D3-13): After
@@ -928,7 +1220,8 @@ struct DSRBlockBody: View {
                 DSRLineList(lines: block.observations.map { DSRLine(text: $0) }, dot: .cavnarInk3)
             }
             if let note = block.coverageNote {
-                Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                Text(note).cavnarText(.caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -948,8 +1241,7 @@ struct DSRBlockBody: View {
         if let v = m("no_shows") { tiles.append(DSRStatTile(label: "No-shows", value: DSRFormat.count(v))) }
         if let v = m("late_arrivals") { tiles.append(DSRStatTile(label: "Late clock-ins", value: DSRFormat.count(v))) }
         if let v = m("shift_quality") {
-            tiles.append(DSRStatTile(label: "Shift quality", value: DSRFormat.count(v),
-                                     detail: "the published day\u{2019}s score"))
+            tiles.append(DSRStatTile(label: "Shift quality", value: DSRFormat.count(v)))
         }
         return tiles
     }
@@ -1012,48 +1304,48 @@ struct DSRBlockBody: View {
             // The % withheld under the coverage floor, and why (I11) — the
             // dash above is not a zero.
             if let note = block.foodCoverageNote {
-                HomeMixedText.make(note, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(note, role: .caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             // The cost drivers' monthly total is an opportunity, never money
             // recovered: it carries its basis, and "partial" when a source
             // was missing (NS1 #7). The renamed key is read first.
             if let line = atStakeLine {
-                HomeMixedText.make(line, size: 14, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(line, role: .body)
             }
             let stock = block.criticalStock
             if !stock.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    DSRKicker(text: "Critically low", tone: .cavnarInk3)
+                    CavnarKicker("Critically low")
                     ForEach(stock, id: \.self) { s in
-                        HStack {
-                            Text(s.item).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(s.item).cavnarText(.body)
                             Spacer()
                             Text(s.daysRemaining.map { "\(DSRFormat.count($0)) days left" } ?? DSRFormat.dash)
-                                .font(.cavnarNumber(13.5))
-                                .foregroundStyle((s.daysRemaining ?? 1) < 1 ? Color.cavnarRed : Color.cavnarAmber)
+                                .font(.cavnarNumber(CavnarType.secondary))
+                                .foregroundStyle((s.daysRemaining ?? 1) < 1 ? Color.cavnarRedText : Color.cavnarAmber)
                         }
                     }
                     if let basis = block.stockBasis {
-                        Text(basis).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                        Text(basis).cavnarText(.caption, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
             let variance = block.varianceItems
             if !variance.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    DSRKicker(text: "Usage over recipe", tone: .cavnarInk3)
+                    CavnarKicker("Usage over recipe")
                     ForEach(variance, id: \.self) { v in
-                        HStack {
+                        HStack(alignment: .firstTextBaseline) {
                             Text(v.dish.map { "\(v.ingredient) · \($0)" } ?? v.ingredient)
-                                .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                                .cavnarText(.body)
                             Spacer()
-                            Text(DSRFormat.money(v.cost)).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text(DSRFormat.money(v.cost)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
                         }
                     }
                     if let window = block.varianceWindow {
-                        HomeMixedText.make(window, size: 12, color: .cavnarInk3)
+                        HomeMixedText.make(window, role: .caption, color: .cavnarInk2)
                     }
                 }
             }
@@ -1074,14 +1366,14 @@ struct DSRBlockBody: View {
                     ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text(DSRFormat.rating(r.rating))
-                                .font(.cavnarNumber(13.5, weight: 700))
-                                .foregroundStyle((r.rating ?? 5) <= 2 ? Color.cavnarRed : Color.cavnarInk2)
-                                .frame(width: 40, alignment: .leading)
-                            Text(r.summary).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                                .font(.cavnarNumber(CavnarType.secondary, weight: 700))
+                                .foregroundStyle((r.rating ?? 5) <= 2 ? Color.cavnarRedText : Color.cavnarInk2)
+                                .frame(width: 44, alignment: .leading)
+                            Text(r.summary).cavnarText(.body)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
                             if r.urgent {
-                                Text("Urgent").font(.cavnarBody(11.5, weight: 700)).foregroundStyle(Color.cavnarRed)
+                                Text("Urgent").font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarRedText)
                             }
                         }
                         .padding(.vertical, 8)
@@ -1090,7 +1382,8 @@ struct DSRBlockBody: View {
                 }
             }
             if let note = block.syncNote {
-                Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                Text(note).cavnarText(.caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1108,18 +1401,18 @@ struct DSRBlockBody: View {
             let posts = block.posts
             if !posts.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    DSRKicker(text: "Posted", tone: .cavnarInk3)
+                    CavnarKicker("Posted")
                     ForEach(posts, id: \.self) { p in
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(p.topic).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                                Text(p.topic).cavnarText(.body)
                                 if let sub = joined([p.platform?.capitalized, p.at]) {
-                                    HomeMixedText.make(sub, size: 12, color: .cavnarInk3)
+                                    HomeMixedText.make(sub, role: .caption, color: .cavnarInk2)
                                 }
                             }
                             Spacer()
                             Text(p.reach.map { "\(DSRFormat.count($0)) reach" } ?? DSRFormat.dash)
-                                .font(.cavnarNumber(13)).foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
                         }
                     }
                 }
@@ -1127,14 +1420,13 @@ struct DSRBlockBody: View {
             let texts = block.textCampaigns
             if !texts.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    DSRKicker(text: "Texts", tone: .cavnarInk3)
+                    CavnarKicker("Texts")
                     ForEach(texts, id: \.self) { t in
                         HStack(alignment: .firstTextBaseline) {
-                            HomeMixedText.make(t.message, size: 14, color: .cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(t.message, role: .body)
                             Spacer()
                             Text(t.sent.map { "\(DSRFormat.count($0)) sent" } ?? DSRFormat.dash)
-                                .font(.cavnarNumber(13)).foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
                         }
                     }
                 }
@@ -1142,41 +1434,32 @@ struct DSRBlockBody: View {
         }
     }
 
-    // Intel
+    // Intel — one line and the game card (10/8/26).
+
+    /// "High 71° / low 58° · 20% rain · 84 covers booked · actual: light rain".
+    private var intelLine: String? {
+        joined([
+            (m("weather_high_f") == nil && m("weather_low_f") == nil) ? nil
+                : "High \(DSRFormat.degrees(m("weather_high_f"))) / low \(DSRFormat.degrees(m("weather_low_f")))",
+            m("weather_precip_pct").map { "\(DSRFormat.pct($0)) rain" },
+            m("reservations_covers").map { "\(DSRFormat.count($0)) covers booked" },
+            block.weatherObservedSummary.map { "actual: \($0)" },
+        ])
+    }
 
     private var intel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DSRTileRow(tiles: [
-                DSRStatTile(label: "High / low",
-                            value: m("weather_high_f") == nil && m("weather_low_f") == nil
-                                ? DSRFormat.dash
-                                : "\(DSRFormat.degrees(m("weather_high_f"))) / \(DSRFormat.degrees(m("weather_low_f")))"),
-                DSRStatTile(label: "Rain", value: DSRFormat.pct(m("weather_precip_pct"))),
-                DSRStatTile(label: "Covers booked", value: DSRFormat.count(m("reservations_covers"))),
-            ])
-            // The weather that happened, beside the forecast above (the
-            // nearest National Weather Service station — M5).
-            if let observed = block.weatherObservedSummary {
-                DSRTileRow(tiles: [
-                    DSRStatTile(label: "Weather (actual)", value: observed, detail: block.weatherObservedBasis,
-                                valueIsText: true),
-                ])
-            }
-            if let events = block.eventsSummary {
-                HomeMixedText.make("Events: \(events)", size: 14, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            if let line = intelLine {
+                CavnarMixedText(line, role: .body)
             }
             // Tonight's game against the last one on the same side (parity
             // audit #33, Event Intelligence phase 2).
             if let game = block.detail["game"], game.object != nil {
                 DSRGameCard(game: game)
             }
-            if let note = block.weatherNote {
-                Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+            if let note = joined([block.weatherNote, block.competitorsNote]) {
+                Text(note).cavnarText(.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            if let note = block.competitorsNote {
-                Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
             }
         }
     }
@@ -1185,21 +1468,15 @@ struct DSRBlockBody: View {
 
     private var closeout: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if block.detail["verbatim"]?.bool == true {
-                Text("In their own words, never edited.")
-                    .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
-                    .padding(.bottom, 8)
-            }
             let fields = block.closeoutFields
             if fields.isEmpty {
-                Text("Nothing was written.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text("Nothing was written.").cavnarText(.secondary)
             }
             ForEach(Array(fields.enumerated()), id: \.element.key) { i, f in
                 VStack(alignment: .leading, spacing: 4) {
-                    DSRKicker(text: f.label)
+                    CavnarKicker(f.label)
                     Text(f.text)
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.body, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }

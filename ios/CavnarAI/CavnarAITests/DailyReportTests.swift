@@ -47,7 +47,7 @@ final class DailyReportDecodingTests: XCTestCase {
         XCTAssertEqual(n.needsAttention.count, 4)
         XCTAssertEqual(n.actionsTomorrow.count, 3)
         XCTAssertEqual(n.actionsTomorrow.first?.urgencyLabel, "This week")
-        XCTAssertEqual(n.actionsTomorrow.first?.effortLabel, "low effort")
+        XCTAssertEqual(n.actionsTomorrow.first?.effortLabel, "Effort: low")
         XCTAssertEqual(n.callouts.map(\.label),
                        ["Highest priority", "Biggest risk", "Biggest win", "Staffing",
                         "Biggest opportunity \u{00B7} not captured",

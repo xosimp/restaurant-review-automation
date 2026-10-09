@@ -366,11 +366,14 @@ enum DSRHeadline {
         let parts: [String?]
         switch name {
         case "sales":
-            parts = [
-                b.metric("net").map { "Net \(DSRFormat.money($0))" },
+            // The comparisons lead (10/8/26): the score card above already
+            // carries the net, so it closes the line rather than opening it.
+            let comparisons = [
                 b.metric("vs_yesterday_pct").map { "\(DSRFormat.signedPct($0)) vs yesterday" },
                 b.metric("vs_budget_net_pct").map { "\(DSRFormat.signedPct($0)) vs budget" },
-            ]
+                b.metric("vs_last_week_pct").map { "\(DSRFormat.signedPct($0)) vs last week" },
+            ].compactMap { $0 }.prefix(2)
+            parts = comparisons.map { Optional($0) } + [b.metric("net").map { "net \(DSRFormat.money($0))" }]
         case "labor":
             parts = [
                 b.metric("pct").map { "\(DSRFormat.pct($0)) of net sales" },

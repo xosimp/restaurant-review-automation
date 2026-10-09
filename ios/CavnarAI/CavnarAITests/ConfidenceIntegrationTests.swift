@@ -286,9 +286,10 @@ final class ConfidenceIntegrationTests: XCTestCase {
                                   "why": "nothing it cites moved 10% (2 points) from what it is compared with"},
              "dollars_adjusted": 1240, "calibration_n": 6, "calibration_note": "adjusted from 6 measured results"}
             """)
-        // The web's sentence and words ("before_service" is "Today"), D3-13.
+        // The move in an owner's words (iOS readability round, 10/8/26);
+        // the web keeps its longer sentence.
         XCTAssertEqual(a.urgencyAdjustedLine,
-                       "Cavnar AI marked this Today; moved to This week because nothing it cites moved 10% (2 points) from what it is compared with")
+                       "Moved to This week \u{2014} the numbers don\u{2019}t show it\u{2019}s urgent")
         XCTAssertEqual(a.dollarsLine, "$1,240/mo · adjusted from 6 measured results")
         let plain = try decode(DSRAction.self, #"{"text": "x", "dollars_monthly": 1500, "dollars_adjusted": null, "urgency_adjusted": null}"#)
         XCTAssertNil(plain.urgencyAdjustedLine)

@@ -454,14 +454,14 @@ final class IOSFixRoundTests: XCTestCase {
             {"text": "x", "urgency": "before_service", "effort": "low", "effort_source": "model"}
             """.utf8))
         XCTAssertEqual(a.urgencyLabel, "Today")
-        XCTAssertEqual(a.effortLabel, "low effort (Cavnar AI\u{2019}s estimate)")
+        XCTAssertEqual(a.effortLabel, "Effort: low (estimate)")
     }
 
     func testAWithheldBlockIsSaidAndAMissingOneIsNotCollected() throws {
         let manager = try JSONDecoder.cavnar.decode(DSRReport.self, from: DailyReportDecodingTests.payload("manager"))
         let names = manager.displayedBlocks.map(\.name)
         XCTAssertFalse(names.contains("food"), "withheld, not missing")
-        XCTAssertEqual(manager.withheldLine?.hasPrefix("Not part of your view: Food."), true)
+        XCTAssertEqual(manager.withheldLine, "Food isn\u{2019}t part of your access. The owner chooses what managers see.")
         var obj = try JSONSerialization.jsonObject(with: DailyReportDecodingTests.payload("manager")) as! [String: Any]
         var facts = obj["facts"] as! [String: Any]
         var blocks = facts["blocks"] as! [String: Any]
