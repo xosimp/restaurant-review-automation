@@ -134,6 +134,12 @@ final class MarketingOpportunityViewModel {
     }
 }
 
+/// The feed on the phone (readability round 10/8/26): ONE card in full —
+/// the best opportunity, with its one primary — and every other card the
+/// server counts as shown as a one-line row that opens into its card in
+/// place, so a card the server logs as shown is always on screen; "Show N
+/// more" brings the rest. The facts behind a card wait behind "Details";
+/// the swipe hint is said once per device.
 struct MarketingOpportunitySection: View {
     let viewModel: MarketingOpportunityViewModel
     /// The card whose "Draft it" is drafting, if any — every other waits.
@@ -142,25 +148,39 @@ struct MarketingOpportunitySection: View {
 
     @State private var rowHeights: [String: CGFloat] = [:]
     @State private var reasonFor: MarketingOpportunity?
+    /// Cards opened from their one-line row (the first is always open).
+    @State private var openKeys: Set<String> = []
+    /// Cards whose facts are showing.
+    @State private var detailKeys: Set<String> = []
+    /// The swipe hint, said once per device (a convenience, so local).
+    @AppStorage("cavnar.marketing.swipeHintSeen") private var swipeHintSeen = false
+    @State private var showsSwipeHint = false
+
+    private func isOpen(_ card: MarketingOpportunity, index: Int) -> Bool {
+        index == 0 || openKeys.contains(card.key) || viewModel.focusedKey == card.key
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Cavnar AI found", title: "Opportunities this week")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                CavnarKicker("Cavnar AI found")
+                Text("Opportunities this week").cavnarText(.headline)
+            }
             if viewModel.isLoading && viewModel.items.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     CavnarSkeletonBar(height: 3)
                     Text("Looking for this week\u{2019}s opportunities")
-                        .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption)
                 }
             } else if let error = viewModel.loadError {
                 HStack(spacing: 10) {
-                    Text(error).font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Retry") { Task { await viewModel.load() } }
                         .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 44)
                 }
             } else if viewModel.loaded && viewModel.items.isEmpty {
                 let line = viewModel.emptyLine
@@ -169,19 +189,27 @@ struct MarketingOpportunitySection: View {
                 let cards = viewModel.shown
                 List {
                     ForEach(Array(cards.enumerated()), id: \.element.id) { i, card in
-                        cardView(card, primary: i == 0)
+                        Group {
+                            if isOpen(card, index: i) {
+                                cardView(card, primary: i == 0)
+                            } else {
+                                compactRow(card)
+                            }
+                        }
                             .cavnarReportsRowHeight(card.key, into: $rowHeights)
                             .listRowBackground(Color.clear)
                             .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                             .listRowSeparator(.hidden)
                             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                 Button {
+                                    swipeHintSeen = true
                                     Task { await viewModel.answer(card, .completed) }
                                 } label: { Label(RecAnswer.completed.label, systemImage: "checkmark") }
                                 .tint(Color.cavnarGreen)
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button {
+                                    swipeHintSeen = true
                                     reasonFor = card
                                 } label: { Label(RecAnswer.notForUs.label, systemImage: "hand.raised") }
                                 .tint(Color.cavnarInk3)
@@ -208,73 +236,137 @@ struct MarketingOpportunitySection: View {
                                  }) { reason in
                     if let card = reasonFor { Task { await viewModel.answer(card, .notForUs, reason: reason) } }
                 }
-                HStack(spacing: 12) {
-                    if viewModel.hiddenCount > 0 {
-                        Button("Show \(viewModel.hiddenCount) more") {
-                            Haptic.light()
-                            Task { await viewModel.showMore() }
+                if viewModel.hiddenCount > 0 {
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.showMore() }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs + 2) {
+                            HomeMixedText.make("Show \(viewModel.hiddenCount) more", role: .label,
+                                               color: .cavnarEmber2, numberColor: .cavnarEmber2)
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
                         }
-                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .frame(minHeight: 36)
+                        .cavnarHitTarget()
                     }
-                    if !viewModel.badSources.isEmpty {
-                        Text("Couldn\u{2019}t check \(viewModel.badSources.joined(separator: ", ")) just now.")
-                            .font(.cavnarBody(CavnarType.caption))
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
+                    .buttonStyle(.plain)
                 }
-                Text("Swipe a card right for Done, left for Not for us.")
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                if !viewModel.badSources.isEmpty {
+                    Text("Couldn\u{2019}t check \(viewModel.badSources.joined(separator: ", ")) just now.")
+                        .cavnarText(.caption)
+                }
+                if showsSwipeHint {
+                    Text("Swipe a card right for Done, left for Not for us.")
+                        .cavnarText(.caption)
+                }
             }
             if let error = viewModel.answerError {
-                Text(error).font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.caption, color: .cavnarRedText)
             }
         }
+        .onAppear {
+            // Said the first time the feed is seen on this device, then not.
+            if !swipeHintSeen {
+                showsSwipeHint = true
+                swipeHintSeen = true
+            }
+        }
+    }
+
+    /// A card the server counts as shown, folded to one line: its kind and
+    /// title; a tap opens the full card in place.
+    private func compactRow(_ card: MarketingOpportunity) -> some View {
+        Button {
+            Haptic.light()
+            viewModel.recordOpened(card.key)
+            withAnimation(.easeOut(duration: 0.2)) { _ = openKeys.insert(card.key) }
+        } label: {
+            HStack(alignment: .center, spacing: CavnarSpace.s) {
+                VStack(alignment: .leading, spacing: 2) {
+                    CavnarKicker(card.kindLabel)
+                    CavnarMixedText(card.title, role: .label)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, CavnarSpace.m)
+            .padding(.vertical, CavnarSpace.s)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(Color.cavnarPaper2)
+            .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens this opportunity")
     }
 
     private func cardView(_ card: MarketingOpportunity, primary: Bool) -> some View {
         let focused = viewModel.focusedKey == card.key
         let drafting = draftingKey == card.key
-        return VStack(alignment: .leading, spacing: 8) {
+        let hasFacts = card.stakeLine != nil || !card.facts.isEmpty
+        let showingFacts = detailKeys.contains(card.key)
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             HStack(spacing: 8) {
-                Text(card.kindLabel.uppercased())
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+                CavnarKicker(card.kindLabel)
                 if let when = card.whenLabel {
-                    Text(when).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                    HomeMixedText.make(when, role: .caption)
                 }
                 if card.rankedByResults {
                     AccountChip(text: "Ranked by your results", muted: true)
                 }
                 Spacer(minLength: 0)
             }
-            HomeMixedText.make(card.title, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarMixedText(card.title, role: .lead)
             if let why = card.why {
-                HomeMixedText.make(why, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(why, role: .secondary)
             }
-            if card.stakeLine != nil || !card.facts.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
+            // The figures behind it, behind "Details" (readability round).
+            if hasFacts {
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        if showingFacts { detailKeys.remove(card.key) } else { detailKeys.insert(card.key) }
+                    }
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs + 2) {
+                        Text(showingFacts ? "Hide details" : "Details")
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .rotationEffect(.degrees(showingFacts ? 180 : 0))
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(showingFacts ? "Expanded" : "Collapsed")
+                if showingFacts {
+                    AccountFlowLayout(spacing: 6, lineSpacing: 6) {
                         if let stake = card.stakeLine {
-                            HomeMixedText.make(stake, size: 12.5, weight: 700, color: .cavnarInk, numberColor: .cavnarInk)
+                            HomeMixedText.make(stake, role: .caption, color: .cavnarInk, numberColor: .cavnarInk)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(Capsule().fill(Color.cavnarEmber.opacity(0.16)))
                         }
                         ForEach(card.facts, id: \.self) { fact in
-                            HomeMixedText.make(fact, size: 12.5, weight: 600, color: .cavnarInk2)
+                            HomeMixedText.make(fact, role: .caption, color: .cavnarInk2)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
                                 .background(Capsule().fill(Color.white.opacity(0.05)))
                         }
                     }
                 }
-                .scrollIndicators(.hidden)
             }
             if let conflict = card.conflict {
                 RecConflictPanel(conflict: conflict) { Task { await viewModel.load(quiet: true) } }
@@ -300,7 +392,7 @@ struct MarketingOpportunitySection: View {
             .disabled(draftingKey != nil)
             .accessibilityLabel("Draft it: \(card.title)")
         }
-        .padding(14)
+        .padding(CavnarSpace.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2)
         .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card)

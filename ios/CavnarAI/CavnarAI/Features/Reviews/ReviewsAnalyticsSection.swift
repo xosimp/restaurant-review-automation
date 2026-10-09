@@ -1,9 +1,15 @@
 import SwiftUI
 
+/// Reviews → Analytics on the phone (readability round 10/8/26): Cavnar
+/// AI's read, the money the rating's move implies, the most likely cause as
+/// an answer card, the three topics guests talk about most, and how you
+/// compare. The weekly topic grid, the sentiment river and the approval
+/// rings are the web's ("Full analysis" opens it) — "Web explains. iPhone
+/// decides." The chart views stay in the project for now (candidate for
+/// future cleanup after additional verification).
 struct ReviewsAnalyticsSection: View {
     let viewModel: ReviewsAnalyticsViewModel
 
-    @State private var selectedTopic: TopicWeekRow?
     /// A review a diagnosis cites, tapped open.
     @State private var evidenceTarget: EvidenceTarget?
     /// The caveat banners behind the one-line summary (density #34).
@@ -31,15 +37,14 @@ struct ReviewsAnalyticsSection: View {
     }
 
     // Each section shows its own skeleton while it's individually still in
-    // flight rather than gating the whole page behind one spinner — the 5
+    // flight rather than gating the whole page behind one spinner — the
     // requests in ReviewsAnalyticsViewModel.load() run concurrently but are
     // awaited (and so become non-nil) in a fixed order, so e.g. the AI
-    // insight — the slowest, since it's an LLM call, unlike the plain SQL
-    // aggregates behind the other sections — used to visibly "pop in" a
-    // couple seconds after everything else had already rendered.
+    // insight — the slowest, since it's an LLM call — used to visibly "pop
+    // in" a couple seconds after everything else had already rendered.
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: CavnarSpace.l) {
                 Picker("Period", selection: Binding(
                     get: { viewModel.windowDays },
                     set: { days in
@@ -54,10 +59,9 @@ struct ReviewsAnalyticsSection: View {
                 .pickerStyle(.segmented)
 
                 // The restaurant's own read first, its money figure next,
-                // the charts, and How you compare LAST (density #34) — a
-                // peer's number before your own read the wrong way round.
-                // The up-to-four caveat banners that stood above the read
-                // are one line now, with the banners behind "Why?".
+                // the cause, the topics, and How you compare LAST (density
+                // #34) — a peer's number before your own read the wrong way
+                // round. The caveat banners are one line, behind "Why?".
                 if let line = caveatSummary {
                     Button {
                         Haptic.light()
@@ -65,17 +69,17 @@ struct ReviewsAnalyticsSection: View {
                     } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: "exclamationmark.circle")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarAmber)
                             Text(line)
-                                .font(.cavnarBody(CavnarType.caption, weight: 600))
-                                .foregroundStyle(Color.cavnarInk2)
+                                .cavnarText(.caption, color: .cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(showingCaveats ? "Hide" : "Why?")
                                 .font(.cavnarBody(CavnarType.caption, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
                             Spacer(minLength: 0)
                         }
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -110,34 +114,17 @@ struct ReviewsAnalyticsSection: View {
                 // the answer away, and could still show the caveat above
                 // referring to a passage that was not on screen.
                 if let insight = viewModel.insight, !insight.isEmpty {
-                    // The ember thread: the chart above to the read below.
-                    EmberThread().padding(.leading, 6)
                     insightCard(insight)
-                    // Next week's rating, computed from the fitted trend in
-                    // Python (H8) — tagged so it never reads as the model's.
-                    if let forecast = viewModel.ratingForecast?.line {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            HomeMixedText.make(forecast, size: 13, weight: 500, color: .cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            ClaimKindTag(kind: "forecast")
-                        }
-                    }
                     // Open complaints ranked by how serious they are rather
                     // than how many there are. Sits directly under the read
                     // because it is the same question that read is answering.
-                    // The unclassified count shows even with no tier open.
-                    if !viewModel.severityTiers.isEmpty || viewModel.unclassifiedCount > 0 {
+                    if !viewModel.severityTiers.isEmpty {
                         severityStrip(viewModel.severityTiers)
                     }
                 } else if viewModel.isLoading || viewModel.insightPending {
                     insightSkeleton
                 }
 
-                // The root-cause card. Everything above it is a snapshot —
-                // what happened and what to do next. This is the step after
-                // that, and it renders only when a diagnosis actually exists:
-                // an owner whose reviews do not yet support a cause sees
-                // nothing here, never a cause produced to fill the space.
                 // The whole restaurant's revenue range, from the move in its
                 // all-time rating — its own block, never inside a complaint's
                 // card, where it read as what that complaint costs (M-19).
@@ -146,45 +133,23 @@ struct ReviewsAnalyticsSection: View {
                    let low = m.monthlyLow, let high = m.monthlyHigh {
                     revenueBlock(low: low, high: high, m: m)
                 }
+                // The root-cause card. It renders only when a diagnosis
+                // actually exists: an owner whose reviews do not yet support
+                // a cause sees nothing here, never a cause produced to fill
+                // the space.
                 if let diagnosis = viewModel.diagnosis {
                     diagnosisCard(diagnosis)
                 }
 
-                if let performance = viewModel.performance {
-                    ResponseRingsChart(performance: performance)
-                } else if viewModel.isLoading {
-                    performanceSkeleton
-                }
-
-                // The weekly grid needs categorised reviews inside the last 8
-                // weeks; the period-total cards stay as the fallback.
-                if let topicWeeks = viewModel.topicWeeks, !topicWeeks.topics.isEmpty {
-                    TopicHeatGridChart(
-                        data: topicWeeks,
-                        trends: Dictionary(uniqueKeysWithValues: viewModel.heatmap.map { ($0.category, $0.trend) })
-                    ) { row in
-                        selectedTopic = row
-                    }
-                } else if !viewModel.heatmap.isEmpty {
-                    topicGrid
-                } else if viewModel.isLoading {
-                    topicGridSkeleton
-                }
-
-                if !viewModel.sentimentWeeks.isEmpty {
-                    SentimentRiverChart(weeks: viewModel.sentimentWeeks)
-                } else if viewModel.isLoading {
-                    trendChartSkeleton
-                }
+                // What guests talk about, three rows; the weekly grid, the
+                // sentiment river and the approvals are the web's (#60).
+                topTopics
 
                 // How you compare — the Benchmark Engine's card (#23) —
                 // after the restaurant's own read (density #34).
                 HowYouCompareCard(module: "reviews")
             }
-            .padding(20)
-        }
-        .navigationDestination(item: $selectedTopic) { topic in
-            FilteredReviewsView(title: topic.label, category: topic.category)
+            .padding(CavnarSpace.gutter)
         }
         .navigationDestination(item: $evidenceTarget) { target in
             ReviewByIdView(reviewID: target.reviewID, category: target.category)
@@ -194,111 +159,123 @@ struct ReviewsAnalyticsSection: View {
     // MARK: - The AI read
 
     /// The endpoint writes 3-4 prefixed lines (📊 this week / ⚠️ watch /
-    /// ✅ do today / 🔮 next week). Each becomes its own row with a symbol,
-    /// and the forecast gets a separate tinted block — the same separation
-    /// the web makes, because a prediction sitting in the same visual
-    /// weight as a measured figure reads as another measured figure.
+    /// ✅ do today / 🔮 next week). Each becomes its own row with a symbol.
+    /// Trimmed for the phone (readability round #59): a claim tag only on a
+    /// line that is inferred or a forecast (a measured line needs no
+    /// label); the confidence and the answer row only on the action line;
+    /// ONE forecast, at Secondary, tagged.
     private func insightCard(_ insight: String) -> some View {
         let lines = insight
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("Cavnar AI's read on your reviews")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.1)
-                .textCase(.uppercase)
-                .foregroundStyle(Color.cavnarEmber)
-            // Which way the rating is moving, and how sure that direction is
-            // — decoded all along and never shown.
+        let placed = Self.actionRecs(viewModel.insightRecs, lines: lines)
+        let hasForecastLine = lines.contains { Self.parseInsightLine($0).isForecast }
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Cavnar AI\u{2019}s read on your reviews")
+            // Which way the rating is moving, and how steady that is — the
+            // trend's measured strength rides the confidence line.
             ratingTrendLine
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 let parsed = Self.parseInsightLine(line)
                 let claim = Self.claimKey(forInsightLine: line).flatMap { viewModel.claimKinds[$0] }
                 if parsed.isForecast {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Forecast")
-                            .font(.cavnarBody(9.5, weight: 700))
-                            .tracking(0.8)
-                            .textCase(.uppercase)
-                            .foregroundStyle(Color.cavnarEmber)
-                        Text(parsed.text)
-                            .font(.cavnarBody(CavnarType.tag))
-                            .italic()
-                            .foregroundStyle(Color.cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.leading, 10)
-                    .padding(.vertical, 6)
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(Color.cavnarEmber).frame(width: 2)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Forecast. \(parsed.text)")
+                    forecastRow(parsed.text)
                 } else {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Image(systemName: parsed.symbol)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(parsed.tint)
                                 .accessibilityHidden(true)
-                            Text(parsed.text)
-                                .font(.cavnarBody(14.5))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .lineSpacing(3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(parsed.text, role: .body)
                         }
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel(parsed.text)
-                        // Measured / inferred / suggestion — what kind of
-                        // statement this line is (claim_kinds).
-                        if claim != nil {
+                        // Inferred / forecast — what kind of statement this
+                        // line is (claim_kinds), only where it is not simply
+                        // measured.
+                        if Self.tagsClaim(claim) {
                             ClaimKindTag(kind: claim)
                                 .padding(.leading, 22)
                         }
-                        // The answer row sits under the line it answers —
-                        // the "Do today" line, matched by the text the
-                        // server keyed.
-                        if let rec = Self.rec(for: line, in: viewModel.insightRecs) {
-                            // The line's own confidence (E13), not the
-                            // rating trend's.
-                            if let c = rec.confidenceDetail {
-                                ConfidenceLine(confidence: c, recKey: rec.key, surface: "reviews", module: "reviews")
-                                    .padding(.leading, 22)
-                            }
-                            RecAnswerRow(key: rec.key, surface: "reviews")
-                                .padding(.leading, 22)
+                        // The answer row sits under the action line only —
+                        // matched by the text the server keyed.
+                        if Self.isActionLine(line), let rec = Self.rec(for: line, in: viewModel.insightRecs) {
+                            recControls(rec)
                         }
                     }
                 }
             }
+            // The computed forecast (H8), when the passage carries no
+            // forecast of its own — one forecast on the card, never two.
+            if !hasForecastLine, let forecast = viewModel.ratingForecast?.line {
+                forecastRow(forecast)
+            }
             // A keyed line the passage no longer carries verbatim (the
-            // model's line was reworded on the way through) keeps its
-            // controls rather than losing them.
-            ForEach(Self.unplacedRecs(viewModel.insightRecs, lines: lines)) { rec in
-                VStack(alignment: .leading, spacing: 6) {
+            // model's line was reworded on the way through), or one keyed to
+            // a line that is not the action line, keeps its controls.
+            ForEach(viewModel.insightRecs.filter { r in !placed.contains { $0.key == r.key } }) { rec in
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarGreen)
                             .accessibilityHidden(true)
-                        Text(rec.text)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(rec.text, role: .body)
                     }
-                    if let c = rec.confidenceDetail {
-                        ConfidenceLine(confidence: c, recKey: rec.key, surface: "reviews", module: "reviews")
-                            .padding(.leading, 22)
-                    }
-                    RecAnswerRow(key: rec.key, surface: "reviews")
-                        .padding(.leading, 22)
+                    recControls(rec)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard(.ai)
+    }
+
+    /// The action line's own confidence (E13), not the rating trend's, and
+    /// Done / Not for us.
+    @ViewBuilder
+    private func recControls(_ rec: ReviewInsightRec) -> some View {
+        if let c = rec.confidenceDetail {
+            ConfidenceLine(confidence: c, recKey: rec.key, surface: "reviews", module: "reviews")
+                .padding(.leading, 22)
+        }
+        RecAnswerRow(key: rec.key, surface: "reviews")
+            .padding(.leading, 22)
+    }
+
+    /// A forecast: Secondary, tagged so it never reads as a measurement.
+    private func forecastRow(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            ClaimKindTag(kind: "forecast")
+            CavnarMixedText(text, role: .secondary)
+        }
+        .padding(.leading, 10)
+        .padding(.vertical, CavnarSpace.xxs)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Color.cavnarEmber.opacity(0.7)).frame(width: 2)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Forecast. \(text)")
+    }
+
+    /// A claim tag is worth its space only where the line is not simply
+    /// measured: inferred, a forecast, an estimate.
+    static func tagsClaim(_ kind: String?) -> Bool {
+        guard let k = kind?.lowercased() else { return false }
+        return k == "inferred" || k == "forecast" || k == "estimate"
+    }
+
+    /// The "Do today" line — the one the answer row belongs under.
+    static func isActionLine(_ line: String) -> Bool {
+        claimKey(forInsightLine: line) == "do_today"
+    }
+
+    /// The keyed recommendations the passage's action line carries — the
+    /// ones whose controls render in place; every other keyed rec renders
+    /// in its own row so no controls are lost.
+    static func actionRecs(_ recs: [ReviewInsightRec], lines: [String]) -> [ReviewInsightRec] {
+        recs.filter { r in lines.contains { isActionLine($0) && rec(for: $0, in: [r]) != nil } }
     }
 
     /// The keyed recommendation this passage line carries, if any.
@@ -320,6 +297,8 @@ struct ReviewsAnalyticsSection: View {
     /// Open complaints by tier. Urgency answers "should this have woken the
     /// owner up?"; this answers "what kind of problem is it?", which is the
     /// question that orders twelve open complaints on a Tuesday morning.
+    /// Only the tiers with something open; the unclassified count is the
+    /// web's (readability round 10/8/26).
     private func severityStrip(_ tiers: [SeverityTier]) -> some View {
         // Horizontally scrolling rather than wrapping: there are at most five
         // tiers and usually one or two, so this never actually scrolls — but
@@ -330,30 +309,16 @@ struct ReviewsAnalyticsSection: View {
                 ForEach(tiers) { tier in
                     HStack(spacing: 6) {
                         Text("\(tier.open)")
-                            .font(.cavnarNumber(12.5, weight: 700))
+                            .font(.cavnarNumber(CavnarType.caption, weight: 700))
                         Text(tier.label)
-                            .font(.cavnarBody(11.5))
+                            .font(.cavnar(.caption))
                     }
                     .foregroundStyle(Self.severityTint(tier.key))
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 5)
                     .background(Self.severityTint(tier.key).opacity(0.12), in: Capsule())
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(tier.open) open \(tier.label) \(tier.open == 1 ? "complaint" : "complaints")")
-                }
-                // The ones no tier was given, said rather than left out.
-                if viewModel.unclassifiedCount > 0 {
-                    HStack(spacing: 6) {
-                        Text("\(viewModel.unclassifiedCount)")
-                            .font(.cavnarNumber(12.5, weight: 700))
-                        Text("unclassified")
-                            .font(.cavnarBody(11.5))
-                    }
-                    .foregroundStyle(Color.cavnarInk3)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.cavnarPaper3.opacity(0.6), in: Capsule())
-                    .accessibilityElement(children: .combine)
                 }
             }
             .padding(.vertical, 1)
@@ -363,138 +328,146 @@ struct ReviewsAnalyticsSection: View {
 
     private static func severityTint(_ key: String) -> Color {
         switch key {
-        case "safety":      return .cavnarRed
+        case "safety":      return .cavnarRedText
         case "legal":       return .cavnarAmber
         // Ember is emphasis, never a severity (B4 L7).
         case "operational": return .cavnarInk2
-        default:            return .cavnarInk3
+        default:            return .cavnarInk2
         }
     }
 
     // MARK: - The root cause
 
-    /// The diagnosis, laid out as the argument it is: a cause, the
-    /// alternative it is being chosen over, and what would settle it. The
-    /// alternative and the confidence are not decoration — a single confident
-    /// cause with nothing to weigh it against is exactly the shape of a
-    /// plausible guess, and this card exists to not be that.
+    /// The diagnosis as an answer card (readability round 10/8/26): the
+    /// cause is the headline, what it rests on is the one line under it,
+    /// then the confidence, the action with its answer row, the conditional
+    /// outcome and ONE visible alternative. What would tell the two apart,
+    /// the cross-checks and the reviews it rests on are behind "Show the
+    /// reasoning". The alternative and the confidence are not decoration —
+    /// a single confident cause with nothing to weigh it against is exactly
+    /// the shape of a plausible guess, and this card exists to not be that.
     private func diagnosisCard(_ d: ReviewDiagnosis) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(OwnerCopy.diagnosisHeading)
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.1)
-                    .textCase(.uppercase)
-                    .foregroundStyle(Color.cavnarEmber)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                CavnarKicker(OwnerCopy.diagnosisHeading)
                 Spacer(minLength: 0)
                 // The cause is the model's read of the reviews — said so.
                 ClaimKindTag(kind: viewModel.claimKinds["why"])
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-
-            HomeMixedText.make("\(d.category.replacingOccurrences(of: "_", with: " ")) · \(d.mentionCount) negative reviews over \(d.windowDays) days"
-                 + (d.asOf.map { " · read \($0)" } ?? "")
-                 + (((d.stale ?? false) || d.isOlderRead) && d.staleNote == nil ? " · older read" : ""),
-                               size: 12, weight: 400, color: .cavnarInk3)
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, d.trust == nil ? 12 : 8)
-
-            // How sure, as a percentage with what it rests on (K1/K6) — the
-            // shared confidence line, not a bare band capsule.
-            if let c = d.trust {
-                ConfidenceLine(confidence: c, recKey: d.recKey, surface: "reviews", module: "reviews")
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
-            }
-
             // The server's own sentence for a read that hasn't been
             // refreshed — the same caveat the insight above uses.
             if let note = d.staleNote, !note.isEmpty {
                 CavnarCaveat(title: "Older read", detail: note)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
             } else if d.isOlderRead {
                 // Too old to lean on (memory round): kept for its evidence,
                 // never answered as a live recommendation.
                 CavnarCaveat(title: "Older read",
                              detail: "Past its refresh \u{2014} kept for the reviews it rests on, not as a live recommendation.")
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
             }
             // A figure in the cause that could not be traced to the data,
             // stored with the read so the card says so here too (M-17).
             if let figs = d.unsupportedFigures, !figs.isEmpty {
                 CavnarCaveat.unverifiedFigures(figs)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
             }
-
-            Divider().overlay(Color.cavnarInk3.opacity(0.18))
-
-            VStack(alignment: .leading, spacing: 13) {
-                diagnosisRow("Most likely cause", d.cause)
-                if let alt = d.alternativeCause {
-                    diagnosisRow("It could also be", alt, quiet: true)
-                }
-                if let confirm = d.whatWouldConfirm {
-                    diagnosisRow("What would tell them apart", confirm)
-                }
+            CavnarAnswerCard(
+                headline: d.cause,
+                summary: Self.diagnosisBasis(d),
+                alternativeCause: d.alternativeCause,
+                // Conditional on the cause, never a promise (NS1 H10).
+                expectedOutcome: OwnerCopy.expectedOutcome(d.expectedOutcome).map { "If this is the cause: \($0)" },
+                // How sure, as a percentage with what it rests on (K1/K6).
+                confidence: d.trust.map {
+                    ConfidenceLine(confidence: $0, recKey: d.recKey, surface: "reviews", module: "reviews")
+                },
+                detailLabel: "Show the reasoning",
+                surface: nil
+            ) {
                 // An action the owner already answered stays answered: the
                 // card keeps its evidence and drops the action.
                 if let action = d.recommendedAction, d.answered != true {
-                    VStack(alignment: .leading, spacing: 6) {
-                        // An older read's action is what it suggested then,
-                        // with no answer controls (controls_withheld).
-                        diagnosisRow(d.isOlderRead ? "It suggested then" : "Do this", action, quiet: d.isOlderRead)
-                        if d.showsControls, let key = d.recKey {
-                            RecAnswerRow(key: key, surface: "reviews")
-                        }
+                    // An older read's action is what it suggested then, with
+                    // no answer controls (controls_withheld).
+                    (Text(d.isOlderRead ? "It suggested then: " : "Do this: ")
+                        .font(.cavnarBody(CavnarType.body, weight: 700))
+                        .foregroundStyle(d.isOlderRead ? Color.cavnarInk2 : Color.cavnarInk)
+                     + HomeMixedText.make(action, role: .body, color: d.isOlderRead ? .cavnarInk2 : .cavnarInk))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if d.showsControls, let key = d.recKey {
+                        RecAnswerRow(key: key, surface: "reviews")
                     }
                 }
-                // Conditional on the cause, never a promise (NS1 H10).
-                if let outcome = OwnerCopy.expectedOutcome(d.expectedOutcome) {
-                    diagnosisRow(OwnerCopy.expectedOutcomeLabel, outcome, quiet: true)
+            } detail: {
+                diagnosisReasoning(d)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard(.ai)
+    }
+
+    /// "Cold food · 6 negative reviews · 30 days · read 10/7/26".
+    static func diagnosisBasis(_ d: ReviewDiagnosis) -> String {
+        let topic = d.category.replacingOccurrences(of: "_", with: " ")
+        var s = "\(topic.prefix(1).uppercased() + topic.dropFirst()) \u{00B7} \(d.mentionCount) negative "
+            + "\(d.mentionCount == 1 ? "review" : "reviews") \u{00B7} \(d.windowDays) days"
+        if let asOf = d.asOf, !asOf.isEmpty { s += " \u{00B7} read \(asOf)" }
+        if ((d.stale ?? false) || d.isOlderRead) && d.staleNote == nil { s += " \u{00B7} older read" }
+        return s
+    }
+
+    /// What would tell the cause from its alternative, what it was checked
+    /// against, and the reviews it rests on — each one opens.
+    @ViewBuilder
+    private func diagnosisReasoning(_ d: ReviewDiagnosis) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            if let confirm = d.whatWouldConfirm, !confirm.isEmpty {
+                reasoningRow("What would tell them apart", confirm)
+            }
+            if !d.operationalEvidence.isEmpty {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("Checked against")
+                    ForEach(Array(d.operationalEvidence.enumerated()), id: \.offset) { _, e in
+                        CavnarMixedText(Self.crossCheckLine(e), role: .secondary)
+                    }
                 }
-                if !d.operationalEvidence.isEmpty {
-                    diagnosisRow(
-                        "Cross-checked against",
-                        d.operationalEvidence
-                            .map { "\($0.module.replacingOccurrences(of: "_", with: " ")): \($0.metric) \($0.value)" }
-                            .joined(separator: "  ·  "),
-                        quiet: true)
-                }
-                if !d.evidenceReviewIds.isEmpty {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("Reviews this rests on")
-                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                            .tracking(0.9)
-                            .textCase(.uppercase)
-                            .foregroundStyle(Color.cavnarInk3)
-                            .accessibilityLabel("Based on \(d.evidenceReviewIds.count) reviews")
-                        // Each cited review opens — the web's jumpToReview.
-                        AccountFlowLayout(spacing: 6, lineSpacing: 6) {
-                            ForEach(d.evidenceReviewIds, id: \.self) { id in
-                                evidenceChip(id, category: d.category, recKey: d.recKey)
-                            }
+            }
+            if !d.evidenceReviewIds.isEmpty {
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                    CavnarKicker("Reviews this rests on")
+                        .accessibilityLabel("Based on \(d.evidenceReviewIds.count) reviews")
+                    // Each cited review opens — the web's jumpToReview.
+                    AccountFlowLayout(spacing: 6, lineSpacing: 6) {
+                        ForEach(d.evidenceReviewIds, id: \.self) { id in
+                            evidenceChip(id, category: d.category, recKey: d.recKey)
                         }
                     }
                 }
             }
-            .padding(16)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.cavnarInk3.opacity(0.05),
-                    in: RoundedRectangle(cornerRadius: CavnarRadius.control))
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .stroke(Color.cavnarInk3.opacity(0.18), lineWidth: 1)
-        )
     }
 
-    /// "Review #412" as a tappable chip — AccountChip's muted look, with the
-    /// id in the number face. Opens that review (ReviewByIdView).
+    /// One cross-check in an owner's words: "Labor · overtime hours: 12"
+    /// rather than "labor: overtime_hours 12".
+    static func crossCheckLine(_ e: ReviewDiagnosis.OperationalEvidence) -> String {
+        let module: String
+        switch e.module.lowercased() {
+        case "labor": module = "Labor"
+        case "food_cost", "inventory": module = "Food cost"
+        case "pos", "sales": module = "Sales"
+        case "reviews": module = "Reviews"
+        case "marketing": module = "Marketing"
+        default:
+            let m = e.module.replacingOccurrences(of: "_", with: " ")
+            module = m.prefix(1).uppercased() + m.dropFirst()
+        }
+        let metric = e.metric
+            .replacingOccurrences(of: "_pct", with: " %")
+            .replacingOccurrences(of: "_", with: " ")
+        return "\(module) \u{00B7} \(metric): \(e.value)"
+    }
+
+    /// A cited review as its guest's first name and stars ("Maria ★★") —
+    /// read when the reasoning opens, never "Review #412". Opens that review
+    /// (ReviewByIdView).
     private func evidenceChip(_ id: Int, category: String, recKey: String? = nil) -> some View {
         Button {
             Haptic.light()
@@ -502,32 +475,21 @@ struct ReviewsAnalyticsSection: View {
             // Opening a review the diagnosis rests on is evidence viewed (#38).
             RecEvidenceLog.viewed(key: recKey, surface: "reviews", module: "reviews")
         } label: {
-            (Text("Review ") + Text("#\(id)").font(.cavnarNumber(13, weight: 600)))
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(Color.cavnarInk2)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 6)
+            DiagnosisEvidenceLabel(reviewID: id)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
                 .background(Color.white.opacity(0.04))
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
                 .clipShape(Capsule())
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Open review \(id)")
     }
 
-    private func diagnosisRow(_ label: String, _ body: String, quiet: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(0.9)
-                .textCase(.uppercase)
-                .foregroundStyle(Color.cavnarInk3)
-            Text(body)
-                .font(.cavnarBody(quiet ? 13.5 : 14.5))
-                .foregroundStyle(quiet ? Color.cavnarInk3 : Color.cavnarInk2)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
+    private func reasoningRow(_ label: String, _ body: String) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            CavnarKicker(label)
+            CavnarMixedText(body, role: .secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -538,23 +500,20 @@ struct ReviewsAnalyticsSection: View {
     /// from. A point estimate here would be a fabricated precision; the range
     /// and the assumption travelling with it are the honest version.
     private func revenueBlock(low: Double, high: Double, m: RevenueAtRisk) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
             Text("\("$" + abs(low).commaFormatted)–\("$" + abs(high).commaFormatted)")
-                .font(.cavnarNumber(19, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-            Text("a month \(m.direction == "at_risk" ? "at risk" : "of upside") across the restaurant, from the "
-                 + String(format: "%+.2f", m.ratingDelta ?? 0) + "★ move in your all-time rating over 30 days")
-                .font(.cavnarBody(12))
-                .foregroundStyle(Color.cavnarInk2)
+                .cavnarText(.figureM)
+            CavnarMixedText("a month \(m.direction == "at_risk" ? "at risk" : "of upside") across the restaurant, from the "
+                            + String(format: "%+.2f", m.ratingDelta ?? 0) + "\u{2605} move in your all-time rating over 30 days",
+                            role: .secondary)
             if let assumption = m.assumption {
                 Text("Forecast, not a measurement. \(assumption)")
-                    .font(.cavnarBody(11))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(CavnarSpace.s)
         .background(Color.cavnarEmber.opacity(0.09),
                     in: RoundedRectangle(cornerRadius: 9))
         .accessibilityElement(children: .combine)
@@ -581,20 +540,32 @@ struct ReviewsAnalyticsSection: View {
         return nil
     }
 
+    /// The rating's direction as a sentence, and under it the trend's
+    /// measured strength as a confidence line (a meter and the real %),
+    /// where a confidence is read everywhere else (readability round).
     @ViewBuilder
     private var ratingTrendLine: some View {
         if let sentence = viewModel.ratingTrend?.sentence {
             let strength = viewModel.ratingTrend?.trendStrengthPct
-            let label = Self.trendStrengthLabel(strength)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                (HomeMixedText.make(sentence, size: 12.5, weight: 600, color: .cavnarInk2)
-                 + (label.map {
-                     HomeMixedText.make(" \u{00B7} " + $0, size: 12.5, weight: 700,
-                                        color: ConfidenceDisplay.tone(pct: strength).color)
-                 } ?? Text(verbatim: "")))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                ClaimKindTag(kind: viewModel.claimKinds["rating_trend"])
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    CavnarMixedText(sentence, role: .label)
+                    Spacer(minLength: 0)
+                    if Self.tagsClaim(viewModel.claimKinds["rating_trend"]) {
+                        ClaimKindTag(kind: viewModel.claimKinds["rating_trend"])
+                    }
+                }
+                if let label = Self.trendStrengthLabel(strength), let pct = strength {
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                        ConfidenceMeter(fraction: Double(max(0, min(100, pct))) / 100,
+                                        tone: ConfidenceDisplay.tone(pct: strength))
+                            .alignmentGuide(.firstTextBaseline) { dim in dim[.bottom] + 1 }
+                        HomeMixedText.make(label, role: .caption,
+                                           color: .cavnarInk2,
+                                           numberColor: ConfidenceDisplay.tone(pct: strength).color)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
             }
         }
     }
@@ -643,127 +614,133 @@ struct ReviewsAnalyticsSection: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
-    // MARK: - Loading skeletons
+    // MARK: - Top topics
 
-    private var performanceSkeleton: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            CavnarSkeletonBar(height: 11, widthFraction: 0.5)
-            HStack {
-                ForEach(0..<3, id: \.self) { _ in
-                    VStack(spacing: 6) {
-                        CavnarSkeletonBar(height: 20, widthFraction: 0.5)
-                        CavnarSkeletonBar(height: 10, widthFraction: 0.8)
+    /// The three topics guests mention most in the window — the label, the
+    /// count and which way it is moving — each opening its reviews, then
+    /// the web's full analysis (the weekly grid, the sentiment river and
+    /// the approvals) one tap away (readability round 10/8/26 #60).
+    @ViewBuilder
+    private var topTopics: some View {
+        let top = Array(viewModel.heatmap.filter { $0.count > 0 }.sorted { $0.count > $1.count }.prefix(3))
+        if !top.isEmpty {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("What guests talk about")
+                VStack(spacing: 0) {
+                    ForEach(Array(top.enumerated()), id: \.element.id) { index, entry in
+                        NavigationLink {
+                            FilteredReviewsView(title: entry.label, category: entry.category)
+                        } label: {
+                            topicRow(entry)
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .top) {
+                            if index > 0 { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+                        }
                     }
-                    .frame(maxWidth: .infinity)
                 }
+                CavnarWebLinkRow(title: "Full analysis",
+                                 subtitle: "Topics week by week, sentiment and how replies were approved",
+                                 path: "reviews/analytics", actionLabel: "Open on the web")
             }
+            .cavnarCard()
+        } else if viewModel.isLoading {
+            topicSkeleton
+        } else {
+            CavnarWebLinkRow(title: "Full analysis", path: "reviews/analytics", actionLabel: "Open on the web")
         }
     }
 
-    private var topicGridSkeleton: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            CavnarSkeletonBar(height: 11, widthFraction: 0.35)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                ForEach(0..<4, id: \.self) { _ in
-                    VStack(alignment: .leading, spacing: 8) {
-                        CavnarSkeletonBar(height: 12, widthFraction: 0.6)
-                        CavnarSkeletonBar(height: 20, widthFraction: 0.3)
-                        CavnarSkeletonBar(height: 6, widthFraction: 1.0)
-                    }
-                    .padding(12)
-                    .background(Color.cavnarPaper2.opacity(0.6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: CavnarRadius.control)
-                            .strokeBorder(Color.cavnarPaper3.opacity(0.5), lineWidth: 1)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                }
-            }
-        }
-    }
-
-    private var trendChartSkeleton: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            CavnarSkeletonBar(height: 11, widthFraction: 0.45)
-            CavnarSkeletonBar(height: 190, widthFraction: 1.0)
-            HStack(spacing: 16) {
-                CavnarSkeletonBar(height: 9, widthFraction: 0.15)
-                CavnarSkeletonBar(height: 9, widthFraction: 0.15)
-                CavnarSkeletonBar(height: 9, widthFraction: 0.15)
-            }
-        }
-        // Unboxed, matching trendChartCard's own now-unboxed container —
-        // otherwise the skeleton pops from boxed to unboxed the instant
-        // real data arrives.
-    }
-
-    // MARK: - Topic sentiment grid
-
-    private var topicGrid: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Topic sentiment")
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                ForEach(viewModel.heatmap.filter { $0.count > 0 }) { entry in
-                    NavigationLink {
-                        FilteredReviewsView(title: entry.label, category: entry.category)
-                    } label: {
-                        topicCard(entry)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    private func topicTone(_ entry: TopicHeatmapEntry) -> CavnarTone {
-        if entry.pctNegative > 20 { return .bad }
-        if entry.pctPositive >= 70 { return .good }
-        return .warning
-    }
-
-    private func topicCard(_ entry: TopicHeatmapEntry) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 4) {
-                Text(entry.label)
-                    .font(.cavnarBody(14, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                    .lineLimit(1)
-                trendIcon(entry.trend)
-                Spacer()
-            }
+    private func topicRow(_ entry: TopicHeatmapEntry) -> some View {
+        HStack(alignment: .center, spacing: CavnarSpace.s) {
+            Text(entry.label)
+                .cavnarText(.label)
+                .lineLimit(1)
+            Spacer(minLength: CavnarSpace.xs)
             Text("\(entry.count)")
-                .font(.cavnarNumber(20, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-                .cavnarNumberGlow()
-            StatProgressBar(progress: Double(entry.pctPositive) / 100, tone: topicTone(entry))
-            HStack {
-                Text("\(entry.pctPositive)% pos")
-                    .font(.cavnarNumber(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarGreen)
-                Spacer()
-                Text("\(entry.pctNegative)% neg")
-                    .font(.cavnarNumber(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarRed)
-            }
+                .cavnarText(.figureS)
+            trendIcon(entry.trend)
+                .frame(width: 18)
+            Image(systemName: "chevron.right")
+                .font(.cavnar(.caption))
+                .foregroundStyle(Color.cavnarInk3)
+                .accessibilityHidden(true)
         }
-        .padding(12)
-        .background(Color.cavnarPaper2.opacity(0.6))
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .strokeBorder(Color.cavnarPaper3.opacity(0.5), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entry.label), \(entry.count) mentions\(Self.trendWords(entry.trend))")
     }
 
+    private static func trendWords(_ trend: String) -> String {
+        switch trend {
+        case "up": return ", complaints rising"
+        case "down": return ", complaints easing"
+        default: return ""
+        }
+    }
+
+    /// The topic's complaint trend: up is worse (red), down is better.
     @ViewBuilder
     private func trendIcon(_ trend: String) -> some View {
         switch trend {
-        case "up": Image(systemName: "arrow.up.right").font(.system(size: 9)).foregroundStyle(Color.cavnarRed)
-        case "down": Image(systemName: "arrow.down.right").font(.system(size: 9)).foregroundStyle(Color.cavnarGreen)
-        default: EmptyView()
+        case "up": Image(systemName: "arrow.up.right").font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+        case "down": Image(systemName: "arrow.down.right").font(.cavnar(.caption)).foregroundStyle(Color.cavnarGreen)
+        default: Image(systemName: "minus").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
         }
     }
 
+    private var topicSkeleton: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CavnarSkeletonBar(height: 11, widthFraction: 0.35)
+            ForEach(0..<3, id: \.self) { _ in
+                CavnarSkeletonBar(height: 14, widthFraction: 0.9)
+            }
+        }
+    }
+}
+
+/// A cited review's guest and stars ("Maria ★★"), read once per review per
+/// launch (GET /mobile/api/reviews/<id>, the route ReviewByIdView reads);
+/// "A review" until it lands or when it can't be read — never its id.
+private struct DiagnosisEvidenceLabel: View {
+    let reviewID: Int
+    @State private var who: (name: String, stars: Int?)?
+
+    @MainActor private static var cache: [Int: (name: String, stars: Int?)] = [:]
+
+    private struct OneResponse: Decodable {
+        let ok: Bool
+        let review: Review?
+    }
+
+    var body: some View {
+        HStack(spacing: CavnarSpace.xxs + 2) {
+            Text(who?.name ?? "A review")
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                .foregroundStyle(Color.cavnarInk2)
+            if let stars = who?.stars, stars > 0 {
+                Text(String(repeating: "\u{2605}", count: min(stars, 5)))
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarAmber)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(who.map { "Open \($0.name)\u{2019}s review" + ($0.stars.map { ", \($0) stars" } ?? "") }
+                            ?? "Open a review this rests on")
+        .task {
+            if let hit = Self.cache[reviewID] {
+                who = hit
+                return
+            }
+            guard let one: OneResponse = try? await APIClient.shared.send("/mobile/api/reviews/\(reviewID)",
+                                                                          hapticOnError: false),
+                  let r = one.review else { return }
+            let first = (r.author ?? "").split(separator: " ").first.map(String.init) ?? ""
+            let entry = (name: first.isEmpty ? "A guest" : first, stars: r.rating)
+            Self.cache[reviewID] = entry
+            who = entry
+        }
+    }
 }

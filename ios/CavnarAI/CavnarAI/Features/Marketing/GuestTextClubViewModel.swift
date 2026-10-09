@@ -137,6 +137,17 @@ final class GuestTextClubViewModel {
 
     /// The reads this screen needs, at once rather than one after another
     /// (parity audit drift: six serial loads).
+    /// What the Text Club screen shows since it folded into Campaigns
+    /// (readability round 10/8/26 #57): the guests, the join link and QR,
+    /// and the receipt hint. Sending, history and the consent ledger are on
+    /// Campaigns.
+    func loadClub() async {
+        async let a: Void = load()
+        async let b: Void = loadJoinLink()
+        async let g: Void = loadOverview()
+        _ = await (a, b, g)
+    }
+
     func loadAll() async {
         async let a: Void = load()
         async let b: Void = loadJoinLink()

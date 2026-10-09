@@ -1,45 +1,52 @@
 import SwiftUI
 
-/// The four figures the web's Reviews header has always shown as pills —
-/// rating, answered, to approve, urgent — on the phone.
+/// The reputation figures on the phone: the rating and how much of it is
+/// answered. The web's header carries four pills; on the iPhone the "to
+/// approve" and "urgent" counts ride the filter chips (one set of inbox
+/// counts, readability round 10/8/26 #55), so they are not said twice.
 ///
 /// ReviewStats was modelled in full and then called from nowhere in the
 /// app, so the Reviews tab opened straight into a list with no summary of
 /// the restaurant's reputation anywhere on it. Two of the honesty lines
 /// that model carries were invisible for the same reason and are shown
-/// here too: how much of Google's history our average actually covers
-/// (isFullHistory / officialReviewCount), and how many reviews the
-/// sentiment and topic charts don't cover yet (unanalysed).
+/// here too, behind the info button: how much of Google's history our
+/// average actually covers (isFullHistory / officialReviewCount), and how
+/// many reviews the sentiment and topic figures don't cover yet (unanalysed).
 struct ReviewsStatStrip: View {
     let stats: ReviewStats
+    @State private var showingCaveat = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Four equal tiles across the width — they used to scroll and
-            // the fourth was cut off the right edge (10/8/26).
-            HStack(spacing: 8) {
-                pill(value: String(format: "%.1f", stats.avgRating), unit: "★",
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(spacing: CavnarSpace.xs) {
+                pill(value: String(format: "%.1f", stats.avgRating), unit: "\u{2605}",
                      label: "rating", tone: ratingTone,
                      spoken: "\(String(format: "%.1f", stats.avgRating)) star average rating")
                 pill(value: "\(Int(stats.responseRate))", unit: "%",
                      label: "answered", tone: stats.responseRate >= 70 ? .good : (stats.responseRate >= 40 ? .warning : .bad),
                      spoken: "\(Int(stats.responseRate)) percent of reviews answered")
-                pill(value: "\(stats.awaitingApproval + stats.needsResponse)", unit: nil,
-                     label: "to approve",
-                     tone: (stats.awaitingApproval + stats.needsResponse) == 0 ? .good
-                           : ((stats.awaitingApproval + stats.needsResponse) > 2 ? .bad : .warning),
-                     spoken: "\(stats.awaitingApproval + stats.needsResponse) replies waiting for you")
-                pill(value: "\(stats.urgent)", unit: nil, label: "urgent",
-                     tone: stats.urgent > 0 ? .bad : .good,
-                     spoken: "\(stats.urgent) urgent reviews")
+                if coverageCaveat != nil {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.2)) { showingCaveat.toggle() }
+                    } label: {
+                        Image(systemName: showingCaveat ? "info.circle.fill" : "info.circle")
+                            .font(.cavnar(.lead))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("What these figures cover")
+                    .accessibilityValue(showingCaveat ? "Expanded" : "Collapsed")
+                }
             }
             .padding(.vertical, 2)
 
-            if let caveat = coverageCaveat {
+            if showingCaveat, let caveat = coverageCaveat {
                 Text(caveat)
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
             }
         }
     }
@@ -55,40 +62,36 @@ struct ReviewsStatStrip: View {
             parts.append("Average is over the \(stats.total) reviews Cavnar AI holds, not all \(official) on Google.")
         }
         if let unanalysed = stats.unanalysed, unanalysed > 0 {
-            parts.append("\(unanalysed) not yet analysed — the topic and sentiment charts don't cover them.")
+            parts.append("\(unanalysed) not yet analysed \u{2014} the topic and sentiment figures don't cover them.")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     private func pill(value: String, unit: String?, label: String,
                       tone: CavnarTone, spoken: String) -> some View {
-        // The figure over its label, so four fit side by side: a status
-        // dot and the number on top, the word under it.
-        VStack(spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Circle()
-                    .fill(tone.foreground)
-                    .frame(width: 7, height: 7)
-                    .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 1 }
-                HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text(value)
-                        .font(.cavnarNumber(19, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                    if let unit {
-                        Text(unit)
-                            .font(.cavnarNumber(13, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
+        // The figure beside its word: a status dot, the number, the label.
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+            Circle()
+                .fill(tone.foreground)
+                .frame(width: 8, height: 8)
+                .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 2 }
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(value)
+                    .cavnarText(.figureM)
+                if let unit {
+                    Text(unit)
+                        .font(.cavnar(.figureS))
+                        .foregroundStyle(Color.cavnarInk2)
                 }
             }
             Text(label)
-                .font(.cavnarBody(13.5, weight: 500))
-                .foregroundStyle(Color.cavnarInk2)
+                .cavnarText(.secondary)
+            Spacer(minLength: 0)
         }
         .lineLimit(1)
-        .minimumScaleFactor(0.75)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 9)
+        .minimumScaleFactor(0.85)
+        .padding(.horizontal, CavnarSpace.s)
+        .padding(.vertical, CavnarSpace.xs + 2)
         .frame(maxWidth: .infinity)
         .background(Color.cavnarPaper2.opacity(0.75))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)

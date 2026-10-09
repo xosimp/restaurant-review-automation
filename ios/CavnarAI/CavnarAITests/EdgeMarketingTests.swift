@@ -63,13 +63,19 @@ final class EdgeMarketingTests: XCTestCase {
     }
 
     func testTheSendButtonAsksForConfirmationWithTheCount() throws {
-        // The web asks "Send this text to <segment>?" (dashboard.html); the
-        // app's button calls sendCampaign directly.
-        let view = try EdgeSource.read("Features/Marketing/GuestTextClubView.swift")
-        let button = try XCTUnwrap(EdgeSource.slice(view, from: "Task { await viewModel.sendCampaign() }", length: 30))
-        XCTAssertFalse(button.isEmpty)
-        XCTAssertTrue(view.contains(".confirmationDialog") || view.contains(".alert("),
-                      "a guest blast needs a confirmation that shows who it goes to")
+        // The web asks "Send this text to <segment>?" (dashboard.html). Since
+        // the Text Club folded into Campaigns (readability round 10/8/26
+        // #57) the phone sends a guest text from one place only — the
+        // Campaign Studio — and its pinned button opens the review sheet,
+        // the confirm that lists who it goes to; the Studio itself never
+        // sends.
+        let club = try EdgeSource.read("Features/Marketing/GuestTextClubView.swift")
+        XCTAssertFalse(club.contains("sendCampaign"), "the Text Club no longer sends a text of its own")
+        let studio = try EdgeSource.read("Features/Marketing/CampaignStudioView.swift")
+        XCTAssertTrue(studio.contains("CampaignReviewSheet(vm: vm"), "the send goes through the review sheet")
+        let sheet = try XCTUnwrap(EdgeSource.slice(studio, from: "struct CampaignReviewSheet", length: 8000))
+        XCTAssertTrue(sheet.contains("vm.send(vm.snapshot())"))
+        XCTAssertTrue(sheet.contains("snap.lines"), "the confirm shows what goes, with its head counts")
     }
 
     // MARK: CLIENT-1 — the same blast twice

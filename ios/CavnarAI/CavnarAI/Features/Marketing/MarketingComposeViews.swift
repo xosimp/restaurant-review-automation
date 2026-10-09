@@ -111,13 +111,9 @@ struct MarketingPhotoPicker: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Photo attached")
-                            .font(.cavnarBody(16, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
                         if let w = media.width, let h = media.height {
-                            (Text("\(w)").font(.cavnarNumber(15)) + Text(" × ")
-                                + Text("\(h)").font(.cavnarNumber(15)))
-                                .font(.cavnarBody(15))
-                                .foregroundStyle(Color.cavnarInk3)
+                            HomeMixedText.make("\(w) × \(h)", role: .caption)
                         }
                     }
                     Spacer()
@@ -154,7 +150,7 @@ struct MarketingPhotoPicker: View {
             }
 
             if let error = viewModel.mediaError {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
         }
         .onChange(of: selection) { _, item in
@@ -182,7 +178,7 @@ struct MarketingDropZone: View {
         Group {
             if let text {
                 Label(text, systemImage: systemImage)
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             } else {
@@ -238,14 +234,12 @@ struct MarketingPreviewSheet: View {
     private func problems(_ preview: MarketingPreview) -> some View {
         if preview.ready {
             Label("Ready to post", systemImage: "checkmark.seal")
-                .font(.cavnarBody(16, weight: 600))
-                .foregroundStyle(Color.cavnarGreen)
+                .cavnarText(.label, color: .cavnarGreen)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(preview.problems, id: \.self) { problem in
                     Label(problem, systemImage: "exclamationmark.triangle")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -273,16 +267,13 @@ struct MarketingPreviewSheet: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(preview.visibleBeforeMore)
-                    .font(.cavnarBody(16))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.body, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if preview.truncated {
                     Text("… more")
-                        .font(.cavnarBody(15, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: .cavnarInk2)
                     Text("Everything after this is hidden until someone taps.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption)
                 }
             }
             .padding(14)
@@ -306,8 +297,8 @@ struct MarketingPreviewSheet: View {
 
     private func tile(value: String, label: String, tint: Color) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(tint)
-            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+            Text(value).cavnarText(.figureM, color: tint)
+            Text(label).cavnarText(.caption)
         }
         .frame(maxWidth: .infinity)
     }
@@ -340,8 +331,7 @@ struct MarketingScheduleSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Cavnar AI will publish this to \(platform.capitalized) for you. Times are your restaurant's own clock (\(clockName)).")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
 
                     // Shown and picked on the restaurant's clock, the same
@@ -371,7 +361,7 @@ struct MarketingScheduleSheet: View {
                     .disabled(viewModel.isScheduling)
 
                     if let error = viewModel.scheduleError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                     }
                 }
                 .padding(20)
@@ -385,32 +375,53 @@ struct MarketingScheduleSheet: View {
     }
 }
 
-/// The queue itself.
+/// "Scheduled & sent" (readability round 10/8/26 #58): what is still
+/// coming (Upcoming, soonest first) and what went out — posted, didn't go
+/// out, cancelled — split by each post's own status. The queue was mostly a
+/// record of what had already gone.
 struct MarketingQueueView: View {
     let viewModel: MarketingComposeViewModel
     /// The post whose Cancel was tapped, awaiting the confirm.
     @State private var postToCancel: ScheduledPost?
 
+    /// Still waiting to go, soonest first.
+    static func upcoming(_ posts: [ScheduledPost]) -> [ScheduledPost] {
+        posts.filter(\.isPending).sorted { $0.scheduledFor < $1.scheduledFor }
+    }
+
+    /// Everything else, newest first.
+    static func wentOut(_ posts: [ScheduledPost]) -> [ScheduledPost] {
+        posts.filter { !$0.isPending }.sorted { $0.scheduledFor > $1.scheduledFor }
+    }
+
     var body: some View {
+        let upcoming = Self.upcoming(viewModel.scheduled)
+        let wentOut = Self.wentOut(viewModel.scheduled)
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if viewModel.scheduled.isEmpty {
-                    Text("Nothing queued. Write a post, then choose Schedule instead of posting it now.")
-                        .font(.cavnarBody(16))
-                        .foregroundStyle(Color.cavnarInk3)
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                CavnarKicker("Upcoming")
+                if upcoming.isEmpty {
+                    Text("Nothing scheduled. Write a post, then choose Schedule instead of posting it now.")
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 40)
                 }
-                ForEach(viewModel.scheduled) { post in
+                ForEach(upcoming) { post in
                     row(post)
+                }
+                if !wentOut.isEmpty {
+                    CavnarKicker("Went out")
+                        .padding(.top, CavnarSpace.s)
+                    ForEach(wentOut) { post in
+                        row(post)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            .padding(CavnarSpace.gutter)
         }
         .cavnarModuleBackground()
-        .navigationTitle("Scheduled")
-        .toolbar { cavnarTitleToolbar("Scheduled") }
+        .navigationTitle("Scheduled & sent")
+        .toolbar { cavnarTitleToolbar("Scheduled & sent") }
         .cavnarEmberRefreshable { await viewModel.loadScheduled() }
         .task { await viewModel.loadScheduled() }
         .confirmationDialog("Cancel this post?",
@@ -426,26 +437,22 @@ struct MarketingQueueView: View {
     }
 
     private func row(_ post: ScheduledPost) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(post.whenLabel)
-                    .font(.cavnarBody(15, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber)
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs + 2) {
+            HStack(alignment: .firstTextBaseline) {
+                HomeMixedText.make(post.whenLabel, role: .label)
                 Spacer()
                 Text(post.statusLabel)
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(statusColor(post.status))
             }
             Text(post.platform.capitalized)
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption)
             Text(post.body)
-                .font(.cavnarBody(16))
-                .foregroundStyle(Color.cavnarInk)
-                .lineLimit(4)
+                .cavnarText(.body)
+                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             if let error = post.error, !error.isEmpty {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
             if post.isPending {
                 Button(role: .destructive) {
@@ -453,13 +460,15 @@ struct MarketingQueueView: View {
                     postToCancel = post
                 } label: {
                     Text("Cancel this post")
-                        .font(.cavnarBody(15, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber)
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
-                .padding(.top, 2)
+                .buttonStyle(.plain)
             }
         }
-        .padding(14)
+        .padding(CavnarSpace.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2)
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
@@ -468,7 +477,7 @@ struct MarketingQueueView: View {
     private func statusColor(_ status: String) -> Color {
         switch status {
         case "posted": return .cavnarGreen
-        case "failed": return .cavnarRed
+        case "failed": return .cavnarRedText
         case "cancelled": return .cavnarInk3
         default: return .cavnarInk
         }
@@ -489,13 +498,12 @@ struct MarketingDraftsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if viewModel.drafts.isEmpty {
                     Text("Nothing saved. Generate a post and choose Save draft — it'll be here whenever you come back.")
-                        .font(.cavnarBody(16))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 40)
                 }
                 if let error = viewModel.draftError {
-                    Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
                 }
                 ForEach(viewModel.drafts) { draft in
                     row(draft)
@@ -520,20 +528,18 @@ struct MarketingDraftsView: View {
     }
 
     private func row(_ draft: MarketingDraft) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .firstTextBaseline) {
                 Text(draft.topic?.isEmpty == false ? draft.topic! : "Untitled")
-                    .font(.cavnarBody(16, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.label)
                 Spacer()
                 Text(draft.statusLabel)
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(draft.isApproved ? Color.cavnarGreen
                                      : (draft.isExpired ? Color.cavnarInk3 : Color.cavnarEmber2))
             }
             Text(draft.body)
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
             // Retired server-side: a quiet-night piece whose night passed
@@ -541,8 +547,7 @@ struct MarketingDraftsView: View {
             // offers to release it.
             if let note = draft.expiredNote {
                 Text(note)
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -550,11 +555,21 @@ struct MarketingDraftsView: View {
                 Text(draft.isApproved && draft.approvedByName != nil
                      ? "Written by \(who) · approved by \(draft.approvedByName!)"
                      : "Written by \(who)")
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption)
             }
 
-            HStack(spacing: 14) {
+            // Real 44pt buttons (readability round #19): Approve first, as
+            // the decision this screen exists for; Open; the trash last.
+            HStack(spacing: CavnarSpace.xs) {
+                if draft.canApprove {
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.approve(draft) }
+                    } label: {
+                        Text("Approve").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSoftButtonStyle())
+                }
                 // "Open" puts it in the composer — the road to Post, Schedule
                 // and Send — so an expired draft doesn't get it. Delete stays.
                 if let onUse, draft.canOpenInComposer {
@@ -562,27 +577,26 @@ struct MarketingDraftsView: View {
                         Haptic.selection()
                         onUse(draft)
                     } label: {
-                        Text("Open").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarEmber)
+                        Text("Open").frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
                 }
-                if draft.canApprove {
-                    Button {
-                        Task { await viewModel.approve(draft) }
-                    } label: {
-                        Text("Approve").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarEmber)
-                    }
-                }
-                Spacer()
+                Spacer(minLength: 0)
                 Button {
                     Haptic.selection()
                     draftToDelete = draft
                 } label: {
-                    Image(systemName: "trash").foregroundStyle(Color.cavnarEmber)
+                    Image(systemName: "trash")
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarHitTarget()
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete draft")
             }
             .padding(.top, 2)
         }
-        .padding(14)
+        .padding(CavnarSpace.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2)
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))

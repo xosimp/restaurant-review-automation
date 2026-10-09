@@ -1,27 +1,25 @@
 import SwiftUI
 
-/// The Analytics tab, top to bottom: the brief (one headline, the numbered
-/// moves), the period, a glossy stats tile with the engagement-rate ring,
-/// thin platform bars, what posts did to sales, and the recent pieces.
+/// The Analytics tab, top to bottom (readability round 10/8/26): the brief
+/// (one headline, the numbered moves, ONE forecast) with its caveats folded
+/// into one line, the guest texts' most likely cause, the period, the stats
+/// tile with the engagement-rate ring, thin platform bars, the top post, and
+/// how you compare. What posts did to sales — a table of before/after rows
+/// by kind, occasion and dish — is the web's, one tap away; the output
+/// counts and the per-piece history are too.
 struct MarketingAnalyticsSection: View {
     let viewModel: MarketingAnalyticsViewModel
-    /// The output counts the Content tab used to lead with — this month,
-    /// generated, published — kept here as one line (density #10): what
-    /// Cavnar produced, beside what it did.
-    var counts: MarketingStats? = nil
+
+    /// The caveat banners behind the one-line summary.
+    @State private var showingCaveats = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             briefCard
             // Under the brief, as on the web: the guest texts' most likely
             // cause. Renders nothing until two campaigns can be compared.
             if let diagnosis = viewModel.diagnosis {
                 LaborDiagnosisCard(diagnosis: diagnosis, title: "WHY SOME TEXTS DID BETTER", surface: "marketing")
-            }
-            if let c = counts {
-                HomeMixedText.make("\(c.thisMonth) this month \u{00B7} \(c.generated) generated \u{00B7} \(c.published) published",
-                                   size: CavnarType.caption, weight: 600, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if viewModel.isLoading && viewModel.performance == nil {
@@ -34,9 +32,10 @@ struct MarketingAnalyticsSection: View {
             } else {
                 CachedDataNotice(text: viewModel.stalenessNotice)
                 periodSwitcher
-                // "Metrics synced 9/21/26" — amber when the nightly pull is
-                // stale or failing (DH4-8), so a flat week reads as what it is.
-                if let sync = viewModel.performance?.metricsSync {
+                // "Metrics synced 9/21/26" — only when it is news: amber
+                // when the nightly pull is stale or failing (DH4-8), so a
+                // flat week reads as what it is.
+                if let sync = viewModel.performance?.metricsSync, sync.tone == "warn" || sync.tone == "bad" {
                     ServerStatusCaption(status: sync)
                 }
                 if let window = viewModel.window {
@@ -44,31 +43,40 @@ struct MarketingAnalyticsSection: View {
                     // Why there's no +/−% beside the figures (F2) — a
                     // blank change is "too few posts", never "no change".
                     if let note = window.changeNote, !note.isEmpty {
-                        HomeMixedText.make(note + ".", size: 12.5, weight: 500, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(note + ".", role: .caption)
                     }
                     if !window.byPlatform.isEmpty {
                         platformBars(window)
                     }
                 } else if viewModel.performance != nil {
                     Text("No published post metrics yet.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .cavnarCard()
                 }
                 topPostCard
-                attributionCard
+                // What a post did to the till — same weekday, before vs
+                // after, by kind, occasion and dish — on the web (#60's
+                // rule: wide tables and multi-row analysis are the web's).
+                if viewModel.attribution != nil {
+                    CavnarWebLinkRow(title: "What posts did to sales",
+                                     subtitle: "Same weekday, before vs after \u{2014} by post, kind, occasion and dish",
+                                     path: "marketing", actionLabel: "Open on the web")
+                }
                 // How you compare — the Benchmark Engine's card (#23).
                 HowYouCompareCard(module: "marketing")
-            }
-
-            if !viewModel.recentTopics.isEmpty {
-                recentlyGenerated
             }
         }
     }
 
     // MARK: - Brief
+
+    /// One line for every caveat on the brief — nil when there is none
+    /// (the same summary Reviews' read uses).
+    private func caveatLine(_ insight: AIInsight) -> String? {
+        ReviewsAnalyticsSection.caveatSummary(
+            unverified: insight.figuresVerified == false || insight.causesVerified == false,
+            stale: insight.olderReadNote != nil)
+    }
 
     /// The consultant's read as one headline and the numbered moves — not
     /// a strip of prose. The insight endpoint already writes in this shape
@@ -86,41 +94,57 @@ struct MarketingAnalyticsSection: View {
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
             } else if let insight = viewModel.insight {
-                // A figure the server couldn't trace to the data: said, and
-                // the lines carry no Done / Track (M-16). The phone never
-                // showed it, so an untraced number read as fact.
-                if insight.figuresVerified == false {
-                    CavnarCaveat.unverifiedFigures(insight.unsupportedFigures ?? [])
+                // Up to three caveat banners stood above the read; they are
+                // one line now, the banners behind "Why?".
+                if let line = caveatLine(insight) {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.2)) { showingCaveats.toggle() }
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: "exclamationmark.circle")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarAmber)
+                            Text(line)
+                                .cavnarText(.caption, color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(showingCaveats ? "Hide" : "Why?")
+                                .font(.cavnarBody(CavnarType.caption, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if showingCaveats {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            // A figure the server couldn't trace to the data:
+                            // said, and the lines carry no Done / Track (M-16).
+                            if insight.figuresVerified == false {
+                                CavnarCaveat.unverifiedFigures(insight.unsupportedFigures ?? [])
+                            }
+                            // A reason the read gave that nothing measured backs (H2).
+                            if insight.causesVerified == false {
+                                CavnarCaveat.unverifiedCauses(insight.unsupportedCauses ?? [])
+                            }
+                            // A cached read served because a new one failed (B6 sub-audit).
+                            if let note = insight.olderReadNote {
+                                CavnarCaveat.olderRead(note)
+                            }
+                        }
                         .padding(.bottom, 10)
+                    }
                 }
-                // A reason the read gave that nothing measured backs (H2).
-                if insight.causesVerified == false {
-                    CavnarCaveat.unverifiedCauses(insight.unsupportedCauses ?? [])
-                        .padding(.bottom, 10)
-                }
-                // A cached read served because a new one failed (B6 sub-audit).
-                if let note = insight.olderReadNote {
-                    CavnarCaveat.olderRead(note)
-                        .padding(.bottom, 10)
-                }
-                Text(insight.intro)
-                    .font(.cavnarHeadline(18))
-                    .foregroundStyle(Color.cavnarInk)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(insight.intro, role: .lead)
                     .padding(.bottom, insight.recommendations.isEmpty ? 0 : 12)
 
                 ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Text("\(index + 1)")
-                            .font(.cavnarNumber(14.5, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarText(.figureS, color: .cavnarEmber2)
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(rec)
-                                .font(.cavnarBody(14.5))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .lineSpacing(3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(rec, role: .body)
                             // Done / Not for us / Track — for a line the
                             // server keyed (insight_rec_keys, index-aligned).
                             if let key = insight.recKey(at: index) {
@@ -132,32 +156,24 @@ struct MarketingAnalyticsSection: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if let forecast = insight.forecast, !forecast.isEmpty {
-                    Text(forecast)
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 8)
-                }
-                // The figure behind that line, computed in Python (H8) —
-                // last week's level carried forward, never extrapolated.
-                if let computed = insight.computedForecast?.line {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        HomeMixedText.make(computed, size: 13, weight: 500, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
+                // ONE forecast: the figure computed in Python (H8) — last
+                // week's level carried forward, never extrapolated — when
+                // there is one, else the brief's own line; tagged either way.
+                if let forecast = insight.computedForecast?.line ?? insight.forecast, !forecast.isEmpty {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                         ClaimKindTag(kind: "forecast")
+                        CavnarMixedText(forecast, role: .secondary)
                     }
-                    .padding(.top, 6)
+                    .padding(.top, 8)
+                    .accessibilityElement(children: .combine)
                 }
             } else {
                 Text("Publish a post or two and the brief will have something to say.")
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(CavnarSpace.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarEmber.opacity(0.12))
         .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
@@ -177,13 +193,12 @@ struct MarketingAnalyticsSection: View {
                     Haptic.light()
                     Task { await viewModel.setWindow(days) }
                 } label: {
-                    (Text("\(days)").font(.cavnarNumber(15, weight: 700)) + Text(" days"))
-                        .font(.cavnarBody(15, weight: 700))
-                        .foregroundStyle(days == viewModel.windowDays ? Color.cavnarInk : Color.cavnarInk3)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                    HomeMixedText.make("\(days) days", role: .label,
+                                       color: days == viewModel.windowDays ? .cavnarInk : .cavnarInk2)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                         .background(days == viewModel.windowDays ? Color.cavnarPaper3 : Color.clear)
                         .clipShape(Capsule())
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -197,9 +212,6 @@ struct MarketingAnalyticsSection: View {
 
     // MARK: - Stats
 
-    /// A period against the period before it. "Total reach 4,231" with no
-    /// denominator and no trend is a number, not a metric — and engagement
-    /// RATE is the one that survives a follower count changing.
     /// "Top performing post" — named only over the floor of measured posts
     /// (AUX-13); below it, when one will be named. The web's
     /// `#mkt-perf-top-wrap`.
@@ -208,27 +220,25 @@ struct MarketingAnalyticsSection: View {
         if let p = viewModel.performance {
             if let title = p.topPostTitle {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("TOP PERFORMING POST")
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
+                    CavnarKicker("Top performing post")
                     Text(title)
-                        .font(.cavnarBody(15, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.label)
                         .fixedSize(horizontal: false, vertical: true)
                     if let metrics = p.topPostMetrics {
-                        HomeMixedText.make(metrics, size: 13, weight: 500, color: .cavnarInk3)
+                        CavnarMixedText(metrics, role: .caption)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()
             } else if let wait = p.topPostWaitLine {
-                HomeMixedText.make(wait, size: 13, weight: 500, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(wait, role: .caption)
             }
         }
     }
 
+    /// A period against the period before it. "Total reach 4,231" with no
+    /// denominator and no trend is a number, not a metric — and engagement
+    /// RATE is the one that survives a follower count changing.
     private func statsTile(_ window: MarketingWindow) -> some View {
         HStack(alignment: .center, spacing: 8) {
             bigStat(window.reach.formatted(), "Reach", window.change.reach)
@@ -242,16 +252,15 @@ struct MarketingAnalyticsSection: View {
     private func bigStat(_ value: String, _ label: String, _ change: Double?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.cavnarNumber(24, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.figureM)
                 .cavnarNumberGlow()
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                .minimumScaleFactor(0.85)
+            Text(label).cavnarText(.caption)
             if let change {
                 Text("\(change > 0 ? "+" : "")\(change, specifier: "%.0f")%")
-                    .font(.cavnarNumber(13, weight: 700))
-                    .foregroundStyle(change >= 0 ? Color.cavnarGreen : Color.cavnarRed)
+                    .font(.cavnarNumber(CavnarType.caption, weight: 700))
+                    .foregroundStyle(change >= 0 ? Color.cavnarGreen : Color.cavnarRedText)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -273,12 +282,13 @@ struct MarketingAnalyticsSection: View {
                 // No reach measured is "—", never a 0.0% that reads as
                 // "nobody engaged".
                 Text(measured.map { String(format: "%.1f%%", $0) } ?? "\u{2014}")
-                    .font(.cavnarNumber(17, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
-                Text("Rate").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.figureS)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Text("Rate").cavnarText(.caption)
             }
         }
-        .frame(width: 74, height: 74)
+        .frame(width: 78, height: 78)
         .padding(.vertical, 5)
     }
 
@@ -288,14 +298,12 @@ struct MarketingAnalyticsSection: View {
         let maxReach = max(window.byPlatform.map(\.reach).max() ?? 0, 1)
         return VStack(alignment: .leading, spacing: 10) {
             Text("By platform")
-                .font(.cavnarBody(16, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.label)
 
             ForEach(window.byPlatform) { platform in
                 HStack(spacing: 10) {
                     Text(platform.label)
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.secondary)
                         .lineLimit(1)
                         .frame(width: 82, alignment: .leading)
                     GeometryReader { geo in
@@ -309,211 +317,12 @@ struct MarketingAnalyticsSection: View {
                     }
                     .frame(height: 8)
                     Text(platform.reach > 0 ? platform.reach.formatted() : "—")
-                        .font(.cavnarNumber(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 500))
+                        .foregroundStyle(Color.cavnarInk2)
                         .frame(width: 52, alignment: .trailing)
                 }
             }
         }
         .cavnarCard()
-    }
-
-    // MARK: - Attribution
-
-    /// What a post did to the till — the question a marketing director asks
-    /// first. Labelled as a comparison because that is what it is.
-    @ViewBuilder
-    private var attributionCard: some View {
-        if let attribution = viewModel.attribution {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("What posts did to sales")
-                        .font(.cavnarBody(16, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                        .fixedSize()
-                        .layoutPriority(1)
-                    Spacer(minLength: 6)
-                    Text("same weekday, before vs after")
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(2)
-                }
-                .padding(.bottom, 4)
-
-                if attribution.ok, !attribution.posts.isEmpty {
-                    // What the posts' own verdicts say (F2), before any one
-                    // post's figure is read as the pattern.
-                    if let line = attribution.verdictLine {
-                        HomeMixedText.make(line + ".", size: 12.5, weight: 500, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 4)
-                    }
-                    ForEach(Array(attribution.posts.enumerated()), id: \.element.id) { index, post in
-                        attributionRow(post, divider: index > 0)
-                    }
-                    if let weakest = attribution.weakest, !weakest.isEmpty {
-                        Text("WHAT DIDN'T LAND")
-                            .font(.cavnarBody(12, weight: 700)).tracking(1.1)
-                            .foregroundStyle(Color.cavnarInk3)
-                            .padding(.top, 12)
-                        ForEach(Array(weakest.enumerated()), id: \.element.id) { index, post in
-                            attributionRow(post, divider: index > 0)
-                        }
-                    }
-                    groupBlock("BY KIND OF POST", attribution.byKind)
-                    groupBlock("BY OCCASION", attribution.byOccasion)
-                    groupBlock("BY DISH", attribution.byDish)
-                } else {
-                    Text(attribution.emptyExplanation)
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                }
-            }
-            .cavnarCard()
-        }
-    }
-
-    /// One measured post: topic with what it was about, the sales lift, and
-    /// beneath it only the further measures that exist for it.
-    private func attributionRow(_ post: MarketingAttribution.Post, divider: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(post.topic ?? "Untitled")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let about = post.aboutLabel {
-                        AccountChip(text: about, muted: true)
-                    }
-                }
-                Spacer(minLength: 8)
-                liftLabel(post)
-            }
-            if let detail = post.detailLine {
-                HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
-            }
-        }
-        .padding(.vertical, 9)
-        .overlay(alignment: .top) {
-            if divider { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
-        }
-    }
-
-    /// The result, worded and coloured by the server's verdict — not by the
-    /// sign of lift_pct. A +3% inside a ±8% weekday noise band is not a lift,
-    /// and painting it green said it was. An older payload without a verdict
-    /// falls back to the sign, as before.
-    @ViewBuilder
-    private func liftLabel(_ post: MarketingAttribution.Post) -> some View {
-        switch post.liftVerdict {
-        case .noClearChange:
-            (Text("No clear change")
-                + Text(post.noiseBandPct.map { " (\u{00B1}\(Int($0.rounded()))%)" } ?? "")
-                    .font(.cavnarNumber(13, weight: 600)))
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
-                .multilineTextAlignment(.trailing)
-        case .lifted, .dropped:
-            Text("\(post.liftPct > 0 ? "+" : "")\(post.liftPct, specifier: "%.0f")%")
-                .font(.cavnarNumber(15, weight: 700))
-                .foregroundStyle(post.liftVerdict == .lifted ? Color.cavnarGreen : Color.cavnarRed)
-        }
-    }
-
-    private static func groupValue(_ g: MarketingAttribution.Group) -> String {
-        var text = "\(g.medianLiftPct > 0 ? "+" : "")\(Int(g.medianLiftPct.rounded()))% median"
-        if let il = g.medianItemLiftPct {
-            text += " · dish \(il > 0 ? "+" : "")\(Int(il.rounded()))%"
-        }
-        return text
-    }
-
-    @ViewBuilder
-    private func groupBlock(_ title: String, _ groups: [MarketingAttribution.Group]?) -> some View {
-        if let groups, !groups.isEmpty {
-            Text(title)
-                .font(.cavnarBody(12, weight: 700)).tracking(1.1)
-                .foregroundStyle(Color.cavnarInk3)
-                .padding(.top, 12)
-            ForEach(groups) { g in
-                HStack(alignment: .firstTextBaseline) {
-                    HomeMixedText.make("\(g.group.replacingOccurrences(of: "_", with: " ")) · \(g.posts) posts", size: 13.5, weight: 500, color: .cavnarInk2)
-                    Spacer(minLength: 8)
-                    // Coloured by the group's own verdict (F2) — a positive
-                    // median most of whose posts sat inside their band is
-                    // not a lift.
-                    HomeMixedText.make(Self.groupValue(g) + (g.liftVerdict == .noClearChange ? " \u{00B7} no clear change" : ""),
-                                       size: 13.5, weight: 700,
-                                       color: g.liftVerdict == .lifted ? .cavnarGreen
-                                            : (g.liftVerdict == .dropped ? .cavnarRed : .cavnarInk3))
-                        .multilineTextAlignment(.trailing)
-                }
-                .padding(.vertical, 5)
-            }
-        }
-    }
-
-    // MARK: - Recent
-
-    /// Per-piece history — what was written, whether it went out, and what it
-    /// did. Pull to refresh pulls fresh numbers from Meta first.
-    private var recentlyGenerated: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Recently generated")
-                    .font(.cavnarBody(16, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
-                Spacer()
-                if viewModel.isRefreshingMetrics {
-                    CavnarShimmerText(text: "Refreshing…")
-                }
-            }
-            .padding(.bottom, 4)
-
-            ForEach(Array(viewModel.recentTopics.enumerated()), id: \.element.id) { index, topic in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(topic.topic)
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 8)
-                        if topic.posted {
-                            pill("\(topic.platformLabel ?? "Posted") ✓", tone: Color.cavnarGreen)
-                        } else {
-                            pill("Draft", tone: Color.cavnarEmber2)
-                        }
-                    }
-                    if let line = topic.metricsLine {
-                        Text(line).font(.cavnarNumber(13)).foregroundStyle(Color.cavnarInk3)
-                    } else if topic.posted {
-                        Text("No numbers back from Meta yet")
-                            .font(.cavnarBody(13))
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
-                }
-                .padding(.vertical, 9)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .top) {
-                    if index > 0 { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
-                }
-            }
-        }
-        .cavnarCard()
-    }
-
-    private func pill(_ text: String, tone: Color) -> some View {
-        Text(text)
-            .font(.cavnarBody(12, weight: 700))
-            .foregroundStyle(tone)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 3)
-            .background(tone.opacity(0.14))
-            .clipShape(Capsule())
-            .lineLimit(1)
     }
 }

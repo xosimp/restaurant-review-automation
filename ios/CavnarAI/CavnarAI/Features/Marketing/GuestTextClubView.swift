@@ -1,75 +1,44 @@
 import SwiftUI
 
-private enum CampaignField: Hashable, CaseIterable {
-    case winback, topic, link, draftMessage, newsletter
+private enum ClubField: Hashable, CaseIterable {
+    case search
 }
 
+/// The Guest Text Club since it folded into Campaigns (readability round
+/// 10/8/26 #57): how guests join — the link, the QR code to print, the
+/// receipt line — and who has, searchable and paged. Writing and sending a
+/// text or an email, what went out and the consent ledger are on Marketing
+/// → Campaigns, once; this screen used to repeat each of them.
 struct GuestTextClubView: View {
-    @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel = GuestTextClubViewModel()
-    /// The Campaign Studio, opened on the email channel from here.
-    @State private var studioSeed: StudioSeed?
-    /// The campaign whose Stop sending was tapped, awaiting the confirm.
-    @State private var campaignToStop: GuestCampaign?
     @State private var showingAddContact = false
     @State private var copied = false
-    @State private var confirmingSend = false
-    @State private var confirmingWinback = false
-    /// The win-back's "Not for us" asking why (RecReasonDialog).
-    @State private var askingWinbackReason = false
     /// The guest whose trash button was tapped, awaiting confirmation.
     @State private var contactToDelete: GuestContact?
-    @FocusState private var focusedField: CampaignField?
+    /// Finds a guest by name or number.
+    @State private var search = ""
+    /// How many matching guests are on screen; "Show more" adds a page.
+    @State private var shown = GuestTextClubView.pageSize
+    @FocusState private var focusedField: ClubField?
+
+    static let pageSize = 25
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: CavnarSpace.l) {
                 if let joinURL = viewModel.joinURL {
                     joinLinkCard(joinURL)
                 }
-                if let draft = viewModel.winback {
-                    winbackCard(draft)
-                }
-                campaignCard
-                newsletterCard
-                historyCard
-                ledgerCard
                 contactsCard
             }
-            .padding(20)
+            .padding(CavnarSpace.gutter)
         }
         .background(Color.cavnarPaper)
         .navigationTitle("Guest Text Club")
         .toolbar { cavnarTitleToolbar("Guest Text Club") }
         .keyboardNavToolbar($focusedField)
-        .task { await viewModel.loadAll() }
-        .cavnarEmberRefreshable { await viewModel.loadAll() }
-        // "Cavnar AI flagged this": what the send gate held back and why,
-        // with Edit or Discard (parity audit #74).
-        .sheet(item: $viewModel.gateFlag) { flag in
-            // A flagged win-back text goes back to its own box.
-            SendGateSheet(flag: flag,
-                          onEdit: { focusedField = flag.channel == "winback" ? .winback : .draftMessage },
-                          onDiscard: {
-                              if flag.channel == "winback" { viewModel.discardWinbackText() } else { viewModel.discardDraft() }
-                          })
-        }
-        .sheet(item: $studioSeed) { seed in
-            CampaignStudioView(seed: seed, connected: nil, isOwner: sessionStore.currentUser?.isOwner ?? false) {
-                Task { await viewModel.loadHistory() }
-            }
-        }
-        .confirmationDialog(
-            campaignToStop.map { "Stop sending? \(mktPlural($0.pending, "text")) won\u{2019}t go out." } ?? "",
-            isPresented: Binding(get: { campaignToStop != nil }, set: { if !$0 { campaignToStop = nil } }),
-            titleVisibility: .visible, presenting: campaignToStop
-        ) { campaign in
-            Button("Stop sending", role: .destructive) { Task { await viewModel.stop(campaign) } }
-            Button("Keep sending", role: .cancel) {}
-        } message: { _ in
-            Text("Texts already handed to the carrier are not recalled.")
-        }
-        .onChange(of: viewModel.campaignType) { _, _ in viewModel.campaignTypeChanged() }
+        .task { await viewModel.loadClub() }
+        .cavnarEmberRefreshable { await viewModel.loadClub() }
         .sheet(isPresented: $showingAddContact) {
             AddGuestContactSheet(viewModel: viewModel)
         }
@@ -91,20 +60,19 @@ struct GuestTextClubView: View {
                  ? "This also deletes the record that they texted STOP. If their number is added again, nothing will show they opted out."
                  : "This also deletes the record of their consent to be texted.")
         }
+        .onChange(of: search) { _, _ in shown = Self.pageSize }
     }
 
     private func joinLinkCard(_ url: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Guest join link").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Guest join link")
             Text("Guests join by scanning or tapping this themselves — that's the only way anyone becomes text-eligible.")
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 10) {
                 Text(url)
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.secondary, color: .cavnarInk)
                     .textSelection(.enabled)
                     .lineLimit(2)
                 Spacer(minLength: 8)
@@ -116,7 +84,10 @@ struct GuestTextClubView: View {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .labelStyle(.iconOnly)
                         .foregroundStyle(Color.cavnarEmber)
+                        .cavnarHitTarget()
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copied ? "Copied" : "Copy the join link")
             }
 
             // A QR on a screen helps nobody — the whole point is that it gets
@@ -133,13 +104,13 @@ struct GuestTextClubView: View {
                         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Print this where guests can scan it")
-                            .font(.cavnarBody(16, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
                         ShareLink(item: Image(uiImage: qr),
                                   preview: SharePreview("Guest text club QR", image: Image(uiImage: qr))) {
                             Text("Share QR code")
-                                .font(.cavnarBody(15, weight: 600))
-                                .foregroundStyle(Color.cavnarEmber)
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .frame(minHeight: 44)
                         }
                     }
                     Spacer(minLength: 0)
@@ -149,485 +120,37 @@ struct GuestTextClubView: View {
             if let hint = viewModel.receiptHint {
                 DisclosureGroup("Add this to your receipts") {
                     Text(hint)
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 6)
                 }
-                .font(.cavnarBody(15, weight: 600))
+                .font(.cavnar(.label))
                 .tint(Color.cavnarEmber)
             }
         }
         .cavnarCard()
     }
 
-    // MARK: - Suggested win-back
-
-    /// A drafted win-back text for a lapsed segment. Written by the server
-    /// deterministically, edited here, and sent only on the owner's tap —
-    /// confirmed first, like every text blast on this screen (CLIENT-9).
-    private func winbackCard(_ draft: GuestWinback.Draft) -> some View {
-        let size = draft.segmentSize ?? 0
-        let who = (draft.segmentLabel ?? "who haven\u{2019}t been back").lowercased()
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .semibold))
-                    .accessibilityHidden(true)
-                Text("SUGGESTED \u{00B7} WIN-BACK TEXT")
-                    .font(.cavnarBody(12, weight: 700))
-                    .tracking(1.1)
-            }
-            .foregroundStyle(Color.cavnarEmber)
-
-            (Text("\(size)").font(.cavnarNumber(16, weight: 700))
-                + Text(" opted-in guest\(size == 1 ? "" : "s") \(who) can be texted."))
-                .font(.cavnarBody(16, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let text = draft.pastReturn?.text, !text.isEmpty {
-                HomeMixedText.make(text, size: 13, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let total = viewModel.winbackSentTotal {
-                // Stays put (not the fading posted check): the owner should
-                // still see what happened when they scroll back up.
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .accessibilityHidden(true)
-                    (Text("Sending to ") + Text("\(total)").font(.cavnarNumber(12.5, weight: 600))
-                        + Text(" guest\(total == 1 ? "" : "s") \u{2014} it\u{2019}s in the campaign history below"))
-                        .font(.cavnarBody(12.5, weight: 500))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .foregroundStyle(Color.cavnarInk3)
-            } else if viewModel.winbackDismissed {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .accessibilityHidden(true)
-                    Text(RecAnswer.notForUs.confirmation)
-                        .font(.cavnarBody(12.5, weight: 500))
-                }
-                .foregroundStyle(Color.cavnarInk3)
-            } else {
-                TextEditor(text: $viewModel.winbackMessage)
-                    .font(.cavnarBody(16))
-                    .frame(minHeight: 80)
-                    .padding(8)
-                    .background(Color.cavnarPaper2)
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                    .focused($focusedField, equals: .winback)
-                    .onChange(of: viewModel.winbackMessage) { _, text in
-                        // Held to the server's own length limit as it's typed.
-                        if let max = draft.maxChars, text.count > max {
-                            viewModel.winbackMessage = String(text.prefix(max))
-                        }
-                    }
-                if let left = viewModel.winbackCharsLeft {
-                    (Text("\(left)").font(.cavnarNumber(12.5, weight: 600))
-                        + Text(" character\(left == 1 ? "" : "s") left"))
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(left <= 10 ? Color.cavnarAmber : Color.cavnarInk3)
-                }
-
-                HStack(alignment: .center, spacing: 16) {
-                    Button {
-                        confirmingWinback = true
-                    } label: {
-                        if viewModel.isSendingWinback {
-                            CavnarShimmerText(text: "Sending\u{2026}")
-                        } else {
-                            Text(viewModel.sendingNow ? "Send to these guests" : "Queue for \(viewModel.opensAt)")
-                        }
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSendWinback))
-                    .disabled(!viewModel.canSendWinback)
-                    .confirmationDialog(
-                        "Text \(size) guest\(size == 1 ? "" : "s") \(who)?",
-                        isPresented: $confirmingWinback, titleVisibility: .visible
-                    ) {
-                        Button("Send to \(size) guest\(size == 1 ? "" : "s")") {
-                            Task { await viewModel.sendWinback() }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text(windowSentence(draft.smsWindow ?? viewModel.smsWindow))
-                    }
-
-                    // Not for us asks why first — the same reason picker as
-                    // every other Not for us. A reason sends its code, Skip
-                    // sends none, Cancel sends nothing at all.
-                    Button {
-                        Haptic.light()
-                        askingWinbackReason = true
-                    } label: {
-                        Text(RecAnswer.notForUs.label)
-                            .font(.cavnarBody(12.5, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.isSendingWinback)
-                    .accessibilityHint(RecAnswer.notForUs.accessibilityHint)
-                    .recReasonDialog(isPresented: $askingWinbackReason, skipLabel: "Skip",
-                                     onSkip: { Task { await viewModel.dismissWinback() } }) { reason in
-                        Task { await viewModel.dismissWinback(reasonCode: reason.code) }
-                    }
-                }
-            }
-
-            if let error = viewModel.winbackError {
-                Text(error)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarRed)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    /// Guests whose name or number matches the search.
+    private var matching: [GuestContact] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return viewModel.contacts }
+        let digits = q.filter(\.isNumber)
+        return viewModel.contacts.filter { c in
+            (c.name ?? "").lowercased().contains(q)
+                || (!digits.isEmpty && c.phone.filter(\.isNumber).contains(digits))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard(.ai)
-    }
-
-    private var campaignCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Send a campaign").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-
-            // guest_marketing.CAMPAIGN_PROMPTS. "Promo" used to sit here and
-            // matched nothing on the backend, so it quietly became "general".
-            CavnarSegmentedControl(
-                selection: $viewModel.campaignType,
-                options: GuestTextClubViewModel.campaignTypes
-            ) { type in
-                switch type {
-                case "win_back": return "Win-back"
-                case "event": return "Event"
-                case "loyalty": return "Loyalty"
-                default: return "General"
-                }
-            }
-
-            if !viewModel.segments.isEmpty {
-                Picker("Audience", selection: $viewModel.selectedSegment) {
-                    ForEach(viewModel.segments) { segment in
-                        Text("\(segment.label) (\(segment.reach))").tag(segment.key)
-                    }
-                }
-                .pickerStyle(.menu)
-                .tint(Color.cavnarEmber)
-
-                if let help = viewModel.selectedSegmentHelp {
-                    Text(help)
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                // What past texts did with this audience, once a draft has
-                // been written (returns_by_segment) — measured, never
-                // stated to guests.
-                if let ret = viewModel.selectedSegmentReturn {
-                    HomeMixedText.make(ret.line + " \u{2014} before and after, not proof.", size: 14, weight: 600,
-                                       color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if !viewModel.segmentReturns.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(viewModel.segmentReturns.prefix(3)) { ret in
-                            HomeMixedText.make(ret.line, size: 13.5, color: .cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
-
-            if viewModel.audienceUnknown {
-                // Unknown is never shown as zero (CLIENT-9).
-                HStack(spacing: 10) {
-                    Text("Couldn't load who this goes to.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarRed)
-                    Button("Retry") { Task { await viewModel.loadSegments() } }
-                        .font(.cavnarBody(15, weight: 600))
-                }
-            } else {
-                // Who a text reaches NOW (`eligible`): anyone texted inside
-                // the spacing is left out, and says so (CS-5).
-                let left = viewModel.selectedSegmentTotal - viewModel.selectedSegmentCount
-                let days = viewModel.ledger?.minDaysBetween ?? viewModel.overview?.minDaysBetween ?? 3
-                HomeMixedText.make("Goes to \(mktPlural(viewModel.selectedSegmentCount, "guest")) "
-                                   + SMSWindow.sentence(viewModel.smsWindow) + "."
-                                   + (left > 0 ? " \(left) texted in the last \(days) days left out." : "")
-                                   + " Nobody gets two campaigns inside \(days) days.",
-                                   size: 15, weight: 400, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !viewModel.sendingNow {
-                    HomeMixedText.make("It\u{2019}s outside your sending hours: a text sent now is queued and goes at \(viewModel.opensAt).",
-                                       size: 14, weight: 600, color: .cavnarAmber)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            TextField("Topic (optional)", text: $viewModel.campaignTopic)
-                .cavnarTextFieldStyle()
-                .focused($focusedField, equals: .topic)
-
-            // draft_campaign_message's own prompt forbids links, so a text
-            // could never carry one — meaning a text club could ask guests to
-            // come back and never learn whether one did. A short link is
-            // appended on send and the taps are counted.
-            TextField("Link to track (optional)", text: $viewModel.linkURL)
-                .cavnarTextFieldStyle()
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .focused($focusedField, equals: .link)
-
-            Button {
-                Task { await viewModel.draftCampaign() }
-            } label: {
-                if viewModel.isDrafting {
-                    CavnarShimmerText(text: "Drafting…")
-                } else {
-                    Text("Draft message")
-                }
-            }
-            .buttonStyle(CavnarPrimaryButtonStyle())
-            .disabled(viewModel.isDrafting)
-
-            if !viewModel.draftMessage.isEmpty {
-                TextEditor(text: $viewModel.draftMessage)
-                    .font(.cavnarBody(16))
-                    .frame(minHeight: 80)
-                    .padding(8)
-                    .background(Color.cavnarPaper2)
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                    .focused($focusedField, equals: .draftMessage)
-
-                // A text blast can't be taken back, so it is confirmed with
-                // the audience and the count first, like the web's
-                // "Send this text to …?" (CLIENT-9).
-                Button {
-                    confirmingSend = true
-                } label: {
-                    if viewModel.isSending {
-                        CavnarShimmerText(text: "Sending…")
-                    } else {
-                        Text(viewModel.sendingNow
-                             ? "Send to \(mktPlural(viewModel.selectedSegmentCount, "guest"))"
-                             : "Queue for \(viewModel.opensAt)")
-                    }
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isSending || viewModel.audienceUnknown || viewModel.selectedSegmentCount == 0)
-                .confirmationDialog(sendConfirmationTitle, isPresented: $confirmingSend, titleVisibility: .visible) {
-                    Button((viewModel.sendingNow ? "Send to " : "Queue for ")
-                           + "\(viewModel.selectedSegmentCount) guest\(viewModel.selectedSegmentCount == 1 ? "" : "s")") {
-                        Task { await viewModel.sendCampaign() }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text(windowSentence(viewModel.smsWindow))
-                }
-
-                if viewModel.didSend {
-                    // "Posted" — plays once on the real send, then clears
-                    // itself so the form is ready for the next campaign.
-                    CavnarInlinePosted(label: viewModel.queuedCount.map { "Sending to \($0)" }
-                                       ?? viewModel.sentCount.map { "Sent to \($0)" } ?? "Campaign sent") {
-                        viewModel.didSend = false
-                    }
-                    .padding(.top, 6)
-                }
-                if let line = viewModel.sendLine {
-                    HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            if let error = viewModel.campaignError {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-            }
-        }
-        .cavnarCard()
-    }
-
-    private var sendConfirmationTitle: String {
-        let count = viewModel.selectedSegmentCount
-        let label = viewModel.segments.first { $0.key == viewModel.selectedSegment }?.label ?? "your guests"
-        return "Text \(label) — \(count) guest\(count == 1 ? "" : "s")?"
-    }
-
-    /// The confirm's sentence, the window in the server's own words.
-    private func windowSentence(_ window: String?) -> String {
-        let when = viewModel.sendingNow ? "" : "It\u{2019}s queued and goes at \(viewModel.opensAt). "
-        return when + "Texts go out " + SMSWindow.sentence(window) + ". A sent text can\u{2019}t be recalled."
-    }
-
-    private var newsletterCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Email newsletter").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                Spacer()
-                if !viewModel.newsletterLoadFailed {
-                    (Text("\(viewModel.subscriberCount)").font(.cavnarNumber(15, weight: 700))
-                        + Text(" subscribed"))
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-            }
-
-            if viewModel.newsletterLoadFailed {
-                // A failed load is not an empty list (CLIENT-58).
-                HStack(spacing: 10) {
-                    Text(viewModel.newsletterError ?? "Couldn't load your email list.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarRed)
-                    Button("Retry") { Task { await viewModel.loadNewsletter() } }
-                        .font(.cavnarBody(15, weight: 600))
-                }
-            } else if viewModel.subscriberCount == 0 {
-                Text("Nobody has opted in to email yet. The join page asks for an address, separately from the text club — a guest can say yes to one and not the other.")
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                // Written and sent in the Campaign Studio: Cavnar AI drafts it
-                // from a goal, the look and the audience are set there, and
-                // the email is previewed exactly as guests get it (parity
-                // audit #51, #17). Nothing is pasted in here any more.
-                Text("Cavnar AI drafts the email from what you want it to do; you pick the audience, see it as guests will, and send.")
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    Haptic.light()
-                    studioSeed = StudioSeed(channels: [.email])
-                } label: {
-                    Label("Write an email", systemImage: "envelope").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle())
-            }
-        }
-        .cavnarCard()
-    }
-
-    /// What has already gone out. This was recorded from the beginning and
-    /// displayed nowhere, so "did we already text about the wine dinner?"
-    /// had no answer.
-    @ViewBuilder
-    private var historyCard: some View {
-        if !viewModel.campaigns.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Campaigns sent").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                ForEach(viewModel.campaigns) { campaign in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(campaign.whenLabel)
-                                .font(.cavnarBody(15, weight: 700))
-                                .foregroundStyle(Color.cavnarEmber)
-                            Spacer()
-                            (Text("\(campaign.sentCount)").font(.cavnarNumber(15, weight: 700))
-                                + Text(" sent")
-                                + Text(campaign.clicks > 0 ? " · " : "")
-                                + (campaign.clicks > 0
-                                   ? Text("\(campaign.clicks)").font(.cavnarNumber(15, weight: 700)) + Text(" taps")
-                                   : Text("")))
-                                .font(.cavnarBody(15))
-                                .foregroundStyle(Color.cavnarInk3)
-                        }
-                        HStack(spacing: 8) {
-                            if let label = campaign.segmentLabel {
-                                Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-                            }
-                            Spacer(minLength: 4)
-                            AccountChip(text: campaign.statusLabel,
-                                        tint: campaign.isOpen ? .cavnarAmber
-                                            : (campaign.status == "cancelled" ? .cavnarInk3 : .cavnarGreen))
-                        }
-                        Text(campaign.message)
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk)
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if campaign.isOpen {
-                            Button(role: .destructive) {
-                                Haptic.light()
-                                campaignToStop = campaign
-                            } label: {
-                                if viewModel.stoppingID == campaign.id {
-                                    CavnarShimmerText(text: "Stopping\u{2026}", color: .cavnarRed)
-                                } else {
-                                    Text("Stop sending").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarRed)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .frame(minHeight: 32)
-                            .disabled(viewModel.stoppingID != nil)
-                        }
-                    }
-                    .contextMenu {
-                        if campaign.isOpen {
-                            Button(role: .destructive) { campaignToStop = campaign } label: {
-                                Label("Stop sending", systemImage: "stop.circle")
-                            }
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.cavnarPaper2)
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                }
-            }
-            .cavnarCard()
-        }
-    }
-
-    /// The rules this list runs under, stated rather than assumed.
-    @ViewBuilder
-    private var ledgerCard: some View {
-        if let ledger = viewModel.ledger {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Consent & sending").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                HStack(spacing: 0) {
-                    ledgerTile("\(ledger.textable)", "Text-eligible", .cavnarGreen)
-                    Divider()
-                    ledgerTile("\(ledger.noConsent)", "No consent", .cavnarEmber2)
-                    Divider()
-                    ledgerTile("\(ledger.unsubscribed)", "Unsubscribed", .cavnarInk3)
-                }
-                (Text("\(ledger.textsThisMonth)").font(.cavnarNumber(15, weight: 700))
-                    + Text(" texts sent this month across ")
-                    + Text("\(ledger.campaignsThisMonth)").font(.cavnarNumber(15, weight: 700))
-                    + Text(" campaigns. Texts go out between \(ledger.window) only, and no guest gets two inside \(ledger.minDaysBetween) days."))
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .cavnarCard()
-        }
-    }
-
-    private func ledgerTile(_ value: String, _ label: String, _ tint: Color) -> some View {
-        VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(tint)
-            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-        }
-        .frame(maxWidth: .infinity)
     }
 
     private var contactsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        let list = matching
+        let page = Array(list.prefix(shown))
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(16, weight: 700)) + Text(")"))
-                        .font(.cavnarBody(16, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
+                    HomeMixedText.make("Guests (\(viewModel.contacts.count))", role: .label)
                     if !viewModel.contacts.isEmpty {
-                        (Text("\(viewModel.textableCount)").font(.cavnarNumber(15, weight: 700))
-                            + Text(" text-eligible"))
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
+                        HomeMixedText.make("\(viewModel.textableCount) text-eligible", role: .secondary)
                     }
                 }
                 Spacer()
@@ -635,12 +158,42 @@ struct GuestTextClubView: View {
                     showingAddContact = true
                 } label: {
                     Image(systemName: "plus.circle")
+                        .font(.cavnar(.lead))
+                        .foregroundStyle(Color.cavnarEmber)
+                        .cavnarHitTarget()
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add a guest")
+            }
+            if viewModel.contacts.count > Self.pageSize {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Color.cavnarInk3)
+                    TextField("Search guests", text: $search)
+                        .font(.cavnar(.body))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .focused($focusedField, equals: .search)
+                    if !search.isEmpty {
+                        Button {
+                            Haptic.light()
+                            search = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(Color.cavnarInk3)
+                                .cavnarHitTarget()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear search")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .background(Color.cavnarPaper2)
+                .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                .clipShape(Capsule())
             }
             // A failed action (a delete the server refused) is said above the
             // list rather than replacing it.
             if let error = viewModel.errorMessage {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
             if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 8)
@@ -648,19 +201,36 @@ struct GuestTextClubView: View {
                 EmptyView()
             } else if viewModel.contacts.isEmpty {
                 Text("Nobody has joined yet. Share the QR code above where guests can scan it.")
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if list.isEmpty {
+                Text("No guest matches \u{201C}\(search)\u{201D}.")
+                    .cavnarText(.body)
             } else {
-                // Lazy: this is the one unbounded list in the app — a text
-                // club is thousands of guests and get_guest_contacts applies
-                // no LIMIT, so a plain ForEach in a ScrollView built every row
-                // on appear (audit #17). Every other long list here is either
-                // inside a List (Reviews) or bounded by its own data.
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(viewModel.contacts) { contact in
+                // Paged: a text club is thousands of guests and
+                // get_guest_contacts applies no LIMIT — 25 at a time, lazily.
+                LazyVStack(alignment: .leading, spacing: CavnarSpace.s) {
+                    ForEach(page) { contact in
                         contactRow(contact)
                     }
+                }
+                if list.count > page.count {
+                    Button {
+                        Haptic.light()
+                        shown += Self.pageSize
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs + 2) {
+                            HomeMixedText.make("Show \(min(Self.pageSize, list.count - page.count)) more of \(list.count)",
+                                               role: .label, color: .cavnarEmber2, numberColor: .cavnarEmber2)
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                        }
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -674,45 +244,49 @@ struct GuestTextClubView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.name?.isEmpty == false ? contact.name! : "Guest")
-                    .font(.cavnarBody(16, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                Text(PhoneFormat.display(contact.phone)).font(.cavnarNumber(15)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.label)
+                Text(PhoneFormat.display(contact.phone))
+                    .font(.cavnarNumber(CavnarType.secondary, weight: 500))
+                    .foregroundStyle(Color.cavnarInk2)
                 Text(contact.statusLabel)
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(statusColor(contact.status))
                 if let visit = contact.lastVisit, !visit.isEmpty {
-                    Text("Last visit \(shortDate(visit))")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                    HomeMixedText.make("Last visit \(shortDate(visit))", role: .caption)
                 }
             }
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 10) {
+            VStack(alignment: .trailing, spacing: 0) {
                 // Starts the post-visit review-request countdown. The route
                 // existed; nothing in the app could call it.
                 Button {
                     Task { await viewModel.markVisit(contact) }
                 } label: {
                     Text("Mark visit")
-                        .font(.cavnarBody(15, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber)
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarHitTarget()
                 }
+                .buttonStyle(.plain)
                 Button {
                     Haptic.selection()
                     contactToDelete = contact
                 } label: {
-                    Image(systemName: "trash").foregroundStyle(Color.cavnarEmber)
+                    Image(systemName: "trash")
+                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarHitTarget()
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Delete \(contact.name?.isEmpty == false ? contact.name! : "guest")")
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
     }
 
     private func statusColor(_ status: GuestContact.Status) -> Color {
         switch status {
         case .textable: return .cavnarGreen
-        case .unsubscribed: return .cavnarInk3
+        case .unsubscribed: return .cavnarInk2
         case .noConsent: return .cavnarEmber2
         }
     }

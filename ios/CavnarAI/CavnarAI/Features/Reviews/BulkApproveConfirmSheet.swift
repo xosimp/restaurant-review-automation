@@ -4,7 +4,8 @@ import SwiftUI
 /// post, in its own words — not a count (NS5 M10, the proposal card's rule).
 /// `reviews` is the snapshot shown; Approve posts exactly those, each bound
 /// to the words listed here (`review_hashes`), so a reply rewritten while
-/// the sheet was open is not posted.
+/// the sheet was open is not posted. Approve is pinned in thumb reach under
+/// the list (readability round 10/8/26) — it used to sit after every reply.
 struct BulkApproveConfirmSheet: View {
     let reviews: [Review]
     /// Selected but not in the bulk — read one at a time.
@@ -16,31 +17,31 @@ struct BulkApproveConfirmSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HomeMixedText.make(Self.title(reviews.count), size: 19, weight: 700, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: CavnarSpace.m) {
+                    CavnarMixedText(Self.title(reviews.count), role: .headline)
                     Text(ReviewsListView.bulkApproveMessage(held: held))
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: CavnarSpace.s) {
                         ForEach(reviews) { r in
                             replyRow(r)
                         }
                     }
-                    Button {
-                        Haptic.light()
-                        onApprove()
-                        dismiss()
-                    } label: {
-                        HomeMixedText.make("Approve \(reviews.count)", size: 16, weight: 600,
-                                           color: .white, numberColor: .white)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: reviews.isEmpty || isWorking))
-                    .disabled(reviews.isEmpty || isWorking)
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
+            }
+            .cavnarPinnedBar {
+                Button {
+                    Haptic.light()
+                    onApprove()
+                    dismiss()
+                } label: {
+                    HomeMixedText.make("Approve \(reviews.count)", role: .label,
+                                       color: .white, numberColor: .white)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: reviews.isEmpty || isWorking))
+                .disabled(reviews.isEmpty || isWorking)
             }
             .cavnarModuleBackground()
             .navigationTitle("Approve replies")
@@ -60,15 +61,14 @@ struct BulkApproveConfirmSheet: View {
 
     /// "5★ Ann", then the reply as it would post.
     private func replyRow(_ r: Review) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HomeMixedText.make("\(r.rating.map { "\($0)\u{2605}" } ?? "\u{2014}") \(r.author ?? "A guest")",
-                               size: 12, weight: 700, color: .cavnarEmber2, numberColor: .cavnarEmber2)
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs + 2) {
+            HomeMixedText.make("\(r.rating.map { "\($0)\u{2605}" } ?? "\u{2014}") \(r.author ?? "A guest") \u{00B7} \(r.platformDisplayName)",
+                               role: .caption, color: .cavnarEmber2, numberColor: .cavnarEmber2)
             Text((r.draftResponse ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk2)
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(CavnarSpace.s)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
         .accessibilityElement(children: .combine)
