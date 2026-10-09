@@ -3363,6 +3363,15 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
 
 # How many of the latest occurrences of a weekday typical headcount reads.
 TYPICAL_WEEKS = 8
+# A role's usual crew that has moved (historical_patterns._trend): the last
+# TREND_SIDE weeks of a weekday against the TREND_SIDE before, a move of at
+# least TREND_MIN_MOVE people held on TREND_HOLD of the recent weeks; a week
+# whose whole crew is over TREND_EVENT_RATIO x the weekday's median (or under
+# half) is an event or a closure, not a trend.
+TREND_SIDE = 4
+TREND_MIN_MOVE = 0.75
+TREND_HOLD = 3
+TREND_EVENT_RATIO = 1.6
 
 
 def _restaurant_role_families(restaurant_id) -> dict:
@@ -3512,7 +3521,9 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                         late_by[day][role][date_].add((name, s.get("shift_start"), s.get("shift_end")))
         return by_role_date, dates_by_day, late_by, late_dates
 
-    def _typical(by_role_date, dates_by_day):
+    trends = []
+
+    def _typical(by_role_date, dates_by_day, find_trends=False):
         typical = {}
         for day, parts in by_role_date.items():
             # The most recent TYPICAL_WEEKS of this weekday, the newest counting
@@ -3523,17 +3534,57 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
             total_w = float(sum(weight.values())) or 1.0
             for part in ("morning", "night"):
                 counts = {}
+                usual_dates = _usual_dates(parts.get(part, {}), dates) if find_trends else dates
                 for role, per_date in parts.get(part, {}).items():
                     # Averaged over every date this weekday ran, not only the
                     # dates this role appeared — otherwise an occasional role
                     # reads as a permanent one.
                     n = int(math.floor(
                         sum(len(per_date.get(d, ())) * weight[d] for d in dates) / total_w + 0.5))
+                    # A level that has moved and stayed moved (owner, 10/9/26:
+                    # "will it notice trends either up or down over time?"):
+                    # the recent level, not the blend that lags it by weeks.
+                    t = _trend(per_date, usual_dates) if find_trends else None
+                    if t:
+                        n = t["now"]
+                        trends.append(dict(t, day=day, part=part, role=role))
                     if n:
                         counts[role] = n
                 if counts:
                     typical[(day, part)] = counts
         return typical
+
+    def _usual_dates(per_role, dates):
+        # The weekday's dates without the odd ones out: a date whose whole
+        # crew is under half or over 1.6x the weekday's median (a holiday, a
+        # closure, an event) says nothing about the trend.
+        totals = {d: sum(len(v.get(d, ())) for v in per_role.values()) for d in dates}
+        vals = sorted(totals.values())
+        if len(vals) < 4:
+            return dates
+        med = vals[len(vals) // 2] or 0
+        if not med:
+            return dates
+        return [d for d in dates if 0.5 * med <= totals[d] <= TREND_EVENT_RATIO * med]
+
+    def _trend(per_date, dates):
+        # The last TREND_SIDE dates against the TREND_SIDE before them: a move
+        # of at least TREND_MIN_MOVE people, held on TREND_HOLD of the recent
+        # dates. {now, was, since, direction} or None.
+        if len(dates) < TREND_SIDE + 3:
+            return None
+        recent, prior = dates[-TREND_SIDE:], dates[-2 * TREND_SIDE:-TREND_SIDE]
+        r = [len(per_date.get(d, ())) for d in recent]
+        p = [len(per_date.get(d, ())) for d in prior]
+        mr, mp = sum(r) / float(len(r)), sum(p) / float(len(p))
+        move = mr - mp
+        if abs(move) < TREND_MIN_MOVE:
+            return None
+        held = sum(1 for x in r if (x > mp if move > 0 else x < mp))
+        if held < TREND_HOLD:
+            return None
+        return {"now": int(math.floor(mr + 0.5)), "was": int(math.floor(mp + 0.5)), "since": recent[0],
+                "direction": "up" if move > 0 else "down", "recent": r, "prior": p}
 
     def _held(spans, window):
         # The people a role holds ACROSS the late window: the median of its
@@ -3572,7 +3623,7 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         return out
 
     p_by, p_dates, p_late, p_late_dates = _count(punch_rows)
-    typical = _typical(p_by, p_dates)
+    typical = _typical(p_by, p_dates, find_trends=True)
     late = _late(p_late, p_late_dates)
     published_typical = {}
     if pub_rows:
@@ -3591,6 +3642,10 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
 
     return {
         "typical_headcount": typical,
+        # The roles and shifts whose usual crew has moved and held
+        # (_trend): [{day, part, role, now, was, since, direction}] — the
+        # typical above already uses `now` for them.
+        "headcount_trends": [t for t in trends if t["now"] != t["was"]],
         # Cross-trained means two ROLES, not two job codes of one: a server
         # who works "Server AM" and "Server PM" is not cross-trained (D-13).
         "cross_trained": {n: sorted(r) for n, r in roles_by_employee.items()

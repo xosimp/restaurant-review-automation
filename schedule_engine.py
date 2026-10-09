@@ -1256,11 +1256,52 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
            "budget_basis": plan.get("budget_basis"), "daily_target_basis": plan.get("daily_target_basis"),
            "daily_target_reasons": plan.get("daily_target_reasons") or {}}
     out["labor_target_label"] = tgt.get("label")
+    # What the draft will staff to, learned from the punches: each shift's
+    # usual crew by role and the roles whose crew has moved and held
+    # (labor.historical_patterns' trends; owner, 10/9/26: "the scheduler has
+    # no way of knowing what current trends work" - now it says them).
+    try:
+        out.update(learned_crew(restaurant_id))
+    except Exception as _lc:
+        _soft_fail("forecast_preview learned crew", _lc, restaurant_id)
     try:
         out["demand_data_through"] = _demand_data_through(restaurant_id)
     except Exception:
         out["demand_data_through"] = None
     return out
+
+
+_DAY_ORDER = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def learned_crew(restaurant_id) -> dict:
+    """{"learned_crew": [{day, part, roles: [{role, n, trend?}]}],
+    "crew_trends": [{day, part, role, now, was, since, direction}]} — the
+    usual crew per weekday and shift the draft is built to (the same
+    labor.staffing_baseline the requirements read) and what moved."""
+    from labor import staffing_baseline
+    from time_utils import mdy
+    p = staffing_baseline(restaurant_id)
+    typ = p.get("typical_headcount") or {}
+    trends = p.get("headcount_trends") or []
+    tkey = {(t["day"], t["part"], t["role"]): t for t in trends}
+    rows = []
+    for day in _DAY_ORDER:
+        for part in ("morning", "night"):
+            roles = typ.get((day, part)) or {}
+            if not roles:
+                continue
+            items = []
+            for role, n in sorted(roles.items(), key=lambda kv: (-int(kv[1] or 0), kv[0])):
+                it = {"role": role, "n": int(n)}
+                t = tkey.get((day, part, role))
+                if t:
+                    it["trend"] = {"was": t["was"], "since": mdy(t["since"]), "direction": t["direction"]}
+                items.append(it)
+            rows.append({"day": day, "part": part, "roles": items})
+    return {"learned_crew": rows,
+            "crew_trends": [dict({k: t[k] for k in ("day", "part", "role", "now", "was", "direction")},
+                                 since=mdy(t["since"])) for t in trends]}
 
 
 def _date_of(iso):
@@ -1423,6 +1464,7 @@ _INPUT_WORDS = {
     "unmet list": "what the week doesn't meet",
     "forecast_preview revenue": "your sales budget for the week",
     "forecast_preview salaries": "the salaried staff's share of the budget",
+    "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
     "measured call cost": "what a schedule call has cost before", "cache read rate": "the AI model's cache price",

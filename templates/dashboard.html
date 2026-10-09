@@ -10825,6 +10825,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-saved.dirty{color:var(--hb-warn)}
 .ss-main{flex:1;overflow:auto;position:relative;z-index:1}
 .ss-stage{display:none}
+/* The usual crew in the Forecast tab (schedule_engine.learned_crew) */
+.ssc-trends{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:var(--ink2)}
+.ssc-trends li{padding-left:16px;position:relative}
+.ssc-trends li:before{content:'';position:absolute;left:0;top:.5em;width:7px;height:7px;border-radius:50%;background:var(--ink3)}
+.ssc-trends li.up:before{background:var(--green)}
+.ssc-trends li.down:before{background:var(--amber)}
+.ssc-all{margin-top:10px}
+.ssc-all>summary{cursor:pointer;font-size:13px;color:var(--ember);font-weight:600}
+.ssc-grid{display:flex;flex-direction:column;gap:4px;margin-top:8px;font-size:13px}
+.ssc-row{display:grid;grid-template-columns:110px 1fr;gap:10px;color:var(--ink2)}
+.ssc-row .d{color:var(--ink3);font-weight:600}
 .ss-stage.on{display:block;animation:ssIn .28s cubic-bezier(.2,.9,.3,1)}
 @keyframes ssIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .ss-kick{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
@@ -26735,6 +26746,23 @@ function ssLoadForecast(force) {
       fc.innerHTML = ssForecastHtml(d);
     }).catch(function () { _ssFcKey = null; fc.innerHTML = '<div class="sw-note">The forecast could not load.</div>'; });
 }
+function ssCrewHtml(d) {
+  var rows = d.learned_crew || [], tr = d.crew_trends || [], h = '', i, j, PART = {morning: 'Daytime', night: 'Night'};
+  if (!rows.length) return '';
+  h += '<div class="sw-sub">The usual crew</div><div class="sw-note">What Cavnar AI staffs each shift to, learned from your clock-ins over the last 8 weeks — the newest weeks count most, and a change that has held for 3 of the last 4 weeks is followed straight away.</div>';
+  if (tr.length) {
+    h += '<ul class="ssc-trends">';
+    for (i = 0; i < tr.length; i++) h += '<li class="' + (tr[i].direction === 'up' ? 'up' : 'down') + '"><b>' + _escHtml(tr[i].role) + '</b>, ' + _escHtml(tr[i].day) + ' ' + (tr[i].part === 'night' ? 'night' : 'daytime') + ': <span class="hb-num">' + tr[i].now + '</span> ' + (tr[i].direction === 'up' ? 'up' : 'down') + ' from <span class="hb-num">' + tr[i].was + '</span> since <span class="hb-num">' + _escHtml(tr[i].since) + '</span></li>';
+    h += '</ul>';
+  }
+  h += '<details class="ssc-all"><summary>Every shift</summary><div class="ssc-grid">';
+  for (i = 0; i < rows.length; i++) {
+    var bits = [];
+    for (j = 0; j < rows[i].roles.length; j++) { var r = rows[i].roles[j]; bits.push(_escHtml(r.role) + ' <span class="hb-num">' + r.n + '</span>' + (r.trend ? (r.trend.direction === 'up' ? ' ↑' : ' ↓') : '')); }
+    h += '<div class="ssc-row"><span class="d">' + _escHtml(rows[i].day.slice(0, 3)) + ' ' + PART[rows[i].part] + '</span><span class="r">' + bits.join(' · ') + '</span></div>';
+  }
+  return h + '</div></details>';
+}
 function ssForecastHtml(d) {
   var days = d.days || [], mx = 0, i, h = '', miss = [], why = '';
   for (i = 0; i < days.length; i++) mx = Math.max(mx, +days[i].hours || 0);
@@ -26775,6 +26803,9 @@ function ssForecastHtml(d) {
   var ddt = d.demand_data_through;
   if (ddt && (ddt.message || ddt.line)) h += '<div class="sw-flag' + (ddt.blocked || ddt.blind ? ' bad' : '') + '">' + _numText(ddt.message || ddt.line) + '</div>';
   else if (ddt && ddt.blind) h += '<div class="sw-flag bad">' + (ddt.date ? 'No sales newer than <span class="hb-num">' + _escHtml(mdy(ddt.date)) + '</span>' : 'No sales on file') + ': the forecast cannot see recent weeks.</div>';
+  // The usual crew the draft staffs to, learned from the POS clock-ins, and
+  // what has moved and held (schedule_engine.learned_crew; owner, 10/9/26).
+  h += ssCrewHtml(d);
   return h;
 }
 document.addEventListener('change', function (ev) {
