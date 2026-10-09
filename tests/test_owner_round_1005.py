@@ -213,11 +213,13 @@ def test_done_for_you_cards_put_their_category_bottom_right():
     assert ".hb-rcpt .m{position:absolute;right:16px;bottom:13px;margin:0;" in SRC
 
 
-def test_the_studio_day_row_is_one_full_width_band_that_fades():
-    """Owner, 10/6/26: the boxed black cells read tacky against the page;
-    one band edge to edge, from the top of the week, fading into the page."""
+def test_the_studio_day_row_is_one_full_width_band_with_no_blur():
+    """Owner, 10/6/26: the boxed black cells read tacky against the page -
+    one band edge to edge. 10/9/26: "no blur" - no fade and no darker
+    shade, a hard-edged band in the page's own colour."""
     assert ".ss .swg-hr>.swg-d{background:transparent;border-radius:0}" in SRC
     band = SRC[_at(".ss .swg-hr>.swg-d:first-child::before{"):]
     band = band[:band.index("}")]
-    assert "left:-100vw;right:-100vw" in band and "transparent 0" in band and "transparent 100%" in band
+    assert "left:-100vw;right:-100vw" in band and "background:var(--paper)" in band
+    assert "transparent" not in band and "--ss-band" not in band
     assert ".ss .ss-main{overflow-x:hidden}" in SRC

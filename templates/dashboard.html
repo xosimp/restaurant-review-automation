@@ -10690,8 +10690,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    Its colour is the page's own a shade darker (--ss-band over --paper), not
    black: it reads as the header and blends in (owner, 10/7/26). */
 .ss .sw-center{overflow-x:clip}
-.ss .swg-hr>.swg-d:first-child::before{content:'';position:absolute;z-index:-1;top:-14px;bottom:-14px;left:-100vw;right:-100vw;pointer-events:none;
-  background:linear-gradient(180deg,transparent 0,var(--ss-band) 14px,var(--ss-band) calc(100% - 18px),transparent 100%),linear-gradient(180deg,transparent 0,var(--paper) 14px,var(--paper) calc(100% - 18px),transparent 100%)}
+/* No fade and no darker shade (owner, 10/9/26: "no blur"): a hard-edged band
+   in the page's own colour, opaque so the people scroll cleanly under it. */
+.ss .swg-hr>.swg-d:first-child::before{content:'';position:absolute;z-index:-1;top:0;bottom:0;left:-100vw;right:-100vw;pointer-events:none;
+  background:var(--paper)}
 .swg-t{display:grid;grid-template-columns:var(--swg-name,148px) repeat(var(--swg-days,7),minmax(var(--swg-min,86px),1fr));min-width:760px}
 .swg-r{display:contents}
 .swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}
