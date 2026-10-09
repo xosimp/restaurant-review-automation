@@ -624,6 +624,50 @@ extension View {
     func accountSheetChrome(_ title: String, isDirty: Bool = false) -> some View {
         modifier(AccountSheetChrome(title: title, isDirty: isDirty))
     }
+
+    /// The same guard for a screen PUSHED inside a sheet (a message thread
+    /// with a reply typed): while `hasDraft`, the system Back is swapped for
+    /// one that asks "Discard your message?", and the sheet under it can't be
+    /// swiped away (re-audit M9). No draft: the system Back, untouched.
+    func cavnarDraftGuard(_ hasDraft: Bool, title: String = "Discard your message?") -> some View {
+        modifier(DraftGuard(hasDraft: hasDraft, title: title))
+    }
+}
+
+private struct DraftGuard: ViewModifier {
+    let hasDraft: Bool
+    let title: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirming = false
+
+    func body(content: Content) -> some View {
+        content
+            .navigationBarBackButtonHidden(hasDraft)
+            .toolbar {
+                if hasDraft {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            Haptic.light()
+                            confirming = true
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Color.cavnarEmber)
+                                .cavnarToolbarIconGlass()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Back")
+                    }
+                }
+            }
+            .interactiveDismissDisabled(hasDraft)
+            .confirmationDialog(title, isPresented: $confirming, titleVisibility: .visible) {
+                Button("Discard it", role: .destructive) { dismiss() }
+                Button("Keep writing", role: .cancel) {}
+            } message: {
+                Text("What you typed hasn\u{2019}t been sent.")
+            }
+    }
 }
 
 
@@ -651,9 +695,16 @@ struct AccountStateSwitch: View {
     /// that may be cancelled (2FA setup) — there the thumb only moves once
     /// the source of truth actually changes.
     var optimistic: Bool = true
+    /// The setting's name, for VoiceOver ("Haptic feedback, On") — a bare
+    /// "On"/"Off" said nothing about what it switches (re-audit M12).
+    var accessibilityName: String? = nil
+    /// Bumped by a row that toggles from anywhere on it (AccountSwitchRow):
+    /// each change flips the switch exactly as a tap on it would.
+    var externalTap: Int = 0
 
     private static let cell: CGFloat = 36
     private static let height: CGFloat = 30
+    @Environment(\.isEnabled) private var isEnabled
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // The tapped-but-not-yet-confirmed position. Network-backed switches
@@ -701,15 +752,8 @@ struct AccountStateSwitch: View {
         // the padding is taken back after the tap target is set.
         .padding(.vertical, 7)
         .contentShape(Rectangle())
-        .onTapGesture {
-            guard !disabled, !busy else { return }
-            Haptic.selection()
-            let target = !isOn
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
-                if optimistic { pending = target }
-                isOn = target
-            }
-        }
+        .onTapGesture { flip() }
+        .onChange(of: externalTap) { _, _ in flip() }
         .onChange(of: isOn) { _, _ in
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { pending = nil }
         }
@@ -720,8 +764,19 @@ struct AccountStateSwitch: View {
         }
         .padding(.vertical, -7)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(shown ? "On" : "Off")
+        .accessibilityLabel(accessibilityName ?? (shown ? "On" : "Off"))
+        .accessibilityValue(accessibilityName == nil ? "" : (shown ? "On" : "Off"))
         .accessibilityAddTraits(.isButton)
+    }
+
+    private func flip() {
+        guard isEnabled, !disabled, !busy else { return }
+        Haptic.selection()
+        let target = !isOn
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+            if optimistic { pending = target }
+            isOn = target
+        }
     }
 
     private func glyph(_ name: String, active: Bool) -> some View {
@@ -826,6 +881,9 @@ struct AccountSwitchRow: View {
     var disabled: Bool = false
     var optimistic: Bool = true
     var showsDivider: Bool = true
+    /// Each tap on the row's label flips the switch (re-audit M12: only the
+    /// switch itself was tappable).
+    @State private var rowTaps = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -838,16 +896,29 @@ struct AccountSwitchRow: View {
                     }
                 }
                 Spacer(minLength: 8)
-                AccountStateSwitch(isOn: $isOn, busy: busy, disabled: disabled, optimistic: optimistic)
+                AccountStateSwitch(isOn: $isOn, busy: busy, disabled: disabled, optimistic: optimistic,
+                                   accessibilityName: label, externalTap: rowTaps)
             }
             .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
             .padding(.vertical, 9)
+            .contentShape(Rectangle())
+            .onTapGesture { rowTaps += 1 }
+            // One VoiceOver element: the setting's name, its state, and
+            // double-tap to switch it.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityValue(isOn ? "On" : "Off")
+            .accessibilityHint(detail ?? "")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { rowTaps += 1 }
             if showsDivider { AccountRowDivider() }
         }
     }
 }
 
-/// A one-shot action row: label and an action chip on the right.
+/// A one-shot action row: label and an action chip on the right. The whole
+/// row is the button (re-audit M11: only the 28pt chip was tappable), and
+/// its label reads as an action — Ink, or the red text ink for a red one.
 struct AccountActionRow: View {
     let label: String
     var detail: String? = nil
@@ -859,24 +930,50 @@ struct AccountActionRow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(label).cavnarText(.body, color: tone == .cavnarRed ? .cavnarRedText : .cavnarInk2)
-                    if let detail {
-                        Text(detail).cavnarText(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+            Button {
+                guard !busy else { return }
+                Haptic.light()
+                action()
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(label).cavnarText(.body, color: tone == .cavnarRed ? .cavnarRedText : .cavnarInk)
+                            .multilineTextAlignment(.leading)
+                        if let detail {
+                            Text(detail).cavnarText(.secondary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if busy {
+                        CavnarShimmerLine(color: tone).frame(width: 28)
+                    } else {
+                        Self.chip(symbol: symbol, tone: tone)
                     }
                 }
-                Spacer(minLength: 8)
-                if busy {
-                    CavnarShimmerLine(color: tone).frame(width: 28)
-                } else {
-                    AccountActionChip(symbol: symbol, tone: tone, accessibilityLabel: label, action: action)
-                }
+                .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
             }
-            .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
-            .padding(.vertical, 9)
+            .buttonStyle(.plain)
+            .disabled(busy)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityHint(detail ?? "")
+            .accessibilityAddTraits(.isButton)
             if showsDivider { AccountRowDivider() }
         }
+    }
+
+    /// AccountActionChip's look, drawn only — the row is the button.
+    private static func chip(symbol: String, tone: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(tone)
+            .frame(width: 28, height: 28)
+            .background(tone.opacity(0.14), in: Circle())
+            .overlay(Circle().strokeBorder(tone.opacity(0.35), lineWidth: 1))
+            .accessibilityHidden(true)
     }
 }

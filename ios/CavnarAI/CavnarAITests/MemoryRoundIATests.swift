@@ -298,7 +298,7 @@ final class MemoryRoundIATests: XCTestCase {
         XCTAssertEqual(m.facts[1].detailLine(viewerIsPrincipal: false), "due 10/3/26")
         XCTAssertTrue(m.lanes[0].isFull)
         XCTAssertEqual(m.lanes[1].fraction, 0.1, accuracy: 0.001)
-        XCTAssertEqual(m.archived.first?.detailLine, "Left 9/2/26 \u{2014} its lane was full")
+        XCTAssertEqual(m.archived.first?.detailLine, "Left 9/2/26 \u{2014} replaced by newer notes", "a full lane in the owner's words (re-audit M21)")
     }
 
     func testTheAddFormSendsEachFieldItNames() throws {

@@ -143,7 +143,8 @@ final class PeopleRulesViewModel {
         await post(Self.certsPath, body: body, ok: "Saved.") { await loadCerts() }
     }
 
-    func removeCert(_ cert: KnowledgeCert) async {
+    @discardableResult
+    func removeCert(_ cert: KnowledgeCert) async -> Bool {
         await post(Self.certRemovePath(cert.id), body: TeamEmptyBody(), ok: "Removed.") { await loadCerts() }
     }
 }
@@ -156,6 +157,22 @@ struct AccountPeopleRulesView: View {
     @State private var editingDoc: StaffDocEditorTarget?
     @State private var editingCert: StaffCertEditorTarget?
     @State private var removingCert: KnowledgeCert?
+    @State private var rulesExpanded = false
+
+    /// "2 certificates expire in the next 30 days · 1 has expired" — the
+    /// screen's answer, first (re-audit M17); nil when nothing needs doing.
+    static func certLead(_ certs: [KnowledgeCert], remindDays: Int?) -> String? {
+        let expiring = certs.filter { $0.status == "expiring" }.count
+        let expired = certs.filter { $0.status == "expired" }.count
+        var parts: [String] = []
+        if expiring > 0 {
+            parts.append("\(expiring) certificate\(expiring == 1 ? "" : "s") expire\(expiring == 1 ? "s" : "") in the next \(remindDays ?? 30) days")
+        }
+        if expired > 0 {
+            parts.append("\(expired) ha\(expired == 1 ? "s" : "ve") expired")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+    }
 
     var body: some View {
         NavigationStack {
@@ -173,9 +190,23 @@ struct AccountPeopleRulesView: View {
                         Text(e).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    rules
-                    docs
-                    certs
+                    // Certificates that need someone lead, and the list comes
+                    // first while they do (re-audit M17).
+                    if model.certsLoaded, let lead = Self.certLead(model.certs, remindDays: model.remindDays) {
+                        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(Color.cavnarAmber)
+                                .accessibilityHidden(true)
+                            CavnarMixedText(lead, role: .body, color: .cavnarInk)
+                        }
+                        certs
+                        rules
+                        docs
+                    } else {
+                        rules
+                        docs
+                        certs
+                    }
                 }
                 .padding(20)
             }
@@ -188,7 +219,11 @@ struct AccountPeopleRulesView: View {
                 .presentationDetents([.large])
         }
         .sheet(item: $editingCert) { target in
-            StaffCertEditor(target: target, roster: model.roster) { await model.saveCert($0) }
+            // Remove is inside the editor (re-audit M17), not only a
+            // long-press on the row.
+            StaffCertEditor(target: target, roster: model.roster,
+                            save: { await model.saveCert($0) },
+                            remove: target.cert.map { c in { await model.removeCert(c) } })
                 .presentationDetents([.large])
         }
         .confirmationDialog(removingCert.map { "Remove \($0.employeeName)\u{2019}s \($0.certLabel) certificate?" } ?? "",
@@ -214,9 +249,30 @@ struct AccountPeopleRulesView: View {
                         .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let hr = model.houseRules, !hr.body.isEmpty {
+                        // Three lines, the rest a tap away (re-audit M17:
+                        // the full text ran down the page).
                         Text(hr.body)
                             .cavnarText(.body)
+                            .lineLimit(rulesExpanded ? nil : 3)
                             .fixedSize(horizontal: false, vertical: true)
+                        if hr.body.count > 160 || hr.body.filter({ $0 == "\n" }).count > 2 {
+                            Button {
+                                Haptic.light()
+                                withAnimation(.easeOut(duration: 0.2)) { rulesExpanded.toggle() }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(rulesExpanded ? "Show less" : "Read all").cavnarText(.label, color: .cavnarEmber2)
+                                    Image(systemName: "chevron.down")
+                                        .font(.cavnar(.caption))
+                                        .foregroundStyle(Color.cavnarEmber2)
+                                        .rotationEffect(.degrees(rulesExpanded ? 180 : 0))
+                                        .accessibilityHidden(true)
+                                    Spacer(minLength: 0)
+                                }
+                                .cavnarHitTarget()
+                            }
+                            .buttonStyle(.plain)
+                        }
                         if let at = hr.updatedAt {
                             HomeMixedText.make("Saved " + CavnarDate.mdy(at), role: .caption)
                         }
@@ -356,7 +412,7 @@ struct AccountPeopleRulesView: View {
                             .cavnarText(.label)
                             .lineLimit(1)
                         Text(c.certLabel.capitalized + ((c.note ?? "").isEmpty ? "" : " \u{00B7} \(c.note!)"))
-                            .cavnarText(.caption)
+                            .cavnarText(.caption, color: .cavnarInk2)
                             .lineLimit(2)
                     }
                     Spacer(minLength: 6)
@@ -422,7 +478,7 @@ struct StaffDocEditor: View {
                 VStack(alignment: .leading, spacing: 18) {
                     if target.readOnly, let d = target.doc {
                         Text(d.title).font(.cavnarHeadline(CavnarText.title.size)).foregroundStyle(Color.cavnarInk)
-                        HomeMixedText.make(d.metaLine, size: CavnarType.caption, color: .cavnarInk3)
+                        HomeMixedText.make(d.metaLine, size: CavnarType.caption, color: .cavnarInk2)
                         Text(d.body).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -514,11 +570,20 @@ struct StaffCertEditor: View {
     let target: StaffCertEditorTarget
     let roster: [String]
     let save: (StaffCertSaveBody) async -> Bool
+    /// Takes an existing certificate off; nil for a new one.
+    var remove: (() async -> Bool)? = nil
 
     static let kinds = ["food handler", "alcohol", "allergen", "manager", "first aid"]
     private static let other = "__other__"
 
     @Environment(\.dismiss) private var dismiss
+    /// The form as it opened — what "unsaved" is measured against (M9).
+    @State private var opened: String?
+    @State private var confirmingRemove = false
+    @State private var removing = false
+
+    private var snapshot: String { [person, currentKind, expires, issued, note].joined(separator: "|") }
+    private var isDirty: Bool { opened != nil && snapshot != opened && !saving }
     @State private var person = ""
     @State private var kindChoice = "food handler"
     @State private var customKind = ""
@@ -549,7 +614,7 @@ struct StaffCertEditor: View {
                     if let scanNote {
                         Text(scanNote)
                             .font(.cavnarBody(CavnarType.secondary))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     AccountSection(kicker: "Certificate") {
@@ -610,10 +675,36 @@ struct StaffCertEditor: View {
                     }
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: saving))
                     .disabled(saving)
+
+                    if remove != nil {
+                        VStack(alignment: .leading, spacing: 0) {
+                            AccountActionRow(label: "Remove this certificate",
+                                             detail: "The schedule stops counting it, and nobody is reminded before it expires.",
+                                             symbol: "trash", tone: .cavnarRed, busy: removing, showsDivider: false) {
+                                confirmingRemove = true
+                            }
+                        }
+                        .accountCard()
+                    }
                 }
                 .padding(20)
             }
-            .accountSheetChrome(target.cert == nil ? "New certificate" : "Certificate")
+            .accountSheetChrome(target.cert == nil ? "New certificate" : "Certificate", isDirty: isDirty)
+            .confirmationDialog("Remove \(person)\u{2019}s \(currentKind) certificate?", isPresented: $confirmingRemove,
+                                titleVisibility: .visible) {
+                Button("Remove it", role: .destructive) {
+                    guard let remove else { return }
+                    Task {
+                        removing = true
+                        let ok = await remove()
+                        removing = false
+                        if ok { Haptic.success(); dismiss() } else { error = "It wasn\u{2019}t removed \u{2014} see the message on People." }
+                    }
+                }
+                Button("Keep it", role: .cancel) {}
+            } message: {
+                Text("The schedule stops counting it, and nobody is reminded before it expires.")
+            }
         }
         .onAppear {
             if let c = target.cert {
@@ -623,6 +714,7 @@ struct StaffCertEditor: View {
                 issued = c.issuedOn ?? ""
                 note = c.note ?? ""
             }
+            if opened == nil { opened = snapshot }
         }
         .fullScreenCover(isPresented: $scanning) {
             DocumentCameraView { pages in

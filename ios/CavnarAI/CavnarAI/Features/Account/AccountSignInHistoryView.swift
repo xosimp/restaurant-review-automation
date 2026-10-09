@@ -43,7 +43,7 @@ struct AccountSignInHistoryView: View {
                                         Text(entry.label).font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                                         Text(AccountRelativeTime.describe(entry.createdAt))
                                             .font(.cavnarNumber(CavnarType.secondary))
-                                            .foregroundStyle(Color.cavnarInk3)
+                                            .foregroundStyle(Color.cavnarInk2)
                                     }
                                     Spacer(minLength: 0)
                                 }

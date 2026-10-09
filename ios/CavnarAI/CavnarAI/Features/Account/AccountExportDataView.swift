@@ -9,6 +9,8 @@ struct AccountExportDataView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scopes: Set<String> = ["reviews"]
     @State private var retentionPosted: String?
+    /// A shorter retention waiting on its confirm.
+    @State private var pendingRetention: Int?
 
     private static let scopeOptions: [(key: String, label: String, detail: String)] = [
         ("reviews", "Reviews", "Date, rating, text, response status"),
@@ -94,11 +96,12 @@ struct AccountExportDataView: View {
                                 get: { viewModel.summary?.data.retentionMonths ?? 0 },
                                 set: { months in
                                     Haptic.selection()
-                                    Task {
-                                        if await viewModel.setDataRetention(months: months) {
-                                            Haptic.success()
-                                            retentionPosted = months == 0 ? "Keeping everything" : "Older reviews will be removed"
-                                        }
+                                    // A shorter window erases reviews for good:
+                                    // asked first (re-audit A7). Longer saves.
+                                    if Self.shortens(from: viewModel.summary?.data.retentionMonths ?? 0, to: months) {
+                                        pendingRetention = months
+                                    } else {
+                                        saveRetention(months)
                                     }
                                 }
                             )) {
@@ -120,6 +123,37 @@ struct AccountExportDataView: View {
             }
             .accountSheetChrome("Your Data")
             .cavnarPostedOverlay(retentionPosted) { retentionPosted = nil }
+            .confirmationDialog(
+                pendingRetention.map { "Keep reviews for \(Self.label($0)) only?" } ?? "",
+                isPresented: Binding(get: { pendingRetention != nil }, set: { if !$0 { pendingRetention = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Shorten to \(pendingRetention.map(Self.label) ?? "")", role: .destructive) {
+                    if let months = pendingRetention { saveRetention(months) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Reviews older than this leave the app tonight, and 30 days later their words and replies are erased for good.")
+            }
+        }
+    }
+
+    /// True when `to` keeps less than `from` (0 = keep everything).
+    static func shortens(from: Int, to: Int) -> Bool {
+        guard to != 0 else { return false }
+        return from == 0 || to < from
+    }
+
+    private static func label(_ months: Int) -> String {
+        retentionOptions.first { $0.months == months }?.label ?? "\(months) months"
+    }
+
+    private func saveRetention(_ months: Int) {
+        Task {
+            if await viewModel.setDataRetention(months: months) {
+                Haptic.success()
+                retentionPosted = months == 0 ? "Keeping everything" : "Older reviews will be removed"
+            }
         }
     }
 }

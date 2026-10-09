@@ -17,6 +17,10 @@ struct AccountReportBugSheet: View {
         return "\(device.model) · iOS \(device.systemVersion)"
     }
 
+    private var versionLine: String {
+        "v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
+    }
+
     private var buildLine: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         return "v\(version) · build \(BuildInfo.gitSHA) · \(BuildInfo.builtAt)"
@@ -37,8 +41,10 @@ struct AccountReportBugSheet: View {
                                       text: $message, focus: $focused, field: .message, showsDivider: false)
                     }
 
+                    // The version is shown; the build stamp still rides with
+                    // the report (re-audit L17: a commit SHA isn't for owners).
                     AccountSection(kicker: "Attached automatically") {
-                        AccountKVRow(label: "Build") { AccountValue(text: buildLine, isNumber: true) }
+                        AccountKVRow(label: "Version") { AccountValue(text: versionLine, isNumber: true) }
                         AccountKVRow(label: "Device", showsDivider: false) { AccountValue(text: deviceLine) }
                     }
 
@@ -66,7 +72,8 @@ struct AccountReportBugSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
-            .accountSheetChrome("Report a Bug")
+            .accountSheetChrome("Report a Bug", isDirty: !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                && postedLabel == nil)
             .keyboardDoneToolbar { focused = nil }
             .cavnarPostedOverlay(postedLabel) { dismiss() }
         }

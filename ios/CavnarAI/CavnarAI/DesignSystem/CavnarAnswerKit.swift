@@ -391,7 +391,9 @@ extension CavnarAnswerCard where Actions == EmptyView, Detail == EmptyView {
 /// reviews/inbox, reviews/analytics, home/results, account/overview,
 /// account/restaurant, account/notifications (alert rules),
 /// account/automation, account/integrations, account/people,
-/// account/billing, account/security, account/data, account/support.
+/// account/billing, account/security, account/data, account/support,
+/// labor/history (the Studio's History stage), account/email-history (the
+/// Email history card, unfolded).
 /// An unknown section opens its module, never an error.
 ///
 /// Why an in-app browser (SFSafariViewController) and not `openURL`: the app

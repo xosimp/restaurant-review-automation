@@ -287,6 +287,12 @@ private struct InviteTeamMemberSheet: View {
     @State private var email = ""
     @State private var role = "manager"
     @State private var postedLabel: String?
+    /// Added — the form is spent, so nothing on it is "unsaved" any more.
+    @State private var added = false
+    /// Co-owner picked: confirmed first, as changing an existing teammate's
+    /// role to co-owner is (re-audit M13).
+    @State private var pendingCoOwner = false
+    @State private var confirmingCancel = false
     @FocusState private var focusedField: InviteField?
 
     private let roleChoices: [(key: String, label: String, hint: String)] = [
@@ -296,7 +302,12 @@ private struct InviteTeamMemberSheet: View {
     ]
 
     private var canSubmit: Bool {
-        !viewModel.isInvitingTeamMember && !name.trimmingCharacters(in: .whitespaces).isEmpty && email.contains("@")
+        !added && !viewModel.isInvitingTeamMember && !name.trimmingCharacters(in: .whitespaces).isEmpty && email.contains("@")
+    }
+
+    /// Something typed and not yet sent: Back and swipe-down ask first (M9).
+    private var isDirty: Bool {
+        !added && (!name.trimmingCharacters(in: .whitespaces).isEmpty || !email.trimmingCharacters(in: .whitespaces).isEmpty)
     }
 
     var body: some View {
@@ -304,8 +315,7 @@ private struct InviteTeamMemberSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("They'll get an email with a temporary password and can set their own once they sign in.")
-                        .font(.cavnar(.body))
-                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.body)
 
                     AccountField(label: "Name", text: $name, focus: $focusedField, field: .name)
                     AccountField(label: "Email", text: $email, focus: $focusedField, field: .email, keyboardType: .emailAddress, showsDivider: false)
@@ -314,59 +324,102 @@ private struct InviteTeamMemberSheet: View {
                         ForEach(Array(roleChoices.enumerated()), id: \.element.key) { index, choice in
                             Button {
                                 Haptic.light()
-                                role = choice.key
+                                if choice.key == "client" && role != "client" {
+                                    pendingCoOwner = true
+                                } else {
+                                    role = choice.key
+                                }
                             } label: {
+                                // The hint stays visible when picked; a check
+                                // marks the choice (it was replaced by "Selected").
                                 AccountKVRow(label: choice.label, showsDivider: index < roleChoices.count - 1) {
-                                    AccountPill(text: role == choice.key ? "Selected" : choice.hint, on: role == choice.key)
+                                    HStack(spacing: CavnarSpace.xs) {
+                                        AccountPill(text: choice.hint, on: role == choice.key)
+                                        Image(systemName: role == choice.key ? "checkmark.circle.fill" : "circle")
+                                            .font(.cavnar(.body))
+                                            .foregroundStyle(role == choice.key ? Color.cavnarEmber : Color.cavnarInk3)
+                                            .accessibilityHidden(true)
+                                    }
                                 }
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityAddTraits(role == choice.key ? .isSelected : [])
                         }
                     }
 
                     if let error = viewModel.inviteTeamError {
-                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
+                        Text(error).cavnarText(.body, color: .cavnarRedText)
+                    }
+                    // Added, but the email with their sign-in didn't go out:
+                    // the server's sentence, not "Invite sent" (re-audit A3).
+                    if added, let notice = viewModel.inviteEmailNotice {
+                        Text(notice)
+                            .cavnarText(.body, color: .cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     VStack(spacing: 10) {
-                        Button {
-                            Task {
-                                if await viewModel.inviteTeamMember(name: name, email: email, role: role) {
-                                    Haptic.success()
-                                    postedLabel = "Invite sent"
-                                }
+                        if added {
+                            Button {
+                                dismiss()
+                            } label: {
+                                Text("Done").frame(maxWidth: .infinity)
                             }
-                        } label: {
-                            Group {
-                                if viewModel.isInvitingTeamMember {
-                                    CavnarShimmerText(text: "Adding…", color: Color.cavnarInk)
-                                } else {
-                                    Text("Add teammate")
+                            .buttonStyle(CavnarPrimaryButtonStyle())
+                        } else {
+                            Button {
+                                Task {
+                                    if await viewModel.inviteTeamMember(name: name, email: email, role: role) {
+                                        added = true
+                                        if viewModel.inviteEmailNotice == nil {
+                                            Haptic.success()
+                                            postedLabel = "Invite sent"
+                                        } else {
+                                            Haptic.warning()
+                                        }
+                                    }
                                 }
+                            } label: {
+                                Group {
+                                    if viewModel.isInvitingTeamMember {
+                                        CavnarShimmerText(text: "Adding…", color: Color.cavnarInk)
+                                    } else {
+                                        Text("Add teammate")
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
                             }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
-                        .disabled(!canSubmit)
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
+                            .disabled(!canSubmit)
 
-                        Button {
-                            dismiss()
-                        } label: {
-                            Text("Cancel").frame(maxWidth: .infinity)
+                            Button {
+                                if isDirty { confirmingCancel = true } else { dismiss() }
+                            } label: {
+                                Text("Cancel").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
                         }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .padding(.top, 6)
                 }
                 .padding(20)
             }
-            .cavnarModuleBackground()
-            .navigationTitle("Invite Team Member")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { cavnarTitleToolbar("Invite Team Member") }
+            .accountSheetChrome("Invite a teammate", isDirty: isDirty)
             .keyboardNavToolbar($focusedField)
             .cavnarPostedOverlay(postedLabel) { dismiss() }
+            .confirmationDialog("Invite them as a co-owner?", isPresented: $pendingCoOwner, titleVisibility: .visible) {
+                Button("Co-owner") { Haptic.selection(); role = "client" }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("They'll be able to do everything you can \u{2014} manage the team, settings and every number.")
+            }
+            .confirmationDialog("Discard changes?", isPresented: $confirmingCancel, titleVisibility: .visible) {
+                Button("Discard changes", role: .destructive) { dismiss() }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text("What you changed here hasn\u{2019}t been saved.")
+            }
         }
     }
 }

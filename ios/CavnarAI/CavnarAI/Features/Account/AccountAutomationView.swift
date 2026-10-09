@@ -11,6 +11,8 @@ import Observation
 struct AccountAutomationView: View {
     @State private var viewModel = AccountAutomationViewModel()
     @Environment(\.dismiss) private var dismiss
+    /// "Days & send delay" open.
+    @State private var showingTiming = false
 
     var body: some View {
         NavigationStack {
@@ -28,6 +30,12 @@ struct AccountAutomationView: View {
                              : "\(viewModel.earnedCount) earned from your own record.")
                     }
 
+                    // A load failure up top; a save's refusal sits under the
+                    // control that was changed (re-audit M18).
+                    if viewModel.errorKey == nil, let error = viewModel.errorMessage {
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if viewModel.isLoading && !viewModel.loaded {
                         CavnarWorkingLine().padding(.vertical, 12)
                     } else {
@@ -37,10 +45,6 @@ struct AccountAutomationView: View {
                         // sheet: Memory is its own row on Account, one
                         // entry point (iOS readability round [73]).
                     }
-                    if let error = viewModel.errorMessage {
-                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
                 .padding(20)
             }
@@ -49,83 +53,129 @@ struct AccountAutomationView: View {
         }
     }
 
+    /// A save's refusal, under the control it came from (re-audit M18).
+    @ViewBuilder
+    private func saveError(_ keys: String...) -> some View {
+        if let key = viewModel.errorKey, keys.contains(key), let error = viewModel.errorMessage {
+            Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 6)
+        }
+    }
+
+    // Each switch's detail is one line (re-audit M18); the days and the send
+    // delay sit behind "Days & send delay".
     private var switches: some View {
         AccountSection(kicker: "What runs on its own") {
-            // The draft and its day (owner 9/27/26: Thursday was fixed).
             // Hidden where a scheduling tool is named, as on the web — the
             // draft never runs there.
             if let draft = viewModel.autoDraft, draft.externalTool.isEmpty {
                 AccountSwitchRow(
                     label: "Draft next week's schedule",
-                    detail: "Every \(draft.day), if you haven't built one. A draft only — nothing goes to staff until you publish. On by default with a paid Labor plan; switch it off any time.",
+                    detail: "Every \(draft.day), a draft only. On by default with a paid Labor plan.",
                     isOn: Binding(get: { draft.enabled }, set: { on in Task { await viewModel.setAutoDraft(on) } }),
                     busy: viewModel.saving == "auto_draft",
                     showsDivider: true
                 )
-                AccountKVRow(label: "Draft day") {
-                    Picker("", selection: Binding(get: { draft.weekday },
-                                                  set: { d in Task { await viewModel.setAutoDraftDay(d) } })) {
-                        ForEach(0..<6, id: \.self) { d in Text(AccountAutomationViewModel.dayNames[d]).tag(d) }
-                    }
-                    .tint(Color.cavnarEmber)
-                    .disabled(viewModel.saving == "auto_draft_day")
-                }
+                saveError("auto_draft")
             }
             AccountSwitchRow(
                 label: "Publish the schedule \(viewModel.autoPublish?.day ?? "Friday")",
                 detail: viewModel.autoPublish.map { p in
-                    p.armed ? "Armed — \(p.trust) schedules went out unedited in a row. You're told at 9, and can undo from Home until 11."
-                            : "Your record: \(p.trust) of \(p.needed) unedited schedules in a row. It arms itself when you get there."
+                    p.armed ? "Armed \u{2014} undo from Home until 11."
+                            : "\(p.trust) of \(p.needed) unedited weeks; it arms itself."
                 },
                 isOn: Binding(get: { viewModel.autoPublish?.enabled ?? false },
                               set: { on in Task { await viewModel.setAutoPublish(on) } }),
                 busy: viewModel.saving == "auto_publish",
                 showsDivider: true
             )
+            saveError("auto_publish")
             if let order = viewModel.autoOrder {
                 AccountSwitchRow(
                     label: "Send trusted supplier orders",
                     detail: order.suppliersTrusted == 0
-                        ? "No supplier trusted yet — three sent orders earns one. A draft inside your usual total then goes \(order.dayName) with an hour to undo."
-                        : "\(order.suppliersTrusted) supplier\(order.suppliersTrusted == 1 ? "" : "s") trusted. A draft inside your usual total goes \(order.dayName) 8am with an hour to undo.",
+                        ? "No supplier trusted yet \u{2014} three sent orders earns one."
+                        : "\(order.suppliersTrusted) supplier\(order.suppliersTrusted == 1 ? "" : "s") trusted; \(order.dayName) with an hour to undo.",
                     isOn: Binding(get: { order.enabled }, set: { on in Task { await viewModel.setAutoOrder(on) } }),
                     busy: viewModel.saving == "auto_order",
                     showsDivider: true
                 )
-                AccountKVRow(label: "Order day") {
-                    Picker("", selection: Binding(get: { order.weekday ?? 0 },
-                                                  set: { d in Task { await viewModel.setAutoOrderDay(d) } })) {
-                        ForEach(0..<7, id: \.self) { d in Text(AccountAutomationViewModel.dayNames[d]).tag(d) }
-                    }
-                    .tint(Color.cavnarEmber)
-                    .disabled(viewModel.saving == "auto_order_day")
-                }
+                saveError("auto_order")
             }
             AccountSwitchRow(
                 label: "Monday plan",
-                detail: "Monday 7am the assistant reads the week and files up to three actions on Home. Nobody is texted.",
+                detail: "Up to three actions on Home, Monday 7am.",
                 isOn: Binding(get: { viewModel.weeklyPlan ?? false },
                               set: { on in Task { await viewModel.setWeeklyPlan(on) } }),
                 busy: viewModel.saving == "weekly_plan",
                 showsDivider: true
             )
-            AccountKVRow(label: "Send delay", showsDivider: false) {
-                Picker("", selection: Binding(get: { viewModel.sendDelay?.minutes ?? 0 },
-                                              set: { m in Task { await viewModel.setSendDelay(m) } })) {
-                    ForEach(viewModel.sendDelay?.choices ?? [0], id: \.self) { m in
-                        Text(m == 0 ? "None" : "\(m) min").tag(m)
-                    }
+            saveError("weekly_plan")
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.22)) { showingTiming.toggle() }
+            } label: {
+                AccountKVRow(label: "Days & send delay", showsDivider: showingTiming) {
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(showingTiming ? 180 : 0))
+                        .accessibilityHidden(true)
                 }
-                .tint(Color.cavnarEmber)
-                .disabled(viewModel.saving == "send_delay")
+                .contentShape(Rectangle())
             }
-            Text("Every reply, post and order waits this long before it goes, with an undo on Home.")
-                .cavnarText(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 6)
+            .buttonStyle(.plain)
+            .accessibilityValue(showingTiming ? "Expanded" : "Collapsed")
+            if showingTiming { timing }
         }
     }
 
+    /// The draft day, the order day and the send delay.
+    @ViewBuilder
+    private var timing: some View {
+        // The draft's day (owner 9/27/26: Thursday was fixed).
+        if let draft = viewModel.autoDraft, draft.externalTool.isEmpty {
+            AccountKVRow(label: "Draft day") {
+                Picker("", selection: Binding(get: { draft.weekday },
+                                              set: { d in Task { await viewModel.setAutoDraftDay(d) } })) {
+                    ForEach(0..<6, id: \.self) { d in Text(AccountAutomationViewModel.dayNames[d]).tag(d) }
+                }
+                .tint(Color.cavnarEmber)
+                .disabled(viewModel.saving == "auto_draft_day")
+            }
+            saveError("auto_draft_day")
+        }
+        if let order = viewModel.autoOrder {
+            AccountKVRow(label: "Order day") {
+                Picker("", selection: Binding(get: { order.weekday ?? 0 },
+                                              set: { d in Task { await viewModel.setAutoOrderDay(d) } })) {
+                    ForEach(0..<7, id: \.self) { d in Text(AccountAutomationViewModel.dayNames[d]).tag(d) }
+                }
+                .tint(Color.cavnarEmber)
+                .disabled(viewModel.saving == "auto_order_day")
+            }
+            saveError("auto_order_day")
+        }
+        AccountKVRow(label: "Send delay", showsDivider: false) {
+            Picker("", selection: Binding(get: { viewModel.sendDelay?.minutes ?? 0 },
+                                          set: { m in Task { await viewModel.setSendDelay(m) } })) {
+                ForEach(viewModel.sendDelay?.choices ?? [0], id: \.self) { m in
+                    Text(m == 0 ? "None" : "\(m) min").tag(m)
+                }
+            }
+            .tint(Color.cavnarEmber)
+            .disabled(viewModel.saving == "send_delay")
+        }
+        Text("Replies, posts and orders wait this long, with an undo on Home.")
+            .cavnarText(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.bottom, 6)
+        saveError("send_delay")
+    }
+
+    /// What went back to the owner stays here; the full record — every
+    /// band, supplier and invoice count — is the web's (re-audit M18).
     private var trust: some View {
         AccountSection(kicker: "Why it stopped asking") {
             if let t = viewModel.trust {
@@ -135,55 +185,13 @@ struct AccountAutomationView: View {
                     CavnarCaveat(title: "Back to you", detail: lapse.text)
                         .padding(.vertical, 6)
                 }
-                AccountKVRow(label: "Review replies", showsDivider: t.bandsDetail == nil) {
-                    AccountPill(text: t.earnedBands.isEmpty ? "Not yet" : "Trusted on " + t.earnedBands.joined(separator: ", "),
-                                on: !t.earnedBands.isEmpty)
-                }
-                if let detail = t.bandsDetail { trustDetail(detail) }
-                let undone = t.schedule?.undoneOn.map { "You undid an automatic publish on \($0) \u{2014} the clean runs count again from there" }
-                AccountKVRow(label: "Schedule publishing",
-                             showsDivider: undone == nil && (!t.suppliers.isEmpty || !t.invoices.isEmpty)) {
-                    AccountPill(text: t.schedule.map { $0.uneditedInARow >= $0.needed ? "Earned" : "\($0.uneditedInARow) of \($0.needed)" } ?? "—",
-                                on: (t.schedule?.uneditedInARow ?? 0) >= (t.schedule?.needed ?? 1))
-                }
-                if let undone { trustDetail(undone, showsDivider: !t.suppliers.isEmpty || !t.invoices.isEmpty) }
-                ForEach(Array(t.suppliers.enumerated()), id: \.offset) { i, s in
-                    let more = i < t.suppliers.count - 1 || !t.invoices.isEmpty
-                    let undoneLine = s.undoneAt.map { at in
-                        "Undone \(CavnarDate.mdyLocal(at))" + (s.cleanSinceUndo.map { " \u{00B7} \($0) clean since" } ?? "")
-                    }
-                    AccountKVRow(label: "Orders to \(s.name ?? "supplier")", showsDivider: undoneLine == nil && more) {
-                        AccountPill(text: (s.trusted ?? false) ? "Earned" : "\(s.orders ?? 0) of \((s.orders ?? 0) + (s.needed ?? 0))",
-                                    on: s.trusted ?? false)
-                    }
-                    if let undoneLine { trustDetail(undoneLine, showsDivider: more) }
-                }
-                ForEach(Array(t.invoices.enumerated()), id: \.offset) { i, v in
-                    AccountKVRow(label: "Invoices from \(v.supplier ?? "supplier")", showsDivider: i < t.invoices.count - 1) {
-                        AccountPill(text: (v.trusted ?? false) ? "Earned" : "\(v.fullAccepts ?? 0) of \((v.fullAccepts ?? 0) + (v.needed ?? 0))",
-                                    on: v.trusted ?? false)
-                    }
-                }
-                Text("Each line is your own record — approved replies you didn't edit, schedules you didn't change, orders you sent, scans you applied as read. Nothing is inferred.")
-                    .cavnarText(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 8)
-                    .padding(.bottom, 6)
+                CavnarWebLinkRow(title: "Your record",
+                                 subtitle: viewModel.earnedCount == 0 ? "Nothing earned yet \u{2014} each line is your own approvals, schedules and orders."
+                                    : "\(viewModel.earnedCount) earned \u{2014} each line is your own approvals, schedules and orders.",
+                                 path: "account/automation", actionLabel: "On the web")
             } else {
                 Text("The record hasn't loaded.").cavnarText(.body).padding(.vertical, 9)
             }
-        }
-    }
-}
-
-extension AccountAutomationView {
-    /// A record's detail under its row — dates M/D/YY, figures in the
-    /// number face — then the row's divider.
-    fileprivate func trustDetail(_ text: String, showsDivider: Bool = true) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            CavnarMixedText(text, role: .secondary)
-                .padding(.bottom, 9)
-            if showsDivider { AccountRowDivider() }
         }
     }
 }
@@ -334,6 +342,9 @@ final class AccountAutomationViewModel {
     var loaded = false
     var saving: String?
     var errorMessage: String?
+    /// Which control's save failed — its message shows under that control;
+    /// nil for a load failure (re-audit M18).
+    var errorKey: String?
 
     private let client: APIClient
 
@@ -414,15 +425,17 @@ final class AccountAutomationViewModel {
     }
 
     private func save(_ key: String, _ work: () async throws -> Void) async {
-        saving = key; errorMessage = nil
+        saving = key; errorMessage = nil; errorKey = nil
         defer { saving = nil }
         do {
             try await work()
             Haptic.selection()
         } catch let error as APIClient.APIError {
             errorMessage = error.message
+            errorKey = key
         } catch {
             errorMessage = "Couldn't save that."
+            errorKey = key
         }
     }
 }

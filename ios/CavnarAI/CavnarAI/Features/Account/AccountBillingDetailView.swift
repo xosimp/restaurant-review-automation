@@ -36,6 +36,13 @@ struct AccountBillingDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 hero
+                // Past due says what to do next — in plain text, no payment
+                // link (Guideline 3.1.1; re-audit L19).
+                if live?.status == "past_due" {
+                    Text(verbatim: "The last charge didn\u{2019}t go through. Contact will@cavnar.ai to settle it.")
+                        .cavnarText(.body, color: .cavnarAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 // The modules on the plan and what's been measured — from
                 // the account health card (iOS readability round).
                 if let health = viewModel.health, !health.features.isEmpty || health.measured?.line != nil {

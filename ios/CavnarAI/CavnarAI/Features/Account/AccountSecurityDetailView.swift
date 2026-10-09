@@ -26,6 +26,8 @@ struct AccountSecurityDetailView: View {
     // something off, .success (ember, the checkmark) for everything else.
     @State private var disabledTone: CavnarPostedTone = .success
     @State private var isRevoking = false
+    @State private var confirmingDisable2FA = false
+    @State private var showingMoreSecurity = false
     @Environment(SessionStore.self) private var sessionStore
 
     // Prefer the live summary (it refreshes after enable/disable 2FA and
@@ -78,7 +80,25 @@ struct AccountSecurityDetailView: View {
         // success path happens to call loadSessions() again as a side
         // effect, so it looked like the click was what populated the
         // list, when really it was just the first fetch to actually land.
-        .task { await viewModel.loadSessions() }
+        .task {
+            await viewModel.loadSessions()
+            // The checkup row's score.
+            if viewModel.securitySummary == nil { await viewModel.loadSecuritySummary() }
+        }
+        .confirmationDialog("Turn off two-factor?", isPresented: $confirmingDisable2FA, titleVisibility: .visible) {
+            Button("Turn off two-factor", role: .destructive) {
+                Task {
+                    if await viewModel.disable2FA() {
+                        Haptic.success()
+                        disabledTone = .removed
+                        disabledLabel = "Two-factor disabled"
+                    }
+                }
+            }
+            Button("Keep it on", role: .cancel) {}
+        } message: {
+            Text("Anyone who learns a password could then sign in to this account from a new device without a code.")
+        }
         .sheet(isPresented: $showingChangePassword) {
             ChangePasswordSheet(viewModel: viewModel)
         }
@@ -158,19 +178,13 @@ struct AccountSecurityDetailView: View {
                     .cavnarText(.secondary, color: .cavnarRedText)
                     .padding(.bottom, 4)
             }
-            AccountNavRow(label: "Security checkup") { showingCheckup = true }
+            // The checkup's score on the row itself (the server's number).
+            AccountNavRow(label: "Security checkup",
+                          value: viewModel.securitySummary.flatMap { s in s.checkup.score.map { "\($0) / \(s.checkup.max)" } },
+                          valueIsNumber: true) { showingCheckup = true }
             // The password's strength and age, once (the tile that said it
             // too is gone).
             AccountNavRow(label: "Password", value: passwordValue) { showingChangePassword = true }
-            // Face ID sign-in, the same passkeys as the web (parity #57).
-            AccountNavRow(label: "Passkeys") { showingPasskeys = true }
-            if live.twoFAEnabled {
-                AccountNavRow(label: "Backup codes", value: viewModel.backupCodesRemaining.map { "\($0) left" }, valueIsNumber: true) { showingBackupCodes = true }
-                // "Skip-code devices", not "Trusted devices" — the Devices
-                // card below is every signed-in device; these are the ones
-                // that skip the 2FA code.
-                AccountNavRow(label: "Skip-code devices") { showingTrustedDevices = true }
-            }
             // Always an unconditional sibling — only its trailing link
             // branches. This row used to be the whole AccountKVRow wrapped
             // in the if/else above, and that was enough to make it
@@ -191,27 +205,51 @@ struct AccountSecurityDetailView: View {
                 isOn: Binding(
                     get: { live.twoFAEnabled },
                     set: { on in
-                        if on {
-                            showing2FASetup = true
-                        } else {
-                            Task {
-                                if await viewModel.disable2FA() {
-                                    Haptic.success()
-                                    disabledLabel = "Two-factor disabled"
-                                }
-                            }
-                        }
+                        // Off is asked first — one tap used to drop the
+                        // second factor (re-audit A6).
+                        if on { showing2FASetup = true } else { confirmingDisable2FA = true }
                     }
                 ),
                 busy: viewModel.is2FABusy,
-                optimistic: false
+                optimistic: false,
+                showsDivider: true
             )
-            // A "Turn on"/"Turn off" link, not a Toggle — matches 2FA's
-            // own trailing control right above it (a Toggle's native
-            // ~31pt height sat taller than every Link row around it,
-            // which is what made this row read as misaligned against its
-            // siblings; every row in this card is now the exact same
-            // AccountLink shape, so they can't drift apart again).
+            // The rest of sign-in behind one row (re-audit M19): passkeys,
+            // backup codes, skip-code devices, recovery email, activity and
+            // sign-in notifications. The checkup, password and 2FA stay up top.
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.22)) { showingMoreSecurity.toggle() }
+            } label: {
+                AccountKVRow(label: "More security", showsDivider: showingMoreSecurity) {
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(showingMoreSecurity ? 180 : 0))
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showingMoreSecurity ? "Expanded" : "Collapsed")
+            if showingMoreSecurity {
+                moreSecurityRows
+            }
+        }
+    }
+
+    /// Behind "More security".
+    @ViewBuilder
+    private var moreSecurityRows: some View {
+            // Face ID sign-in, the same passkeys as the web (parity #57).
+            AccountNavRow(label: "Passkeys") { showingPasskeys = true }
+            if live.twoFAEnabled {
+                AccountNavRow(label: "Backup codes", value: viewModel.backupCodesRemaining.map { "\($0) left" }, valueIsNumber: true) { showingBackupCodes = true }
+                // "Skip-code devices", not "Trusted devices" — the Devices
+                // card below is every signed-in device; these are the ones
+                // that skip the 2FA code.
+                AccountNavRow(label: "Skip-code devices") { showingTrustedDevices = true }
+            }
             // One "Activity" row: account changes, with the sign-ins a tap
             // inside it (was two rows, Sign-in activity and Account activity).
             AccountNavRow(label: "Activity") { showingActivity = true }
@@ -240,7 +278,6 @@ struct AccountSecurityDetailView: View {
             if let error = viewModel.accountToggleError {
                 Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
-        }
     }
 
     /// "Strong · changed 3 days ago" — the strength and when, one value.
@@ -469,8 +506,12 @@ private struct TwoFactorSetupSheet: View {
     // otherwise this stays "email" and the picker never renders.
     @State private var selectedMethod: String = "email"
 
+    /// Text is offered when the code can reach THIS login by text — the
+    /// server's word (re-audit L2); an older server falls back to the
+    /// owner's phone being on file.
     private var hasPhone: Bool {
-        !(viewModel.summary?.profile.ownerPhone?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
+        if let can = viewModel.summary?.account.twoFASmsAvailable { return can }
+        return !(viewModel.summary?.profile.ownerPhone?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
     }
 
     var body: some View {
@@ -561,10 +602,7 @@ private struct TwoFactorSetupSheet: View {
 
                         if hasPhone {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("SEND CODE BY")
-                                    .font(.cavnarBody(CavnarType.caption, weight: 700))
-                                    .foregroundStyle(Color.cavnarInk3)
-                                    .tracking(0.6)
+                                CavnarKicker("Send code by")
                                 CavnarSegmentedControl(selection: $selectedMethod, options: ["email", "sms"]) { option in
                                     option == "sms" ? "Text" : "Email"
                                 }

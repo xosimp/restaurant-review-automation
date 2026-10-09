@@ -127,6 +127,7 @@ private struct TeamDMRoute: Hashable {
 /// Every teammate, most recent conversation first; a thread opens on tap.
 struct TeamMessagesView: View {
     var initialUserId: Int? = nil
+    @Environment(SessionStore.self) private var sessionStore
 
     @State private var teammates: [TeammateThread] = []
     @State private var loaded = false
@@ -141,10 +142,15 @@ struct TeamMessagesView: View {
                     if !loaded {
                         CavnarSkeletonLines(widths: [0.8, 0.6, 0.9, 0.5])
                     } else if let error, teammates.isEmpty {
-                        Text(error).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                        Text(error).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk2)
                     } else if teammates.isEmpty {
+                        // Manage team is the owner's: a manager is told who
+                        // adds teammates, not pointed at a row they don't
+                        // have (re-audit L18).
                         CavnarEmptyHearth(title: "Nobody to message yet",
-                                          message: "Teammates you add in Account \u{2192} Manage team show up here.")
+                                          message: sessionStore.currentUser?.isOwner == true
+                                            ? "Teammates you add in Account \u{2192} Manage team show up here."
+                                            : "Ask the account owner to add teammates \u{2014} they show up here.")
                     } else {
                         VStack(spacing: 0) {
                             ForEach(Array(teammates.enumerated()), id: \.element.id) { i, t in
@@ -263,7 +269,7 @@ struct TeamDirectThreadView: View {
                     if !loaded {
                         CavnarSkeletonLines(widths: [0.6, 0.8, 0.5])
                     } else if let loadError, messages.isEmpty {
-                        Text(loadError).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                        Text(loadError).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk2)
                     } else if messages.isEmpty {
                         CavnarEmptyHearth(title: "Say hello",
                                           message: "\(firstName) gets it on their phone.")
@@ -286,6 +292,8 @@ struct TeamDirectThreadView: View {
         .navigationTitle(name.isEmpty ? "Conversation" : name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar(name.isEmpty ? "Conversation" : name) }
+        // A typed message isn't lost to Back or a swipe-down (re-audit M9).
+        .cavnarDraftGuard(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !sending)
         .task {
             await reload()
             while !Task.isCancelled {

@@ -11,6 +11,10 @@ struct AccountHealthCard: View {
     /// The Fix link's action, by the item it fixes (profile, people,
     /// integrations, notifications, security, subscription).
     var onFix: (String) -> Void
+    /// Whether this login can open the setting a Fix names — a teammate
+    /// can't open Manage team or Billing (owner-only), so their Fix is
+    /// hidden rather than a link that does nothing (re-audit M5).
+    var canFix: (String) -> Bool = { _ in true }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawn = false
@@ -34,11 +38,13 @@ struct AccountHealthCard: View {
             ring
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 CavnarKicker("Account health")
-                if let sentence = health.sayLead ?? health.sayText {
+                // Lead and text together: the lead alone ("2 things need
+                // you:") ended on a dangling colon (re-audit A1).
+                if let sentence = health.sentence {
                     CavnarMixedText(sentence, role: .body, color: .cavnarInk)
-                        .lineLimit(3)
+                        .lineLimit(4)
                 }
-                if let fix = health.fix {
+                if let fix = health.fix, canFix(fix.key) {
                     Button {
                         Haptic.light()
                         onFix(fix.key)

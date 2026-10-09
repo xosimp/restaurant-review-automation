@@ -6251,7 +6251,19 @@ def _do_mobile_account(current_user):
         _method = "email"
         _em = restaurant.owner_email or current_user.get("email") or ""
         _masked = (_em[:2] + "***@" + _em.split("@")[-1]) if "@" in _em else "your email"
+    # Whether a setup code can go to THIS login by text — the send-test
+    # route's own rule (two_fa_destination, strict), so the 2FA sheet offers
+    # "Text" only when it would work for whoever is turning 2FA on, not
+    # whenever the owner has a phone (iOS re-audit L2).
+    try:
+        from auth import two_fa_destination as _tfd, get_user_by_id as _gubi
+        _me_tf = dict(_gubi(current_user["id"]) or {})
+        _me_tf.update({k: current_user.get(k) for k in ("role", "is_admin", "restaurant_id") if k in current_user})
+        _can_text = bool(_tfd(_me_tf, restaurant, method="sms", strict=True))
+    except Exception:
+        _can_text = None
     account = {
+        "two_fa_sms_available": _can_text,
         "username": current_user["username"],
         "email": current_user["email"],
         "two_fa_enabled": bool(restaurant.two_fa_enabled),
@@ -6542,8 +6554,10 @@ def mobile_update_email(current_user):
     return jsonify(ok=True)
 
 
-# Profile fields only an account holder may change (PROMPTS-9).
-_BRAND_VOICE_FIELDS = ("voice_notes", "never_say", "menu_notes", "sign_off_name", "owner_name")
+# Profile fields only an account holder may change (PROMPTS-9). The owner's
+# phone is theirs too (iOS re-audit M15, 10/8/26): it is the number the
+# owner's texts go to, and a teammate's form carried it unguarded.
+_BRAND_VOICE_FIELDS = ("voice_notes", "never_say", "menu_notes", "sign_off_name", "owner_name", "owner_phone")
 
 
 @mobile_bp.route("/account/update-profile", methods=["POST"])
@@ -6585,16 +6599,27 @@ def mobile_update_profile(current_user):
     from permissions import is_principal as _is_principal_up
     if not _is_principal_up(current_user):
         current = get_restaurant(current_user["restaurant_id"])
+        def _same(key, sent, saved):
+            # A phone is compared by its digits: the web form sends it as
+            # shown, "(312) 555-0100", whatever the row holds.
+            if key == "owner_phone":
+                return "".join(ch for ch in (sent or "") if ch.isdigit()) == \
+                    "".join(ch for ch in (saved or "") if ch.isdigit())
+            return (sent or None) == ((saved or "").strip() or None)
         for key in _BRAND_VOICE_FIELDS:
             if key not in updates:
                 continue
-            if (updates[key] or None) != ((getattr(current, key, None) or "").strip() or None):
+            if not _same(key, updates[key], getattr(current, key, None)):
                 return jsonify(ok=False, owner_only=True,
-                               error="Only the account owner can change the brand voice or the owner's name."), 403
+                               error="Only the account owner can change the brand voice or the owner's name and phone."), 403
             updates.pop(key)
     # Fixed sets — these are dropped straight into the drafting prompt.
-    lang = (data.get("response_language") or "").strip().lower()
-    updates["response_language"] = lang if lang in ("en", "es", "fr", "it", "pt", "de") else None
+    # Only when sent, like the fields above: the phone's contact save sends
+    # just the owner's name and phone, and an unsent language read as
+    # "Match the review" and cleared the one set on the web (re-audit A2).
+    if "response_language" in data:
+        lang = (data.get("response_language") or "").strip().lower()
+        updates["response_language"] = lang if lang in ("en", "es", "fr", "it", "pt", "de") else None
     # Same 7-zone list as the admin Client Settings page (templates/
     # client_settings.html) — only accept a value from that fixed set so a
     # bad string can't silently break "today"/trend math elsewhere.

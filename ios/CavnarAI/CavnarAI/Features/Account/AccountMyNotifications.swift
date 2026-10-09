@@ -272,8 +272,10 @@ struct AccountPreferences: Decodable {
         for (t, l) in extra where !seen.contains(t) && !unmutable.contains(t) {
             out.append(AlertType(type: t, label: l)); seen.insert(t)
         }
+        // A muted type the server no longer labels stays listed so it can be
+        // unmuted — but never by its raw key (re-audit L5).
         for t in mine.mutedTypes where !seen.contains(t) {
-            out.append(AlertType(type: t, label: t.replacingOccurrences(of: "_", with: " ").capitalized)); seen.insert(t)
+            out.append(AlertType(type: t, label: "An alert type no longer listed")); seen.insert(t)
         }
         return out
     }
@@ -443,21 +445,35 @@ final class AccountPreferencesViewModel {
         }
     }
 
-    /// The From / Until pickers: each change saves that one end.
+    /// The From / Until pickers: the wheel moves freely and the end saves
+    /// once it has been still for a moment (re-audit L3: every tick of the
+    /// wheel posted, and each answer snapped the wheel back mid-spin).
+    var quietDraft: [Bool: Date] = [:]
+    @ObservationIgnored private var quietSaveTask: [Bool: Task<Void, Never>] = [:]
+
     func quietBinding(start: Bool) -> Binding<Date> {
         Binding(
             get: {
+                if let draft = self.quietDraft[start] { return draft }
                 let hm = start ? self.prefs?.mine.quietStart : self.prefs?.mine.quietEnd
                 return hm.flatMap(AccountPreferences.hmDate) ?? Date()
             },
             set: { date in
-                let hm = AccountPreferences.hm(date)
-                Task {
+                self.quietDraft[start] = date
+                self.quietSaveTask[start]?.cancel()
+                self.quietSaveTask[start] = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(Self.quietDebounceMs))
+                    guard !Task.isCancelled else { return }
+                    let hm = AccountPreferences.hm(date)
                     await self.post(start ? MineBody(quietStart: .some(hm)) : MineBody(quietEnd: .some(hm)),
                                     busy: "quiet")
+                    // The server's value is the one shown from here on.
+                    if self.quietDraft[start] == date { self.quietDraft[start] = nil }
                 }
             })
     }
+
+    static let quietDebounceMs = 800
 
     private func post(_ body: MineBody, busy: String) async {
         saving = busy

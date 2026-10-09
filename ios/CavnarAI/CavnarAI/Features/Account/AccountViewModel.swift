@@ -786,17 +786,46 @@ final class AccountViewModel {
 
     private struct InviteBody: Encodable { let name: String; let email: String; let role: String }
     private typealias InviteResponse = APIClient.OKResponse
+    /// The invite route's answer: the login is made either way, and whether
+    /// the email carrying their sign-in went out (re-audit A3).
+    private struct InviteResult: Decodable {
+        let ok: Bool
+        let error: String?
+        let inviteEmailSent: Bool?
+        let inviteEmailError: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, error
+            case inviteEmailSent = "invite_email_sent"
+            case inviteEmailError = "invite_email_error"
+        }
+    }
+    /// Set when the teammate was added but their invite email didn't go out
+    /// — the server's sentence, shown instead of "Invite sent".
+    var inviteEmailNotice: String?
+
+    /// "The invite email…" → "the invite email…", to follow "X is on the team, but".
+    static func lowerFirst(_ s: String) -> String {
+        guard let f = s.first else { return s }
+        return f.lowercased() + s.dropFirst()
+    }
 
     @discardableResult
     func inviteTeamMember(name: String, email: String, role: String = "manager") async -> Bool {
         isInvitingTeamMember = true
         inviteTeamError = nil
+        inviteEmailNotice = nil
         defer { isInvitingTeamMember = false }
         do {
-            let response: InviteResponse = try await client.send(
+            let response: InviteResult = try await client.send(
                 "/mobile/api/account/team/invite", method: .post, body: InviteBody(name: name, email: email, role: role)
             )
             if response.ok {
+                if response.inviteEmailSent == false {
+                    let reason = response.inviteEmailError
+                        ?? "The invite email didn\u{2019}t go out \u{2014} try again or tell them yourself."
+                    inviteEmailNotice = "\(name.trimmingCharacters(in: .whitespaces)) is on the team, but "
+                        + Self.lowerFirst(reason)
+                }
                 await loadTeam()
                 return true
             }
@@ -1017,15 +1046,20 @@ final class AccountViewModel {
     var saveProfileError: String?
     var saveProfileSucceeded = false
 
+    /// Every field optional, and a nil one is left out of the JSON
+    /// (synthesized encodeIfPresent): the route writes only the keys sent, so
+    /// the contact save sends only what changed and never puts a brand voice,
+    /// menu, language or time zone from the phone's cache back over a web
+    /// edit (re-audit A2).
     private struct UpdateProfileBody: Encodable {
-        let ownerName: String
-        let ownerPhone: String
-        let voiceNotes: String
-        let neverSay: String
-        let menuNotes: String
-        let timezone: String
-        let signOffName: String
-        let responseLanguage: String
+        var ownerName: String? = nil
+        var ownerPhone: String? = nil
+        var voiceNotes: String? = nil
+        var neverSay: String? = nil
+        var menuNotes: String? = nil
+        var timezone: String? = nil
+        var signOffName: String? = nil
+        var responseLanguage: String? = nil
         enum CodingKeys: String, CodingKey {
             case signOffName = "sign_off_name"
             case responseLanguage = "response_language"
@@ -1038,8 +1072,9 @@ final class AccountViewModel {
         }
     }
 
-    func updateProfile(ownerName: String, ownerPhone: String, voiceNotes: String, neverSay: String, menuNotes: String, timezone: String,
-                       signOffName: String = "", responseLanguage: String = "") async {
+    /// Saves the owner's contact fields — only those passed (nil = unchanged).
+    func updateProfile(ownerName: String? = nil, ownerPhone: String? = nil) async {
+        guard ownerName != nil || ownerPhone != nil else { saveProfileSucceeded = true; return }
         isSavingProfile = true
         saveProfileError = nil
         saveProfileSucceeded = false
@@ -1047,11 +1082,7 @@ final class AccountViewModel {
         do {
             let response: OKErrorResponse = try await client.send(
                 "/mobile/api/account/update-profile", method: .post,
-                body: UpdateProfileBody(
-                    ownerName: ownerName, ownerPhone: ownerPhone,
-                    voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes, timezone: timezone,
-                    signOffName: signOffName, responseLanguage: responseLanguage
-                )
+                body: UpdateProfileBody(ownerName: ownerName, ownerPhone: ownerPhone)
             )
             if response.ok {
                 saveProfileSucceeded = true
@@ -1130,14 +1161,8 @@ final class AccountViewModel {
         }
     }
 
-    func disconnectInstagram() async {
-        do {
-            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/instagram", method: .delete)
-            await load()
-        } catch {
-            // Same low-stakes fallback as disconnectToast() below.
-        }
-    }
+    @discardableResult
+    func disconnectInstagram() async -> Bool { await disconnect("/mobile/api/connections/instagram", name: "Instagram & Facebook") }
 
     // MARK: - Referral
 
@@ -1163,14 +1188,8 @@ final class AccountViewModel {
         }
     }
 
-    func disconnectGoogleBusiness() async {
-        do {
-            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/google", method: .delete)
-            await load()
-        } catch {
-            // Same low-stakes fallback as disconnectToast() below.
-        }
-    }
+    @discardableResult
+    func disconnectGoogleBusiness() async -> Bool { await disconnect("/mobile/api/connections/google", name: "Google Business") }
 
     // Connections — Toast
 
@@ -1212,16 +1231,8 @@ final class AccountViewModel {
         }
     }
 
-    func disconnectToast() async {
-        do {
-            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/toast", method: .delete)
-            await load()
-        } catch {
-            // Low-stakes background action from a status row — a failed
-            // disconnect just leaves the existing connected state showing,
-            // which is a safe, obvious fallback with no separate UI for it.
-        }
-    }
+    @discardableResult
+    func disconnectToast() async -> Bool { await disconnect("/mobile/api/connections/toast", name: "Toast") }
 
     // Connections — Square / Clover
     //
@@ -1267,14 +1278,8 @@ final class AccountViewModel {
         }
     }
 
-    func disconnectSquare() async {
-        do {
-            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/square", method: .delete)
-            await load()
-        } catch {
-            // Same low-stakes fallback as disconnectToast().
-        }
-    }
+    @discardableResult
+    func disconnectSquare() async -> Bool { await disconnect("/mobile/api/connections/square", name: "Square") }
 
     var isConnectingClover = false
     var connectCloverError: String?
@@ -1312,14 +1317,8 @@ final class AccountViewModel {
         }
     }
 
-    func disconnectClover() async {
-        do {
-            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/clover", method: .delete)
-            await load()
-        } catch {
-            // Same low-stakes fallback as disconnectToast().
-        }
-    }
+    @discardableResult
+    func disconnectClover() async -> Bool { await disconnect("/mobile/api/connections/clover", name: "Clover") }
 
     // MARK: - Settings audit additions
 
@@ -1527,7 +1526,11 @@ final class AccountViewModel {
                 closureError = r.error ?? "Couldn't save that date."
                 return nil
             }
-            return list.filter { !$0.isEmpty }.sorted()
+            let saved = list.filter { !$0.isEmpty }.sorted()
+            // The summary the Profile sheet reopens Hours from: without this
+            // the sheet came back on the list it first opened with (re-audit A4).
+            summary?.profile.closures = saved
+            return saved
         } catch let error as APIClient.APIError {
             closureError = error.message
         } catch {
@@ -1661,16 +1664,31 @@ final class AccountViewModel {
 
     var disconnectError: String?
 
-    func disconnectRPower() async {
+    @discardableResult
+    func disconnectRPower() async -> Bool { await disconnect("/mobile/api/connections/rpower", name: "RPOWER") }
+
+    /// `{ok?, error?}` — some disconnect routes answer `{}`.
+    private struct DisconnectResponse: Decodable { let ok: Bool?; let error: String? }
+
+    /// Every disconnect: true only when the server took it off. A failure
+    /// says so in `disconnectError` — they used to be swallowed, with a
+    /// success haptic either way (re-audit A5).
+    private func disconnect(_ path: String, name: String) async -> Bool {
         disconnectError = nil
         do {
-            let _: APIClient.OKResponse = try await client.send("/mobile/api/connections/rpower", method: .delete)
+            let r: DisconnectResponse = try await client.send(path, method: .delete, retryTransient: false)
+            if r.ok == false {
+                disconnectError = r.error ?? "Couldn\u{2019}t disconnect \(name)."
+                return false
+            }
             await load()
+            return true
         } catch let error as APIClient.APIError {
             disconnectError = error.message
         } catch {
-            disconnectError = "Couldn't disconnect RPOWER."
+            disconnectError = "Couldn\u{2019}t disconnect \(name) \u{2014} check your connection and try again."
         }
+        return false
     }
 
     // MARK: - Delete my login (a teammate's own; parity #13)

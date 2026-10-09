@@ -152,7 +152,11 @@ struct AccountRestaurantProfileSheet: View {
                         Text(errorText).cavnarText(.secondary, color: .cavnarRedText)
                     }
 
-                    if canEdit, payload?.profile != nil {
+                    // One primary on the sheet (re-audit L13): the card's
+                    // "Yes" when there is a guess or a re-check to answer;
+                    // otherwise a one-tap confirm of what's on file, only
+                    // while it isn't confirmed.
+                    if canEdit, let p = payload?.profile, !Self.cardShown(p), !p.confirmed {
                         Button {
                             Task { await save() }
                         } label: {
@@ -236,36 +240,34 @@ struct AccountRestaurantProfileSheet: View {
         }
     }
 
+    /// A guess or a re-check card is on screen — its "Yes" is the primary.
+    static func cardShown(_ p: RestaurantProfilePayload.Profile) -> Bool {
+        (p.suggestion != nil && !p.confirmed) || (p.review != nil && p.confirmed)
+    }
+
+    /// What's on file, read here; changing it is the web's form (re-audit
+    /// L13 — a five-field form on the phone beside a one-tap confirm).
     private func profileSection(_ p: RestaurantProfilePayload.Profile) -> some View {
         AccountSection(kicker: "How you serve") {
-            pickerRow("Service", selection: $serviceModel, choices: p.choices.serviceModel, empty: "Not confirmed")
-            pickerRow("Concept", selection: $concept, choices: p.choices.concept, empty: "Not set")
-            AccountSwitchRow(label: "Bar-led", detail: "Alcohol is about 40% or more of sales.",
-                             isOn: $barLed, disabled: !canEdit)
-            pickerRow("Ownership", selection: $ownership, choices: p.choices.ownership, empty: "Not set")
-            AccountKVRow(label: "Year opened", showsDivider: false) {
-                TextField("2019", text: $openedYear)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .font(.cavnar(.figureS))
-                    .frame(width: 80)
-                    .disabled(!canEdit)
+            valueRow("Service", Self.label(serviceModel, in: p.choices.serviceModel, empty: "Not confirmed"))
+            valueRow("Concept", Self.label(concept, in: p.choices.concept, empty: "Not set"))
+            valueRow("Bar-led", barLed ? "Yes" : "No")
+            valueRow("Ownership", Self.label(ownership, in: p.choices.ownership, empty: "Not set"))
+            AccountKVRow(label: "Year opened") {
+                AccountValue(text: openedYear.isEmpty ? "Not set" : openedYear, isNumber: !openedYear.isEmpty)
             }
+            CavnarWebLinkRow(title: "How you serve", path: "account/restaurant",
+                             actionLabel: canEdit ? "Edit on the web" : "See on the web")
         }
     }
 
-    private func pickerRow(_ label: String, selection: Binding<String>, choices: [RestaurantProfileChoice],
-                           empty: String) -> some View {
-        AccountKVRow(label: label) {
-            Picker("", selection: selection) {
-                Text(empty).tag("")
-                ForEach(choices, id: \.value) { c in
-                    Text(c.label).tag(c.value)
-                }
-            }
-            .tint(Color.cavnarEmber)
-            .disabled(!canEdit)
-        }
+    private func valueRow(_ label: String, _ value: String) -> some View {
+        AccountKVRow(label: label) { AccountValue(text: value) }
+    }
+
+    static func label(_ value: String, in choices: [RestaurantProfileChoice], empty: String) -> String {
+        guard !value.isEmpty else { return empty }
+        return choices.first { $0.value == value }?.label ?? empty
     }
 
     // MARK: - Network
