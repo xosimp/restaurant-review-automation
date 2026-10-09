@@ -589,10 +589,13 @@ enum RecDollarCalibration {
         return "adjusted from \(n) measured result\(n == 1 ? "" : "s")"
     }
 
-    /// "$1,240/mo · adjusted from 6 measured results", or the raw "$1,500/mo".
+    /// "$1,240/mo at stake · adjusted from 6 measured results", or the raw
+    /// "$1,500/mo at stake" — an opportunity is said as at stake, never a
+    /// bare figure that reads as money saved (re-audit D11, 10/8/26; the
+    /// Home chips' words).
     static func line(raw: Double?, adjusted: Double?, n: Int?, note: String?) -> String? {
         guard let f = figure(raw: raw, adjusted: adjusted) else { return nil }
-        let base = "$\(f.commaFormatted)/mo"
+        let base = "$\(f.commaFormatted)/mo at stake"
         return self.note(adjusted: adjusted, n: n, note: note).map { base + " \u{00B7} " + $0 } ?? base
     }
 }

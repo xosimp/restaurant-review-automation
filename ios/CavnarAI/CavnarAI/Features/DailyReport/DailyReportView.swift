@@ -37,7 +37,9 @@ struct DailyReportView: View {
     @State private var didLoad = false
     /// An unmapped POS department the owner is placing (parity audit #33).
     @State private var mapping: DSRBlock.Unmapped?
-    @State private var showingSettings = false
+    /// "The night in full": insights, every number and the blocks, folded
+    /// under the key numbers (re-audit D9).
+    @State private var showingNightInFull = false
     @State private var clock = CavnarEntranceClock()
     /// The hour chart's scrub, so a drag along it never swipes the night.
     @State private var scrub = DSRScrubState()
@@ -87,23 +89,9 @@ struct DailyReportView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             cavnarTitleToolbar("Daily report")
-            // The owner's report settings (parity audit #64) — notify,
-            // deadline, gross basis, the category map, the switch.
-            if viewModel.isOwner {
-                cavnarToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Haptic.light()
-                        showingSettings = true
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .cavnarToolbarIconGlass()
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Report settings")
-                }
-            }
+            // The report's settings are the web's (re-audit D13, "Web
+            // explains. iPhone decides."): a link at the foot of the report;
+            // "Map it" stays on the night itself.
             cavnarToolbarItem(placement: .topBarTrailing) {
                 NavigationLink(value: DailyReportRoute.week(date: viewModel.businessDate)) {
                     Image(systemName: "tablecells")
@@ -133,9 +121,6 @@ struct DailyReportView: View {
             DSRCategoryMapSheet(department: dept)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showingSettings, onDismiss: { Task { await viewModel.load() } }) {
-            DSRSettingsSheet()
         }
         .task {
             guard !didLoad else { return }
@@ -432,14 +417,15 @@ struct DailyReportView: View {
     @ViewBuilder
     private func reportBody(_ report: DSRReport) -> some View {
         let actions = report.narrative?.actionsTomorrow ?? []
-        if !report.facts.missing.isEmpty {
-            CavnarCaveat(title: "Still missing", detail: report.facts.missing.joined(separator: " "))
+        if let missing = Self.missingLine(report) {
+            CavnarCaveat(title: "Still missing", detail: missing)
         }
         // SCORE FIRST (owner decision 9/25/26; DESIGN_SYSTEM.md §12), then
         // the one thing to do (10/8/26), then the summary — its first
         // sentence, the rest a tap away — and the night's risks and wins in
-        // one card, the remaining priorities, the day after, four KPIs, the
-        // blocks (closed) and how the night was checked. A manager's view
+        // one card, the remaining priorities, the day after, four KPIs, "The
+        // night in full" folded (insights, every number, the blocks) and how
+        // the night was checked. A manager's view
         // has no scorecard: the operations summary leads, then the shift,
         // the one thing, the priorities, and the numbers.
         if let card = report.scorecard {
@@ -468,34 +454,26 @@ struct DailyReportView: View {
             DSRTomorrowLaborCard(tomorrow: t, isOwner: report.isOwnerView)
         }
 
-        // Four KPIs (the owner's `kpis_headline`: without the score's four
-        // components), every KPI behind "All KPIs" — for a manager, labor
+        // Four KPIs (the owner's `kpis_headline`: without the score's
+        // components), every KPI behind "All numbers" — for a manager, labor
         // against target leads (it is in `kpis`), then Operations.
-        let split = Self.kpiSplit(top: report.topKPIs, all: report.kpis, showingAll: showingAllKPIs)
+        let split = Self.kpiSplit(top: report.topKPIs, all: report.kpis, showingAll: false)
         DSRKPIGrid(title: "Key numbers", kpis: split.shown)
-        if split.hidden > 0 || showingAllKPIs {
-            disclosureButton(showingAllKPIs ? "Key numbers only" : "All numbers (\(report.kpis.count))",
-                             open: showingAllKPIs) { showingAllKPIs.toggle() }
-        }
         if !report.isOwnerView {
             DSRKPIGrid(title: "Operations", kpis: report.operations)
         }
-        DSRInsightsGrid(insights: report.insights)
 
-        // Each measured block as a card; a block the night has no row for
-        // is one caption line, not a card of its own (10/8/26).
+        // The rest of the night — what Cavnar AI noticed, every number and
+        // each block — folded under one disclosure (re-audit D9): the
+        // decision is above, the detail one tap away.
         let blocks = report.displayedBlocks.filter { $0.block != DSRBlock.notCollected }
-        if !blocks.isEmpty {
-            DSRSectionTitle(title: "The night, block by block")
-            ForEach(Array(blocks.enumerated()), id: \.element.name) { index, entry in
-                blockCard(entry.name, entry.block)
-                    .cavnarRowEntrance(index: index, clock: clock)
+        let foldedKPIs = max(0, report.kpis.count - split.shown.count)
+        if Self.hasNightInFull(report, blocks: blocks.count, hiddenKPIs: foldedKPIs) {
+            disclosureButton(showingNightInFull ? "Less of the night" : "The night in full",
+                             open: showingNightInFull) { showingNightInFull.toggle() }
+            if showingNightInFull {
+                nightInFull(report, blocks: blocks, hiddenKPIs: foldedKPIs)
             }
-        }
-        if !report.notCollectedTitles.isEmpty {
-            HomeMixedText.make("Not collected this night: \(DSRText.list(report.notCollectedTitles))",
-                               role: .caption, color: .cavnarInk2)
-                .fixedSize(horizontal: false, vertical: true)
         }
 
         // How far to trust it: yesterday's calls graded, and the summary's
@@ -530,6 +508,59 @@ struct DailyReportView: View {
         guard !showingAll else { return (all, 0) }
         let shown = Array(top.prefix(kpisShown))
         return (shown, max(0, all.count - shown.count))
+    }
+
+    /// "Still missing" says how many parts aren't in yet — each block card
+    /// carries its own reason (re-audit D5: the caveat repeated every one).
+    /// A reason no block card shows stays in the caveat. Nil when nothing
+    /// is missing.
+    static func missingLine(_ report: DSRReport) -> String? {
+        let missing = report.facts.missing
+        guard !missing.isEmpty else { return nil }
+        let onCards = Set(report.displayedBlocks
+            .filter { !$0.block.isReady && $0.block != DSRBlock.notCollected }
+            .compactMap { $0.block.reason })
+        let carded = missing.filter { onCards.contains($0) }
+        let loose = missing.filter { !onCards.contains($0) }
+        var parts: [String] = []
+        if !carded.isEmpty {
+            let n = carded.count
+            parts.append("\(n) part\(n == 1 ? "" : "s") of the night \(n == 1 ? "isn\u{2019}t" : "aren\u{2019}t") in yet \u{2014} each says why under The night in full.")
+        }
+        parts += loose
+        return parts.joined(separator: " ")
+    }
+
+    /// Whether "The night in full" has anything to open.
+    static func hasNightInFull(_ report: DSRReport, blocks: Int, hiddenKPIs: Int) -> Bool {
+        blocks > 0 || hiddenKPIs > 0 || !report.insights.isEmpty || !report.notCollectedTitles.isEmpty
+    }
+
+    @ViewBuilder
+    private func nightInFull(_ report: DSRReport, blocks: [(name: String, block: DSRBlock)],
+                             hiddenKPIs: Int) -> some View {
+        DSRInsightsGrid(insights: report.insights)
+        if hiddenKPIs > 0 {
+            disclosureButton(showingAllKPIs ? "Fewer numbers" : "All numbers (\(report.kpis.count))",
+                             open: showingAllKPIs) { showingAllKPIs.toggle() }
+            if showingAllKPIs {
+                DSRKPIGrid(title: "All numbers", kpis: report.kpis)
+            }
+        }
+        // Each measured block as a card; a block the night has no row for
+        // is one caption line, not a card of its own (10/8/26).
+        if !blocks.isEmpty {
+            DSRSectionTitle(title: "The night, block by block")
+            ForEach(Array(blocks.enumerated()), id: \.element.name) { index, entry in
+                blockCard(entry.name, entry.block)
+                    .cavnarRowEntrance(index: index, clock: clock)
+            }
+        }
+        if !report.notCollectedTitles.isEmpty {
+            HomeMixedText.make("Not collected this night: \(DSRText.list(report.notCollectedTitles))",
+                               role: .caption, color: .cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func disclosureButton(_ label: String, open: Bool, _ toggle: @escaping () -> Void) -> some View {
@@ -615,14 +646,24 @@ struct DailyReportView: View {
         }
     }
 
+    /// Whether the score card states the night's net (re-audit D6) — then
+    /// the Sales block neither opens nor closes on it again.
+    private var netOnScorecard: Bool {
+        guard let report = viewModel.report, report.scorecard != nil,
+              let sales = report.facts.blocks["sales"] else { return false }
+        return sales.isReady && sales.metric("net") != nil
+    }
+
     private func blockCard(_ name: String, _ block: DSRBlock) -> some View {
-        DSRBlockCard(title: DSRBlock.titles[name] ?? name.capitalized, block: block,
-                     headline: DSRHeadline.line(for: name, block),
+        let date = viewModel.report?.businessDate ?? viewModel.businessDate
+        return DSRBlockCard(title: DSRBlock.titles[name] ?? name.capitalized, block: block,
+                     headline: DSRHeadline.line(for: name, block, businessDate: date, netOnScorecard: netOnScorecard),
                      isExpanded: Binding(get: { expanded.contains(name) },
                                          set: { if $0 { expanded.insert(name) } else { expanded.remove(name) } })) {
-            DSRBlockBody(name: name, block: block, businessDate: viewModel.businessDate,
+            DSRBlockBody(name: name, block: block, businessDate: date,
                          blocks: viewModel.report?.facts.blocks ?? [:],
                          isOwner: viewModel.report?.isOwnerView == true,
+                         netOnScorecard: netOnScorecard,
                          onMap: { mapping = $0 })
         }
     }
@@ -639,32 +680,18 @@ struct DailyReportView: View {
                 Text(why).cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if viewModel.canRerun {
-                Button {
-                    Haptic.light()
-                    confirmingRerun = true
-                } label: {
-                    Group {
-                        if viewModel.isSubmitting { CavnarShimmerText(text: "Starting", color: .cavnarInk) } else { Text("Re-run this night") }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle())
-                .disabled(viewModel.isSubmitting)
-                if !showsProgress, !viewModel.canCloseDay, let error = viewModel.actionError {
-                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            // Re-run and the week are the toolbar's ("…" and the grid icon)
+            // — one place each (re-audit D18). A re-run's error still shows.
+            if viewModel.canRerun, !showsProgress, !viewModel.canCloseDay, let error = viewModel.actionError {
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            NavigationLink(value: DailyReportRoute.week(date: viewModel.businessDate)) {
-                HStack(spacing: 6) {
-                    Text("See the week").font(.cavnarBody(CavnarType.body, weight: 700))
-                    Image(systemName: "chevron.right").font(.cavnar(.caption))
-                }
-                .foregroundStyle(Color.cavnarEmber2)
-                .cavnarHitTarget()
+            // The report's settings live on the web (re-audit D13).
+            if viewModel.isOwner {
+                CavnarWebLinkRow(title: "Report settings",
+                                 subtitle: "When it\u{2019}s sent, the deadline, gross, your calendar and POS departments",
+                                 path: "account/report")
             }
-            .buttonStyle(.plain)
         }
         .padding(.top, 6)
     }
@@ -683,6 +710,16 @@ struct DSRLeadCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Three body lines on a phone hold about this many characters.
     static let clampAfter = 140
+    @State private var clampedHeight: CGFloat = 0
+    @State private var fullHeight: CGFloat = 0
+
+    /// "Read more" when the three-line clamp cut the text — measured, so a
+    /// large Dynamic Type size that truncates a short summary still opens
+    /// (re-audit D4) — or, before it is measured, past `clampAfter`.
+    static func clamps(characters: Int, full: CGFloat, clamped: CGFloat) -> Bool {
+        if full > 0, clamped > 0 { return full > clamped + 1 }
+        return characters > clampAfter
+    }
 
     var body: some View {
         let parts = DSRText.split(text)
@@ -702,8 +739,21 @@ struct DSRLeadCard: View {
                         .cavnarText(.body)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { clampedHeight = $0 }
+                        // The whole text, unclamped and unseen, at the same
+                        // width: taller than the three lines means a large
+                        // text size cut it, so "Read more" shows (re-audit
+                        // D4) — not only past a character count.
+                        .background(alignment: .top) {
+                            HomeMixedText.make(rest, role: .body)
+                                .cavnarText(.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+                                .hidden()
+                                .accessibilityHidden(true)
+                        }
                 }
-                if rest.count > Self.clampAfter {
+                if expanded || Self.clamps(characters: rest.count, full: fullHeight, clamped: clampedHeight) {
                     Button {
                         Haptic.light()
                         if reduceMotion { expanded.toggle() } else {
@@ -989,7 +1039,19 @@ struct DSRBlockBody: View {
     var blocks: [String: DSRBlock] = [:]
     /// The owner places an unmapped POS department ("Map it").
     var isOwner = false
+    /// The score card above states the net (re-audit D6): the opened Sales
+    /// block doesn't repeat it as its figure.
+    var netOnScorecard = false
     var onMap: ((DSRBlock.Unmapped) -> Void)? = nil
+
+    /// The Service block draws the night's hour chart and what was given
+    /// away when it is ready (re-audit D7, D8) — Sales and Labor then leave
+    /// theirs to it.
+    private var serviceReady: Bool { blocks["service"]?.isReady == true }
+    private var serviceDrawsHours: Bool {
+        serviceReady && DSRHourStory(sales: blocks["sales"], labor: blocks["labor"]) != nil
+    }
+    private var serviceDrawsGiven: Bool { serviceReady && blocks["service"]?.lossGiven != nil }
 
     var body: some View {
         switch name {
@@ -1017,11 +1079,15 @@ struct DSRBlockBody: View {
     private var sales: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                CavnarKicker("Net sales")
-                // FigureL: the score above is the screen's one FigureXL.
-                Text(DSRFormat.money(m("net")))
-                    .cavnarText(.figureL, color: m("net") == nil ? Color.cavnarInk3 : Color.cavnarInk)
-                    .cavnarSensitive()
+                // The net is the score card's when it states it (re-audit
+                // D6); a manager's view, with no score card, opens on it.
+                if !netOnScorecard {
+                    CavnarKicker("Net sales")
+                    // FigureL: the score above is the screen's one FigureXL.
+                    Text(DSRFormat.money(m("net")))
+                        .cavnarText(.figureL, color: m("net") == nil ? Color.cavnarInk3 : Color.cavnarInk)
+                        .cavnarSensitive()
+                }
                 if let line = joined([
                     // An "all" gross the POS couldn't complete says so
                     // here, never the items figure passed off as it.
@@ -1061,7 +1127,7 @@ struct DSRBlockBody: View {
                             Text(DSRFormat.money(c.base))
                                 .font(.cavnarNumber(CavnarType.secondary))
                                 .foregroundStyle(Color.cavnarInk2)
-                                .frame(width: 80, alignment: .trailing)
+                                .fixedSize().frame(minWidth: 80, alignment: .trailing).layoutPriority(1)
                         }
                         .padding(.vertical, 8)
                         .accessibilityElement(children: .combine)
@@ -1088,8 +1154,10 @@ struct DSRBlockBody: View {
             }
             unmappedDepartments
 
+            // The hour story in the night in detail carries the hours when
+            // the Service block is ready (re-audit D7) — one chart, not two.
             let hours = block.hourly
-            if !hours.isEmpty {
+            if !hours.isEmpty, !serviceDrawsHours {
                 VStack(alignment: .leading, spacing: 10) {
                     CavnarKicker("By hour")
                     DSRHourlyBars(hours: hours)
@@ -1105,8 +1173,10 @@ struct DSRBlockBody: View {
             // login may see them (the server drops them otherwise).
             // Tax last, captioned with where it sits for this restaurant's
             // gross (the web's tile says the same).
+            // When the night in detail carries what was given away (re-audit
+            // D8), the loss tiles are its, not repeated here; tax stays.
             let loss = [("Discounts", "discounts"), ("Comps", "comps"), ("Voids", "voids"), ("Refunds", "refunds")]
-                .filter { block.has($0.1) }
+                .filter { !serviceDrawsGiven && block.has($0.1) }
                 .map { DSRStatTile(label: $0.0, value: DSRFormat.money(m($0.1))) }
                 + (m("tax").map { [DSRStatTile(label: "Tax collected", value: DSRFormat.money($0),
                                                detail: block.taxCaption)] } ?? [])
@@ -1130,7 +1200,7 @@ struct DSRBlockBody: View {
                         Spacer()
                         Text(DSRFormat.count(item.qty)).font(.cavnarNumber(CavnarType.secondary)).foregroundStyle(Color.cavnarInk2)
                         Text(DSRFormat.money(item.net)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            .frame(width: 80, alignment: .trailing)
+                            .fixedSize().frame(minWidth: 80, alignment: .trailing).layoutPriority(1)
                     }
                 }
             }
@@ -1181,7 +1251,8 @@ struct DSRBlockBody: View {
     }
 
     private var salesComparisons: [(label: String, pct: Double?, base: Double?)] {
-        let lastWeekLabel = businessDate.flatMap(DSRFormat.weekday).map { "vs last \($0)" } ?? "vs last week"
+        // The same words the collapsed Sales line uses (re-audit D19).
+        let lastWeekLabel = DSRHeadline.lastWeekLabel(businessDate)
         let all: [(String, String, String)] = [
             ("vs yesterday", "vs_yesterday_pct", "yesterday_net"),
             (lastWeekLabel, "vs_last_week_pct", "last_week_net"),
