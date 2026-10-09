@@ -746,11 +746,11 @@ enum HomeBriefFilter {
     }
 }
 
-/// "Tonight's forecast · usually right 7 in 10" — what last night's report
-/// said today would bring, each graded against the night tomorrow
-/// (dsr/predictions.py), in the brief line's sheet. "N in 10" is the same
-/// measured share of nights its forecast range has held here
-/// (`confidence_pct`), said the way an owner says it.
+/// "Tonight's forecast · 70% confidence" with its meter — what last night's
+/// report said today would bring, each graded against the night tomorrow
+/// (dsr/predictions.py), in the brief line's sheet. The % is the measured
+/// share of nights its forecast range has held here (`confidence_pct`), in
+/// the one confidence form every surface uses (iOS re-audit L15).
 struct HomeReportCalls: View {
     let calls: [String]
     var confidencePct: Int? = nil
@@ -760,7 +760,7 @@ struct HomeReportCalls: View {
 
     static func title(confidencePct: Int?) -> String {
         guard let pct = confidencePct else { return "Tonight\u{2019}s forecast" }
-        return "Tonight\u{2019}s forecast \u{00B7} usually right \(inTen(pct)) in 10"
+        return "Tonight\u{2019}s forecast \u{00B7} \(max(0, min(pct, 100)))% confidence"
     }
 
     var body: some View {
@@ -782,7 +782,7 @@ struct HomeReportCalls: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Tonight's forecast: " + calls.joined(separator: ". ")
-                            + (confidencePct.map { ". Usually right \(Self.inTen($0)) nights in 10." } ?? ""))
+                            + (confidencePct.map { ". \(max(0, min($0, 100)))% confidence: its range held that share of nights here." } ?? ""))
     }
 }
 

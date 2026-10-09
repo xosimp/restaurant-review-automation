@@ -126,10 +126,11 @@ struct LoginErrorBar: View {
             Text(message)
                 .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarRedText)
-                // One line, shrinking if it has to. Wrapping would grow the
-                // reserved slot and put the page back to moving.
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                // Up to three lines (iOS re-audit M11): a sign-in error the
+                // owner cannot finish reading is no help. The slot keeps its
+                // one-line height and grows only for a longer message.
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, LoginMetrics.spaceM)

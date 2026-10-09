@@ -217,6 +217,9 @@ struct HomeKPIRow: View {
         var detail: String? = nil
         var tone: Color = .cavnarInk
         let target: Target
+        /// The tile's own tap-through, said ("Read the report") — the net
+        /// tile carries last night's card before noon (iOS re-audit H3).
+        var cta: String? = nil
     }
 
     struct Health: Equatable {
@@ -250,6 +253,11 @@ struct HomeKPIRow: View {
                                     .minimumScaleFactor(0.85)
                                 if let detail = tile.detail {
                                     CavnarMixedText(detail, role: .caption, color: .cavnarInk2)
+                                        .lineLimit(2)
+                                }
+                                if let cta = tile.cta {
+                                    Text(cta)
+                                        .cavnarText(.caption, color: .cavnarEmber2)
                                         .lineLimit(2)
                                 }
                             }
@@ -301,15 +309,16 @@ struct HomeKPIRow: View {
             if let p = m.pulse, pulses[m.key] == nil { pulses[m.key] = p }
         }
         let replies: Tile? = pulses["reviews"].map { reviews in
-            Tile(id: "reviews", value: reviews.value, label: "Replied",
-                 detail: OwnerCopy.displayLabel(reviews.label),
-                 tone: Self.tone(reviews.tone), target: .module("reviews"))
+            let read = Self.repliesFigure(reviews.value)
+            return Tile(id: "reviews", value: read?.value ?? reviews.value, label: "Replied",
+                        detail: read?.detail ?? OwnerCopy.displayLabel(reviews.label),
+                        tone: Self.tone(reviews.tone), target: .module("reviews"))
         }
         if let night {
             out.append(Tile(id: "net", value: night.net.map { DSRFormat.money($0) } ?? "\u{2014}",
                             label: "Net, " + (nightKicker ?? "last night").lowercased(),
                             detail: night.vsYesterdayPct.map { DSRFormat.signedPct($0) + " vs the night before" },
-                            tone: .cavnarInk, target: .report(night.businessDate)))
+                            tone: .cavnarInk, target: .report(night.businessDate), cta: "Read the report"))
         } else if let replies {
             out.append(replies)
         }
@@ -327,6 +336,18 @@ struct HomeKPIRow: View {
             out.append(replies)
         }
         return out
+    }
+
+    /// "45/52" → ("87%", "7 waiting") — the replies tile says the rate and
+    /// what is left, not a fraction beside the same rate again (iOS
+    /// re-audit L6). Nil for any other shape, which keeps the server's.
+    static func repliesFigure(_ raw: String) -> (value: String, detail: String)? {
+        let parts = raw.split(separator: "/").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2, let done = Int(parts[0]), let total = Int(parts[1]), total > 0,
+              done >= 0, done <= total else { return nil }
+        let pct = Int((Double(done) / Double(total) * 100).rounded())
+        let waiting = total - done
+        return ("\(pct)%", waiting == 0 ? "None waiting" : "\(waiting) waiting")
     }
 
     /// The figure's status colour: red over the named threshold, amber

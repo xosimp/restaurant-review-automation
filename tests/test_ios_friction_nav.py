@@ -62,7 +62,13 @@ def test_a_deep_link_starts_a_fresh_modules_stack():
 def test_the_warm_lock_asks_face_id_on_its_own():
     root = _src("RootView.swift")
     assert "autoUnlockIfWarm()" in root
-    assert "guard coldLaunch else" in root
+    # iOS re-audit M12: the cold launch shows the controls at once and asks
+    # Face ID too — the staged reveal and the "warm only" guard are gone.
+    assert "guard coldLaunch else" not in root
+    auto = root.split("private func autoUnlockIfWarm()", 1)[1].split("\n    }\n", 1)[0]
+    assert "!coldLaunch" not in auto
+    assert "stage = 4\n            autoUnlockIfWarm()" in root
+    assert "LaunchIntroDay.claim()" in root and "LaunchSplashView(quick: !firstLaunchToday)" in root
     prefs = _src("Core/AppPreferences.swift")
     assert "defaultLockDelaySeconds = 60" in prefs
     assert "initialLockDelay(stored: d.object(forKey: Key.lockDelay))" in prefs
@@ -77,14 +83,19 @@ def test_home_leads_with_the_work():
     assert attention < body.index("moreGroup(summary, lead: lead)")
     assert body.index("moreGroup(summary, lead: lead)") < body.index("private func moreGroup(")
     more = body[body.index("private func moreGroup("):]
-    assert "HomeValueBand(" in more and "HomeBenchmarkStrip(" in more
-    # Last night's report leads only before noon (#37); after noon it sits
-    # under Needs you with the brief.
-    first_night = body.index("HomeLastNightCard(")
-    assert "Self.isMorning(summary), lastNight.night != nil" in body[first_night - 200:first_night]
-    later_night = body.index("HomeLastNightCard(", first_night + 1)
+    # The band stays; the benchmarks, trends and monthly review are the web's
+    # (iOS re-audit M16).
+    assert "HomeValueBand(" in more and "HomeBenchmarkStrip(" not in more
+    assert 'path: "home/results"' in more
+    # Today's focus sits directly under the hero (H3); before noon last
+    # night's report is the glance's net tile, after noon its own card under
+    # Needs you — never both (M2).
+    assert body.index("HomeOneThingCard(") < body.index("HomeKPIRow(")
+    assert body.count("HomeLastNightCard(") == 1
+    later_night = body.index("HomeLastNightCard(")
     assert attention < later_night
-    assert "!Self.isMorning(summary), lastNight.night != nil" in body[later_night - 200:later_night]
+    assert "Self.lastNightCardShows(summary, night: lastNight.night)" in body[later_night - 200:later_night]
+    assert "night: Self.lastNightCardShows(summary, night: lastNight.night) ? nil : lastNight.night" in body
     # Every item, not the first four behind a swipe — less only the one the
     # one-thing card leads with, plus the cross-module links (parity #1/#5).
     assert "var items = summary.needsAttention" in home
@@ -129,9 +140,10 @@ def test_notification_rows_act_in_place():
 
 def test_the_bell_and_the_switcher_reach_every_screen():
     root = _src("RootView.swift")
-    # The tab's red system badge counts what is urgent, as the web's red
-    # bell count does; unread-but-not-urgent is the bell's quiet dot.
-    assert ".badge(chrome.notificationsBadge.urgentCount)" in root
+    # The Home tab's badge is Needs you's own count for the location on
+    # screen (iOS re-audit H8); the bell keeps the notification counts.
+    assert ".badge(homeViewModel.needsYouCount)" in root
+    assert ".badge(chrome.notificationsBadge.urgentCount)" not in root
     # The reset runs for EVERY switch path, from SessionStore (F3-4).
     assert "LocationSwitcherView {}" in root
     assert "session.onLocationSwitched = { _ in didSwitchLocation() }" in root

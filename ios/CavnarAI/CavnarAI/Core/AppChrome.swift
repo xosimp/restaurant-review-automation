@@ -129,29 +129,33 @@ struct CavnarScreenTitle: View {
 
     var body: some View {
         if showsLocation, let chrome, chrome.showsLocation, let name = chrome.locationName {
-            VStack(spacing: 0) {
-                Text(title)
-                    .font(.cavnarHeadline(17))
-                    .foregroundStyle(Color.cavnarInk)
-                    .lineLimit(1)
-                Button {
-                    Haptic.light()
-                    chrome.showingLocationSwitcher = true
-                } label: {
-                    HStack(spacing: 3) {
+            // The whole title block is the switcher's button (iOS re-audit
+            // M9): the name at the caption floor (13pt, never 11.5) with a
+            // chevron the same size, and a 44pt target — the name alone was
+            // a 16pt sliver a thumb missed.
+            Button {
+                Haptic.light()
+                chrome.showingLocationSwitcher = true
+            } label: {
+                VStack(spacing: 0) {
+                    Text(title)
+                        .font(.cavnarHeadline(17))
+                        .foregroundStyle(Color.cavnarInk)
+                        .lineLimit(1)
+                    HStack(spacing: CavnarSpace.xxs) {
                         Text(name)
-                            .font(.cavnarBody(11.5, weight: 600))
+                            .cavnarText(.caption, color: .cavnarEmber2)
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .accessibilityHidden(true)
                     }
-                    .foregroundStyle(Color.cavnarEmber2)
-                    .frame(minHeight: 16)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Location: \(name). Switch location")
+                .cavnarHitTarget()
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title). Location: \(name). Switch location")
         } else {
             Text(title)
                 .font(.cavnarHeadline(18))

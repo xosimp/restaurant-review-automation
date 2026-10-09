@@ -2847,6 +2847,17 @@ def _location_record(conn, r, now):
             items, live, a = analysis_for(rid)
             if live and items:
                 inv = {"recoverable": float(a.get("recoverable_monthly") or 0), "critical_low": len(a.get("critical_low") or []), "waste_rate": a.get("waste_rate_pct")}
+                # The measured food cost % and its target (iOS re-audit M14):
+                # the phone's figure for a location, never the recoverable
+                # opportunity in its place. Absent when the ledger can't say.
+                try:
+                    import food_cost_intelligence as _fci_grp
+                    _fc_grp = _fci_grp.build_evidence(rid)["food_cost"]
+                    if _fc_grp.get("ok"):
+                        inv["pct"] = _fc_grp.get("pct")
+                        inv["target"] = _fc_grp.get("target")
+                except Exception:
+                    pass
         except Exception:
             inv = None
     issues = []

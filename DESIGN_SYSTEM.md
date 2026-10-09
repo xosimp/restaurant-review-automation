@@ -453,7 +453,7 @@ each chosen so no two adjacent sections share a silhouette:
 | Obsidian tile | `.ob-tile` (+ `.sm`) — the web twin of iOS `GlowBadge`: obsidian gradient, lit edge ember→dark from the top-left, hairline lip, cream glyph, one ember seated on the right edge. A solid object, not a light source | Every mark that names a block or a module; the glyph inside is a 22px stroke SVG |
 | Goal bar | `.hb-goal .bar i` (width from `data-w`) | Progress from baseline to target; no bar when the baseline is unreadable |
 | Checklist | `.hb-chk` | Still open |
-| Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm. iOS `HomeSectionHeader` is its twin: the kicker in `.cavnarEmber` (not ember2), the 14×3 ember bar before a Clash **Medium** title (parity #85). `AccountKicker` and Account's group titles are the same ember kicker (the web's `.ac-kicker`) |
+| Section header | `.hb-sh` — `.k` kicker (ember, or `.dim`) + Clash `h2 small` | Between the big moments; the hairline is the rhythm. iOS `HomeSectionHeader` is its twin minus the kicker (iOS re-audit L13, 10/8/26: kicker + title said the same thing twice): the 14×3 ember bar before the Headline-role title, and an Ink2 trailing note. `AccountKicker` and Account's group titles are the same ember kicker (the web's `.ac-kicker`) |
 
 Entrances are `.hb-rise` with `--i` for a 70ms stagger, 420ms, no overshoot.
 The list row `.hb-row` stays for what is genuinely a list. A Needs-attention
@@ -1149,38 +1149,45 @@ the 300-second drill-down.
    changes, last month. The Recommendations page (`#recs`) is reached from
    both.
 
-**iOS, from 10/8/26: decide, then more (readability round).** "Web
-explains. iPhone decides." The phone no longer mirrors the web's order
-block for block; it reads top to bottom as: the hero (date kicker, the
-brief's headline at Title, one Ink2 overnight line — "Overnight: 3 replies
-drafted · 2 flagged", no restaurant prefix) → `HomeQueuedBanner` (amber,
-only while something is about to go out on its own, with Undo; the
-rotating "Right now" ticker lives in Notifications) → the night's own card
-(`HomeLastNightCard` before noon local, `HomeCloseOutCard` after 8pm) →
-`HomeKPIRow` (three fixed tiles: net last night — or replies when the
-report card is right above — labor %, rating; data health as a dot and
-words, "All data current" / "1 source stale", never "Data 87%") → Find or
-ask (the command sheet) → Today's focus (`HomeOneThingCard` on
+**iOS, from 10/8/26: decide, then more (readability round; re-audit order
+10/8/26).** "Web explains. iPhone decides." The phone no longer mirrors the
+web's order block for block; it reads top to bottom as: the hero (date
+kicker, the location's name under it for a multi-location owner — a tap
+opens the switcher — the brief's headline at Title, one Ink2 overnight line
+— "Overnight: 3 replies drafted · 2 flagged", or "No new reviews overnight",
+never "All quiet") → Today's focus directly under it (`HomeOneThingCard` on
 `CavnarAnswerCard`: headline, one why, the top cause, ONE "Could also be"
-line, one $ figure with its basis, the confidence %, one full-width
-primary; proof, To confirm, conflicts and Done / Pass behind "See the
-evidence") → **Needs you (N)** (`HomeNeedsYou`, ONE ranked list replacing
+line, one $ figure with its basis, the confidence %, one full-width primary
+— the decision (Done, or the card's own action), "Measure it" the
+secondary; proof, To confirm, conflicts and Not for us behind "See the
+evidence"; its sentence clears after a few seconds) → `HomeQueuedBanner`
+(amber, only while something is about to go out on its own, with Undo) →
+`HomeCloseOutCard` after 8pm → `HomeKPIRow` (three fixed tiles: before noon
+the net tile IS last night's report — "Read the report" opens it; after
+noon the report has its own card further down and the tile is replies —
+"87% · Replied · 7 waiting"; labor %; rating; data health as a dot and
+words) → the quiet-hours sentence once per window (the toolbar glyph says
+it after) → **Needs you (N)** (`HomeNeedsYou`, ONE ranked list replacing
 Needs attention, the quick chips, the brief's action lines, Open issues,
-Still open, check-ins, comps/voids flags and proposed/missed goals: each
-row a dot, title, one line of why, ONE 44pt primary, a "…" menu with Not
-today / Hide / Ask and the row's other answers, a swipe for the safe
-second action; as many rows as the server records as shown — four, the
-focus card counting as one — then "+N more" in place; every action keeps
-its own endpoint and record) → the brief's reads (`HomeDayCard`: text +
-chevron, a tap opens `HomeBriefLineSheet` with the line's action,
-"Tonight's forecast · usually right N in 10", Ask, Done / Pass) →
-Restaurant DNA → **More** (`HomeMoreDisclosure`, closed, the measured
-figure on its row: the recommendations, "Recommendation history" — where
-"Keep suggesting these?" and the quieter kinds now live — then Results
-with How you compare inside it, the signals, the receipts off Monday,
-what your changes did, and the close-out before 8pm). No quick-action
-chips, kind holds, activity ticker or 120pt FAB spacer on Home; the Home
-tab's badge scrolls to Needs you.
+Still open, the open recommendations, check-ins, comps/voids flags and
+proposed/missed goals: each row a dot, title, one line of why, ONE 44pt
+primary, a "…" menu with the row's other answers, a swipe for the safe
+second action; a recommendation row carries its confidence % on the row
+and opens its full card on a tap; a cross-module link leads with Done /
+Not for us, "See the evidence" the secondary; a request's Deny asks first,
+naming it; as many rows as the server records as shown, then "+N more" in
+place; every action keeps its own endpoint and record) → last night's card
+after noon → the brief's reads (`HomeDayCard`, "Tonight's forecast · 70%
+confidence" with its meter) → **More** (`HomeMoreDisclosure`, closed, the
+measured figure on its row: Restore hidden, "Recommendation history", the
+Restaurant DNA row (still-forming shows nothing), then Results — the band,
+the receipts off Monday, what your changes did — one "See it on the web"
+row for the trends, how you compare and the monthly review, and the
+close-out before 8pm). Find or ask is a toolbar icon (the command sheet).
+The Home tab's badge is Needs you's own count for the location on screen
+and scrolls there on the first arrival after it changes; the bell is the
+history (its "Needs you" filter is a link here) and the command sheet's
+Waiting on you is one row here. `HomeSectionHeader` is the title only.
 
 **iOS, the same order (parity round, 9/25/26 — superseded on the phone by
 the paragraph above).** The hero adds the web's

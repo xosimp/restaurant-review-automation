@@ -381,7 +381,8 @@ extension CavnarAnswerCard where Actions == EmptyView, Detail == EmptyView {
 /// `path` is a nav path (nav.py; the dashboard's `cavNav`), opened as
 /// https://dashboard.cavnar.ai/?nav=<path> — the same link every email and
 /// push carries (`CavnarHandoff.webpageURL`). Valid heads: home, reviews,
-/// labor, inventory, marketing, intel, dsr, ask, recs, account; sections the
+/// labor, inventory, marketing, intel, dsr, ask, recs, account, dna (the
+/// Restaurant DNA page), locations (Home's all-locations scope); sections the
 /// dashboard marks with data-nav, e.g. labor/schedule, labor/people,
 /// labor/requests, labor/tasks, inventory/invoices, inventory/order,
 /// inventory/pars, inventory/menu, inventory/waste, inventory/count,

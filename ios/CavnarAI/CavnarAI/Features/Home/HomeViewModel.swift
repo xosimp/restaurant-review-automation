@@ -11,6 +11,11 @@ final class HomeViewModel {
     /// policy and the "showing data from earlier" notice — Home used to keep
     /// hours-old numbers on screen with nothing to indicate it (audit 4.2).
     private(set) var lastLoadedAt: Date?
+    /// How many rows Home's "Needs you" shows for this location — the Home
+    /// tab's badge (iOS re-audit H8). The bell's urgent count was group-wide
+    /// (every location) and counted notifications, not decisions. Set by
+    /// HomeNeedsYou whenever its list changes.
+    var needsYouCount = 0
 
     /// Home had no cache at all, so an offline launch showed a bare error
     /// screen instead of the numbers the owner opened the app to check
@@ -35,6 +40,7 @@ final class HomeViewModel {
         loadedGeneration = SessionScope.generation
         summary = nil
         lastLoadedAt = nil
+        needsYouCount = 0
         errorMessage = nil
         cache = CachedResource<HomeSummary>(key: SessionScope.key("home.summary"))
     }

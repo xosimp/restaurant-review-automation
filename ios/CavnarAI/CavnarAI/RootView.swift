@@ -40,6 +40,9 @@ struct RootView: View {
     // (CavnarWordmarkTraceIn) instead of stamping in. A later re-lock
     // from the background is the same session, and gets the stamp-in.
     @State private var coldLaunchIntroPending = true
+    /// True on the first launch of the day only — the full splash and the
+    /// traced wordmark; every later launch that day is the quick one (M12).
+    @State private var firstLaunchToday = LaunchIntroDay.claim()
     // Owned here rather than by HomeView/ModulesGridView themselves — see
     // ModulesGridView.path's doc comment for why: these need to survive
     // the LockedView swap in body below, which discards and recreates
@@ -427,7 +430,8 @@ struct RootView: View {
                     // introReady: on a cold launch this mounts UNDER the splash;
                     // without the gate its draw-in played hidden and the user
                     // only ever saw the settled end state once the splash lifted.
-                    LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
+                    LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending,
+                               fullIntro: firstLaunchToday)
                         // Fetch Home's summary while the gate is up (the
                         // session is signed in, just locked), so the moment the
                         // user unlocks, Home mounts straight onto its hero — no
@@ -497,7 +501,11 @@ struct RootView: View {
                 .transition(.opacity)
             }
         }
-        .overlay(alignment: .top) {
+        // An inset, not an overlay (iOS re-audit M21): the pill and the
+        // dropped-write note push the screen down while they show instead
+        // of lying over the toolbar and swallowing its taps.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if connectivityStatus != nil || droppedNote != nil {
             VStack(spacing: 6) {
                 if let status = connectivityStatus {
                     Text(status)
@@ -529,6 +537,9 @@ struct RootView: View {
                 }
             }
             .padding(.top, 8)
+            .padding(.bottom, 4)
+            .frame(maxWidth: .infinity)
+            }
         }
         .animation(.easeOut(duration: 0.25), value: connectivityStatus)
         .animation(.easeOut(duration: 0.25), value: droppedWrites)
@@ -560,7 +571,7 @@ struct RootView: View {
         #endif
         .overlay {
             if showLaunchSplash {
-                LaunchSplashView {
+                LaunchSplashView(quick: !firstLaunchToday) {
                     DebugFrameWatchdog.mark("splash finished")
                     withAnimation(.easeOut(duration: 0.45)) { showLaunchSplash = false }
                     if introWaitingOnSplash {
@@ -732,11 +743,10 @@ struct RootView: View {
             HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared,
                      onHeroAppear: startIntroSequence, tabVisible: selectedTab == .home)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
-                // Where the thumb already is (#32): the system's red badge
-                // carries the URGENT count, the bell's red number — a red
-                // count of merely-unread rows would say "urgent" when the
-                // web bell (and ours) says only a grey dot.
-                .badge(chrome.notificationsBadge.urgentCount)
+                // Where the thumb already is (#32): the Home tab carries Needs
+                // you's own count for the location on screen (iOS re-audit
+                // H8) — the bell keeps the notification counts, group-wide.
+                .badge(homeViewModel.needsYouCount)
                 .tag(AppTab.home)
 
             // Seeded with the modules Home already fetched, so the tab's
@@ -774,7 +784,7 @@ struct RootView: View {
         NavigationSplitView {
             AppSidebar(selection: sidebarSelection,
                        modules: homeViewModel.summary?.modules ?? [],
-                       urgentCount: chrome.notificationsBadge.urgentCount,
+                       urgentCount: homeViewModel.needsYouCount,
                        locationName: chrome.showsLocation ? chrome.locationName : nil,
                        onSwitchLocation: { chrome.showingLocationSwitcher = true })
                 .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 320)
@@ -994,7 +1004,32 @@ struct RootView: View {
 /// underneath. The time BEFORE this appears (the static ghost) is the
 /// process launching — nothing in the app runs yet, and a debug build with
 /// Xcode attached spends several seconds there that a release build doesn't.
+/// The first launch of the day (iOS re-audit M12): `claim()` answers true
+/// once per calendar day on this phone and records it, so the full splash
+/// and the traced wordmark play once a day, not on every cold launch.
+enum LaunchIntroDay {
+    static let key = "launch.introDay"
+
+    static func today(_ now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: now)
+    }
+
+    static func claim(_ defaults: UserDefaults = .standard, now: Date = Date()) -> Bool {
+        let day = today(now)
+        guard defaults.string(forKey: key) != day else { return false }
+        defaults.set(day, forKey: key)
+        return true
+    }
+}
+
 private struct LaunchSplashView: View {
+    /// After the first launch of the day the mark draws in and lifts in
+    /// about a second, without the flare (iOS re-audit M12): an owner
+    /// opening the app ten times a shift waited ~4.5s each time.
+    var quick: Bool = false
     var onFinished: () -> Void
 
     @State private var ringProgress: CGFloat = 0
@@ -1022,6 +1057,14 @@ private struct LaunchSplashView: View {
             .frame(width: 128, height: 128)
         }
         .task {
+            if quick {
+                withAnimation(.easeInOut(duration: 0.45)) { ringProgress = 1 }
+                try? await Task.sleep(for: .seconds(0.4))
+                withAnimation(.easeOut(duration: 0.3)) { emberOn = true }
+                try? await Task.sleep(for: .seconds(0.3))
+                onFinished()
+                return
+            }
             withAnimation(.easeInOut(duration: 0.9)) { ringProgress = 1 }
             try? await Task.sleep(for: .seconds(0.85))
             withAnimation(.easeOut(duration: 0.45)) { emberOn = true }
@@ -1055,6 +1098,9 @@ struct LockedView: View {
     // Cold launch: the wordmark is traced and filled in by the ember. A
     // warm re-lock (same session) gets the quicker stamp-in.
     var coldLaunch: Bool = false
+    /// The first launch of the day: the wordmark is traced in. Every later
+    /// cold launch that day gets the quick stamp-in (M12).
+    var fullIntro: Bool = true
     @State private var isUnlocking = false
     @State private var unlockFailed = false
     // Staggered reveal after the lockup has drawn itself in: 1 headline,
@@ -1143,7 +1189,7 @@ struct LockedView: View {
                 // aiTagOverhangs: the six letters are what's centered above
                 // "Welcome back"; the small AI tag hangs off to the right.
                 Group {
-                    if introReady && coldLaunch {
+                    if introReady && coldLaunch && fullIntro {
                         CavnarWordmarkTraceIn(width: 300, aiTagOverhangs: true)
                     } else if introReady {
                         CavnarWordmarkStampIn(width: 300, aiTagOverhangs: true)
@@ -1163,7 +1209,7 @@ struct LockedView: View {
                         .lockReveal(stage >= 1)
                     Text(caption)
                         .font(.cavnarBody(16, weight: captionIsError ? 600 : 400))
-                        .foregroundStyle(captionIsError ? Color.cavnarRed : Color.cavnarInk3)
+                        .foregroundStyle(captionIsError ? Color.cavnarRedText : Color.cavnarInk2)
                         .multilineTextAlignment(.center)
                         .lineSpacing(3)
                         .lockReveal(stage >= 2)
@@ -1191,22 +1237,13 @@ struct LockedView: View {
         }
         .task(id: introReady) {
             guard introReady, stage == 0 else { return }
-            // A warm re-lock (the owner stepped away for a minute) shows
-            // everything at once and asks Face ID straight away — the staged
-            // reveal cost ~1.3s and a tap on every return (friction #9). The
-            // cold launch keeps its entrance.
-            guard coldLaunch else {
-                stage = 4
-                autoUnlockIfWarm()
-                return
-            }
-            // Let the wordmark finish arriving first — traced and filled
-            // (cold launch) or stamped in — then bring the rest up in order.
-            try? await Task.sleep(for: .seconds(coldLaunch ? CavnarWordmarkTraceIn.duration : CavnarWordmarkStampIn.duration))
-            for step in 1...4 {
-                withAnimation(.easeOut(duration: 0.45)) { stage = step }
-                try? await Task.sleep(for: .seconds(0.14))
-            }
+            // Everything at once and Face ID asked straight away — on a
+            // warm re-lock (friction #9) AND on a cold launch (iOS re-audit
+            // M12): the cold launch used to hold Unlock behind the trace and
+            // a staged reveal, then wait for a tap. The wordmark still
+            // draws in above the controls.
+            stage = 4
+            autoUnlockIfWarm()
         }
         // The lock can go up while the app is still in the background (a
         // zero delay locks on .background), so the automatic ask waits for
@@ -1220,10 +1257,11 @@ struct LockedView: View {
         }
     }
 
-    /// Face ID on its own, once, on a warm lock with biometrics on. The
-    /// button stays for a retry; a cancelled ask isn't an error on screen.
+    /// Face ID on its own, once per return — a warm lock or a cold launch
+    /// (M12) — with biometrics on. The button stays for a retry; a
+    /// cancelled ask isn't an error on screen.
     private func autoUnlockIfWarm() {
-        guard !coldLaunch, introReady, !autoPrompted, scenePhase == .active,
+        guard introReady, !autoPrompted, scenePhase == .active,
               biometricAvailable, !isUnlocking, lockoutRemaining == 0 else { return }
         autoPrompted = true
         Task { await unlock(quietFailure: true) }

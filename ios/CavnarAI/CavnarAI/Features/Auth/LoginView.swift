@@ -215,7 +215,7 @@ struct LoginView: View {
                     LoginErrorBar(message: error, shakeTrigger: viewModel.errorShake)
                 }
             }
-            .frame(height: LoginMetrics.errorBarHeight)
+            .frame(minHeight: LoginMetrics.errorBarHeight)
             .frame(maxWidth: .infinity)
 
             HStack {

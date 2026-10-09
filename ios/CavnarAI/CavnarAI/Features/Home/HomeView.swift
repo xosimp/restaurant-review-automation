@@ -2,13 +2,16 @@ import SwiftUI
 
 /// Home — "Web explains. iPhone decides." (iOS readability round, 10/8/26).
 ///
-/// Top to bottom, "decide, then more": the hero (the date, the brief's
-/// headline and one overnight line), anything about to go out on its own
-/// with Undo, the night's own card (last night's report before noon, the
-/// close-out after 8pm), the glance (three fixed tiles and data health in
-/// words), Find or ask, Today's focus, ONE ranked "Needs you" list, the
-/// brief's reads, Restaurant DNA — and one closed "More" group holding the
-/// recommendations, the measured results and how the restaurant compares.
+/// Top to bottom, "decide, then more" (re-audit order, 10/8/26): the hero
+/// (the date, the location for a multi-location owner, the brief's headline
+/// and one overnight line), Today's focus, anything about to go out on its
+/// own with Undo, the close-out after 8pm, the glance (three fixed tiles —
+/// before noon the net tile is last night's report — and data health in
+/// words), ONE ranked "Needs you" list (the open recommendations among its
+/// rows), last night's card after noon, the brief's reads — and one closed
+/// "More" group holding the record, Restaurant DNA's row and the measured
+/// results, with the analysis one link away on the web. Find or ask is a
+/// toolbar icon.
 /// No module tiles here — that's the Modules tab's job. Everything sits on
 /// HomeObsidianField — black stone with light moving across it.
 struct HomeView: View {
@@ -70,6 +73,14 @@ struct HomeView: View {
     /// opens the full DNA screen. One read feeds both.
     @State private var showingDNA = false
     @State private var dnaModel = RestaurantDNAViewModel()
+    /// The Needs you count the last badge-led scroll was for (H8): a
+    /// return to Home with the same count stays where the owner left it.
+    @State private var scrolledForBadge: Int?
+    /// The quiet-hours window whose sentence this run shows (L12) — and the
+    /// last window it was shown for, kept across launches, so the banner
+    /// says it once per window and the toolbar glyph carries it after.
+    @State private var quietBannerShown: String?
+    @AppStorage("home.quietBannerSeenWindow") private var quietBannerSeen = ""
     // Drives the hero's one-time landing reveal (opacity + upward offset),
     // and everything below it rises in off the same flip, a beat later.
     // Owned and animated by RootView, not here — the Ask Cavnar FAB (a
@@ -150,6 +161,22 @@ struct HomeView: View {
                                     .padding(.top, 10)
                             }
 
+                            // Today's focus (#6) directly under the hero (iOS
+                            // re-audit H3): the decision first. The finding,
+                            // else the most urgent item, else the top
+                            // recommendation — the web's order (parity #1)
+                            // — never before the day's reads have landed.
+                            let lead = focusLead(summary)
+                            if let lead {
+                                HomeOneThingCard(viewModel: followThrough, lead: lead,
+                                                 busy: viewModel.isPublishingReplies,
+                                                 onPrimary: { item in primaryAction(item, in: summary) },
+                                                 onChanged: { Task { await viewModel.load() } })
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 28)
+                                    .belowFold(heroAppeared, delay: 0.08)
+                            }
+
                             // Something Cavnar AI is about to send on its
                             // own, with Undo — only while something is
                             // queued (#40).
@@ -157,33 +184,29 @@ struct HomeView: View {
                                 HomeQueuedBanner(viewModel: aiActivity)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 18)
-                                    .belowFold(heroAppeared, delay: 0.08)
+                                    .belowFold(heroAppeared, delay: 0.1)
                             }
 
-                            // The day's slot: the close-out after 8pm, last
-                            // night's report before noon (#37) — directly
-                            // under the hero, what the owner opened the app
-                            // for at that hour.
+                            // After 8pm the close-out leads the day's slot.
+                            // Before noon last night's report is no card of
+                            // its own any more (H3): it is the glance's net
+                            // tile, which opens the report.
                             if summary.localIsEvening {
                                 HomeCloseOutCard(viewModel: followThrough)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 24)
-                                    .belowFold(heroAppeared, delay: 0.1)
-                            } else if Self.isMorning(summary), lastNight.night != nil {
-                                HomeLastNightCard(viewModel: lastNight, open: { path.append($0) },
-                                                  localNow: summary.localNow)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 24)
                                     .belowFold(heroAppeared, delay: 0.1)
                             }
 
                             // The glance (#94): three fixed tiles and data
-                            // health in words. The net tile leaves when the
-                            // report's own card is right above it.
+                            // health in words. The net tile is last night's
+                            // report before noon; after noon the report's
+                            // own card renders further down, so the net is
+                            // never said twice (M2).
                             HomeKPIRow(
                                 tiles: HomeKPIRow.tiles(
                                     modules: summary.modules, charts: summary.charts,
-                                    night: Self.isMorning(summary) ? nil : lastNight.night,
+                                    night: Self.lastNightCardShows(summary, night: lastNight.night) ? nil : lastNight.night,
                                     nightKicker: lastNight.kicker(localNow: summary.localNow)),
                                 health: HomeKPIRow.healthLine(
                                     health: summary.dataHealth, unavailable: summary.freshnessUnavailable,
@@ -194,13 +217,9 @@ struct HomeView: View {
                                 .padding(.top, 18)
                                 .belowFold(heroAppeared, delay: 0.12)
 
-                            // Find or ask — the command sheet, on Home too.
-                            findOrAsk
-                                .padding(.horizontal, 20)
-                                .padding(.top, 10)
-                                .belowFold(heroAppeared, delay: 0.12)
-
-                            if summary.quietHoursActive {
+                            // Quiet hours: the toolbar glyph says it every
+                            // visit; the sentence once per window (L12).
+                            if summary.quietHoursActive, quietBannerShown == Self.quietWindowKey(summary) {
                                 quietHoursBanner(summary)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 16)
@@ -229,25 +248,11 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.16)
                             }
 
-                            // Today's focus (#6): the finding, else the most
-                            // urgent item, else the top recommendation — the
-                            // web's order (parity #1) — never before the
-                            // day's reads have landed.
-                            let lead = focusLead(summary)
-                            if let lead {
-                                HomeOneThingCard(viewModel: followThrough, lead: lead,
-                                                 busy: viewModel.isPublishingReplies,
-                                                 onPrimary: { item in primaryAction(item, in: summary) },
-                                                 onChanged: { Task { await viewModel.load() } })
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 28)
-                                    .belowFold(heroAppeared, delay: 0.18)
-                            }
-
                             // Needs you (#5): every decision in one ranked
                             // list — attention items and links, issues,
                             // what is still open, the brief's actions,
-                            // goals, check-ins, flags and shortcuts.
+                            // the open recommendations (H7), goals,
+                            // check-ins, flags and shortcuts.
                             attentionSection(summary, items: attentionItems(summary, lead: lead), lead: lead,
                                              scrollProxy: scrollProxy)
                                 .padding(.horizontal, 20)
@@ -261,7 +266,7 @@ struct HomeView: View {
                             // Last night's report after noon (before noon it
                             // leads, above); it shows nothing for a login or
                             // location without one.
-                            if !Self.isMorning(summary), lastNight.night != nil {
+                            if Self.lastNightCardShows(summary, night: lastNight.night) {
                                 HomeLastNightCard(viewModel: lastNight, open: { path.append($0) },
                                                   localNow: summary.localNow)
                                     .padding(.horizontal, 20)
@@ -278,13 +283,9 @@ struct HomeView: View {
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.32)
 
-                            // Restaurant DNA under the day's read (owner,
-                            // 10/8/26: it sat at the foot of Results where
-                            // no one saw it). Opens the full DNA screen.
-                            DNAHomeCard(model: dnaModel) { showingDNA = true }
-                                .padding(.horizontal, 20)
-                                .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.36)
+                            // Restaurant DNA is a compact row inside More now
+                            // (iOS re-audit H6): it carries no decision, so
+                            // it never outshouts the ones above.
 
                             // MORE — the recommendations, the measured
                             // results and How you compare, closed, with the
@@ -332,12 +333,30 @@ struct HomeView: View {
                 // A pull rebuilds the brief (fresh=1) instead of the
                 // server's 60-second copy — the web's hbLoad(true) (#90).
                 .cavnarEmberRefreshable { await viewModel.load(fresh: true) }
-                // The Home tab's badge leads to Needs you: arriving on Home
-                // with something urgent scrolls to the list.
+                // The Home tab's badge is Needs you's own count for this
+                // location (iOS re-audit H8), and it leads there — but only
+                // on the first arrival after the count changed, never every
+                // time the owner comes back to Home.
                 .onChange(of: tabVisible) { _, visible in
-                    guard visible, chrome.notificationsBadge.urgentCount > 0 else { return }
-                    withAnimation(.easeInOut(duration: 0.35)) {
+                    let count = viewModel.needsYouCount
+                    guard visible, Self.scrollsToNeedsYou(count: count, lastScrolledFor: scrolledForBadge) else { return }
+                    scrolledForBadge = count
+                    withAnimation(.cavnarEase(0.35)) {
                         scrollProxy.scrollTo(HomeNeedsYou.anchor, anchor: .top)
+                    }
+                }
+                // The bell and the command sheet send the owner here to act
+                // (M3): back to Home's top level, then the list.
+                .onChange(of: deepLinkRouter.pendingNeedsYou, initial: true) { _, wanted in
+                    guard wanted else { return }
+                    deepLinkRouter.pendingNeedsYou = false
+                    if !path.isEmpty { path = NavigationPath() }
+                    scrolledForBadge = viewModel.needsYouCount
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(300))
+                        withAnimation(.cavnarEase(0.35)) {
+                            scrollProxy.scrollTo(HomeNeedsYou.anchor, anchor: .top)
+                        }
                     }
                 }
                 // Anchored to the whole screen, not to HomeActionDeck —
@@ -436,6 +455,12 @@ struct HomeView: View {
                     }
                 }
                 cavnarToolbarItem(placement: .topBarTrailing) {
+                    // Find or ask (the command sheet) as a toolbar icon (iOS
+                    // re-audit M19): the full-width capsule under the glance
+                    // repeated the Ask tab and ⌘K and pushed decisions down.
+                    findOrAskButton
+                }
+                cavnarToolbarItem(placement: .topBarTrailing) {
                     // The one bell (AppChrome): the sheet opens at once on
                     // its own skeleton — the first open used to wait for the
                     // network before anything appeared (#32).
@@ -478,6 +503,7 @@ struct HomeView: View {
                 HomeLinkEvidenceSheet(link: link)
             }
             .task { await viewModel.load() }
+            .onChange(of: viewModel.lastLoadedAt, initial: true) { _, _ in noteQuietWindow() }
             // A tapped push about another location switched to it
             // (DeepLinkRouter), or the switcher did — Home shows that
             // location now, not the old one. RootView re-reads the badge.
@@ -499,6 +525,28 @@ struct HomeView: View {
             Text(Self.heroDate(localNow: summary.localNow))
                 .cavnarText(.kicker)
                 .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
+
+            // Which location this is, for an owner with more than one
+            // (iOS re-audit M8) — a tap opens the switcher.
+            if chrome.showsLocation, let name = chrome.locationName {
+                Button {
+                    Haptic.light()
+                    chrome.showingLocationSwitcher = true
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs) {
+                        Text(name)
+                            .cavnarText(.secondary, color: .cavnarEmber2)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .accessibilityHidden(true)
+                    }
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Location: \(name). Switch location")
+            }
 
             heroHeadline(summary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -600,8 +648,11 @@ struct HomeView: View {
     }
 
     static func overnightText(_ overnight: HomeOvernight?, hour: Int) -> String {
+        // Says only what it measures (iOS re-audit M1): the line counts
+        // reviews drafted and flagged, so "All quiet" under a red headline
+        // claimed a calm it never checked.
         guard let o = overnight, o.answered + o.flagged > 0 else {
-            return "All quiet since yesterday."
+            return hour < 12 ? "No new reviews overnight." : "No new reviews since yesterday."
         }
         var bits: [String] = []
         if o.answered > 0 { bits.append("\(o.answered) \(o.answered == 1 ? "reply" : "replies") drafted") }
@@ -707,6 +758,47 @@ struct HomeView: View {
         (summary.localHour ?? Calendar.current.component(.hour, from: Date())) < 12
     }
 
+    /// Whether last night's report renders as its own card (after noon,
+    /// below Needs you). Before noon it is the glance's net tile instead
+    /// (H3), and the tile never shows beside the card (M2).
+    static func lastNightCardShows(_ summary: HomeSummary, night: DSRSummary?) -> Bool {
+        night != nil && !isMorning(summary)
+    }
+
+    /// The badge-led scroll (H8): only with something in Needs you, and
+    /// only when the count differs from the one the last scroll was for.
+    static func scrollsToNeedsYou(count: Int, lastScrolledFor: Int?) -> Bool {
+        count > 0 && count != lastScrolledFor
+    }
+
+    /// One quiet-hours window, named by the day and time it ends (L12):
+    /// "2026-10-08@07:00". A window that runs past midnight keeps one name
+    /// on both sides of it — the day its end falls on.
+    static func quietWindowKey(_ summary: HomeSummary) -> String {
+        let end = summary.alertQuietEnd ?? "?"
+        guard let today = localDay(summary.localNow)?.iso else { return "now@" + end }
+        let endHour = Int(end.prefix(2)) ?? 0
+        let hour = summary.localHour ?? Calendar.current.component(.hour, from: Date())
+        guard hour >= endHour, summary.alertQuietEnd != nil else { return today + "@" + end }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: today) else { return today + "@" + end }
+        return f.string(from: d.addingTimeInterval(86_400)) + "@" + end
+    }
+
+    /// Shows the quiet-hours sentence for a window this login has not
+    /// been told about yet, and remembers that it has been (L12).
+    private func noteQuietWindow() {
+        guard let summary = viewModel.summary, summary.quietHoursActive else { return }
+        let key = Self.quietWindowKey(summary)
+        if key != quietBannerSeen {
+            quietBannerShown = key
+            quietBannerSeen = key
+        }
+    }
+
     /// What the page above the brief already says, by job (web
     /// `hbShownKeys`): every attention item and link, and the lead's key.
     private func briefShownKeys(_ summary: HomeSummary, lead: HomeFocusLead?) -> Set<String> {
@@ -730,6 +822,10 @@ struct HomeView: View {
             leadTookAttention: leadIsAttention,
             quick: HomeQuickAction.unsaid(summary.quickActions?.items ?? [], attention: summary.needsAttention),
             briefActions: HomeBriefFilter.split(day.lines, shown: shown, hasIssues: !day.issues.isEmpty).act,
+            // The open recommendations, answerable in place (H7) — less
+            // the one Today's focus leads with.
+            recommendations: recommendationsShown(summary, lead: lead),
+            assignees: summary.assignees ?? [],
             day: day,
             followThrough: followThrough,
             busyPublishing: viewModel.isPublishingReplies,
@@ -769,6 +865,8 @@ struct HomeView: View {
                 navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
             },
             onChanged: { Task { await viewModel.load() } },
+            onCount: { count in viewModel.needsYouCount = count },
+            onPosted: { said in postedLabel = said },
             focusIssue: issueFocus,
             onFocus: { id in
                 withAnimation(.easeInOut(duration: 0.35)) {
@@ -784,28 +882,21 @@ struct HomeView: View {
                          onPick: { reason in answerAttentionWhy(kind: "not_for_us", reason: reason) })
     }
 
-    /// Find or ask anything — the command sheet, one tap from Home.
-    private var findOrAsk: some View {
+    /// Find or ask anything — the command sheet, one tap from Home's
+    /// toolbar (M19), in the bell's glass.
+    private var findOrAskButton: some View {
         Button {
             Haptic.light()
             CommandSheetRequest.request()
         } label: {
-            HStack(spacing: CavnarSpace.xs) {
-                Image(systemName: "magnifyingglass")
-                    .font(.cavnar(.body))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .accessibilityHidden(true)
-                Text("Find or ask anything")
-                    .cavnarText(.body)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, CavnarSpace.m)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(Color.cavnarPaper2.opacity(0.85), in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
-            .contentShape(Capsule())
+            Image(systemName: "magnifyingglass")
+                .font(.cavnar(.label))
+                .foregroundStyle(Color.cavnarEmber2)
+                .frame(width: 34, height: 34)
+                .cavnarToolbarIconGlass()
         }
         .buttonStyle(.plain)
+        .tint(nil)
         .accessibilityLabel("Find or ask")
     }
 
@@ -829,24 +920,21 @@ struct HomeView: View {
             tone: HomeResultsSummary.tone(headline: summary.valueHeadline)
         ) {
             VStack(alignment: .leading, spacing: 0) {
-                // What Cavnar AI recommends, less the one the focus card
-                // leads with, and the undo for the last one hidden.
-                let recs = recommendationsShown(summary, lead: lead)
-                let hidden = summary.dismissed?.items.first
-                if !recs.isEmpty || hidden != nil {
-                    HomeRecommendations(recommendations: recs,
-                                        viewModel: followThrough,
-                                        assignees: summary.assignees ?? [],
-                                        onOpenModule: { module in
-                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                    }, onChanged: { Task { await viewModel.load() } },
-                                        restorable: hidden,
-                                        onRestore: { rec in await viewModel.restoreHidden(rec) })
-                    .padding(.horizontal, 20)
+                // The open recommendations are Needs you rows now (H7) —
+                // decisions never sit in a closed group (DS §12). Here: the
+                // undo for the last one hidden, and the record.
+                if let hidden = summary.dismissed?.items.first {
+                    restoreHiddenRow(hidden)
+                        .padding(.horizontal, 20)
                 }
                 // The record, with the kinds held back and the quieter kinds
                 // (moved off Home, #96).
                 recordRow(summary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                // Restaurant DNA, a compact row (H6): the full screen is
+                // unchanged; a profile still forming shows nothing here.
+                DNAHomeCard(model: dnaModel) { showingDNA = true }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
 
@@ -868,22 +956,6 @@ struct HomeView: View {
                     showingValueDetail = true
                 }
 
-                // How you compare (Benchmarking #23) — inside Results.
-                HomeBenchmarkStrip(onOpenModule: { module in
-                    navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                })
-                .padding(.horizontal, 20)
-                .padding(.top, 22)
-
-                // The trend behind each glance tile (web `renderSignals`).
-                if let charts = summary.charts, !charts.isEmpty {
-                    HomeSignals(charts: charts) { module in
-                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 22)
-                }
-
                 // The weekly receipts, outside Monday: proof, so they sit
                 // with the results.
                 if !summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
@@ -892,6 +964,7 @@ struct HomeView: View {
                         .padding(.top, 30)
                 }
 
+                // What changed — the owner's own changes and what they did.
                 if HomeFollowThrough.hasResults(followThrough) {
                     HomeFollowThrough(viewModel: followThrough, part: .results) { module in
                         navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
@@ -899,6 +972,15 @@ struct HomeView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 30)
                 }
+
+                // "Web explains. iPhone decides." (M16): the trends, how you
+                // compare and the monthly review are analysis — they live in
+                // Home's Results on the web.
+                CavnarWebLinkRow(title: "Trends, how you compare and the monthly review",
+                                 subtitle: "Every chart and benchmark behind these results",
+                                 path: "home/results", actionLabel: "See it on the web")
+                    .padding(.horizontal, 20)
+                    .padding(.top, 22)
 
                 // Before 8pm the handoff waits here; after, it leads Home.
                 if !summary.localIsEvening {
@@ -908,6 +990,35 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    /// "Restore hidden": the last recommendation this login hid comes back
+    /// (web `data-undo`, parity audit #1) — with the record in More now that
+    /// the open recommendations are Needs you rows (H7).
+    private func restoreHiddenRow(_ hidden: HomeDismissedRec) -> some View {
+        Button {
+            Haptic.light()
+            Task {
+                if await viewModel.restoreHidden(hidden) {
+                    postedLabel = "It will show again"
+                    await viewModel.load()
+                }
+            }
+        } label: {
+            HStack(spacing: CavnarSpace.xs) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                (Text("Restore hidden").font(.cavnar(.label)).foregroundColor(.cavnarEmber2)
+                 + Text(" \u{00B7} " + hidden.title).font(.cavnar(.secondary)).foregroundColor(.cavnarInk2))
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Restore hidden: \(hidden.title)")
     }
 
     /// "Recommendation history · 2 kinds on hold ›" — the record, where the

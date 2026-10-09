@@ -32,14 +32,22 @@ struct LocationGroupHomeView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HomeSectionHeader(kicker: "Side by side", title: "Your locations",
                                           trailing: "\(g.locations.count)")
-                        ForEach(g.locations) { loc in
-                            locationCard(loc)
+                        // One line per location (iOS re-audit M15): the dot,
+                        // the name, last night's net and the one issue —
+                        // the four-figure grid per card is the web's.
+                        VStack(spacing: 0) {
+                            ForEach(Array(g.locations.enumerated()), id: \.element.id) { index, loc in
+                                locationCard(loc)
+                                if index < g.locations.count - 1 { AccountRowDivider() }
+                            }
                         }
+                        .cavnarCard()
                     }
-                    VStack(alignment: .leading, spacing: 12) {
-                        HomeSectionHeader(kicker: "Benchmarks", title: "How your locations compare")
-                        LocationComparisonSection()
-                    }
+                    // "Web explains. iPhone decides." — the location-to-
+                    // location comparison is analysis (M15).
+                    CavnarWebLinkRow(title: "How your locations compare",
+                                     subtitle: "Labor, food cost, reviews and sales, location against location",
+                                     path: "locations", actionLabel: "See it on the web")
                 } else if viewModel.isLoading {
                     CavnarSkeletonLines(widths: [0.5, 0.9, 0.75, 0.6], lineHeight: 14, spacing: 12)
                 } else {
@@ -155,58 +163,48 @@ struct LocationGroupHomeView: View {
 
     private func locationCard(_ loc: LocationGroupBrief.Location) -> some View {
         let night = LocationGroupFormat.lastNight(loc.lastNight)
-        let labor = LocationGroupFormat.labor(loc.labor)
-        let reviews = LocationGroupFormat.reviews(loc.reviews)
-        let food = LocationGroupFormat.foodCost(loc.inventory)
         return Button {
             Haptic.selection()
             switchTo(loc)
         } label: {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 8) {
-                    Circle().fill(LocationSwitcherView.healthColor(loc.health)).frame(width: 9, height: 9)
-                    Text(loc.name)
-                        .font(.cavnar(.headline))
-                        .foregroundStyle(Color.cavnarInk)
-                        .lineLimit(1)
-                    if loc.active {
-                        Text("viewing")
-                            .font(.cavnarBody(CavnarType.caption, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
+            HStack(alignment: .top, spacing: CavnarSpace.s) {
+                Circle().fill(LocationSwitcherView.healthColor(loc.health)).frame(width: 9, height: 9)
+                    .padding(.top, 6)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                        Text(loc.name)
+                            .cavnarText(.label)
+                            .lineLimit(2)
+                        if loc.active {
+                            Text("viewing").cavnarText(.caption, color: .cavnarInk2)
+                        }
+                        Spacer(minLength: 4)
+                        HomeMixedText.make(night.figure, role: .label,
+                                           color: night.figure == LocationGroupFormat.dash ? .cavnarInk2 : .cavnarInk)
+                            .accessibilityLabel("Last night \(night.figure)")
                     }
-                    Spacer(minLength: 4)
-                    if switching == loc.id {
-                        CavnarSkeletonBar(height: 3).frame(width: 40)
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Color.cavnarInk3)
+                    // The one issue, in its own tone (red text for a red one).
+                    if let first = loc.issues.first {
+                        CavnarMixedText(first.text + (loc.issues.count > 1 ? "  +\(loc.issues.count - 1)" : ""),
+                                        role: .secondary,
+                                        color: first.severity == "critical" ? .cavnarRedText : .cavnarInk2)
+                            .lineLimit(2)
                     }
                 }
-                if let first = loc.issues.first {
-                    HomeMixedText.make(first.text + (loc.issues.count > 1 ? "  +\(loc.issues.count - 1)" : ""),
-                                       size: CavnarType.caption, weight: 600,
-                                       color: LocationSwitcherView.healthColor(first.severity))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-                          alignment: .leading, spacing: 10) {
-                    cell("Last night", night)
-                    cell("Labor", labor)
-                    cell("Rating \u{00B7} 30 days", reviews)
-                    cell("Food cost", food)
-                }
-                HStack(spacing: 6) {
-                    Text("Last active")
-                        .font(.cavnarBody(CavnarType.caption, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
-                    HomeMixedText.make(LocationGroupFormat.lastActive(loc.lastActive), size: CavnarType.caption, weight: 600,
-                                       color: .cavnarInk2)
+                if switching == loc.id {
+                    CavnarSkeletonBar(height: 3).frame(width: 40)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .padding(.top, 4)
+                        .accessibilityHidden(true)
                 }
             }
+            .padding(.vertical, CavnarSpace.s)
             .cavnarSensitive()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cavnarCard()
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -231,28 +229,7 @@ struct LocationGroupHomeView: View {
         }
     }
 
-    private func cell(_ label: String, _ value: (figure: String, detail: String?)) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.1)
-                .foregroundStyle(Color.cavnarInk3)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Text(value.figure)
-                .font(.cavnarNumber(CavnarType.emphasis, weight: 700))
-                .foregroundStyle(value.figure == LocationGroupFormat.dash ? Color.cavnarInk3 : Color.cavnarInk)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            if let detail = value.detail {
-                HomeMixedText.make(detail, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
-                    .lineLimit(2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.cavnarPaper2.opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
+
 
     // MARK: Actions
 

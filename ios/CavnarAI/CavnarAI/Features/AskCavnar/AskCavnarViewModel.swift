@@ -54,6 +54,10 @@ struct ChatMessage: Identifiable {
     /// The validation's own caveats (`validation.caveats`), shown in the
     /// warning disclosure when no figure, cause or name is listed.
     var caveats: [String] = []
+    /// An answer without a card: the follow-up questions its "Follow-ups:"
+    /// line carried, drawn as "Ask next" chips, never as a line of text
+    /// (iOS re-audit H1). A card keeps its own (`card.followUps`).
+    var followUps: [String] = []
 
     /// The backend records what the owner did with a proposal as a
     /// "[Confirmed: …]" / "[Dismissed: …]" user turn (so the model knows).
@@ -275,18 +279,19 @@ struct AskEvidence: Decodable, Hashable {
     var declinedRepeats: [AskDeclinedRepeat] = []
 
     /// Nothing worth drawing a strip for. A measured confidence is always
-    /// worth its line; a legacy band only when it is low (as before).
+    /// worth its line; a legacy band word never is (iOS re-audit L4).
     var isEmpty: Bool {
         guard modules.isEmpty && unverifiedFigures.isEmpty && declinedRepeats.isEmpty
                 && unsupportedCauses.isEmpty && unsupportedNames.isEmpty else { return false }
-        guard let c = confidence, ConfidenceDisplay(c).isRenderable else { return true }
-        return !c.isMeasuredShape && c.effectiveBand != "low"
+        return confidenceLabel == nil
     }
 
-    /// The line's label — "72% confidence", or "Medium confidence" for a
-    /// legacy band; nil when there is nothing to say.
+    /// The line's label — "72% confidence" — only for a measured
+    /// percentage (iOS re-audit L4): an older server's band word ("Medium
+    /// confidence") says how sure without saying how it was measured, so
+    /// it draws nothing.
     var confidenceLabel: String? {
-        guard let c = confidence else { return nil }
+        guard let c = confidence, c.pct != nil else { return nil }
         let d = ConfidenceDisplay(c)
         return d.isRenderable ? d.lineLabel : nil
     }
@@ -762,10 +767,13 @@ final class AskCavnarViewModel {
         var detail: String? = nil
         var depth: String? = nil
         var validation: AskValidation? = nil
+        /// The follow-up questions lifted off the text (iOS re-audit H1).
+        var followUps: [String]? = nil
 
         enum CodingKeys: String, CodingKey {
             case ok, answer, error, truncated, proposals, confidence, suggestions, meta
             case card, detail, depth, validation
+            case followUps = "follow_ups"
             case declinedRepeats = "declined_repeats"
             case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"
@@ -972,11 +980,16 @@ final class AskCavnarViewModel {
                 let view = isUser ? nil : m.meta
                 let evidence = view?.evidence
                 let card = view?.card
-                return ChatMessage(text: m.content, isUser: isUser,
+                // The stored text keeps the contract's scaffolding (the card
+                // is re-read from it); the phone never draws it (H1).
+                let stripped = isUser ? (text: m.content, followUps: [String]())
+                                      : AskAnswerText.scaffoldingStripped(m.content)
+                return ChatMessage(text: stripped.text.isEmpty ? m.content : stripped.text, isUser: isUser,
                                    evidence: (evidence?.isEmpty == false) ? evidence : nil,
                                    messageId: isUser ? nil : m.id, hasRevealed: true,
                                    card: card, detail: card == nil ? nil : m.detail,
-                                   caveats: view?.caveats ?? [])
+                                   caveats: view?.caveats ?? [],
+                                   followUps: card == nil ? stripped.followUps : [])
             }
             self.conversationId = conversationId
             wantsNewConversation = false
@@ -1384,7 +1397,8 @@ final class AskCavnarViewModel {
                             suggestions: response.ok ? (response.suggestions ?? []) : [],
                             card: response.ok ? response.card?.card : nil,
                             detail: response.detail, depth: response.depth,
-                            caveats: response.validation?.caveats ?? [])
+                            caveats: response.validation?.caveats ?? [],
+                            followUps: response.ok ? (response.followUps ?? []) : [])
             } catch where answerGeneration != SessionScope.generation {
                 // The scope moved on while the fallback ran; see above.
             } catch is CancellationError {
@@ -1469,7 +1483,8 @@ final class AskCavnarViewModel {
                             proposals: event.proposals ?? [], evidence: event.evidence,
                             messageId: event.messageId, suggestions: event.suggestions ?? [],
                             revealed: previewed, card: event.card?.card, detail: event.detail,
-                            depth: event.depth, caveats: event.validation?.caveats ?? [])
+                            depth: event.depth, caveats: event.validation?.caveats ?? [],
+                            followUps: event.followUps ?? [])
             case "error":
                 gotAnswer = true
                 streamingPreview = ""
@@ -1494,9 +1509,12 @@ final class AskCavnarViewModel {
                               evidence: AskEvidence?, messageId: Int? = nil,
                               suggestions: [AskSuggestion] = [], revealed: Bool = false,
                               card: AskCard? = nil, detail: String? = nil, depth: String? = nil,
-                              caveats: [String] = []) {
+                              caveats: [String] = [], followUps: [String] = []) {
         guard answerGeneration == SessionScope.generation else { return }
-        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Never a "---" rule or a "Follow-ups:" line as text (H1): an older
+        // server still sends them; its follow-ups become the chips.
+        let stripped = AskAnswerText.scaffoldingStripped(raw)
+        let cleaned = stripped.text
         let display = cleaned.isEmpty
             ? "I didn't get an answer back that time — mind asking again?"
             : cleaned
@@ -1511,7 +1529,10 @@ final class AskCavnarViewModel {
                                     suggestions: suggestions.filter(\.showsAnswers),
                                     hasRevealed: revealed || shownCard != nil,
                                     card: shownCard, detail: shownCard == nil ? nil : detail,
-                                    depth: depth, caveats: caveats))
+                                    depth: depth, caveats: caveats,
+                                    followUps: shownCard == nil
+                                        ? Array((followUps.isEmpty ? stripped.followUps : followUps).prefix(3))
+                                        : []))
     }
 
     /// A follow-up chip under an answer (#91): asks it as if typed. Ignored

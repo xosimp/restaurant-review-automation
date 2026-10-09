@@ -341,6 +341,8 @@ struct NotificationsListView: View {
     @State private var activity = AIActivityViewModel()
     /// Drafts opened past their first four lines ("Show all").
     @State private var expandedDrafts: Set<String> = []
+    /// The row whose Approve is asking first — it publishes (M5).
+    @State private var approving: NotificationItem?
 
     /// A draft longer than this is clamped to four lines until opened.
     static let draftClampChars = 220
@@ -379,8 +381,36 @@ struct NotificationsListView: View {
         return "\(open.count) need\(open.count == 1 ? "s" : "") you: " + bits.joined(separator: ", ")
     }
 
-    private var shown: [NotificationItem] {
-        urgentOnly ? viewModel.notifications.filter(\.needsYou) : viewModel.notifications
+    /// Every row: the bell is the history (M3) — Home's Needs you is where
+    /// the owner acts, so the list no longer filters to "Needs you".
+    private var shown: [NotificationItem] { viewModel.notifications }
+
+    /// "Post this reply to Google?" when Approve publishes there, else
+    /// "Approve this reply?" (M5).
+    static func approveTitle(_ item: NotificationItem) -> String {
+        item.postsTo == "google" ? "Post this reply to Google?" : "Approve this reply?"
+    }
+
+    /// "Act on them in Needs you on Home ›" — the deep link the filter
+    /// was (M3).
+    private var needsYouLink: some View {
+        Button {
+            Haptic.light()
+            deepLinkRouter.open(NavPath("home/needs")!)
+            dismiss()
+        } label: {
+            HStack(spacing: CavnarSpace.xs) {
+                Text("Act on them in Needs you on Home")
+                    .cavnarText(.label, color: .cavnarEmber2)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
+            }
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
     }
 
     /// Day headings, newest first, preserving the server's ordering within
@@ -423,15 +453,6 @@ struct NotificationsListView: View {
                     .padding(.top, 40)
                 } else {
                     List {
-                        // Right now: what Cavnar AI is running, rotating; a
-                        // tap opens the feed. Nothing for an account with
-                        // nothing armed.
-                        if activity.currentLine != nil {
-                            AIActivityStrip(viewModel: activity)
-                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                        }
                         if let summary = Self.summaryLine(viewModel.notifications) {
                             HomeMixedText.make(summary, role: .label,
                                                color: hasUrgent ? .cavnarInk : .cavnarInk2,
@@ -440,16 +461,13 @@ struct NotificationsListView: View {
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                         }
+                        // The bell is the history (iOS re-audit M3): what to
+                        // act on is ONE list, Home's Needs you — one tap away.
                         if hasUrgent {
-                            Picker("", selection: Binding(get: { urgentOnly },
-                                                          set: { urgentChoice = $0 })) {
-                                Text("Everything").tag(false)
-                                Text("Needs you").tag(true)
-                            }
-                            .pickerStyle(.segmented)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 10, trailing: 0))
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                            needsYouLink
+                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 10, trailing: 0))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                         }
                         ForEach(grouped, id: \.0) { day, items in
                             Section {
@@ -478,6 +496,15 @@ struct NotificationsListView: View {
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                         }
+                        // What Cavnar AI is running, one still line at the
+                        // foot (L14) — it used to rotate atop the inbox; a
+                        // tap opens the feed.
+                        if activity.currentLine != nil {
+                            AIActivityStrip(viewModel: activity, paused: true)
+                                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -501,6 +528,19 @@ struct NotificationsListView: View {
             // — the same chrome every Account sheet uses.
             .accountSheetChrome("Notifications")
             .undoWhyDialog(Binding(get: { viewModel.askWhy }, set: { viewModel.askWhy = $0 }))
+            // Approve publishes: the confirm names where (M5).
+            .confirmationDialog(approving.map { Self.approveTitle($0) } ?? "",
+                                isPresented: Binding(get: { approving != nil }, set: { if !$0 { approving = nil } }),
+                                titleVisibility: .visible, presenting: approving) { item in
+                Button(item.postsTo == "google" ? "Post to Google" : "Approve") {
+                    Task { await viewModel.approve(item) }
+                }
+                Button("Not yet", role: .cancel) {}
+            } message: { item in
+                Text(item.postsTo == "google"
+                     ? "The reply above goes live on your Google listing."
+                     : "The reply is marked approved; it is not posted anywhere from here.")
+            }
             .task { await activity.load() }
         }
     }
@@ -537,8 +577,14 @@ struct NotificationsListView: View {
                             .fill(item.needsYou ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.25))
                             .frame(width: 6, height: 6)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(item.label)
+                            // What it is and where (H4): "1-star review ·
+                            // Lakeview", then the review's own words.
+                            Text(item.title)
                                 .cavnarText(item.isUnread ? .label : .body, color: .cavnarInk)
+                            if let snippet = item.snippet, !snippet.isEmpty, !(approve && item.draft != nil) {
+                                CavnarMixedText(snippet, role: .secondary, color: .cavnarInk2)
+                                    .lineLimit(2)
+                            }
                             Text(item.relativeFiredAt)
                                 .cavnarText(.secondary)
                         }
@@ -561,7 +607,7 @@ struct NotificationsListView: View {
                     // in full (F3-10): a long one opens first.
                     rowAction("Read it", tint: .cavnarEmber2) { expandDraft(item) }
                 } else if approve {
-                    rowAction("Approve", tint: .cavnarEmber2) { Task { await viewModel.approve(item) } }
+                    rowAction("Approve", tint: .cavnarEmber2) { approving = item }
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.cavnar(.caption))

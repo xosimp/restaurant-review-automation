@@ -229,8 +229,15 @@ final class HomeAskParityTests: XCTestCase {
         XCTAssertEqual(LocationGroupFormat.labor(a.labor).figure, "31.2%")
         XCTAssertEqual(LocationGroupFormat.reviews(a.reviews).figure, "4.3\u{2605} \u{2193}")
         XCTAssertEqual(LocationGroupFormat.reviews(a.reviews).detail, "2 urgent \u{00B7} 5 waiting")
-        XCTAssertEqual(LocationGroupFormat.foodCost(a.inventory).figure, "$1,240/mo")
-        XCTAssertEqual(LocationGroupFormat.foodCost(a.inventory).detail, "opportunity \u{00B7} 2 low")
+        // The figure is the measured food cost %, never the opportunity (iOS
+        // re-audit M14): no % in this payload is "—", and the opportunity
+        // is said as what it is.
+        XCTAssertEqual(LocationGroupFormat.foodCost(a.inventory).figure, "\u{2014}")
+        XCTAssertEqual(LocationGroupFormat.foodCost(a.inventory).detail, "$1,240/mo could recover \u{00B7} 2 low")
+        let measured = try decode(LocationGroupBrief.Inventory.self,
+                                  #"{"recoverable": 1240.0, "critical_low": 0, "pct": 34.2, "target": 30}"#)
+        XCTAssertEqual(LocationGroupFormat.foodCost(measured).figure, "34.2%")
+        XCTAssertEqual(LocationGroupFormat.foodCost(measured).detail, "vs 30% target \u{00B7} $1,240/mo could recover")
         // Missing is "—", never 0.
         XCTAssertEqual(LocationGroupFormat.labor(b.labor).figure, "\u{2014}")
         XCTAssertEqual(LocationGroupFormat.foodCost(b.inventory).figure, "\u{2014}")

@@ -419,10 +419,10 @@ final class HomeFollowThroughViewModel {
             NeedsAttentionItem(
                 type: Self.linkType(l.recKey ?? "\(i)"), module: l.modules?.first ?? "home",
                 title: l.headline,
-                // How long it has stood, beside the modules (memory round:
-                // "Found 3 weeks running, since 9/7/26").
-                detail: ([(l.modules ?? []).map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + ")]
-                         + [l.memory?.line].compactMap { $0 })
+                // Why it matters: the first evidence sentence (iOS re-audit
+                // M20) — module names said nothing — else the modules; then
+                // how long it has stood ("Found 3 weeks running, since 9/7/26").
+                detail: ([Self.linkWhy(l)] + [l.memory?.line].compactMap { $0 })
                     .filter { !$0.isEmpty }.joined(separator: " \u{00B7} "),
                 cta: "Evidence", secondary: nil, action: "link_evidence",
                 recKey: l.recKey, dismissable: false, timesHidden: nil, count: nil,
@@ -431,6 +431,22 @@ final class HomeFollowThroughViewModel {
     }
 
     static func linkType(_ key: String) -> String { "link:" + key }
+
+    /// A link row's why line: its first evidence sentence, else the
+    /// modules it ties together (M20).
+    static func linkWhy(_ l: CrossModule.Link) -> String {
+        if let first = l.evidence?.first?.trimmingCharacters(in: .whitespacesAndNewlines), !first.isEmpty {
+            return first
+        }
+        return (l.modules ?? []).map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + ")
+    }
+
+    /// A link the owner can answer (Done / Not for us) — its confirm step
+    /// leads the row; Evidence is the secondary (M20).
+    static func linkAnswerKey(_ l: CrossModule.Link?) -> String? {
+        guard let l, l.answerable != false, let key = l.recKey, !key.isEmpty else { return nil }
+        return key
+    }
 
     /// The link a Needs-attention row stands for (its `type`).
     func link(for item: NeedsAttentionItem) -> CrossModule.Link? {
@@ -1681,9 +1697,9 @@ struct HomeFollowThrough: View {
                     // What got better, merged in (density #4): the same
                     // measured story, one card instead of two.
                     goodNewsRows(leadsCard: viewModel.results.isEmpty)
-                    if !viewModel.results.isEmpty {
-                        recordLink.padding(.top, 10)
-                    }
+                    // No "What you followed" link here (M7): More's own
+                    // record row, right above, opens the record with its
+                    // kinds on hold and quieter kinds.
                 }
                 .cavnarCard()
             }
@@ -1702,7 +1718,9 @@ struct HomeFollowThrough: View {
             valueCard
         }
 
-        if let month = viewModel.month {
+        // The monthly review is analysis — on Home's Results it is the
+        // web link (M16); the full part still draws it.
+        if part != .results, let month = viewModel.month {
             HomeMonthlyReviewCard(month: month, onOpen: { showingMonth = true })
         }
     }
@@ -1731,14 +1749,14 @@ struct HomeFollowThrough: View {
                     HomeMixedText.make(r.summary ?? r.resultLine ?? "", size: CavnarType.emphasis, weight: 500, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let label = r.attributionLabel, !label.isEmpty {
-                        HomeMixedText.make(label, size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(label, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     // Shown, never counted, when its baseline overlapped
                     // the trigger; the grade; the band's false-alarm rate.
                     ForEach(r.measurementNotes, id: \.self) { note in
                         HomeMixedText.make(note + ".", size: CavnarType.secondary, weight: 500,
-                                           color: note.hasPrefix("Not counted") ? .cavnarAmber : .cavnarInk3)
+                                           color: note.hasPrefix("Not counted") ? .cavnarAmber : .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1765,7 +1783,7 @@ struct HomeFollowThrough: View {
                 Text(leadsCard ? "WHAT GOT BETTER" : "ALSO GOT BETTER")
                     .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.4)
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
                     .padding(.top, leadsCard ? 0 : 14)
                     .padding(.bottom, 2)
                 ForEach(Array(viewModel.goodNews.prefix(4).enumerated()), id: \.element.id) { index, item in
@@ -1778,7 +1796,7 @@ struct HomeFollowThrough: View {
                                                    color: .cavnarInk)
                                 if let summary = item.summary {
                                     HomeMixedText.make(summary, size: CavnarType.secondary, weight: 500,
-                                                       color: .cavnarInk3)
+                                                       color: .cavnarInk2)
                                 }
                                 HomeAskLink(question: item.ask ?? "What's behind this: \(item.headline)",
                                             label: "Ask")
