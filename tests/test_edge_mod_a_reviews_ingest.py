@@ -223,6 +223,40 @@ def test_the_same_review_through_places_then_gbp_is_one_row_with_its_review_name
         "the surviving row cannot be replied to on Google"
 
 
+def _gbp_copy_written_earlier(minutes, author="Ann", text="Cold food, never again"):
+    """The Business Profile copy of a review the guest edited `minutes` after
+    posting: createTime is when it was first written, Places' `time` the edit."""
+    from datetime import datetime as _dt, timedelta as _td
+    t = (_dt(2025, 9, 4, 15, 33, 20) - _td(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"reviews": [{
+        "name": "accounts/1/locations/2/reviews/abc", "starRating": "ONE", "comment": text,
+        "createTime": t, "updateTime": "2025-09-04T15:33:20Z", "reviewer": {"displayName": author}}]}
+
+
+@pytest.mark.parametrize("minutes", [4, 61])
+def test_an_edited_review_dated_apart_by_the_two_apis_is_still_one_row(db_path, monkeypatch, minutes):
+    """Owner, 10/9/26: Joseph V (edited after 4 minutes) and Don Forni (61)
+    were stored twice; the copy without the reply stayed Urgent."""
+    rid = _restaurant(db_path, 1, google_place_id="ChIJ_fake", timezone="UTC")
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(_places_copy(rid)))
+    save_reviews(fetcher.fetch_google("ChIJ_fake", rid), db_path=db_path)
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(_gbp_copy_written_earlier(minutes)))
+    save_reviews(gmb.fetch_reviews_via_gmb("tok", "locations/2", rid), db_path=db_path)
+    rows = _q(db_path, "SELECT review_name FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL", (rid,))
+    assert [r[0] for r in rows] == ["accounts/1/locations/2/reviews/abc"]
+
+
+def test_a_near_time_alone_never_merges_two_guests(db_path, monkeypatch):
+    """Inside the edit window it takes the same author AND the same words."""
+    rid = _restaurant(db_path, 1, google_place_id="ChIJ_fake", timezone="UTC")
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(_places_copy(rid)))
+    save_reviews(fetcher.fetch_google("ChIJ_fake", rid), db_path=db_path)
+    for author, text in (("Bea", "Cold food, never again"), ("Ann", "Cold food. Never again!")):
+        monkeypatch.setattr(requests, "get", lambda *a, _x=(author, text), **k: _Resp(_gbp_copy_written_earlier(10, *_x)))
+        save_reviews(gmb.fetch_reviews_via_gmb("tok", "locations/2", rid), db_path=db_path)
+    assert len(_q(db_path, "SELECT id FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL", (rid,))) == 2
+
+
 # ── MOD-REV-7: GBP backfill gets past the newest 1,000 (R1 #13) ─────────────
 
 def _paged_gbp(pages_requested, total_pages=30):

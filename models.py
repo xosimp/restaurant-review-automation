@@ -6004,18 +6004,34 @@ def _apply_review_edit(conn, r: "Review") -> tuple:
     return (True, bool(new_rating and old_rating and new_rating < old_rating))
 
 
+# How far apart the two Google APIs may date one review. Places dates it by
+# its last edit, the Business Profile by when it was first written: Joseph V
+# and Don Forni at Simple EJ's edited theirs 4 and 61 minutes after posting,
+# so each was stored twice and the copy without the reply stayed "Urgent"
+# (owner, 10/9/26).
+CROSS_SOURCE_EDIT_WINDOW_HOURS = 48
+
+
 def _same_guest_review(row, r: "Review") -> bool:
     """Whether a stored row and an incoming review are one guest review seen
-    through the other Google API. Same rating, same second written (Places
-    `time` and GBP createTime are one instant; both are stored to the second
-    in the restaurant's day), and the same author or the same words."""
-    if int(row["rating"] or 0) != int(r.rating or 0):
-        return False
-    if (row["review_date"] or "")[:19] != (r.review_date or "")[:19] or not (r.review_date or ""):
+    through the other Google API. Same rating, and either the same second
+    written with the same author or the same words, or - dated apart by an
+    edit, inside CROSS_SOURCE_EDIT_WINDOW_HOURS - the same author AND the
+    same words (never a near time on one of the two alone)."""
+    if int(row["rating"] or 0) != int(r.rating or 0) or not (r.review_date or ""):
         return False
     same_author = (row["author"] or "").strip().lower() == (r.author or "").strip().lower()
-    same_text = (row["text"] or "").strip() == (r.text or "").strip()
-    return same_author or same_text
+    text = (r.text or "").strip()
+    same_text = (row["text"] or "").strip() == text
+    if (row["review_date"] or "")[:19] == (r.review_date or "")[:19]:
+        return same_author or same_text
+    try:
+        a = datetime.fromisoformat((row["review_date"] or "")[:19])
+        b = datetime.fromisoformat((r.review_date or "")[:19])
+    except ValueError:
+        return False
+    near = abs((a - b).total_seconds()) <= CROSS_SOURCE_EDIT_WINDOW_HOURS * 3600
+    return near and same_author and same_text and bool(text) and bool((r.author or "").strip())
 
 
 def _cross_source_copy(conn, r: "Review"):
@@ -6037,8 +6053,9 @@ def _cross_source_copy(conn, r: "Review"):
     rows = conn.execute(
         f"SELECT id, rating, author, text, review_date, review_name FROM reviews "
         f"WHERE restaurant_id=? AND platform='google' AND deleted_at IS NULL AND {where} "
-        f"AND substr(review_date, 1, 19) = ?",
-        (r.restaurant_id, (r.review_date or "")[:19])).fetchall()
+        f"AND datetime(substr(review_date, 1, 19)) BETWEEN datetime(?, ?) AND datetime(?, ?)",
+        (r.restaurant_id, (r.review_date or "")[:19], f"-{CROSS_SOURCE_EDIT_WINDOW_HOURS} hours",
+         (r.review_date or "")[:19], f"+{CROSS_SOURCE_EDIT_WINDOW_HOURS} hours")).fetchall()
     for row in rows:
         if _same_guest_review(row, r):
             return row
