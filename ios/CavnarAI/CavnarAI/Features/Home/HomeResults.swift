@@ -1,56 +1,62 @@
 import SwiftUI
 
-/// Home's one "Results" section (DESIGN_SYSTEM.md §11b step 7, density #4):
-/// everything measured — the value band, How you compare, what the
-/// owner's changes did, what worked, this month — behind a single
-/// disclosure that starts closed. Its closed row still carries data: the
-/// measured figure at body scale and one sentence ("3 improved · 1 got
-/// worse · $1,310/mo net measured"), so a glance gets the result without
-/// the section taking the top of the page from the work. Whether it was
-/// left open is remembered on the device (@AppStorage).
-struct HomeResultsDisclosure<Content: View>: View {
+/// Home's one "More" group (iOS readability round, 10/8/26, #4): what is
+/// not a decision for today — the recommendations, the measured results
+/// (How you compare among them) — behind one closed row at the foot of the
+/// page. "Decide, then more": the work above it, this below. The closed
+/// row still carries data — the measured figure in its tone and one
+/// sentence ("3 improved · $1,310/mo net measured") — so a glance gets the
+/// result without opening it. Whether it was left open is remembered on
+/// the device (@AppStorage).
+struct HomeMoreDisclosure<Content: View>: View {
     let line: String
     /// The figure's colour — green for a measured gain, red for a net loss,
     /// ink3 when nothing is measured yet (never a green "$0").
     let tone: Color
     @ViewBuilder var content: () -> Content
 
-    @AppStorage("home.results.open") private var isOpen = false
+    @AppStorage("home.more.open") private var isOpen = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 Haptic.light()
-                withAnimation(.easeOut(duration: 0.22)) { isOpen.toggle() }
+                if reduceMotion {
+                    isOpen.toggle()
+                } else {
+                    withAnimation(.easeOut(duration: 0.22)) { isOpen.toggle() }
+                }
             } label: {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("RESULTS")
-                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                            .tracking(1.6)
-                            .foregroundStyle(Color.cavnarEmber2)
-                        HomeMixedText.make(line, size: CavnarType.body, weight: 600,
-                                           color: .cavnarInk, numberColor: tone)
+                HStack(alignment: .center, spacing: CavnarSpace.s) {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        Text("More")
+                            .cavnarText(.headline)
+                        Text("Recommendations, results, how you compare")
+                            .cavnarText(.secondary)
+                        HomeMixedText.make(line, role: .body, color: .cavnarInk, numberColor: tone)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                             .cavnarSensitive()
                     }
-                    Spacer(minLength: 8)
+                    Spacer(minLength: CavnarSpace.xs)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
                         .rotationEffect(.degrees(isOpen ? 180 : 0))
+                        .accessibilityHidden(true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 20)
-            .accessibilityHint(isOpen ? "Hides the measured results" : "Shows the measured results")
+            .padding(.horizontal, CavnarSpace.gutter)
+            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+            .accessibilityHint(isOpen ? "Hides recommendations and results" : "Shows recommendations and results")
 
             if isOpen {
                 content()
-                    .padding(.top, 16)
+                    .padding(.top, CavnarSpace.m)
                     .transition(.opacity)
             }
         }

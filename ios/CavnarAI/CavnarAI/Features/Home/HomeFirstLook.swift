@@ -22,13 +22,13 @@ struct HomeFirstLook: View {
             HomeSectionHeader(kicker: "Day one", title: "What I can already see")
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(lines, id: \.self) { line in
-                    HomeMixedText.make(line, size: 14.5, weight: 500, color: .cavnarInk2)
+                    HomeMixedText.make(line, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                 }
                 // Says where it came from. A number with no source is the
                 // one thing this product never ships, and it matters most
                 // on the very first figure an owner ever sees from it.
                 Text("From your Google listing — your own numbers replace this as they arrive.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 2)

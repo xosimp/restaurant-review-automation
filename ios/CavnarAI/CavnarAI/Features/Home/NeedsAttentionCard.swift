@@ -18,12 +18,10 @@ struct AllClearRow: View {
                     .foregroundStyle(notClearReason == nil ? Color.cavnarGreen : Color.cavnarAmber)
             }
             Text(notClearReason == nil ? "All clear" : "Nothing flagged")
-                .font(.cavnarBody(15, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.label)
             Text(notClearReason.map { $0.replacingOccurrences(of: "Nothing flagged \u{2014} but ", with: "But ") }
                  ?? "Nothing needs your attention right now")
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }

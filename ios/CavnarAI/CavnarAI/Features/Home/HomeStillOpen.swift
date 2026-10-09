@@ -31,7 +31,7 @@ struct HomeActionProposalSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(proposal.item.title)
-                        .font(.cavnarHeadline(19))
+                        .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if let card {
@@ -51,7 +51,7 @@ struct HomeActionProposalSheet: View {
                     } else {
                         Text(viewModel.rowNote[proposal.item.key]?.text
                              ?? "Couldn\u{2019}t open that \u{2014} open the item instead.")
-                            .font(.cavnarBody(15))
+                            .font(.cavnar(.body))
                             .foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -114,7 +114,7 @@ private struct HomeSwipeModifier: ViewModifier {
                             Image(systemName: swipe.systemImage)
                                 .font(.system(size: 15, weight: .bold))
                             Text(swipe.label)
-                                .font(.cavnarBody(12.5, weight: 700))
+                                .font(.cavnarBody(CavnarType.caption, weight: 700))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                         }

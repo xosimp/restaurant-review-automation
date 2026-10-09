@@ -62,7 +62,7 @@ struct ValueChartCard: View {
             // something got worse, that the figure is net of it.
             // The figure is a monthly rate, so the label says so (NS3 M2).
             Text(isNet ? "MEASURED RESULTS \u{00B7} NET PER MONTH" : "MEASURED RESULTS \u{00B7} PER MONTH")
-                .font(.cavnarBody(14, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .tracking(1.5)
                 .foregroundStyle(Color.cavnarEmber2)
 
@@ -72,12 +72,12 @@ struct ValueChartCard: View {
             // measured, whatever its sign, so it is always drawn.
             if !isNet && totalValue <= 0 {
                 Text("Nothing measured yet")
-                    .font(.cavnarNumber(26, weight: 600))
+                    .font(.cavnarNumber(CavnarType.cardNumber, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                     .cavnarSensitive()
             } else {
             AnimatableNumberText(value: animatedTotal, format: Self.signedCurrencyText)
-                .font(.cavnarNumber(38, weight: 600))
+                .font(.cavnarNumber(CavnarType.heroNumber, weight: 600))
                 .foregroundStyle(figure < 0 ? Color.cavnarRed : Color.cavnarGreen)
                 .cavnarNumberGlow(figure < 0 ? .cavnarRed : .cavnarGreen)
                 .cavnarSensitive()
@@ -104,7 +104,7 @@ struct ValueChartCard: View {
                 } else if isNet, let breakdown = headline?.breakdown {
                     // What the net is made of. The history below is of the
                     // improvements, so no ▲/▼ against it beside a net figure.
-                    HomeMixedText.make(breakdown, size: 14, weight: 600, color: .cavnarInk2, numberWeight: 700)
+                    HomeMixedText.make(breakdown, size: CavnarType.secondary, weight: 600, color: .cavnarInk2, numberWeight: 700)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let delta = deltaInfo {
                     HStack(spacing: 4) {
@@ -121,7 +121,7 @@ struct ValueChartCard: View {
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
-            .font(.cavnarBody(14, weight: 600))
+            .font(.cavnarBody(CavnarType.secondary, weight: 600))
             .padding(.bottom, 10)
 
             // With no real trend yet, the chart still draws — just from a
@@ -137,12 +137,12 @@ struct ValueChartCard: View {
                 // The curve is a hard-coded shape, not any restaurant's
                 // data — it says exactly that (NS1 #13, NS4 L1).
                 Text("Illustration only \u{2014} not your data or any restaurant\u{2019}s")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                     .padding(.top, 4)
             } else if isNet {
                 Text("The line is the improvements measured each day; the figure above is net of what got worse.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 4)
@@ -164,7 +164,7 @@ struct ValueChartCard: View {
                     selectedRange = range
                 } label: {
                     Text(range.rawValue)
-                        .font(.cavnarBody(14, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(range == selectedRange ? Color.cavnarEmber2 : Color.cavnarInk3)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)

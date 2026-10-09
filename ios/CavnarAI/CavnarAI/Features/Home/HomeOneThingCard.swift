@@ -1,37 +1,32 @@
 import SwiftUI
 
-/// "If you only do one thing" — Home's cross-module pick
-/// (GET /mobile/api/cross-module → fix_first), in the slot DESIGN_SYSTEM
-/// §11b gives it: after Needs attention, before the recommendations. The
-/// web's focus card has always led with it; the phone never showed it, so
-/// the one recommendation both Homes present was the one iOS could not
-/// answer (rec-ROI #26).
+/// "Today's focus" — Home's one pick, on the iPhone answer card
+/// (CavnarAnswerCard, iOS readability round 10/8/26, #6): the headline,
+/// one sentence of why, the top cause (labelled a hypothesis when no
+/// measured signal backs it), "Could also be" as ONE visible line, the one
+/// dollar figure with what it covers, the confidence %, and ONE full-width
+/// primary. Everything else — the modules it joins, what it rests on, what
+/// would confirm it, the notes on the figure, advice it pulls against and
+/// Done / Pass — is behind "See the evidence".
 ///
-/// Always an action (business_intelligence.pick_one_thing). The modules it
-/// joins are drawn with the ember thread only when there are two — a real
-/// link in the payload, never decoration. "Could also be…" opens what else
-/// would explain it, and records that the owner looked (#38).
-///
-/// When there is no finding it leads with what the web's focus card leads
-/// with, in the same order (parity audit #1, web `renderFocus`): the most
-/// urgent Needs-attention item — whose action is then the page's one
-/// primary, and which the deck under it no longer repeats — else the top
-/// recommendation. See `HomeFocusLead.pick`.
+/// What leads is the web's `renderFocus` order (parity audit #1,
+/// `HomeFocusLead.pick`): the cross-module finding
+/// (GET /mobile/api/cross-module → fix_first,
+/// business_intelligence.pick_one_thing), else the most urgent
+/// Needs-attention item — whose action is then the page's one primary, and
+/// which Needs you under it no longer repeats — else the top recommendation.
 struct HomeOneThingCard: View {
     let viewModel: HomeFollowThroughViewModel
     /// What leads; nil draws the finding when there is one (older callers).
     var lead: HomeFocusLead? = nil
     var busy: Bool = false
-    /// An attention lead's action — the deck's own handler (publish asks
+    /// An attention lead's action — Needs you's own handler (publish asks
     /// first, anything else opens its nav).
     var onPrimary: (NeedsAttentionItem) -> Void = { _ in }
     /// Something changed server-side (a conflict settled) — reload Home.
     var onChanged: () -> Void = {}
-    @State private var explaining = false
     @State private var toast: String?
-    /// The card's second layer (HomeCardKit): evidence, how sure, the
-    /// basis, what else could explain it.
-    @State private var detailsOpen = false
+    @Environment(DeepLinkRouter.self) private var router
 
     var body: some View {
         switch lead {
@@ -41,132 +36,134 @@ struct HomeOneThingCard: View {
         }
     }
 
+    static let kicker = "Today\u{2019}s focus"
+
+    /// The one primary, full width, ember.
+    private func primaryButton(_ label: String, working: Bool = false, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.medium()
+            action()
+        } label: {
+            Group {
+                if working {
+                    CavnarShimmerText(text: "Working\u{2026}", color: .white)
+                } else {
+                    HomeMixedText.make(label, role: .label, color: .white, numberColor: .white)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarPrimaryButtonStyle())
+        .disabled(working)
+    }
+
+    private func ask(_ question: String) {
+        router.pendingAskScreen = AskScreen(panel: "home")
+        router.pendingAskAutoSend = true
+        router.pendingAskPrompt = question
+    }
+
+    /// The one dollar figure and, always under it, what it covers (B4 H7).
+    private func figure(_ text: String, basis: String?) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            CavnarMixedText(text, role: .figureM)
+            if let basis, !basis.isEmpty {
+                CavnarMixedText(basis, role: .caption)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .cavnarSensitive()
+    }
+
     // MARK: - An attention item leads
 
     private func attentionCard(_ item: NeedsAttentionItem) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HomeSectionHeader(kicker: "Start here", title: "Today\u{2019}s focus")
-            VStack(alignment: .leading, spacing: 10) {
-                HomeMixedText.make(item.title, size: HomeType.title + 1, weight: 600, color: .cavnarInk)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !item.detail.isEmpty {
-                    HomeClampedText(text: item.detail, size: HomeType.body, color: .cavnarInk2, lines: 3)
+        CavnarAnswerCard(
+            kicker: Self.kicker,
+            headline: item.title,
+            summary: item.detail.isEmpty ? nil : item.detail,
+            confidence: item.confidence.map {
+                ConfidenceLine(confidence: $0, recKey: item.recKey, surface: "home", module: "home", compact: true)
+            },
+            surface: .hero
+        ) {
+            if let cta = item.cta {
+                primaryButton(cta, working: busy && item.isPublishAction) { onPrimary(item) }
+            } else {
+                primaryButton("Ask Cavnar AI") { ask("What should I do about this: \(item.title)") }
+            }
+        } detail: {
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if let evidence = item.evidenceLine {
+                    CavnarMixedText(evidence, role: .secondary)
                 }
-                if detailsOpen {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if let evidence = item.evidenceLine {
-                            HomeMixedText.make(evidence, size: HomeType.meta, weight: 500, color: .cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if let c = item.confidence {
-                            ConfidenceLine(confidence: c, recKey: item.recKey, surface: "home", module: "home")
-                        }
-                        RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer)
-                    }
-                    .transition(.opacity)
-                }
+                RecMemoryNote(previous: item.previousAnswer, delegate: item.delegateAnswer)
                 if let conflict = item.conflict {
                     RecConflictPanel(conflict: conflict, onSettled: { Task { await viewModel.load() } })
                 }
-                if let cta = item.cta {
-                    Button {
-                        Haptic.medium()
-                        onPrimary(item)
-                    } label: {
-                        Group {
-                            if busy && item.isPublishAction {
-                                CavnarShimmerText(text: "Working\u{2026}", color: .white)
-                            } else {
-                                HomeMixedText.make(cta, size: 16, weight: 700, color: .white,
-                                                   numberWeight: 700, numberColor: .white)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle())
-                    .disabled(busy && item.isPublishAction)
-                }
-                HStack(spacing: 22) {
-                    HomeAskLink(question: "What should I do about this: \(item.title)", label: "Ask")
-                    if item.evidenceLine != nil || item.confidence != nil
-                        || item.previousAnswer != nil || item.delegateAnswer != nil {
-                        HomeDetailsToggle(open: $detailsOpen)
-                    }
+                if item.cta != nil {
+                    HomeAskLink(question: "What should I do about this: \(item.title)", label: "Ask Cavnar AI")
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cavnarCard(.hero)
         }
     }
 
     // MARK: - The top recommendation leads
 
     private func recommendationCard(_ rec: HomeRecommendation) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HomeSectionHeader(kicker: "Start here", title: "Today\u{2019}s focus")
-            VStack(alignment: .leading, spacing: 10) {
-                HomeMixedText.make(rec.title, size: HomeType.title + 1, weight: 600, color: .cavnarInk)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let caution = rec.caution {
-                    RecCautionLine(text: caution)
-                }
-                if let why = rec.why, !why.isEmpty {
-                    HomeClampedText(text: why, size: HomeType.body, color: .cavnarInk2, lines: 3)
-                }
-                if let line = RecDollarCalibration.line(raw: rec.dollarsMonthly, adjusted: rec.dollarsAdjusted,
-                                                        n: rec.calibrationN, note: rec.calibrationNote) {
-                    HomeMixedText.make(line, size: 18, weight: 600, color: .cavnarInk, numberWeight: 600)
-                    if let basis = rec.dollarsBasis {
-                        HomeMixedText.make(basis, size: HomeType.meta, weight: 500, color: .cavnarInk3)
-                            .lineLimit(2)
+        let dollars = RecDollarCalibration.line(raw: rec.dollarsMonthly, adjusted: rec.dollarsAdjusted,
+                                                n: rec.calibrationN, note: rec.calibrationNote)
+        return CavnarAnswerCard(
+            kicker: Self.kicker,
+            headline: rec.title,
+            summary: rec.why,
+            alternativeCause: rec.alternative,
+            confidence: rec.confidence.map {
+                ConfidenceLine(confidence: $0, recKey: rec.key, surface: "home", module: rec.module ?? "home",
+                               compact: true)
+            },
+            surface: .hero
+        ) {
+            // Another module's word against it changes how the owner
+            // answers, so it stays on the face (M3's trim guard).
+            if let caution = rec.caution {
+                RecCautionLine(text: caution)
+            }
+            if let dollars {
+                figure(dollars, basis: rec.dollarsBasis)
+            }
+            // "Measure it" only on a card that names a metric — one that
+            // doesn't can't be measured before and after.
+            if rec.metric != nil {
+                primaryButton(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it") {
+                    Task {
+                        if let message = await viewModel.track(rec) { withAnimation { toast = message } }
                     }
                 }
-                if detailsOpen {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if rec.modelWritten == true { ClaimKindTag(kind: nil, modelWritten: true) }
-                        if let c = rec.confidence {
-                            ConfidenceLine(confidence: c, recKey: rec.key, surface: "home", module: rec.module ?? "home")
-                        }
-                        RecMemoryNote(previous: rec.previousAnswer, delegate: rec.delegateAnswer,
-                                      retest: rec.retest == true)
-                    }
-                    .transition(.opacity)
+                .disabled(viewModel.tracked.contains(rec.key))
+            } else {
+                primaryButton("Walk me through it") { ask("Walk me through this: \(rec.title)") }
+            }
+            if let toast {
+                Text(toast).cavnarText(.secondary, color: .cavnarGreen)
+            }
+        } detail: {
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if rec.modelWritten == true {
+                    Text("Written by Cavnar AI from your numbers").cavnarText(.caption)
                 }
-                // "Measure it" only on a card that names a metric — one that
-                // doesn't can't be measured before and after.
-                if rec.metric != nil {
-                    Button {
-                        Haptic.medium()
-                        Task {
-                            if let message = await viewModel.track(rec) { withAnimation { toast = message } }
-                        }
-                    } label: {
-                        Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle())
-                    .disabled(viewModel.tracked.contains(rec.key))
-                }
+                RecMemoryNote(previous: rec.previousAnswer, delegate: rec.delegateAnswer,
+                              retest: rec.retest == true)
                 if let conflict = rec.conflict {
                     RecConflictPanel(conflict: conflict, onSettled: onChanged)
                 }
                 RecAnswerRow(key: rec.key, surface: "home", module: rec.module ?? "home",
                              answers: [.completed, .notForUs])
-                if let toast {
-                    Text(toast)
-                        .font(.cavnarBody(HomeType.meta + 1, weight: 600))
-                        .foregroundStyle(Color.cavnarGreen)
-                }
-                HStack(spacing: 22) {
-                    HomeAskLink(question: "Walk me through this: \(rec.title)", label: "Ask")
-                    if rec.confidence != nil || rec.modelWritten == true
-                        || rec.previousAnswer != nil || rec.delegateAnswer != nil {
-                        HomeDetailsToggle(open: $detailsOpen)
-                    }
+                if rec.metric != nil {
+                    HomeAskLink(question: "Walk me through this: \(rec.title)", label: "Ask Cavnar AI")
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cavnarCard(.hero)
+            .onAppear { RecEvidenceLog.viewed(key: rec.key, surface: "home", module: rec.module ?? "home") }
         }
     }
 
@@ -175,126 +172,90 @@ struct HomeOneThingCard: View {
     @ViewBuilder
     private var findingCard: some View {
         if let ff = viewModel.fixFirst, let what = ff.what, !what.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
-                HomeSectionHeader(kicker: "Start here", title: "If you only do one thing")
-                VStack(alignment: .leading, spacing: 12) {
-                    // The phone shows the pick, why, and what it is worth;
-                    // the rest is under Details (HomeCardKit, 10/8/26).
-                    HomeMixedText.make(what, size: HomeType.title + 1, weight: 600, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let why = ff.why, !why.isEmpty {
-                        HomeClampedText(text: why.prefix(1).uppercased() + why.dropFirst(),
-                                        size: HomeType.body, color: .cavnarInk2, lines: 3)
-                    }
-                    // Calibrated by this restaurant's measured results when
-                    // the server sent it (F6); what the figure covers (B4
-                    // H7) always rides under it — never a bare number.
-                    if let dollars = ff.statedDollars {
-                        VStack(alignment: .leading, spacing: 3) {
-                            (Text("$" + dollars.commaFormatted).font(.cavnarNumber(26, weight: 600))
-                                .foregroundColor(.cavnarInk)
-                             + Text("/month").font(.cavnarBody(15, weight: 600)).foregroundColor(.cavnarInk3))
-                            if let basis = ff.dollarsBasis {
-                                HomeMixedText.make(basis, size: HomeType.meta, weight: 500, color: .cavnarInk3)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
-                    } else if let range = ff.moneyRange {
-                        // The money fallback is a range with its label —
-                        // never one figure pulled out of it (CA4 F3).
-                        VStack(alignment: .leading, spacing: 3) {
-                            HomeMixedText.make(range, size: 22, weight: 600, color: .cavnarInk, numberWeight: 600)
-                            if let label = ff.money?.label, !label.isEmpty {
-                                HomeMixedText.make(label, size: HomeType.meta, weight: 500, color: .cavnarInk3)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
-                    if detailsOpen {
-                        findingDetails(ff, what: what)
-                            .transition(.opacity)
-                    }
-                    // Advice the hero pulls against (memory round 9/29/26).
-                    if let conflict = ff.conflict {
-                        RecConflictPanel(conflict: conflict, onSettled: {
-                            Task { await viewModel.load() }
-                            onChanged()
-                        })
-                    }
-                    if ff.answerable == true, let key = ff.answerKey {
-                        RecAnswerRow(key: key, surface: "home", module: "home")
-                    }
-                    HStack(spacing: 22) {
-                        HomeAskLink(question: "Walk me through this: \(what)", label: "Ask")
-                        HomeDetailsToggle(open: $detailsOpen)
-                    }
+            let why = ff.why.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            CavnarAnswerCard(
+                kicker: Self.kicker,
+                headline: what,
+                summary: why,
+                cause: ff.evidence?.first,
+                isHypothesis: Self.isHypothesis(ff.claimKind),
+                alternativeCause: ff.alternative,
+                confidence: ff.confidence.map {
+                    ConfidenceLine(confidence: $0, recKey: ff.answerKey, surface: "home", module: "home", compact: true)
+                },
+                surface: .hero
+            ) {
+                // Calibrated by this restaurant's measured results when the
+                // server sent it (F6); the money fallback is a range with its
+                // label — never one figure pulled out of it (CA4 F3).
+                if let dollars = ff.statedDollars {
+                    figure("$" + dollars.commaFormatted + "/month", basis: ff.dollarsBasis)
+                } else if let range = ff.moneyRange {
+                    figure(range, basis: ff.money?.label)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cavnarCard(.hero)
+                primaryButton("Walk me through it") { ask("Walk me through this: \(what)") }
+            } detail: {
+                findingDetails(ff, what: what)
             }
-            .alert("What else could explain it", isPresented: $explaining) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(ff.alternative ?? "")
-            }
+        }
+    }
+
+    /// A cause no measured signal backs reads "Hypothesis".
+    static func isHypothesis(_ claimKind: String?) -> Bool {
+        switch claimKind?.lowercased() {
+        case "inferred", "suggestion", "estimate": return true
+        default: return false
         }
     }
 }
 
 extension HomeOneThingCard {
-    /// The finding's second layer: the modules it joins, what kind of
-    /// claim it is (K4), how sure (CA4), what it rests on, what would
-    /// confirm it, the note on the figure, and what else could explain it.
+    /// The finding's proof, behind "See the evidence": the modules it joins
+    /// (the ember thread only when there are two — a real link, never
+    /// decoration), what kind of claim it is, the rest of what it rests on,
+    /// what would confirm it, the note on the figure, advice it pulls
+    /// against, and Done / Pass. Opening it records that the owner looked.
     @ViewBuilder
     fileprivate func findingDetails(_ ff: HomeFollowThroughViewModel.CrossModule.FixFirst, what: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             if let modules = ff.modules, modules.count > 1 {
-                HStack(spacing: 8) {
+                HStack(spacing: CavnarSpace.xs) {
                     ForEach(Array(modules.enumerated()), id: \.offset) { index, module in
                         if index > 0 { EmberThread(axis: .horizontal, length: 22) }
-                        Text(RecSummaryFormat.moduleLabel(module).uppercased())
-                            .font(.cavnarBody(CavnarType.kicker + 1, weight: 700))
-                            .tracking(1.0)
-                            .foregroundStyle(Color.cavnarInk3)
+                        Text(RecSummaryFormat.moduleLabel(module))
+                            .cavnarText(.kicker, color: .cavnarInk2)
                     }
                 }
                 .accessibilityElement(children: .combine)
             }
-            ClaimKindTag(kind: ff.claimKind)
-            if let c = ff.confidence {
-                ConfidenceLine(confidence: c, recKey: ff.answerKey, surface: "home", module: "home")
+            if let label = ClaimKind.label(kind: ff.claimKind) {
+                Text("How Cavnar AI knows: \(label.lowercased())").cavnarText(.caption)
             }
-            if let evidence = ff.evidence?.prefix(3), !evidence.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
+            if let evidence = ff.evidence?.dropFirst().prefix(3), !evidence.isEmpty {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                     ForEach(Array(evidence.enumerated()), id: \.offset) { _, line in
-                        HomeMixedText.make("\u{00B7} " + line, size: HomeType.meta + 1, weight: 500, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText("\u{00B7} " + line, role: .secondary)
                     }
                 }
             }
             if let confirm = ff.confirmBy, !confirm.isEmpty, confirm != what {
-                HomeMixedText.make("To confirm: " + confirm, size: HomeType.meta + 1, weight: 600, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText("To confirm: " + confirm, role: .secondary)
             }
             if let note = ff.dollarsNote {
-                HomeMixedText.make(note, size: HomeType.meta, weight: 500, color: .cavnarAmber)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(note, role: .secondary, color: .cavnarAmber)
             }
-            if let alternative = ff.alternative {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Could also be")
-                        .font(.cavnarBody(HomeType.meta, weight: 700))
-                        .foregroundStyle(Color.cavnarInk3)
-                    Text(alternative)
-                        .font(.cavnarBody(HomeType.meta + 1))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .onAppear { RecEvidenceLog.viewed(key: ff.answerKey, surface: "home", module: "home") }
+            // Advice the hero pulls against (memory round 9/29/26).
+            if let conflict = ff.conflict {
+                RecConflictPanel(conflict: conflict, onSettled: {
+                    Task { await viewModel.load() }
+                    onChanged()
+                })
+            }
+            if ff.answerable == true, let key = ff.answerKey {
+                RecAnswerRow(key: key, surface: "home", module: "home")
             }
         }
+        .onAppear { RecEvidenceLog.viewed(key: ff.answerKey, surface: "home", module: "home") }
     }
 }
 
@@ -348,7 +309,7 @@ struct HomeLinkEvidenceSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    HomeMixedText.make(link.headline, size: 17, weight: 700, color: .cavnarInk)
+                    HomeMixedText.make(link.headline, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     // How long it has stood (memory round: link_memory) —
                     // "Found 3 weeks running, since 9/7/26" — and the
@@ -358,7 +319,7 @@ struct HomeLinkEvidenceSheet: View {
                             if let badge = memory.badge {
                                 AccountChip(text: badge, tint: .cavnarAmber)
                             }
-                            HomeMixedText.make(line, size: 13, weight: 600, color: .cavnarInk3)
+                            HomeMixedText.make(line, size: CavnarType.caption, weight: 600, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -374,13 +335,13 @@ struct HomeLinkEvidenceSheet: View {
                     if let evidence = link.evidence, !evidence.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(evidence, id: \.self) { line in
-                                HomeMixedText.make("\u{00B7} " + line, size: 13.5, weight: 500, color: .cavnarInk2)
+                                HomeMixedText.make("\u{00B7} " + line, size: CavnarType.caption, weight: 500, color: .cavnarInk2)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
                     if let confirm = link.confirmBy {
-                        HomeMixedText.make("To confirm: " + confirm, size: 13.5, weight: 600, color: .cavnarInk2)
+                        HomeMixedText.make("To confirm: " + confirm, size: CavnarType.caption, weight: 600, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let alt = link.notACause ?? link.alternative {

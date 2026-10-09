@@ -1,17 +1,27 @@
 import SwiftUI
 
-/// Home — the first fold has one job: make the owner feel the AI working.
+/// Home — "Web explains. iPhone decides." (iOS readability round, 10/8/26).
 ///
-/// Top to bottom: the hero line (the date, "{name}" and a line that only
-/// claims AI at work over a live source, and what Cavnar did overnight), the pulse strip of
-/// breathing module chips, the action deck led by the one thing to tap,
-/// the measured-results band, and a "this week" receipt. No module tiles
-/// here — that's the Modules tab's job, not Home's. Everything sits on
-/// HomeObsidianField — black stone with light moving across it — instead
-/// of the old ember aurora.
+/// Top to bottom, "decide, then more": the hero (the date, the brief's
+/// headline and one overnight line), anything about to go out on its own
+/// with Undo, the night's own card (last night's report before noon, the
+/// close-out after 8pm), the glance (three fixed tiles and data health in
+/// words), Find or ask, Today's focus, ONE ranked "Needs you" list, the
+/// brief's reads, Restaurant DNA — and one closed "More" group holding the
+/// recommendations, the measured results and how the restaurant compares.
+/// No module tiles here — that's the Modules tab's job. Everything sits on
+/// HomeObsidianField — black stone with light moving across it.
 struct HomeView: View {
     @State private var followThrough = HomeFollowThroughViewModel()
     @State private var aiActivity = AIActivityViewModel()
+    /// The brief and open issues — one read feeds the brief card and the
+    /// issue rows in Needs you.
+    @State private var day = HomeDayViewModel()
+    /// Last night's report — one read feeds its card and the glance row.
+    @State private var lastNight = HomeLastNightViewModel()
+    /// The recommendation record, with the kinds on hold and the quieter
+    /// kinds (moved off Home, #96).
+    @State private var showingRecord = false
     @Environment(SessionStore.self) private var sessionStore
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     // Owned by RootView (see its homeViewModel) so the loaded summary
@@ -117,56 +127,84 @@ struct HomeView: View {
                 }
 
                 // The reader lets an issue push scroll Home to the issue
-                // (parity audit #11).
+                // (parity audit #11), and the Home tab's badge to Needs you.
                 ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if let summary = viewModel.summary {
+                            // "Decide, then more" (iOS readability round,
+                            // 10/8/26, #4): the glance, what is about to go
+                            // out, the night's own card, the one thing, ONE
+                            // ranked Needs you, the brief, DNA — then one
+                            // closed More group. The chips, the kind holds
+                            // and the activity ticker are gone from Home.
                             hero(summary)
 
                             // What's on screen came from the device cache
                             // and is old enough to say so (audit 6.5).
                             if let notice = viewModel.stalenessNotice {
-                                HomeMixedText.make(notice, size: 12.5, weight: 600, color: .cavnarAmber)
+                                HomeMixedText.make(notice, role: .secondary, color: .cavnarAmber)
                                     .frame(maxWidth: .infinity)
                                     .multilineTextAlignment(.center)
                                     .padding(.horizontal, 24)
                                     .padding(.top, 10)
                             }
 
-                            // The pulse row, with freshness folded in
-                            // (density #21): a stale module's chip carries
-                            // an amber clock, and the row ends on the Data
-                            // health chip that opens the sheet — the old
-                            // per-source strip under it is gone from Home.
-                            let entries = summary.freshness?.entries ?? []
-                            HomePulseStrip(modules: summary.modules, paused: backgroundMotionPaused,
-                                           staleModules: HomePulseStrip.staleModules(entries),
-                                           dataChip: HomePulseStrip.dataChipLabel(
-                                               health: summary.dataHealth,
-                                               unavailable: summary.freshnessUnavailable),
-                                           onOpenDataHealth: { showingDataHealth = true }) { module in
-                                navigate(to: ModuleRoute(key: module.key, label: module.label))
+                            // Something Cavnar AI is about to send on its
+                            // own, with Undo — only while something is
+                            // queued (#40).
+                            if aiActivity.activity?.queued?.isEmpty == false || aiActivity.undoneNote != nil {
+                                HomeQueuedBanner(viewModel: aiActivity)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 18)
+                                    .belowFold(heroAppeared, delay: 0.08)
                             }
-                            .padding(.top, 18)
-                            .belowFold(heroAppeared, delay: 0.1)
 
-                            // The quick actions no Needs-attention row
-                            // already carries (web `hbQuickUnsaid`, §11b
-                            // step 1) — secondary, one tap to the item.
-                            let quick = HomeQuickAction.unsaid(summary.quickActions?.items ?? [],
-                                                               attention: summary.needsAttention)
-                            if !quick.isEmpty {
-                                quickRow(quick, in: summary)
-                                    .padding(.top, 14)
-                                    .belowFold(heroAppeared, delay: 0.12)
+                            // The day's slot: the close-out after 8pm, last
+                            // night's report before noon (#37) — directly
+                            // under the hero, what the owner opened the app
+                            // for at that hour.
+                            if summary.localIsEvening {
+                                HomeCloseOutCard(viewModel: followThrough)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 24)
+                                    .belowFold(heroAppeared, delay: 0.1)
+                            } else if Self.isMorning(summary), lastNight.night != nil {
+                                HomeLastNightCard(viewModel: lastNight, open: { path.append($0) },
+                                                  localNow: summary.localNow)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 24)
+                                    .belowFold(heroAppeared, delay: 0.1)
                             }
+
+                            // The glance (#94): three fixed tiles and data
+                            // health in words. The net tile leaves when the
+                            // report's own card is right above it.
+                            HomeKPIRow(
+                                tiles: HomeKPIRow.tiles(
+                                    modules: summary.modules, charts: summary.charts,
+                                    night: Self.isMorning(summary) ? nil : lastNight.night,
+                                    nightKicker: lastNight.kicker(localNow: summary.localNow)),
+                                health: HomeKPIRow.healthLine(
+                                    health: summary.dataHealth, unavailable: summary.freshnessUnavailable,
+                                    entries: summary.freshness?.entries ?? []),
+                                onOpen: { target in openGlance(target, in: summary) },
+                                onOpenDataHealth: { showingDataHealth = true })
+                                .padding(.horizontal, 20)
+                                .padding(.top, 18)
+                                .belowFold(heroAppeared, delay: 0.12)
+
+                            // Find or ask — the command sheet, on Home too.
+                            findOrAsk
+                                .padding(.horizontal, 20)
+                                .padding(.top, 10)
+                                .belowFold(heroAppeared, delay: 0.12)
 
                             if summary.quietHoursActive {
                                 quietHoursBanner(summary)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 16)
-                                    .belowFold(heroAppeared, delay: 0.1)
+                                    .belowFold(heroAppeared, delay: 0.14)
                             }
 
                             // The updated Privacy Policy and Terms, owed an
@@ -178,23 +216,22 @@ struct HomeView: View {
                                     .id(notice.key)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 16)
-                                    .belowFold(heroAppeared, delay: 0.12)
+                                    .belowFold(heroAppeared, delay: 0.14)
                             }
 
-                            // The order is fixed by role, the same as the web
-                            // Home (§11b as amended 9/25/26, density #3):
-                            // header strip, THE ONE THING at position 2 with
-                            // Needs attention directly under it, then the
-                            // day, what to do next, and Results — collapsed,
-                            // one row — at the bottom. An account with
-                            // nothing connected leads with readiness and the
-                            // first look instead, because nothing else has
-                            // data yet. The one thing renders nothing when
-                            // there is none, and Needs attention then says
-                            // "Start here" itself — one "Start here" a page.
-                            // What leads, in the web's order (parity #1):
-                            // the finding, else the most urgent item, else
-                            // the top recommendation — never before the
+                            // Monday: the weekly receipts, short, in the
+                            // day's slot (the rest of the week they are
+                            // proof, in More).
+                            if summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
+                                HomeWeeklyReceipts(receipts: receipts)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 24)
+                                    .belowFold(heroAppeared, delay: 0.16)
+                            }
+
+                            // Today's focus (#6): the finding, else the most
+                            // urgent item, else the top recommendation — the
+                            // web's order (parity #1) — never before the
                             // day's reads have landed.
                             let lead = focusLead(summary)
                             if let lead {
@@ -203,75 +240,43 @@ struct HomeView: View {
                                                  onPrimary: { item in primaryAction(item, in: summary) },
                                                  onChanged: { Task { await viewModel.load() } })
                                     .padding(.horizontal, 20)
-                                    .padding(.top, 26)
-                                    .belowFold(heroAppeared, delay: 0.16)
+                                    .padding(.top, 28)
+                                    .belowFold(heroAppeared, delay: 0.18)
                             }
 
-                            // The work leads (friction audit #11): what needs
-                            // the owner, every item visible, before any
-                            // result or read — the cross-module links too,
-                            // as rows (What connects is gone, #5).
-                            attentionSection(summary, items: attentionItems(summary, lead: lead),
-                                             hasLead: lead != nil)
+                            // Needs you (#5): every decision in one ranked
+                            // list — attention items and links, issues,
+                            // what is still open, the brief's actions,
+                            // goals, check-ins, flags and shortcuts.
+                            attentionSection(summary, items: attentionItems(summary, lead: lead), lead: lead,
+                                             scrollProxy: scrollProxy)
                                 .padding(.horizontal, 20)
-                                .padding(.top, lead != nil ? 30 : 26)
-                                .belowFold(heroAppeared, delay: 0.2)
-
-                            // How you compare (Benchmarking #23, §11b step
-                            // 3): beside the freshness read, under the work
-                            // — not inside the collapsed Results (#5).
-                            HomeBenchmarkStrip(onOpenModule: { module in
-                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                            })
-                            .padding(.horizontal, 20)
-                            .padding(.top, 22)
-                            .belowFold(heroAppeared, delay: 0.24)
+                                .padding(.top, 30)
+                                .belowFold(heroAppeared, delay: 0.22)
 
                             if summary.isFresh {
                                 freshStart(summary)
                             }
 
-                            // THE DAY. Monday: the weekly receipts lead it
-                            // (the rest of the week they are proof, in
-                            // Results). After 8pm: the close-out takes the
-                            // slot.
-                            if summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
-                                HomeWeeklyReceipts(receipts: receipts)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.3)
-                            }
-                            if summary.localIsEvening {
-                                HomeCloseOutCard(viewModel: followThrough)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.3)
-                            }
-                            // Last night's Daily Sales Report leads the
-                            // day's read; it renders nothing for a login or
+                            // Last night's report after noon (before noon it
+                            // leads, above); it shows nothing for a login or
                             // location without one.
-                            // (It pads itself, so a hidden card leaves no gap.)
-                            HomeLastNightCard(open: { path.append($0) },
-                                              homeLoadedAt: viewModel.lastLoadedAt,
-                                              localNow: summary.localNow)
-                                .belowFold(heroAppeared, delay: 0.32)
-                            // The brief leaves out what the page already
+                            if !Self.isMorning(summary), lastNight.night != nil {
+                                HomeLastNightCard(viewModel: lastNight, open: { path.append($0) },
+                                                  localNow: summary.localNow)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 30)
+                                    .belowFold(heroAppeared, delay: 0.3)
+                            }
+                            // The brief's reads; its actions are Needs you
+                            // rows, and it leaves out what the page already
                             // says (web `hbShownKeys`, parity #3).
-                            HomeDayCard(dateLabel: dayLabel(summary),
-                                        weekday: Self.localDay(summary.localNow)?.weekday,
-                                        shownKeys: HomeBriefFilter.shownKeys(
-                                            attention: summary.needsAttention + followThrough.linkItems,
-                                            focusKey: followThrough.fixFirst?.answerKey ?? lead?.key),
-                                        onOpenNav: { nav in open(nav: nav, module: "home", in: summary) },
-                                        focusIssue: issueFocus,
-                                        onFocus: { id in
-                                            withAnimation(.easeInOut(duration: 0.35)) {
-                                                scrollProxy.scrollTo(HomeDayCard.issueAnchor(id), anchor: .center)
-                                            }
-                                        })
+                            HomeDayCard(viewModel: day,
+                                        shownKeys: briefShownKeys(summary, lead: lead),
+                                        onOpenNav: { nav in open(nav: nav, module: "home", in: summary) })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.36)
+                                .belowFold(heroAppeared, delay: 0.32)
 
                             // Restaurant DNA under the day's read (owner,
                             // 10/8/26: it sat at the foot of Results where
@@ -279,143 +284,27 @@ struct HomeView: View {
                             DNAHomeCard(model: dnaModel) { showingDNA = true }
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.4)
+                                .belowFold(heroAppeared, delay: 0.36)
 
-                            // What Cavnar recommends, each with the button
-                            // that starts measuring it — less the one the
-                            // one-thing card leads with — and the undo for
-                            // the last one hidden.
-                            let recs = recommendationsShown(summary, lead: lead)
-                            let hidden = summary.dismissed?.items.first
-                            if !recs.isEmpty || hidden != nil {
-                                HomeRecommendations(recommendations: recs,
-                                                    viewModel: followThrough,
-                                                    assignees: summary.assignees ?? [],
-                                                    quieter: summary.quieter ?? [],
-                                                    onOpenModule: { module in
-                                    navigate(to: ModuleRoute(key: module,
-                                                             label: moduleLabel(module, in: summary)))
-                                }, onChanged: { Task { await viewModel.load() } },
-                                                    restorable: hidden,
-                                                    onRestore: { rec in await viewModel.restoreHidden(rec) })
-                                .padding(.horizontal, 20)
-                                .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.46)
-                            }
+                            // MORE — the recommendations, the measured
+                            // results and How you compare, closed, with the
+                            // figure still on the closed row.
+                            moreGroup(summary, lead: lead)
+                                .padding(.top, 34)
+                                // Its four reads (what worked, the value
+                                // figures, what got better, last month) wait
+                                // until More nears the screen (parity #20).
+                                .onScrolledNear { Task { await followThrough.loadResults() } }
+                                .belowFold(heroAppeared, delay: 0.42)
 
-                            // The kinds held back by this restaurant's own
-                            // record, each asked "Keep suggesting it?" (M4)
-                            // — right under the cards they were taken from.
-                            if let holds = summary.kindHolds?.items, !holds.isEmpty {
-                                HomeKindHolds(holds: holds)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.48)
-                            }
-
-                            // No readiness row after the recommendations
-                            // (owner's call, 9/26/26, web and iOS alike):
-                            // it leads the page only for a fresh account.
-
-                            // The follow-through's work half — still open,
-                            // check-ins, what connects, comps/voids and
-                            // (before 8pm) the handoff. Every one can carry
-                            // an answer, so none of it hides in Results.
-                            // This instance also loads the follow-through
-                            // (the Results one inside the disclosure does
-                            // not — it may never be opened).
-                            HomeFollowThrough(viewModel: followThrough, part: .work,
-                                              showsCloseOut: !summary.localIsEvening,
-                                              homeLoadedAt: viewModel.lastLoadedAt,
-                                              onOpenModule: { module in
-                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                            }, onOpenNav: { nav in open(nav: nav.raw, module: "home", in: summary) })
-                            .padding(.horizontal, 20)
-                            .padding(.top, 30)
-                            .belowFold(heroAppeared, delay: 0.5)
-
-                            // RESULTS (§11b step 7, density #4): everything
-                            // measured behind one closed row that still
-                            // carries the figure — the band, How you
-                            // compare, what the owner's changes did (with
-                            // what got better merged in), what worked and
-                            // this month. Worth moved into the band's sheet.
-                            HomeResultsDisclosure(
-                                line: HomeResultsSummary.line(
-                                    headline: summary.valueHeadline,
-                                    improved: followThrough.value?.delivered?.wins,
-                                    worse: summary.value?.worsened?.count
-                                        ?? followThrough.value?.delivered?.worsened?.count),
-                                tone: HomeResultsSummary.tone(headline: summary.valueHeadline)
-                            ) {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    HomeValueBand(
-                                        total: summary.totalValueDelivered,
-                                        history: summary.valueHistory,
-                                        measuredOn: summary.valueByModule ?? [],
-                                        headline: summary.valueHeadline,
-                                        scope: summary.value?.scope,
-                                        revealed: heroAppeared
-                                    ) {
-                                        Haptic.light()
-                                        showingValueDetail = true
-                                    }
-
-                                    // The trend behind each pulse chip (web
-                                    // `renderSignals`, parity #1).
-                                    if let charts = summary.charts, !charts.isEmpty {
-                                        HomeSignals(charts: charts) { module in
-                                            navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                                        }
-                                        .padding(.horizontal, 20)
-                                        .padding(.top, 22)
-                                    }
-
-                                    // The weekly receipts, outside Monday:
-                                    // proof, so they sit with the results.
-                                    if !summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
-                                        HomeWeeklyReceipts(receipts: receipts)
-                                            .padding(.horizontal, 20)
-                                            .padding(.top, 30)
-                                    }
-
-                                    if HomeFollowThrough.hasResults(followThrough) {
-                                        HomeFollowThrough(viewModel: followThrough, part: .results) { module in
-                                            navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                                        }
-                                        .padding(.horizontal, 20)
-                                        .padding(.top, 30)
-                                    }
-
-                                }
-                            }
-                            .padding(.top, 34)
-                            // Its four reads (what worked, the value figures,
-                            // what got better, last month) wait until Results
-                            // nears the screen (parity audit #20).
-                            .onScrolledNear { Task { await followThrough.loadResults() } }
-                            .belowFold(heroAppeared, delay: 0.56)
-
-                            // What Cavnar AI is doing right now, rotating;
-                            // tap for the feed. Ambient, so it sits under the
-                            // results rather than between the hero and the
-                            // work (density #21). Nothing for an account
-                            // with nothing armed.
-                            AIActivityStrip(viewModel: aiActivity, paused: backgroundMotionPaused)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.6)
-                                .task { await aiActivity.load() }
-
-                            // Clears the FAB's reserved band above the tab
-                            // bar plus its own footprint, so the last
-                            // section never sits behind it.
-                            Color.clear.frame(height: 120)
+                            // The tab bar's safe area is the ScrollView's;
+                            // this is breathing room under the last row.
+                            Color.clear.frame(height: CavnarSpace.l)
                         } else if viewModel.isLoading {
                             heroSkeleton
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
-                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                Text(error).cavnarText(.body)
                                 Button("Retry") { Task { await viewModel.load() } }
                             }
                             .padding(.top, 80)
@@ -425,10 +314,32 @@ struct HomeView: View {
                     // One readable column on an iPad, centred (#99) — §11b's
                     // order holds at every width.
                     .cavnarReadableWidth()
+                    // The day's reads — the follow-through queue, the brief
+                    // and open issues, last night's report, what is about
+                    // to go out — are read only after Home's own fetch,
+                    // and again after each one (the queue drops what Home
+                    // already showed today, which it learns from that
+                    // fetch, H-23).
+                    .task(id: viewModel.lastLoadedAt) {
+                        guard viewModel.lastLoadedAt != nil else { return }
+                        async let ft: Void = followThrough.load()
+                        async let d: Void = day.load()
+                        async let n: Void = lastNight.load()
+                        async let a: Void = aiActivity.load()
+                        _ = await (ft, d, n, a)
+                    }
                 }
                 // A pull rebuilds the brief (fresh=1) instead of the
                 // server's 60-second copy — the web's hbLoad(true) (#90).
                 .cavnarEmberRefreshable { await viewModel.load(fresh: true) }
+                // The Home tab's badge leads to Needs you: arriving on Home
+                // with something urgent scrolls to the list.
+                .onChange(of: tabVisible) { _, visible in
+                    guard visible, chrome.notificationsBadge.urgentCount > 0 else { return }
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        scrollProxy.scrollTo(HomeNeedsYou.anchor, anchor: .top)
+                    }
+                }
                 // Anchored to the whole screen, not to HomeActionDeck —
                 // publishing can be the LAST needs-attention item, and the
                 // reload that follows a successful publish (inside
@@ -555,6 +466,11 @@ struct HomeView: View {
             .sheet(isPresented: $showingDataHealth) {
                 DataHealthSheet(summary: viewModel.summary?.dataHealth)
             }
+            .sheet(isPresented: $showingRecord, onDismiss: { Task { await viewModel.load() } }) {
+                RecommendationHistoryView(kindHolds: viewModel.summary?.kindHolds?.items ?? [],
+                                          quieter: viewModel.summary?.quieter ?? [],
+                                          onRestoreKind: { kind in await followThrough.restoreKind(kind) })
+            }
             .fullScreenCover(isPresented: $showingDNA) {
                 RestaurantDNAScreen(model: dnaModel)
             }
@@ -581,9 +497,7 @@ struct HomeView: View {
     private func hero(_ summary: HomeSummary) -> some View {
         VStack(spacing: 10) {
             Text(Self.heroDate(localNow: summary.localNow))
-                .font(.cavnarBody(12.5, weight: 700))
-                .tracking(2.2)
-                .foregroundStyle(Color.cavnarEmber2)
+                .cavnarText(.kicker)
                 .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
 
             heroHeadline(summary)
@@ -615,12 +529,9 @@ struct HomeView: View {
             // slogan it replaced said nothing about the restaurant.
             VStack(spacing: 6) {
                 Text(greetingName(summary))
-                    .font(.cavnarHeadline(18))
-                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarText(.lead, color: .cavnarEmber2)
                 Text(headline)
-                    .font(.cavnarHeadline(27))
-                    .foregroundStyle(Self.briefToneColor(summary.brief?.tone))
-                    .lineSpacing(3)
+                    .cavnarText(.title, color: Self.briefToneColor(summary.brief?.tone))
                     // The 3-second answer reads at the phone's own size, past
                     // the app's xxxLarge cap: one centred, wrapping line
                     // with nothing beside it. accessibility2, not 3 — at 27pt
@@ -637,8 +548,7 @@ struct HomeView: View {
             // font/colour per segment, not per-segment view modifiers.
             (Text(greetingName(summary)).foregroundStyle(Color.cavnarEmber2)
                 + Text(Self.heroTail(liveSources: summary.monitoring?.countLive)).foregroundStyle(Color.cavnarInk))
-                .font(.cavnarHeadline(27))
-                .lineSpacing(3)
+                .cavnarText(.title)
                 .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
         }
     }
@@ -676,42 +586,27 @@ struct HomeView: View {
         return username.prefix(1).uppercased() + username.dropFirst()
     }
 
-    /// "Gia Mia · Overnight, Cavnar answered 3 reviews and flagged 2 things
-    /// for you." — numbers in ember, in Space Grotesk. Before noon it's
-    /// "Overnight"; after, "Since yesterday" (the window is the last 24h
-    /// either way). With nothing to report it says so instead of padding.
+    /// "Overnight: 3 replies drafted · 2 flagged" — Ink2 at body size,
+    /// figures in ember; no "{Restaurant} · " prefix (the switcher and the
+    /// hero already say where). Before noon it's "Overnight"; after, "Since
+    /// yesterday" (the window is the last 24h either way). `answered` counts
+    /// drafts written (mobile_api._home_overnight), so the line says
+    /// drafted — never posted. With nothing to report it says so.
     private func overnightLine(_ summary: HomeSummary) -> Text {
-        let size: CGFloat = 14
-        let quiet = Color.cavnarInk3
-        let lead = Text(verbatim: summary.restaurantName + " · ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
-        guard let overnight = summary.overnight, overnight.answered + overnight.flagged > 0 else {
-            return lead + Text(verbatim: "All quiet since yesterday — nothing new for you.")
-                .font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
-        }
         // The restaurant's own hour (local_now), not the phone's clock.
         let hour = summary.localHour ?? Calendar.current.component(.hour, from: Date())
-        let when = hour < 12 ? "Overnight" : "Since yesterday"
-        var line = lead + Text(verbatim: "\(when), Cavnar AI ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
-        var clauses: [Text] = []
-        if overnight.answered > 0 {
-            clauses.append(
-                Text(verbatim: "answered ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
-                + Text(verbatim: "\(overnight.answered)").font(.cavnarNumber(size, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-                + Text(verbatim: overnight.answered == 1 ? " review" : " reviews").font(.cavnarBody(size, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-            )
+        return HomeMixedText.make(Self.overnightText(summary.overnight, hour: hour), role: .body,
+                                  numberColor: .cavnarEmber2)
+    }
+
+    static func overnightText(_ overnight: HomeOvernight?, hour: Int) -> String {
+        guard let o = overnight, o.answered + o.flagged > 0 else {
+            return "All quiet since yesterday."
         }
-        if overnight.flagged > 0 {
-            clauses.append(
-                Text(verbatim: "flagged ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
-                + Text(verbatim: "\(overnight.flagged)").font(.cavnarNumber(size, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-                + Text(verbatim: overnight.flagged == 1 ? " thing" : " things").font(.cavnarBody(size, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-            )
-        }
-        line = line + clauses[0]
-        if clauses.count > 1 {
-            line = line + Text(verbatim: " and ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet) + clauses[1]
-        }
-        return line + Text(verbatim: " for you.").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
+        var bits: [String] = []
+        if o.answered > 0 { bits.append("\(o.answered) \(o.answered == 1 ? "reply" : "replies") drafted") }
+        if o.flagged > 0 { bits.append("\(o.flagged) flagged") }
+        return (hour < 12 ? "Overnight: " : "Since yesterday: ") + bits.joined(separator: " \u{00B7} ")
     }
 
     /// "MONDAY · 9/21/26" — the weekday for orientation, the date in the
@@ -807,69 +702,255 @@ struct HomeView: View {
         hasOneThing ? "Then these" : "Start here"
     }
 
-    /// One "Start here" a page (density #3): the one thing carries it when
-    /// there is one, and Needs attention follows as "Then these".
+    /// Before noon on the restaurant's clock — last night's report leads.
+    static func isMorning(_ summary: HomeSummary) -> Bool {
+        (summary.localHour ?? Calendar.current.component(.hour, from: Date())) < 12
+    }
+
+    /// What the page above the brief already says, by job (web
+    /// `hbShownKeys`): every attention item and link, and the lead's key.
+    private func briefShownKeys(_ summary: HomeSummary, lead: HomeFocusLead?) -> Set<String> {
+        HomeBriefFilter.shownKeys(attention: summary.needsAttention + followThrough.linkItems,
+                                  focusKey: followThrough.fixFirst?.answerKey ?? lead?.key)
+    }
+
+    /// Needs you (#5): the attention items less the one the focus card
+    /// leads with (the server records the focus plus the first rows as
+    /// shown, home_brief HOME_ATTENTION_SHOWN), the links, the shortcuts no
+    /// row carries, the brief's own actions, issues, what is still open,
+    /// goals, check-ins and flags — one ranked list. "Start here" is gone:
+    /// the focus card above says it.
     @ViewBuilder
-    private func attentionSection(_ summary: HomeSummary, items: [NeedsAttentionItem], hasLead: Bool) -> some View {
-        let attentionTitle = Self.attentionTitle(hasOneThing: hasLead)
-        if items.isEmpty && !summary.needsAttention.isEmpty {
-            // The one-thing card took the only item (web: "Nothing else
-            // needs you") — never an "All clear" beside an item.
-            VStack(alignment: .leading, spacing: 12) {
-                HomeSectionHeader(kicker: "Needs attention", title: attentionTitle)
-                Text("Nothing else needs you \u{2014} Cavnar AI is watching.")
-                    .font(.cavnarBody(14, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+    private func attentionSection(_ summary: HomeSummary, items: [NeedsAttentionItem], lead: HomeFocusLead?,
+                                  scrollProxy: ScrollViewProxy) -> some View {
+        let shown = briefShownKeys(summary, lead: lead)
+        let leadIsAttention: Bool = { if case .attention? = lead { return true } else { return false } }()
+        HomeNeedsYou(
+            items: items,
+            leadTookAttention: leadIsAttention,
+            quick: HomeQuickAction.unsaid(summary.quickActions?.items ?? [], attention: summary.needsAttention),
+            briefActions: HomeBriefFilter.split(day.lines, shown: shown, hasIssues: !day.issues.isEmpty).act,
+            day: day,
+            followThrough: followThrough,
+            busyPublishing: viewModel.isPublishingReplies,
+            // Nothing flagged on stale or no data is not a clean bill (NS1 #8).
+            notClearReason: OwnerCopy.allClear(attentionEmpty: true, monitoring: summary.monitoring).reason,
+            leadTookOnlyItem: items.isEmpty && !summary.needsAttention.isEmpty,
+            onPrimary: { item in primaryAction(item, in: summary) },
+            onSecondary: { item in
+                // "Read them first" is the queue to read, not the inbox.
+                open(nav: item.isPublishAction ? (item.nav ?? "reviews?filter=pending") : item.nav,
+                     module: item.module, in: summary)
+            },
+            // Not today / hide, recorded server-side so the same item is
+            // quiet in the brief and the queue too. Never offered for a
+            // critical item (the server sends dismissable=false). A second
+            // hide asks why first, as the web does (#42).
+            onDismiss: { item, kind in
+                if kind == "recommendation", (item.timesHidden ?? 0) >= 1 {
+                    attentionAskingWhy = item
+                    showingAttentionWhy = true
+                    return
+                }
+                Task {
+                    // The server's sentence for what the answer does (memory
+                    // round 9/29/26) in the screen's posted check — the row
+                    // leaves on the reload under it.
+                    if let said = await followThrough.answerAttention(item, kind: kind) {
+                        postedLabel = said
+                        await viewModel.load()
+                    }
+                }
+            },
+            onQuick: { q in quickAction(q, in: summary) },
+            onOpenNav: { nav in open(nav: nav, module: "home", in: summary) },
+            onOpenPath: { nav in open(nav: nav.raw, module: "home", in: summary) },
+            onOpenModule: { module in
+                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+            },
+            onChanged: { Task { await viewModel.load() } },
+            focusIssue: issueFocus,
+            onFocus: { id in
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    scrollProxy.scrollTo(HomeDayCard.issueAnchor(id), anchor: .center)
+                }
             }
-        } else if items.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                HomeSectionHeader(kicker: "Needs attention", title: attentionTitle)
-                AllClearRow(notClearReason: OwnerCopy.allClear(attentionEmpty: true,
-                                                               monitoring: summary.monitoring).reason)
+        )
+        .recReasonDialog(isPresented: $showingAttentionWhy,
+                         title: "You\u{2019}ve hidden this before \u{2014} why?",
+                         message: "Tell Cavnar AI why, so it stops raising it.",
+                         skipLabel: "Just hide it for two weeks",
+                         onSkip: { answerAttentionWhy(kind: "recommendation", reason: nil) },
+                         onPick: { reason in answerAttentionWhy(kind: "not_for_us", reason: reason) })
+    }
+
+    /// Find or ask anything — the command sheet, one tap from Home.
+    private var findOrAsk: some View {
+        Button {
+            Haptic.light()
+            CommandSheetRequest.request()
+        } label: {
+            HStack(spacing: CavnarSpace.xs) {
+                Image(systemName: "magnifyingglass")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .accessibilityHidden(true)
+                Text("Find or ask anything")
+                    .cavnarText(.body)
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, CavnarSpace.m)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(Color.cavnarPaper2.opacity(0.85), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Find or ask")
+    }
+
+    /// A glance tile's place: the night's report, or the module.
+    private func openGlance(_ target: HomeKPIRow.Target, in summary: HomeSummary) {
+        switch target {
+        case .report(let date): path.append(DailyReportRoute.report(date: date))
+        case .module(let key): navigate(to: ModuleRoute(key: key, label: moduleLabel(key, in: summary)))
+        }
+    }
+
+    /// MORE (#4): the recommendations, then Results — the measured band,
+    /// How you compare (#96), the trends, the receipts off Monday and what
+    /// the owner's changes did — and, before 8pm, the handoff.
+    private func moreGroup(_ summary: HomeSummary, lead: HomeFocusLead?) -> some View {
+        HomeMoreDisclosure(
+            line: HomeResultsSummary.line(
+                headline: summary.valueHeadline,
+                improved: followThrough.value?.delivered?.wins,
+                worse: summary.value?.worsened?.count ?? followThrough.value?.delivered?.worsened?.count),
+            tone: HomeResultsSummary.tone(headline: summary.valueHeadline)
+        ) {
+            VStack(alignment: .leading, spacing: 0) {
+                // What Cavnar AI recommends, less the one the focus card
+                // leads with, and the undo for the last one hidden.
+                let recs = recommendationsShown(summary, lead: lead)
+                let hidden = summary.dismissed?.items.first
+                if !recs.isEmpty || hidden != nil {
+                    HomeRecommendations(recommendations: recs,
+                                        viewModel: followThrough,
+                                        assignees: summary.assignees ?? [],
+                                        onOpenModule: { module in
+                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                    }, onChanged: { Task { await viewModel.load() } },
+                                        restorable: hidden,
+                                        onRestore: { rec in await viewModel.restoreHidden(rec) })
+                    .padding(.horizontal, 20)
+                }
+                // The record, with the kinds held back and the quieter kinds
+                // (moved off Home, #96).
+                recordRow(summary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+
+                Text("Results")
+                    .cavnarText(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 30)
+                    .padding(.bottom, 12)
+                HomeValueBand(
+                    total: summary.totalValueDelivered,
+                    history: summary.valueHistory,
+                    measuredOn: summary.valueByModule ?? [],
+                    headline: summary.valueHeadline,
+                    scope: summary.value?.scope,
+                    revealed: heroAppeared
+                ) {
+                    Haptic.light()
+                    showingValueDetail = true
+                }
+
+                // How you compare (Benchmarking #23) — inside Results.
+                HomeBenchmarkStrip(onOpenModule: { module in
+                    navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                })
+                .padding(.horizontal, 20)
+                .padding(.top, 22)
+
+                // The trend behind each glance tile (web `renderSignals`).
+                if let charts = summary.charts, !charts.isEmpty {
+                    HomeSignals(charts: charts) { module in
+                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 22)
+                }
+
+                // The weekly receipts, outside Monday: proof, so they sit
+                // with the results.
+                if !summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
+                    HomeWeeklyReceipts(receipts: receipts)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 30)
+                }
+
+                if HomeFollowThrough.hasResults(followThrough) {
+                    HomeFollowThrough(viewModel: followThrough, part: .results) { module in
+                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 30)
+                }
+
+                // Before 8pm the handoff waits here; after, it leads Home.
+                if !summary.localIsEvening {
+                    HomeCloseOutCard(viewModel: followThrough)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 30)
+                }
+            }
+        }
+    }
+
+    /// "Recommendation history · 2 kinds on hold ›" — the record, where the
+    /// "Keep suggesting these?" questions and the quieter kinds live now.
+    private func recordRow(_ summary: HomeSummary) -> some View {
+        let holds = summary.kindHolds?.items.count ?? 0
+        let quieter = summary.quieter?.count ?? 0
+        var bits: [String] = []
+        if holds > 0 { bits.append("\(holds) to answer") }
+        if quieter > 0 { bits.append("\(quieter) quieter") }
+        return Button {
+            Haptic.light()
+            showingRecord = true
+        } label: {
+            HStack(spacing: CavnarSpace.xs) {
+                (Text("Recommendation history").font(.cavnar(.label)).foregroundColor(.cavnarInk)
+                 + Text(bits.isEmpty ? "" : " \u{00B7} " + bits.joined(separator: ", "))
+                    .font(.cavnar(.secondary)).foregroundColor(.cavnarInk2))
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .accessibilityHidden(true)
+            }
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens what Cavnar AI suggested, what you did, and the kinds it is holding back")
+    }
+
+    /// A shortcut row's tap: a publish asks first, as an attention row's
+    /// does; anything else opens its place.
+    private func quickAction(_ q: HomeQuickAction, in summary: HomeSummary) {
+        Haptic.light()
+        if q.kind == "publish_replies" {
+            pendingPublish = NeedsAttentionItem(
+                type: "reviews_awaiting_approval", module: q.module ?? "reviews",
+                title: q.label, detail: "", cta: q.label, secondary: nil,
+                action: "publish_replies", recKey: nil, dismissable: false,
+                timesHidden: nil, count: q.count, evidence: nil, confidence: nil)
+            loadPublishProposal()
         } else {
-            // The lead card plus every other item as a row (friction #11):
-            // the first four show, as on the web (its focus card plus three
-            // rows) — the server logs exactly those as shown (home_brief
-            // HOME_ATTENTION_SHOWN) — and "+N more" opens the rest in place.
-            HomeActionDeck(
-                items: items,
-                title: attentionTitle,
-                busy: viewModel.isPublishingReplies,
-                onPrimary: { item in primaryAction(item, in: summary) },
-                onSecondary: { item in
-                    // "Read them first" is the queue to read, not the inbox.
-                    open(nav: item.isPublishAction ? (item.nav ?? "reviews?filter=pending") : item.nav,
-                         module: item.module, in: summary)
-                },
-                // Not today / hide, recorded server-side so the same item is
-                // quiet in the brief and the queue too. Never offered for a
-                // critical item (the server sends dismissable=false). A
-                // second hide asks why first, as the web does (#42).
-                onDismiss: { item, kind in
-                    if kind == "recommendation", (item.timesHidden ?? 0) >= 1 {
-                        attentionAskingWhy = item
-                        showingAttentionWhy = true
-                        return
-                    }
-                    Task {
-                        // The server's sentence for what the answer does
-                        // (memory round 9/29/26) in the screen's posted
-                        // check — the row leaves on the reload under it.
-                        if let said = await followThrough.answerAttention(item, kind: kind) {
-                            postedLabel = said
-                            await viewModel.load()
-                        }
-                    }
-                },
-                onChanged: { Task { await viewModel.load() } }
-            )
-            .recReasonDialog(isPresented: $showingAttentionWhy,
-                             title: "You\u{2019}ve hidden this before \u{2014} why?",
-                             message: "Tell Cavnar AI why, so it stops raising it.",
-                             skipLabel: "Just hide it for two weeks",
-                             onSkip: { answerAttentionWhy(kind: "recommendation", reason: nil) },
-                             onPick: { reason in answerAttentionWhy(kind: "not_for_us", reason: reason) })
+            open(nav: q.nav, module: q.module ?? "home", in: summary)
         }
     }
 
@@ -916,8 +997,8 @@ struct HomeView: View {
                         showingValueDetail = false
                     } label: {
                         Text("Done")
-                            .font(.cavnarBody(15, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -932,8 +1013,8 @@ struct HomeView: View {
     private func quietHoursBanner(_ summary: HomeSummary) -> some View {
         HStack(spacing: 9) {
             CavnarQuietMark(size: 26)
-            (Text("Notifications quiet").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                + Text(quietHoursEndText(summary)).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk2))
+            (Text("Notifications quiet").font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
+                + Text(quietHoursEndText(summary)).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 14)
@@ -1031,39 +1112,6 @@ struct HomeView: View {
         publishProposalLoading = false
     }
 
-    /// The header's quick actions no Needs-attention row carries: secondary
-    /// chips, one tap to the item; a publish asks first like the deck's.
-    private func quickRow(_ actions: [HomeQuickAction], in summary: HomeSummary) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(actions) { q in
-                    Button {
-                        Haptic.light()
-                        if q.kind == "publish_replies" {
-                            pendingPublish = NeedsAttentionItem(
-                                type: "reviews_awaiting_approval", module: q.module ?? "reviews",
-                                title: q.label, detail: "", cta: q.label, secondary: nil,
-                                action: "publish_replies", recKey: nil, dismissable: false,
-                                timesHidden: nil, count: q.count, evidence: nil, confidence: nil)
-                            loadPublishProposal()
-                        } else {
-                            open(nav: q.nav, module: q.module ?? "home", in: summary)
-                        }
-                    } label: {
-                        HomeMixedText.make(q.chipLabel, size: 13.5, weight: 700, color: .cavnarEmber2,
-                                           numberWeight: 700, numberColor: .cavnarEmber2)
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 44)
-                            .background(Color.cavnarPaper2.opacity(0.85), in: Capsule())
-                            .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 20)
-        }
-    }
-
     /// A card's destination: its nav path when the server sent one — the
     /// filter, section or item it is about, pushed on Home's own stack when
     /// it is a module screen, handed to the router otherwise (Ask, the daily
@@ -1145,8 +1193,7 @@ struct HomeView: View {
                 closePublish()
             } label: {
                 Text("Close")
-                    .font(.cavnarBody(15, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.label, color: .cavnarInk2)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.plain)
@@ -1165,12 +1212,10 @@ struct HomeView: View {
         ZStack {
             VStack(spacing: 18) {
                 Text(item.cta ?? "Publish replies")
-                    .font(.cavnarHeadline(19))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.headline)
                     .multilineTextAlignment(.center)
                 Text("Each reply was drafted in your voice. Google-connected replies post right away; the rest are marked approved.")
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.body)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1188,8 +1233,7 @@ struct HomeView: View {
                             Task { await publishReplies() }
                         } label: {
                             Text(item.cta ?? "Publish")
-                                .font(.cavnarBody(15.5, weight: 700))
-                                .foregroundStyle(.white)
+                                .cavnarText(.label, color: .white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 13)
                                 .background(
@@ -1204,8 +1248,9 @@ struct HomeView: View {
                             pendingPublish = nil
                         } label: {
                             Text("Cancel")
-                                .font(.cavnarBody(15, weight: 600))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.label, color: .cavnarInk2)
+                                .frame(maxWidth: .infinity)
+                                .cavnarHitTarget()
                         }
                         .buttonStyle(.plain)
                     }

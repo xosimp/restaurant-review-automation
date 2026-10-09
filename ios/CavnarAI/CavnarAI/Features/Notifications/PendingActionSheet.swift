@@ -122,26 +122,26 @@ struct PendingActionSheet: View {
                     CavnarSkeletonLines(widths: [0.5, 0.9, 0.7], lineHeight: 12, spacing: 10)
                 } else if let action = viewModel.action {
                     Text(viewModel.undone ? "UNDONE" : "GOING OUT ON ITS OWN")
-                        .font(.cavnarBody(12, weight: 700))
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(viewModel.undone ? Color.cavnarInk3 : Color.cavnarEmber2)
                     Text(action.label ?? "A queued send")
-                        .font(.cavnarHeadline(20))
+                        .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if viewModel.undone {
                         Text("Nothing went out. You can send it yourself whenever it's ready.")
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
                         if let note = viewModel.undoneNote {
-                            Text(note).font(.cavnarBody(13.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                            Text(note).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     } else if let line = action.goesOutLine() {
-                        HomeMixedText.make(line, size: 14.5, weight: 600, color: .cavnarInk2)
+                        HomeMixedText.make(line, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     }
                     Spacer(minLength: 8)
                     HStack(spacing: 12) {
@@ -170,7 +170,7 @@ struct PendingActionSheet: View {
                     }
                 } else {
                     Text(viewModel.errorMessage ?? "That already went out, or was already undone.")
-                        .font(.cavnarBody(15))
+                        .font(.cavnar(.body))
                         .foregroundStyle(Color.cavnarInk2)
                     Spacer(minLength: 8)
                 }

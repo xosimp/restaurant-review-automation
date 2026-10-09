@@ -1,321 +1,149 @@
 import SwiftUI
 import Observation
 
-/// THE DAY — the morning brief and the open issues, in the slot right under
-/// the value graph, the same place the web Home puts them. The brief is
-/// read once, top to bottom, before service; each line can be asked about.
-/// After 8pm local the close-out card takes this slot instead (HomeView
-/// decides), because that is what the evening owner opens the app for.
+/// TODAY'S BRIEF — the morning brief's reads, under Needs you on Home
+/// (iOS readability round, 10/8/26). Each line is its sentence and a
+/// chevron: a tap opens the line's sheet — its own action, the report's
+/// calls for tonight with how often its forecast held, Ask, and Done / Pass
+/// (HomeBriefLineSheet). A line that carries its own action is a decision,
+/// so it is a row in Needs you instead (HomeBriefFilter.split); open issues
+/// are rows there too. The hero already shows the date, so the card no
+/// longer repeats "TODAY / Weekday · date".
 struct HomeDayCard: View {
-    @State private var viewModel = HomeDayViewModel()
-    let dateLabel: String?
-    /// The restaurant's weekday (local_now) — the phone's clock only when
-    /// the server sent none.
-    var weekday: String? = nil
+    /// HomeView's — one read feeds this card and Needs you.
+    let viewModel: HomeDayViewModel
     /// What the page above already says — the one thing and every Needs
     /// attention item, by job (HomeBriefFilter.same) — so a brief line
     /// about the same job is left out, as the web's `hbShownKeys` does.
     var shownKeys: Set<String> = []
     /// Where a line's own action lands (its `action.nav`).
     var onOpenNav: (String) -> Void = { _ in }
-    var onOpenIssues: () -> Void = {}
-    /// An issue a push or a row opened (`issue/<id>`, parity audit #11):
-    /// the list opens far enough to show it, Home scrolls to it
-    /// (`onFocus`, with the row's scroll id) and it pulses once.
-    var focusIssue: HomeIssueFocus? = nil
-    private var focusIssueId: Int? { focusIssue?.id }
-    var onFocus: (Int) -> Void = { _ in }
 
-    /// Every open issue is on Home — the first four, then "+N more" in
-    /// place (the header counts N; only four used to render).
-    @State private var showAllIssues = false
-    @State private var openIssue: HomeDayViewModel.Issue?
-    @State private var pulsing: Int?
-    @State private var askingCover: HomeDayViewModel.CoverAsk?
+    @State private var openLine: HomeDayViewModel.BriefLine?
 
-    /// The scroll id HomeView's ScrollViewReader scrolls to.
+    /// The scroll id HomeView's ScrollViewReader scrolls to (an issue's row
+    /// in Needs you).
     static func issueAnchor(_ id: Int) -> String { "home-issue-\(id)" }
 
-    /// The lines this card draws: the web's rule, applied to the brief.
+    /// The lines this card draws: the web's rule, less the lines that act
+    /// (those are Needs you rows).
     private var lines: [HomeDayViewModel.BriefLine] {
-        var shown = shownKeys
-        if !viewModel.issues.isEmpty { shown.insert("issues") }
-        return HomeBriefFilter.visible(viewModel.lines, shown: shown)
+        HomeBriefFilter.split(viewModel.lines, shown: shownKeys, hasIssues: !viewModel.issues.isEmpty).read
     }
 
     var body: some View {
-        issueChrome(dayStack)
-    }
-
-    private var dayStack: some View {
         let lines = self.lines
-        return VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Today", title: weekday ?? Date.now.formatted(.dateTime.weekday(.wide)),
-                              trailing: dateLabel)
-            VStack(alignment: .leading, spacing: 0) {
-                if viewModel.isLoading && viewModel.lines.isEmpty {
-                    CavnarWorkingLine().padding(.vertical, 10)
-                } else if lines.isEmpty {
-                    Text("Your brief fills in as your numbers come in.")
-                        .font(.cavnarBody(HomeType.body)).foregroundStyle(Color.cavnarInk3)
-                        .padding(.vertical, 8)
-                } else {
-                    ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
-                        VStack(spacing: 0) {
-                            HStack(alignment: .top, spacing: 12) {
-                                Circle().fill(line.toneColor).frame(width: 10, height: 10).padding(.top, 7)
-                                VStack(alignment: .leading, spacing: 6) {
-                                    // The line itself at reading size, three
-                                    // lines then More (10/8/26). Its claim
-                                    // tag, the forecast's track record and
-                                    // the report's calls are the Daily
-                                    // report's and the web's; a phone brief
-                                    // is the sentence and what to do.
-                                    HomeClampedText(text: line.text, size: HomeType.line, color: .cavnarInk, lines: 3)
-                                    // The line's direct action first — send,
-                                    // open the order, answer the replies —
-                                    // and Ask as the secondary (web #46).
-                                    HStack(spacing: 16) {
-                                        if let act = line.action {
-                                            Button {
-                                                Haptic.light()
-                                                onOpenNav(act.nav)
-                                            } label: {
-                                                HStack(spacing: 4) {
-                                                    Text(act.label).font(.cavnarBody(HomeType.action, weight: 700))
-                                                        .lineLimit(1).minimumScaleFactor(0.85)
-                                                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
-                                                }
-                                                .foregroundStyle(Color.cavnarEmber2)
-                                                .frame(minHeight: 44)
-                                                .contentShape(Rectangle())
-                                            }
-                                            .buttonStyle(.plain)
-                                        }
-                                        if let ask = line.ask, !ask.isEmpty {
-                                            HomeAskLink(question: ask, label: "Ask")
-                                        }
-                                    }
-                                    // A brief line that stands for a
-                                    // recommendation is answered where it
-                                    // is read: Done / Not for us, never
-                                    // Track (the brief names no metric).
-                                    if let conflict = line.conflict {
-                                        RecConflictPanel(conflict: conflict, onSettled: {
-                                            Task { await viewModel.load() }
-                                        })
-                                    }
-                                    if let key = line.answerKey {
-                                        RecAnswerRow(key: key, surface: "home", module: line.answerModule,
-                                                     answers: [.completed, .notForUs],
-                                                     alsoKeys: line.recKeys ?? [])
-                                    }
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.vertical, 12)
-                            if index < lines.count - 1 { AccountRowDivider() }
-                        }
-                    }
-                }
+        if viewModel.isLoading && viewModel.lines.isEmpty {
+            CavnarWorkingLine().padding(.vertical, CavnarSpace.xs)
+        } else if viewModel.lines.isEmpty {
+            card {
+                Text("Your brief fills in as your numbers come in.")
+                    .cavnarText(.body)
+                    .padding(.vertical, CavnarSpace.xs)
             }
-            .cavnarCard(.ai)
-
-            // Open issues: the day's obligations, beside the day's read.
-            issuesCard
-        }
-        .task { await viewModel.load() }
-    }
-
-    /// The issue sheet, the cover confirm, the focus a push set and the
-    /// Undo window's end — apart from the day's stack so each type-checks
-    /// on its own.
-    private func issueChrome<Content: View>(_ content: Content) -> some View {
-        content
-            // Keyed on the request, not the id: the same issue pushed twice
-            // focuses twice, and nothing clears it mid-pulse.
-            .task(id: focusIssue) { await focus() }
-            .onDisappear { viewModel.keepPendingResolve() }
-            .sheet(item: $openIssue, onDismiss: { Task { await viewModel.load() } }) { issue in
-                HomeIssueSheet(issue: issue, viewModel: viewModel) { resolved in
-                    openIssue = nil
-                    viewModel.resolveWithUndo(resolved)
-                }
-            }
-            .confirmationDialog(askingCover.map { "Ask \($0.name) to cover?" } ?? "",
-                                isPresented: coverDialogShown,
-                                titleVisibility: .visible, presenting: askingCover) { ask in
-                Button("Ask \(HomeDayViewModel.firstName(ask.name))") {
-                    Task { await viewModel.askToCover(ask.issue, name: ask.name) }
-                }
-                Button("Not yet", role: .cancel) {}
-            } message: { ask in
-                Text(HomeDayViewModel.coverAskMessage(ask))
-            }
-    }
-
-    private var coverDialogShown: Binding<Bool> {
-        Binding(get: { askingCover != nil }, set: { if !$0 { askingCover = nil } })
-    }
-
-    /// The issues card: every open issue (the first four, then "+N more"
-    /// in place), each a swipe to Resolve with an Undo, a tap for the
-    /// issue's own sheet (Resolve, Hand it to…, Ask to cover).
-    private var issuesCard: some View {
-        let shown = viewModel.visibleIssues
-        let limit = showAllIssues ? shown.count : min(shown.count, HomeDayViewModel.issuesShown)
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("OPEN ISSUES").font(.cavnarBody(HomeType.meta, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarEmber2)
-                Spacer()
-                if !shown.isEmpty {
-                    Text("\(shown.count)").font(.cavnarNumber(HomeType.meta + 1, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-                }
-            }
-            .padding(.bottom, 6)
-            if let pending = viewModel.pendingResolve {
-                StaffUndoCapsule(text: "Resolved \u{2014} \(pending.title)") {
-                    viewModel.undoResolve()
-                }
-                .padding(.vertical, 6)
-            }
-            if let error = viewModel.issueError {
-                Text(error).font(.cavnarBody(HomeType.meta + 0.5, weight: 600)).foregroundStyle(Color.cavnarRed)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 4)
-            }
-            if shown.isEmpty && viewModel.pendingResolve == nil {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Color.cavnarGreen)
-                    Text("Nothing open.").font(.cavnarBody(HomeType.body)).foregroundStyle(Color.cavnarInk3)
-                }
-                .padding(.vertical, 6)
-            } else {
-                ForEach(Array(shown.prefix(limit).enumerated()), id: \.element.id) { index, issue in
-                    issueRow(issue, showsDivider: index < limit - 1)
-                        .id(Self.issueAnchor(issue.id))
-                }
-                if shown.count > HomeDayViewModel.issuesShown {
+        } else if !lines.isEmpty {
+            card {
+                ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
                     Button {
                         Haptic.light()
-                        withAnimation(.easeOut(duration: 0.2)) { showAllIssues.toggle() }
+                        openLine = line
                     } label: {
-                        Text(showAllIssues ? "Show fewer" : "+\(shown.count - HomeDayViewModel.issuesShown) more")
-                            .font(.cavnarBody(HomeType.action, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 44, alignment: .leading)
-                            .contentShape(Rectangle())
+                        HStack(alignment: .top, spacing: CavnarSpace.s) {
+                            Circle().fill(line.toneColor).frame(width: 10, height: 10).padding(.top, 7)
+                                .accessibilityHidden(true)
+                            CavnarMixedText(line.text, role: .body, color: .cavnarInk)
+                                .lineLimit(3)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: CavnarSpace.xs)
+                            Image(systemName: "chevron.right")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .padding(.top, 4)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(.vertical, CavnarSpace.s)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Opens the line: what to do, Ask, Done or Pass")
+                    if index < lines.count - 1 { AccountRowDivider() }
                 }
             }
-        }
-        .cavnarCard()
-    }
-
-    private func issueRow(_ issue: HomeDayViewModel.Issue, showsDivider: Bool) -> some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                Circle().fill(issue.tone).frame(width: 10, height: 10).padding(.top, 7)
-                VStack(alignment: .leading, spacing: 4) {
-                    HomeMixedText.make(issue.title, size: HomeType.body + 0.5, weight: 600, color: .cavnarInk)
-                        .lineLimit(3)
-                    Text(issue.statusLine)
-                        .font(.cavnarBody(HomeType.meta + 0.5)).foregroundStyle(Color.cavnarInk3)
-                    // A call-off of several people is one issue per role
-                    // (schedule audit 10/3/26 E-31): each gap with where it
-                    // stands, and one cover button per gap still open.
-                    if issue.isGroup {
-                        CoverageGapList(issue: issue) { name in
-                            askingCover = HomeDayViewModel.CoverAsk(issue: issue, name: name)
-                        }
-                    }
-                    // A coverage issue's suggested covers: asking one texts
-                    // (or emails) them, so it confirms first. The schedule
-                    // moves only when the manager decides who is on.
-                    let covers = issue.isGroup ? [] : issue.coversToAsk
-                    if !covers.isEmpty {
-                        HStack(spacing: 14) {
-                            ForEach(covers, id: \.self) { name in
-                                Button {
-                                    Haptic.light()
-                                    askingCover = HomeDayViewModel.CoverAsk(issue: issue, name: name)
-                                } label: {
-                                    Text("Ask \(HomeDayViewModel.firstName(name)) to cover")
-                                        .font(.cavnarBody(15, weight: 700))
-                                        .foregroundStyle(Color.cavnarEmber2)
-                                        .frame(minHeight: 44)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-                    if let note = viewModel.coverNote[issue.id] {
-                        Text(note).font(.cavnarBody(HomeType.meta + 0.5, weight: 600)).foregroundStyle(Color.cavnarGreen)
-                    }
-                    // Whoever was asked: "Did Zed take it?" — the manager's
-                    // word counts on their record of covers (memory round).
-                    ForEach(issue.askedNames, id: \.self) { name in
-                        CoverAnswerRow(issueId: issue.id, name: name)
-                    }
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .padding(.top, 6)
-            }
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                Haptic.light()
-                openIssue = issue
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityHint("Opens the issue: resolve it, hand it to someone, or ask someone to cover")
-            if showsDivider { AccountRowDivider() }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.cavnarEmber.opacity(pulsing == issue.id ? 0.16 : 0))
-                .padding(.horizontal, -8)
-        )
-        .homeSwipeAction(issue.status == "resolved" ? nil : HomeSwipeAction(
-            label: "Resolve", systemImage: "checkmark", tint: .cavnarGreen) {
-                viewModel.resolveWithUndo(issue)
-            })
-        .contextMenu {
-            Button { openIssue = issue } label: { Label("Open the issue", systemImage: "arrow.up.right") }
-            if issue.status != "resolved" {
-                Button { viewModel.resolveWithUndo(issue) } label: { Label("Resolve", systemImage: "checkmark") }
-            }
-            ForEach(issue.isGroup ? issue.groupCoverNames : issue.coversToAsk, id: \.self) { name in
-                Button { askingCover = HomeDayViewModel.CoverAsk(issue: issue, name: name) } label: {
-                    Label("Ask \(HomeDayViewModel.firstName(name)) to cover", systemImage: "person.badge.plus")
-                }
+            .sheet(item: $openLine) { line in
+                HomeBriefLineSheet(line: line, day: viewModel, onOpenNav: { nav in
+                    openLine = nil
+                    onOpenNav(nav)
+                })
             }
         }
     }
 
-    /// A push or a row named an issue: open the list far enough, scroll to
-    /// it, pulse it once. An issue not on the list (resolved since the push
-    /// went out) says so instead of opening nothing.
-    private func focus() async {
-        guard let id = focusIssueId else { return }
-        if !viewModel.issues.contains(where: { $0.id == id }) { await viewModel.load() }
-        guard let index = viewModel.visibleIssues.firstIndex(where: { $0.id == id }) else {
-            viewModel.issueError = "That issue isn\u{2019}t open any more."
-            onFocus(id)
-            return
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            Text("Today\u{2019}s brief")
+                .cavnarText(.headline)
+                .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 0) {
+                content()
+            }
+            .cavnarCard(.ai)
         }
-        if index >= HomeDayViewModel.issuesShown { showAllIssues = true }
-        try? await Task.sleep(for: .milliseconds(150))
-        onFocus(id)
-        try? await Task.sleep(for: .milliseconds(450))
-        withAnimation(.easeInOut(duration: 0.35)) { pulsing = id }
-        try? await Task.sleep(for: .seconds(1.4))
-        withAnimation(.easeOut(duration: 0.6)) { pulsing = nil }
+    }
+}
+
+/// One brief line, opened: the sentence, its own action as the one
+/// primary, tonight's forecast (the report's calls and how often its range
+/// held here, on the line built from last night's report), the forecast's
+/// record, advice it pulls against, Done / Pass, and Ask.
+struct HomeBriefLineSheet: View {
+    let line: HomeDayViewModel.BriefLine
+    let day: HomeDayViewModel
+    var onOpenNav: (String) -> Void = { _ in }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    CavnarMixedText(line.text, role: .lead)
+                    if let act = line.action {
+                        Button {
+                            Haptic.medium()
+                            onOpenNav(act.nav)
+                        } label: {
+                            Text(act.label).frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle())
+                    }
+                    if !line.reportCalls.isEmpty {
+                        HomeReportCalls(calls: line.reportCalls, confidencePct: line.confidencePct)
+                    }
+                    // How today's kind of forecast has held up here (K8).
+                    if line.key == "today", let record = day.demandAccuracy?.sentence {
+                        CavnarMixedText(record + ".", role: .secondary)
+                    }
+                    // Advice this line pulls against, for the owner to settle.
+                    if let conflict = line.conflict {
+                        RecConflictPanel(conflict: conflict, onSettled: { Task { await day.load() } })
+                    }
+                    // A line that stands for a recommendation is answered
+                    // here: Done / Pass, never Track (the brief names no metric).
+                    if let key = line.answerKey {
+                        RecAnswerRow(key: key, surface: "home", module: line.answerModule,
+                                     answers: [.completed, .notForUs],
+                                     alsoKeys: line.recKeys ?? [])
+                    }
+                    if let ask = line.ask, !ask.isEmpty {
+                        HomeAskLink(question: ask, label: "Ask Cavnar AI")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(CavnarSpace.gutter)
+            }
+            .background(Color.cavnarPaper.ignoresSafeArea())
+            .accountSheetChrome("Today\u{2019}s brief")
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -798,29 +626,35 @@ final class HomeDayViewModel {
     }
 }
 
-/// The close-out card, on its own so HomeView can put it in the day's slot
-/// after 8pm and HomeFollowThrough can keep it at the bottom before then.
+/// The close-out card: after 8pm it takes the day's slot on Home, under
+/// the hero; before then it waits in Home's More group.
 struct HomeCloseOutCard: View {
     let viewModel: HomeFollowThroughViewModel
     @State private var showingCloseOut = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "End of the night", title: "Close-out",
-                              trailing: viewModel.closeOut == nil ? nil : "filed")
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Close-out")
+                    .cavnarText(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: CavnarSpace.xs)
+                if viewModel.closeOut != nil {
+                    Text("Filed").cavnarText(.secondary, color: .cavnarGreen)
+                }
+            }
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                // The sheet opens on exactly four fields (#97).
                 Text(viewModel.closeOut == nil
-                     ? "A few lines from whoever closes lead tomorrow's brief."
+                     ? "Four lines from whoever closes lead tomorrow\u{2019}s brief."
                      : filedSummary)
-                    .font(.cavnarBody(HomeType.body))
-                    .foregroundStyle(Color.cavnarInk2)
+                    .cavnarText(.body)
                     .lineLimit(viewModel.closeOut == nil ? nil : 4)
                     .fixedSize(horizontal: false, vertical: true)
                 // How tonight felt to the staff who answered the post-shift
                 // pulse — context for the closer, never saved (parity #67).
                 if let pulse = viewModel.closeOutStaffPulse, !pulse.line.isEmpty {
-                    HomeMixedText.make(pulse.line, size: HomeType.body, weight: 600, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(pulse.line, role: .body)
                 }
                 Button {
                     Haptic.light()
@@ -829,7 +663,7 @@ struct HomeCloseOutCard: View {
                     Text(viewModel.closeOut == nil ? "Hand off the night" : "Update the handoff")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(CavnarSecondaryButtonStyle())
+                .buttonStyle(CavnarPrimaryButtonStyle())
             }
             .cavnarCard()
         }
@@ -883,6 +717,18 @@ enum HomeBriefFilter {
         return s
     }
 
+    /// The brief as Home draws it (iOS readability round, 10/8/26): the
+    /// lines that carry their own action are rows in Needs you (`act`); the
+    /// rest are the brief's reads (`read`). Open issues on the page count
+    /// as said (the issues line leaves).
+    static func split(_ lines: [HomeDayViewModel.BriefLine], shown: Set<String>,
+                      hasIssues: Bool) -> (read: [HomeDayViewModel.BriefLine], act: [HomeDayViewModel.BriefLine]) {
+        var said = shown
+        if hasIssues { said.insert("issues") }
+        let all = visible(lines, shown: said)
+        return (all.filter { $0.action == nil }, all.filter { $0.action != nil })
+    }
+
     static func visible(_ lines: [HomeDayViewModel.BriefLine], shown: Set<String>) -> [HomeDayViewModel.BriefLine] {
         // An all-clear alone is not a brief.
         if lines.count == 1, lines[0].key == "all_clear" { return [] }
@@ -900,40 +746,43 @@ enum HomeBriefFilter {
     }
 }
 
-/// "THE REPORT'S CALLS" — what last night's report said today would bring,
-/// each graded against the night tomorrow (dsr/predictions.py), under the
-/// brief's "today" line, with the share of nights its forecast range has
-/// held here as a small meter. Numbers in the number face; the kicker
-/// orange, as every kicker.
+/// "Tonight's forecast · usually right 7 in 10" — what last night's report
+/// said today would bring, each graded against the night tomorrow
+/// (dsr/predictions.py), in the brief line's sheet. "N in 10" is the same
+/// measured share of nights its forecast range has held here
+/// (`confidence_pct`), said the way an owner says it.
 struct HomeReportCalls: View {
     let calls: [String]
     var confidencePct: Int? = nil
 
+    /// 0–100 → "N in 10", rounded; the measured share, never a tone word.
+    static func inTen(_ pct: Int) -> Int { Int((Double(max(0, min(pct, 100))) / 10).rounded()) }
+
+    static func title(confidencePct: Int?) -> String {
+        guard let pct = confidencePct else { return "Tonight\u{2019}s forecast" }
+        return "Tonight\u{2019}s forecast \u{00B7} usually right \(inTen(pct)) in 10"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .center, spacing: 8) {
-                Text("THE REPORT\u{2019}S CALLS")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .center, spacing: CavnarSpace.xs) {
+                CavnarMixedText(Self.title(confidencePct: confidencePct), role: .label)
                 if let pct = confidencePct {
                     ConfidenceMeter(fraction: Double(pct) / 100, tone: pct >= 75 ? .good : (pct >= 50 ? .neutral : .warn))
-                    HomeMixedText.make("range held \(pct)%", size: CavnarType.caption, weight: 600,
-                                       color: .cavnarInk3)
+                        .accessibilityHidden(true)
                 }
             }
             ForEach(Array(calls.prefix(4).enumerated()), id: \.offset) { _, call in
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Circle().fill(Color.cavnarEmber2.opacity(0.8)).frame(width: 4, height: 4)
-                        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 3 }
-                    HomeMixedText.make(call, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    Circle().fill(Color.cavnarEmber2).frame(width: 5, height: 5)
+                        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 4 }
+                    CavnarMixedText(call, role: .body)
                 }
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("The report's calls for today: " + calls.joined(separator: ". ")
-                            + (confidencePct.map { ". Its forecast range has held \($0) percent of the time." } ?? ""))
+        .accessibilityLabel("Tonight's forecast: " + calls.joined(separator: ". ")
+                            + (confidencePct.map { ". Usually right \(Self.inTen($0)) nights in 10." } ?? ""))
     }
 }
 
@@ -956,8 +805,7 @@ struct CoverageGapList: View {
                             .fill(gap.isOpen ? Color.cavnarRed : (gap.status == "covered" ? Color.cavnarGreen : Color.cavnarInk3))
                             .frame(width: 5, height: 5)
                             .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 3 }
-                        HomeMixedText.make(gap.line, size: 13, weight: 500, color: gap.isOpen ? .cavnarInk2 : .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(gap.line, role: .secondary, color: gap.isOpen ? .cavnarInk2 : .cavnarInk3)
                     }
                     if let cover = issue.cover(for: gap), let name = cover.name {
                         Button {
@@ -965,16 +813,15 @@ struct CoverageGapList: View {
                             onAsk(name)
                         } label: {
                             Text(Self.askLabel(cover: name, kind: cover.kind, gap: gap))
-                                .font(.cavnarBody(12.5, weight: 700))
-                                .foregroundStyle(Color.cavnarEmber2)
+                                .cavnarText(.label, color: .cavnarEmber2)
                                 .multilineTextAlignment(.leading)
-                                .frame(minHeight: 32, alignment: .leading)
+                                .frame(minHeight: 44, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .padding(.leading, 11)
                         if let how = cover.how, !how.isEmpty {
-                            HomeMixedText.make(how.prefix(1).uppercased() + how.dropFirst(), size: 12, color: .cavnarInk3)
+                            CavnarMixedText(how.prefix(1).uppercased() + how.dropFirst(), role: .caption)
                                 .padding(.leading, 11)
                         }
                     }

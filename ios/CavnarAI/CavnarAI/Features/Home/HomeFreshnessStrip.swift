@@ -45,7 +45,7 @@ struct HomeFreshnessStrip: View {
         VStack(alignment: .leading, spacing: 8) {
             if let kicker = Self.kicker(dataAsOf: dataAsOf, monitoring: monitoring, health: health) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    HomeMixedText.make(kicker, size: 11, weight: 700, color: .cavnarInk3, numberColor: .cavnarInk2)
+                    HomeMixedText.make(kicker, size: CavnarType.caption, weight: 700, color: .cavnarInk3, numberColor: .cavnarInk2)
                         .tracking(1.1)
                         .accessibilityLabel(kicker.lowercased())
                     if onOpen != nil {
@@ -58,7 +58,7 @@ struct HomeFreshnessStrip: View {
             }
             if entries.isEmpty && unavailable {
                 Text(Self.unavailableLine)
-                    .font(.cavnarBody(12.5, weight: 500))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
             if !entries.isEmpty {
@@ -115,10 +115,10 @@ struct HomeFreshnessStrip: View {
             }
             .frame(width: 7, height: 7)
             .accessibilityHidden(true)
-            (Text(e.name).font(.cavnarBody(12.5, weight: 700)).foregroundColor(.cavnarInk2)
-             + (e.caption.map { HomeMixedText.make(" " + $0, size: 12.5, weight: 500, color: .cavnarInk3) }
+            (Text(e.name).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundColor(.cavnarInk2)
+             + (e.caption.map { HomeMixedText.make(" " + $0, size: CavnarType.caption, weight: 500, color: .cavnarInk3) }
                 ?? Text(verbatim: ""))
-             + (e.pct.map { Text(" \($0)%").font(.cavnarNumber(12.5, weight: 600)).foregroundColor(tone == .cavnarInk3 ? .cavnarInk3 : .cavnarInk2) }
+             + (e.pct.map { Text(" \($0)%").font(.cavnarNumber(CavnarType.caption, weight: 600)).foregroundColor(tone == .cavnarInk3 ? .cavnarInk3 : .cavnarInk2) }
                 ?? Text(verbatim: "")))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)

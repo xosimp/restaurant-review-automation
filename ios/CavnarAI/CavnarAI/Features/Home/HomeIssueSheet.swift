@@ -39,7 +39,7 @@ struct HomeIssueSheet: View {
                     handSection
                     if let error {
                         Text(error)
-                            .font(.cavnarBody(14, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -100,15 +100,15 @@ struct HomeIssueSheet: View {
                 .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.4)
                 .foregroundStyle(Color.cavnarEmber2)
-            HomeMixedText.make(issue.title, size: 21, weight: 700, color: .cavnarInk)
+            HomeMixedText.make(issue.title, size: CavnarType.section, weight: 700, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Circle().fill(issue.tone).frame(width: 8, height: 8)
                 HomeMixedText.make(issue.statusLine + (issue.createdAt.map { " \u{00B7} filed \(CavnarDate.mdyLocal($0))" } ?? ""),
-                                   size: 13, weight: 600, color: .cavnarInk3)
+                                   size: CavnarType.caption, weight: 600, color: .cavnarInk3)
             }
             if let detail = issue.detail, !detail.isEmpty {
-                HomeMixedText.make(detail, size: 15, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make(detail, size: CavnarType.body, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 2)
             }
@@ -136,7 +136,7 @@ struct HomeIssueSheet: View {
                     } label: {
                         HStack {
                             Text("Ask \(HomeDayViewModel.firstName(name)) to cover")
-                                .font(.cavnarBody(15, weight: 600))
+                                .font(.cavnar(.label))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer()
                             Image(systemName: "paperplane")
@@ -165,7 +165,7 @@ struct HomeIssueSheet: View {
                 AccountSection(kicker: "Hand it to") {
                     if contacts.isEmpty {
                         Text("Nobody on your alert contacts has agreed to texts yet \u{2014} add someone in Account \u{2192} Notifications.")
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.vertical, 10)
@@ -177,12 +177,12 @@ struct HomeIssueSheet: View {
                         } label: {
                             HStack {
                                 Text(contact.name)
-                                    .font(.cavnarBody(15, weight: 600))
+                                    .font(.cavnar(.label))
                                     .foregroundStyle(Color.cavnarInk)
                                 Spacer()
                                 if contact.name == issue.assigneeName {
                                     Text("has it")
-                                        .font(.cavnarBody(12.5, weight: 600))
+                                        .font(.cavnarBody(CavnarType.caption, weight: 600))
                                         .foregroundStyle(Color.cavnarInk3)
                                 } else {
                                     Image(systemName: "arrow.right.circle")

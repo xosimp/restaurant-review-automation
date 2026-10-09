@@ -20,9 +20,9 @@ struct HomeWeeklyReceipts: View {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(Color.cavnarGreen)
-                            (HomeMixedText.make(receipt.emphasis, size: 13.5, weight: 700, color: .cavnarInk)
+                            (HomeMixedText.make(receipt.emphasis, size: CavnarType.caption, weight: 700, color: .cavnarInk)
                              + Text(verbatim: " ")
-                             + HomeMixedText.make(receipt.text, size: 13.5, weight: 600, color: .cavnarInk2))
+                             + HomeMixedText.make(receipt.text, size: CavnarType.caption, weight: 600, color: .cavnarInk2))
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }

@@ -44,11 +44,11 @@ struct LocationGroupHomeView: View {
                     CavnarSkeletonLines(widths: [0.5, 0.9, 0.75, 0.6], lineHeight: 14, spacing: 12)
                 } else {
                     Text(viewModel.errorMessage ?? "Couldn\u{2019}t load all locations.")
-                        .font(.cavnarBody(15))
+                        .font(.cavnar(.body))
                         .foregroundStyle(Color.cavnarInk2)
                 }
                 if let error = viewModel.errorMessage, viewModel.group != nil {
-                    Text(error).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnarBody(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarRed)
                 }
             }
             .padding(20)
@@ -70,12 +70,12 @@ struct LocationGroupHomeView: View {
                 .foregroundStyle(Color.cavnarEmber2)
             if let headline = g.headline {
                 Text(headline)
-                    .font(.cavnarHeadline(24))
+                    .font(.cavnar(.title))
                     .foregroundStyle(HomeView.briefToneColor(g.tone))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let line = g.portfolio?.line {
-                HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarInk2)
+                HomeMixedText.make(line, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                     .cavnarSensitive()
             }
@@ -92,13 +92,13 @@ struct LocationGroupHomeView: View {
                               trailing: all.isEmpty ? nil : "\(all.count)")
             VStack(alignment: .leading, spacing: 0) {
                 if let sentence = g.summaryLine {
-                    HomeMixedText.make(sentence, size: 13.5, weight: 600, color: .cavnarInk2)
+                    HomeMixedText.make(sentence, size: CavnarType.caption, weight: 600, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 8)
                 }
                 if all.isEmpty {
                     Text("Nothing needs you at any location.")
-                        .font(.cavnarBody(14, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarGreen)
                         .padding(.vertical, 6)
                 }
@@ -112,7 +112,7 @@ struct LocationGroupHomeView: View {
                         withAnimation(.easeOut(duration: 0.2)) { showAllAttention.toggle() }
                     } label: {
                         Text(showAllAttention ? "Show fewer" : "+\(all.count - Self.attentionShown) more")
-                            .font(.cavnarBody(13, weight: 700))
+                            .font(.cavnarBody(CavnarType.caption, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
@@ -133,15 +133,15 @@ struct LocationGroupHomeView: View {
             HStack(alignment: .top, spacing: 10) {
                 Circle().fill(LocationSwitcherView.healthColor(a.severity)).frame(width: 8, height: 8).padding(.top, 6)
                 VStack(alignment: .leading, spacing: 2) {
-                    HomeMixedText.make(a.text, size: 14.5, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(a.text, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if let loc = a.location {
-                        Text(loc).font(.cavnarBody(12.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                        Text(loc).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 Spacer(minLength: 8)
                 Text(a.actionLabel ?? "Open")
-                    .font(.cavnarBody(13, weight: 700))
+                    .font(.cavnarBody(CavnarType.caption, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
             }
             .padding(.vertical, 8)
@@ -166,12 +166,12 @@ struct LocationGroupHomeView: View {
                 HStack(alignment: .center, spacing: 8) {
                     Circle().fill(LocationSwitcherView.healthColor(loc.health)).frame(width: 9, height: 9)
                     Text(loc.name)
-                        .font(.cavnarHeadline(18))
+                        .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
                     if loc.active {
                         Text("viewing")
-                            .font(.cavnarBody(12, weight: 600))
+                            .font(.cavnarBody(CavnarType.caption, weight: 600))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     Spacer(minLength: 4)
@@ -185,7 +185,7 @@ struct LocationGroupHomeView: View {
                 }
                 if let first = loc.issues.first {
                     HomeMixedText.make(first.text + (loc.issues.count > 1 ? "  +\(loc.issues.count - 1)" : ""),
-                                       size: 13, weight: 600,
+                                       size: CavnarType.caption, weight: 600,
                                        color: LocationSwitcherView.healthColor(first.severity))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -198,9 +198,9 @@ struct LocationGroupHomeView: View {
                 }
                 HStack(spacing: 6) {
                     Text("Last active")
-                        .font(.cavnarBody(12, weight: 600))
+                        .font(.cavnarBody(CavnarType.caption, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
-                    HomeMixedText.make(LocationGroupFormat.lastActive(loc.lastActive), size: 12, weight: 600,
+                    HomeMixedText.make(LocationGroupFormat.lastActive(loc.lastActive), size: CavnarType.caption, weight: 600,
                                        color: .cavnarInk2)
                 }
             }
@@ -240,12 +240,12 @@ struct LocationGroupHomeView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             Text(value.figure)
-                .font(.cavnarNumber(19, weight: 700))
+                .font(.cavnarNumber(CavnarType.emphasis, weight: 700))
                 .foregroundStyle(value.figure == LocationGroupFormat.dash ? Color.cavnarInk3 : Color.cavnarInk)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             if let detail = value.detail {
-                HomeMixedText.make(detail, size: 12, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(detail, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .lineLimit(2)
             }
         }

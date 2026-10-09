@@ -17,44 +17,10 @@ struct LocationSwitcherView: View {
             List {
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.secondary, color: .cavnarRedText)
                 }
-                // All locations, compact (parity audit #8): the portfolio
-                // strip and what needs the owner across them. The full
-                // side-by-side table stays on the web's group Home.
-                if let g = viewModel.group {
-                    Section {
-                        // The whole group Home, card by card (parity #32).
-                        NavigationLink {
-                            LocationGroupHomeView(viewModel: viewModel, onSwitched: onSwitched,
-                                                  close: { dismiss() })
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "square.grid.2x2")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(Color.cavnarEmber2)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("All locations, side by side")
-                                        .font(.cavnarBody(15, weight: 700))
-                                        .foregroundStyle(Color.cavnarInk)
-                                    Text("Last night, labor, reviews, food cost")
-                                        .font(.cavnarBody(12.5, weight: 500))
-                                        .foregroundStyle(Color.cavnarInk3)
-                                }
-                            }
-                            .frame(minHeight: 44)
-                        }
-                        groupSummary(g)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-                    } header: {
-                        Text("ALL LOCATIONS")
-                            .font(.cavnarBody(13, weight: 700))
-                            .tracking(1.4)
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
-                }
+                // The locations first (iOS readability round, 10/8/26, #98):
+                // switching is what this sheet is for.
                 ForEach(viewModel.locations) { location in
                     Button {
                         Haptic.selection()
@@ -69,7 +35,7 @@ struct LocationSwitcherView: View {
                             }
                         }
                     } label: {
-                        HStack {
+                        HStack(spacing: CavnarSpace.s) {
                             // Status dot, the name, and — under it — how
                             // many things need the owner there and last
                             // night's net (the web switcher's row).
@@ -77,14 +43,14 @@ struct LocationSwitcherView: View {
                             if let signal {
                                 Circle()
                                     .fill(Self.healthColor(signal.health))
-                                    .frame(width: 8, height: 8)
+                                    .frame(width: 10, height: 10)
+                                    .accessibilityHidden(true)
                             }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(location.name)
-                                    .font(.cavnarBody(15))
-                                    .foregroundStyle(Color.cavnarInk)
+                                    .cavnarText(.label)
                                 if let detail = signal?.detail {
-                                    HomeMixedText.make(detail, size: 12.5, weight: 600, color: .cavnarInk3)
+                                    CavnarMixedText(detail, role: .secondary)
                                         .cavnarSensitive()
                                 }
                             }
@@ -93,34 +59,41 @@ struct LocationSwitcherView: View {
                                 ZStack {
                                     CavnarRippleBurst(fromDiameter: 18, toDiameter: 48, rings: 1, duration: 0.7)
                                     Image(systemName: "checkmark")
-                                        .font(.system(size: 15, weight: .semibold))
+                                        .font(.cavnar(.label))
                                         .foregroundStyle(Color.cavnarEmber)
                                         .transition(.scale(scale: 0.4).combined(with: .opacity))
                                 }
                                 .frame(width: 24, height: 24)
                             } else if location.active {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(.cavnar(.label))
                                     .foregroundStyle(Color.cavnarEmber)
                             }
                         }
+                        .frame(minHeight: 44)
                     }
                     .disabled(tappedName != nil)
                     .animation(.easeOut(duration: 0.25), value: tappedName)
                 }
-                // The group view on the phone: the owner's locations side by
-                // side on the Benchmark Engine's `location` kind (#19) —
-                // each against its own normal first, a gap only beyond noise.
-                if viewModel.locations.count > 1 {
+                // The whole group as ONE row: "All locations · 3 need you ›".
+                // The side-by-side cards, what needs the owner at each
+                // location and how the locations compare (with how the
+                // comparison is made) are on that screen, not here.
+                if let g = viewModel.group {
                     Section {
-                        LocationComparisonSection()
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                    } header: {
-                        Text("HOW YOUR LOCATIONS COMPARE")
-                            .font(.cavnarBody(13, weight: 700))
-                            .tracking(1.4)
-                            .foregroundStyle(Color.cavnarInk3)
+                        NavigationLink {
+                            LocationGroupHomeView(viewModel: viewModel, onSwitched: onSwitched,
+                                                  close: { dismiss() })
+                        } label: {
+                            HStack(spacing: CavnarSpace.s) {
+                                Image(systemName: "square.grid.2x2")
+                                    .font(.cavnar(.body))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                                    .accessibilityHidden(true)
+                                CavnarMixedText(Self.groupRowTitle(g), role: .label, color: .cavnarInk)
+                            }
+                            .frame(minHeight: 44)
+                        }
                     }
                 }
             }
@@ -157,70 +130,9 @@ struct LocationSwitcherView: View {
         }
     }
 
-    /// The group in a few lines: its headline, the portfolio strip, the one
-    /// sentence naming who needs a look, and the attention across locations
-    /// — each row opens its item at that location (switching there first).
-    private func groupSummary(_ g: LocationGroupBrief) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let headline = g.headline {
-                Text(headline)
-                    .font(.cavnarHeadline(18))
-                    .foregroundStyle(HomeView.briefToneColor(g.tone))
-            }
-            if let line = g.portfolio?.line {
-                HomeMixedText.make(line, size: 13, weight: 600, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .cavnarSensitive()
-            }
-            if let sentence = g.summaryLine {
-                HomeMixedText.make(sentence, size: 13, weight: 500, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            ForEach(g.attention.prefix(5)) { a in
-                Button {
-                    Haptic.light()
-                    guard let rid = a.restaurantId, let nav = NavPath(a.nav ?? "home") else { return }
-                    dismiss()
-                    router.open(nav, restaurantId: rid)
-                } label: {
-                    HStack(alignment: .top, spacing: 10) {
-                        Circle().fill(Self.healthColor(a.severity)).frame(width: 7, height: 7).padding(.top, 6)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HomeMixedText.make(a.text, size: 14, weight: 600, color: .cavnarInk)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if let loc = a.location {
-                                Text(loc).font(.cavnarBody(12.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
-                            }
-                        }
-                        Spacer(minLength: 8)
-                        Text(a.actionLabel ?? "Open")
-                            .font(.cavnarBody(13, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                    }
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            // The rest are on the all-locations screen, every one of them.
-            if g.attention.count > 5 {
-                NavigationLink {
-                    LocationGroupHomeView(viewModel: viewModel, onSwitched: onSwitched, close: { dismiss() })
-                } label: {
-                    Text("+\(g.attention.count - 5) more")
-                        .font(.cavnarBody(13, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .frame(minHeight: 44, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-            }
-            if g.attention.isEmpty {
-                Text("Nothing needs you at any location.")
-                    .font(.cavnarBody(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarGreen)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard()
+    /// "All locations · 3 need you" — or "All locations · nothing needs you".
+    static func groupRowTitle(_ g: LocationGroupBrief) -> String {
+        let n = g.attention.count
+        return "All locations \u{00B7} " + (n == 0 ? "nothing needs you" : "\(n) need\(n == 1 ? "s" : "") you")
     }
 }

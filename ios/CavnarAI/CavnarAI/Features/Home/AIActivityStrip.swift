@@ -111,7 +111,7 @@ struct AIActivityStrip: View {
             } label: {
                 HStack(spacing: 9) {
                     BreathingDot(color: .cavnarEmber, paused: paused || reduceMotion)
-                    HomeMixedText.make(line, size: 13, weight: 600, color: .cavnarInk2)
+                    HomeMixedText.make(line, size: CavnarType.caption, weight: 600, color: .cavnarInk2)
                         .lineLimit(1)
                         .id(line)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -181,9 +181,9 @@ struct AIActivityFeedSheet: View {
                                     HStack(alignment: .top, spacing: 10) {
                                         BreathingDot(color: .cavnarEmber).padding(.top, 2)
                                         VStack(alignment: .leading, spacing: 2) {
-                                            HomeMixedText.make(item.text, size: 14.5, weight: 600, color: .cavnarInk)
+                                            HomeMixedText.make(item.text, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                                             if let at = item.executeAt, let when = Self.clock(at) {
-                                                Text("at \(when)").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                                                Text("at \(when)").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                                             }
                                         }
                                         Spacer(minLength: 0)
@@ -191,17 +191,17 @@ struct AIActivityFeedSheet: View {
                                             Haptic.light()
                                             Task { if let err = await viewModel.cancel(item) { undoError = err } else { Haptic.success() } }
                                         } label: {
-                                            Text("Undo").font(.cavnarBody(13, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                                            Text("Undo").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
                                         }
                                         .buttonStyle(.plain)
                                     }
                                     .padding(.vertical, 8)
                                 }
                                 if let undoError {
-                                    Text(undoError).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                                    Text(undoError).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
                                 }
                                 if let note = viewModel.undoneNote {
-                                    Text(note).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                                    Text(note).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarGreen)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
@@ -222,12 +222,12 @@ struct AIActivityFeedSheet: View {
                             }
                         }
                         Text("Every line is something that actually ran, with its time. Nothing here is generated to fill space.")
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text("Nothing to show yet. Once data is flowing, everything Cavnar AI does for this restaurant is listed here as it happens.")
-                            .font(.cavnarBody(15))
+                            .font(.cavnar(.body))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }
@@ -238,7 +238,7 @@ struct AIActivityFeedSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.font(.cavnarBody(15, weight: 600))
+                    Button("Done") { dismiss() }.font(.cavnar(.label))
                 }
             }
             .task { await viewModel.load(force: true) }
@@ -266,9 +266,9 @@ struct AIActivityFeedSheet: View {
                 Circle().fill(tone).frame(width: 7, height: 7).padding(.top, 6).padding(.horizontal, 4)
             }
             VStack(alignment: .leading, spacing: 2) {
-                HomeMixedText.make(text, size: 14.5, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make(text, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                 if let ago {
-                    Text(ago).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                    Text(ago).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                 }
             }
             Spacer(minLength: 0)
@@ -293,5 +293,97 @@ struct AIActivityFeedSheet: View {
         if h < 24 { return h == 1 ? "1 hour ago" : "\(h) hours ago" }
         let d = h / 24
         return d == 1 ? "1 day ago" : "\(d) days ago"
+    }
+}
+
+/// "Text to 212 guests · at 4:30pm  [Undo]" — something Cavnar AI is about to
+/// send on its own (the undo window, delayed.py), as an amber banner at the
+/// top of Home (iOS readability round, 10/8/26, #40). Only while something
+/// is queued; nothing has gone out, and Undo is a status change. The
+/// ambient "Right now" ticker lives in Notifications now.
+struct HomeQueuedBanner: View {
+    let viewModel: AIActivityViewModel
+    @State private var error: String?
+    @State private var busy = false
+    @State private var showingFeed = false
+
+    /// The sentence, with when it goes out.
+    static func line(_ q: AIActivity.Queued) -> String {
+        guard let at = q.executeAt, let when = AIActivityFeedSheet.clock(at) else { return q.text }
+        return q.text + " \u{00B7} goes out at " + when
+    }
+
+    var body: some View {
+        if let queued = viewModel.activity?.queued, let q = queued.first {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                HStack(alignment: .center, spacing: CavnarSpace.s) {
+                    Image(systemName: "paperplane.fill")
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .accessibilityHidden(true)
+                    CavnarMixedText(Self.line(q), role: .label)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        Haptic.medium()
+                        busy = true
+                        Task {
+                            if let err = await viewModel.cancel(q) {
+                                error = err
+                                busy = false
+                            } else {
+                                error = nil
+                                busy = false
+                                Haptic.success()
+                                // The server's sentence for what the undo did
+                                // stays a few seconds, then the slot closes.
+                                try? await Task.sleep(for: .seconds(6))
+                                viewModel.undoneNote = nil
+                            }
+                        }
+                    } label: {
+                        Group {
+                            if busy {
+                                CavnarShimmerText(text: "Undo", color: Color.cavnarEmber2)
+                            } else {
+                                Text("Undo").cavnarText(.label, color: .cavnarEmber2)
+                            }
+                        }
+                        .padding(.horizontal, CavnarSpace.s)
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(busy)
+                    .accessibilityLabel("Undo: \(q.text)")
+                }
+                if queued.count > 1 {
+                    Button {
+                        Haptic.light()
+                        showingFeed = true
+                    } label: {
+                        Text("+\(queued.count - 1) more going out")
+                            .cavnarText(.secondary, color: .cavnarEmber2)
+                            .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                }
+                if let error {
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, CavnarSpace.m)
+            .padding(.vertical, CavnarSpace.xs)
+            .background(Color.cavnarAmberBg, in: RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                .strokeBorder(Color.cavnarAmber.opacity(0.6), lineWidth: 1))
+            .sheet(isPresented: $showingFeed) {
+                AIActivityFeedSheet(viewModel: viewModel)
+            }
+            .undoWhyDialog(Binding(get: { viewModel.askWhy }, set: { viewModel.askWhy = $0 }))
+        } else if let note = viewModel.undoneNote {
+            // What the undo did, once, after the banner leaves.
+            Text(note).cavnarText(.secondary, color: .cavnarGreen)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

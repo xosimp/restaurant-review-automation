@@ -30,7 +30,7 @@ struct HomeSectionHeader: View {
             }
             Spacer(minLength: 12)
             if let trailing {
-                HomeMixedText.make(trailing, size: 12, weight: 700, color: .cavnarInk3)
+                HomeMixedText.make(trailing, size: CavnarType.caption, weight: 700, color: .cavnarInk3)
             }
         }
     }

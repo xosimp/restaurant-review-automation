@@ -849,7 +849,8 @@ lands and is *revealed*, not typed, so nothing is pretended.
 
 **The AI activity strip and feed** (`activity.py`, `/api/activity`): a
 low-profile pill in the bottom-left (`.cbtn.ai-strip` web; `AIActivityStrip`
-under the pulse strip on iOS) with one breathing ember dot and a rotating
+at the top of Notifications on iOS since 10/8/26 — Home shows only
+`HomeQueuedBanner`, the amber "about to go out · Undo" banner) with one breathing ember dot and a rotating
 sentence of what is armed right now, and a badge counting entries newer than
 the last look. Tap for the feed (`.ai-feed` / `AIActivityFeedSheet`): *Right
 now* (ember, breathing), *Recently* (green, timestamped), *Still holding*
@@ -1127,7 +1128,41 @@ the 300-second drill-down.
    changes, last month. The Recommendations page (`#recs`) is reached from
    both.
 
-**iOS, the same order (parity round, 9/25/26).** The hero adds the web's
+**iOS, from 10/8/26: decide, then more (readability round).** "Web
+explains. iPhone decides." The phone no longer mirrors the web's order
+block for block; it reads top to bottom as: the hero (date kicker, the
+brief's headline at Title, one Ink2 overnight line — "Overnight: 3 replies
+drafted · 2 flagged", no restaurant prefix) → `HomeQueuedBanner` (amber,
+only while something is about to go out on its own, with Undo; the
+rotating "Right now" ticker lives in Notifications) → the night's own card
+(`HomeLastNightCard` before noon local, `HomeCloseOutCard` after 8pm) →
+`HomeKPIRow` (three fixed tiles: net last night — or replies when the
+report card is right above — labor %, rating; data health as a dot and
+words, "All data current" / "1 source stale", never "Data 87%") → Find or
+ask (the command sheet) → Today's focus (`HomeOneThingCard` on
+`CavnarAnswerCard`: headline, one why, the top cause, ONE "Could also be"
+line, one $ figure with its basis, the confidence %, one full-width
+primary; proof, To confirm, conflicts and Done / Pass behind "See the
+evidence") → **Needs you (N)** (`HomeNeedsYou`, ONE ranked list replacing
+Needs attention, the quick chips, the brief's action lines, Open issues,
+Still open, check-ins, comps/voids flags and proposed/missed goals: each
+row a dot, title, one line of why, ONE 44pt primary, a "…" menu with Not
+today / Hide / Ask and the row's other answers, a swipe for the safe
+second action; as many rows as the server records as shown — four, the
+focus card counting as one — then "+N more" in place; every action keeps
+its own endpoint and record) → the brief's reads (`HomeDayCard`: text +
+chevron, a tap opens `HomeBriefLineSheet` with the line's action,
+"Tonight's forecast · usually right N in 10", Ask, Done / Pass) →
+Restaurant DNA → **More** (`HomeMoreDisclosure`, closed, the measured
+figure on its row: the recommendations, "Recommendation history" — where
+"Keep suggesting these?" and the quieter kinds now live — then Results
+with How you compare inside it, the signals, the receipts off Monday,
+what your changes did, and the close-out before 8pm). No quick-action
+chips, kind holds, activity ticker or 120pt FAB spacer on Home; the Home
+tab's badge scrolls to Needs you.
+
+**iOS, the same order (parity round, 9/25/26 — superseded on the phone by
+the paragraph above).** The hero adds the web's
 "Since your last visit: …" line (`HomeChanges.line`, the first three changes)
 and the quick-action row under the pulse chips (`HomeQuickAction.unsaid`:
 secondary capsules, never an action a Needs-attention row carries, never Ask
@@ -1415,7 +1450,7 @@ remembered on that device; Account → Security can always add one.
 | Claim tag (iOS) | `ClaimKindTag` — the web `.ck-tag`: tiny uppercase ink3 on a Paper3 capsule, "AI-written" / "Measured" / "Computed" / "Forecast" / "Inferred"; also "Checked" / "Unchecked" on a scanned invoice line (`verified`) |
 | Counts-only Food Cost (iOS) | `FoodCostCountsOnlyView` — for a tile with `mode: "counts"` (or a 403 `module_forbidden` on the analytics): kicker "FOOD COST · STOCK", "Counts & deliveries", the status line (last counted · deliveries to receive), Count (primary) and Log waste (secondary), then `DeliveriesSection` with no cost anywhere. The web's counts-only panel |
 | Log waste (iOS) | `WasteLogForm` — kicker "LOG WASTE", an ingredient menu picker, a quantity field and a reason picker (the web's six reasons), one secondary "Log it"; the result in green under it. On the count sheet under the count, and alone as `WasteLogSheet` ("inventory/waste") |
-| The one thing | `HomeOneThingCard` — `.cavnarCard(.hero)`: module names joined by `EmberThread` (two or more only), the action at 18, why, "To confirm:", up to three evidence lines, its `ClaimKindTag` and `ConfidenceLine`, $/month in the number face with what it covers under it (`dollars_basis`; a `money {low, high, label}` range stays a range), "Could also be…" (an alert; records `evidence_viewed`), an Ask link, and its `RecAnswerRow`. After Needs attention, before the recommendations (§11b) |
+| The one thing | `HomeOneThingCard` — "Today's focus" on `CavnarAnswerCard` (surface `.hero`, 10/8/26): the headline at Lead, one sentence of why, the top cause ("Hypothesis ·" in amber when the claim is inferred), "Could also be: …" as ONE visible line, the one $ figure with what it covers under it (`dollars_basis`; a `money {low, high, label}` range stays a range), the confidence % (`ConfidenceLine`, compact), and ONE full-width primary (the attention item's CTA, Measure it, or Walk me through it). Behind "See the evidence": the modules joined by `EmberThread` (two or more only), what kind of claim it is in words, the rest of the evidence, "To confirm:", the figure's note, the conflict panel and its `RecAnswerRow` (opening it records `evidence_viewed`). No claim-kind capsule on the card. After the night's card, before Needs you (§11b) |
 | Home on a phone (iOS, 10/8/26) | `HomeCardKit` (`Features/Home/HomeCardKit.swift`): owners read Home in a dim room, often with older eyes, so a Home card shows its headline (`HomeType.title` 19–20), ONE supporting line (`HomeType.body` 16, `HomeClampedText`: three lines, then **More**), its figure with what the figure covers (`HomeType.meta` 14 — the floor for any text on a Home card), and 44pt actions; everything else — how sure (`ConfidenceLine`), the claim tag, evidence, to confirm, the figure's note, could also be — sits behind **Details** (`HomeDetailsToggle`) on the same card. Text actions use `HomeTextButtonStyle` (44pt). Exception kept on purpose: the comps/voids card shows "Could also be" beside every flag, never behind Details, because it names a person. The Today brief shows each line and its actions only (its claim tag, the forecast's track record and the report's calls live on the Daily report). Labor-by-day bars on Home are red over target, green at or under (web parity). |
 | Labor diagnosis | `LaborDiagnosisCard` — `.cavnarCard(.ai)`: "WHY LABOR RAN OVER", the `ConfidenceLine`, summary, most likely cause, it could also be, "Check this" (the action) with its `RecAnswerRow`, cross-checked against. Nothing when there is no cause |
 | Evidence viewed | `RecEvidenceLog.viewed(key:surface:module:)` — call when the owner opens a keyed recommendation's reasoning ("Could also be…", "Why this matters"); once per key per launch, fire and forget |
@@ -1423,7 +1458,7 @@ remembered on that device; Account → Security can always add one.
 | Switch with its record | `AccountSwitchRow(label:detail:isOn:busy:)` — the `detail` is the owner's own record behind the switch (Automation & trust) |
 | Score movement | `ScoreDeltaChip(delta:)` — "+3" green / "−2" red capsule in the number face (`ShiftQualityPanel.swift`) |
 | Decide-in-place row | `TimeOffSection` row: name + dates, Deny (secondary) / Approve (primary) side by side, status text once answered |
-| Needs attention (iOS) | `HomeActionDeck` — the lead `ActionDeckCard` (primary CTA, secondary link, ⋯ Not today / Hide) and every other item as an `ActionDeckRow` under it in one Paper2 card: title and detail on one line each, the CTA as an ember2 text button with a chevron, long-press for Not today / Hide. The lead plus three rows show (`shownByDefault = 4`, the server's `HOME_ATTENTION_SHOWN`); "+N more" (number face, 44pt) opens the rest in place. No swipe deck, no dots. Directly under the header strip (§11b). A card's tap follows its `nav` (the filter, section or item), never just the module |
+| Needs you (iOS) | `HomeNeedsYou` (10/8/26) — "Needs you (N)", ONE ranked list in one Paper2 card: attention items and cross-module links (server order), a high-severity issue, what is still open, the brief's action lines, other issues, proposed / missed goals, check-ins, comps/voids flags (the innocent explanation in full on the row), shortcuts. Each `HomeNeedsYouRow`: a status dot (red / amber, never ember), the title at Label, one Secondary line of why, ONE 44pt ember capsule primary, a 44pt "…" menu (Not today, Hide for two weeks, Ask Cavnar AI, the row's other answers) and a swipe for the safe second action (Not today, Resolve, Deny). As many rows as the server records as shown (`HomeActionDeck.shownByDefault = 4`, `HOME_ATTENTION_SHOWN`, the focus card counting as one), then `CavnarMoreToggle` in place. Every row keeps its source's endpoint: publish asks first, a resolve waits out its Undo, a Still-open step opens its confirm card, a goal confirms through /goals, a check-in opens `HomeCheckInSheet`. `HomeActionDeck` is no longer drawn |
 | Bell and location (iOS) | `CavnarBellButton` (`Core/AppChrome.swift`) — the one bell, on Home and every module screen's trailing toolbar, with **the web's badge rule** (`CavnarAlertBadge`): a red count pill in the number face ("9+" past nine) of the urgent rows nobody has handled (`/mobile/api/notifications/unread-count` → `urgent`), a 7pt Ink3 dot when something is unread but nothing is urgent, nothing otherwise — it was one ember dot for anything unread. The sheet opens at once on its skeleton. The Home tab's system `.badge` carries the **urgent** count (a system badge is red, so an unread-only count there would say "urgent" when the bell says a grey dot). `CavnarScreenTitle` (drawn by `cavnarTitleToolbar`) adds the location's name under a module screen's title — ember2, 11.5, a chevron-down — for an owner with more than one location; tapping it opens `LocationSwitcherView`. A switch resets the Modules stack and never replays the landing intro |
 | Queued send (iOS) | `PendingActionSheet` — medium detent, Account-kit chrome "Queued send": "GOING OUT ON ITS OWN" kicker, the action's label (Clash 20), "Goes out at 11:00am" on the restaurant's clock (M/D/YY when not today), Review (secondary → the schedule or order it sends) and Undo (primary, acts at once — it only changes a row nothing has run yet). Opened by an `action/<id>` nav path: the "goes out at" push, its notification row, a card |
 | Review queue (iOS) | `ReviewDetailView` pins Skip / Approve to the bottom (`.safeAreaInset`, Paper at 94% over a hairline). With another drafted reply after this one in the list's order the primary reads "Approve & next": a 0.45s check capsule (green check + "Posted to Google"), then the next reply in place; the full `CavnarPostedCheck` plays only on the last. The inbox opens on "To approve" when replies are waiting; a trailing swipe "Approve" (green) exists only for a reply that may go out unread (drafted, not flagged, not urgent — the bulk-publish bar) |

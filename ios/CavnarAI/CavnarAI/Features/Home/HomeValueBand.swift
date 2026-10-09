@@ -67,17 +67,9 @@ struct HomeValueBand: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                // The period comes from the payload's own `scope` (I7).
-                Text(isNet ? "MEASURED RESULTS \u{00B7} NET \(HomeValueBlock.periodCaption(scope: scope))"
-                           : "MEASURED RESULTS \u{00B7} \(HomeValueBlock.periodCaption(scope: scope))")
-                    .font(.cavnarBody(11.5, weight: 700))
-                    .tracking(1.6)
-                    .foregroundStyle(Color.cavnarEmber2)
-
                 if nothingMeasured {
                     Text("Nothing measured yet")
-                        .font(.cavnarNumber(30, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.figureM)
                         .cavnarSensitive()
                 } else {
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -99,6 +91,15 @@ struct HomeValueBand: View {
                 }
                 }
 
+                // What the figure is, in words — the kicker that sat over
+                // it repeated the Results title (10/8/26). The period comes
+                // from the payload's own `scope` (I7).
+                if !nothingMeasured {
+                    Text((isNet ? "Net measured, " : "Measured, ")
+                         + HomeValueBlock.periodCaption(scope: scope).lowercased())
+                        .cavnarText(.secondary)
+                }
+
                 deltaLine
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.trailing, 44)
@@ -114,10 +115,11 @@ struct HomeValueBand: View {
                     .foregroundStyle(Color.cavnarEmber)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Color.cavnarEmber.opacity(0.16)))
+                    .cavnarHitTarget()
             }
             .buttonStyle(.plain)
-            .padding(.trailing, 20)
-            .padding(.bottom, 18)
+            .padding(.trailing, 13)
+            .padding(.bottom, 11)
             .accessibilityLabel("Measured results over time")
         }
         .background(
@@ -135,30 +137,27 @@ struct HomeValueBand: View {
     @ViewBuilder
     private var deltaLine: some View {
         if isNet, let breakdown = headline?.breakdown {
-            HomeMixedText.make(breakdown, size: 13, weight: 600, color: .cavnarInk3, numberWeight: 700)
+            HomeMixedText.make(breakdown, role: .secondary)
         } else if let delta = monthDelta {
             (Text("+$")
-                .font(.cavnarNumber(13, weight: 700))
+                .font(.cavnar(.figureS))
              + Text(Self.digits(delta))
-                .font(.cavnarNumber(13, weight: 700))
+                .font(.cavnar(.figureS))
              + Text("/mo since the 1st")
-                .font(.cavnarBody(13, weight: 700)))
+                .font(.cavnar(.label)))
                 .foregroundStyle(Color.cavnarGreen)
             + Text(contributions.map { " \u{00B7} " + $0 } ?? "")
-                .font(.cavnarBody(13, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.secondary))
+                .foregroundStyle(Color.cavnarInk2)
         } else if let contributions {
             Text(contributions)
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
         } else if nothingMeasured {
             Text("Track a recommendation and its before-and-after result lands here")
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
         } else {
             Text("Grows as tracked changes are measured before and after")
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
         }
     }
 
