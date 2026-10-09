@@ -2031,8 +2031,11 @@ revealing the personality of the restaurant"). Data: `GET /api/dna` →
 `profile` + `story` (`intelligence/dna_story.py`). Web prefix `dn-`
 (`templates/dashboard.html`); iOS `Features/Home/HomeDNA.swift`.
 
-- **Where.** A Home card under Before service (`#hb-dna-card`,
-  `dnaHomeCard`): the mini shape, the first sentence of the read, the top
+- **Where.** On web Home, in the header under the pills, centred in the
+  space beside the greeting down to where the brief starts (`#hb-dna-card`
+  in `.hb-side`, owner 10/9/26; `hbDnaGap` matches the gap above it to the
+  brief's first margin so the room above and below is equal; under 1000px
+  it stacks under the pills). The card (`dnaHomeCard`): the mini shape, the first sentence of the read, the top
   four traits as chips, a measured/total ring and "Explore your DNA →". It
   opens the full page at **`/dna`**, over the dashboard with its own address
   (Back, Escape and the browser's Back close it; a direct `/dna` load opens

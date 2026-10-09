@@ -2962,6 +2962,24 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-top{display:flex;justify-content:space-between;gap:28px;align-items:flex-start;flex-wrap:wrap}
 .hb-top>div:first-child{flex:1 1 460px}
 .hb-top .hb-pulse{flex:0 1 auto}
+/* Home's header (owner, 10/9/26): the greeting on the left; on the right the
+   pills, then Restaurant DNA centred in the space left under them, down to
+   where the brief starts. The side column spans the greeting and the One tap
+   row, and the DNA slot adds no width of its own (width:0; min-width:100%),
+   so the pills alone set the column and the greeting keeps its room. */
+#hb-root>.hb-top{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"lead side" "quick side";column-gap:28px;align-items:stretch}
+#hb-root>.hb-top>div:first-child{grid-area:lead}
+#hb-root>.hb-top>.hb-quick{grid-area:quick;margin-top:16px;align-self:start}
+.hb-side{grid-area:side;display:flex;flex-direction:column;min-width:0}
+.hb-dna-slot{flex:1 1 auto;width:0;min-width:100%;display:flex;align-items:center;justify-content:center;padding-top:var(--hb-dna-gap,30px)}
+.hb-dna-slot:empty{display:none}
+.hb-dna-slot>*{width:100%}
+.hb-dna-slot .dn-home,.hb-dna-slot .hb-card{margin-top:0!important}
+@media (max-width:1000px){
+  #hb-root>.hb-top{grid-template-columns:minmax(0,1fr);grid-template-areas:"lead" "side" "quick"}
+  .hb-side .hb-pulse{justify-content:flex-start}
+  .hb-dna-slot{padding-top:22px}
+}
 /* pulse chips (iOS HomePulseStrip) */
 .hb-pulse{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;padding-top:6px}
 /* One tap: the server's quick actions, a row of buttons under the header. */
@@ -3933,7 +3951,12 @@ svg:hover .hb-xh{opacity:1}
       <div class="hb-status" id="hb-status" hidden></div>
       <div class="hb-sub" id="hb-sub" hidden></div>
     </div>
-    <div class="hb-pulse" id="hb-pulse"><div class="hb-skel" style="width:260px;height:34px;border-radius:999px"></div></div>
+    <!-- The pills, and Restaurant DNA centred in the space under them beside
+         the greeting (owner, 10/9/26: it filled a blank area there). -->
+    <div class="hb-side">
+      <div class="hb-pulse" id="hb-pulse"><div class="hb-skel" style="width:260px;height:34px;border-radius:999px"></div></div>
+      <section class="hb-dna-slot" id="hb-dna-card" aria-label="Restaurant DNA"></section>
+    </div>
     <!-- One tap (Friction audit #13): the server's quick_actions, ranked per
          restaurant (home_brief), each landing on its item via its nav. -->
     <div class="hb-quick" id="hb-quick" role="group" aria-label="One tap" hidden></div>
@@ -5813,9 +5836,8 @@ svg:hover .hb-xh{opacity:1}
     // Progressive: the day shimmers where it will land, instead of the page
     // jumping when its reads arrive.
     h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet hb-skel-stack" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%;height:11px;min-height:11px"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
-    // Restaurant DNA (owner, 10/8/26): its own card under Before service,
-    // opening the full page at /dna - it used to sit at the foot of Results.
-    h+='<section id="hb-dna-card" aria-label="Restaurant DNA"></section>';
+    // Restaurant DNA lives in the header now, under the pills (owner,
+    // 10/9/26); dnaHomeCard fills #hb-dna-card there after each render.
     h+=renderRecs(d,used&&used.rec?1:0);
     // No readiness pills under the recommendations (owner's call, 9/26/26):
     // readiness leads the page only for an account with nothing connected.
@@ -5832,10 +5854,22 @@ svg:hover .hb-xh{opacity:1}
     var rs=document.getElementById('hb-results');
     if(rs)rs.addEventListener('toggle',function(){try{localStorage.setItem('cavnar_hb_results',rs.open?'1':'0');}catch(e){}});
     if(window.dnaHomeCard)dnaHomeCard(document.getElementById('hb-dna-card'));
+    hbDnaGap();
     if(document.getElementById('hb-hero'))renderHero(d);
     if(window.cavBench)window.cavBench.strip(document.getElementById('hb-bench'));
     hbReveal();hbLiveStart();
     hbFollow();
+  }
+  // Restaurant DNA sits centred in the space under the pills (owner, 10/9/26).
+  // The space ends where the brief's first card starts, and that card's top
+  // margin varies with which card it is, so the gap above the DNA card is set
+  // to the same margin: equal room above and below, whatever leads the brief.
+  function hbDnaGap(){
+    var slot=document.getElementById('hb-dna-card'),fade=document.querySelector('#hb-body .hb-fade');
+    if(!slot||!fade)return;
+    var k,el,m=null;
+    for(k=0;k<fade.children.length;k++){el=fade.children[k];if(el.offsetHeight>0){m=parseFloat(window.getComputedStyle(el).marginTop);break;}}
+    if(m!==null&&m>=0&&m<=80)slot.style.setProperty('--hb-dna-gap',m+'px');
   }
   // ── follow-through: today's brief, open issues, goals, results ────────────
   // Four small reads, rendered together once all have answered. Each is
