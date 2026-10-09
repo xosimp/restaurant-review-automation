@@ -810,11 +810,27 @@ def _data_hygiene(conn, rid, f, today):
               "feature completeness × Data Health score")
 
 
+# What each weekly feature a dimension reads is, in the owner's words — the
+# basis line on the DNA page printed the raw key ("from this week's
+# avg_rating_30d feature", 10/9/26).
+FEATURE_BASIS = {
+    "avg_rating_30d": "average star rating over the last 30 days",
+    "avg_rating_delta": "average rating over the last 30 days against the 60 days before",
+    "food_cost_pct_28d": "food cost as a share of sales over the last 28 days",
+    "labor_hours_per_1k_28d": "labor hours per $1,000 of sales over the last 28 days",
+    "outcomes_improved_rate_90d": "share of measured changes that improved, last 90 days",
+    "reply_rate_30d": "share of reviews answered over the last 30 days",
+    "response_24h_rate_30d": "share of reviews answered within a day, last 30 days",
+    "labor_pct_28d": "labor cost as a share of sales over the last 28 days, on your pay rates",
+    "labor_pct_sd_28d": "day-to-day swing in labor % over the last 28 days, on your pay rates",
+}
+
+
 def _from_feature(f, key, dim, n=None):
     v = (f or {}).get(key)
     if v is None:
         return _need(0, "")
-    return _m(v, n, f"from this week's {key} feature")
+    return _m(v, n, FEATURE_BASIS.get(key) or "this week's reading")
 
 
 def _labor_cost(f, key, dim, restaurant):

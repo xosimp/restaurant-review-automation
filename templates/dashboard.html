@@ -3572,7 +3572,7 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-chips{display:flex;flex-wrap:wrap;gap:8px}
 .dn-chip{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:999px;font-size:13.5px;font-weight:600;border:1px solid var(--hb-line);color:var(--ink2);background:rgba(255,255,255,.03);white-space:nowrap}
 .dn-chip svg{width:14px;height:14px;flex:none}
-.dn-chip.t{border-color:rgba(212,88,58,.45);color:var(--ink);background:linear-gradient(180deg,rgba(212,88,58,.18),rgba(212,88,58,.06));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 22px -12px rgba(212,88,58,.7)}
+.dn-chip.t{border-color:rgba(212,88,58,.45);color:var(--ink);background:linear-gradient(180deg,rgba(212,88,58,.18),rgba(212,88,58,.06));box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
 .dn-chip.t svg{color:var(--ember2)}
 .dn-chip.watch{border-color:rgba(212,160,48,.45);background:rgba(212,160,48,.09);box-shadow:none}
 .dn-chip.watch svg{color:var(--amber)}
@@ -3620,11 +3620,8 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 /* traits */
 .dn-traits{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:28px}
 .dn-tr{position:relative;border-radius:24px;padding:22px 22px 18px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.015));border:1px solid var(--hb-line2);box-shadow:0 30px 70px -48px rgba(0,0,0,.95),inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden;transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s,opacity .7s cubic-bezier(.2,.8,.2,1)}
-.dn-tr::before{content:'';position:absolute;top:-90px;right:-70px;width:240px;height:240px;border-radius:50%;background:radial-gradient(closest-side,rgba(212,88,58,.2),transparent);pointer-events:none;transition:transform .5s}
-.dn-tr:hover{transform:translateY(-3px);border-color:rgba(212,88,58,.38);box-shadow:0 34px 80px -40px rgba(212,88,58,.38),inset 0 1px 0 rgba(255,255,255,.08)}
-.dn-tr:hover::before{transform:scale(1.15)}
-.dn-tr.watch::before{background:radial-gradient(closest-side,rgba(212,160,48,.18),transparent)}
-.dn-tr.watch:hover{border-color:rgba(212,160,48,.4);box-shadow:0 34px 80px -40px rgba(212,160,48,.3)}
+.dn-tr:hover{transform:translateY(-3px);border-color:rgba(212,88,58,.42);box-shadow:0 0 0 1px rgba(212,88,58,.14),0 0 34px rgba(212,88,58,.26),inset 0 1px 0 rgba(255,255,255,.08)}
+.dn-tr.watch:hover{border-color:rgba(212,160,48,.42);box-shadow:0 0 0 1px rgba(212,160,48,.14),0 0 34px rgba(212,160,48,.22),inset 0 1px 0 rgba(255,255,255,.08)}
 .dn-tr.big{grid-column:span 2}
 .dn-tr .top{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .dn-tr .ic{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;color:var(--ember2);background:rgba(212,88,58,.14);box-shadow:inset 0 0 0 1px rgba(212,88,58,.28),0 0 24px -6px rgba(212,88,58,.5)}
@@ -3656,7 +3653,10 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-ev .h{display:flex;justify-content:space-between;gap:10px;color:var(--ink);font-weight:600}
 .dn-ev .h b{font-family:'Space Grotesk',sans-serif}
 .dn-ev .m{font-size:12px;color:var(--ink3);margin-top:2px}
-.dn-ev svg{display:block;width:100%;height:34px;margin-top:6px;overflow:visible}
+.dn-sp{position:relative;display:block}
+.dn-sp svg{display:block;width:100%;height:100%;overflow:visible}
+.dn-sp i{position:absolute;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%}
+.dn-ev .dn-sp{height:34px;margin-top:6px}
 /* the small charts inside a trait */
 .dn-split{display:flex;height:34px;border-radius:10px;overflow:hidden;position:relative;background:rgba(255,255,255,.05)}
 .dn-split .a{background:rgba(255,255,255,.07);display:flex;align-items:center;padding:0 10px;font-size:12px;color:var(--ink2);white-space:nowrap;min-width:0;transition:flex-basis 1.2s cubic-bezier(.2,.8,.2,1)}
@@ -3686,12 +3686,12 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-chain:first-of-type{margin-top:28px}
 .dn-chain .t{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .dn-nodes{display:flex;align-items:stretch;margin-top:16px}
-.dn-node{flex:1 1 0;min-width:0;padding:16px 18px;border-radius:18px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:0 18px 40px -30px rgba(0,0,0,.9)}
+.dn-node{flex:1 1 0;min-width:0;padding:16px 18px;border-radius:18px;background:var(--surface);border:1px solid rgba(212,88,58,.4);box-shadow:0 0 18px -6px rgba(212,88,58,.28),0 18px 40px -30px rgba(0,0,0,.9)}
 .dn-node .l{font-size:13.5px;font-weight:600;color:var(--ink)}
 .dn-node b{display:block;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:28px;color:var(--ink);margin-top:6px;line-height:1.05}
 .dn-node b.none{color:var(--ink3);font-size:20px}
 .dn-node .nt{font-size:12px;color:var(--ink3);margin-top:3px}
-.dn-link{flex:0 0 54px;align-self:center;height:2px;position:relative;overflow:hidden;background:rgba(212,88,58,.25)}
+.dn-link{flex:0 0 54px;align-self:center;height:1px;position:relative;overflow:hidden;background:rgba(212,88,58,.4)}
 .dn-link:after{content:'';position:absolute;top:-1px;bottom:-1px;width:45%;left:-45%;background:linear-gradient(90deg,transparent,var(--ember2),transparent);animation:dnFlow 2.2s linear infinite}
 @keyframes dnFlow{to{left:100%}}
 .dn-chain .sen{font-size:16.5px;color:var(--ink);line-height:1.6;margin-top:18px;max-width:74ch}
@@ -3719,7 +3719,7 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-row{display:grid;grid-template-columns:minmax(0,1fr) 120px 96px;gap:4px 18px;align-items:center;padding:13px 20px;border-top:1px solid var(--hb-line2)}
 .dn-row .l{font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.35}
 .dn-row .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink);text-align:right;white-space:nowrap}
-.dn-row svg{width:120px;height:30px;display:block;overflow:visible}
+.dn-row .dn-sp{width:120px;height:30px}
 .dn-row .b{grid-column:1/-1;font-size:12.5px;color:var(--ink3);line-height:1.45}
 .dn-row .b.good{color:var(--hb-good)}.dn-row .b.bad{color:var(--hb-bad)}
 .dn-row.off .l,.dn-row.off .v{color:var(--ink3)}
@@ -3748,10 +3748,10 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
   .dn-tr.big{grid-column:auto}
   .dn-tr.big .fig{font-size:46px}
   .dn-nodes{flex-direction:column}
-  .dn-link{flex-basis:26px;width:2px;height:26px}
+  .dn-link{flex-basis:26px;width:1px;height:26px}
   .dn-link:after{width:auto;height:45%;left:-1px;right:-1px;top:-45%;bottom:auto;background:linear-gradient(180deg,transparent,var(--ember2),transparent);animation-name:dnFlowY}
   .dn-row{grid-template-columns:minmax(0,1fr) auto}
-  .dn-row svg{grid-column:1/-1;width:100%}
+  .dn-row .dn-sp{grid-column:1/-1;width:100%}
   .dn-home{grid-template-columns:84px minmax(0,1fr);gap:16px;padding:18px}
   .dn-home .go{grid-column:1/-1;flex-direction:row;justify-content:space-between}
   .dn-h2{font-size:27px}
@@ -41946,9 +41946,13 @@ function sfw2RuleCheck(chk) {
     var pad = (hi - lo) * 0.25 || Math.abs(hi) * 0.03 || 1, top = hi + pad, bot = lo - pad;
     for (i = 0; i < pts.length; i++) xy.push((i * 120 / (pts.length - 1)).toFixed(1) + ',' + (28 - ((+pts[i].value - bot) / (top - bot)) * 24).toFixed(1));
     var c = tone === 'good' ? 'var(--hb-good)' : (tone === 'bad' ? 'var(--hb-bad)' : 'var(--ember2)'), last = xy[xy.length - 1].split(',');
-    return '<svg viewBox="0 0 120 30" preserveAspectRatio="none" role="img" aria-label="' + esc(label + ' over ' + pts.length + ' weeks') + '">'
-      + '<polyline fill="none" vector-effect="non-scaling-stroke" style="stroke:' + c + ';stroke-width:2;stroke-linecap:round;stroke-linejoin:round" points="' + xy.join(' ') + '"/>'
-      + '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.6" style="fill:' + c + '"/></svg>';
+    // The line stretches to its box (preserveAspectRatio none) with a
+    // non-scaling stroke; the end dot is an HTML dot placed by percent, so
+    // a wide box can never squash it into a sliver (10/9/26).
+    return '<span class="dn-sp" role="img" aria-label="' + esc(label + ' over ' + pts.length + ' weeks') + '">'
+      + '<svg viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true">'
+      + '<polyline fill="none" vector-effect="non-scaling-stroke" style="stroke:' + c + ';stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round" points="' + xy.join(' ') + '"/></svg>'
+      + '<i style="left:' + (+last[0] / 120 * 100).toFixed(2) + '%;top:' + (+last[1] / 30 * 100).toFixed(2) + '%;background:' + c + ';box-shadow:0 0 8px ' + c + '"></i></span>';
   }
   function toneOf(x) {
     var dir = (x.trend && x.trend.direction) || '';
