@@ -140,7 +140,7 @@ struct TeamInboxView: View {
                     case .unavailable(let why):
                         Text(why)
                             .font(.cavnarBody(CavnarType.body))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     case .loaded:
                         if !viewModel.late.isEmpty { lateStrip }
@@ -237,7 +237,7 @@ struct TeamInboxView: View {
                         HomeMixedText.make(r.headline, size: CavnarType.body, weight: 700)
                             .fixedSize(horizontal: false, vertical: true)
                         if !r.detail.isEmpty {
-                            HomeMixedText.make(r.detail, size: CavnarType.secondary, color: .cavnarInk3)
+                            HomeMixedText.make(r.detail, size: CavnarType.secondary, color: .cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -260,7 +260,7 @@ struct TeamInboxView: View {
             if viewModel.threads.isEmpty {
                 Text("No messages yet. Staff write to the manager on duty from the app.")
                     .font(.cavnarBody(CavnarType.body))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 6)
             } else {
@@ -340,11 +340,11 @@ struct TeamInboxView: View {
             }
             if viewModel.announcements.isEmpty {
                 if let error = viewModel.announcementsError {
-                    Text(error).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                    Text(error).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk2)
                 } else {
                     Text("Nothing sent yet. An announcement reaches each person\u{2019}s phone, and you see who has read it.")
                         .font(.cavnarBody(CavnarType.body))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button {
@@ -389,7 +389,7 @@ struct TeamAnnouncementRow: View {
                 }
                 Text(a.title)
                     .font(.cavnarBody(CavnarType.body, weight: 700))
-                    .foregroundStyle(a.withdrawn ? Color.cavnarInk3 : Color.cavnarInk)
+                    .foregroundStyle(a.withdrawn ? Color.cavnarInk2 : Color.cavnarInk)
                     .lineLimit(2)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right")
@@ -402,7 +402,7 @@ struct TeamAnnouncementRow: View {
                     .foregroundStyle(Color.cavnarInk2)
                     .lineLimit(3)
             }
-            HomeMixedText.make(Self.metaLine(a), size: CavnarType.caption, color: .cavnarInk3)
+            HomeMixedText.make(Self.metaLine(a), size: CavnarType.caption, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
             if a.recipients > 0 && !a.withdrawn {
                 GeometryReader { geo in
@@ -428,11 +428,11 @@ struct TeamAnnouncementRow: View {
     }
 
     /// "Everyone · 10/3/26 · by Erik · 3 of 7 read · until 10/9/26 · withdrawn".
-    static func metaLine(_ a: TeamAnnouncement) -> String {
+    static func metaLine(_ a: TeamAnnouncement, includeRead: Bool = true) -> String {
         var bits = [a.audienceLabel]
         if let created = a.createdAt, !created.isEmpty { bits.append(CavnarDate.mdyLocal(created)) }
         if !a.createdByName.isEmpty { bits.append("by \(a.createdByName)") }
-        bits.append(a.readLine)
+        if includeRead { bits.append(a.readLine) }
         if let exp = a.expiresOn, !exp.isEmpty { bits.append((a.expired ? "ended " : "until ") + CavnarDate.mdy(exp)) }
         if a.withdrawn { bits.append("withdrawn") }
         return bits.joined(separator: " \u{00B7} ")
@@ -462,7 +462,7 @@ struct TeamAnnouncementDetail: View {
                             .foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    HomeMixedText.make(TeamAnnouncementRow.metaLine(a), size: CavnarType.caption, color: .cavnarInk3)
+                    HomeMixedText.make(TeamAnnouncementRow.metaLine(a, includeRead: false), size: CavnarType.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 10) {
@@ -482,7 +482,7 @@ struct TeamAnnouncementDetail: View {
                             AccountKVRow(label: r.name, showsDivider: i < a.readBy.count - 1) {
                                 Text(TeamTime.when(r.ackedAt))
                                     .font(.cavnarNumber(CavnarType.secondary, weight: 500))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                    .foregroundStyle(Color.cavnarInk2)
                             }
                         }
                     }
@@ -535,7 +535,7 @@ struct TeamThreadView: View {
                     if !loaded {
                         CavnarSkeletonLines(widths: [0.6, 0.8, 0.5])
                     } else if let loadError, messages.isEmpty {
-                        Text(loadError).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                        Text(loadError).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk2)
                     } else if messages.isEmpty {
                         CavnarEmptyHearth(title: "No messages yet",
                                           message: "Write to \(displayName) here; it goes to their phone.")
@@ -556,6 +556,8 @@ struct TeamThreadView: View {
         .navigationTitle(displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar(displayName) }
+        // A typed reply isn't lost to Back or a swipe-down (re-audit M9).
+        .cavnarDraftGuard(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !sending)
         .task {
             await reload()
             // New messages while it's open: read again every 20 seconds.
@@ -583,7 +585,7 @@ struct TeamThreadView: View {
         let who = mine ? (m.senderName.isEmpty ? "A manager" : m.senderName) : (m.senderName.isEmpty ? displayName : m.senderName)
         return VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
             if let day = m.shiftDate, !day.isEmpty {
-                HomeMixedText.make("About " + CavnarDate.mdy(day), size: CavnarType.caption, color: .cavnarInk3)
+                HomeMixedText.make("About " + CavnarDate.mdy(day), size: CavnarType.caption, color: .cavnarInk2)
             }
             Text(m.body)
                 .font(.cavnarBody(CavnarType.body))
@@ -596,9 +598,9 @@ struct TeamThreadView: View {
                 .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card)
                     .strokeBorder(Color.cavnarPaper3.opacity(mine ? 0 : 0.6), lineWidth: 1))
             HomeMixedText.make([who, TeamTime.when(m.createdAt)].filter { !$0.isEmpty }.joined(separator: " \u{00B7} "),
-                               size: CavnarType.caption, color: .cavnarInk3)
+                               size: CavnarType.caption, color: .cavnarInk2)
             if seen {
-                Text("Seen").font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                Text("Seen").font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk2)
             }
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
@@ -610,7 +612,7 @@ struct TeamThreadView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let note {
-                Text(note).font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
+                Text(note).font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
             }
             HStack(alignment: .bottom, spacing: 10) {
                 TextField("Reply to \(displayName.split(separator: " ").first.map(String.init) ?? displayName)",
@@ -733,7 +735,7 @@ struct TeamAnnouncementComposer: View {
                                 .onChange(of: message) { _, v in if v.count > 2000 { message = String(v.prefix(2000)) } }
                             Text("The title is what the lock screen shows.")
                                 .font(.cavnarBody(CavnarType.caption))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .foregroundStyle(Color.cavnarInk2)
                         }
                         .padding(.vertical, 8)
                     }
@@ -750,7 +752,7 @@ struct TeamAnnouncementComposer: View {
                                 if roles.isEmpty {
                                     Text("No roles yet \u{2014} they come from the roster.")
                                         .font(.cavnarBody(CavnarType.secondary))
-                                        .foregroundStyle(Color.cavnarInk3)
+                                        .foregroundStyle(Color.cavnarInk2)
                                 } else {
                                     AccountKVRow(label: "Role", showsDivider: false) {
                                         Picker("Role", selection: $role) {
@@ -796,7 +798,7 @@ struct TeamAnnouncementComposer: View {
                     if audience == .shiftDate {
                         Text("A note for one day\u{2019}s crew ends with that day.")
                             .font(.cavnarBody(CavnarType.caption))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .foregroundStyle(Color.cavnarInk2)
                     }
 
                     if let error {
@@ -818,7 +820,10 @@ struct TeamAnnouncementComposer: View {
                 }
                 .padding(20)
             }
-            .accountSheetChrome("New announcement")
+            // A drafted announcement isn't lost to Back or a swipe (M9).
+            .accountSheetChrome("New announcement", isDirty: !sending && (
+                !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         }
         .onAppear { if role.isEmpty { role = roles.first ?? "" } }
         .confirmationDialog("Send \u{201C}\(title.trimmingCharacters(in: .whitespaces))\u{201D} to \(audienceWords)?",

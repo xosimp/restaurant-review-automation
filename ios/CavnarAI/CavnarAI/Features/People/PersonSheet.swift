@@ -187,11 +187,43 @@ struct PersonRecord: Decodable, Equatable {
             return parts.isEmpty ? nil : parts.joined(separator: ", ")
         case .object(let o):
             if let label = o["label"].flatMap({ describe($0) }) { return label }
-            let parts = o.keys.sorted().compactMap { k -> String? in
-                guard let v = describe(o[k]) else { return nil }
-                return "\(k.replacingOccurrences(of: "_", with: " ")) \(v)"
+            // Owner words for the keys the server sends; a key the app
+            // doesn't know is left out, never shown raw (re-audit L5: it
+            // read "max hours 32 · min hours 20").
+            let parts = fieldOrder.compactMap { k -> String? in
+                guard let v = o[k] else { return nil }
+                return describeField(k, v)
             }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
+    }
+
+    private static let fieldOrder = ["employment_type", "min", "max", "min_hours", "max_hours", "desired_hours",
+                                     "score", "can_close", "dayparts", "preferred_dayparts"]
+
+    /// One known fact field, said the way an owner would.
+    static func describeField(_ key: String, _ value: JSONValue) -> String? {
+        switch key {
+        case "employment_type":
+            guard case .string(let s) = value else { return nil }
+            return s == "full" ? "Full-time" : s == "part" ? "Part-time" : nil
+        case "min", "min_hours": return describe(value).map { "at least \($0) h" }
+        case "max", "max_hours": return describe(value).map { "at most \($0) h" }
+        case "desired_hours": return describe(value).map { "wants \($0) h" }
+        case "score": return describe(value)
+        case "can_close":
+            if case .bool(true) = value { return "can close" }
+            return nil
+        case "preferred_dayparts": return describe(value).map { "prefers \($0)" }
+        case "dayparts":
+            guard case .object(let days) = value else { return nil }
+            let order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            let parts = order.compactMap { d -> String? in
+                guard case .string(let v)? = days[d], v != "any", !v.isEmpty else { return nil }
+                return "\(d.prefix(3)) \(v == "off" ? "off" : v + "s")"
+            }
+            return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        default: return nil
         }
     }
 }
@@ -572,7 +604,25 @@ struct PersonSheet: View {
     /// (iOS readability round [75]: they sat on the record itself).
     @State private var addingRole = false
     @State private var showingMerges = false
+    /// A role waiting on its "Remove the X role?" confirm (L16).
+    @State private var pendingRoleRemoval: String?
     @Environment(\.openURL) private var openURL
+
+    /// Contact fields typed and not saved (M9).
+    private var contactDirty: Bool {
+        guard case .loaded(let person) = viewModel.state, person.canEdit != false else { return false }
+        var changed = viewModel.changes(from: person)
+        // The phone field shows "(312) 555-0100" for a stored "3125550100":
+        // the same number is not an edit.
+        if viewModel.phone.filter(\.isNumber) == (person.phone ?? "").filter(\.isNumber) {
+            changed.removeValue(forKey: "phone")
+        }
+        return !changed.isEmpty
+    }
+
+    private func removeRole(_ role: String) async {
+        await viewModel.changeRole(role, remove: true)
+    }
 
     var body: some View {
         NavigationStack {
@@ -594,7 +644,22 @@ struct PersonSheet: View {
                 }
                 .padding(CavnarSpace.gutter)
             }
-            .accountSheetChrome("Person")
+            // Contact edits typed and not saved: Back and swipe-down ask
+            // first (re-audit M9).
+            .accountSheetChrome("Person", isDirty: contactDirty)
+            .confirmationDialog(pendingRoleRemoval.map { "Remove the \($0) role?" } ?? "",
+                                isPresented: Binding(get: { pendingRoleRemoval != nil },
+                                                     set: { if !$0 { pendingRoleRemoval = nil } }),
+                                titleVisibility: .visible) {
+                Button("Remove role", role: .destructive) {
+                    guard let role = pendingRoleRemoval else { return }
+                    pendingRoleRemoval = nil
+                    Task { await removeRole(role) }
+                }
+                Button("Keep it", role: .cancel) { pendingRoleRemoval = nil }
+            } message: {
+                Text("Schedules stop giving them shifts as this role. You can add it back from the \u{2026} menu.")
+            }
             .toolbar {
                 if case .loaded(let person) = viewModel.state, person.canManageLogin || person.canEdit != false {
                     cavnarToolbarItem(placement: .topBarTrailing) { overflowMenu(person) }
@@ -930,9 +995,11 @@ struct PersonSheet: View {
                             CavnarMixedText(role.line, role: .secondary)
                             Spacer(minLength: 4)
                             if person.canEdit != false && !role.primary {
+                                // Asked first (re-audit L16): one tap took
+                                // the role off.
                                 Button {
                                     Haptic.light()
-                                    Task { await viewModel.changeRole(role.role, remove: true) }
+                                    pendingRoleRemoval = role.role
                                 } label: {
                                     Text("Remove")
                                         .font(.cavnarBody(CavnarType.secondary, weight: 700))

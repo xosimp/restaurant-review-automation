@@ -20,6 +20,8 @@ struct AccountMemoryView: View {
     /// A forget waiting on its confirm — it used to fire on the tap.
     @State private var pendingForget: MemoryFact?
     @State private var showingAddOptions = false
+    /// Facts whose full detail line is open (a tap on the row).
+    @State private var expandedFacts: Set<Int> = []
 
     enum Field: Hashable { case fact }
 
@@ -153,7 +155,10 @@ struct AccountMemoryView: View {
                         }
                         CavnarMixedText(fact.fact, role: .body, color: .cavnarInk)
                     }
-                    CavnarMixedText(fact.detailLine(viewerIsPrincipal: isPrincipal), role: .caption)
+                    // Who and when; the rest on a tap (M21).
+                    CavnarMixedText(expandedFacts.contains(fact.id) ? fact.detailLine(viewerIsPrincipal: isPrincipal)
+                                                                    : fact.shortLine,
+                                    role: .caption, color: .cavnarInk2)
                     // A staffing rule says how the schedule holds it — or
                     // that it can't (schedule audit 10/3/26 D-14, D-38).
                     if let schedule {
@@ -181,6 +186,13 @@ struct AccountMemoryView: View {
             }
             .padding(.vertical, 10)
             .contentShape(Rectangle())
+            .onTapGesture {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.2)) {
+                    if expandedFacts.contains(fact.id) { expandedFacts.remove(fact.id) } else { expandedFacts.insert(fact.id) }
+                }
+            }
+            .accessibilityHint(expandedFacts.contains(fact.id) ? "" : "Shows who can read it and how long it holds")
             // Long-press for every action this login has on the fact: pin,
             // which locations keep it, share, forget (parity #65).
             .contextMenu {
@@ -213,14 +225,29 @@ struct AccountMemoryView: View {
 
     // MARK: - Archive
 
+    /// The two most recent, the rest behind "+N more" (web-only extras:
+    /// the archive is the web's long list).
     private func archived(_ items: [ArchivedFact]) -> some View {
         AccountSection(kicker: "Left without anyone asking") {
-            ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+            ForEach(Array(items.prefix(2).enumerated()), id: \.element.id) { i, item in
+                archivedRow(item, showsDivider: i < min(items.count, 2) - 1 || items.count > 2)
+            }
+            if items.count > 2 {
+                CavnarMoreDisclosure(hiddenCount: items.count - 2) {
+                    ForEach(Array(items.dropFirst(2).enumerated()), id: \.element.id) { i, item in
+                        archivedRow(item, showsDivider: i < items.count - 3)
+                    }
+                }
+            }
+        }
+    }
+
+    private func archivedRow(_ item: ArchivedFact, showsDivider: Bool) -> some View {
                 VStack(spacing: 0) {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             CavnarMixedText(item.fact, role: .body)
-                            CavnarMixedText(item.detailLine, role: .caption)
+                            CavnarMixedText(item.detailLine, role: .caption, color: .cavnarInk2)
                         }
                         Spacer(minLength: 8)
                         if item.canRestore {
@@ -246,10 +273,8 @@ struct AccountMemoryView: View {
                         }
                     }
                     .padding(.vertical, 10)
-                    if i < items.count - 1 { AccountRowDivider() }
+                    if showsDivider { AccountRowDivider() }
                 }
-            }
-        }
     }
 
     // MARK: - Add
@@ -361,7 +386,9 @@ enum MemoryKind {
         case "preference": return "Preference"
         case "goal": return "Aim"
         case "followup": return "Follow-up"
-        default: return kind.replacingOccurrences(of: "_", with: " ").capitalized
+        // A kind the app doesn't know is never shown by its raw key
+        // (re-audit L5).
+        default: return "Note"
         }
     }
 
@@ -372,7 +399,7 @@ enum MemoryKind {
         case "preference": return "Preferences"
         case "goal": return "Aims"
         case "followup": return "Follow-ups"
-        default: return kind.replacingOccurrences(of: "_", with: " ").capitalized
+        default: return "Other"
         }
     }
 }
@@ -384,8 +411,10 @@ enum MemoryModule {
         ("marketing", "Marketing"), ("intel", "Intel"), ("ops", "Operations"),
     ]
 
-    static func label(_ key: String) -> String {
-        all.first { $0.key == key }?.label ?? key.replacingOccurrences(of: "_", with: " ").capitalized
+    /// The module's name, or nil for a key the app doesn't know — left out
+    /// rather than shown raw (re-audit L5).
+    static func label(_ key: String) -> String? {
+        all.first { $0.key == key }?.label
     }
 }
 
@@ -553,12 +582,23 @@ struct MemoryFact: Codable, Hashable, Identifiable {
         var parts: [String] = []
         if let author { parts.append(author) }
         if audience != "team" { parts.append(MemoryAudience.label(audience)) }
-        if !modules.isEmpty { parts.append(modules.map(MemoryModule.label).joined(separator: ", ")) }
+        let named = modules.compactMap(MemoryModule.label)
+        if !named.isEmpty { parts.append(named.joined(separator: ", ")) }
         if let due = dueLabel { parts.append("due " + due) }
         if let until = validUntilLabel { parts.append("until " + until) }
         if let on = createdOn { parts.append("added " + on) }
         if scope == "org" { parts.append(fromLocation ? "All locations \u{2014} kept at another" : "All locations") }
         if pinned { parts.append("Pinned") }
+        return parts.isEmpty ? MemoryKind.singular(kind) : parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// The row's one line: who said it and when — "Erik, owner · due
+    /// 10/3/26" or "· added 9/21/26". The rest of `detailLine` is a tap
+    /// away (re-audit M21: seven parts chained in a caption).
+    var shortLine: String {
+        var parts: [String] = []
+        if let author { parts.append(author) }
+        if let due = dueLabel { parts.append("due " + due) } else if let on = createdOn { parts.append("added " + on) }
         return parts.isEmpty ? MemoryKind.singular(kind) : parts.joined(separator: " \u{00B7} ")
     }
 }
@@ -603,12 +643,19 @@ struct ArchivedFact: Codable, Hashable, Identifiable {
         canRestore = ((try? c.decodeIfPresent(Bool.self, forKey: .canRestore)) ?? nil) ?? false
     }
 
-    /// "Left 9/2/26 — its lane was full · Erik, owner".
+    /// "Left 9/2/26 — replaced by newer notes · Erik, owner".
     var detailLine: String {
         var head = "Left"
         if let on = archivedOn { head += " " + on }
-        if let why = reasonLabel { head += " \u{2014} " + why }
+        if let why = reasonLabel.map(Self.ownerWords) { head += " \u{2014} " + why }
         return [head, author].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
+    /// The server's reason in the owner's words: a full lane is "replaced
+    /// by newer notes" (re-audit M21 — "its lane was full" is the system's
+    /// word for it, not the owner's).
+    static func ownerWords(_ reason: String) -> String {
+        reason == "its lane was full" ? "replaced by newer notes" : reason
     }
 }
 

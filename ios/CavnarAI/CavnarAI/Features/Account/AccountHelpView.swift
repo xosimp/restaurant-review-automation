@@ -27,9 +27,12 @@ struct AccountHelpView: View {
             FAQItem(question: "What's the difference between the modules?",
                     answer: "Reviews drafts AI responses to your Google reviews and flags urgent ones. Intel tracks what's being said about you and nearby competitors. Marketing automates guest outreach. Labor pulls hours and schedules from your POS. Food Cost tracks ingredient spend and waste. Not every restaurant has every module — check Account for what's active on yours."),
         ]),
+        // Every answer names a row as it reads in the app today (re-audit
+        // M4: auto-approve exists, "Plan & billing", Export is a web row,
+        // and there was no "Send me a preview" in the app).
         FAQGroup(title: "Reviews", items: [
             FAQItem(question: "Does Cavnar AI post responses automatically?",
-                    answer: "No — every AI-drafted response needs your approval before it goes out. You can edit the draft, approve it as-is, or regenerate it from the review's detail screen."),
+                    answer: "Only if the account owner turns it on. By default every drafted reply waits for your approval — edit it, approve it as-is, or regenerate it from the review. Under Account → Profile & details → Auto-approve, the owner can let drafted 5-star replies (and, if chosen, 4-star) post on their own, up to a daily cap. Anything sensitive still waits for you."),
             FAQItem(question: "Why does a review show as \"urgent\"?",
                     answer: "Two kinds: a 1- or 2-star review from the last 30 days that hasn\u{2019}t been answered yet, and any review about illness, injury, a legal threat or staff misconduct. Urgent reviews sit at the top of your list until they\u{2019}re answered. The safety and legal ones can also send you an alert, depending on your Alert settings."),
         ]),
@@ -43,17 +46,17 @@ struct AccountHelpView: View {
         ]),
         FAQGroup(title: "Billing & account", items: [
             FAQItem(question: "How is billing handled?",
-                    answer: "Billing is handled under your service agreement. Account → Plan & payment shows your plan and recent invoices; for anything to change on it, contact Will directly."),
+                    answer: "Billing is handled under your service agreement. Account → Plan & billing shows your plan and recent invoices, and lets the owner pause; for anything else to change on it, contact Will directly."),
             FAQItem(question: "Can I export my review data?",
-                    answer: "Yes — Account → Export my data emails you a CSV of your reviews (date, rating, text, and response status)."),
+                    answer: "Yes — Account → Export my data opens your web dashboard, where you pick reviews, labor, food cost or settings and they're emailed to you."),
             FAQItem(question: "How do I cancel my account?",
                     answer: "Getting started with Cavnar AI includes signing a service agreement, so cancellation isn't self-serve — go to Account → Close my account to request it. 30 days' written notice is required; your account stays active through the end of your current billing period plus 30 days."),
         ]),
         FAQGroup(title: "Notifications", items: [
             FAQItem(question: "How do I control which alerts I get?",
-                    answer: "Account → Alerts & digest controls what triggers an alert (1-star reviews, a rating spike, health mentions, etc.) and whether it reaches you by text, email, or push. You can also set quiet hours so alerts wait until morning."),
+                    answer: "Account → Notifications holds your own choices on this phone: push, the alert types you've muted, quiet hours, and how much to hear from Cavnar AI. The restaurant's alert rules — what triggers an alert, text and email, the weekly digest — are set by the owner on the web, from the Restaurant alert rules row there."),
             FAQItem(question: "What's the difference between alerts and the weekly digest?",
-                    answer: "Alerts are near-real-time — something specific just happened. The weekly digest is a full summary sent on the day you choose. You can preview it any time from Account → Alerts & digest → Send me a preview."),
+                    answer: "Alerts are near-real-time — something specific just happened. The weekly digest is a full summary sent on the day you choose. To see one now, open Account → Email history on the web and use Send me a preview digest."),
         ]),
     ]
 

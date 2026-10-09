@@ -71,6 +71,9 @@ struct AccountView: View {
             .onChange(of: anySheetOpen) { _, open in
                 if !open { Task { await viewModel.loadHealth() } }
             }
+            .sheet(item: $webTarget) { target in
+                CavnarSafariView(url: target.url).ignoresSafeArea()
+            }
             .task {
                 await viewModel.load()
                 await viewModel.loadHealth()
@@ -124,18 +127,38 @@ struct AccountView: View {
               let section = deepLinkRouter.consumePendingAccountSection() else { return }
         switch AccountLinkSection(section) {
         case .profile: showingProfile = true
-        case .team: showingTeam = true
+        // Manage team and Staff accounts are the owner's, as their rows are
+        // (re-audit M7) — a teammate's link opens nothing rather than a
+        // sheet of controls the server refuses.
+        case .team: showingTeam = isOwner
+        case .staff: showingStaff = isOwner
         case .people: showingPeople = true
         case .billing: showingBilling = isOwner
         case .alerts: showingAlerts = true
         case .automation: showingAutomation = true
         case .connections: showingConnections = true
         case .security: showingSecurity = true
-        case .export: showingExportData = true
+        // The export is the web's now, as the row on the page is (M8).
+        case .export: openWeb("account/data")
         case .help: showingHelp = true
         case .recommendations: showingRecommendations = true
         case .memory: showingMemory = true
         case nil: break
+        }
+    }
+
+    /// Opens the web dashboard at `path` in the in-app browser — the same
+    /// page a `CavnarWebLinkRow` opens, for a row or a link that isn't one.
+    private func openWeb(_ path: String) {
+        webTarget = CavnarHandoff.webpageURL(for: CavnarWebLinkRow.navPath(path)).map(AccountWebTarget.init(url:))
+    }
+
+    /// Whether this login can open what a health item's Fix names: people
+    /// (Manage team) and subscription (Billing) are the owner's (M5).
+    private func canOpenHealthFix(_ key: String) -> Bool {
+        switch key {
+        case "people", "subscription": return isOwner
+        default: return true
         }
     }
 
@@ -175,7 +198,8 @@ struct AccountView: View {
         // Account health, the modules on the plan and the measured value —
         // the web's Account overview, scored on the server (parity #89).
         if let health = viewModel.health {
-            AccountHealthCard(health: health) { key in openHealthFix(key) }
+            AccountHealthCard(health: health, onFix: { key in openHealthFix(key) },
+                              canFix: { key in canOpenHealthFix(key) })
         }
         groupedSettings(summary)
         signOutSection
@@ -255,16 +279,28 @@ struct AccountView: View {
     /// numbers are set on the web, iOS readability round [71]).
     @State private var targets = AccountTargetsModel()
 
+    /// The App row's sheet: haptics, the tab it opens on, the app icon (L8).
+    @State private var showingAppSettings = false
+    /// A web page opened from a row or a link that isn't a CavnarWebLinkRow
+    /// (Targets, an account/data link).
+    @State private var webTarget: AccountWebTarget?
+
+    struct AccountWebTarget: Identifiable {
+        let url: URL
+        var id: String { url.absoluteString }
+    }
+
+    /// Every sheet Account opens — closing any of them may have fixed a
+    /// health item, so the card re-reads (re-audit L4: Automation, Memory,
+    /// People, Close account and the rest were missing).
     private var anySheetOpen: Bool {
         showingProfile || showingSecurity || showingAlerts || showingConnections || showingBilling
-            || showingTeam || showingStaff
+            || showingTeam || showingStaff || showingPeople || showingAutomation || showingMemory
+            || showingRecommendations || showingExportData || showingEmailHistory || showingCloseAccount
+            || showingDeleteLogin || showingHelp || showingReportBug || showingReferral || showingChangelog
+            || showingAppSettings || showingViewAs || webTarget != nil
     }
     @State private var changelogBadge = ChangelogBadgeViewModel()
-    // Reflects the actual system state (UIApplication.shared.alternateIconName),
-    // not a preference of our own — this is the home-screen icon, which iOS
-    // owns, not the in-app interface (that stays dark-only, see RootView).
-    @State private var isLightAppIcon = UIApplication.shared.alternateIconName == "AppIconLight"
-    @State private var appIconError: String?
 
     /// Four groups (iOS readability round [70]): Restaurant · Notifications
     /// & security · Team · App & support, then the account's own data. A
@@ -370,7 +406,9 @@ struct AccountView: View {
                 settingsRow {
                     row(
                         "Security & devices", systemImage: "lock.shield",
-                        trailing: viewModel.sessions.isEmpty ? nil : "\(viewModel.sessions.count)",
+                        // "3 devices", not a bare "3" beside 2FA ON (L12).
+                        trailing: viewModel.sessions.isEmpty ? nil
+                            : "\(viewModel.sessions.count) device\(viewModel.sessions.count == 1 ? "" : "s")",
                         badge: summary.account.twoFAEnabled ? "2FA ON" : nil
                     )
                 } action: {
@@ -428,32 +466,13 @@ struct AccountView: View {
             }
 
             group("App & support") {
-                prefToggleRow("Haptic feedback", systemImage: "hand.tap", isOn: Binding(
-                    get: { prefs.hapticsEnabled },
-                    set: { on in prefs.hapticsEnabled = on; if on { Haptic.light() } }
-                ))
-                rowDivider
-                HStack(spacing: 13) {
-                    Image(systemName: "house")
-                        .font(.cavnar(.body))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .frame(width: 18)
-                        .accessibilityHidden(true)
-                    Text("Open on")
-                        .cavnarText(.body, color: .cavnarInk)
-                    Spacer()
-                    Picker("", selection: Binding(
-                        get: { prefs.defaultTab },
-                        set: { tab in Haptic.selection(); prefs.defaultTab = tab }
-                    )) {
-                        ForEach(AppTab.allCases) { Text($0.title).tag($0) }
-                    }
-                    .tint(Color.cavnarEmber)
+                // Haptics, the tab the app opens on and the home-screen icon
+                // in one row (re-audit L8: nine rows in this card).
+                settingsRow {
+                    row("App", systemImage: "iphone", trailing: "Opens on \(prefs.defaultTab.title)")
+                } action: {
+                    showingAppSettings = true
                 }
-                .padding(.horizontal, CavnarSpace.m)
-                .frame(minHeight: 54)
-                rowDivider
-                appIconRow
                 rowDivider
                 settingsRow {
                     row(
@@ -464,6 +483,10 @@ struct AccountView: View {
                     showingChangelog = true
                 }
                 rowDivider
+                // The system's review prompt: there is no App Store ID in the
+                // project yet for a write-review link (re-audit L1 — switch
+                // to apps.apple.com/app/id<ID>?action=write-review once the
+                // listing has one).
                 settingsRow {
                     row("Rate Cavnar AI", systemImage: "star")
                 } action: {
@@ -471,14 +494,8 @@ struct AccountView: View {
                         AppStore.requestReview(in: scene)
                     }
                 }
-                rowDivider
-                settingsRow {
-                    row("Contact Will", systemImage: "envelope")
-                } action: {
-                    if let url = URL(string: "mailto:will@cavnar.ai") {
-                        openURL(url)
-                    }
-                }
+                // "Contact Will" is gone: Help & FAQ opens on Will's card,
+                // with Email and Book a call (L8).
                 // Referrals are the account holder's (/send-referral answers
                 // 403 to anyone else), as on the web.
                 if isOwner {
@@ -509,6 +526,9 @@ struct AccountView: View {
             .sheet(isPresented: $showingHelp) {
                 AccountHelpView()
             }
+            .sheet(isPresented: $showingAppSettings) {
+                AccountAppSettingsSheet()
+            }
             .sheet(isPresented: $showingReportBug) {
                 AccountReportBugSheet(viewModel: viewModel)
             }
@@ -521,9 +541,12 @@ struct AccountView: View {
             // readability round); closing the account and deleting a login
             // stay in the app (App Store Guideline 5.1.1(v)).
             group("Your data") {
-                webRow("Schedule history", path: "labor/schedule")
+                // The Studio's History stage and the Email history card,
+                // opened (re-audit M1/M2) — they landed on the schedule and
+                // the top of Notifications.
+                webRow("Schedule history", path: "labor/history")
                 rowDivider
-                webRow("Email history", path: "account/notifications")
+                webRow("Email history", path: "account/email-history")
                 rowDivider
                 webRow("Export my data", path: "account/data")
                 if isOwner {
@@ -579,33 +602,17 @@ struct AccountView: View {
         }
     }
 
-    /// "Labor 28% · Food 30%" — read only, then the web row that sets them.
-    @ViewBuilder
+    /// "Targets · Labor 28% · Food 30% ›" — one row that opens the web's
+    /// Targets & pay rates, where they're set (re-audit L11: a read-only row
+    /// and a second web row said the same thing).
     private var targetsRow: some View {
-        HStack(spacing: 13) {
-            Image(systemName: "target")
-                .font(.cavnar(.body))
-                .foregroundStyle(Color.cavnarInk3)
-                .frame(width: 18)
-                .accessibilityHidden(true)
-            Text("Targets")
-                .cavnarText(.body, color: .cavnarInk)
-            Spacer(minLength: CavnarSpace.xs)
-            if let line = Self.targetsLine(targets.payload) {
-                HomeMixedText.make(line, role: .secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            } else if targets.isLoading {
-                CavnarSkeletonBar(height: 3).frame(width: 80)
-            } else {
-                Text("Not set").cavnarText(.secondary)
-            }
+        settingsRow {
+            row("Targets", systemImage: "target",
+                trailing: Self.targetsLine(targets.payload) ?? (targets.isLoading ? nil : "Not set"))
+        } action: {
+            openWeb("account/restaurant")
         }
-        .padding(.horizontal, CavnarSpace.m)
-        .frame(minHeight: 54)
-        .accessibilityElement(children: .combine)
-        rowDivider
-        webRow("Targets & pay rates", path: "account/restaurant")
+        .accessibilityHint("Opens Targets & pay rates on the web")
     }
 
     /// "Labor 28% · Food 30%" from the targets payload; nil when neither is set.
@@ -634,78 +641,6 @@ struct AccountView: View {
             label()
         }
         .foregroundStyle(Color.cavnarInk)
-    }
-
-    // The HOME-SCREEN icon only — black-with-cream-seal (default) vs.
-    // white-with-black-seal (AppIconLight, registered in project.yml's
-    // CFBundleAlternateIcons). The in-app interface stays dark-only
-    // regardless (see RootView) — this is purely UIApplication's own
-    // alternate-icon mechanism, not our own preference storage, so the
-    // toggle always reflects whatever's actually active rather than
-    // trusting a stale local flag if the switch silently failed.
-    private func prefToggleRow(_ label: String, systemImage: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: systemImage)
-                .font(.cavnar(.body))
-                .foregroundStyle(Color.cavnarInk3)
-                .frame(width: 18)
-                .accessibilityHidden(true)
-            Text(label)
-                .cavnarText(.body, color: .cavnarInk)
-            Spacer()
-            AccountStateSwitch(isOn: isOn)
-        }
-        .padding(.horizontal, CavnarSpace.m)
-        .frame(minHeight: 54)
-    }
-
-    private var appIconRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 13) {
-                Image(systemName: "circle.lefthalf.filled")
-                    .font(.cavnar(.body))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .frame(width: 18)
-                    .accessibilityHidden(true)
-                Text("Light app icon")
-                    .cavnarText(.body, color: .cavnarInk)
-                Spacer()
-                AccountStateSwitch(isOn: Binding(
-                    get: { isLightAppIcon },
-                    set: { newValue in setAppIcon(light: newValue) }
-                ))
-            }
-            .padding(.horizontal, CavnarSpace.m)
-            .frame(minHeight: 54)
-            if let appIconError {
-                Text(appIconError)
-                    .cavnarText(.secondary, color: .cavnarRedText)
-                    .padding(.horizontal, CavnarSpace.m)
-                    .padding(.bottom, 10)
-            }
-        }
-    }
-
-    private func setAppIcon(light: Bool) {
-        guard UIApplication.shared.supportsAlternateIcons else {
-            appIconError = "This device doesn't support switching app icons."
-            return
-        }
-        appIconError = nil
-        let targetName = light ? "AppIconLight" : nil
-        UIApplication.shared.setAlternateIconName(targetName) { error in
-            Task { @MainActor in
-                if let error {
-                    appIconError = error.localizedDescription
-                    // Reflect whatever's actually active, not the tap's
-                    // intent — a failed switch means the toggle should
-                    // snap back rather than show a state that didn't apply.
-                    isLightAppIcon = UIApplication.shared.alternateIconName == "AppIconLight"
-                } else {
-                    isLightAppIcon = light
-                }
-            }
-        }
     }
 
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
@@ -798,6 +733,8 @@ struct AccountView: View {
 /// Nil for a section the app shows on Account's page itself (appearance).
 enum AccountLinkSection: Equatable {
     case profile, team, billing, alerts, automation, connections, security, export, help, recommendations
+    /// Account → Staff accounts (re-audit M7: "staff" opened Manage team).
+    case staff
     /// Account → People: house rules, docs, certifications and, for the
     /// owner, access (the certificate expiry email's link; parity #62).
     case people
@@ -808,7 +745,8 @@ enum AccountLinkSection: Equatable {
         switch raw.lowercased() {
         case "restaurant", "profile": self = .profile
         case "people": self = .people
-        case "team", "staff": self = .team
+        case "team": self = .team
+        case "staff": self = .staff
         case "billing": self = .billing
         case "notifications", "alerts": self = .alerts
         case "automation": self = .automation
@@ -819,6 +757,86 @@ enum AccountLinkSection: Equatable {
         case "recs", "recommendations": self = .recommendations
         case "memory", "remembers": self = .memory
         default: return nil
+        }
+    }
+}
+
+/// Account → App: the phone's own preferences — haptics, the tab the app
+/// opens on, and the home-screen icon — folded from three rows of App &
+/// support into one (re-audit L8).
+struct AccountAppSettingsSheet: View {
+    @State private var prefs = AppPreferences.shared
+    // The HOME-SCREEN icon only — black-with-cream-seal (default) vs.
+    // white-with-black-seal (AppIconLight, registered in project.yml's
+    // CFBundleAlternateIcons). The in-app interface stays dark-only
+    // regardless (see RootView) — this is purely UIApplication's own
+    // alternate-icon mechanism, not our own preference storage, so the
+    // switch always reflects whatever's actually active rather than
+    // trusting a stale local flag if the change silently failed.
+    @State private var isLightAppIcon = UIApplication.shared.alternateIconName == "AppIconLight"
+    @State private var appIconError: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    AccountHero(title: "App") {
+                        GlowBadge(systemImage: "iphone", size: 64)
+                    } subtitle: {
+                        Text("How Cavnar AI behaves on this phone")
+                    }
+                    AccountSection(kicker: "This phone") {
+                        AccountSwitchRow(label: "Haptic feedback", isOn: Binding(
+                            get: { prefs.hapticsEnabled },
+                            set: { on in prefs.hapticsEnabled = on; if on { Haptic.light() } }
+                        ))
+                        AccountKVRow(label: "Open on") {
+                            Picker("Open on", selection: Binding(
+                                get: { prefs.defaultTab },
+                                set: { tab in Haptic.selection(); prefs.defaultTab = tab }
+                            )) {
+                                ForEach(AppTab.allCases) { Text($0.title).tag($0) }
+                            }
+                            .labelsHidden()
+                            .tint(Color.cavnarEmber)
+                        }
+                        AccountSwitchRow(label: "Light app icon", isOn: Binding(
+                            get: { isLightAppIcon },
+                            set: { newValue in setAppIcon(light: newValue) }
+                        ), optimistic: false, showsDivider: false)
+                        if let appIconError {
+                            Text(appIconError)
+                                .cavnarText(.secondary, color: .cavnarRedText)
+                                .padding(.bottom, 6)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(CavnarSpace.gutter)
+            }
+            .accountSheetChrome("App")
+        }
+    }
+
+    private func setAppIcon(light: Bool) {
+        guard UIApplication.shared.supportsAlternateIcons else {
+            appIconError = "This device doesn't support switching app icons."
+            return
+        }
+        appIconError = nil
+        let targetName = light ? "AppIconLight" : nil
+        UIApplication.shared.setAlternateIconName(targetName) { error in
+            Task { @MainActor in
+                if let error {
+                    appIconError = error.localizedDescription
+                    // Reflect whatever's actually active, not the tap's
+                    // intent — a failed switch snaps back rather than show a
+                    // state that didn't apply.
+                    isLightAppIcon = UIApplication.shared.alternateIconName == "AppIconLight"
+                } else {
+                    isLightAppIcon = light
+                }
+            }
         }
     }
 }

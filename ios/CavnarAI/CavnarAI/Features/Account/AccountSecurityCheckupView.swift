@@ -147,10 +147,10 @@ struct AccountSecurityCheckupView: View {
                         if let points {
                             Text(earned ? "+\(points)" : "\(points) pts")
                                 .font(.cavnarNumber(CavnarType.secondary, weight: 600))
-                                .foregroundStyle(earned ? Color.cavnarGreen : Color.cavnarInk3)
+                                .foregroundStyle(earned ? Color.cavnarGreen : Color.cavnarInk2)
                         }
                     }
-                    HomeMixedText.make(detail, size: CavnarType.secondary, color: .cavnarInk3)
+                    HomeMixedText.make(detail, size: CavnarType.secondary, color: .cavnarInk2)
                     if let fix {
                         Button {
                             Haptic.light()

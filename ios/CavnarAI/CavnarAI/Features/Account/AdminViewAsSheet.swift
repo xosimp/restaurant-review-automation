@@ -43,15 +43,11 @@ struct AdminViewAsSheet: View {
                         .disabled(opening != nil)
                     }
                 } header: {
-                    Text("CLIENTS")
-                        .font(.cavnarBody(CavnarType.caption, weight: 700))
-                        .tracking(1.4)
-                        .foregroundStyle(Color.cavnarInk3)
+                    CavnarKicker("Clients")
                 } footer: {
-                    Text("Opens the app as their owner login for \(hours) hours. A banner stays up the whole time, "
+                    Text("Opens the app as their owner login for \(ViewAsBanner.hoursPhrase(hours)). A banner stays up the whole time, "
                          + "and anything you change is recorded under your name.")
-                        .font(.cavnar(.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption, color: .cavnarInk2)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -74,7 +70,7 @@ struct AdminViewAsSheet: View {
                 Button("Open \(client.name)") { open(client) }
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
-                Text("You'll see the app exactly as their owner does, for \(hours) hours. "
+                Text("You'll see the app exactly as their owner does, for \(ViewAsBanner.hoursPhrase(hours)). "
                      + "Anything you change is recorded under your name.")
             }
         }
@@ -92,16 +88,12 @@ struct AdminViewAsSheet: View {
                     .foregroundStyle(Color.cavnarInk)
                 if let detail = client.detail {
                     Text(detail)
-                        .font(.cavnarBody(CavnarType.caption, weight: 500))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption, color: .cavnarInk2)
                 }
             }
             Spacer()
             if client.isDemo {
-                Text("DEMO")
-                    .font(.cavnarBody(CavnarType.caption, weight: 700))
-                    .tracking(0.8)
-                    .foregroundStyle(Color.cavnarInk3)
+                AccountChip(text: "Demo", muted: true)
             }
             if opening == client.id {
                 CavnarShimmerLine(color: .cavnarEmber).frame(width: 28)
@@ -180,16 +172,23 @@ struct ViewAsBanner: View {
                             stopping = false
                         }
                     } label: {
-                        if stopping {
-                            CavnarShimmerLine(color: .cavnarPaper).frame(width: 28)
-                        } else {
-                            Text("Stop")
-                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        Group {
+                            if stopping {
+                                CavnarShimmerLine(color: .cavnarPaper).frame(width: 28)
+                            } else {
+                                Text("Stop")
+                                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                            }
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().strokeBorder(Color.cavnarPaper.opacity(0.6), lineWidth: 1.2))
+                        // 30pt to the eye, 44pt to the thumb (re-audit L7);
+                        // the overhang is taken back so the banner keeps its height.
+                        .cavnarHitTarget()
+                        .padding(.vertical, -7)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Capsule().strokeBorder(Color.cavnarPaper.opacity(0.6), lineWidth: 1.2))
+                    .buttonStyle(.plain)
                     .disabled(stopping)
                     .accessibilityLabel("Stop viewing as \(view.restaurantName)")
                 }
@@ -220,9 +219,11 @@ struct ViewAsBanner: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .frame(width: 44, height: 32)
+                            .foregroundStyle(Color.cavnarInk2)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Dismiss")
                 }
                 .padding(.leading, 16)
@@ -241,7 +242,12 @@ struct ViewAsBanner: View {
 
     static func detail(_ view: ViewAsSession) -> String {
         let change = view.readOnly ? "Read-only: nothing can be changed." : "Changes are recorded under your name."
-        let time = view.endsAt.formatted(date: .omitted, time: .shortened)
+        // The restaurant's clock, the app's time form (re-audit L7: it was
+        // the device's locale and zone).
+        let time = CavnarDate.time(view.endsAt, in: RestaurantClock.timeZone)
         return "\(change) Ends at \(time)."
     }
+
+    /// "1 hour" / "2 hours".
+    static func hoursPhrase(_ hours: Int) -> String { hours == 1 ? "1 hour" : "\(hours) hours" }
 }

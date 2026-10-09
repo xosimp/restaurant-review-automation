@@ -144,19 +144,15 @@ struct AccountProfileDetailView: View {
         }
     }
 
-    /// Saves the contact fields; everything this sheet no longer edits goes
-    /// back exactly as the server last said it (the live summary, so a web
-    /// edit made meanwhile isn't overwritten by the snapshot this opened on).
+    /// Saves the contact fields that changed, and only those: the route
+    /// writes just the keys sent, so a web edit to the brand voice, menu,
+    /// language or time zone is never put back from this sheet (re-audit A2).
     private func saveContact() async {
         focusedField = nil
-        let current = viewModel.summary?.profile ?? profile
-        await viewModel.updateProfile(
-            ownerName: ownerName, ownerPhone: ownerPhone,
-            voiceNotes: current.voiceNotes ?? "", neverSay: current.neverSay ?? "",
-            menuNotes: current.menuNotes ?? "", timezone: current.timezone,
-            signOffName: current.signOffName ?? "",
-            responseLanguage: current.responseLanguage ?? ""
-        )
+        let nameChanged = ownerName.trimmingCharacters(in: .whitespaces) != savedOwnerName.trimmingCharacters(in: .whitespaces)
+        let phoneChanged = ownerPhone.filter(\.isNumber) != savedOwnerPhone.filter(\.isNumber)
+        await viewModel.updateProfile(ownerName: nameChanged ? ownerName : nil,
+                                      ownerPhone: phoneChanged ? ownerPhone : nil)
         if viewModel.saveProfileSucceeded {
             Haptic.success()
             savedOwnerName = ownerName
@@ -284,18 +280,29 @@ struct AccountProfileDetailView: View {
             // (mobile_update_profile refuses anyone else's edit).
             AccountField(label: "Owner", text: $ownerName, focus: $focusedField, field: .ownerName)
                 .disabled(!isOwner)
+            // The owner's phone is theirs too — the server refuses a
+            // teammate's change to it (re-audit M15).
             AccountField(label: "Phone", text: $ownerPhone, focus: $focusedField, field: .ownerPhone, keyboardType: .phonePad, isNumber: true)
+                .disabled(!isOwner)
                 .onChange(of: ownerPhone) { _, v in let f = PhoneFormat.typing(v); if f != v { ownerPhone = f } }
+            if !isOwner {
+                Text("Only the account owner can change the owner\u{2019}s name and phone.")
+                    .cavnarText(.caption, color: .cavnarInk2)
+                    .padding(.vertical, 6)
+            }
             // Shares AccountFieldRow's exact label/value/reserved-underline
             // footprint (see AccountDisplayRow's own doc comment) — Email
             // isn't edited inline (it opens its own sheet), but it sits in
             // this same card next to Owner/Phone and needs to measure the
-            // same height as they do.
+            // same height as they do. The sheet changes THIS login's email,
+            // so the row shows this login's, said as such (re-audit M14).
             Button {
                 Haptic.light()
                 showingUpdateEmail = true
             } label: {
-                AccountDisplayRow(label: "Email", value: profile.ownerEmail ?? "—", showsDivider: isOwner) {
+                AccountDisplayRow(label: "Your sign-in email",
+                                  value: viewModel.summary?.account.email ?? profile.ownerEmail ?? "\u{2014}",
+                                  showsDivider: isOwner) {
                     AccountDisclosureChip()
                 }
                 .contentShape(Rectangle())
@@ -327,15 +334,52 @@ struct AccountProfileDetailView: View {
 
     // MARK: - Hours
 
-    private var hoursSummary: String {
-        guard let json = profile.closeTimesJson ?? profile.openTimesJson, let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String], !dict.isEmpty else { return "Not set" }
-        return "\(dict.count) day\(dict.count == 1 ? "" : "s") set"
+    /// "Open 6 days · closes 10pm · 2 closed dates" — the week as it runs,
+    /// not a count of stored keys ("7 days set", re-audit L9). Closed dates
+    /// counted from today on; "Hours not set" when nothing is stored.
+    static func hoursSummary(_ p: AccountProfile, today: String = AccountHoursSheet.isoDay(Date())) -> String {
+        func decode(_ json: String?) -> [String: String] {
+            guard let json, let data = json.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
+            return dict
+        }
+        let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        let opens = decode(p.openTimesJson), closes = decode(p.closeTimesJson)
+        var parts: [String] = []
+        if opens.isEmpty && closes.isEmpty {
+            parts.append("Hours not set")
+        } else {
+            let drafts = HoursDayDraft.drafts(days: days, opens: opens, closes: closes)
+            let open = days.compactMap { drafts[$0] }.filter { !$0.closed }
+            parts.append(open.count == 7 ? "Open every day" : "Open \(open.count) day\(open.count == 1 ? "" : "s")")
+            let closeTimes = Set(open.compactMap { HoursFormat.parse($0.originalClose).map { HoursFormat.format(HoursFormat.date($0)) } })
+            if closeTimes.count == 1, let t = closeTimes.first {
+                parts.append("closes " + t.replacingOccurrences(of: ":00", with: ""))
+            }
+        }
+        let upcoming = (p.closures ?? []).filter { !$0.isEmpty && $0 >= today }.count
+        if upcoming > 0 { parts.append("\(upcoming) closed date\(upcoming == 1 ? "" : "s")") }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
+    /// One row, the week in words; the kicker says what it is once.
     private var hoursSection: some View {
-        AccountSection(kicker: "Hours & closed dates") {
-            AccountNavRow(label: "Hours & closed dates", value: hoursSummary, showsDivider: false) { showingHours = true }
+        AccountSection(kicker: "Hours") {
+            Button {
+                Haptic.light()
+                showingHours = true
+            } label: {
+                HStack(spacing: CavnarSpace.s) {
+                    CavnarMixedText(Self.hoursSummary(viewModel.summary?.profile ?? profile), role: .body)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    AccountDisclosureChip()
+                }
+                .padding(.vertical, 9)
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens your hours and closed dates")
         }
     }
 
@@ -344,9 +388,14 @@ struct AccountProfileDetailView: View {
     /// The time zone and reply language as set — read here, changed on the web.
     private var webSubtitle: String {
         let current = viewModel.summary?.profile ?? profile
-        let zone = Self.timezoneOptions.first { $0.value == current.timezone }?.label ?? current.timezone
-        let language = Self.languageOptions.first { $0.value == (current.responseLanguage ?? "") }?.label ?? "Match the review"
-        return "Brand voice, reply language (\(language)), time zone (\(zone)) and who you're compared with."
+        // One short line, no nested brackets (re-audit L10): "English
+        // replies · Central time".
+        let zoneLabel = Self.timezoneOptions.first { $0.value == current.timezone }?.label ?? current.timezone
+        let zone = zoneLabel.components(separatedBy: " (").first ?? zoneLabel
+        let code = current.responseLanguage ?? ""
+        let language = code.isEmpty ? "Replies match the review"
+            : "\(Self.languageOptions.first { $0.value == code }?.label ?? code) replies"
+        return "\(language) \u{00B7} \(zone) time"
     }
 
     private var webSection: some View {
@@ -421,7 +470,7 @@ struct AccountProfileDetailView: View {
                                     : autoApprovePaused ? "Paused \u{2014} nothing posts on its own until it resumes."
                                     : autoApproveRuleLine, role: .body)
                     Text("Only the account owner can change auto-approve.")
-                        .cavnarText(.caption)
+                        .cavnarText(.caption, color: .cavnarInk2)
                 }
                 .padding(.vertical, 9)
             }

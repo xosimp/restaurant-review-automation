@@ -23,7 +23,7 @@ struct AccountConnectionsDetailView: View {
     /// The Intel card's own model, so the connect sheet is the one Intel uses.
     @State private var websiteModel = WebsiteAnalyticsViewModel()
     /// A disconnect waiting on its confirm: what it disconnects and how.
-    @State private var pendingDisconnect: (name: String, action: () async -> Void)?
+    @State private var pendingDisconnect: (name: String, action: () async -> Bool)?
 
     var body: some View {
         NavigationStack {
@@ -34,15 +34,25 @@ struct AccountConnectionsDetailView: View {
                         googleRow
                         AccountRowDivider()
                         instagramRow
-                        AccountRowDivider()
-                        posRow("Toast POS", brand: .toast, provider: "toast", status: connections.toast,
-                               disconnect: { await viewModel.disconnectToast() })
-                        AccountRowDivider()
-                        posRow("Square POS", brand: .square, provider: "square", status: connections.square,
-                               disconnect: { await viewModel.disconnectSquare() })
-                        AccountRowDivider()
-                        posRow("Clover POS", brand: .clover, provider: "clover", status: connections.clover,
-                               disconnect: { await viewModel.disconnectClover() })
+                        // A credential POS only once it's connected; the
+                        // ones that aren't are named in the one "Connect a
+                        // POS" web row below, not three "Not connected"
+                        // rows (re-audit M20).
+                        if connections.toast.connected {
+                            AccountRowDivider()
+                            posRow("Toast POS", brand: .toast, provider: "toast", status: connections.toast,
+                                   disconnect: { await viewModel.disconnectToast() })
+                        }
+                        if connections.square.connected {
+                            AccountRowDivider()
+                            posRow("Square POS", brand: .square, provider: "square", status: connections.square,
+                                   disconnect: { await viewModel.disconnectSquare() })
+                        }
+                        if connections.clover.connected {
+                            AccountRowDivider()
+                            posRow("Clover POS", brand: .clover, provider: "clover", status: connections.clover,
+                                   disconnect: { await viewModel.disconnectClover() })
+                        }
                         rpowerRow
                         webAnalyticsRow
                     }
@@ -58,7 +68,7 @@ struct AccountConnectionsDetailView: View {
                             CavnarWebLinkRow(
                                 title: "Connect a POS",
                                 subtitle: isOwner
-                                    ? "Toast, Square and Clover connect with keys from your POS account."
+                                    ? "\(Self.unconnectedPOS(connections)) connect with keys from your POS account."
                                     : "Only the account owner can connect a POS.",
                                 path: "account/integrations",
                                 actionLabel: "Connect on the web"
@@ -78,7 +88,9 @@ struct AccountConnectionsDetailView: View {
             ) {
                 Button("Disconnect", role: .destructive) {
                     guard let pending = pendingDisconnect else { return }
-                    Task { await pending.action(); Haptic.success() }
+                    // Success only when the server took it off; a refusal
+                    // shows its reason under the list (re-audit A5).
+                    Task { if await pending.action() { Haptic.success() } else { Haptic.error() } }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -98,6 +110,18 @@ struct AccountConnectionsDetailView: View {
             return "Posts and scheduled content stop going to Instagram and Facebook until you connect again."
         default:
             return "Sales and labor stop syncing from it until you connect it again."
+        }
+    }
+
+    /// "Toast, Square and Clover" / "Square and Clover" / "Clover" — the
+    /// credential POS systems not connected, for the web row's line.
+    static func unconnectedPOS(_ c: AccountConnections) -> String {
+        let names = [("Toast", c.toast), ("Square", c.square), ("Clover", c.clover)]
+            .filter { !$0.1.connected }.map(\.0)
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        default: return names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
         }
     }
 
@@ -149,7 +173,7 @@ struct AccountConnectionsDetailView: View {
     /// Sync now and Disconnect side by side — any login syncs (as on the
     /// web); only the owner disconnects, and only after the confirm.
     @ViewBuilder
-    private func connectedActions(_ provider: String, name: String, disconnect: @escaping () async -> Void) -> some View {
+    private func connectedActions(_ provider: String, name: String, disconnect: @escaping () async -> Bool) -> some View {
         HStack(spacing: CavnarSpace.s) {
             Button {
                 Task { await viewModel.syncNow(provider) }
@@ -182,7 +206,7 @@ struct AccountConnectionsDetailView: View {
     }
 
     /// Disconnect alone (an OAuth connection has nothing to sync by hand).
-    private func disconnectButton(_ name: String, action: @escaping () async -> Void) -> some View {
+    private func disconnectButton(_ name: String, action: @escaping () async -> Bool) -> some View {
         Button {
             Haptic.light()
             pendingDisconnect = (name, action)
@@ -245,7 +269,7 @@ struct AccountConnectionsDetailView: View {
 
     private var ownerOnlyNote: some View {
         Text("Only the account owner can connect or disconnect this.")
-            .cavnarText(.caption)
+            .cavnarText(.caption, color: .cavnarInk2)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -299,7 +323,7 @@ struct AccountConnectionsDetailView: View {
         brand: ConnectionBrand,
         provider: String,
         status: ConnectionStatus,
-        disconnect: @escaping () async -> Void
+        disconnect: @escaping () async -> Bool
     ) -> some View {
         let line = status.posStatusLine(provider: provider, posLine: connections.posLine)
         return providerRow(label, mark: { ConnectionMarkTile(brand: brand, size: 40) },

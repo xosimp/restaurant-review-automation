@@ -41,10 +41,11 @@ struct AccountCloseAccountView: View {
                         Text(requestedAt != nil ? "Request received" : "Cancellation goes through Will")
                     }
 
-                    // The smaller decision first. A pause stops billing and the
-                    // briefs and resumes on its own; data keeps flowing, so the
-                    // day they come back the brief is current, not a month stale.
-                    AccountPauseSection()
+                    // The smaller decision, named first — the pause itself is
+                    // on Plan & billing, its one place (re-audit L19).
+                    Text("Need a break instead? Pausing stops billing and the briefs and resumes on its own \u{2014} it\u{2019}s on Plan & billing.")
+                        .cavnarText(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     // Two sentences (iOS readability round — it was 60 words).
                     Text("Your service agreement needs 30 days' written notice, so canceling goes through Will. Your account stays on through the end of this billing period plus 30 days after you ask.")
@@ -103,9 +104,9 @@ struct AccountCloseAccountView: View {
                     // per-segment color is safe here.
                     if let url = URL(string: mailtoLink) {
                         Link(destination: url) {
-                            Text(requestedAt != nil ? "Or contact " : "You can also contact ").foregroundStyle(Color.cavnarInk3)
+                            Text(requestedAt != nil ? "Or contact " : "You can also contact ").foregroundStyle(Color.cavnarInk2)
                                 + Text("will@cavnar.ai").foregroundStyle(Color.cavnarEmber)
-                                + Text(" directly.").foregroundStyle(Color.cavnarInk3)
+                                + Text(" directly.").foregroundStyle(Color.cavnarInk2)
                         }
                         .font(.cavnar(.body))
                     }
@@ -230,10 +231,17 @@ struct AccountPauseSection: View {
         let pausedUntil: String?
         let days: [Int]?
         let canPause: Bool?
+        /// A hold only Cavnar AI can lift (a past-due or admin pause): no
+        /// Resume, and the server's sentence for why (re-audit M3).
+        var locked: Bool? = nil
+        var canResume: Bool? = nil
+        var lockMessage: String? = nil
         enum CodingKeys: String, CodingKey {
-            case ok, paused, days
+            case ok, paused, days, locked
             case pausedUntil = "paused_until"
             case canPause = "can_pause"
+            case canResume = "can_resume"
+            case lockMessage = "lock_message"
         }
     }
     private struct PauseBody: Encodable { let days: Int }
@@ -250,11 +258,27 @@ struct AccountPauseSection: View {
             if let st = status, st.canPause == true {
                 AccountSection(kicker: "Need a break?") {
                     if st.paused == true {
-                        AccountActionRow(
-                            label: "Paused",
-                            detail: st.pausedUntil.map { "Billing and briefs are paused. Resumes \(Self.mdy($0))." } ?? "Billing and briefs are paused.",
-                            symbol: "play.fill", busy: busy, showsDivider: false
-                        ) { Task { await act("/mobile/api/account/resume", body: PauseBody(days: 0)) } }
+                        let until = st.pausedUntil.map { "Billing and briefs are paused. Resumes \(Self.mdy($0))." }
+                            ?? "Billing and briefs are paused."
+                        if st.locked == true {
+                            // Cavnar AI's hold: its reason, and no Resume —
+                            // the route refuses one (re-audit M3).
+                            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                                Text("Paused").cavnarText(.body, color: .cavnarInk)
+                                Text(st.lockMessage ?? "This pause is held by Cavnar AI \u{2014} contact will@cavnar.ai to lift it.")
+                                    .cavnarText(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.vertical, 9)
+                        } else if st.canResume != false {
+                            AccountActionRow(
+                                label: "Resume now",
+                                detail: until,
+                                symbol: "play.fill", busy: busy, showsDivider: false
+                            ) { Task { await act("/mobile/api/account/resume", body: PauseBody(days: 0)) } }
+                        } else {
+                            Text(until).cavnarText(.secondary).padding(.vertical, 9)
+                        }
                     } else {
                         AccountKVRow(label: "Pause for") {
                             Picker("Pause length", selection: $days) {

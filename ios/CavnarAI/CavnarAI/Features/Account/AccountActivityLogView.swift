@@ -7,6 +7,8 @@ import SwiftUI
 struct AccountActivityLogView: View {
     let viewModel: AccountViewModel
     @State private var showingSignIns = false
+    /// The most recent few of each list; the rest are on the web.
+    static let shown = 3
 
     private func symbol(for event: AccountActivityEvent) -> String {
         switch event.type {
@@ -46,9 +48,11 @@ struct AccountActivityLogView: View {
                     // never-say, hours, prices, menu, roster — who changed
                     // it and when, kept for good (change_log, M7). Pay
                     // changes reach an account holder only (the server's).
+                    // The last three of each here; the full history is the
+                    // web's Security section (re-audit M6).
                     if !viewModel.changes.isEmpty {
                         AccountSection(kicker: "Settings and targets") {
-                            ForEach(Array(viewModel.changes.prefix(40).enumerated()), id: \.element.id) { index, change in
+                            ForEach(Array(viewModel.changes.prefix(Self.shown).enumerated()), id: \.element.id) { index, change in
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: change.symbol)
                                         .font(.system(size: 15, weight: .medium))
@@ -61,22 +65,24 @@ struct AccountActivityLogView: View {
                                     Spacer(minLength: 0)
                                 }
                                 .padding(.vertical, 10)
-                                if index < min(viewModel.changes.count, 40) - 1 { AccountRowDivider() }
+                                if index < min(viewModel.changes.count, Self.shown) - 1 { AccountRowDivider() }
                             }
                         }
                     }
 
-                    if viewModel.isLoadingActivity && viewModel.activity.isEmpty {
-                        CavnarLoadingOrb().padding(.top, 40).frame(maxWidth: .infinity)
-                    } else if viewModel.activity.isEmpty {
+                    if viewModel.isLoadingActivity && viewModel.activity.isEmpty && viewModel.changes.isEmpty {
+                        CavnarSkeletonBar(height: 3).padding(.vertical, 10)
+                            .accessibilityLabel("Loading activity")
+                    } else if viewModel.activity.isEmpty && viewModel.changes.isEmpty {
+                        // Only when there's nothing at all — it rendered under
+                        // a full Settings and targets list (re-audit M6).
                         Text("Nothing has changed on your account yet.")
-                            .font(.cavnar(.body))
-                            .foregroundStyle(Color.cavnarInk2)
+                            .cavnarText(.body)
                             .padding(.top, 20)
                             .frame(maxWidth: .infinity)
-                    } else {
-                        AccountSection(kicker: "Most recent first") {
-                            ForEach(Array(viewModel.activity.enumerated()), id: \.element.id) { index, event in
+                    } else if !viewModel.activity.isEmpty {
+                        AccountSection(kicker: "Account and security") {
+                            ForEach(Array(viewModel.activity.prefix(Self.shown).enumerated()), id: \.element.id) { index, event in
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: symbol(for: event))
                                         .font(.system(size: 15, weight: .medium))
@@ -101,9 +107,18 @@ struct AccountActivityLogView: View {
                                     Spacer(minLength: 0)
                                 }
                                 .padding(.vertical, 10)
-                                if index < viewModel.activity.count - 1 { AccountRowDivider() }
+                                if index < min(viewModel.activity.count, Self.shown) - 1 { AccountRowDivider() }
                             }
                         }
+                    }
+
+                    if viewModel.activity.count > Self.shown || viewModel.changes.count > Self.shown {
+                        VStack(alignment: .leading, spacing: 0) {
+                            CavnarWebLinkRow(title: "The full history",
+                                             subtitle: "Account activity and change history, every entry.",
+                                             path: "account/security", actionLabel: "On the web")
+                        }
+                        .accountCard()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

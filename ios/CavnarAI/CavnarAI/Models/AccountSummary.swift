@@ -20,7 +20,7 @@ struct AccountProfile: Decodable {
     let skipHolidays: String?
     /// The scheduler's closed dates (schedule_rules.closures, Friction #6) —
     /// what "Hours & closures" edits. `skipHolidays` is the marketing list.
-    let closures: [String]?
+    var closures: [String]?
     /// Set the moment "Close my account" is tapped — an ISO-ish UTC
     /// timestamp string, or nil if no request is on file. Lets the sheet
     /// show "request received" instead of the button again on a later
@@ -82,8 +82,13 @@ struct AccountInfo: Decodable {
     /// rule — a teammate, or a co-owner while another owner remains (re-audit
     /// 10/8/26, #7). Nil on an older server (then: not an owner).
     var canDeleteLogin: Bool? = nil
+    /// Whether a 2FA setup code can go to THIS login by text (the send-test
+    /// route's rule — this login's own phone, not the owner's). Nil on an
+    /// older server.
+    var twoFASmsAvailable: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
+        case twoFASmsAvailable = "two_fa_sms_available"
         case username, email
         case staffSignInNotify = "staff_signin_notify"
         case canDeleteLogin = "can_delete_login"
@@ -409,7 +414,7 @@ struct DataSettings: Decodable {
 
 struct AccountSummary: Decodable {
     let ok: Bool
-    let profile: AccountProfile
+    var profile: AccountProfile
     var account: AccountInfo
     let connections: AccountConnections
     let alerts: AccountAlerts

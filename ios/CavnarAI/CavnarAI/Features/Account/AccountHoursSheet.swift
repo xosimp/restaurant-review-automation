@@ -27,6 +27,9 @@ struct AccountHoursSheet: View {
         return f
     }()
 
+    /// "2026-10-08" — the closed-date list's own form.
+    static func isoDay(_ date: Date) -> String { dayFormatter.string(from: date) }
+
     /// "Fri, 9/25/26" — M/D/YY, the one owner-facing date form (F3-17). It
     /// read "Fri, Sep 25, 2026".
     static func closureLabel(_ iso: String) -> String {

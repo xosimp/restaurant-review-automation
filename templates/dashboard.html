@@ -2594,6 +2594,20 @@ cavNavRegister('ask', function (p) {
 /* Account's rail, one address per section: #account/notifications. */
 cavNavRegister('account', function (p, o) {
   cavNavOpenModule('account');
+  /* The Email history card, unfolded (iOS re-audit M2: the app's "Email
+     history" row landed on the top of Notifications with the card shut).
+     Its section loads above it, so the scroll is aimed again as it settles. */
+  if (p.rest[0] === 'email-history') {
+    var ehCard = document.getElementById('email-history-card'), ehFold = document.getElementById('eh-fold');
+    if (ehCard) {
+      var ehBtn = ehCard.querySelector('.ac-fold-btn');
+      if (ehFold && ehFold.hidden && ehBtn && typeof window.acctFold === 'function') window.acctFold(ehBtn, 'eh-fold');
+      [0, 700, 1500].forEach(function (ms) {
+        setTimeout(function () { if (ehCard.scrollIntoView) ehCard.scrollIntoView({behavior: 'smooth', block: 'start'}); }, ms);
+      });
+      return true;
+    }
+  }
   if (p.rest[0] && typeof window.acctGo === 'function' && window.acctGo(p.rest[0]) !== false) return true;
   if (!(o && o.fromPop)) window.scrollTo(0, 0);
   return true;
@@ -12312,7 +12326,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
     </section>
 
-    <section class="ss-stage" data-stage="history" aria-label="History">
+    {# data-nav="labor/history": the router opens the Studio on this stage
+       (cavNavSection's .ss-stage rule) - the app's "Schedule history" row
+       (iOS re-audit M1). #}
+    <section class="ss-stage" data-stage="history" data-nav="labor/history" aria-label="History">
       <div class="ss-hist">
         <div class="ss-kick">History</div>
         <h1>Every week you've built</h1>
