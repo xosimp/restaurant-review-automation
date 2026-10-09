@@ -68,7 +68,7 @@ private struct PendingSendLockView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(attributes.kicker.uppercased())
-                    .font(.cavnarBody(10.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
                     .tracking(1.1)
                     .foregroundStyle(Color.cavnarEmber2)
                 Text(attributes.title)

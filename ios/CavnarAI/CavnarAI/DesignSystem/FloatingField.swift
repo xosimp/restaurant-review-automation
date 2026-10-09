@@ -28,9 +28,10 @@ struct CavnarFloatingField<Field: Hashable>: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.cavnar(.body))
                     .foregroundStyle(Color.cavnarEmber2)
                     .frame(width: 18)
+                    .accessibilityHidden(true)
                 Group {
                     if isSecure {
                         SecureField(placeholder, text: $text)
@@ -38,7 +39,7 @@ struct CavnarFloatingField<Field: Hashable>: View {
                         TextField(placeholder, text: $text)
                     }
                 }
-                .font(.cavnarBody(17))
+                .font(.cavnar(.body))
                 .foregroundStyle(Color.cavnarInk)
                 .keyboardType(keyboardType)
                 .textContentType(textContentType)
@@ -77,23 +78,21 @@ struct CavnarFloatingTextArea<Field: Hashable>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // The field's label is the one kicker (re-audit S13).
             Text(caption)
-                .font(.cavnarBody(15, weight: 700))
-                .tracking(0.9)
-                .textCase(.uppercase)
-                .foregroundStyle(Color.cavnarEmber2)
+                .cavnarText(.kicker)
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
                     if text.isEmpty {
                         Text(placeholder)
-                            .font(.cavnarBody(17))
+                            .font(.cavnar(.body))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, 8)
                             .padding(.leading, 5)
                             .allowsHitTesting(false)
                     }
                     TextEditor(text: $text)
-                        .font(.cavnarBody(17))
+                        .font(.cavnar(.body))
                         .foregroundStyle(Color.cavnarInk)
                         .scrollContentBackground(.hidden)
                         // Sizes to its content (one line minimum) and hands

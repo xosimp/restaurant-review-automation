@@ -35,6 +35,12 @@ struct AIInsight: Codable, Equatable {
     var stale: Bool? = nil
     var staleNote: String? = nil
     var asOf: String? = nil
+    /// Each recommendation's MEASURED confidence (K1), index for index with
+    /// `recommendations` (`insight_rec_confidence`, mobile_api's
+    /// `_structured_insight`); nil at an index where the server measured
+    /// none. The consultant sheet draws a ConfidenceLine only from this —
+    /// never an invented one. Optional: older servers and cached copies.
+    var recConfidence: [TrustConfidence?]? = nil
 
     /// What the "Older read" caveat says, or nil on a fresh read.
     var olderReadNote: String? {
@@ -58,6 +64,7 @@ struct AIInsight: Codable, Equatable {
         case stale
         case staleNote = "stale_note"
         case asOf = "as_of"
+        case recConfidence = "insight_rec_confidence"
     }
 
     /// The key for the recommendation at `index`, or nil when it has none
@@ -67,5 +74,13 @@ struct AIInsight: Codable, Equatable {
               recKeys.indices.contains(index) else { return nil }
         guard let key = recKeys[index], !key.isEmpty else { return nil }
         return key
+    }
+
+    /// The measured confidence for the recommendation at `index`, or nil
+    /// when it has none (or the arrays disagree in length).
+    func recConfidence(at index: Int) -> TrustConfidence? {
+        guard let recConfidence, recConfidence.count == recommendations.count,
+              recConfidence.indices.contains(index) else { return nil }
+        return recConfidence[index]
     }
 }

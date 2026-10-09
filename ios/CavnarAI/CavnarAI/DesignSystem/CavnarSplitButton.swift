@@ -74,8 +74,11 @@ struct CavnarSplitButton<MenuContent: View>: View {
                     .foregroundStyle(Color.white.opacity(0.85))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
+            // The glyph alone read as "chevron down" (re-audit S14).
+            .accessibilityLabel("More options")
             // .simultaneousGesture, not a wrapping tap gesture, so this
             // doesn't compete with Menu's own gesture for opening it. The
             // haptic is fired imperatively rather than through

@@ -98,9 +98,11 @@ struct NextShiftWidgetView: View {
     private var small: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("NEXT SHIFT")
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             switch answer {
             case .next(let s):
                 Text(StaffShiftSnapshot.dayWord(s.date, now: entry.date, calendar: .current))

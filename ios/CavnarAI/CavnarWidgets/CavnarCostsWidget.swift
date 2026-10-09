@@ -93,7 +93,7 @@ struct CostsWidgetView: View {
             Gauge(value: min(value, Self.gaugeMax(value: value, target: target)),
                   in: 0...Self.gaugeMax(value: value, target: target)) {
                 Text(isLabor ? "LAB" : "FOOD")
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
             } currentValueLabel: {
                 Text(String(format: "%.0f", value))
                     .font(.cavnarNumber(17, weight: 700))
@@ -104,7 +104,7 @@ struct CostsWidgetView: View {
         } else {
             VStack(spacing: 0) {
                 Text("—").font(.cavnarNumber(20, weight: 700))
-                Text(isLabor ? "labor" : "food").font(.cavnarBody(9, weight: 700))
+                Text(isLabor ? "labor" : "food").font(.cavnarBody(CavnarType.tag, weight: 700))
             }
         }
     }
@@ -114,14 +114,14 @@ struct CostsWidgetView: View {
     private var small: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text((entry.locationName ?? snap?.restaurantName ?? "Last night").uppercased())
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
                 .lineLimit(1)
             if let snap {
                 if let date = snap.nightLabel {
                     Text(date)
-                        .font(.cavnarNumber(10, weight: 700))
+                        .font(.cavnarNumber(12, weight: 700))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 Spacer(minLength: 0)
@@ -144,9 +144,11 @@ struct CostsWidgetView: View {
     private func row(_ name: String, label: String?, value: Double?, target: Double?, estimate: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(estimate ? "\(name.uppercased()) \u{00B7} EST." : name.uppercased())
-                .font(.cavnarBody(9.5, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(label ?? "—")
                     .font(.cavnarNumber(22, weight: 600))
@@ -154,7 +156,7 @@ struct CostsWidgetView: View {
                     .privacySensitive()
                 if let target, value != nil {
                     Text("target \(String(format: "%g", target))%")
-                        .font(.cavnarNumber(11))
+                        .font(.cavnarNumber(12))
                         .foregroundStyle(Color.cavnarInk3)
                         .lineLimit(1)
                 }

@@ -43,9 +43,11 @@ enum RecAnswer: String, CaseIterable, Sendable {
     var label: String {
         switch self {
         case .completed: return "Done"
-        // "Not for us" everywhere (memory round 9/29/26, M1 "silences"):
-        // "Pass" read as "skip it for now", and the answer silences the
-        // advice for a year.
+        // "Pass" everywhere, web and iOS (owner, 10/1/26). It read "Not for
+        // us" from 9/29/26 (memory round, M1); the owner chose "Pass" back.
+        // The case keeps its name — the ledger event is `dismissed` with
+        // kind `not_for_us` — and the hint and confirmation say what the
+        // answer does (it silences the advice for a year).
         case .notForUs:  return "Pass"
         case .accepted:  return "Measure it"
         }

@@ -104,9 +104,9 @@ struct ScheduleBuildLockView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("SCHEDULE")
-                    .font(.cavnarBody(10.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
                     .tracking(1.1)
-                    .foregroundStyle(Color.cavnarEmber)
+                    .foregroundStyle(Color.cavnarEmber2)
                 Text(Self.headline(attributes, state))
                     .font(.cavnarBody(15, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
@@ -123,7 +123,7 @@ struct ScheduleBuildLockView: View {
                         .font(.cavnarNumber(17, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     Text("typical")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             } else {

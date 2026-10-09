@@ -102,11 +102,19 @@ extension Font {
     /// stays proportional to the role the size implies — iOS grows captions
     /// faster than titles, and matching that keeps hierarchy intact at large
     /// sizes instead of everything converging on one size.
+    ///
+    /// The same curve as the roles (re-audit S13, 10/8/26): 13 footnote
+    /// (`caption`), 14–15 subheadline (`secondary`), 16 callout (`body`,
+    /// `label`), 17–19 body (`lead`, `figureS`), 20–23 title3 (`headline`).
+    /// `cavnarBody(16)` used to scale as subheadline while the 16pt `body`
+    /// role scaled as callout, so the two drifted apart under Dynamic Type;
+    /// 14 scaled as footnote beside the 14pt `secondary` role's subheadline.
     static func bodyTextStyle(for size: CGFloat) -> Font.TextStyle {
         switch size {
         case ..<13:  return .caption
-        case ..<15:  return .footnote
-        case ..<17:  return .subheadline
+        case ..<14:  return .footnote
+        case ..<16:  return .subheadline
+        case ..<17:  return .callout
         case ..<20:  return .body
         case ..<24:  return .title3
         default:     return .title2
@@ -125,8 +133,9 @@ extension Font {
     private static func uiTextStyle(for size: CGFloat) -> UIFont.TextStyle {
         switch size {
         case ..<13:  return .caption1
-        case ..<15:  return .footnote
-        case ..<17:  return .subheadline
+        case ..<14:  return .footnote
+        case ..<16:  return .subheadline
+        case ..<17:  return .callout
         case ..<20:  return .body
         case ..<24:  return .title3
         default:     return .title2

@@ -23,15 +23,22 @@ import SafariServices
 ///
 /// `tint` is for a kicker whose colour IS its meaning (an amber projection);
 /// everything else stays Ember2.
+///
+/// `isHeader` (default true) puts the kicker in VoiceOver's headings rotor —
+/// right for a kicker over a section. A kicker that labels a tile's figure
+/// ("LABOR" over 28.4%) passes false, so the rotor lists sections, not
+/// every tile (re-audit S10, 10/8/26).
 struct CavnarKicker: View {
     let text: String
     var icon: String? = nil
     var tint: Color = .cavnarEmber2
+    var isHeader: Bool = true
 
-    init(_ text: String, icon: String? = nil, tint: Color = .cavnarEmber2) {
+    init(_ text: String, icon: String? = nil, tint: Color = .cavnarEmber2, isHeader: Bool = true) {
         self.text = text
         self.icon = icon
         self.tint = tint
+        self.isHeader = isHeader
     }
 
     var body: some View {
@@ -43,7 +50,7 @@ struct CavnarKicker: View {
         }
         .cavnarText(.kicker, color: tint)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
+        .accessibilityAddTraits(isHeader ? .isHeader : [])
     }
 }
 
@@ -80,23 +87,40 @@ extension HomeMixedText {
 /// `HomeMixedText.make(_:role:)`, with the role's leading and tracking.
 ///
 ///     CavnarMixedText("Food cost is 34.2%, 2.1 points over", role: .lead)
+///
+/// A `.lead` or `.body` sentence is a paragraph to READ, so it follows the
+/// phone's text size past the app's `.xxxLarge` cap, up to
+/// `.accessibility2` (`cavnarReadingSize`; re-audit S4, 10/8/26). Pass
+/// `readingSize: false` for one that sits beside other content in a row
+/// that would not survive an accessibility size.
 struct CavnarMixedText: View {
     let text: String
     var role: CavnarText = .body
     var color: Color? = nil
     var numberColor: Color? = nil
+    var readingSize: Bool = true
 
-    init(_ text: String, role: CavnarText = .body, color: Color? = nil, numberColor: Color? = nil) {
+    init(_ text: String, role: CavnarText = .body, color: Color? = nil, numberColor: Color? = nil,
+         readingSize: Bool = true) {
         self.text = text
         self.role = role
         self.color = color
         self.numberColor = numberColor
+        self.readingSize = readingSize
     }
 
+    /// The roles that are reading paragraphs.
+    static func readsPastCap(_ role: CavnarText) -> Bool { role == .lead || role == .body }
+
     var body: some View {
-        HomeMixedText.make(text, role: role, color: color, numberColor: numberColor)
+        let text = HomeMixedText.make(self.text, role: role, color: color, numberColor: numberColor)
             .cavnarText(role, color: color)
             .fixedSize(horizontal: false, vertical: true)
+        if readingSize && Self.readsPastCap(role) {
+            text.cavnarReadingSize(upTo: .accessibility2)
+        } else {
+            text
+        }
     }
 }
 
@@ -150,14 +174,16 @@ struct CavnarAnswerCard<Actions: View, Detail: View>: View {
     @ViewBuilder var detail: () -> Detail
 
     @State private var showingDetail = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let stack = VStack(alignment: .leading, spacing: CavnarSpace.s) {
             if let kicker, !kicker.isEmpty {
                 CavnarKicker(kicker)
             }
+            // L0 is read, not scanned: headline and summary follow the
+            // phone's text size past the app's cap (re-audit S4).
             CavnarMixedText(headline, role: headlineRole)
+                .cavnarReadingSize(upTo: .accessibility2)
                 .accessibilityAddTraits(.isHeader)
             if let summary = Self.present(summary) {
                 CavnarMixedText(summary, role: .body)
@@ -166,10 +192,12 @@ struct CavnarAnswerCard<Actions: View, Detail: View>: View {
                 causeLine(cause)
             }
             if let alt = Self.present(alternativeCause) {
-                (Text("Could also be: ").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
+                // Wraps in full: a tail-clipped alternative read as a
+                // different claim (re-audit S7). Ink2 lead-in — it is read.
+                (Text("Could also be: ").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                     + HomeMixedText.make(alt, role: .secondary))
-                    .lineLimit(2)
-                    .truncationMode(.tail)
+                    .lineSpacing(CavnarText.secondary.lineSpacing)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if Actions.self != EmptyView.self {
                 VStack(alignment: .leading, spacing: CavnarSpace.xs) {
@@ -191,7 +219,7 @@ struct CavnarAnswerCard<Actions: View, Detail: View>: View {
                 confidence
             }
             if Detail.self != EmptyView.self {
-                disclosure
+                CavnarEvidenceDisclosure(label: detailLabel, isExpanded: $showingDetail, content: detail)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -213,22 +241,70 @@ struct CavnarAnswerCard<Actions: View, Detail: View>: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var disclosure: some View {
+    private static func present(_ s: String?) -> String? {
+        guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        return t
+    }
+}
+
+// MARK: - Evidence disclosure
+
+/// L2 — the proof behind one tap: "See the evidence ⌄" / "Hide the
+/// evidence ⌃", 44pt, Ember2, collapsed by default. `CavnarAnswerCard`
+/// draws it for its `detail`; a screen with its own anatomy (the AI
+/// consultant sheet) uses it directly.
+///
+///     CavnarEvidenceDisclosure(label: "See the evidence") { EvidenceList(rows) }
+///
+/// The hide label is derived from the show label — "Show the reasoning" →
+/// "Hide the reasoning" — so the two always name the same thing (re-audit
+/// S7: it always said "Hide the evidence").
+struct CavnarEvidenceDisclosure<Content: View>: View {
+    var label: String = "See the evidence"
+    @Binding var isExpanded: Bool
+    @ViewBuilder var content: () -> Content
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(label: String = "See the evidence", isExpanded: Binding<Bool>,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.label = label
+        self._isExpanded = isExpanded
+        self.content = content
+    }
+
+    /// "See the evidence" → "Hide the evidence"; "Show the reasoning" →
+    /// "Hide the reasoning"; "Why?" → "Hide". A leading show-verb (See,
+    /// Show, Read, View, Open) becomes "Hide"; a trailing "›" or "…" goes.
+    static func hideLabel(for label: String) -> String {
+        var t = label.trimmingCharacters(in: .whitespaces)
+        for suffix in ["\u{203A}", "\u{2026}", "...", ">"] where t.hasSuffix(suffix) {
+            t = String(t.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+        }
+        let words = t.split(separator: " ", maxSplits: 1).map(String.init)
+        let verbs: Set<String> = ["see", "show", "read", "view", "open"]
+        if words.count == 2, verbs.contains(words[0].lowercased()) {
+            return "Hide " + words[1]
+        }
+        return "Hide"
+    }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
             Button {
                 Haptic.light()
                 if reduceMotion {
-                    showingDetail.toggle()
+                    isExpanded.toggle()
                 } else {
-                    withAnimation(.easeOut(duration: 0.22)) { showingDetail.toggle() }
+                    withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
                 }
             } label: {
                 HStack(spacing: CavnarSpace.xxs + 2) {
-                    Text(showingDetail ? "Hide the evidence" : detailLabel)
+                    Text(isExpanded ? Self.hideLabel(for: label) : label)
                         .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     Image(systemName: "chevron.down")
                         .font(.cavnar(.caption))
-                        .rotationEffect(.degrees(showingDetail ? 180 : 0))
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
                         .accessibilityHidden(true)
                     Spacer(minLength: 0)
                 }
@@ -236,17 +312,23 @@ struct CavnarAnswerCard<Actions: View, Detail: View>: View {
                 .cavnarHitTarget()
             }
             .buttonStyle(.plain)
-            .accessibilityValue(showingDetail ? "Expanded" : "Collapsed")
-            if showingDetail {
-                detail()
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            if isExpanded {
+                content()
                     .transition(reduceMotion ? .identity : .opacity)
             }
         }
     }
+}
 
-    private static func present(_ s: String?) -> String? {
-        guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
-        return t
+/// Owns its own open state — for a screen that just wants the disclosure.
+struct CavnarEvidenceSection<Content: View>: View {
+    var label: String = "See the evidence"
+    @ViewBuilder var content: () -> Content
+    @State private var expanded = false
+
+    var body: some View {
+        CavnarEvidenceDisclosure(label: label, isExpanded: $expanded, content: content)
     }
 }
 
@@ -359,12 +441,24 @@ struct CavnarWebLinkRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title). \(actionLabel)")
+        // The subtitle is part of the row's meaning ("Set every par on the
+        // web"); VoiceOver used to stop at the action (re-audit S10).
+        .accessibilityLabel(Self.accessibilityText(title: title, subtitle: subtitle, actionLabel: actionLabel))
         .accessibilityHint("Opens the Cavnar AI web dashboard")
         .sheet(item: $presented) { target in
             CavnarSafariView(url: target.url)
                 .ignoresSafeArea()
         }
+    }
+
+    /// "Alert rules. Edit on the web. Choose who hears what" — title, the
+    /// action, then the subtitle when there is one.
+    static func accessibilityText(title: String, subtitle: String?, actionLabel: String) -> String {
+        var parts = [title, actionLabel]
+        if let subtitle = subtitle?.trimmingCharacters(in: .whitespacesAndNewlines), !subtitle.isEmpty {
+            parts.append(subtitle)
+        }
+        return parts.joined(separator: ". ")
     }
 
     /// "/#account/notifications", "#labor", "/labor/schedule" → the bare nav
@@ -406,18 +500,38 @@ struct CavnarSafariView: UIViewControllerRepresentable {
 ///         }
 ///
 /// One primary per bar; a secondary may sit beside it. `note` is an
-/// optional caption above the buttons ("Save your changes first").
+/// optional line above the buttons ("Save your changes first"), and
+/// `noteTone` says what kind of line it is (re-audit S6, 10/8/26 — every
+/// note used to be a grey caption, so a failed save or a blocking warning
+/// read as a hint):
+/// - `.hint` (default) — caption, Ink3: guidance.
+/// - `.warning` — secondary, Amber, with a warning glyph: something will
+///   block or change the action.
+/// - `.error` — secondary, `cavnarRedText`, with an error glyph: the last
+///   attempt failed. VoiceOver announces a warning or an error.
+enum CavnarNoteTone: Sendable {
+    case hint, warning, error
+}
+
 struct CavnarPinnedBar<Content: View>: View {
     var note: String? = nil
+    var noteTone: CavnarNoteTone = .hint
     @ViewBuilder var content: () -> Content
+
+    init(note: String? = nil, noteTone: CavnarNoteTone = .hint, @ViewBuilder content: @escaping () -> Content) {
+        self.note = note
+        self.noteTone = noteTone
+        self.content = content
+    }
 
     var body: some View {
         VStack(spacing: CavnarSpace.xs) {
             if let note, !note.isEmpty {
-                Text(note)
-                    .cavnarText(.caption)
+                noteLine(note)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .onAppear { announce(note) }
+                    .onChange(of: note) { _, new in announce(new) }
             }
             HStack(spacing: CavnarSpace.s) {
                 content()
@@ -430,15 +544,38 @@ struct CavnarPinnedBar<Content: View>: View {
         .background(Color.cavnarPaper.opacity(0.96))
         .overlay(alignment: .top) { Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1) }
     }
+
+    @ViewBuilder
+    private func noteLine(_ note: String) -> some View {
+        switch noteTone {
+        case .hint:
+            Text(note).cavnarText(.caption)
+        case .warning, .error:
+            let isError = noteTone == .error
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                Image(systemName: isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .accessibilityHidden(true)
+                Text(note)
+            }
+            .cavnarText(.secondary, color: isError ? .cavnarRedText : .cavnarAmber)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel((isError ? "Error: " : "Warning: ") + note)
+        }
+    }
+
+    private func announce(_ note: String) {
+        guard noteTone != .hint, !note.isEmpty else { return }
+        AccessibilityNotification.Announcement(note).post()
+    }
 }
 
 extension View {
     /// Pins `content` to the bottom safe area as a `CavnarPinnedBar`; the
     /// scroll content above insets itself so nothing hides under the bar.
-    func cavnarPinnedBar<Content: View>(note: String? = nil,
+    func cavnarPinnedBar<Content: View>(note: String? = nil, noteTone: CavnarNoteTone = .hint,
                                         @ViewBuilder _ content: @escaping () -> Content) -> some View {
         safeAreaInset(edge: .bottom, spacing: 0) {
-            CavnarPinnedBar(note: note, content: content)
+            CavnarPinnedBar(note: note, noteTone: noteTone, content: content)
         }
     }
 }

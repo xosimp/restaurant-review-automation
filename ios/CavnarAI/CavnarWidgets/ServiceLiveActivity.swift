@@ -84,11 +84,11 @@ struct ServiceLockView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text("TONIGHT\u{2019}S SERVICE")
-                    .font(.cavnarBody(10.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
                     .tracking(1.1)
-                    .foregroundStyle(Color.cavnarEmber)
+                    .foregroundStyle(Color.cavnarEmber2)
                 Text(attributes.dayLabel)
-                    .font(.cavnarNumber(10.5, weight: 700))
+                    .font(.cavnarNumber(12, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer(minLength: 4)
                 if state.status == "closed" {

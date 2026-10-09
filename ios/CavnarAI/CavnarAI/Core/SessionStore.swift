@@ -740,7 +740,7 @@ final class SessionStore {
             return
         }
         clearLocalSession()
-        lastError = "Your session expired — please log in again."
+        lastError = APIClient.sessionEndedMessage
     }
 
     private func clearLocalSession() {
