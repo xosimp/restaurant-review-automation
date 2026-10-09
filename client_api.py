@@ -1828,6 +1828,20 @@ def reviews_why_line_api(current_user):
         return jsonify(ok=False, error=_safe_err(e))
 
 
+@client_bp.route("/api/reviews/keywords", methods=["GET", "POST"])
+@login_required
+def reviews_keywords_api(current_user):
+    """The search phrases Cavnar AI works into review replies (reply_keywords;
+    Danny, 10/9/26). Anyone with the Reviews module (the /api/reviews prefix
+    gate) reads and edits them - a manager runs the replies."""
+    import reply_keywords as _rk
+    try:
+        return jsonify(**_rk.api(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                 user=current_user))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @client_bp.route("/api/review-insight")
 @login_required
 def review_insight_api(current_user):

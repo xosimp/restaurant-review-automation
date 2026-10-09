@@ -10145,6 +10145,17 @@ svg:hover .hb-xh{opacity:1}
    results"): one hairline summary row, a chevron that turns when open. */
 /* No hairline between sections (owner, 9/26/26): spacing separates them. */
 .rv2-analytics,.hb-results{margin-top:30px}
+/* Search phrases worked into replies (reply_keywords) */
+.rv2-kw-box{margin-top:30px}
+.rv2-kw-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.rv2-kw-sub{font-size:13px;color:var(--ink3)}
+.rv2-kw-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.rv2-kw-list .ac-chip{height:30px;padding:0 4px 0 12px}
+.rv2-kw-list .ac-chip .n{color:var(--ink3);font-weight:500}
+.rv2-kw-empty{font-size:13px;color:var(--ink3)}
+.rv2-kw-add{display:flex;gap:8px;margin-top:12px;max-width:460px}
+.rv2-kw-add .ac-input{flex:1}
+.draft-lbl .rv2-kw{color:var(--ink3);font-weight:600;letter-spacing:.02em;text-transform:none}
 .rv2-analytics>summary,.hb-results>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:14px 0;font-size:13px;color:var(--ink2)}
 .rv2-analytics>summary::-webkit-details-marker,.hb-results>summary::-webkit-details-marker{display:none}
 .rv2-analytics>summary:after,.hb-results>summary:after{content:'';margin-left:auto;flex:0 0 auto;align-self:center;display:block;width:30px;height:30px;border-radius:50%;background:var(--hb-tint,color-mix(in srgb,var(--ember) 8%,transparent)) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23c84b2f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px 12px no-repeat;transition:transform .2s ease,background-color .15s ease}
@@ -10270,6 +10281,14 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
      "too hidden opening closed for owners"), and load when Reviews is
      shown (switchTab 'reviews'); the reads are stored, so a visit is not a
      model call. Closing it still works. #}
+  {# Search phrases worked into replies (reply_keywords; Danny, 10/9/26):
+     anyone with Reviews edits the list; an add or a remove saves on its own. #}
+  <section class="rv2-kw-box" id="rv-keywords" aria-labelledby="rv-kw-h">
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="rv2-kw-sub">Cavnar AI works one of these into a reply when it reads naturally — never more than one, never in a reply to an unhappy guest.</span></div>
+    <div class="rv2-kw-list" id="rv-kw-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
+    <form class="rv2-kw-add" id="rv-kw-form" onsubmit="rvKwAdd(event)"><input class="ac-input" id="rv-kw-in" maxlength="60" placeholder="e.g. brunch in St. Charles" aria-label="Add a search phrase" autocomplete="off"><button type="submit" class="cbtn cbtn-secondary cbtn-sm">Add</button></form>
+  </section>
+
   <details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics" open>
     <summary class="rv2-analytics-sum"><span class="hb-kicker">Trends</span><span>Rating trend, Cavnar AI's read, how replies were approved, topics</span></summary>
 
@@ -19488,7 +19507,7 @@ function switchTab(n,btn){
   _swPanel.style.animation = 'panelIn .22s ease forwards';
   animateStatNums('panel-'+n);
   animateBars('panel-'+n);
-  if(n==='reviews'){staggerCards();if(!window._rvFiltered){window._rvFiltered=true;filterReviews();}if(!window._rvWhyDone){window._rvWhyDone=true;rvLoadWhy();}}
+  if(n==='reviews'){staggerCards();if(!window._rvFiltered){window._rvFiltered=true;filterReviews();}if(!window._rvWhyDone){window._rvWhyDone=true;rvLoadWhy();rvLoadKeywords();}}
   if(n==='labor'){
     var _gapEl=document.getElementById('gap-current-pct');
     if(_gapEl&&!_gapEl.dataset.animated){_gapEl.dataset.animated='1';var _gapRaw=parseFloat((_gapEl.textContent||'').replace('%','').trim());if(!isNaN(_gapRaw))countUp(_gapEl,_gapRaw,900,'','%',1);}
@@ -19923,6 +19942,23 @@ function rvAnsweredDivider(){
 // direction over the last four weeks against the four before, and the top
 // complaint from the stored diagnosis, with a link into Trends. Built from
 // /api/reviews/why-line - counts and stored rows, no model call.
+// Search phrases (reply_keywords): the list with how many posted replies
+// in 90 days carry each. Add and remove each save on their own.
+function rvKwRender(d){
+  var el=document.getElementById('rv-kw-list');if(!el)return;
+  var ks=(d&&d.keywords)||[],h='',i;
+  if(!ks.length){el.innerHTML='<span class="rv2-kw-empty">No phrases yet. Add the searches you want to show up for, like a dish, a neighbourhood or an occasion.</span>';return;}
+  for(i=0;i<ks.length;i++){h+='<span class="ac-chip">'+esc(ks[i].phrase)+' <span class="n hb-num" title="Posted replies in the last 90 days that carry it">'+(+ks[i].used||0)+'</span><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-sm" data-kw-rm="'+esc(ks[i].phrase)+'" aria-label="Remove '+esc(ks[i].phrase)+'">✕</button></span>';}
+  el.innerHTML=h;
+}
+function rvKwSend(body){
+  function done(d){if(!d||!d.ok){toast((d&&d.error)||'Could not save that','error');return;}rvKwRender(d);if(body)toast('Saved','success');}
+  if(body){jsend('/api/reviews/keywords',body,done);return;}
+  fetch('/api/reviews/keywords',{credentials:'same-origin'}).then(apiJson).then(done).catch(function(){});
+}
+function rvLoadKeywords(){rvKwSend(null);}
+window.rvKwAdd=function(ev){if(ev)ev.preventDefault();var i=document.getElementById('rv-kw-in'),v=i?String(i.value||'').trim():'';if(!v)return;i.value='';rvKwSend({add:v});};
+document.addEventListener('click',function(e){var b=e.target&&e.target.closest?e.target.closest('[data-kw-rm]'):null;if(b)rvKwSend({remove:b.getAttribute('data-kw-rm')});});
 function rvLoadWhy(){
   var box=document.getElementById('rv-why');if(!box)return;
   fetch('/api/reviews/why-line',{credentials:'same-origin'}).then(apiJson).then(function(d){

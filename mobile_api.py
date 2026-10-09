@@ -1759,6 +1759,18 @@ def mobile_reviews_why_line(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 200
 
 
+@mobile_bp.route("/reviews/keywords", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_reviews_keywords(current_user):
+    """Twin of /api/reviews/keywords: the search phrases worked into replies."""
+    import reply_keywords as _rk
+    try:
+        return jsonify(**_rk.api(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                 user=current_user)), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @mobile_bp.route("/reviews/<int:review_id>/approve", methods=["POST"])
 @mobile_login_required
 def mobile_approve_review(review_id, current_user):

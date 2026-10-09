@@ -627,7 +627,18 @@ class Restaurant:
     open_times_json: Optional[str]   = None  # {"Monday":"11:00am",...}; close_times_json already exists
     compliance_json: Optional[str]   = None  # schedule_rules.DEFAULTS overrides: min_rest_hours, max_shift_hours, minors, days off
     role_floors_json: Optional[str]  = None  # {"Line Cook": {"morning": 1, "night": 2, "days": {"Saturday": {"night": 3}}}}
-    dedicated_shifts_json: Optional[str] = None  # schedule_dedicated: [{"label", "family", "parts": {daypart: [days]}, "waive_words"}]
+    dedicated_shifts_json: Optional[str] = None
+    reply_keywords: Optional[str] = None   # reply_keywords: JSON list of search phrases worked into review replies
+
+    def reply_keyword_in(self, text) -> str:
+        """The search phrase a reply works in (reply_keywords), or "" — read by
+        the review card, which a bare template environment renders too."""
+        try:
+            import reply_keywords as _rk
+            hit = _rk.found_in(text, _rk.of(self))
+            return hit[0] if hit else ""
+        except Exception:
+            return ""  # schedule_dedicated: [{"label", "family", "parts": {daypart: [days]}, "waive_words"}]
     cut_floor_default: int           = 2     # the fewest people a cut suggestion leaves in a role with no floor set (1..10; schedule_rules.cut_floor)
     jurisdiction: Optional[str]      = None  # compliance_packs code (CA, NY, …) applied under the owner's own rules
     role_arrival_json: Optional[str] = None  # {"Server": 5} minutes before their own shift start a role clocks in (attendance.clock_in_leads)
@@ -1212,6 +1223,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "compliance_json", "TEXT"),
         ("restaurants", "role_floors_json", "TEXT"),
         ("restaurants", "dedicated_shifts_json", "TEXT"),
+        ("restaurants", "reply_keywords", "TEXT"),
         # The fewest people a cut suggestion leaves in a role with no floor
         # of its own (schedule_rules.cut_floor). Cuts only, never a
         # staffing requirement.
@@ -4937,7 +4949,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json","dedicated_shifts_json","cut_floor_default",
+        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","cut_floor_default",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
@@ -5700,6 +5712,7 @@ def _restaurant_from_row(row) -> Restaurant:
         compliance_json=row["compliance_json"] if "compliance_json" in row.keys() else None,
         role_floors_json=row["role_floors_json"] if "role_floors_json" in row.keys() else None,
         dedicated_shifts_json=row["dedicated_shifts_json"] if "dedicated_shifts_json" in row.keys() else None,
+        reply_keywords=row["reply_keywords"] if "reply_keywords" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,

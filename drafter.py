@@ -744,6 +744,16 @@ def draft_response(review_id: int, rating: int, text: str,
     # specific details"). Answer the rating; never remark on the missing words.
     import analyser
     rating_only = analyser.is_rating_only(text)
+    # The restaurant's search phrases (reply_keywords; Danny, 10/9/26): one
+    # offered, never on an unhappy guest's reply.
+    import reply_keywords as _rk
+    try:
+        from models import get_restaurant as _gr_kw
+        _kw_all = _rk.of(_gr_kw(restaurant_id)) if restaurant_id else []
+    except Exception:
+        _kw_all = []
+    _kw = _rk.pick(restaurant_id, _kw_all, rating, text, urgency=urgency, sentiment=sentiment) if _kw_all else None
+    keyword_note = _rk.prompt_note(_kw)
     if rating_only:
         opener_ban = ("\nRATING ONLY: the guest left " + str(rating) + " stars and wrote nothing. Reply to the rating in "
                       "1-2 sentences. Never mention, hint at or apologise for the review having no words or details, "
@@ -775,7 +785,7 @@ Platform: {platform_note}
 Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {sign_off_name}
 {reviewer_line}
-Length: {length_note}{never_note}{style_block}{template_block}{edit_note}{theme_note}{fix_note}{health_note}{memory_note}
+Length: {length_note}{never_note}{keyword_note}{style_block}{template_block}{edit_note}{theme_note}{fix_note}{health_note}{memory_note}
 LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, language) + ", regardless of the language of the review.") if language else "Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English."}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
 FACTS: State only what the restaurant has told you above (Voice{", and the OWNER-CONFIRMED CHANGES" if fixes else ""}). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"){" other than an OWNER-CONFIRMED CHANGE, in its own words" if fixes else ""}, never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary — you cannot know any of it is true.
@@ -847,6 +857,8 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         reason, checked = check_reply(draft, restaurant_id=restaurant_id, review_id=review_id, review_text=text,
                                       reviewer_name=reviewer_name, voice_notes=voice_notes, never_say=never_say,
                                       restaurant_name=restaurant_name, sign_off=sign_off, action="draft_response")
+        if not reason:
+            reason = _rk.check(draft, _kw_all, rating, urgency=urgency, sentiment=sentiment) or None
         if fixes and uses_confirmed_fix(draft, fixes):
             # Drawing on a change the owner marked done: always read before it
             # goes out, never bulk- or auto-published (drafter_fixes). A refusal
