@@ -43,7 +43,7 @@ struct AccountTargetsView: View {
                         if model.canEdit { salariedSection(p) }
                     }
                     if let error = model.error {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -109,7 +109,7 @@ struct AccountTargetsView: View {
             numberRow("By the week", key: TargetsPayload.Field.weekly, prefix: "$",
                       note: p.noteFor(TargetsPayload.Field.weekly))
             Text("One target: typing either fills the other (a month is 52 ÷ 12 weeks). Only the one you typed is saved.")
-                .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.vertical, 6)
         }
@@ -123,14 +123,14 @@ struct AccountTargetsView: View {
                       note: p.noteFor(TargetsPayload.Field.hourly) ?? "Costs an hour nobody has a rate for.")
             if p.roles.isEmpty {
                 Text("No roles yet \u{2014} they come from your shifts and the roster.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).padding(.vertical, 9)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2).padding(.vertical, 9)
             }
             ForEach(p.roles, id: \.self) { role in
                 roleRow(p, role: role)
             }
             if !p.salariedRoles.isEmpty {
                 Text("\(p.salariedRoles.joined(separator: ", ")) \(p.salariedRoles.count == 1 ? "isn\u{2019}t" : "aren\u{2019}t") listed: everyone in \(p.salariedRoles.count == 1 ? "it" : "them") is salaried, set below.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 6)
             }
@@ -145,7 +145,7 @@ struct AccountTargetsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(role).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                    Text(role).font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                     if !people.isEmpty {
                         Button {
                             Haptic.selection()
@@ -155,7 +155,7 @@ struct AccountTargetsView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 HomeMixedText.make(TargetsPayload.peopleLine(people.count, unrated: pay?.unrated ?? 0),
-                                                   size: 13.5, weight: 600, color: .cavnarEmber2)
+                                                   size: CavnarType.secondary, weight: 600, color: .cavnarEmber2)
                                 Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(Color.cavnarEmber2)
                             }
@@ -169,8 +169,8 @@ struct AccountTargetsView: View {
                 if let range = pay?.rangeText {
                     // What the POS pays this role's people — shown as it is.
                     VStack(alignment: .trailing, spacing: 0) {
-                        Text(range).font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk)
-                        Text("an hour").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                        Text(range).font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text("an hour").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     }
                 } else {
                     rateField(key: TargetsPayload.Field.role(role), placeholder: p.hourlyRate.map(TargetsPayload.money) ?? "")
@@ -182,18 +182,18 @@ struct AccountTargetsView: View {
                     ForEach(people) { person in
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(person.name).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk2)
+                                Text(person.name).font(.cavnar(.body)).foregroundStyle(Color.cavnarInk2)
                                 if person.posRate == nil && person.rate == nil, let fb = pay?.fallback {
                                     HomeMixedText.make("No rate on your POS \u{00B7} costed at \(TargetsPayload.money(fb)) until you set one",
-                                                       size: 12.5, weight: 500, color: .cavnarAmber)
+                                                       size: CavnarType.caption, weight: 500, color: .cavnarAmber)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                             Spacer(minLength: 8)
                             if let pos = person.posRate {
                                 VStack(alignment: .trailing, spacing: 0) {
-                                    Text(TargetsPayload.money(pos)).font(.cavnarNumber(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                    Text("from your POS").font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                                    Text(TargetsPayload.money(pos)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                    Text("from your POS").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                                 }
                             } else {
                                 rateField(key: TargetsPayload.Field.person(person.name),
@@ -216,7 +216,7 @@ struct AccountTargetsView: View {
         AccountSection(kicker: p.salaried.isEmpty ? "Salaried staff" : "Salaried staff \u{00B7} \(p.salaried.count)") {
             if p.salaried.isEmpty {
                 Text("Nobody yet. Add the people paid a salary and Labor shows their pay beside hourly labor.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 9)
             }
@@ -224,9 +224,9 @@ struct AccountTargetsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.name).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                            Text(entry.name).font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                             HomeMixedText.make(TargetsPayload.salaryLine(entry, perDay: p.perDay[entry.name]),
-                                               size: 13.5, weight: 500, color: .cavnarInk3)
+                                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                         }
                         Spacer(minLength: 8)
                         if model.busy == entry.name {
@@ -238,7 +238,7 @@ struct AccountTargetsView: View {
                         }
                     }
                     if let warning = entry.warning {
-                        Text(warning).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarAmber)
+                        Text(warning).font(.cavnar(.caption)).foregroundStyle(Color.cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let suggestion = entry.suggestion {
@@ -263,7 +263,7 @@ struct AccountTargetsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     TextField("Name, as on your POS", text: $newSalariedName)
-                        .font(.cavnarBody(15.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.body, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .textInputAutocapitalization(.words)
                         .focused($focus, equals: "salaried-name")
@@ -281,9 +281,9 @@ struct AccountTargetsView: View {
                     }
                 }
                 HStack(spacing: 10) {
-                    Text("$").font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                    Text("$").font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk3)
                     TextField("Annual salary", text: $newSalariedAnnual)
-                        .font(.cavnarNumber(15.5, weight: 600))
+                        .font(.cavnarNumber(CavnarType.body, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .keyboardType(.numberPad)
                         .focused($focus, equals: "salaried-annual")
@@ -313,11 +313,11 @@ struct AccountTargetsView: View {
                            placeholder: String = "", note: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 10) {
-                Text(label).font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text(label).font(.cavnarBody(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
                 Spacer(minLength: 8)
-                if let prefix { Text(prefix).font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk3) }
+                if let prefix { Text(prefix).font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk3) }
                 TextField(placeholder.isEmpty ? "\u{2014}" : placeholder, text: model.binding(key))
-                    .font(.cavnarNumber(16, weight: 600))
+                    .font(.cavnarNumber(CavnarType.body, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                     .multilineTextAlignment(.trailing)
                     .keyboardType(.decimalPad)
@@ -325,11 +325,11 @@ struct AccountTargetsView: View {
                     .focused($focus, equals: key)
                     .disabled(!model.canEdit)
                     .accessibilityLabel(label)
-                if let suffix { Text(suffix).font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk3) }
+                if let suffix { Text(suffix).font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk3) }
                 if model.busy == key { CavnarShimmerLine().frame(width: 22) }
             }
             if let note {
-                HomeMixedText.make(note, size: 12.5, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(note, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             AccountRowDivider()
@@ -339,9 +339,9 @@ struct AccountTargetsView: View {
 
     private func rateField(key: String, placeholder: String) -> some View {
         HStack(spacing: 4) {
-            Text("$").font(.cavnarNumber(14.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+            Text("$").font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk3)
             TextField(placeholder.replacingOccurrences(of: "$", with: ""), text: model.binding(key))
-                .font(.cavnarNumber(15, weight: 600))
+                .font(.cavnarNumber(CavnarType.body, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.trailing)
                 .keyboardType(.decimalPad)

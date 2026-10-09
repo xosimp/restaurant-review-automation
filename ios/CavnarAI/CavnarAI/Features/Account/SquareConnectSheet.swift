@@ -30,8 +30,8 @@ struct SquareConnectSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("Find these in Square's Developer Dashboard — create an application, then copy its access token and the location ID you want to sync.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
 
                     CavnarFloatingField(
                         icon: "key", placeholder: "Access token", text: $accessToken,
@@ -52,7 +52,7 @@ struct SquareConnectSheet: View {
                     }
 
                     if let error = viewModel.connectSquareError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     // Plain full-width buttons, not a width-matched pair —

@@ -5,15 +5,21 @@ import Observation
 /// said each thing, who may read it and until when — and what left without
 /// anyone asking, with the way back (memory round 9/29/26, M2 owner_lanes;
 /// GET /account/memory → owner_memory.account_view). Built from the
-/// identity-card kit: the hero, the lanes strip (how full each kind of
-/// memory is, as meters), then the facts by kind, the archive, and the add
+/// identity-card kit: the hero, the facts by kind, the archive, and the add
 /// form. Every add, forget and restore saves on its own — nothing here is a
-/// whole-list save (owner edits never vanish).
+/// whole-list save (owner edits never vanish). iOS readability round: the
+/// lane meters (how full each kind is) are the web's; a fact shows one
+/// chip (Forget, asked first) with pin, share and scope in its long-press
+/// menu; the add form is the words and the kind, the rest behind More
+/// options.
 struct AccountMemoryView: View {
     @State private var viewModel = AccountMemoryViewModel()
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
     @FocusState private var focus: Field?
     @State private var pendingDismiss: ArchivedFact?
+    /// A forget waiting on its confirm — it used to fire on the tap.
+    @State private var pendingForget: MemoryFact?
+    @State private var showingAddOptions = false
 
     enum Field: Hashable { case fact }
 
@@ -34,9 +40,6 @@ struct AccountMemoryView: View {
                             .padding(.vertical, 10)
                             .accessibilityLabel("Loading what Cavnar AI remembers")
                     } else if let memory = viewModel.memory {
-                        if !memory.lanes.isEmpty {
-                            lanes(memory.lanes)
-                        }
                         facts(memory)
                         if !memory.archived.isEmpty {
                             archived(memory.archived)
@@ -44,11 +47,11 @@ struct AccountMemoryView: View {
                         addForm
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .accountSheetChrome("Memory")
             .cavnarPostedOverlay(viewModel.posted) { viewModel.posted = nil }
@@ -75,6 +78,19 @@ struct AccountMemoryView: View {
                 Text("\u{201C}\(pending.similar.fact)\u{201D} \u{2014} does the new one replace it?")
             }
             .confirmationDialog(
+                "Forget this?",
+                isPresented: Binding(get: { pendingForget != nil }, set: { if !$0 { pendingForget = nil } }),
+                titleVisibility: .visible,
+                presenting: pendingForget
+            ) { fact in
+                Button("Forget", role: .destructive) {
+                    Task { await viewModel.forget(fact) }
+                }
+                Button("Keep it", role: .cancel) {}
+            } message: { fact in
+                Text("\u{201C}\(fact.fact)\u{201D} \u{2014} Cavnar AI stops using it.")
+            }
+            .confirmationDialog(
                 "Let this note go for good?",
                 isPresented: Binding(get: { pendingDismiss != nil }, set: { if !$0 { pendingDismiss = nil } }),
                 titleVisibility: .visible
@@ -90,39 +106,6 @@ struct AccountMemoryView: View {
         }
     }
 
-    // MARK: - Lanes
-
-    /// One meter per kind: how many are kept against how many the kind
-    /// holds before the oldest leaves for the archive.
-    private func lanes(_ lanes: [MemoryLane]) -> some View {
-        AccountSection(kicker: "How full each kind is") {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(lanes) { lane in
-                    HStack(spacing: 10) {
-                        Text(MemoryKind.plural(lane.kind))
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .frame(width: 104, alignment: .leading)
-                        ConfidenceMeter(fraction: lane.fraction, tone: lane.isFull ? .warn : .good,
-                                        width: nil, height: 6)
-                            .frame(maxWidth: .infinity)
-                        Text("\(lane.count) of \(lane.cap)")
-                            .font(.cavnarNumber(14, weight: 600))
-                            .foregroundStyle(lane.isFull ? Color.cavnarAmber : Color.cavnarInk2)
-                            .frame(width: 64, alignment: .trailing)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(MemoryKind.plural(lane.kind)): \(lane.count) of \(lane.cap)")
-                }
-                Text("When a kind is full, its oldest fact moves to the archive below — never deleted.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.vertical, 9)
-        }
-    }
-
     // MARK: - Facts
 
     @ViewBuilder
@@ -130,8 +113,7 @@ struct AccountMemoryView: View {
         if memory.facts.isEmpty {
             AccountSection(kicker: "What Cavnar AI remembers") {
                 Text("Nothing remembered yet. Add something below, or tell Ask Cavnar AI \u{201C}remember that\u{2026}\u{201D}.")
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 9)
             }
@@ -162,46 +144,39 @@ struct AccountMemoryView: View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    HomeMixedText.make(fact.fact, size: 16, weight: 500, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HomeMixedText.make(fact.detailLine(viewerIsPrincipal: isPrincipal), size: 13.5, weight: 500,
-                                       color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if fact.pinned {
+                            Image(systemName: "pin.fill")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .accessibilityLabel("Pinned")
+                        }
+                        CavnarMixedText(fact.fact, role: .body, color: .cavnarInk)
+                    }
+                    CavnarMixedText(fact.detailLine(viewerIsPrincipal: isPrincipal), role: .caption)
                     // A staffing rule says how the schedule holds it — or
                     // that it can't (schedule audit 10/3/26 D-14, D-38).
                     if let schedule {
-                        HomeMixedText.make(schedule.text, size: 13.5, weight: 600,
-                                           color: schedule.checked ? .cavnarGreen : .cavnarAmber)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(schedule.text, role: .secondary,
+                                        color: schedule.checked ? .cavnarGreen : .cavnarAmber)
                     }
                 }
                 Spacer(minLength: 8)
-                if fact.canPin && viewModel.busyId != fact.id {
-                    // Pinned out of the lane's eviction (the web's Pin).
-                    AccountActionChip(symbol: fact.pinned ? "pin.slash" : "pin",
-                                      tone: fact.pinned ? .cavnarEmber2 : .cavnarInk3,
-                                      accessibilityLabel: (fact.pinned ? "Unpin: " : "Pin: ") + fact.fact) {
-                        Task { await viewModel.pin(fact, pinned: !fact.pinned) }
-                    }
-                }
+                // One visible chip: Forget, asked first. Pin, share with the
+                // team and which locations keep it are in the long-press
+                // menu below (personnel and money stay owners-only until
+                // shared — memory re-audit PEOPLE-10).
                 if fact.canForget {
                     if viewModel.busyId == fact.id {
                         CavnarShimmerLine(color: .cavnarRed).frame(width: 28)
                     } else {
-                        // Personnel and money default to owners only; one
-                        // tap shares it with the team (memory re-audit
-                        // PEOPLE-10, /account/memory/audience).
-                        if fact.audience == "principals" {
-                            AccountActionChip(symbol: "person.2",
-                                              accessibilityLabel: "Share with the team: \(fact.fact)") {
-                                Task { await viewModel.share(fact) }
-                            }
-                        }
                         AccountActionChip(symbol: "xmark", tone: .cavnarRed,
                                           accessibilityLabel: "Forget: \(fact.fact)") {
-                            Task { await viewModel.forget(fact) }
+                            pendingForget = fact
                         }
                     }
+                } else if viewModel.busyId == fact.id {
+                    CavnarShimmerLine(color: .cavnarEmber).frame(width: 28)
                 }
             }
             .padding(.vertical, 10)
@@ -227,8 +202,8 @@ struct AccountMemoryView: View {
                     }
                 }
                 if fact.canForget {
-                    Button(role: .destructive) { Task { await viewModel.forget(fact) } } label: {
-                        Label("Forget", systemImage: "xmark")
+                    Button(role: .destructive) { pendingForget = fact } label: {
+                        Label("Forget\u{2026}", systemImage: "xmark")
                     }
                 }
             }
@@ -244,10 +219,8 @@ struct AccountMemoryView: View {
                 VStack(spacing: 0) {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            HomeMixedText.make(item.fact, size: 15.5, weight: 500, color: .cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            HomeMixedText.make(item.detailLine, size: 13.5, weight: 500, color: .cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(item.fact, role: .body)
+                            CavnarMixedText(item.detailLine, role: .caption)
                         }
                         Spacer(minLength: 8)
                         if item.canRestore {
@@ -259,10 +232,8 @@ struct AccountMemoryView: View {
                                     Task { await viewModel.restore(item) }
                                 } label: {
                                     Text("Restore")
-                                        .font(.cavnarBody(14, weight: 700))
-                                        .foregroundStyle(Color.cavnarEmber2)
-                                        .frame(minHeight: 36)
-                                        .contentShape(Rectangle())
+                                        .cavnarText(.label, color: .cavnarEmber2)
+                                        .cavnarHitTarget()
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Restore: \(item.fact)")
@@ -293,6 +264,11 @@ struct AccountMemoryView: View {
                         MemoryKind.singular($0)
                     }
                 }
+                // What it's about, how long it holds and who may read it —
+                // sensible defaults (the whole business, the kind's own
+                // date, the default readers) unless the owner opens these.
+                CavnarMoreToggle(hiddenCount: 3, isExpanded: $showingAddOptions)
+                if showingAddOptions {
                 choice("About") {
                     AccountFlowLayout(spacing: 6) {
                         ForEach(MemoryModule.all, id: \.key) { m in
@@ -309,8 +285,7 @@ struct AccountMemoryView: View {
                     }
                     Text(viewModel.draft.modules.isEmpty ? "Nothing picked: the whole business."
                                                          : "Only what Cavnar AI writes about these reads it.")
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption)
                 }
                 choice(viewModel.draft.kind == "followup" ? "Due" : "Holds until") {
                     let options = viewModel.draft.kind == "followup" ? MemoryDate.dueOptions : MemoryDate.untilOptions
@@ -318,8 +293,7 @@ struct AccountMemoryView: View {
                         MemoryDate.label($0, due: viewModel.draft.kind == "followup")
                     }
                     if let d = viewModel.draft.dateLabel {
-                        HomeMixedText.make((viewModel.draft.kind == "followup" ? "Due " : "Until ") + d,
-                                           size: 13, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make((viewModel.draft.kind == "followup" ? "Due " : "Until ") + d, role: .caption)
                     }
                 }
                 choice("Who can read it") {
@@ -328,6 +302,7 @@ struct AccountMemoryView: View {
                                                                 : MemoryAudience.teamOptions) {
                         MemoryAudience.label($0)
                     }
+                }
                 }
                 Button {
                     focus = nil
@@ -350,12 +325,11 @@ struct AccountMemoryView: View {
                 if let rule = viewModel.lastScheduleRule {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: rule.checked ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(rule.checked ? Color.cavnarGreen : Color.cavnarAmber)
-                            .padding(.top, 2)
-                        HomeMixedText.make(rule.text, size: 14, weight: 600,
-                                           color: rule.checked ? .cavnarInk2 : .cavnarAmber)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityHidden(true)
+                        CavnarMixedText(rule.text, role: .secondary,
+                                        color: rule.checked ? .cavnarInk2 : .cavnarAmber)
                     }
                 }
             }
@@ -365,10 +339,8 @@ struct AccountMemoryView: View {
 
     private func choice<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(0.8)
-                .foregroundStyle(Color.cavnarInk3)
+            Text(title)
+                .cavnarText(.caption, color: .cavnarInk2)
             content()
         }
     }

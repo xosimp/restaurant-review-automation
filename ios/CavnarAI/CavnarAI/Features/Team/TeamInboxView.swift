@@ -201,13 +201,24 @@ struct TeamInboxView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HomeSectionHeader(kicker: "Team inbox", title: "Your team",
-                              trailing: viewModel.unread > 0 ? "\(viewModel.unread) unread" : nil)
-            Text("Staff reach the manager on duty from the app; you answer here and it goes to their phone. "
-                 + "An announcement goes to each person\u{2019}s phone, and they tap Got it.")
-                .font(.cavnarBody(CavnarType.secondary))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .lastTextBaseline) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("Team inbox")
+                    Text("Your team").cavnarText(.headline)
+                }
+                Spacer(minLength: CavnarSpace.s)
+                if viewModel.unread > 0 {
+                    HomeMixedText.make("\(viewModel.unread) unread", role: .secondary, color: .cavnarEmber2)
+                }
+            }
+            // How the inbox works — only while there's nothing in it yet
+            // (iOS readability round: it sat above every conversation).
+            if viewModel.threads.isEmpty && viewModel.announcements.isEmpty {
+                Text("Staff reach the manager on duty from the app; you answer here and it goes to their phone. "
+                     + "An announcement goes to each person\u{2019}s phone, and they tap Got it.")
+                    .cavnarText(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -215,7 +226,7 @@ struct TeamInboxView: View {
 
     private var lateStrip: some View {
         VStack(alignment: .leading, spacing: 8) {
-            AccountKicker(text: "Running late today")
+            CavnarKicker("Running late today")
             ForEach(viewModel.late) { r in
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "clock.badge.exclamationmark")
@@ -245,7 +256,7 @@ struct TeamInboxView: View {
 
     private var messages: some View {
         VStack(alignment: .leading, spacing: 8) {
-            AccountKicker(text: "Messages")
+            CavnarKicker("Messages")
             if viewModel.threads.isEmpty {
                 Text("No messages yet. Staff write to the manager on duty from the app.")
                     .font(.cavnarBody(CavnarType.body))
@@ -278,7 +289,7 @@ struct TeamInboxView: View {
                             .lineLimit(1)
                         if t.unread > 0 {
                             Text("\(t.unread)")
-                                .font(.cavnarNumber(12, weight: 700))
+                                .font(.cavnarNumber(CavnarType.caption, weight: 700))
                                 .foregroundStyle(Color.white)
                                 .padding(.horizontal, 7)
                                 .frame(minHeight: 20)
@@ -286,14 +297,12 @@ struct TeamInboxView: View {
                                 .accessibilityLabel("\(t.unread) unread")
                         }
                         Spacer(minLength: 4)
-                        Text(TeamTime.when(t.lastAt))
-                            .font(.cavnarNumber(12, weight: 500))
-                            .foregroundStyle(Color.cavnarInk3)
+                        HomeMixedText.make(TeamTime.when(t.lastAt), role: .caption)
                             .lineLimit(1)
                     }
                     Text(t.preview)
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(t.unread > 0 ? Color.cavnarInk2 : Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(t.unread > 0 ? Color.cavnarInk : Color.cavnarInk2)
                         .lineLimit(2)
                 }
                 Image(systemName: "chevron.right")
@@ -311,14 +320,14 @@ struct TeamInboxView: View {
     private var announcements: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                AccountKicker(text: "Announcements")
+                CavnarKicker("Announcements")
                 Spacer()
                 Button {
                     Haptic.light()
                     composing = true
                 } label: {
                     Label("New", systemImage: "plus")
-                        .font(.cavnarBody(14, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
@@ -327,7 +336,7 @@ struct TeamInboxView: View {
                 .accessibilityLabel("New announcement")
             }
             if let error = viewModel.withdrawError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
             }
             if viewModel.announcements.isEmpty {
                 if let error = viewModel.announcementsError {
@@ -375,8 +384,8 @@ struct TeamAnnouncementRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if a.isUrgent {
                     Text("Urgent")
-                        .font(.cavnarBody(12.5, weight: 700))
-                        .foregroundStyle(Color.cavnarRed)
+                        .font(.cavnarBody(CavnarType.caption, weight: 700))
+                        .foregroundStyle(Color.cavnarRedText)
                 }
                 Text(a.title)
                     .font(.cavnarBody(CavnarType.body, weight: 700))
@@ -444,7 +453,7 @@ struct TeamAnnouncementDetail: View {
                         AccountChip(text: "Urgent", tint: .cavnarRed)
                     }
                     Text(a.title)
-                        .font(.cavnarHeadline(24))
+                        .font(.cavnarHeadline(CavnarText.title.size))
                         .foregroundStyle(Color.cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if !a.body.isEmpty {
@@ -472,7 +481,7 @@ struct TeamAnnouncementDetail: View {
                         ForEach(Array(a.readBy.enumerated()), id: \.offset) { i, r in
                             AccountKVRow(label: r.name, showsDivider: i < a.readBy.count - 1) {
                                 Text(TeamTime.when(r.ackedAt))
-                                    .font(.cavnarNumber(13.5, weight: 500))
+                                    .font(.cavnarNumber(CavnarType.secondary, weight: 500))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                         }
@@ -629,7 +638,7 @@ struct TeamThreadView: View {
                 .accessibilityLabel("Send reply")
             }
             if let error {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -791,7 +800,7 @@ struct TeamAnnouncementComposer: View {
                     }
 
                     if let error {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 

@@ -502,7 +502,10 @@ def test_both_clients_offer_the_brief_hours_the_server_takes():
     web = open(os.path.join(ROOT, "templates", "dashboard.html")).read()
     assert "for (var i = 4; i <= 13; i++)" in web
     ios = open(os.path.join(IOS, "Features", "Account", "AccountAlertsDetailView.swift")).read()
-    assert "ForEach(4...13" in ios
+    # The restaurant's brief hour is set on the web since the iOS readability
+    # round (10/8/26: the phone keeps this login's own notifications). If the
+    # phone ever offers the hour again, it offers exactly the server's hours.
+    assert "ForEach(4...13" in ios or "brief.hour =" not in ios
 
 
 def test_the_referral_row_is_drawn_for_an_account_holder_only():

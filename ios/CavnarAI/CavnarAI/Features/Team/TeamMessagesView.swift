@@ -179,7 +179,7 @@ struct TeamMessagesView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text(t.initials)
-                    .font(.cavnarBody(13, weight: 700))
+                    .font(.cavnarBody(CavnarType.caption, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
                     .frame(width: 38, height: 38)
                     .background(Color.cavnarEmber.opacity(0.14), in: Circle())
@@ -191,21 +191,19 @@ struct TeamMessagesView: View {
                             .lineLimit(1)
                         Spacer(minLength: 4)
                         if t.lastAt != nil {
-                            Text(TeamTime.when(t.lastAt))
-                                .font(.cavnarNumber(12, weight: 500))
-                                .foregroundStyle(Color.cavnarInk3)
+                            HomeMixedText.make(TeamTime.when(t.lastAt), role: .caption)
                                 .lineLimit(1)
                         }
                     }
                     HStack {
                         Text(t.lastMessage.map { (t.lastFromMe ? "You: " : "") + $0 } ?? (t.role.map { $0.capitalized } ?? ""))
-                            .font(.cavnarBody(CavnarType.secondary))
-                            .foregroundStyle(t.unread > 0 ? Color.cavnarInk2 : Color.cavnarInk3)
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(t.unread > 0 ? Color.cavnarInk : Color.cavnarInk2)
                             .lineLimit(1)
                         Spacer(minLength: 4)
                         if t.unread > 0 {
                             Text(t.unread > 9 ? "9+" : "\(t.unread)")
-                                .font(.cavnarNumber(12, weight: 700))
+                                .font(.cavnarNumber(CavnarType.caption, weight: 700))
                                 .foregroundStyle(Color.white)
                                 .padding(.horizontal, 7)
                                 .frame(minHeight: 20)
@@ -318,9 +316,7 @@ struct TeamDirectThreadView: View {
                 .background(mine ? Color.cavnarEmber.opacity(0.18) : Color.cavnarPaper2,
                             in: RoundedRectangle(cornerRadius: CavnarRadius.card))
             if endOfRun {
-                Text(TeamTime.when(m.createdAt))
-                    .font(.cavnarNumber(11.5, weight: 500))
-                    .foregroundStyle(Color.cavnarInk3)
+                HomeMixedText.make(TeamTime.when(m.createdAt), role: .caption)
                     .padding(.bottom, 8)
             }
         }
@@ -357,7 +353,7 @@ struct TeamDirectThreadView: View {
                 .accessibilityLabel("Send")
             }
             if let error {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
             }
         }
         .padding(.horizontal, 20)

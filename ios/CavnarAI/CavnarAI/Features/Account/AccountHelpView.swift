@@ -82,19 +82,8 @@ struct AccountHelpView: View {
                         }
                     }
 
-                    Text("Can't find what you're looking for?")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
-                    if let url = URL(string: "mailto:will@cavnar.ai") {
-                        Link(destination: url) {
-                            HStack {
-                                Text("Contact Will").font(.cavnarBody(15.5, weight: 600))
-                                Spacer()
-                                Image(systemName: "arrow.up.right").font(.system(size: 11))
-                            }
-                        }
-                        .foregroundStyle(Color.cavnarEmber)
-                    }
+                    // The bottom "Contact Will" link repeated the
+                    // consultant card at the top (iOS readability round).
 
                     HStack(spacing: 18) {
                         if let url = URL(string: "https://cavnar.ai/privacy") {
@@ -104,16 +93,11 @@ struct AccountHelpView: View {
                             Link("Terms of service", destination: url)
                         }
                     }
-                    .font(.cavnarBody(14, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
                     .padding(.top, 6)
-
-                    Text("Build \(BuildInfo.gitSHA) · \(BuildInfo.builtAt)")
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3Muted(contrast))
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 8)
+                    // The build line is in Report a bug, where it's needed.
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -143,9 +127,9 @@ struct AccountHelpView: View {
                         .clipShape(Circle())
                         .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Will Cavnar").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text("Will Cavnar").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                         Text("Founder, Cavnar AI · your dedicated restaurant intelligence consultant")
-                            .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -179,7 +163,7 @@ struct AccountHelpView: View {
             } label: {
                 HStack(alignment: .top, spacing: 10) {
                     Text(item.question)
-                        .font(.cavnarBody(15.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.body, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .multilineTextAlignment(.leading)
                         .lineSpacing(2)
@@ -193,8 +177,8 @@ struct AccountHelpView: View {
             .buttonStyle(.plain)
             if isOpen {
                 Text(item.answer)
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarInk2)
                     .lineSpacing(4)
                     .padding(.bottom, 2)
             }

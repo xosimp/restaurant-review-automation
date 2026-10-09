@@ -59,20 +59,20 @@ struct AccountSecurityCheckupView: View {
                     AccountHero(title: verdict) {
                         GlowBadge(systemImage: "checkmark.shield", size: 64)
                     } subtitle: {
-                        Text("The same checkup as on the web")
+                        Text("How well your login is protected")
                     }
 
                     HStack(alignment: .lastTextBaseline, spacing: 6) {
                         if score != nil {
                             CavnarAnimatableNumber(value: animatedScore, format: { String(Int($0.rounded())) })
-                                .font(.cavnarNumber(56, weight: 600))
+                                .font(.cavnarNumber(CavnarType.heroNumber, weight: 600))
                                 .foregroundStyle(scoreTone)
                                 .cavnarNumberGlow(scoreTone)
                         } else {
-                            Text("\u{2014}").font(.cavnarNumber(56, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                            Text("\u{2014}").font(.cavnarNumber(CavnarType.heroNumber, weight: 600)).foregroundStyle(Color.cavnarInk3)
                         }
                         Text("/ \(checkup?.max ?? 100)")
-                            .font(.cavnarNumber(18))
+                            .font(.cavnarNumber(CavnarType.emphasis))
                             .foregroundStyle(Color.cavnarInk3)
                         Spacer()
                     }
@@ -91,7 +91,7 @@ struct AccountSecurityCheckupView: View {
                         }
                     } else if let error = viewModel.securitySummaryError {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                                 .fixedSize(horizontal: false, vertical: true)
                             Button {
                                 Haptic.light()
@@ -111,7 +111,7 @@ struct AccountSecurityCheckupView: View {
                     // This phone — kept from the app's own checkup, outside
                     // the account's score.
                     AccountSection(kicker: "On this phone") {
-                        itemRow(title: "Re-entry lock",
+                        itemRow(title: "App lock",
                                 detail: sessionStore.reentryProtected
                                     ? (sessionStore.appPasscodeSet ? "Face ID and app passcode" : "Face ID")
                                     : "Off \u{2014} the app reopens without asking",
@@ -142,15 +142,15 @@ struct AccountSecurityCheckupView: View {
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
-                        Text(title).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text(title).font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                         Spacer(minLength: 8)
                         if let points {
                             Text(earned ? "+\(points)" : "\(points) pts")
-                                .font(.cavnarNumber(14, weight: 600))
+                                .font(.cavnarNumber(CavnarType.secondary, weight: 600))
                                 .foregroundStyle(earned ? Color.cavnarGreen : Color.cavnarInk3)
                         }
                     }
-                    HomeMixedText.make(detail, size: 14, color: .cavnarInk3)
+                    HomeMixedText.make(detail, size: CavnarType.secondary, color: .cavnarInk3)
                     if let fix {
                         Button {
                             Haptic.light()
@@ -158,7 +158,7 @@ struct AccountSecurityCheckupView: View {
                             onFix(fix)
                         } label: {
                             HStack(spacing: 8) {
-                                Text(fixLabel).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarEmber)
+                                Text(fixLabel).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber)
                                 AccountDisclosureChip()
                             }
                         }

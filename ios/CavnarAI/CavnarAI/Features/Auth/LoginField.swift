@@ -41,7 +41,7 @@ struct LoginField<Field: Hashable>: View {
                     TextField(placeholder, text: $text)
                 }
             }
-            .font(.cavnarBody(16, weight: 600))
+            .font(.cavnarBody(CavnarType.body, weight: 600))
             .foregroundStyle(Color.cavnarInk)
             .keyboardType(keyboardType)
             .textContentType(textContentType)
@@ -124,12 +124,12 @@ struct LoginErrorBar: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Color.cavnarRed)
             Text(message)
-                .font(.cavnarBody(13.5, weight: 600))
-                .foregroundStyle(Color.cavnarRed.opacity(0.92))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
+                .foregroundStyle(Color.cavnarRedText)
                 // One line, shrinking if it has to. Wrapping would grow the
                 // reserved slot and put the page back to moving.
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, LoginMetrics.spaceM)
@@ -172,7 +172,7 @@ struct LoginSocialButton<Icon: View>: View {
             HStack(spacing: 10) {
                 icon().frame(width: 18, height: 18)
                 Text(title)
-                    .font(.cavnarBody(16, weight: 700))
+                    .font(.cavnarBody(CavnarType.body, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
             }
             .frame(maxWidth: .infinity)

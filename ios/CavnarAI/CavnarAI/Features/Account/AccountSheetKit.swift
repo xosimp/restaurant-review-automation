@@ -16,18 +16,19 @@ struct AccountHero<Badge: View, Subtitle: View>: View {
     @ViewBuilder var subtitle: () -> Subtitle
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: CavnarSpace.s + 2) {
             badge()
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                 Text(title)
-                    .font(.cavnarHeadline(24))
-                    .foregroundStyle(Color.cavnarInk)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .cavnarText(.headline)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                // Secondary in Ink2 — the hero's one line is read, not meta
+                // (iOS readability round: Ink3 never for what an owner reads).
                 subtitle()
-                    .font(.cavnarBody(15.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .lineLimit(1)
+                    .cavnarText(.secondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
             }
             Spacer(minLength: 0)
         }
@@ -50,7 +51,7 @@ struct AccountChip: View {
 
     var body: some View {
         Text(text)
-            .font(.cavnarBody(13.5, weight: 700))
+            .font(.cavnarBody(CavnarType.secondary, weight: 700))
             .foregroundStyle(fg)
             .multilineTextAlignment(.leading)
             .padding(.horizontal, 11)
@@ -123,14 +124,13 @@ struct AccountFlowLayout: Layout {
 
 // MARK: - Section + kicker
 
+/// The Account sheets' kicker — now the one design-system kicker
+/// (`CavnarKicker`, iOS readability round), kept as a name so every sheet
+/// reads the same without touching each call.
 struct AccountKicker: View {
     let text: String
     var body: some View {
-        // The web's `.ac-kicker`: ember, the one kicker size (parity #85).
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(1.6)
-            .foregroundStyle(Color.cavnarEmber)
+        CavnarKicker(text)
     }
 }
 
@@ -176,8 +176,8 @@ struct AccountSection<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            AccountKicker(text: kicker)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker(kicker)
             VStack(alignment: .leading, spacing: 0) { content() }
                 .modifier(AccountCardStyle())
         }
@@ -202,21 +202,25 @@ struct AccountStatTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.1)
-                .foregroundStyle(Color.cavnarInk3)
-            Text(value)
-                .font(valueIsNumber ? .cavnarNumber(18, weight: 600) : .cavnarHeadline(18))
-                .foregroundStyle(tone)
+            Text(label)
+                .cavnarText(.caption, color: .cavnarInk2)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.85)
+            Text(value)
+                .cavnarText(valueIsNumber ? .figureS : .lead, color: tone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             if let detail {
-                Text(detail)
-                    .font(detailIsNumber ? .cavnarNumber(13.5) : .cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                Group {
+                    if detailIsNumber {
+                        HomeMixedText.make(detail, role: .caption)
+                    } else {
+                        Text(detail)
+                    }
+                }
+                .cavnarText(.caption)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -269,7 +273,8 @@ struct AccountKVRow<Trailing: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                // Body in Ink2: a row's label is read (Ink3 is for meta).
+                Text(label).cavnarText(.body)
                 Spacer(minLength: 8)
                 trailing()
             }
@@ -292,8 +297,7 @@ struct AccountValue: View {
 
     var body: some View {
         Text(text)
-            .font(isNumber ? .cavnarNumber(16, weight: 600) : .cavnarBody(16, weight: 700))
-            .foregroundStyle(tone)
+            .cavnarText(isNumber ? .figureS : .label, color: tone)
             .multilineTextAlignment(.trailing)
     }
 }
@@ -305,7 +309,7 @@ struct AccountPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(on ? Color.cavnarGreen : Color.cavnarInk3).frame(width: 6, height: 6)
-            Text(text).font(.cavnarBody(13, weight: 700)).foregroundStyle(on ? Color.cavnarGreen : Color.cavnarInk3)
+            Text(text).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(on ? Color.cavnarGreen : Color.cavnarInk2)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
@@ -336,14 +340,15 @@ private struct AccountFieldLabel: View {
         // pairing can read subtly misaligned; baseline alignment is the
         // correct pairing for text next to a glyph regardless of either
         // font's own metrics.
+        // Caption 13, sentence case, Ink2 (iOS readability round: was an
+        // 11.5pt uppercase Ink3 label).
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(text.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(0.8)
-                .foregroundStyle(Color.cavnarInk3)
+            Text(text)
+                .cavnarText(.caption, color: .cavnarInk2)
             Image(systemName: "pencil")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarEmber.opacity(0.7))
+                .accessibilityHidden(true)
         }
     }
 }
@@ -356,10 +361,8 @@ private struct AccountFieldLabel: View {
 private struct AccountCaptionLabel: View {
     let text: String
     var body: some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(0.8)
-            .foregroundStyle(Color.cavnarInk3)
+        Text(text)
+            .cavnarText(.caption, color: .cavnarInk2)
     }
 }
 
@@ -398,7 +401,7 @@ private struct AccountFieldRow<Field: Hashable>: View {
                         TextField(placeholder, text: $text)
                     }
                 }
-                .font(isNumber ? .cavnarNumber(17, weight: 600) : .cavnarBody(17, weight: multiline ? 400 : 700))
+                .font(isNumber ? .cavnar(.figureS) : .cavnar(multiline ? .body : .label))
                 .foregroundStyle(multiline ? Color.cavnarInk2 : Color.cavnarInk)
                 .keyboardType(keyboardType)
                 .focused(focus, equals: field)
@@ -471,8 +474,7 @@ struct AccountDisplayRow<Trailing: View>: View {
                 VStack(alignment: .leading, spacing: 4) {
                     AccountCaptionLabel(text: label)
                     Text(value)
-                        .font(.cavnarBody(17, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.label)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -513,12 +515,11 @@ struct AccountDeviceRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text(session.label).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text(session.label).cavnarText(.label)
                         if session.isCurrent { AccountPill(text: "This device") }
                     }
-                    Text(AccountRelativeTime.describe(session.lastActive, activePrefix: true))
-                        .font(.cavnarNumber(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                    CavnarMixedText(AccountRelativeTime.describe(session.lastActive, activePrefix: true),
+                                    role: .secondary)
                 }
                 Spacer(minLength: 0)
             }
@@ -572,7 +573,12 @@ enum AccountRelativeTime {
 /// screen's.
 private struct AccountSheetChrome: ViewModifier {
     let title: String
+    /// Unsaved edits on the sheet (a form with a Save bar): swipe-down is
+    /// refused and Back asks "Discard changes?" first, so an edit is never
+    /// lost silently (iOS readability round [25]; owner edits never vanish).
+    var isDirty: Bool = false
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmingDiscard = false
 
     func body(content: Content) -> some View {
         content
@@ -588,7 +594,7 @@ private struct AccountSheetChrome: ViewModifier {
                 cavnarToolbarItem(placement: .topBarLeading) {
                     Button {
                         Haptic.light()
-                        dismiss()
+                        if isDirty { confirmingDiscard = true } else { dismiss() }
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 17, weight: .semibold))
@@ -602,12 +608,21 @@ private struct AccountSheetChrome: ViewModifier {
                     .accessibilityLabel("Back")
                 }
             }
+            .interactiveDismissDisabled(isDirty)
+            .confirmationDialog("Discard changes?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
+                Button("Discard changes", role: .destructive) { dismiss() }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text("What you changed here hasn\u{2019}t been saved.")
+            }
     }
 }
 
 extension View {
-    func accountSheetChrome(_ title: String) -> some View {
-        modifier(AccountSheetChrome(title: title))
+    /// `isDirty`: the sheet holds unsaved edits — Back confirms and
+    /// swipe-down is refused until they're saved or discarded.
+    func accountSheetChrome(_ title: String, isDirty: Bool = false) -> some View {
+        modifier(AccountSheetChrome(title: title, isDirty: isDirty))
     }
 }
 
@@ -682,7 +697,10 @@ struct AccountStateSwitch: View {
         }
         .frame(width: Self.cell * 2 + 4, height: Self.height)
         .opacity(disabled ? 0.45 : 1)
-        .contentShape(Capsule())
+        // A 44pt hit area around the 30pt switch without growing the row:
+        // the padding is taken back after the tap target is set.
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
         .onTapGesture {
             guard !disabled, !busy else { return }
             Haptic.selection()
@@ -700,6 +718,7 @@ struct AccountStateSwitch: View {
             // above) or didn't — either way the thumb follows it now.
             if !nowBusy { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { pending = nil } }
         }
+        .padding(.vertical, -7)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(shown ? "On" : "Off")
         .accessibilityAddTraits(.isButton)
@@ -714,7 +733,9 @@ struct AccountStateSwitch: View {
     }
 }
 
-/// The 28pt ember chip that says "this row opens something".
+/// The 28pt ember chip that says "this row opens something". 28pt to the
+/// eye, 44pt to the thumb (`cavnarHitTarget`); the vertical overhang is
+/// taken back so a row keeps its height.
 struct AccountDisclosureChip: View {
     var body: some View {
         Image(systemName: "chevron.right")
@@ -722,6 +743,9 @@ struct AccountDisclosureChip: View {
             .foregroundStyle(Color.cavnarEmber)
             .frame(width: 28, height: 28)
             .background(Color.cavnarEmber.opacity(0.14), in: Circle())
+            .cavnarHitTarget()
+            .padding(.vertical, -8)
+            .accessibilityHidden(true)
     }
 }
 
@@ -744,9 +768,13 @@ struct AccountActionChip: View {
                 .frame(width: 28, height: 28)
                 .background(tone.opacity(0.14), in: Circle())
                 .overlay(Circle().strokeBorder(tone.opacity(0.35), lineWidth: 1))
-                .contentShape(Circle())
+                // 28pt visual, 44pt hit (iOS readability round).
+                .cavnarHitTarget()
         }
         .buttonStyle(.plain)
+        // The hit area's vertical overhang is taken back from the layout,
+        // so a 48pt row stays 48pt.
+        .padding(.vertical, -8)
         .accessibilityLabel(accessibilityLabel)
     }
 }
@@ -768,10 +796,15 @@ struct AccountNavRow: View {
             AccountKVRow(label: label, showsDivider: showsDivider) {
                 HStack(spacing: 10) {
                     if let value {
-                        Text(value)
-                            .font(valueIsNumber ? .cavnarNumber(15, weight: 600) : .cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .lineLimit(1)
+                        Group {
+                            if valueIsNumber {
+                                HomeMixedText.make(value, role: .secondary)
+                            } else {
+                                Text(value)
+                            }
+                        }
+                        .cavnarText(.secondary)
+                        .lineLimit(1)
                     }
                     AccountDisclosureChip()
                 }
@@ -798,9 +831,9 @@ struct AccountSwitchRow: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                    Text(label).cavnarText(.body)
                     if let detail {
-                        Text(detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                        Text(detail).cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -828,9 +861,9 @@ struct AccountActionRow: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(label).font(.cavnarBody(16)).foregroundStyle(tone == .cavnarRed ? Color.cavnarRed : Color.cavnarInk3)
+                    Text(label).cavnarText(.body, color: tone == .cavnarRed ? .cavnarRedText : .cavnarInk2)
                     if let detail {
-                        Text(detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                        Text(detail).cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

@@ -114,6 +114,14 @@ struct AccountRestaurantProfileSheet: View {
 
     private static let path = "/mobile/api/account/restaurant-profile"
 
+    /// A choice changed and not yet confirmed — Back asks before dropping it.
+    private var isDirty: Bool {
+        guard canEdit, !isSaving, let p = payload?.profile else { return false }
+        return serviceModel != (p.serviceModel ?? "") || concept != (p.concept ?? "")
+            || barLed != (p.barLed ?? false) || ownership != (p.ownership ?? "")
+            || openedYear != (p.openedYear.map(String.init) ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -133,14 +141,15 @@ struct AccountRestaurantProfileSheet: View {
                         } else if let r = p.review, p.confirmed {
                             reviewCard(r)
                         }
+                        // "Your targets" left this sheet: the targets live
+                        // in Account → Restaurant (iOS readability round).
                         profileSection(p)
-                        targetsSection
                     } else if errorText == nil {
                         CavnarSkeletonLines()
                     }
 
                     if let errorText {
-                        Text(errorText).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(errorText).cavnarText(.secondary, color: .cavnarRedText)
                     }
 
                     if canEdit, payload?.profile != nil {
@@ -156,13 +165,13 @@ struct AccountRestaurantProfileSheet: View {
                         .disabled(isSaving || serviceModel.isEmpty)
                     } else if !canEdit {
                         Text("Only the account owner can change the restaurant profile.")
-                            .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
-            .accountSheetChrome("Profile")
+            .accountSheetChrome("Profile", isDirty: isDirty)
             .cavnarPostedOverlay(postedLabel) { dismiss() }
             .task { await load() }
         }
@@ -181,9 +190,11 @@ struct AccountRestaurantProfileSheet: View {
     private func suggestionCard(_ s: RestaurantProfilePayload.Suggestion) -> some View {
         AccountSection(kicker: "Our guess") {
             VStack(alignment: .leading, spacing: 6) {
-                Text(s.text).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                Text("A guess from \((s.cues ?? []).isEmpty ? "your name" : (s.cues ?? []).joined(separator: ", ")) — \(s.confidencePct ?? 0)% confident. Until you confirm, no other restaurant is compared with you.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text(s.text).cavnarText(.label)
+                // The cues and the "% confident" are the guesser's working,
+                // not the owner's question (iOS readability round).
+                Text("Until you confirm, no other restaurant is compared with you.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if canEdit {
                     HStack(spacing: 10) {
@@ -204,9 +215,9 @@ struct AccountRestaurantProfileSheet: View {
     private func reviewCard(_ r: RestaurantProfilePayload.Review) -> some View {
         AccountSection(kicker: "Is this still right?") {
             VStack(alignment: .leading, spacing: 6) {
-                Text(r.text).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text(r.text).cavnarText(.label)
                 Text("From your own figures. Who you're compared with doesn't change until you confirm.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if canEdit {
                     HStack(spacing: 10) {
@@ -236,35 +247,10 @@ struct AccountRestaurantProfileSheet: View {
                 TextField("2019", text: $openedYear)
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.trailing)
-                    .font(.cavnarNumber(15, weight: 600))
+                    .font(.cavnar(.figureS))
                     .frame(width: 80)
                     .disabled(!canEdit)
             }
-        }
-    }
-
-    private var targetsSection: some View {
-        AccountSection(kicker: "Your targets") {
-            if let t = payload?.targets?.labor {
-                AccountKVRow(label: "Labor") { targetValue(t) }
-            }
-            if let t = payload?.targets?.food {
-                AccountKVRow(label: "Food cost", showsDivider: payload?.laborCostBasis?.label != nil) { targetValue(t) }
-            }
-            if let basis = payload?.laborCostBasis?.label {
-                AccountKVRow(label: "Labor cost from", showsDivider: false) {
-                    Text(basis).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk2)
-                        .multilineTextAlignment(.trailing)
-                }
-            }
-        }
-    }
-
-    private func targetValue(_ t: RestaurantProfilePayload.Target) -> some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            Text(t.pct.map { String(format: "%g%%", $0) } ?? "—")
-                .font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk2)
-            Text(t.label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
         }
     }
 

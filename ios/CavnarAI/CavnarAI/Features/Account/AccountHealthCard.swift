@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The Account hero's health card (iOS parity #89): the server's account
-/// health ring and its one sentence with one Fix link, the six items behind
-/// a disclosure, the modules on the plan, and the measured-value line —
+/// health ring, its one sentence and one Fix link (iOS readability round;
+/// the plan's modules and the measured-value line are on Billing) —
 /// `delivered` only, never an opportunity figure (CLAUDE.md "Value
 /// delivered"). Everything here is account_health.payload as the web's
 /// Account overview reads it; nothing is scored on the phone.
@@ -14,7 +14,6 @@ struct AccountHealthCard: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawn = false
-    @State private var showingItems = false
 
     private var tone: Color { Self.toneColor(health.tone) }
 
@@ -27,119 +26,39 @@ struct AccountHealthCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 16) {
-                ring
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("ACCOUNT HEALTH")
-                        .font(.cavnarBody(12.5, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
-                    if let lead = health.sayLead {
-                        HomeMixedText.make(lead, size: 16, weight: 700, color: .cavnarInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let text = health.sayText {
-                        HomeMixedText.make(text, size: 14, weight: 500, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .lineLimit(4)
-                    }
-                    if let fix = health.fix {
-                        Button {
-                            Haptic.light()
-                            onFix(fix.key)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Text(fix.label).font(.cavnarBody(14.5, weight: 700))
-                                Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
-                            }
-                            .foregroundStyle(Color.cavnarEmber)
-                            .frame(minHeight: 36)
-                            .contentShape(Rectangle())
+        // Ring + one sentence + Fix (iOS readability round). The six checked
+        // items, the plan's modules and the measured-value line left the
+        // card: the modules and the value line are on the Billing sheet,
+        // and Fix opens the one thing worth doing.
+        HStack(alignment: .center, spacing: CavnarSpace.m) {
+            ring
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("Account health")
+                if let sentence = health.sayLead ?? health.sayText {
+                    CavnarMixedText(sentence, role: .body, color: .cavnarInk)
+                        .lineLimit(3)
+                }
+                if let fix = health.fix {
+                    Button {
+                        Haptic.light()
+                        onFix(fix.key)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(fix.label).cavnarText(.label, color: .cavnarEmber2)
+                            Image(systemName: "chevron.right")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .accessibilityHidden(true)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityHint("Opens the setting that fixes it")
+                        .cavnarHitTarget()
                     }
-                }
-                Spacer(minLength: 0)
-            }
-
-            // The six items, worst first, behind one tap (progressive disclosure).
-            if !health.items.isEmpty {
-                Button {
-                    Haptic.selection()
-                    withAnimation(.easeOut(duration: 0.22)) { showingItems.toggle() }
-                } label: {
-                    HStack {
-                        Text(showingItems ? "Hide what's checked" : "What's checked")
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarInk2)
-                        Spacer()
-                        Image(systemName: showingItems ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
-                    .frame(minHeight: 36)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                if showingItems {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(sortedItems) { item in
-                            Button {
-                                Haptic.light()
-                                onFix(item.key)
-                            } label: {
-                                HStack(alignment: .top, spacing: 10) {
-                                    Circle().fill(Self.toneColor(item.state))
-                                        .frame(width: 8, height: 8)
-                                        .shadow(color: Self.toneColor(item.state).opacity(0.6), radius: 3)
-                                        .padding(.top, 6)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(item.label).font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
-                                        HomeMixedText.make(item.sub, size: 13.5, weight: 500, color: .cavnarInk3)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                    Spacer(minLength: 0)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the setting that fixes it")
                 }
             }
-
-            if !health.features.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("ON YOUR PLAN")
-                        .font(.cavnarBody(12.5, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
-                    AccountFlowLayout(spacing: 6) {
-                        ForEach(health.features) { f in
-                            AccountChip(text: f.on ? f.label : "\(f.label) · not on plan", muted: !f.on)
-                                .accessibilityLabel(f.on ? "\(f.label): on your plan. \(f.detail)" : "\(f.label): not on your plan")
-                        }
-                    }
-                }
-            }
-
-            // Measured value: delivered, net of what got worse — the only
-            // figure shown here. "Nothing measured yet" says so; never $0.
-            if let line = health.measured?.line {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(health.measured?.measured == true ? Color.cavnarGreen : Color.cavnarInk3)
-                    HomeMixedText.make(line, size: 14, weight: 600,
-                                       color: health.measured?.measured == true ? .cavnarInk2 : .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            Spacer(minLength: 0)
         }
-        .padding(16)
+        .padding(CavnarSpace.m)
         .background(
             LinearGradient(colors: [Color.cavnarPaper2, tone.opacity(0.06)], startPoint: .topLeading, endPoint: .bottomTrailing)
         )
@@ -149,14 +68,6 @@ struct AccountHealthCard: View {
             guard !reduceMotion else { drawn = true; return }
             withAnimation(.timingCurve(0.2, 0.9, 0.3, 1, duration: 1.0)) { drawn = true }
         }
-    }
-
-    /// Worst first: what needs you, then what's worth setting up, then done.
-    private var sortedItems: [AccountHealth.Item] {
-        let rank = ["bad": 0, "warn": 1, "ok": 2]
-        return health.items.enumerated().sorted {
-            (rank[$0.element.state] ?? 1, $0.offset) < (rank[$1.element.state] ?? 1, $1.offset)
-        }.map(\.element)
     }
 
     private var ring: some View {
@@ -174,15 +85,44 @@ struct AccountHealthCard: View {
                 .shadow(color: tone.opacity(0.55), radius: 6)
             VStack(spacing: 0) {
                 Text(health.score.map(String.init) ?? "\u{2014}")
-                    .font(.cavnarNumber(24, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.figureM)
+                    .minimumScaleFactor(0.85)
                 Text("set up")
-                    .font(.cavnarBody(11, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption)
             }
         }
-        .frame(width: 78, height: 78)
+        .frame(width: 84, height: 84)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(health.score.map { "Account setup score \($0) of 100" } ?? "Account setup score not known yet")
+    }
+}
+
+/// The modules on the plan and the measured-value line — the health card's
+/// other two parts, shown on the Billing sheet (iOS readability round).
+/// `delivered` only, never an opportunity figure (CLAUDE.md "Value
+/// delivered"); "Nothing measured yet" says so, never $0.
+struct AccountPlanModules: View {
+    let health: AccountHealth
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            if !health.features.isEmpty {
+                AccountFlowLayout(spacing: 6) {
+                    ForEach(health.features) { f in
+                        AccountChip(text: f.on ? f.label : "\(f.label) · not on plan", muted: !f.on)
+                            .accessibilityLabel(f.on ? "\(f.label): on your plan. \(f.detail)" : "\(f.label): not on your plan")
+                    }
+                }
+            }
+            if let line = health.measured?.line {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(health.measured?.measured == true ? Color.cavnarGreen : Color.cavnarInk3)
+                        .accessibilityHidden(true)
+                    CavnarMixedText(line, role: .secondary)
+                }
+            }
+        }
     }
 }

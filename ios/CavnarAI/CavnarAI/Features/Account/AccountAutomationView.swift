@@ -10,7 +10,6 @@ import Observation
 /// apart.
 struct AccountAutomationView: View {
     @State private var viewModel = AccountAutomationViewModel()
-    @State private var showingMemory = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -34,10 +33,12 @@ struct AccountAutomationView: View {
                     } else {
                         switches
                         trust
-                        memory
+                        // "What Cavnar AI remembers → Memory" left this
+                        // sheet: Memory is its own row on Account, one
+                        // entry point (iOS readability round [73]).
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -45,7 +46,6 @@ struct AccountAutomationView: View {
             }
             .accountSheetChrome("Automation")
             .task { await viewModel.load() }
-            .sheet(isPresented: $showingMemory) { AccountMemoryView() }
         }
     }
 
@@ -120,8 +120,7 @@ struct AccountAutomationView: View {
                 .disabled(viewModel.saving == "send_delay")
             }
             Text("Every reply, post and order waits this long before it goes, with an undo on Home.")
-                .font(.cavnarBody(13.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 6)
         }
@@ -166,13 +165,12 @@ struct AccountAutomationView: View {
                     }
                 }
                 Text("Each line is your own record — approved replies you didn't edit, schedules you didn't change, orders you sent, scans you applied as read. Nothing is inferred.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 8)
                     .padding(.bottom, 6)
             } else {
-                Text("The record hasn't loaded.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).padding(.vertical, 9)
+                Text("The record hasn't loaded.").cavnarText(.body).padding(.vertical, 9)
             }
         }
     }
@@ -183,19 +181,9 @@ extension AccountAutomationView {
     /// number face — then the row's divider.
     fileprivate func trustDetail(_ text: String, showsDivider: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HomeMixedText.make(text, size: 13.5, weight: 500, color: .cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarMixedText(text, role: .secondary)
                 .padding(.bottom, 9)
             if showsDivider { AccountRowDivider() }
-        }
-    }
-
-    /// What Cavnar AI remembers moved to its own sheet, Account → Memory
-    /// (memory round 9/29/26, M2): who said each fact, who may read it,
-    /// until when, the lanes and the archive. This row opens it.
-    fileprivate var memory: some View {
-        AccountSection(kicker: "What Cavnar AI remembers") {
-            AccountNavRow(label: "Memory", showsDivider: false) { showingMemory = true }
         }
     }
 }

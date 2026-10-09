@@ -49,8 +49,8 @@ struct AccountExportDataView: View {
                                         .font(.system(size: 20, weight: .semibold))
                                         .foregroundStyle(scopes.contains(option.key) ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.6))
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(option.label).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                                        Text(option.detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                        Text(option.label).font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                        Text(option.detail).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                                     }
                                     Spacer(minLength: 0)
                                 }
@@ -64,10 +64,10 @@ struct AccountExportDataView: View {
 
                     if viewModel.exportDataSucceeded {
                         Text("Sent — check your inbox.")
-                            .font(.cavnarBody(15, weight: 600))
+                            .font(.cavnarBody(CavnarType.body, weight: 600))
                             .foregroundStyle(Color.cavnarGreen)
                     } else if let error = viewModel.exportDataError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     Button {
@@ -107,11 +107,11 @@ struct AccountExportDataView: View {
                             .tint(Color.cavnarEmber)
                         }
                         Text("Reviews older than this leave the app nightly, and 30 days later their words and replies are erased for good. Monthly counts and ratings stay.")
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
                             .padding(.vertical, 9)
                         if let error = viewModel.retentionError {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed).padding(.bottom, 6)
+                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText).padding(.bottom, 6)
                         }
                     }
                 }

@@ -29,8 +29,8 @@ struct AdminViewAsSheet: View {
             List {
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarRed)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarRedText)
                 }
                 Section {
                     ForEach(shown) { client in
@@ -44,13 +44,13 @@ struct AdminViewAsSheet: View {
                     }
                 } header: {
                     Text("CLIENTS")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnarBody(CavnarType.caption, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk3)
                 } footer: {
                     Text("Opens the app as their owner login for \(hours) hours. A banner stays up the whole time, "
                          + "and anything you change is recorded under your name.")
-                        .font(.cavnarBody(13))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -88,23 +88,23 @@ struct AdminViewAsSheet: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(client.name)
-                    .font(.cavnarBody(15))
+                    .font(.cavnar(.body))
                     .foregroundStyle(Color.cavnarInk)
                 if let detail = client.detail {
                     Text(detail)
-                        .font(.cavnarBody(12.5, weight: 500))
+                        .font(.cavnarBody(CavnarType.caption, weight: 500))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
             Spacer()
             if client.isDemo {
                 Text("DEMO")
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.caption, weight: 700))
                     .tracking(0.8)
                     .foregroundStyle(Color.cavnarInk3)
             }
             if opening == client.id {
-                ProgressView().tint(Color.cavnarEmber)
+                CavnarShimmerLine(color: .cavnarEmber).frame(width: 28)
             } else {
                 Image(systemName: "eye")
                     .font(.system(size: 14, weight: .semibold))
@@ -165,10 +165,10 @@ struct ViewAsBanner: View {
                         .font(.system(size: 13, weight: .bold))
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Viewing as \(view.restaurantName)")
-                            .font(.cavnarBody(13.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .lineLimit(1)
                         Text(Self.detail(view))
-                            .font(.cavnarBody(12, weight: 600))
+                            .font(.cavnarBody(CavnarType.caption, weight: 600))
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -181,10 +181,10 @@ struct ViewAsBanner: View {
                         }
                     } label: {
                         if stopping {
-                            ProgressView().tint(Color.cavnarPaper)
+                            CavnarShimmerLine(color: .cavnarPaper).frame(width: 28)
                         } else {
                             Text("Stop")
-                                .font(.cavnarBody(13.5, weight: 700))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         }
                     }
                     .padding(.horizontal, 12)
@@ -211,7 +211,7 @@ struct ViewAsBanner: View {
             if let notice = session.viewAsNotice {
                 HStack(spacing: 8) {
                     Text(notice)
-                        .font(.cavnarBody(12.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.caption, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 6)

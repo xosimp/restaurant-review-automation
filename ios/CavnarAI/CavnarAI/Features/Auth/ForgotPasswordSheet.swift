@@ -70,8 +70,8 @@ struct ForgotPasswordSheet: View {
     private var emailStep: some View {
         Group {
             Text("Enter the email on your account and we'll send a 6-digit code to reset your password.")
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.body))
+                .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
 
             LoginField(
@@ -99,8 +99,8 @@ struct ForgotPasswordSheet: View {
     private var codeStep: some View {
         Group {
             Text("Code sent to \(email)")
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.body))
+                .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
 
             CavnarCodeEntry(
@@ -145,7 +145,7 @@ struct ForgotPasswordSheet: View {
                 Task { await sendCode(resend: true) }
             } label: {
                 Text("Didn't get it? Send again")
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
                     .frame(maxWidth: .infinity, minHeight: LoginMetrics.touch)
                     .contentShape(Rectangle())
@@ -183,8 +183,8 @@ struct ForgotPasswordSheet: View {
             dismiss()
         } label: {
             Text("Back to sign in")
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                .foregroundStyle(Color.cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: LoginMetrics.touch)
                 .contentShape(Rectangle())
         }

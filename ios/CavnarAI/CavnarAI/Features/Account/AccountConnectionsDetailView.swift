@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// Opened from Account's "Connected apps" row. Was a single card of 5
-/// read-only rows with no way to actually connect anything. Now each
-/// connection is its own standalone card with real space between them,
-/// the brand's own real mark (see ConnectionMark below — real SVGs/PNG
-/// sourced from each brand's own public assets, not SF Symbol
-/// approximations), and a real action where one exists: Google Business
-/// and Instagram & Facebook each run a full mobile OAuth round trip in a
-/// browser sheet (GMBConnectCoordinator), Toast, Square and Clover each take
-/// a credential pair (their own *ConnectSheet) — none of the three has OAuth
-/// of its own. A connected POS has Sync now (the web card's button, parity
-/// #80); RPOWER is set up by Cavnar AI and only taken off here, by the owner.
+/// Opened from Account's "Connected apps" row (iOS readability round [72]).
+/// The hero says how many are connected; then one row per provider — its
+/// real brand mark (ConnectionMark below), its name, one status and the
+/// one action that fits: Sync now and Disconnect for a connected one, a
+/// Connect button where the phone can run the whole flow itself (Google
+/// Business and Instagram & Facebook are one-tap OAuth round trips in a
+/// browser sheet, GMBConnectCoordinator). Toast, Square and Clover take a
+/// client ID and secret (or a merchant GUID and token) that nobody types
+/// on a phone, so connecting one is a single "Connect a POS · Connect on
+/// the web" row. RPOWER is set up by Cavnar AI and only taken off here, by
+/// the owner. Every disconnect asks first.
 struct AccountConnectionsDetailView: View {
     let viewModel: AccountViewModel
     let connections: AccountConnections
@@ -19,9 +19,6 @@ struct AccountConnectionsDetailView: View {
     /// owner's (403 owner_only for a teammate): a teammate sees the status,
     /// not a button that is refused.
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
-    @State private var showingToastConnect = false
-    @State private var showingSquareConnect = false
-    @State private var showingCloverConnect = false
     @State private var showingWebsiteConnect = false
     /// The Intel card's own model, so the connect sheet is the one Intel uses.
     @State private var websiteModel = WebsiteAnalyticsViewModel()
@@ -31,34 +28,49 @@ struct AccountConnectionsDetailView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
                     hero
-                    marksRow
-                    googleRow
-                    toastRow
-                    instagramRow
-                    posRow("Square POS", brand: .square, provider: "square", status: connections.square,
-                           connect: { showingSquareConnect = true },
-                           disconnect: { await viewModel.disconnectSquare() })
-                    posRow("Clover POS", brand: .clover, provider: "clover", status: connections.clover,
-                           connect: { showingCloverConnect = true },
-                           disconnect: { await viewModel.disconnectClover() })
-                    rpowerRow
-                    webAnalyticsRow
+                    VStack(alignment: .leading, spacing: 0) {
+                        googleRow
+                        AccountRowDivider()
+                        instagramRow
+                        AccountRowDivider()
+                        posRow("Toast POS", brand: .toast, provider: "toast", status: connections.toast,
+                               disconnect: { await viewModel.disconnectToast() })
+                        AccountRowDivider()
+                        posRow("Square POS", brand: .square, provider: "square", status: connections.square,
+                               disconnect: { await viewModel.disconnectSquare() })
+                        AccountRowDivider()
+                        posRow("Clover POS", brand: .clover, provider: "clover", status: connections.clover,
+                               disconnect: { await viewModel.disconnectClover() })
+                        rpowerRow
+                        webAnalyticsRow
+                    }
+                    .accountCard()
+
+                    if let error = viewModel.disconnectError {
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                    }
+
+                    // L3: a POS connection is a credential form — the web's.
+                    if !posConnectedAll {
+                        VStack(alignment: .leading, spacing: 0) {
+                            CavnarWebLinkRow(
+                                title: "Connect a POS",
+                                subtitle: isOwner
+                                    ? "Toast, Square and Clover connect with keys from your POS account."
+                                    : "Only the account owner can connect a POS.",
+                                path: "account/integrations",
+                                actionLabel: "Connect on the web"
+                            )
+                        }
+                        .accountCard()
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .accountSheetChrome("Connections")
-            .sheet(isPresented: $showingToastConnect) {
-                ToastConnectSheet(viewModel: viewModel)
-            }
-            .sheet(isPresented: $showingSquareConnect) {
-                SquareConnectSheet(viewModel: viewModel)
-            }
-            .sheet(isPresented: $showingCloverConnect) {
-                CloverConnectSheet(viewModel: viewModel)
-            }
             .confirmationDialog(
                 pendingDisconnect.map { "Disconnect \($0.name)?" } ?? "",
                 isPresented: Binding(get: { pendingDisconnect != nil }, set: { if !$0 { pendingDisconnect = nil } }),
@@ -70,91 +82,130 @@ struct AccountConnectionsDetailView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text(pendingDisconnect?.name == "RPOWER POS"
-                     ? "Sales and labor stop syncing from RPOWER. Connecting it again goes through Cavnar AI."
-                     : "Sales and labor stop syncing from it until you connect it again.")
+                Text(Self.disconnectMessage(pendingDisconnect?.name))
             }
         }
     }
 
-    // MARK: - Identity (option A)
-
-    private var marks: [(name: String, brand: ConnectionBrand, status: ConnectionStatus)] {
-        [
-            ("Google", .google, connections.googleBusiness),
-            ("Toast", .toast, connections.toast),
-            ("Instagram", .instagram, connections.instagram),
-            ("Square", .square, connections.square),
-            ("Clover", .clover, connections.clover),
-        ]
+    /// What a disconnect stops, by connection.
+    static func disconnectMessage(_ name: String?) -> String {
+        switch name {
+        case "RPOWER POS":
+            return "Sales and labor stop syncing from RPOWER. Connecting it again goes through Cavnar AI."
+        case "Google Business":
+            return "New reviews stop coming in and replies stop posting to Google until you connect it again."
+        case "Instagram & Facebook":
+            return "Posts and scheduled content stop going to Instagram and Facebook until you connect again."
+        default:
+            return "Sales and labor stop syncing from it until you connect it again."
+        }
     }
 
-    /// Every connection, RPOWER and website analytics included (parity #80).
-    private var connectedNames: [String] { connections.all.filter(\.connected).map(\.name) }
+    /// Every credential POS already connected — nothing for the web row to do.
+    private var posConnectedAll: Bool {
+        connections.toast.connected && connections.square.connected && connections.clover.connected
+    }
+
+    // MARK: - Identity
 
     private var hero: some View {
-        AccountHero(title: connectedNames.isEmpty ? "Nothing connected yet" : connectedNames.joined(separator: " · ")) {
+        let connected = connections.all.filter(\.connected).count
+        return AccountHero(title: connected == 0 ? "Nothing connected yet" : "\(connected) of \(connections.all.count) connected") {
             GlowBadge(systemImage: "link", size: 64)
         } subtitle: {
-            Text("\(connectedNames.count)").font(.cavnarNumber(15.5, weight: 600))
-                + Text(" of ")
-                + Text("\(connections.all.count)").font(.cavnarNumber(15.5, weight: 600))
-                + Text(" connected")
+            Text("Where Cavnar AI reads your reviews, sales and labor.")
         }
     }
 
-    /// Sync now on a connected POS — any login, as on the web; the message
-    /// is the server's ("Sync started — labor data refreshes in ~30 seconds").
-    @ViewBuilder
-    private func syncRow(_ provider: String) -> some View {
-        AccountActionRow(label: "Sync now",
-                         detail: viewModel.syncMessage[provider] ?? "Pulls the latest sales and labor now.",
-                         symbol: "arrow.triangle.2.circlepath",
-                         busy: viewModel.syncingProvider == provider,
-                         showsDivider: isOwner) {
-            Task { await viewModel.syncNow(provider) }
-        }
-    }
+    // MARK: - One row per provider
 
-    /// The five real brand marks in a row — lit when connected, dimmed
-    /// when not.
-    private var marksRow: some View {
-        HStack(spacing: 8) {
-            ForEach(marks, id: \.name) { mark in
-                ConnectionMarkTile(brand: mark.brand, size: 44)
-                    .opacity(mark.status.connected ? 1 : 0.35)
-                    .overlay(alignment: .topTrailing) {
-                        if mark.status.connected {
-                            Circle().fill(Color.cavnarGreen)
-                                .frame(width: 8, height: 8)
-                                .overlay(Circle().strokeBorder(Color.cavnarPaper, lineWidth: 1.5))
-                                .offset(x: 2, y: -2)
-                        }
+    /// Mark · name · one status line · the row's actions.
+    private func providerRow<Mark: View, Actions: View>(
+        _ name: String,
+        @ViewBuilder mark: () -> Mark,
+        connected: Bool,
+        statusText: String?,
+        tone: ConnectionStatus.SyncTone?,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(spacing: CavnarSpace.s) {
+                mark()
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).cavnarText(.label)
+                    if let statusText {
+                        Self.statusLine(statusText, tone: tone ?? (connected ? .good : .neutral))
+                    } else {
+                        Self.statusLine(connected ? "Connected" : "Not connected", tone: connected ? .good : .neutral)
                     }
+                }
+                Spacer(minLength: 0)
+            }
+            actions()
+        }
+        .padding(.vertical, CavnarSpace.s)
+    }
+
+    /// Sync now and Disconnect side by side — any login syncs (as on the
+    /// web); only the owner disconnects, and only after the confirm.
+    @ViewBuilder
+    private func connectedActions(_ provider: String, name: String, disconnect: @escaping () async -> Void) -> some View {
+        HStack(spacing: CavnarSpace.s) {
+            Button {
+                Task { await viewModel.syncNow(provider) }
+            } label: {
+                Group {
+                    if viewModel.syncingProvider == provider {
+                        CavnarShimmerText(text: "Syncing…")
+                    } else {
+                        Text("Sync now")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.syncingProvider == provider))
+            .disabled(viewModel.syncingProvider == provider)
+            if isOwner {
+                Button {
+                    Haptic.light()
+                    pendingDisconnect = (name, disconnect)
+                } label: {
+                    Text("Disconnect").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .foregroundStyle(Color.cavnarRedText)
             }
         }
+        if let message = viewModel.syncMessage[provider] {
+            CavnarMixedText(message, role: .caption)
+        }
+    }
+
+    /// Disconnect alone (an OAuth connection has nothing to sync by hand).
+    private func disconnectButton(_ name: String, action: @escaping () async -> Void) -> some View {
+        Button {
+            Haptic.light()
+            pendingDisconnect = (name, action)
+        } label: {
+            Text("Disconnect").frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarSecondaryButtonStyle())
+        .foregroundStyle(Color.cavnarRedText)
     }
 
     // MARK: - Google Business (real OAuth)
 
     private var googleRow: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header("Google Business", brand: .google, status: connections.googleBusiness)
-            // The real fetch state, in the restaurant's clock (DH4-6):
-            // "Checked 11:02am · next check 4pm", "Last check 9/21/26 — 6
-            // checks missed". Nothing from an older server.
-            if let fetch = connections.googleBusiness.fetchLine {
-                Self.statusLine(fetch.line, tone: ConnectionStatus.tone(fetch.tone))
-            }
-            // Where the reviews actually come from (G9): a Places-only
-            // restaurant's are a five-at-a-time sample, not a Business
-            // Profile connection — said in the server's words.
-            if let source = connections.googleBusiness.label,
-               connections.googleBusiness.source != "gbp" {
-                HomeMixedText.make(source, size: 14, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
+        let g = connections.googleBusiness
+        // The real fetch state, in the restaurant's clock (DH4-6):
+        // "Checked 11:02am · next check 4pm". Where the reviews come from
+        // (G9) when it isn't a Business Profile connection.
+        let line: String? = g.fetchLine?.line
+            ?? (g.source != "gbp" ? g.label : nil)
+            ?? (g.connected ? g.lastSyncedText : nil)
+        return providerRow("Google Business", mark: { ConnectionMarkTile(brand: .google, size: 40) },
+                           connected: g.connected, statusText: line,
+                           tone: g.fetchLine.map { ConnectionStatus.tone($0.tone) }) {
             // "Handshake" — dashes march between the seal and Google while
             // the OAuth round trip is in flight (see CavnarMotion).
             if viewModel.isConnectingGoogle {
@@ -164,20 +215,16 @@ struct AccountConnectionsDetailView: View {
                 )
                 .padding(.vertical, 4)
             }
-
             if let error = viewModel.connectGoogleError {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
-
             if !isOwner {
                 ownerOnlyNote
-            } else if connections.googleBusiness.connected {
-                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                    Task { await viewModel.disconnectGoogleBusiness() }
-                }
+            } else if g.connected {
+                disconnectButton("Google Business") { await viewModel.disconnectGoogleBusiness() }
             } else {
                 // No manual Haptic.light() — CavnarPrimaryButtonStyle fires
-                // its own press haptic, so this was doubling up.
+                // its own press haptic.
                 Button {
                     Task { await viewModel.connectGoogleBusiness() }
                 } label: {
@@ -194,86 +241,22 @@ struct AccountConnectionsDetailView: View {
                 .disabled(viewModel.isConnectingGoogle)
             }
         }
-        .cavnarCard()
     }
 
     private var ownerOnlyNote: some View {
         Text("Only the account owner can connect or disconnect this.")
-            .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+            .cavnarText(.caption)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    // MARK: - Toast (credential form)
-
-    private var toastRow: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header("Toast POS", brand: .toast, status: connections.toast)
-            Self.syncStateLine(connections.toast, provider: "toast", posLine: connections.posLine)
-
-            if connections.toast.connected {
-                syncRow("toast")
-                if isOwner {
-                    AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                        pendingDisconnect = ("Toast", { await viewModel.disconnectToast() })
-                    }
-                }
-            } else if !isOwner {
-                ownerOnlyNote
-            } else {
-                // Same — the style's own press haptic covers this.
-                Button {
-                    showingToastConnect = true
-                } label: {
-                    Text("Connect").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
-            }
-        }
-        .cavnarCard()
-    }
-
-    // MARK: - Credential-pair POS connections (Square, Clover)
-
-    /// Identical shape to toastRow — the three credential-pair POS
-    /// integrations behave the same way, so they read the same way.
-    private func posRow(
-        _ label: String,
-        brand: ConnectionBrand,
-        provider: String,
-        status: ConnectionStatus,
-        connect: @escaping () -> Void,
-        disconnect: @escaping () async -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header(label, brand: brand, status: status)
-            Self.syncStateLine(status, provider: provider, posLine: connections.posLine)
-
-            if status.connected {
-                syncRow(provider)
-                if isOwner {
-                    AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                        pendingDisconnect = (label, disconnect)
-                    }
-                }
-            } else if !isOwner {
-                ownerOnlyNote
-            } else {
-                // The button style's own press haptic covers this.
-                Button(action: connect) {
-                    Text("Connect").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
-            }
-        }
-        .cavnarCard()
     }
 
     // MARK: - Instagram & Facebook (Meta OAuth — the web's popup, as a sheet)
 
     private var instagramRow: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header("Instagram & Facebook", brand: .instagram, status: connections.instagram)
-
+        let ig = connections.instagram
+        return providerRow("Instagram & Facebook", mark: { ConnectionMarkTile(brand: .instagram, size: 40) },
+                           connected: ig.connected,
+                           statusText: ig.connected ? "Connected \u{00B7} posts go to your page and account" : nil,
+                           tone: nil) {
             if viewModel.isConnectingInstagram {
                 CavnarHandshake(
                     providerSymbol: "camera.fill", providerTint: Color(red: 0.88, green: 0.30, blue: 0.55),
@@ -281,24 +264,14 @@ struct AccountConnectionsDetailView: View {
                 )
                 .padding(.vertical, 4)
             }
-
             if let error = viewModel.connectInstagramError {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
-
             if !isOwner {
                 ownerOnlyNote
-            } else if connections.instagram.connected {
-                Text("Posts and scheduled content go straight to your Instagram business account and Facebook page.")
-                    .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                    Task { await viewModel.disconnectInstagram() }
-                }
+            } else if ig.connected {
+                disconnectButton("Instagram & Facebook") { await viewModel.disconnectInstagram() }
             } else {
-                Text("Sign in with the Facebook account that manages your page — Cavnar AI can then publish to both.")
-                    .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
                 Button {
                     Task { await viewModel.connectInstagram() }
                 } label: {
@@ -306,7 +279,7 @@ struct AccountConnectionsDetailView: View {
                         if viewModel.isConnectingInstagram {
                             CavnarShimmerText(text: "Connecting…")
                         } else {
-                            Text("Connect")
+                            Text("Connect with Facebook")
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -315,10 +288,31 @@ struct AccountConnectionsDetailView: View {
                 .disabled(viewModel.isConnectingInstagram)
             }
         }
-        .cavnarCard()
     }
 
-    // MARK: - Sync state (G3) and the review source (G9)
+    // MARK: - Credential-pair POS connections (Toast, Square, Clover)
+
+    /// Connected: its sync state, Sync now and Disconnect. Not connected:
+    /// the status only — the "Connect a POS" web row below connects it.
+    private func posRow(
+        _ label: String,
+        brand: ConnectionBrand,
+        provider: String,
+        status: ConnectionStatus,
+        disconnect: @escaping () async -> Void
+    ) -> some View {
+        let line = status.posStatusLine(provider: provider, posLine: connections.posLine)
+        return providerRow(label, mark: { ConnectionMarkTile(brand: brand, size: 40) },
+                           connected: status.connected,
+                           statusText: line?.text ?? (status.connected ? status.lastSyncedText : nil),
+                           tone: line?.tone) {
+            if status.connected {
+                connectedActions(provider, name: label, disconnect: disconnect)
+            }
+        }
+    }
+
+    // MARK: - Sync state (G3)
 
     /// How the sync is actually going — a connection that stopped syncing
     /// reads stale here as it does on Home, admin and the status page; an
@@ -335,68 +329,45 @@ struct AccountConnectionsDetailView: View {
     }
 
     /// A 6pt dot and the sentence, in the tone's colour: good green, warn
-    /// amber, bad red, neutral ink3.
+    /// amber, bad red, neutral Ink2.
     static func statusLine(_ text: String, tone: ConnectionStatus.SyncTone) -> some View {
         let color: Color = {
             switch tone {
             case .good: return .cavnarGreen
             case .warn: return .cavnarAmber
-            case .bad: return .cavnarRed
-            case .neutral: return .cavnarInk3
+            case .bad: return .cavnarRedText
+            case .neutral: return .cavnarInk2
             }
         }()
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            HomeMixedText.make(text, size: 13.5, weight: 600, color: color)
+            Circle().fill(color).frame(width: 6, height: 6).accessibilityHidden(true)
+            HomeMixedText.make(text, role: .secondary, color: color)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
     }
 
-    /// RPOWER — connected by Cavnar from its vendor credentials, never from
-    /// the phone — so a status card only, and only once there is something
+    /// RPOWER — connected by Cavnar AI from its vendor credentials, never
+    /// from the phone — so a status row, and only once there is something
     /// to say (G3: it was missing from this list entirely).
     @ViewBuilder
     private var rpowerRow: some View {
         if let rp = connections.rpower, rp.connected || rp.error != nil || rp.lastSynced != nil {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 13) {
-                    GlowBadge(systemImage: "server.rack", size: 40)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("RPOWER POS").font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                        if rp.serverSyncLine == nil, let synced = rp.lastSyncedText {
-                            HomeMixedText.make(synced, size: 15.5, color: .cavnarInk3)
-                        }
-                    }
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(rp.connected ? Color.cavnarGreen : Color.cavnarInk3.opacity(0.4))
-                            .frame(width: 6, height: 6)
-                        Text(rp.connected ? "Connected" : "Off")
-                            .font(.cavnarBody(15, weight: 600))
-                            .foregroundStyle(rp.connected ? Color.cavnarGreen : Color.cavnarInk3)
-                    }
-                }
-                Self.syncStateLine(rp, provider: "rpower", posLine: connections.posLine)
+            AccountRowDivider()
+            let line = rp.posStatusLine(provider: "rpower", posLine: connections.posLine)
+            providerRow("RPOWER POS", mark: { GlowBadge(systemImage: "server.rack", size: 40) },
+                        connected: rp.connected,
+                        statusText: line?.text ?? (rp.serverSyncLine == nil ? rp.lastSyncedText : nil),
+                        tone: line?.tone) {
                 Text("Set up by Cavnar AI from your RPOWER account \u{2014} contact us to change it.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption)
                     .fixedSize(horizontal: false, vertical: true)
                 if rp.connected {
-                    syncRow("rpower")
                     // The owner can take the store off, as on the web
                     // (principal only); connecting again is Cavnar AI's.
-                    if isOwner {
-                        AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                            pendingDisconnect = ("RPOWER POS", { await viewModel.disconnectRPower() })
-                        }
-                    }
-                }
-                if let error = viewModel.disconnectError {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    connectedActions("rpower", name: "RPOWER POS") { await viewModel.disconnectRPower() }
                 }
             }
-            .cavnarCard()
         }
     }
 
@@ -406,30 +377,11 @@ struct AccountConnectionsDetailView: View {
     @ViewBuilder
     private var webAnalyticsRow: some View {
         if let wa = connections.webAnalytics {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 13) {
-                    GlowBadge(systemImage: "chart.bar.xaxis", size: 40)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Website analytics").font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                        if let synced = wa.lastSyncedText {
-                            HomeMixedText.make(synced, size: 15.5, color: .cavnarInk3)
-                        } else if !wa.connected {
-                            Text("Not connected").font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
-                        }
-                    }
-                    Spacer()
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(wa.connected ? Color.cavnarGreen : Color.cavnarInk3.opacity(0.4))
-                            .frame(width: 6, height: 6)
-                        Text(wa.connected ? "Connected" : "Off")
-                            .font(.cavnarBody(15, weight: 600))
-                            .foregroundStyle(wa.connected ? Color.cavnarGreen : Color.cavnarInk3)
-                    }
-                }
-                Text("Google Analytics and Search Console \u{2014} the same connection as Intel \u{2192} Your website.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+            AccountRowDivider()
+            providerRow("Website analytics", mark: { GlowBadge(systemImage: "chart.bar.xaxis", size: 40) },
+                        connected: wa.connected,
+                        statusText: wa.connected ? wa.lastSyncedText : nil,
+                        tone: nil) {
                 // Connecting it is the owner's (the route answers 403
                 // owner_only to anyone else): the Intel connect sheet, here
                 // too (re-audit 10/8/26, #18).
@@ -443,7 +395,6 @@ struct AccountConnectionsDetailView: View {
                     .buttonStyle(CavnarSecondaryButtonStyle())
                 }
             }
-            .cavnarCard()
             .sheet(isPresented: $showingWebsiteConnect, onDismiss: {
                 // Connected or disconnected there: the count and this row re-read.
                 Task { await viewModel.load() }
@@ -451,39 +402,6 @@ struct AccountConnectionsDetailView: View {
                 WebsiteConnectSheet(viewModel: websiteModel)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
-            }
-        }
-    }
-
-    // MARK: - Shared header
-
-    private func header(_ label: String, brand: ConnectionBrand, status: ConnectionStatus) -> some View {
-        HStack(spacing: 13) {
-            ConnectionMarkTile(brand: brand, size: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                // The server's own line (under the header) already says
-                // when it last synced, in the restaurant's clock — the
-                // phone's reading of the raw stamp is only for an older
-                // server.
-                if status.connected, status.serverSyncLine == nil, status.fetchLine == nil,
-                   let lastSynced = status.lastSyncedText {
-                    HomeMixedText.make(lastSynced, size: 15.5, color: .cavnarInk3)
-                } else if !status.connected {
-                    Text("Not connected").font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
-                }
-            }
-
-            Spacer()
-
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(status.connected ? Color.cavnarGreen : Color.cavnarInk3.opacity(0.4))
-                    .frame(width: 6, height: 6)
-                Text(status.connected ? "Connected" : "Off")
-                    .font(.cavnarBody(15, weight: 600))
-                    .foregroundStyle(status.connected ? Color.cavnarGreen : Color.cavnarInk3)
             }
         }
     }

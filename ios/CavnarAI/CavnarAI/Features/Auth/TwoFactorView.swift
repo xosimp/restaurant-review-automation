@@ -17,11 +17,11 @@ struct TwoFactorView: View {
 
                 VStack(spacing: 8) {
                     Text(viewModel.heading)
-                        .font(.cavnarHeadline(26))
+                        .font(.cavnarHeadline(CavnarText.title.size))
                         .foregroundStyle(Color.cavnarInk)
                     Text(viewModel.subheading)
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
                         .multilineTextAlignment(.center)
                 }
 
@@ -29,7 +29,7 @@ struct TwoFactorView: View {
                     // One field for a saved backup code ("7F3A-92C1"). Any
                     // case, dash or not — the server normalises it.
                     TextField("XXXX-XXXX", text: $viewModel.backupCode)
-                        .font(.cavnarNumber(20, weight: 600))
+                        .font(.cavnarNumber(CavnarType.tileNumber, weight: 600))
                         .multilineTextAlignment(.center)
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
@@ -60,17 +60,17 @@ struct TwoFactorView: View {
                 }
 
                 Toggle("Remember this device for 30 days", isOn: $viewModel.rememberDevice)
-                    .font(.cavnarBody(14.5))
+                    .font(.cavnar(.secondary))
                     .tint(Color.cavnarEmber)
 
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarRed)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarRedText)
                         .multilineTextAlignment(.center)
                 } else if let notice = viewModel.resendNotice {
                     Text(notice)
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarGreen)
                         .multilineTextAlignment(.center)
                 }
@@ -115,7 +115,7 @@ struct TwoFactorView: View {
                         viewModel.toggleBackupCode()
                         if viewModel.useBackupCode { isBackupFocused = true } else { isCodeFocused = true }
                     }
-                    .font(.cavnarBody(14.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                     .padding(.top, 4)
                 }

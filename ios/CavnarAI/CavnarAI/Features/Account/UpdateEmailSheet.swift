@@ -32,7 +32,7 @@ struct UpdateEmailSheet: View {
                     )
 
                     if let error = viewModel.updateEmailError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     // Plain full-width buttons, not a width-matched pair —

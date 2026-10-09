@@ -5,13 +5,108 @@ import SwiftUI
 /// contacts list: invite creates an actual account tied to this same
 /// restaurant_id with a temp password emailed directly, and revoke kills
 /// that login's sessions immediately.
+///
+/// iOS readability round: one row per teammate — name and role — and a tap
+/// opens that teammate's own sheet (role, what they see, the morning brief
+/// and nightly report, Remove). It was every manager's "<Name> sees"
+/// section stacked down one long page, with a remove chip on each row.
 struct AccountTeamDetailView: View {
     let viewModel: AccountViewModel
     @State private var showingInvite = false
-    @State private var pendingRevoke: TeamMember?
+    @State private var openMember: TeamMemberRef?
+
+    struct TeamMemberRef: Identifiable { let id: Int }
+
+    /// The owner can open a teammate who isn't them.
+    private func canOpen(_ member: TeamMember) -> Bool {
+        viewModel.canEditTeamAccess && !member.isYou
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    AccountHero(title: "Team") {
+                        GlowBadge(systemImage: "person.2", size: 64)
+                    } subtitle: {
+                        HomeMixedText.make("\(viewModel.teamMembers.count)"
+                                           + (viewModel.teamMembers.count == 1 ? " login" : " logins"),
+                                           role: .secondary)
+                    }
+
+                    if let error = viewModel.revokeTeamError {
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                    }
+
+                    AccountSection(kicker: "Logins") {
+                        ForEach(Array(viewModel.teamMembers.enumerated()), id: \.element.id) { index, member in
+                            let divider = index < viewModel.teamMembers.count - 1
+                            if canOpen(member) {
+                                Button {
+                                    Haptic.light()
+                                    openMember = TeamMemberRef(id: member.id)
+                                } label: {
+                                    AccountKVRow(label: member.displayName, showsDivider: divider) {
+                                        HStack(spacing: CavnarSpace.xs) {
+                                            AccountPill(text: member.roleLabel, on: member.role != "member")
+                                            AccountDisclosureChip()
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint("Opens their role and what they see")
+                            } else {
+                                AccountKVRow(label: member.isYou ? "\(member.displayName) (you)" : member.displayName,
+                                             showsDivider: divider) {
+                                    AccountPill(text: member.roleLabel, on: member.role != "member")
+                                }
+                            }
+                        }
+                    }
+
+                    if let error = viewModel.teamAccessError {
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                    }
+
+                    Button {
+                        Haptic.light()
+                        showingInvite = true
+                    } label: {
+                        Text("Invite a team member").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle())
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(CavnarSpace.gutter)
+            }
+            .accountSheetChrome("Team")
+            .task { await viewModel.loadTeam() }
+            .sheet(isPresented: $showingInvite) {
+                InviteTeamMemberSheet(viewModel: viewModel)
+            }
+            .sheet(item: $openMember) { ref in
+                TeamMemberAccessSheet(viewModel: viewModel, memberId: ref.id)
+            }
+        }
+    }
+}
+
+/// One teammate: their role, what they see beyond it, whether the morning
+/// brief and the nightly report reach them, and Remove — each saved the
+/// moment it changes, the sensitive ones confirmed first (co-owner, comps
+/// and voids, remove).
+private struct TeamMemberAccessSheet: View {
+    let viewModel: AccountViewModel
+    let memberId: Int
+    @Environment(\.dismiss) private var dismiss
+    @State private var pendingRevoke = false
+    @State private var pendingLossGrant = false
+    @State private var pendingCoOwner = false
     @State private var postedLabel: String?
-    @State private var pendingLossGrant: TeamMember?
-    @State private var pendingCoOwner: TeamMember?
+
+    /// Live from the team list, so a change shows the server's answer.
+    private var member: TeamMember? { viewModel.teamMembers.first { $0.id == memberId } }
 
     /// One on/off setting: a tappable pill, not a native Toggle (its height
     /// breaks the kit's row rhythm — see AccountSheetKit).
@@ -23,6 +118,8 @@ struct AccountTeamDetailView: View {
                 set(!on)
             } label: {
                 AccountPill(text: on ? "On" : "Off", on: on)
+                    .cavnarHitTarget()
+                    .padding(.vertical, -8)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(label): \(on ? "on" : "off")")
@@ -32,71 +129,59 @@ struct AccountTeamDetailView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    AccountHero(title: "Team") {
-                        GlowBadge(systemImage: "person.2", size: 64)
-                    } subtitle: {
-                        Text("\(viewModel.teamMembers.count)").font(.cavnarNumber(15.5, weight: 600))
-                            + Text(viewModel.teamMembers.count == 1 ? " login" : " logins")
-                    }
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    if let member {
+                        AccountHero(title: member.displayName) {
+                            GlowBadge(systemImage: "person", size: 56)
+                        } subtitle: {
+                            Text(member.roleLabel)
+                        }
 
-                    if let error = viewModel.revokeTeamError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-                    }
-
-                    AccountSection(kicker: "Who has access") {
-                        ForEach(Array(viewModel.teamMembers.enumerated()), id: \.element.id) { index, member in
-                            AccountKVRow(label: member.displayName, showsDivider: index < viewModel.teamMembers.count - 1) {
-                                HStack(spacing: 8) {
-                                    if viewModel.canEditTeamAccess && (member.roleEditable ?? false) {
-                                        Menu {
-                                            ForEach(viewModel.teamRoleOptions) { option in
-                                                Button {
-                                                    if option.key == "client" {
-                                                        pendingCoOwner = member
-                                                    } else {
-                                                        Task { await viewModel.setTeamRole(member.id, role: option.key) }
-                                                    }
-                                                } label: {
-                                                    if option.key == member.role {
-                                                        Label(option.label, systemImage: "checkmark")
-                                                    } else {
-                                                        Text(option.label)
-                                                    }
+                        if member.roleEditable ?? false {
+                            AccountSection(kicker: "Role") {
+                                AccountKVRow(label: "Role", showsDivider: false) {
+                                    Menu {
+                                        ForEach(viewModel.teamRoleOptions) { option in
+                                            Button {
+                                                if option.key == "client" {
+                                                    pendingCoOwner = true
+                                                } else {
+                                                    Task { await viewModel.setTeamRole(member.id, role: option.key) }
+                                                }
+                                            } label: {
+                                                if option.key == member.role {
+                                                    Label(option.label, systemImage: "checkmark")
+                                                } else {
+                                                    Text(option.label)
                                                 }
                                             }
-                                        } label: {
-                                            AccountPill(text: member.roleLabel, on: member.role != "member")
                                         }
-                                        .accessibilityLabel("Role for \(member.displayName): \(member.roleLabel)")
-                                    } else {
-                                        AccountPill(text: member.roleLabel, on: member.role != "member")
-                                    }
-                                    if !member.isYou && viewModel.canEditTeamAccess {
-                                        AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove \(member.displayName)") {
-                                            pendingRevoke = member
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Text(member.roleLabel).cavnarText(.label, color: .cavnarEmber2)
+                                            Image(systemName: "chevron.up.chevron.down")
+                                                .font(.cavnar(.caption))
+                                                .foregroundStyle(Color.cavnarEmber2)
+                                                .accessibilityHidden(true)
                                         }
+                                        .cavnarHitTarget()
+                                        .padding(.vertical, -7)
                                     }
+                                    .accessibilityLabel("Role for \(member.displayName): \(member.roleLabel)")
                                 }
                             }
                         }
-                    }
 
-                    if let error = viewModel.teamAccessError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-                    }
-
-                    // What each manager sees beyond their role, and whether
-                    // the morning brief reaches them. Owner only.
-                    if viewModel.canEditTeamAccess {
-                        ForEach(viewModel.teamMembers.filter { ($0.accessGrantable ?? false) && !$0.isYou }) { member in
-                            AccountSection(kicker: "\(member.displayName) sees") {
+                        // What this manager sees beyond their role, and
+                        // whether the morning brief reaches them.
+                        if member.accessGrantable ?? false {
+                            AccountSection(kicker: "What they see") {
                                 ForEach(viewModel.teamAccessOptions) { option in
                                     accessRow(label: option.label,
                                               on: (member.access ?? []).contains(option.key),
                                               showsDivider: true) { newValue in
                                         if option.key == "loss.view" && newValue {
-                                            pendingLossGrant = member
+                                            pendingLossGrant = true
                                             return
                                         }
                                         Task { await viewModel.setTeamAccess(member.id, permission: option.key, enabled: newValue) }
@@ -115,75 +200,76 @@ struct AccountTeamDetailView: View {
                                 }
                             }
                         }
-                    }
 
-                    Button {
-                        Haptic.light()
-                        showingInvite = true
-                    } label: {
-                        Text("Invite a team member").frame(maxWidth: .infinity)
+                        if let error = viewModel.teamAccessError {
+                            Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                        }
+                        if let error = viewModel.revokeTeamError {
+                            Text(error).cavnarText(.secondary, color: .cavnarRedText)
+                        }
+
+                        VStack(alignment: .leading, spacing: 0) {
+                            AccountActionRow(label: "Remove from the team",
+                                             detail: "Signs them out and ends this login.",
+                                             symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                                pendingRevoke = true
+                            }
+                        }
+                        .accountCard()
+                    } else {
+                        Text("They're no longer on the team.").cavnarText(.body)
                     }
-                    .buttonStyle(CavnarPrimaryButtonStyle())
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
-            .accountSheetChrome("Team")
-            .task { await viewModel.loadTeam() }
-            .sheet(isPresented: $showingInvite) {
-                InviteTeamMemberSheet(viewModel: viewModel)
-            }
+            .accountSheetChrome(member?.displayName ?? "Teammate")
             .confirmationDialog(
-                pendingRevoke.map { "Remove \($0.displayName)?" } ?? "",
-                isPresented: Binding(get: { pendingRevoke != nil }, set: { if !$0 { pendingRevoke = nil } }),
+                member.map { "Remove \($0.displayName)?" } ?? "",
+                isPresented: $pendingRevoke,
                 titleVisibility: .visible
             ) {
                 Button("Remove access", role: .destructive) {
-                    guard let member = pendingRevoke else { return }
+                    guard let member else { return }
                     Task {
                         if await viewModel.revokeTeamMember(member.id) {
                             Haptic.success()
-                            postedLabel = "\(member.displayName) removed"
+                            dismiss()
                         }
-                        pendingRevoke = nil
                     }
                 }
-                Button("Cancel", role: .cancel) { pendingRevoke = nil }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text("They'll be signed out immediately and won't be able to log back in.")
             }
             .confirmationDialog(
-                pendingCoOwner.map { "Make \($0.displayName) a co-owner?" } ?? "",
-                isPresented: Binding(get: { pendingCoOwner != nil }, set: { if !$0 { pendingCoOwner = nil } }),
+                member.map { "Make \($0.displayName) a co-owner?" } ?? "",
+                isPresented: $pendingCoOwner,
                 titleVisibility: .visible
             ) {
                 Button("Make co-owner") {
-                    guard let member = pendingCoOwner else { return }
+                    guard let member else { return }
                     Task {
                         if await viewModel.setTeamRole(member.id, role: "client") {
                             Haptic.success()
                             postedLabel = "\(member.displayName) is a co-owner"
                         }
-                        pendingCoOwner = nil
                     }
                 }
-                Button("Cancel", role: .cancel) { pendingCoOwner = nil }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text("They'll be able to do everything you can — manage the team, settings and every number.")
             }
             .confirmationDialog(
-                pendingLossGrant.map { "Show comps & voids to \($0.displayName)?" } ?? "",
-                isPresented: Binding(get: { pendingLossGrant != nil }, set: { if !$0 { pendingLossGrant = nil } }),
+                member.map { "Show comps & voids to \($0.displayName)?" } ?? "",
+                isPresented: $pendingLossGrant,
                 titleVisibility: .visible
             ) {
                 Button("Turn on") {
-                    guard let member = pendingLossGrant else { return }
-                    Task {
-                        await viewModel.setTeamAccess(member.id, permission: "loss.view", enabled: true)
-                        pendingLossGrant = nil
-                    }
+                    guard let member else { return }
+                    Task { await viewModel.setTeamAccess(member.id, permission: "loss.view", enabled: true) }
                 }
-                Button("Cancel", role: .cancel) { pendingLossGrant = nil }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text("These patterns can name the manager who approved the comps — including this person.")
             }
@@ -218,8 +304,8 @@ private struct InviteTeamMemberSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("They'll get an email with a temporary password and can set their own once they sign in.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
 
                     AccountField(label: "Name", text: $name, focus: $focusedField, field: .name)
                     AccountField(label: "Email", text: $email, focus: $focusedField, field: .email, keyboardType: .emailAddress, showsDivider: false)
@@ -240,7 +326,7 @@ private struct InviteTeamMemberSheet: View {
                     }
 
                     if let error = viewModel.inviteTeamError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     VStack(spacing: 10) {

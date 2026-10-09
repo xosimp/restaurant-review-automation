@@ -9,47 +9,32 @@ import Observation
 /// or off, the alert types muted on this login's phone, its own quiet
 /// hours, and whether it gets this location's morning brief. Every change
 /// saves on its own (POST /account/preferences/mine), never a whole-screen
-/// save. A group owner also sees where each shared setting comes from ("All
-/// locations" / "This location") and can make one every location's
-/// (POST /account/preferences/apply-to-all {keys}).
+/// save. Which location's settings apply to every location (the group
+/// owner's "Use everywhere", POST /account/preferences/apply-to-all) is a
+/// web setting now — it rewrites other locations' rules (iOS readability
+/// round [24]); the view model keeps `applyToAll` for it.
 struct AccountMyNotifications: View {
     @State private var viewModel = AccountPreferencesViewModel()
     @State private var showingMuted = false
-    @State private var applying: AccountPreferencesViewModel.SharedSetting?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: CavnarSpace.l) {
             if let prefs = viewModel.prefs {
                 mine(prefs)
                 // "Tonight's service" on the Lock Screen (parity audit #94).
                 ServiceActivitySettingsSection()
-                if prefs.showsSources {
-                    shared(prefs)
-                }
             } else if viewModel.isLoading {
                 CavnarSkeletonBar(height: 3)
                     .accessibilityLabel("Loading your own notification settings")
             }
             if let error = viewModel.errorMessage {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .task { await viewModel.load() }
         .sheet(isPresented: $showingMuted) {
             AccountMutedTypesSheet(viewModel: viewModel)
-        }
-        .confirmationDialog(applying.map { "Make this location\u{2019}s \($0.title.lowercased()) every location\u{2019}s?" } ?? "",
-                            isPresented: Binding(get: { applying != nil }, set: { if !$0 { applying = nil } }),
-                            titleVisibility: .visible) {
-            if let setting = applying {
-                Button("Apply to all \(viewModel.prefs?.locationCount ?? 0) locations") {
-                    Task { await viewModel.applyToAll(setting) }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Every location in your group takes this location\u{2019}s setting. Each location can still change it afterwards.")
         }
     }
 
@@ -69,18 +54,15 @@ struct AccountMyNotifications: View {
             // not the restaurant's sum) — one tap mutes it for them alone.
             ForEach(viewModel.neverOpened) { n in
                 VStack(alignment: .leading, spacing: 6) {
-                    HomeMixedText.make("You never open \u{201C}\(n.label)\u{201D} on your phone (\(n.delivered) in \(n.days) days) \u{2014} mute it just for you?",
-                                       size: 14.5, weight: 500, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText("You never open \u{201C}\(n.label)\u{201D} on your phone (\(n.delivered) in \(n.days) days) \u{2014} mute it just for you?",
+                                    role: .body)
                     Button {
                         Haptic.light()
                         Task { await viewModel.mute(n.alertType) }
                     } label: {
                         Text("Mute it for me")
-                            .font(.cavnarBody(14, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 36)
-                            .contentShape(Rectangle())
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                     .disabled(viewModel.saving != nil)
@@ -125,47 +107,6 @@ struct AccountMyNotifications: View {
             }
         }
     }
-
-    // MARK: - This location or all of them
-
-    private func shared(_ p: AccountPreferences) -> some View {
-        AccountSection(kicker: "This location or all of them") {
-            ForEach(Array(p.sharedSettings.enumerated()), id: \.element.id) { i, setting in
-                VStack(spacing: 0) {
-                    HStack(alignment: .center, spacing: 10) {
-                        Text(setting.title).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
-                        Spacer(minLength: 8)
-                        AccountChip(text: setting.sourceLabel, muted: setting.source != "this location")
-                        if p.canApplyToAll && setting.source == "this location" {
-                            Button {
-                                Haptic.light()
-                                applying = setting
-                            } label: {
-                                Text("Use everywhere")
-                                    .font(.cavnarBody(13, weight: 700))
-                                    .foregroundStyle(Color.cavnarEmber2)
-                                    .frame(minHeight: 36)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(viewModel.saving != nil)
-                        }
-                    }
-                    .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
-                    .padding(.vertical, 9)
-                    if i < p.sharedSettings.count - 1 { AccountRowDivider() }
-                }
-            }
-            if viewModel.saving == "apply" {
-                CavnarSkeletonBar(height: 3).padding(.vertical, 6)
-            }
-            if let note = viewModel.appliedNote {
-                Text(note).font(.cavnarBody(13.5, weight: 600)).foregroundStyle(Color.cavnarGreen)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 6)
-            }
-        }
-    }
 }
 
 /// "Muted on my phone": every alert type this login may mute, each its own
@@ -188,7 +129,7 @@ struct AccountMutedTypesSheet: View {
                         AccountSection(kicker: "Send these to my phone") {
                             if types.isEmpty {
                                 Text("Nothing to choose from yet.")
-                                    .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3).padding(.vertical, 9)
+                                    .cavnarText(.body).padding(.vertical, 9)
                             }
                             ForEach(Array(types.enumerated()), id: \.element.type) { i, t in
                                 AccountSwitchRow(
@@ -203,12 +144,11 @@ struct AccountMutedTypesSheet: View {
                             }
                         }
                         Text("Health and safety mentions, an issue assigned to you and a cover you\u{2019}re asked for always reach you.")
-                            .font(.cavnarBody(13.5))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                     }
                 }
                 .padding(20)

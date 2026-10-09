@@ -25,8 +25,8 @@ struct CloverConnectSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("Find these in Clover's Developer Dashboard — your merchant ID sits in the URL of your Clover dashboard, and API tokens are under Setup → API Tokens.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
 
                     CavnarFloatingField(
                         icon: "number", placeholder: "Merchant ID", text: $merchantId,
@@ -47,7 +47,7 @@ struct CloverConnectSheet: View {
                     }
 
                     if let error = viewModel.connectCloverError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     VStack(spacing: 10) {

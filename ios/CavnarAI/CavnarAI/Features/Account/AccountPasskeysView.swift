@@ -32,7 +32,7 @@ struct AccountPasskeysView: View {
                                 // A list that didn't load is never "None yet"
                                 // (re-audit 10/8/26, #12).
                                 VStack(alignment: .leading, spacing: 10) {
-                                    Text(loadError).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                                    Text(loadError).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                                         .fixedSize(horizontal: false, vertical: true)
                                     Button {
                                         Haptic.light()
@@ -43,15 +43,15 @@ struct AccountPasskeysView: View {
                                 .padding(.vertical, 9)
                             } else if model.rows.isEmpty {
                                 Text("None yet. A passkey lives in your iCloud Keychain and signs you in with Face ID — here and on dashboard.cavnar.ai.")
-                                    .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .padding(.vertical, 9)
                             }
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { i, row in
                                 HStack(alignment: .center, spacing: 12) {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(row.name).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                                        HomeMixedText.make(row.detail, size: 13.5, weight: 500, color: .cavnarInk3)
+                                        Text(row.name).font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                        HomeMixedText.make(row.detail, size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                                     }
                                     Spacer(minLength: 8)
                                     if model.busyId == row.id {
@@ -75,7 +75,7 @@ struct AccountPasskeysView: View {
                     }
 
                     if let error = model.error {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -131,12 +131,12 @@ private struct PasskeyPasswordSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Confirm it's you")
-                    .font(.cavnarHeadline(22)).foregroundStyle(Color.cavnarInk)
+                    .font(.cavnarHeadline(CavnarType.section)).foregroundStyle(Color.cavnarInk)
                 Text("Type your password, then save the passkey with Face ID.")
-                    .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                 SecureField("Password", text: $password)
                     .textContentType(.password)
-                    .font(.cavnarBody(17, weight: 600))
+                    .font(.cavnarBody(CavnarType.body, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                     .focused($focused)
                     .submitLabel(.continue)

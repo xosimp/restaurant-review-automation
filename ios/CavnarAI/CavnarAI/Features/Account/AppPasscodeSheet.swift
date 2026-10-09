@@ -74,11 +74,11 @@ struct AppPasscodeSheet: View {
 
                     VStack(spacing: 8) {
                         Text(headline)
-                            .font(.cavnarHeadline(22))
+                            .font(.cavnarHeadline(CavnarType.section))
                             .foregroundStyle(Color.cavnarInk)
                             .multilineTextAlignment(.center)
                         Text(errorText ?? caption)
-                            .font(.cavnarBody(15))
+                            .font(.cavnar(.body))
                             .foregroundStyle(errorText == nil ? Color.cavnarInk3 : Color.cavnarRed)
                             .multilineTextAlignment(.center)
                             .lineSpacing(3)

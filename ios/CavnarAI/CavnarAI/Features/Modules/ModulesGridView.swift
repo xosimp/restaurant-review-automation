@@ -118,7 +118,7 @@ struct ModulesGridView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let error = viewModel.errorMessage, viewModel.modules.isEmpty {
                     VStack(spacing: 8) {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                         Button("Retry") { Task { await viewModel.load() } }
                     }
                 } else if viewModel.modules.isEmpty && !viewModel.isLoading {

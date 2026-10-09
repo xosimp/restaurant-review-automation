@@ -36,8 +36,15 @@ struct AccountBillingDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 hero
+                // The modules on the plan and what's been measured — from
+                // the account health card (iOS readability round).
+                if let health = viewModel.health, !health.features.isEmpty || health.measured?.line != nil {
+                    AccountPlanModules(health: health)
+                }
+                // The figures once: amount, next charge and the card here,
+                // nowhere else (not the hero, not a tile strip, not the
+                // Account row).
                 if let billing = live, billing.ok, billing.status != "inactive" {
-                    statusStrip(billing)
                     VStack(alignment: .leading, spacing: 10) {
                         row("Next charge", billing.nextDate ?? "—", isNumber: true)
                         divider()
@@ -64,8 +71,7 @@ struct AccountBillingDetailView: View {
                 }
                 // Plain text, read only: no portal, no invoice link (3.1.1).
                 Text(Self.manageNote)
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .textSelection(.disabled)
 
                 // Pause lives with billing, as the paused message says.
@@ -106,9 +112,8 @@ struct AccountBillingDetailView: View {
             GlowBadge(systemImage: "creditcard", size: 64)
         } subtitle: {
             if let billing = live, billing.ok, billing.status != "inactive" {
-                Text(billing.amount ?? "—").font(.cavnarNumber(15.5, weight: 600))
-                    + Text(" · next charge ")
-                    + Text(billing.nextDate ?? "—").font(.cavnarNumber(15.5, weight: 600))
+                // The plan, by what's on it — the figures are in the card below.
+                Text(planLine)
             } else if let message = live?.message {
                 Text(message)
             } else {
@@ -118,24 +123,29 @@ struct AccountBillingDetailView: View {
         }
     }
 
-    private func statusStrip(_ billing: BillingSummary) -> some View {
-        let status = billing.status ?? ""
-        let good = status == "active" || status == "trialing"
-        return HStack(spacing: 8) {
-            AccountStatTile(label: "Status", value: status == "trialing" ? "Trial" : status.capitalized,
-                            tone: good ? .cavnarGreen : .cavnarAmber)
-            AccountStatTile(label: "Amount", value: billing.amount ?? "—", valueIsNumber: true)
-            AccountStatTile(label: "Next charge", value: billing.nextDate ?? "—", valueIsNumber: true)
+    /// "Reviews, Labor and Food cost" — the modules on the plan, as the
+    /// plan's name; "Cavnar AI" when the server didn't say.
+    private var planLine: String {
+        let on = (viewModel.health?.features ?? []).filter(\.on).map(\.label)
+        switch on.count {
+        case 0: return "Cavnar AI"
+        case 1: return on[0]
+        default: return on.dropLast().joined(separator: ", ") + " and " + (on.last ?? "")
         }
     }
 
     private func row(_ label: String, _ value: String, isNumber: Bool = false) -> some View {
         HStack {
-            Text(label).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
+            Text(label).cavnarText(.body)
             Spacer()
-            Text(value)
-                .font(isNumber ? .cavnarNumber(15.5, weight: 600) : .cavnarBody(15.5, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
+            Group {
+                if isNumber {
+                    HomeMixedText.make(value, role: .label)
+                } else {
+                    Text(value)
+                }
+            }
+            .cavnarText(.label)
         }
     }
 
@@ -144,11 +154,11 @@ struct AccountBillingDetailView: View {
     private func invoiceRow(_ invoice: BillingInvoice) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(invoice.date).font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Text(Self.invoiceStatus(invoice.status)).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
+                HomeMixedText.make(invoice.date, role: .label)
+                Text(Self.invoiceStatus(invoice.status)).cavnarText(.secondary)
             }
             Spacer()
-            Text(invoice.amount).font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+            HomeMixedText.make(invoice.amount, role: .label)
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)

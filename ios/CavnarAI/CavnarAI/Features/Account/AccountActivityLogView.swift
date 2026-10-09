@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// Opened from Security's "Account activity" row. Everything that changed
-/// on the account — password, email, 2FA, team, exports, alert settings —
-/// with who did it and when. Sign-ins themselves live in Sign-in activity;
-/// this is the "what changed" half.
+/// Opened from Security's "Activity" row. Everything that changed on the
+/// account — password, email, 2FA, team, exports, alert settings — with who
+/// did it and when, and the sign-ins one tap in ("Sign-ins"): Sign-in
+/// activity and Account activity were two rows (iOS readability round).
 struct AccountActivityLogView: View {
     let viewModel: AccountViewModel
+    @State private var showingSignIns = false
 
     private func symbol(for event: AccountActivityEvent) -> String {
         switch event.type {
@@ -30,11 +31,16 @@ struct AccountActivityLogView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    AccountHero(title: "Account activity") {
+                    AccountHero(title: "Activity") {
                         GlowBadge(systemImage: "list.bullet.rectangle", size: 64)
                     } subtitle: {
                         Text("Every change to your account, and who made it")
                     }
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        AccountNavRow(label: "Sign-ins", showsDivider: false) { showingSignIns = true }
+                    }
+                    .accountCard()
 
                     // What changed on the restaurant — targets, settings,
                     // never-say, hours, prices, menu, roster — who changed
@@ -51,8 +57,7 @@ struct AccountActivityLogView: View {
                                         .background(Color.white.opacity(0.05))
                                         .clipShape(RoundedRectangle(cornerRadius: 10))
                                         .accessibilityHidden(true)
-                                    HomeMixedText.make(change.line, size: 15, weight: 500, color: .cavnarInk)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                    CavnarMixedText(change.line, role: .body, color: .cavnarInk)
                                     Spacer(minLength: 0)
                                 }
                                 .padding(.vertical, 10)
@@ -65,8 +70,8 @@ struct AccountActivityLogView: View {
                         CavnarLoadingOrb().padding(.top, 40).frame(maxWidth: .infinity)
                     } else if viewModel.activity.isEmpty {
                         Text("Nothing has changed on your account yet.")
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, 20)
                             .frame(maxWidth: .infinity)
                     } else {
@@ -80,18 +85,17 @@ struct AccountActivityLogView: View {
                                         .background(Color.white.opacity(0.05))
                                         .clipShape(RoundedRectangle(cornerRadius: 10))
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(event.label).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                        Text(event.label).cavnarText(.label)
                                         HStack(spacing: 6) {
-                                            Text(AccountRelativeTime.describe(event.createdAt))
-                                                .font(.cavnarNumber(14))
+                                            HomeMixedText.make(AccountRelativeTime.describe(event.createdAt), role: .secondary)
                                             if let actor = event.actor, !actor.isEmpty {
-                                                (Text("· by ").font(.cavnarBody(14))
-                                                    + Text(actor).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarEmber2))
+                                                (Text("· by ").font(.cavnar(.secondary))
+                                                    + Text(actor).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber2))
                                             }
                                         }
-                                        .foregroundStyle(Color.cavnarInk3)
+                                        .foregroundStyle(Color.cavnarInk2)
                                         if let detail = event.detail, !detail.isEmpty {
-                                            Text(detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                                            Text(detail).cavnarText(.secondary)
                                         }
                                     }
                                     Spacer(minLength: 0)
@@ -105,8 +109,9 @@ struct AccountActivityLogView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
-            .accountSheetChrome("Account Activity")
+            .accountSheetChrome("Activity")
             .task { await viewModel.loadActivity() }
+            .sheet(isPresented: $showingSignIns) { AccountSignInHistoryView(viewModel: viewModel) }
         }
     }
 }

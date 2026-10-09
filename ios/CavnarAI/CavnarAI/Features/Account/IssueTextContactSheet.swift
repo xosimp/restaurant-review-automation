@@ -50,7 +50,7 @@ struct IssueTextContactSheet: View {
                         )
                     }
                     if let error {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {

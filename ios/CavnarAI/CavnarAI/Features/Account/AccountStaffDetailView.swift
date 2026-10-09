@@ -15,7 +15,10 @@ struct AccountStaffDetailView: View {
     @State private var retitling: AccountViewModel.StaffAccount?
     @State private var resettingPin: AccountViewModel.StaffAccount?
     @State private var pendingUnlink: AccountViewModel.StaffAccount?
+    /// A remove waiting on its confirm — it used to fire from the menu.
+    @State private var pendingRemove: AccountViewModel.StaffAccount?
     @State private var pendingRotate = false
+    @State private var showingHowItWorks = false
     @State private var copied = false
     /// The one person record (Friction audit #25).
     @State private var person: PersonSheetTarget?
@@ -27,14 +30,14 @@ struct AccountStaffDetailView: View {
                     AccountHero(title: "Staff accounts") {
                         GlowBadge(systemImage: "person.badge.key", size: 64)
                     } subtitle: {
-                        Text("\(viewModel.staffAccounts.filter(\.active).count)")
-                            .font(.cavnarNumber(15.5, weight: 600))
-                            + Text(viewModel.staffAccounts.filter(\.active).count == 1
-                                   ? " employee signed up" : " employees signed up")
+                        HomeMixedText.make("\(viewModel.staffAccounts.filter(\.active).count)"
+                                           + (viewModel.staffAccounts.filter(\.active).count == 1
+                                              ? " employee signed up" : " employees signed up"),
+                                           role: .secondary)
                     }
 
                     if let error = viewModel.staffError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                     }
 
                     joinCodeSection
@@ -50,8 +53,7 @@ struct AccountStaffDetailView: View {
                     .buttonStyle(CavnarPrimaryButtonStyle())
 
                     Text("Only needed if someone can't sign themselves up — you'll have to read them the PIN.")
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption)
 
                     // The web's sign-in notice and its Recent failed PINs
                     // (parity #70).
@@ -124,6 +126,22 @@ struct AccountStaffDetailView: View {
             } message: {
                 Text("The old code and link stop working for everyone immediately — including anyone mid-signup.")
             }
+            .confirmationDialog(
+                pendingRemove.map { "Remove \($0.name)?" } ?? "",
+                isPresented: Binding(get: { pendingRemove != nil },
+                                     set: { if !$0 { pendingRemove = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Remove", role: .destructive) {
+                    if let staff = pendingRemove {
+                        Task { await viewModel.setStaffActive(staff.membershipID, active: false) }
+                    }
+                    pendingRemove = nil
+                }
+                Button("Cancel", role: .cancel) { pendingRemove = nil }
+            } message: {
+                Text("They can't sign in to the staff app until you restore them. Their shifts and history stay.")
+            }
         }
     }
 
@@ -134,9 +152,11 @@ struct AccountStaffDetailView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center, spacing: 16) {
                     Text(viewModel.staffJoinCode.isEmpty ? "—" : viewModel.staffJoinCode)
-                        .font(.cavnarNumber(30, weight: 600))
+                        .font(.cavnar(.figureL))
                         .kerning(3)
                         .foregroundStyle(Color.cavnarEmber)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     Spacer()
                     AccountActionChip(symbol: copied ? "checkmark" : "doc.on.doc",
                                       accessibilityLabel: "Copy join code") {
@@ -154,9 +174,33 @@ struct AccountStaffDetailView: View {
                         pendingRotate = true
                     }
                 }
-                Text("Post this in the back of house. A new employee downloads Cavnar AI, taps Create your account, and types it — then picks their own name off your roster and sets their own PIN. You don't have to do anything.")
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
+                // One line; the steps behind "How it works" (iOS
+                // readability round — it was a 40-word paragraph).
+                Text("Post it in the back of house \u{2014} new staff sign themselves up with it.")
+                    .cavnarText(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.2)) { showingHowItWorks.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(showingHowItWorks ? "Hide how it works" : "How it works")
+                            .cavnarText(.label, color: .cavnarEmber2)
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .rotationEffect(.degrees(showingHowItWorks ? 180 : 0))
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                if showingHowItWorks {
+                    Text("A new employee downloads Cavnar AI, taps Create your account and types the code \u{2014} then picks their own name off your roster and sets their own PIN. You don't have to do anything.")
+                        .cavnarText(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -169,13 +213,12 @@ struct AccountStaffDetailView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Circle().fill(e.isLockout ? Color.cavnarRed : Color.cavnarAmber).frame(width: 7, height: 7)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(e.name ?? "Someone").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(e.name ?? "Someone").cavnarText(.label)
                         Text(e.isLockout ? "Locked out" : "Wrong PIN")
-                            .font(.cavnarBody(13.5, weight: 600))
-                            .foregroundStyle(e.isLockout ? Color.cavnarRed : Color.cavnarInk3)
+                            .cavnarText(.secondary, color: e.isLockout ? .cavnarRedText : .cavnarInk2)
                     }
                     Spacer(minLength: 8)
-                    Text(Self.when(e.createdAt)).font(.cavnarNumber(13.5)).foregroundStyle(Color.cavnarInk3)
+                    HomeMixedText.make(Self.when(e.createdAt), role: .caption)
                 }
                 .padding(.vertical, 8)
                 .accessibilityElement(children: .combine)
@@ -192,8 +235,8 @@ struct AccountStaffDetailView: View {
     private var unclaimedSection: some View {
         AccountSection(kicker: "Not signed up yet") {
             Text(viewModel.staffUnclaimed.joined(separator: ", "))
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk2)
+                .cavnarText(.body)
+                .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -227,8 +270,8 @@ struct AccountStaffDetailView: View {
                                         pendingUnlink = staff
                                     }
                                 } else {
-                                    Button("Remove", role: .destructive) {
-                                        Task { await viewModel.setStaffActive(staff.membershipID, active: false) }
+                                    Button("Remove\u{2026}", role: .destructive) {
+                                        pendingRemove = staff
                                     }
                                 }
                             } else {
@@ -238,16 +281,18 @@ struct AccountStaffDetailView: View {
                             }
                         } label: {
                             Image(systemName: "ellipsis.circle")
-                                .foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnar(.lead))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .cavnarHitTarget()
+                                .padding(.vertical, -7)
                         }
+                        .accessibilityLabel("More for \(staff.name)")
                     }
                 }
                 if staff.selfSignup, let phone = staff.claimedByPhone {
                     // The phone is the whole owner-side control for self-signup:
                     // a number you don't recognise next to a name you do.
-                    Text("Signed up from \(formatted(phone))")
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3)
+                    HomeMixedText.make("Signed up from \(formatted(phone))", role: .caption)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, 4)
                 }
@@ -276,10 +321,9 @@ private struct StaffTextEditSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(help)
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                     TextField(field, text: $value)
-                        .font(.cavnarBody(17))
+                        .font(.cavnar(.lead))
                         .padding(14)
                         .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 12))
                         .foregroundStyle(Color.cavnarInk)
@@ -318,11 +362,11 @@ private struct StaffPinResetSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("A new 4-digit PIN for \(name). Read it to them — it isn't texted or emailed, and they're signed out until they use it.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
                     TextField("4–8 digits", text: $pin)
                         .keyboardType(.numberPad)
-                        .font(.cavnarNumber(22, weight: 600))
+                        .font(.cavnarNumber(CavnarType.tileNumber, weight: 600))
                         .padding(14)
                         .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 12))
                         .foregroundStyle(Color.cavnarInk)
@@ -361,18 +405,18 @@ private struct AddStaffSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Creates the account and the PIN yourself. Most employees can do this themselves with the join code.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
                     field($name, "Name, as it appears on the schedule")
                     field($job, "Job (Server)")
                     TextField("PIN", text: $pin)
                         .keyboardType(.numberPad)
-                        .font(.cavnarNumber(22, weight: 600))
+                        .font(.cavnarNumber(CavnarType.tileNumber, weight: 600))
                         .padding(14)
                         .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 12))
                         .foregroundStyle(Color.cavnarInk)
                     if let error = viewModel.staffError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     }
                     Button {
                         Haptic.light()
@@ -398,7 +442,7 @@ private struct AddStaffSheet: View {
 
     private func field(_ text: Binding<String>, _ placeholder: String) -> some View {
         TextField(placeholder, text: text)
-            .font(.cavnarBody(17))
+            .font(.cavnar(.body))
             .padding(14)
             .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 12))
             .foregroundStyle(Color.cavnarInk)

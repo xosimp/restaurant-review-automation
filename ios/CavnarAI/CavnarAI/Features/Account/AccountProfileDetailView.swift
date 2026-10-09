@@ -3,11 +3,17 @@ import SwiftUI
 /// Opened from Account's "Profile & details" row. Option A ("identity
 /// card") from the account-sheet design review: the sheet opens on who
 /// this restaurant is — monogram tile, name, location — with the admin-set
-/// facts as chips, then the editable contact and AI-voice fields in warm
-/// cards. Restaurant identity fields (name/location/neighborhood/vibe/
-/// known-for) stay admin-managed because client_api.py matches several of
-/// them by exact string (AI query construction, competitor lookups); the
-/// "Set during onboarding" chip is the whole lock notice now.
+/// facts as chips, then the contact fields, hours and auto-approve.
+/// Restaurant identity fields (name/location/neighborhood/vibe/known-for)
+/// stay admin-managed because client_api.py matches several of them by
+/// exact string (AI query construction, competitor lookups).
+///
+/// iOS readability round [74]/[25]: the brand voice, never-say list, menu
+/// highlights, sign-off, reply language, time zone and the restaurant
+/// profile are set on the web (one row). What's left saves one way each:
+/// auto-approve saves on every switch; the contact fields save from a
+/// pinned Save bar that appears once something changed, and Back or a
+/// swipe-down with unsaved changes asks before throwing them away.
 struct AccountProfileDetailView: View {
     let viewModel: AccountViewModel
     let profile: AccountProfile
@@ -19,21 +25,18 @@ struct AccountProfileDetailView: View {
 
     @State private var ownerName: String
     @State private var ownerPhone: String
-    @State private var voiceNotes: String
-    @State private var neverSay: String
-    @State private var menuNotes: String
-    @State private var timezone: String
-    @State private var signOffName: String
-    @State private var responseLanguage: String
+    /// The contact fields as last saved — what "changed" is measured against.
+    @State private var savedOwnerName: String
+    @State private var savedOwnerPhone: String
     @State private var showingHours = false
-    @State private var showingRestaurantProfile = false
     @State private var autoApproveEnabled: Bool
     @State private var autoApprovePaused: Bool
     @State private var autoApproveCap: Int
     @State private var autoApproveEarned: Bool
     @State private var autoApprove4star: Bool
+    @State private var showingAutoApproveMore = false
 
-    private enum Field: Hashable { case ownerName, ownerPhone, voiceNotes, neverSay, menuNotes, signOff }
+    private enum Field: Hashable { case ownerName, ownerPhone }
 
     static let languageOptions: [(value: String, label: String)] = [
         ("", "Match the review"), ("en", "English"), ("es", "Spanish"), ("fr", "French"),
@@ -60,12 +63,8 @@ struct AccountProfileDetailView: View {
         self.profile = profile
         _ownerName  = State(initialValue: profile.ownerName ?? "")
         _ownerPhone = State(initialValue: PhoneFormat.display(profile.ownerPhone))
-        _voiceNotes = State(initialValue: profile.voiceNotes ?? "")
-        _neverSay   = State(initialValue: profile.neverSay ?? "")
-        _menuNotes  = State(initialValue: profile.menuNotes ?? "")
-        _timezone   = State(initialValue: profile.timezone)
-        _signOffName = State(initialValue: profile.signOffName ?? "")
-        _responseLanguage = State(initialValue: profile.responseLanguage ?? "")
+        _savedOwnerName = State(initialValue: profile.ownerName ?? "")
+        _savedOwnerPhone = State(initialValue: PhoneFormat.display(profile.ownerPhone))
         let auto = viewModel.summary?.reviews
         _autoApproveEnabled = State(initialValue: auto?.enabled ?? false)
         _autoApprovePaused = State(initialValue: auto?.paused ?? false)
@@ -76,54 +75,60 @@ struct AccountProfileDetailView: View {
 
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
 
+    /// Something typed that isn't saved yet.
+    private var isDirty: Bool {
+        ownerName.trimmingCharacters(in: .whitespaces) != savedOwnerName.trimmingCharacters(in: .whitespaces)
+            || ownerPhone.filter(\.isNumber) != savedOwnerPhone.filter(\.isNumber)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
                     hero
                     chips
                     contactSection
-                    timezoneSection
                     hoursSection
-                    voiceSection
                     autoApproveSection
-
-                    if let error = viewModel.saveProfileError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-                    }
-
-                    Button {
-                        Task {
-                            await viewModel.updateProfile(
-                                ownerName: ownerName, ownerPhone: ownerPhone,
-                                voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes,
-                                timezone: timezone, signOffName: signOffName,
-                                responseLanguage: responseLanguage
-                            )
-                            if viewModel.saveProfileSucceeded {
-                                Haptic.success()
-                                postedLabel = "Profile saved"
-                            }
-                        }
-                    } label: {
-                        Group {
-                            if viewModel.isSavingProfile {
-                                CavnarShimmerText(text: "Saving…")
-                            } else {
-                                Text("Save changes")
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingProfile))
-                    .disabled(viewModel.isSavingProfile)
+                    webSection
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
-            .accountSheetChrome("Restaurant")
+            .accountSheetChrome("Restaurant", isDirty: isDirty)
             .keyboardDoneToolbar { focusedField = nil }
-            .cavnarPostedOverlay(postedLabel) { dismiss() }
+            .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
+            // The one Save on this sheet, in thumb reach, only while there
+            // is something to save.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if isDirty || viewModel.isSavingProfile || viewModel.saveProfileError != nil {
+                    CavnarPinnedBar(note: viewModel.saveProfileError) {
+                        Button {
+                            if isDirty {
+                                Haptic.light()
+                                ownerName = savedOwnerName
+                                ownerPhone = savedOwnerPhone
+                            }
+                            viewModel.saveProfileError = nil
+                        } label: {
+                            Text(isDirty ? "Undo" : "Dismiss").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        Button { Task { await saveContact() } } label: {
+                            Group {
+                                if viewModel.isSavingProfile {
+                                    CavnarShimmerText(text: "Saving…")
+                                } else {
+                                    Text("Save changes")
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingProfile || !isDirty))
+                        .disabled(viewModel.isSavingProfile || !isDirty)
+                    }
+                }
+            }
             .sheet(isPresented: $showingUpdateEmail) {
                 UpdateEmailSheet(viewModel: viewModel)
             }
@@ -133,12 +138,30 @@ struct AccountProfileDetailView: View {
             .sheet(isPresented: $showingHours) {
                 AccountHoursSheet(viewModel: viewModel, profile: viewModel.summary?.profile ?? profile)
             }
-            .sheet(isPresented: $showingRestaurantProfile) {
-                AccountRestaurantProfileSheet(canEdit: isOwner)
-            }
             .task {
                 if isOwner { await locations.load() }
             }
+        }
+    }
+
+    /// Saves the contact fields; everything this sheet no longer edits goes
+    /// back exactly as the server last said it (the live summary, so a web
+    /// edit made meanwhile isn't overwritten by the snapshot this opened on).
+    private func saveContact() async {
+        focusedField = nil
+        let current = viewModel.summary?.profile ?? profile
+        await viewModel.updateProfile(
+            ownerName: ownerName, ownerPhone: ownerPhone,
+            voiceNotes: current.voiceNotes ?? "", neverSay: current.neverSay ?? "",
+            menuNotes: current.menuNotes ?? "", timezone: current.timezone,
+            signOffName: current.signOffName ?? "",
+            responseLanguage: current.responseLanguage ?? ""
+        )
+        if viewModel.saveProfileSucceeded {
+            Haptic.success()
+            savedOwnerName = ownerName
+            savedOwnerPhone = ownerPhone
+            postedLabel = "Saved"
         }
     }
 
@@ -207,26 +230,25 @@ struct AccountProfileDetailView: View {
     // Chips are collapsed to just the first one at rest — a wall of orange
     // pills under the restaurant name was too much before you've even
     // reached the editable fields. Tapping the "+N" chip expands the rest;
-    // tapping the trailing chip again (now "Less") collapses back.
+    // tapping the trailing chip again (now "Less") collapses back. (The
+    // "Set during onboarding" chip is gone — iOS readability round.)
     @State private var chipsExpanded = false
 
-    private var allChips: [(text: String, muted: Bool)] {
-        factChips.map { ($0, false) } + [("Set during onboarding", true)]
-    }
-
+    @ViewBuilder
     private var chips: some View {
-        AccountFlowLayout(spacing: 6) {
-            if let first = allChips.first {
-                AccountChip(text: first.text, muted: first.muted)
-            }
-            if allChips.count > 1 {
-                if chipsExpanded {
-                    ForEach(allChips.dropFirst().indices, id: \.self) { i in
-                        AccountChip(text: allChips[i].text, muted: allChips[i].muted)
+        let all = factChips
+        if !all.isEmpty {
+            AccountFlowLayout(spacing: 6) {
+                AccountChip(text: all[0])
+                if all.count > 1 {
+                    if chipsExpanded {
+                        ForEach(all.dropFirst().indices, id: \.self) { i in
+                            AccountChip(text: all[i])
+                        }
+                        chipToggle(label: "Less", systemImage: "chevron.up", expand: false)
+                    } else {
+                        chipToggle(label: "+\(all.count - 1)", systemImage: "chevron.down", expand: true)
                     }
-                    chipToggle(label: "Less", systemImage: "chevron.up", expand: false)
-                } else {
-                    chipToggle(label: "+\(allChips.count - 1)", systemImage: "chevron.down", expand: true)
                 }
             }
         }
@@ -239,15 +261,17 @@ struct AccountProfileDetailView: View {
         } label: {
             HStack(spacing: 3) {
                 Text(label)
-                Image(systemName: systemImage).font(.system(size: 9, weight: .bold))
+                Image(systemName: systemImage).font(.cavnar(.tag)).accessibilityHidden(true)
             }
-            .font(.cavnarBody(13.5, weight: 700))
+            .font(.cavnarBody(CavnarType.secondary, weight: 700))
             .foregroundStyle(Color.cavnarInk2)
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
             .background(Color.white.opacity(0.05))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
             .clipShape(Capsule())
+            .cavnarHitTarget()
+            .padding(.vertical, -6)
         }
         .buttonStyle(.plain)
     }
@@ -289,7 +313,7 @@ struct AccountProfileDetailView: View {
                     AccountKVRow(label: "Locations", showsDivider: false) {
                         HStack(spacing: 10) {
                             if !locations.locations.isEmpty {
-                                Text("\(locations.locations.count)").font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                                Text("\(locations.locations.count)").cavnarText(.figureS, color: .cavnarInk2)
                             }
                             AccountDisclosureChip()
                         }
@@ -297,21 +321,6 @@ struct AccountProfileDetailView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-            }
-        }
-    }
-
-    // MARK: - Timezone
-
-    private var timezoneSection: some View {
-        AccountSection(kicker: "Timezone") {
-            AccountKVRow(label: "Drives \"today\" & weekly trends", showsDivider: false) {
-                Picker("", selection: $timezone) {
-                    ForEach(Self.timezoneOptions, id: \.value) { option in
-                        Text(option.label).tag(option.value)
-                    }
-                }
-                .tint(Color.cavnarEmber)
             }
         }
     }
@@ -325,45 +334,34 @@ struct AccountProfileDetailView: View {
     }
 
     private var hoursSection: some View {
-        AccountSection(kicker: "Hours") {
-            AccountNavRow(label: "Hours & closures", value: hoursSummary) { showingHours = true }
-            // Who Cavnar compares you with (Benchmarking audit #7).
-            AccountNavRow(label: "Restaurant profile", showsDivider: false) { showingRestaurantProfile = true }
+        AccountSection(kicker: "Hours & closed dates") {
+            AccountNavRow(label: "Hours & closed dates", value: hoursSummary, showsDivider: false) { showingHours = true }
         }
     }
 
-    // MARK: - AI voice
+    // MARK: - On the web
 
-    private var voiceSection: some View {
-        AccountSection(kicker: "How the AI writes for you") {
-            // The brand voice is the offer source for public copy and an
-            // instruction every drafter follows, so only an owner changes
-            // it (memory re-audit PROMPTS-9); everyone else reads it.
-            Group {
-                AccountEditor(label: "Brand voice", placeholder: "e.g. warm, a little playful, never corporate", text: $voiceNotes, focus: $focusedField, field: .voiceNotes)
-                AccountEditor(label: "Never says", placeholder: "Phrases or claims the AI should avoid", text: $neverSay, focus: $focusedField, field: .neverSay)
-                AccountEditor(label: "Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, focus: $focusedField, field: .menuNotes)
-                AccountField(label: "Signs off as", text: $signOffName, focus: $focusedField, field: .signOff)
-            }
-            .disabled(!isOwner)
-            if !isOwner {
-                Text("Only an owner can change the brand voice.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
-            }
-            AccountKVRow(label: "Reply language", showsDivider: false) {
-                Picker("", selection: $responseLanguage) {
-                    ForEach(Self.languageOptions, id: \.value) { Text($0.label).tag($0.value) }
-                }
-                .tint(Color.cavnarEmber)
-            }
+    /// The time zone and reply language as set — read here, changed on the web.
+    private var webSubtitle: String {
+        let current = viewModel.summary?.profile ?? profile
+        let zone = Self.timezoneOptions.first { $0.value == current.timezone }?.label ?? current.timezone
+        let language = Self.languageOptions.first { $0.value == (current.responseLanguage ?? "") }?.label ?? "Match the review"
+        return "Brand voice, reply language (\(language)), time zone (\(zone)) and who you're compared with."
+    }
+
+    private var webSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CavnarWebLinkRow(title: "Voice, time zone & profile", subtitle: webSubtitle,
+                             path: "account/restaurant",
+                             actionLabel: isOwner ? "Edit on the web" : "See on the web")
         }
+        .accountCard()
     }
 
     // MARK: - Auto-approve
 
-    // Saves on change (not with the Save button below) — it's a rule with
-    // real consequences, so flipping it should land immediately and
-    // visibly, same as 2FA's own Turn on/off.
+    // Saves on change — it's a rule with real consequences, so flipping it
+    // should land immediately and visibly, same as 2FA's own Turn on/off.
     /// A save the server refused (a teammate's 403 owner_only, a dropped
     /// connection) puts every switch back to what is saved — the screen
     /// never shows a rule that isn't the one running (re-audit 10/8/26, #13).
@@ -404,7 +402,7 @@ struct AccountProfileDetailView: View {
     /// replies were going out too).
     private var autoApproveRuleLine: String {
         let bands = autoApprove4star ? "Drafted 5- and 4-star replies" : "Only drafted 5-star replies"
-        let floor = autoApprove4star ? "never 3 stars or below, and anything the analyser flags still waits for you."
+        let floor = autoApprove4star ? "never 3 stars or below, and anything sensitive still waits for you."
                                      : "never anything lower."
         return "\(bands), \(floor) \(viewModel.summary?.reviews.approvedToday ?? 0) auto-approved today."
     }
@@ -419,19 +417,19 @@ struct AccountProfileDetailView: View {
         } else {
             AccountSection(kicker: "Auto-approve") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(!autoApproveEnabled ? "Off \u{2014} every reply waits for someone to read it."
-                         : autoApprovePaused ? "Paused \u{2014} nothing posts on its own until it resumes."
-                         : autoApproveRuleLine)
-                        .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(!autoApproveEnabled ? "Off \u{2014} every reply waits for someone to read it."
+                                    : autoApprovePaused ? "Paused \u{2014} nothing posts on its own until it resumes."
+                                    : autoApproveRuleLine, role: .body)
                     Text("Only the account owner can change auto-approve.")
-                        .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption)
                 }
                 .padding(.vertical, 9)
             }
         }
     }
 
+    /// The main switch and Paused; the 4-star band, the daily cap and
+    /// "Extend it as you earn it" behind More (iOS readability round [74]).
     private var autoApproveControls: some View {
         AccountSection(kicker: "Auto-approve") {
             AccountSwitchRow(
@@ -442,46 +440,44 @@ struct AccountProfileDetailView: View {
             )
             if autoApproveEnabled {
                 AccountSwitchRow(
-                    label: "Include 4-star reviews",
-                    detail: "Same ceiling, same rule: anything the analyser flags still waits for you. Never 3 stars or below.",
-                    isOn: Binding(get: { autoApprove4star }, set: { on in autoApprove4star = on; saveAutoApprove() }),
-                    busy: viewModel.isSavingAutoApprove,
-                    showsDivider: true
-                )
-                AccountKVRow(label: "Daily cap") {
-                    Picker("", selection: Binding(get: { autoApproveCap }, set: { cap in
-                        Haptic.selection(); autoApproveCap = cap; saveAutoApprove()
-                    })) {
-                        ForEach(Self.capOptions, id: \.self) { Text("\($0) a day").tag($0) }
-                    }
-                    .tint(Color.cavnarEmber)
-                }
-                AccountSwitchRow(
-                    label: "Extend it as you earn it",
-                    isOn: Binding(get: { autoApproveEarned }, set: { on in autoApproveEarned = on; saveAutoApprove() }),
-                    busy: viewModel.isSavingAutoApprove,
-                    showsDivider: true
-                )
-                Text("Once you've approved 10 replies on a star band in 30 days and edited at most 1 in 10, that band goes out on its own too — 3★ at most, never lower.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 6)
-                AccountSwitchRow(
                     label: "Paused",
+                    detail: autoApprovePaused ? "Nothing posts on its own until you resume." : nil,
                     isOn: Binding(get: { autoApprovePaused }, set: { paused in autoApprovePaused = paused; saveAutoApprove() }),
                     busy: viewModel.isSavingAutoApprove,
-                    showsDivider: false
+                    showsDivider: true
                 )
-                Text(autoApprovePaused
-                     ? "Paused — nothing posts on its own until you resume."
-                     : autoApproveRuleLine)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(autoApprovePaused ? Color.cavnarAmber : Color.cavnarInk3)
-                    .padding(.vertical, 9)
+                if !autoApprovePaused {
+                    CavnarMixedText(autoApproveRuleLine, role: .secondary)
+                        .padding(.vertical, 9)
+                }
+                CavnarMoreToggle(hiddenCount: 3, total: nil, isExpanded: $showingAutoApproveMore)
+                if showingAutoApproveMore {
+                    AccountSwitchRow(
+                        label: "Include 4-star reviews",
+                        detail: "Same ceiling, same rule: anything sensitive still waits for you. Never 3 stars or below.",
+                        isOn: Binding(get: { autoApprove4star }, set: { on in autoApprove4star = on; saveAutoApprove() }),
+                        busy: viewModel.isSavingAutoApprove,
+                        showsDivider: true
+                    )
+                    AccountKVRow(label: "Daily cap") {
+                        Picker("", selection: Binding(get: { autoApproveCap }, set: { cap in
+                            Haptic.selection(); autoApproveCap = cap; saveAutoApprove()
+                        })) {
+                            ForEach(Self.capOptions, id: \.self) { Text("\($0) a day").tag($0) }
+                        }
+                        .tint(Color.cavnarEmber)
+                    }
+                    AccountSwitchRow(
+                        label: "Extend it as you earn it",
+                        detail: "Once you've approved 10 replies on a star band in 30 days and edited at most 1 in 10, that band goes out on its own too \u{2014} 3\u{2605} at most, never lower.",
+                        isOn: Binding(get: { autoApproveEarned }, set: { on in autoApproveEarned = on; saveAutoApprove() }),
+                        busy: viewModel.isSavingAutoApprove,
+                        showsDivider: false
+                    )
+                }
             }
             if let error = viewModel.autoApproveError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed).padding(.bottom, 6)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText).padding(.bottom, 6)
             }
         }
     }

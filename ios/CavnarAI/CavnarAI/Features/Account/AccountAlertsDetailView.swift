@@ -1,51 +1,37 @@
 import SwiftUI
 import UIKit
 
-/// Pushed from Account's "Alerts & digest" row. The old inline card only
-/// exposed 7 of the 12 settings the backend actually stores (missing
-/// alert_health, alert_negative_trend, alert_no_response, urgent_via_email,
-/// and digest_day entirely) and showed alert contacts read-only even
-/// though the save endpoint has always accepted a full replacement list.
-/// Also the first UI anywhere for alert_quiet_start/end — notify.py has
-/// checked these since is_in_quiet_hours() existed, but neither client
-/// ever gave an owner a way to actually set them.
+/// Account → Notifications: what reaches THIS login's phone (iOS
+/// readability round [24], "Web explains. iPhone decides."). The phone
+/// keeps the choices an owner makes about their own phone — whether iOS
+/// lets Cavnar AI through at all, push to my phone, what's muted on it, my
+/// own quiet hours, my morning brief, how much to hear from Cavnar AI, a
+/// test notification, and the "you never open X — mute it" nudge. Every
+/// one of them saves the moment it changes; there is no Save button here.
+///
+/// The restaurant's alert rules — which alerts fire, text and email
+/// delivery, extra emails, the restaurant's quiet hours, the weekly digest,
+/// email preferences, issue routing and the alert contacts — are one web
+/// row ("Restaurant alert rules · Edit on the web"). They were 40-odd
+/// controls on the phone behind a Save button at the bottom that Back
+/// silently discarded.
 struct AccountAlertsDetailView: View {
     let viewModel: AccountViewModel
-    @Environment(\.dismiss) private var dismiss
     @Environment(SessionStore.self) private var sessionStore
-    @State private var postedLabel: String?
     /// A morning-brief change the server did not take — it is rolled back
     /// and said here. The save was `try?`, so a refusal looked saved.
     @State private var briefError: String?
 
-    @State private var draft: AlertSettings
-    @State private var contacts: [AlertContact]
-    @State private var quietHoursEnabled: Bool
-    @State private var quietStart: Date
-    @State private var quietEnd: Date
-    @State private var testDigestLabel: String?
     @State private var pushDenied = false
     @State private var pushUndetermined = false
     @State private var brief = BriefSettings()
     @State private var briefLoaded = false
-    @State private var routing: IssueRouting?
-    @State private var routingError: String?
-    @State private var nudge: EngagementSuggestion?
     @State private var testPushLabel: String?
     @State private var sendingTestPush = false
-    @State private var savingIssueTexts = false
-    @State private var showingAddTextContact = false
-    /// The saved contacts' ids when "Add someone to text" opened — whoever
-    /// the server has beyond them afterwards is the person just added.
-    @State private var contactIdsBeforeAdd: Set<Int> = []
-    private enum AlertsField: Hashable { case extraEmails, contactName(Int), contactPhone(Int) }
 
-    /// Alert settings, alert contacts and the account's email preferences
-    /// are the account owner's (403 owner_only for anyone else). A teammate
-    /// sees them — what the restaurant is set to — but cannot change them;
-    /// their own phone's test push stays theirs.
+    /// The restaurant's alert rules are the account owner's (403 owner_only
+    /// for anyone else) — the web row says so to a teammate.
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
-    @FocusState private var focusedField: AlertsField?
 
     /// The contacts on screen after "Add someone to text" saved one: the
     /// draft as the owner left it (names and numbers typed and not yet
@@ -72,474 +58,150 @@ struct AccountAlertsDetailView: View {
         return out
     }
 
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f
-    }()
-
-    private static let days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-
+    /// `alerts` is the restaurant's rules as Account loaded them — edited
+    /// on the web now, so the phone only reads this login's own settings.
     init(viewModel: AccountViewModel, alerts: AccountAlerts) {
         self.viewModel = viewModel
-        _draft = State(initialValue: alerts.settings)
-        _contacts = State(initialValue: alerts.contacts)
-        _quietHoursEnabled = State(initialValue: alerts.settings.alertQuietStart != nil && alerts.settings.alertQuietEnd != nil)
-        _quietStart = State(initialValue: Self.timeFormatter.date(from: alerts.settings.alertQuietStart ?? "")
-            ?? Calendar.current.date(bySettingHour: 22, minute: 0, second: 0, of: Date())!)
-        _quietEnd = State(initialValue: Self.timeFormatter.date(from: alerts.settings.alertQuietEnd ?? "")
-            ?? Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date())!)
     }
 
     var body: some View {
         NavigationStack {
-        ScrollViewReader { proxy in
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                hero
-                statusStrip
+            ScrollView {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    hero
 
-                if !isOwner {
-                    CavnarCaveat(
-                        title: "Only the account owner can change alerts",
-                        detail: "These are the settings your restaurant uses. Ask the owner to change them."
-                    )
-                }
-
-                // This login's own choices (push, muted types, quiet hours,
-                // its brief) and, in a group, where each shared setting
-                // comes from — memory round 9/29/26 (M2 owner_layers). Any
-                // login may change its own.
-                AccountMyNotifications()
-
-                // The one dial for "too much" or "too little" (the web's
-                // How much to hear from Cavnar AI, density audit #38) —
-                // briefing_level on the same /morning-brief/settings twin.
-                if briefLoaded && brief.canEdit {
-                    AccountSection(kicker: "How much to hear from Cavnar AI") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            CavnarSegmentedControl(
-                                selection: Binding(get: { brief.briefingLevel },
-                                                   set: { level in
-                                                       guard level != brief.briefingLevel else { return }
-                                                       let before = brief
-                                                       brief.briefingLevel = level
-                                                       saveBrief(rollback: before)
-                                                   }),
-                                options: Self.levels
-                            ) { Self.levelLabel($0) }
-                            Text(Self.levelNote(brief.briefingLevel))
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk3.opacity(0.8))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.vertical, 9)
-                    }
-                }
-
-                AccountSection(kicker: "What triggers an alert") {
-                    // The web's three (parity #86) — shown once the server
-                    // sends them, and only then saved.
-                    if draft.alertAnyReview != nil {
-                        AccountSwitchRow(label: "Any new review", isOn: optionalBool(\.alertAnyReview))
-                    }
-                    if draft.alertRespApproved != nil {
-                        AccountSwitchRow(label: "Reply approved & posted to Google", isOn: optionalBool(\.alertRespApproved))
-                    }
-                    AccountSwitchRow(label: "1-star reviews", isOn: $draft.alert1star)
-                    AccountSwitchRow(label: "2-star reviews", isOn: $draft.alert2star)
-                    AccountSwitchRow(label: "5-star reviews", isOn: $draft.alert5star)
-                    if draft.alertRatingThreshold != nil {
-                        AccountSwitchRow(label: "Rating climbs above \(Self.starLabel(draft.alertRatingFloor ?? 4.0))",
-                                         isOn: optionalBool(\.alertRatingThreshold),
-                                         showsDivider: draft.alertRatingThreshold != true)
-                        if draft.alertRatingThreshold == true {
-                            AccountKVRow(label: "Rating to climb above") {
-                                Picker("", selection: Binding(
-                                    get: { draft.alertRatingFloor ?? 4.0 },
-                                    set: { Haptic.selection(); draft.alertRatingFloor = $0 }
-                                )) {
-                                    ForEach(Self.ratingOptions(draft.alertRatingFloor), id: \.self) { Text(Self.starLabel($0)).tag($0) }
-                                }
-                                .labelsHidden().tint(Color.cavnarEmber)
-                            }
-                        }
-                    }
-                    AccountSwitchRow(label: "Health or safety mention", isOn: $draft.alertHealth)
-                    AccountSwitchRow(label: "Negative review spike", isOn: $draft.alertNegSpike)
-                    AccountSwitchRow(label: "Rating declining trend", isOn: $draft.alertNegativeTrend)
-                    AccountSwitchRow(label: "Unresponded review (48h)", isOn: $draft.alertNoResponse)
-                    AccountSwitchRow(label: "Labor over target", isOn: $draft.alertLaborOver)
-                    AccountSwitchRow(label: "Food waste flagged", isOn: $draft.alertFoodWaste)
-                    AccountSwitchRow(label: "AI visibility drops", isOn: $draft.alertAiVisibilityDrop)
-                    AccountSwitchRow(label: "Competitor moves (weekly)", isOn: $draft.alertCompetitorMove)
-                    masterAlertPill.padding(.vertical, 9)
-                }
-                .disabled(!isOwner)
-
-                AccountSection(kicker: "How urgent alerts reach you") {
-                    AccountSwitchRow(label: "Text alerts", isOn: $draft.urgentViaSms)
-                    AccountSwitchRow(label: "Email alerts", isOn: $draft.urgentViaEmail)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Also email").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
-                        TextField("chef@…, gm@… (up to 3)", text: $draft.alertExtraEmails)
-                            .font(.cavnarBody(16, weight: 700))
-                            .foregroundStyle(Color.cavnarInk)
-                            .keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focusedField, equals: .extraEmails)
-                            .id("alerts-extra-emails")
-                        Text("Alert and digest emails also go to these addresses.")
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk3.opacity(0.8))
-                    }
-                    .padding(.vertical, 9)
-                }
-                .disabled(!isOwner)
-
-                AccountSection(kicker: "Push notifications") {
                     // A denial is permanent and silent — iOS will not show
                     // the system prompt a second time, so an owner who
                     // tapped "Don't Allow" once was unreachable by push
-                    // forever with nothing anywhere saying why. Every switch
-                    // below it would have been a lie.
-                    if pushDenied {
-                        CavnarCaveat(
-                            title: "Notifications are turned off for Cavnar AI",
-                            detail: "iOS won't ask again, so nothing below can reach your phone until you turn them back on in Settings."
-                        )
-                        AccountActionRow(label: "Open Settings",
-                                         detail: "Notifications → Cavnar AI → Allow Notifications",
-                                         symbol: "arrow.up.forward") {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                    } else if pushUndetermined {
-                        // The system prompt waits for the second app open so
-                        // it doesn't fire before the owner has seen a single
-                        // number. Without this row that deferral is a trap on
-                        // a fresh install: no prompt, no token, and nothing
-                        // anywhere offering either.
-                        CavnarCaveat(
-                            title: "Nothing can reach your phone yet",
-                            detail: "Cavnar AI hasn't asked for permission to send notifications. None of the switches below do anything until it has."
-                        )
-                        AccountActionRow(label: "Allow notifications",
-                                         detail: "Asks iOS now.",
-                                         symbol: "bell.badge") {
-                            Task {
-                                await PushManager.shared.promptNow()
-                                pushDenied = PushManager.shared.authorizationDenied
-                                pushUndetermined = PushManager.shared.authorizationUndetermined
-                            }
-                        }
+                    // forever with nothing anywhere saying why.
+                    if pushDenied || pushUndetermined {
+                        permissionCard
                     }
-                    // One sentence about what is being sent and never
-                    // opened. A suggestion, never an automatic change:
-                    // reading a banner leaves no tap behind, so switching
-                    // alerts off on tap data alone would quietly silence
-                    // ones an owner reads every day.
-                    if let nudge, isOwner {
-                        CavnarCaveat(
-                            title: "\(nudge.delivered) \u{201C}\(nudge.label)\u{201D} alerts in the last \(nudge.days) days",
-                            detail: "You haven't opened one of them. Want to stop pushing these to your phone?"
-                        )
-                        AccountActionRow(label: "Stop pushing these",
-                                         detail: "Still logged, still in your notifications list.",
-                                         symbol: "bell.slash") {
-                            applyNudge(nudge)
-                        }
-                    }
-                    Group {
-                        pushRow("1-star reviews", $draft.al1starPush, on: draft.alert1star)
-                        pushRow("2-star reviews", $draft.al2starPush, on: draft.alert2star)
-                        pushRow("5-star reviews", $draft.al5starPush, on: draft.alert5star)
-                        pushRow("Health or safety mention", $draft.alHealthPush, on: draft.alertHealth)
-                        pushRow("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
-                        pushRow("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
-                        AccountSwitchRow(label: "Play a sound", isOn: $draft.pushSound)
-                    }
-                    .disabled(!isOwner)
-                    // "Is push actually working on my phone?" had no answer
-                    // short of reaching into the database. This login's own
-                    // devices only — a test that buzzes a manager's phone
-                    // is not a test.
-                    AccountActionRow(
-                        label: "Send me a test notification",
-                        detail: testPushLabel ?? "Goes to this phone only.",
-                        symbol: "paperplane.fill",
-                        busy: sendingTestPush
-                    ) { Task { await sendTestPush() } }
-                    Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend, labor, waste and visibility alerts push automatically once enabled.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3.opacity(0.8))
-                        .padding(.vertical, 9)
-                }
 
-                // The morning brief had no settings screen on the phone at
-                // all — an owner who runs Cavnar from iOS could not change
-                // the hour it arrives, stop alerts buzzing mid-service, or
-                // turn on the lineup nudge. All three are the same
-                // /morning-brief/settings twin the web dashboard uses.
-                if briefLoaded && brief.canEdit {
-                    AccountSection(kicker: "Morning brief & issues") {
-                        AccountSwitchRow(
-                            label: "Morning brief",
-                            detail: "Yesterday, what to fix first, and what is waiting on you — to your phone, or email if the app isn't installed.",
-                            isOn: Binding(get: { brief.enabled },
-                                          set: { let before = brief; brief.enabled = $0; saveBrief(rollback: before) })
-                        )
-                        AccountKVRow(label: "Send it at") {
-                            Picker("", selection: Binding(get: { brief.hour },
-                                                          set: { let before = brief; brief.hour = $0; saveBrief(rollback: before) })) {
-                                // 4am to 1pm: every hour the server takes
-                                // (4 <= hour < LATEST_SEND_HOUR), as the web offers.
-                                ForEach(4...13, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
-                            }
-                            .labelsHidden().tint(Color.cavnarEmber)
-                        }
-                        AccountSwitchRow(
-                            label: "Hold alerts through service",
-                            detail: "A two-star review at 12:15 can't be acted on until the rush is over. Held alerts arrive when it ends; health mentions never wait.",
-                            isOn: Binding(get: { brief.holdAlerts },
-                                          set: { let before = brief; brief.holdAlerts = $0; saveBrief(rollback: before) })
-                        )
-                        AccountKVRow(label: "Lineup notes to the manager", showsDivider: routing != nil) {
-                            Picker("", selection: Binding(get: { brief.preshiftNudgeHour },
-                                                          set: { let before = brief; brief.preshiftNudgeHour = $0; saveBrief(rollback: before) })) {
-                                Text("Off").tag(0)
-                                ForEach(12..<21, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
-                            }
-                            .labelsHidden().tint(Color.cavnarEmber)
-                        }
-                        if let routing {
-                            issueRoutingRows(routing)
-                        }
-                    }
-                }
-                if let briefError {
-                    Text(briefError).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-                }
+                    // This login's own choices (push, muted types, quiet
+                    // hours, its brief, the never-opened nudge) — memory
+                    // round 9/29/26 (M2 owner_layers). Each saves on change.
+                    AccountMyNotifications()
 
-                AccountSection(kicker: "Quiet hours") {
-                    AccountSwitchRow(
-                        label: "Pause overnight",
-                        detail: "Text, email, and push all wait until your quiet window ends",
-                        isOn: $quietHoursEnabled,
-                        showsDivider: quietHoursEnabled
-                    )
-                    if quietHoursEnabled {
-                        AccountKVRow(label: "From") {
-                            DatePicker("", selection: $quietStart, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
-                        }
-                        AccountKVRow(label: "Until") {
-                            DatePicker("", selection: $quietEnd, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
-                        }
-                        AccountSwitchRow(
-                            label: "Health alerts break through",
-                            detail: "A health or safety mention still reaches you during quiet hours, and pushes through Focus modes",
-                            isOn: $draft.alertHealthBypassQuiet,
-                            showsDivider: false
-                        )
-                    }
-                }
-                .disabled(!isOwner)
-
-                AccountSection(kicker: "Weekly digest") {
-                    AccountSwitchRow(label: "Weekly digest", isOn: $draft.digestEnabled, showsDivider: draft.digestEnabled)
-                        .disabled(!isOwner)
-                    if draft.digestEnabled {
-                        AccountKVRow(label: "Delivered on") {
-                            Picker("", selection: $draft.digestDay) {
-                                ForEach(Self.days, id: \.self) { day in
-                                    Text(day.capitalized).tag(day)
-                                }
-                            }
-                            .tint(Color.cavnarEmber)
-                        }
-                        .disabled(!isOwner)
-                        AccountActionRow(
-                            label: "Send me a preview",
-                            detail: testDigestLabel ?? viewModel.testDigestError,
-                            symbol: "paperplane.fill",
-                            busy: viewModel.isSendingTestDigest,
-                            showsDivider: false
-                        ) {
-                            Task {
-                                await viewModel.sendTestDigest()
-                                if viewModel.testDigestSucceeded {
-                                    Haptic.success()
-                                    testDigestLabel = "Preview sent"
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if isOwner {
-                AccountSection(kicker: "Email preferences") {
-                    // The web's Monthly business review switch, on the
-                    // same shared body (/account/monthly-review).
-                    AccountSwitchRow(
-                        label: "Monthly business review",
-                        detail: "On the 1st: how last month's numbers moved, what your changes were measured to do, and what's worth fixing next.",
-                        isOn: Binding(
-                            get: { viewModel.summary?.account.monthlyReviewEnabled ?? true },
-                            set: { on in Task { await viewModel.toggleMonthlyReview(on) } }
-                        ),
-                        busy: viewModel.isTogglingMonthlyReview
-                    )
-                    AccountSwitchRow(
-                        label: "Product updates & tips",
-                        detail: "Never affects security emails — sign-in alerts, 2FA codes, and password changes always go out",
-                        isOn: Binding(
-                            get: { viewModel.summary?.account.marketingEmailsOptOut == false },
-                            set: { on in Task { await viewModel.toggleMarketingOptOut(!on) } }
-                        ),
-                        busy: viewModel.isTogglingMarketingOptOut,
-                        showsDivider: false
-                    )
-                }
-                if let error = viewModel.accountToggleError {
-                    Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
-                }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .center) {
-                        sectionHeader(contacts.count == 2 ? "Alert contacts · 2 of 2" : "Alert contacts · up to 2")
-                        Spacer()
-                        if contacts.count < 2 {
-                            AccountActionChip(symbol: "plus", accessibilityLabel: "Add contact") {
-                                let id = -contacts.count - 1
-                                contacts.append(AlertContact(id: id, name: "", phone: "", smsConsent: false))
-                                // Straight into the new row's name field.
-                                Task { @MainActor in
-                                    try? await Task.sleep(for: .seconds(0.05))
-                                    focusedField = .contactName(id)
-                                }
-                            }
-                        }
-                    }
+                    // "Is push actually working on my phone?" This login's
+                    // own devices only — a test that buzzes a manager's
+                    // phone is not a test.
                     VStack(alignment: .leading, spacing: 0) {
-                        if contacts.isEmpty {
-                            Text("No contacts added — urgent alerts only go to the email/phone on your account.")
-                                .font(.cavnarBody(15))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .padding(.vertical, 9)
-                        }
-                        ForEach(Array($contacts.enumerated()), id: \.element.id) { index, $contact in
-                            HStack(alignment: .center, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    TextField("Name", text: $contact.name)
-                                        .font(.cavnarBody(16, weight: 700))
-                                        .foregroundStyle(Color.cavnarInk)
-                                        .focused($focusedField, equals: .contactName(contact.id))
-                                    TextField("Phone", text: $contact.phone)
-                                        .onChange(of: contact.phone) { _, v in let f = PhoneFormat.typing(v); if f != v { contact.phone = f } }
-                                        .font(.cavnarNumber(15))
-                                        .foregroundStyle(Color.cavnarInk2)
-                                        .keyboardType(.phonePad)
-                                        .focused($focusedField, equals: .contactPhone(contact.id))
-                                }
-                                .id("alerts-contact-\(contact.id)")
-                                Spacer(minLength: 8)
-                                AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove contact") {
-                                    contacts.removeAll { $0.id == contact.id }
-                                }
+                        AccountActionRow(
+                            label: "Send me a test notification",
+                            detail: testPushLabel ?? "Goes to this phone only.",
+                            symbol: "paperplane.fill",
+                            busy: sendingTestPush,
+                            showsDivider: false
+                        ) { Task { await sendTestPush() } }
+                    }
+                    .accountCard()
+
+                    // The one dial for "too much" or "too little" (the web's
+                    // How much to hear from Cavnar AI, density audit #38) —
+                    // briefing_level on the /morning-brief/settings twin.
+                    // Saves on change, rolled back if the server refuses.
+                    if briefLoaded && brief.canEdit {
+                        AccountSection(kicker: "How much to hear from Cavnar AI") {
+                            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                                CavnarSegmentedControl(
+                                    selection: Binding(get: { brief.briefingLevel },
+                                                       set: { level in
+                                                           guard level != brief.briefingLevel else { return }
+                                                           let before = brief
+                                                           brief.briefingLevel = level
+                                                           saveBrief(rollback: before)
+                                                       }),
+                                    options: Self.levels
+                                ) { Self.levelLabel($0) }
+                                Text(Self.levelNote(brief.briefingLevel))
+                                    .cavnarText(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .padding(.vertical, 9)
-                            if index < contacts.count - 1 { AccountRowDivider() }
                         }
+                    }
+                    if let briefError {
+                        Text(briefError).cavnarText(.secondary, color: .cavnarRedText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    // L3: the restaurant's rules, for everyone, on the web.
+                    VStack(alignment: .leading, spacing: 0) {
+                        CavnarWebLinkRow(
+                            title: "Restaurant alert rules",
+                            subtitle: isOwner
+                                ? "Which alerts fire, text and email, quiet hours, the weekly digest, issue texts and alert contacts."
+                                : "What your restaurant is set to. Only the account owner can change these.",
+                            path: "account/notifications",
+                            actionLabel: isOwner ? "Edit on the web" : "See on the web"
+                        )
                     }
                     .accountCard()
                 }
-                .disabled(!isOwner)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(CavnarSpace.gutter)
+            }
+            .accountSheetChrome("Notifications")
+            .task {
+                await PushManager.shared.refreshAuthorization()
+                pushDenied = PushManager.shared.authorizationDenied
+                pushUndetermined = PushManager.shared.authorizationUndetermined
+                await loadBrief()
+            }
+        }
+    }
 
-                if let error = viewModel.saveAlertsError {
-                    Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+    // MARK: - Identity
+
+    private var hero: some View {
+        AccountHero(title: pushDenied ? "Notifications are off" : "Your notifications") {
+            GlowBadge(systemImage: pushDenied ? "bell.slash" : "bell.badge", size: 64)
+        } subtitle: {
+            Text(pushDenied ? "Turn them on in Settings to hear from Cavnar AI."
+                            : "What reaches your phone. Each change saves at once.")
+        }
+    }
+
+    // MARK: - iOS permission
+
+    private var permissionCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if pushDenied {
+                CavnarCaveat(
+                    title: "Notifications are turned off for Cavnar AI",
+                    detail: "iOS won't ask again, so nothing below can reach your phone until you turn them back on in Settings."
+                )
+                .padding(.vertical, 9)
+                AccountActionRow(label: "Open Settings",
+                                 detail: "Notifications \u{2192} Cavnar AI \u{2192} Allow Notifications",
+                                 symbol: "arrow.up.forward", showsDivider: false) {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
                 }
-
-                if isOwner {
-                Button {
-                    var toSave = draft
-                    toSave.alertQuietStart = quietHoursEnabled ? Self.timeFormatter.string(from: quietStart) : nil
-                    toSave.alertQuietEnd = quietHoursEnabled ? Self.timeFormatter.string(from: quietEnd) : nil
+            } else {
+                // The system prompt waits for the second app open so it
+                // doesn't fire before the owner has seen a single number.
+                // Without this row that deferral is a trap on a fresh
+                // install: no prompt, no token, and nothing offering either.
+                CavnarCaveat(
+                    title: "Nothing can reach your phone yet",
+                    detail: "Cavnar AI hasn't asked for permission to send notifications. None of the switches below do anything until it has."
+                )
+                .padding(.vertical, 9)
+                AccountActionRow(label: "Allow notifications",
+                                 detail: "Asks iOS now.",
+                                 symbol: "bell.badge", showsDivider: false) {
                     Task {
-                        await viewModel.saveAlertSettings(toSave, contacts: contacts)
-                        if viewModel.saveAlertsError == nil {
-                            Haptic.success()
-                            postedLabel = "Alert settings saved"
-                        }
-                    }
-                } label: {
-                    Group {
-                        if viewModel.isSavingAlerts {
-                            CavnarShimmerText(text: "Saving…")
-                        } else {
-                            Text("Save alert settings")
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingAlerts))
-                .disabled(viewModel.isSavingAlerts)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
-            // Room for the keyboard under the last contact row — without
-            // it the focused field's own scroll-into-view lands the field
-            // right at the keyboard's top edge, or under it.
-            .padding(.bottom, focusedField == nil ? 0 : 280)
-        }
-        .scrollDismissesKeyboard(.interactively)
-        .onChange(of: focusedField) { _, field in
-            guard let field else { return }
-            let target: String
-            switch field {
-            case .extraEmails: target = "alerts-extra-emails"
-            case .contactName(let id), .contactPhone(let id): target = "alerts-contact-\(id)"
-            }
-            // A beat for the keyboard to start rising so the scroll target
-            // is measured against the final safe area, not the pre-keyboard one.
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(0.12))
-                withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(target, anchor: .center) }
-            }
-        }
-        }
-        .accountSheetChrome("Alerts")
-        .keyboardDoneToolbar { focusedField = nil }
-        .cavnarPostedOverlay(postedLabel) { dismiss() }
-        .sheet(isPresented: $showingAddTextContact) {
-            IssueTextContactSheet { updated in
-                routing = updated
-                // The person also joined the alert contacts: re-read them,
-                // and merge only who is new into the list on screen — an
-                // unsaved edit to the others is the owner's, never replaced
-                // by the server's copy (re-audit 10/8/26, #3).
-                let before = contactIdsBeforeAdd
-                Task {
-                    await viewModel.load()
-                    if let server = viewModel.summary?.alerts.contacts {
-                        contacts = Self.mergeAddedContacts(draft: contacts, before: before, server: server)
+                        await PushManager.shared.promptNow()
+                        pushDenied = PushManager.shared.authorizationDenied
+                        pushUndetermined = PushManager.shared.authorizationUndetermined
                     }
                 }
             }
-            .presentationDetents([.medium, .large])
         }
-        .task {
-            await PushManager.shared.refreshAuthorization()
-            pushDenied = PushManager.shared.authorizationDenied
-            pushUndetermined = PushManager.shared.authorizationUndetermined
-            await loadBrief()
-            await loadRouting()
-            await loadNudge()
-        }
-        }
+        .accountCard()
     }
 
     // MARK: - Test push
@@ -558,7 +220,7 @@ struct AccountAlertsDetailView: View {
                 "/mobile/api/account/send-test-push", method: .post)
             if response.ok {
                 Haptic.success()
-                testPushLabel = "Sent — it should arrive in a second"
+                testPushLabel = "Sent \u{2014} it should arrive in a second"
             } else {
                 testPushLabel = response.error ?? "Apple did not accept it."
             }
@@ -567,51 +229,6 @@ struct AccountAlertsDetailView: View {
         } catch {
             testPushLabel = "Couldn't send a test notification."
         }
-    }
-
-    // MARK: - What you never open
-
-    struct EngagementSuggestion: Decodable, Identifiable {
-        let alertType: String
-        let label: String
-        let delivered: Int
-        let days: Int
-        let pushColumn: String
-
-        var id: String { alertType }
-
-        enum CodingKeys: String, CodingKey {
-            case label, delivered, days
-            case alertType = "alert_type"
-            case pushColumn = "push_column"
-        }
-    }
-
-    private struct EngagementResponse: Decodable {
-        let ok: Bool
-        let suggestions: [EngagementSuggestion]
-    }
-
-    private func loadNudge() async {
-        guard let response: EngagementResponse = try? await APIClient.shared.send(
-            "/mobile/api/notifications/engagement") else { return }
-        nudge = response.ok ? response.suggestions.first : nil
-    }
-
-    /// Flips the switch the owner would have flipped themselves, and leaves
-    /// the save button to confirm it — nothing here writes on its own.
-    private func applyNudge(_ suggestion: EngagementSuggestion) {
-        switch suggestion.pushColumn {
-        case "al_1star_push": draft.al1starPush = false
-        case "al_2star_push": draft.al2starPush = false
-        case "al_5star_push": draft.al5starPush = false
-        case "al_health_push": draft.alHealthPush = false
-        case "al_spike_push": draft.alSpikePush = false
-        case "al_unres_push": draft.alUnresPush = false
-        default: break
-        }
-        nudge = nil
-        Haptic.light()
     }
 
     // MARK: - Morning brief & issues
@@ -717,129 +334,6 @@ struct AccountAlertsDetailView: View {
         }
     }
 
-    private struct RoutingSetResponse: Decodable {
-        let ok: Bool
-        let routing: [String: IssueRouting.Route]?
-        let issueTexts: Bool?
-        enum CodingKeys: String, CodingKey { case ok, routing; case issueTexts = "issue_texts" }
-    }
-
-    private struct IssueTextsBody: Encodable { let issue_texts: Bool }
-
-    private struct RoutingBody: Encodable {
-        let role: String
-        /// Omitted (nil) clears the role, as the web's empty choice does.
-        let contact_id: Int?
-    }
-
-    @ViewBuilder
-    private func issueRoutingRows(_ r: IssueRouting) -> some View {
-        let consented = r.contacts.filter { $0.smsConsent }
-        routingPicker(r, role: "manager", label: "Issues go to", contacts: consented, showsDivider: true)
-        if let on = r.issueTexts {
-            // The web's "Text them about new issues" (parity #44).
-            AccountSwitchRow(
-                label: "Text them about new issues",
-                detail: "Off: issues still open and are assigned, and reach you by push and the bell instead. Nobody is texted, an escalation included.",
-                isOn: Binding(get: { on }, set: { value in Task { await saveIssueTexts(value) } }),
-                busy: savingIssueTexts
-            )
-        }
-        routingPicker(r, role: "escalation", label: "If nobody responds", contacts: consented, showsDivider: true)
-        Text(escalationNote(r))
-            .font(.cavnarBody(14))
-            .foregroundStyle(Color.cavnarInk3.opacity(0.8))
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.bottom, 6)
-        if consented.isEmpty {
-            Text("Only someone who agreed to texts can be picked \u{2014} add them here, with their agreement.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3.opacity(0.8))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 6)
-        }
-        // Someone new to text, added from the row itself with the consent
-        // the owner records (/issues/routing/contact — at most two people).
-        AccountActionRow(label: "Add someone to text",
-                         detail: "Their name, mobile number and that they agreed to texts.",
-                         symbol: "person.badge.plus", showsDivider: false) {
-            contactIdsBeforeAdd = Set((viewModel.summary?.alerts.contacts ?? contacts).map(\.id))
-            showingAddTextContact = true
-        }
-        if let routingError {
-            Text(routingError).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 6)
-        }
-    }
-
-    private func routingPicker(_ r: IssueRouting, role: String, label: String,
-                               contacts: [IssueRouting.Contact], showsDivider: Bool) -> some View {
-        AccountKVRow(label: label, showsDivider: showsDivider) {
-            Picker("", selection: Binding(get: { r.routing[role]?.contactId ?? 0 },
-                                          set: { id in Task { await saveRouting(role: role, contactId: id == 0 ? nil : id) } })) {
-                Text("Nobody").tag(0)
-                ForEach(contacts, id: \.id) { c in Text(c.name).tag(c.id) }
-            }
-            .labelsHidden().tint(Color.cavnarEmber)
-            .disabled(contacts.isEmpty)
-        }
-    }
-
-    /// What routing does, with the escalation delay the server stores.
-    private func escalationNote(_ r: IssueRouting) -> String {
-        let mins = r.routing["escalation"]?.escalateAfterMinutes ?? r.routing["manager"]?.escalateAfterMinutes ?? 120
-        let after: String
-        if mins % 60 == 0 {
-            let h = mins / 60
-            after = h == 1 ? "an hour" : (h == 2 ? "two hours" : "\(h) hours")
-        } else {
-            after = "\(mins) minutes"
-        }
-        return "Texted a link when a bad review lands or an issue opens. After \(after) unacknowledged it goes to the second contact."
-    }
-
-    private func loadRouting() async {
-        routing = try? await APIClient.shared.send("/mobile/api/issues/routing", hapticOnError: false)
-    }
-
-    private func saveIssueTexts(_ on: Bool) async {
-        savingIssueTexts = true
-        routingError = nil
-        defer { savingIssueTexts = false }
-        do {
-            let r: RoutingSetResponse = try await APIClient.shared.send(
-                "/mobile/api/issues/routing", method: .post, body: IssueTextsBody(issue_texts: on))
-            if let updated = r.routing { routing?.routing = updated }
-            routing?.issueTexts = r.issueTexts ?? on
-            Haptic.selection()
-        } catch let error as APIClient.APIError {
-            routingError = error.message
-        } catch {
-            routingError = "Couldn't save that."
-        }
-    }
-
-    private func saveRouting(role: String, contactId: Int?) async {
-        routingError = nil
-        do {
-            let response: RoutingSetResponse = try await APIClient.shared.send(
-                "/mobile/api/issues/routing", method: .post, body: RoutingBody(role: role, contact_id: contactId))
-            if let updated = response.routing { routing?.routing = updated }
-            Haptic.selection()
-        } catch let error as APIClient.APIError {
-            routingError = error.message
-        } catch {
-            routingError = "Couldn't save who issues go to."
-        }
-    }
-
-    /// A switch for one of the web's optional alert fields: its stored value
-    /// (on when nil is never reached — the row only shows once it's sent).
-    private func optionalBool(_ key: WritableKeyPath<AlertSettings, Bool?>) -> Binding<Bool> {
-        Binding(get: { draft[keyPath: key] ?? false }, set: { draft[keyPath: key] = $0 })
-    }
-
     /// The web's 1–5 star box, as half-star steps.
     static let ratingFloors: [Double] = [3.0, 3.5, 4.0, 4.2, 4.4, 4.5, 4.6, 4.8]
 
@@ -850,12 +344,6 @@ struct AccountAlertsDetailView: View {
 
     static func starLabel(_ v: Double) -> String {
         (v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)) + "\u{2605}"
-    }
-
-    private static func hourLabel(_ hour: Int) -> String {
-        if hour == 0 { return "Off" }
-        if hour == 12 { return "12pm" }
-        return hour < 12 ? "\(hour)am" : "\(hour - 12)pm"
     }
 
     private func loadBrief() async {
@@ -896,93 +384,4 @@ struct AccountAlertsDetailView: View {
     }
 
     static let briefSaveFailed = "Couldn't save the morning brief settings. Check your connection and try again."
-
-    // MARK: - Identity (option A)
-
-    private var onCount: Int {
-        [draft.alert1star, draft.alert2star, draft.alert5star, draft.alertHealth,
-         draft.alertNegSpike, draft.alertNegativeTrend, draft.alertNoResponse, draft.alertLaborOver,
-         draft.alertFoodWaste, draft.alertAiVisibilityDrop, draft.alertCompetitorMove].filter { $0 }.count
-    }
-
-    private var pushCount: Int {
-        [draft.al1starPush && draft.alert1star, draft.al2starPush && draft.alert2star,
-         draft.al5starPush && draft.alert5star, draft.alHealthPush && draft.alertHealth,
-         draft.alSpikePush && draft.alertNegSpike, draft.alUnresPush && draft.alertNoResponse].filter { $0 }.count
-    }
-
-    private var hero: some View {
-        AccountHero(title: onCount == 0 ? "No alerts on" : "Alerts on") {
-            GlowBadge(systemImage: "bell.badge", size: 64)
-        } subtitle: {
-            Text("\(onCount)").font(.cavnarNumber(15.5, weight: 600))
-                + Text(" of ")
-                + Text("11").font(.cavnarNumber(15.5, weight: 600))
-                + Text(" triggers · Digest \(draft.digestEnabled ? draft.digestDay.capitalized : "off") · Quiet hours \(quietHoursEnabled ? "on" : "off")")
-        }
-    }
-
-    private var statusStrip: some View {
-        HStack(spacing: 8) {
-            AccountStatTile(label: "Text", value: draft.urgentViaSms ? "On" : "Off",
-                            tone: draft.urgentViaSms ? .cavnarGreen : .cavnarInk3, detail: "Urgent alerts")
-            AccountStatTile(label: "Email", value: draft.urgentViaEmail ? "On" : "Off",
-                            tone: draft.urgentViaEmail ? .cavnarGreen : .cavnarInk3, detail: "Urgent alerts")
-            AccountStatTile(label: "Push", value: "\(pushCount)", detail: "alert types", valueIsNumber: true)
-        }
-    }
-
-    private func sectionHeader(_ title: String) -> some View {
-        AccountKicker(text: title)
-    }
-
-    /// A push switch is only meaningful once its alert type is on above —
-    /// otherwise it's shown dimmed and inert, not hidden (so the layout
-    /// doesn't jump as triggers are toggled).
-    private func pushRow(_ label: String, _ binding: Binding<Bool>, on: Bool) -> some View {
-        AccountSwitchRow(label: label, isOn: binding, disabled: !on)
-            .opacity(on ? 1 : 0.5)
-    }
-
-    // One pill that reads the aggregate state of all 8 triggers above it —
-    // "Turn on all alerts" while any are off, "Turn off all alerts" once
-    // every one already is — rather than two separate buttons.
-    private var allAlertsOn: Bool {
-        draft.alert1star && draft.alert2star && draft.alert5star && draft.alertHealth
-            && draft.alertNegSpike && draft.alertNegativeTrend && draft.alertNoResponse && draft.alertLaborOver
-            && draft.alertFoodWaste && draft.alertAiVisibilityDrop && draft.alertCompetitorMove
-    }
-
-    private func setAllAlerts(_ on: Bool) {
-        draft.alert1star = on
-        draft.alert2star = on
-        draft.alert5star = on
-        draft.alertHealth = on
-        draft.alertNegSpike = on
-        draft.alertNegativeTrend = on
-        draft.alertNoResponse = on
-        draft.alertLaborOver = on
-        draft.alertFoodWaste = on
-        draft.alertAiVisibilityDrop = on
-        draft.alertCompetitorMove = on
-    }
-
-    @ViewBuilder
-    private var masterAlertPill: some View {
-        if allAlertsOn {
-            Button {
-                withAnimation(.easeOut(duration: 0.2)) { setAllAlerts(false) }
-            } label: {
-                Text("Turn off all alerts").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(CavnarSecondaryButtonStyle())
-        } else {
-            Button {
-                withAnimation(.easeOut(duration: 0.2)) { setAllAlerts(true) }
-            } label: {
-                Text("Turn on all alerts").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(CavnarPrimaryButtonStyle())
-        }
-    }
 }
