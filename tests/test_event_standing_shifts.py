@@ -74,3 +74,25 @@ def test_build_constraints_turns_it_into_a_dated_standing_shift_the_manager_plan
     assert [s["from"] for s in c.standing_shifts[key]] == ["2026-10-11"]
     assert schedule_skeleton._standing_for(c, key, "2026-10-11")
     assert not schedule_skeleton._standing_for(c, key, "2026-10-04"), "dated to the game, not every Sunday"
+
+
+def test_sunday_off_unless_the_bears_play_holds_both_ways(db_path):
+    """Owner, 10/5/26: "Erik: Sunday off unless the Bears play" — the
+    weekday Off plus a Bears standing shift. On a game Sunday he works (the
+    standing shift is the more particular word); on a bye Sunday he is off,
+    and the model is told Sunday is off only when no game falls that week."""
+    rid = models.create_restaurant(models.Restaurant(name="EJ", owner_email="e@x.test"), db_path=db_path)
+    staff_settings.upsert(rid, "Erik Baylis", standing_shifts=[ERIK],
+                          daypart_availability={"Sunday": "off"}, updated_by="test", db_path=db_path)
+
+    def week(monday):
+        c = _week(monday)
+        c.restaurant_id = rid
+        sr._person_settings(c, {"name": "Erik Baylis", "role": "Owner", "active": True,
+                                "settings": staff_settings.for_name(rid, "Erik Baylis", db_path=db_path)},
+                            {}, staff_settings)
+        return c
+    game, bye = week("2026-10-05"), week("2026-10-26")
+    assert game.can_work("Erik Baylis", "2026-10-11")[0], "a Bears Sunday"
+    assert not bye.can_work("Erik Baylis", "2026-11-01")[0], "no Sunday game that week"
+    assert game.can_work("Erik Baylis", "2026-10-06")[0], "the rest of the week untouched"

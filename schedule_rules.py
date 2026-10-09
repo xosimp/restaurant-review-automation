@@ -1317,11 +1317,20 @@ class Constraints:
         if day and day in (self.unavailable_days.get(key) or set()):
             return False, LABELS["unavailable_day"]
         choice = (self.daypart_avail.get(key) or {}).get(day)
-        if choice == "off":
+        if choice == "off" and not self.event_standing_on(key, date_str):
             return False, LABELS["unavailable_day"]
         if daypart and choice in ("morning", "night") and daypart not in ("unknown", choice):
             return False, LABELS["unavailable_daypart"]
         return True, ""
+
+    def event_standing_on(self, key: str, date_str: str) -> bool:
+        """Whether `key` has a standing shift that holds only when an event
+        plays, and it plays on `date_str` (_event_standing's dated entries).
+        That is the owner's word for the date, more particular than the
+        weekday's Off: "Erik: Sunday off unless the Bears play" (10/5/26) is
+        Sunday Off plus a Bears standing shift, and on a game day he works."""
+        return any(isinstance(x, dict) and x.get("when_event") and x.get("from") == date_str
+                   for x in (self.standing_shifts or {}).get(key) or ())
 
     def manages(self, name: str, date_str: str = None) -> bool:
         """Whether `name` counts as the manager on the floor on `date_str`: a
@@ -5918,7 +5927,11 @@ def person_facts(c: Constraints, names=None) -> dict:
                             "tail": c.bucket_tail(b)})
         f["carried"] = carried
         dp = c.daypart_avail.get(key) or {}
-        f["off_days"] = [d for d in DAYS if d in (c.unavailable_days.get(key) or set()) or dp.get(d) == "off"]
+        game_days = {DAYS[datetime.strptime(x["from"], "%Y-%m-%d").weekday()]
+                     for x in (c.standing_shifts.get(key) or ()) if isinstance(x, dict) and x.get("when_event")
+                     and x.get("from")}
+        f["off_days"] = [d for d in DAYS if d in (c.unavailable_days.get(key) or set())
+                         or (dp.get(d) == "off" and d not in game_days)]
         f["daypart_only"] = {d: dp[d] for d in DAYS if dp.get(d) in ("morning", "night") and d not in f["off_days"]}
         f["windows"] = {d: list(w) for d, w in (c.time_windows.get(key) or {}).items() if d not in f["off_days"]}
         time_off, note_off, other_off = [], [], []
