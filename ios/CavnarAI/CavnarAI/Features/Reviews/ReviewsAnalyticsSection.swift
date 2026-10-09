@@ -606,7 +606,7 @@ struct ReviewsAnalyticsSection: View {
     static func claimKey(forInsightLine line: String) -> String? {
         let t = line.trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("📊") { return "this_week" }
-        if t.hasPrefix("⚠") { return "watch" }
+        if t.unicodeScalars.first == "\u{26A0}" { return "watch" }   // "⚠" or "⚠️" (a Character compare misses the variation selector)
         if t.hasPrefix("✅") { return "do_today" }
         if t.hasPrefix("🔮") { return "next_week" }
         return nil

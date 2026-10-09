@@ -544,7 +544,7 @@ struct ReviewStageFailure: Codable, Hashable {
     /// The owner-facing sentence without its "⚠" marker.
     var text: String? {
         guard let line else { return nil }
-        let t = line.hasPrefix("⚠") ? String(line.dropFirst()).trimmingCharacters(in: .whitespaces) : line
+        let t = line.unicodeScalars.first == "\u{26A0}" ? String(line.dropFirst()).trimmingCharacters(in: .whitespaces) : line
         return t.isEmpty ? nil : t
     }
 }

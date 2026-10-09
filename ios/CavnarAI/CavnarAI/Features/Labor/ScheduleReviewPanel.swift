@@ -173,8 +173,8 @@ struct ScheduleReviewPanel: View {
             return hard + moves + soft
         }
         let lines = (review?.lines ?? []).map(Issue.line)
-        let warns = lines.filter { if case .line(let l) = $0 { return l.hasPrefix("⚠") } else { return false } }
-        let others = lines.filter { if case .line(let l) = $0 { return !l.hasPrefix("⚠") } else { return false } }
+        let warns = lines.filter { if case .line(let l) = $0 { return l.unicodeScalars.first == "\u{26A0}" } else { return false } }
+        let others = lines.filter { if case .line(let l) = $0 { return l.unicodeScalars.first != "\u{26A0}" } else { return false } }
         return warns + moves + others
     }
 
@@ -226,7 +226,7 @@ struct ScheduleReviewPanel: View {
     }
 
     private func lineRow(_ line: String) -> some View {
-        let warns = line.hasPrefix("⚠")
+        let warns = line.unicodeScalars.first == "\u{26A0}"
         let text = warns ? String(line.dropFirst()).trimmingCharacters(in: .whitespaces) : line
         return HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
             Image(systemName: warns ? "exclamationmark.triangle.fill" : "circle.fill")

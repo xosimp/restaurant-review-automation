@@ -51,7 +51,8 @@ final class ReauditHomeAskTests: XCTestCase {
 
     func testTheFullIntroPlaysOncePerDay() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "reaudit.launch.\(UUID().uuidString)"))
-        let day = Date(timeIntervalSince1970: 1_791_000_000)
+        // Noon on the phone's own calendar, so +1h never crosses midnight.
+        let day = try XCTUnwrap(Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 3, hour: 12)))
         XCTAssertTrue(LaunchIntroDay.claim(defaults, now: day))
         XCTAssertFalse(LaunchIntroDay.claim(defaults, now: day.addingTimeInterval(3600)))
         XCTAssertTrue(LaunchIntroDay.claim(defaults, now: day.addingTimeInterval(86_400 * 2)))
