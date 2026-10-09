@@ -21,7 +21,7 @@ struct StaffChoiceChip: View {
             action()
         } label: {
             Text(title)
-                .font(isNumber ? .cavnarNumber(14.5, weight: 600) : .cavnarBody(14.5, weight: 600))
+                .font(isNumber ? .cavnarNumber(CavnarType.secondary, weight: 600) : .cavnar(.label))
                 .foregroundStyle(on ? Color.cavnarInk : Color.cavnarInk2)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -62,6 +62,8 @@ struct StaffAvailabilitySheet: View {
     @State private var draft: StaffAvailabilityDraft?
     @State private var openDay: String?
     @State private var openTime: String?
+    /// The time pickers showing every half hour, not just the hours.
+    @State private var halfHours: Set<String> = []
     @State private var problems: [String: String] = [:]
     @State private var saving = false
     @State private var saveError: String?
@@ -90,6 +92,23 @@ struct StaffAvailabilitySheet: View {
                     }
                 }
                 .padding(20)
+            }
+            // Save in thumb reach, not under seven days of dropdowns.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if draft != nil, load.value != nil {
+                    CavnarPinnedBar {
+                        Button {
+                            Task { await save() }
+                        } label: {
+                            Group {
+                                if saving { StaffShimmerLabel(text: "Saving") } else { Text("Save my availability") }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: saving))
+                        .disabled(saving)
+                    }
+                }
             }
             .accountSheetChrome("My availability")
         }
@@ -120,7 +139,7 @@ struct StaffAvailabilitySheet: View {
                 }
             }
             VStack(alignment: .leading, spacing: 6) {
-                AccountKicker(text: "Anything else")
+                CavnarKicker("Anything else")
                 TextField("\u{201C}Rides the bus — not before 10am\u{201D}", text: notesBinding, axis: .vertical)
                     .lineLimit(1...4)
                     .cavnarTextFieldStyle()
@@ -129,16 +148,7 @@ struct StaffAvailabilitySheet: View {
                     }
             }
             if let whole = problems[""] { StaffUI.errorLine(whole) }
-            Button {
-                Task { await save() }
-            } label: {
-                Group {
-                    if saving { StaffShimmerLabel(text: "Saving") } else { Text("Save my availability") }
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: saving))
-            .disabled(saving)
+            // "Save my availability" is pinned at the foot (CavnarPinnedBar).
             if let saveError { StaffUI.errorLine(saveError) }
             if inlinePosted {
                 CavnarInlinePosted(label: "Saved") { inlinePosted = false }
@@ -164,9 +174,9 @@ struct StaffAvailabilitySheet: View {
                                        weight: 700, color: .cavnarInk)
                     if let reason = c.reason {
                         Text(reason.prefix(1).uppercased() + reason.dropFirst())
-                            .font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                     }
-                    StaffTextButton(title: "Give up this shift") { giving = c }
+                    StaffTextButton(title: "Give up shift") { giving = c }
                 }
             }
             StaffUI.note("Your manager has been told about these.")
@@ -230,24 +240,37 @@ struct StaffAvailabilitySheet: View {
         Binding(get: { draft?.notes ?? "" }, set: { draft?.notes = $0 })
     }
 
-    /// A time of day: the half-hour choices in a grid, folded until opened
-    /// (never a system wheel — DS §7), with "No limit".
+    /// A time of day: the hourly choices in a grid, folded until opened
+    /// (never a system wheel — DS §7), with "No limit" and a "Show
+    /// half-hours" toggle for the 24 in between (the chosen time always
+    /// shows, half-hour or not).
     private func timeChoice(_ i: Int, label: String, key: String, value: String?,
                             set: @escaping (String?) -> Void) -> some View {
-        CavnarDropdown(title: label, subtitle: value.map { StaffClock.display($0) } ?? "No limit",
-                       isExpanded: Binding(get: { openTime == key }, set: { openTime = $0 ? key : nil })) {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                StaffChoiceChip(title: "No limit", on: value == nil) {
-                    set(nil)
-                    openTime = nil
-                }
-                ForEach(StaffClock.choices, id: \.self) { t in
-                    StaffChoiceChip(title: StaffClock.display(t), on: StaffClock.minutes(value) == StaffClock.minutes(t),
-                                    isNumber: true) {
-                        set(t)
+        let halves = halfHours.contains(key)
+        let chosen = StaffClock.minutes(value)
+        let shown = StaffClock.choices.filter { t in
+            guard let m = StaffClock.minutes(t) else { return true }
+            return halves || m % 60 == 0 || m == chosen
+        }
+        return CavnarDropdown(title: label, subtitle: value.map { StaffClock.display($0) } ?? "No limit",
+                              isExpanded: Binding(get: { openTime == key }, set: { openTime = $0 ? key : nil })) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+                    StaffChoiceChip(title: "No limit", on: value == nil) {
+                        set(nil)
                         openTime = nil
-                        problems[StaffAvailabilityRecord.weekdays[i]] = nil
                     }
+                    ForEach(shown, id: \.self) { t in
+                        StaffChoiceChip(title: StaffClock.display(t), on: chosen == StaffClock.minutes(t),
+                                        isNumber: true) {
+                            set(t)
+                            openTime = nil
+                            problems[StaffAvailabilityRecord.weekdays[i]] = nil
+                        }
+                    }
+                }
+                StaffTextButton(title: halves ? "Hourly only" : "Show half-hours") {
+                    if halves { halfHours.remove(key) } else { halfHours.insert(key) }
                 }
             }
         }
@@ -260,13 +283,13 @@ struct StaffAvailabilitySheet: View {
                 DatePicker(label, selection: Binding(get: { date }, set: { set(StaffDay.iso($0)) }),
                            in: (allowPast ? Date.distantPast : Calendar.current.startOfDay(for: Date()))...,
                            displayedComponents: .date)
-                    .font(.cavnarBody(CavnarType.body))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarInk2)
                     .tint(Color.cavnarEmber)
-                StaffTextButton(title: "Clear", tone: .cavnarInk3) { set(nil) }
+                StaffTextButton(title: "Clear", tone: .cavnarInk2) { set(nil) }
                     .accessibilityLabel("Clear the \(label.lowercased()) date")
             } else {
-                Text(label).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                Text(label).cavnarText(.body)
                 Spacer(minLength: 8)
                 StaffTextButton(title: label == "Until" ? "Add an end date" : "Add a start date") {
                     set(StaffDay.todayISO)
@@ -388,7 +411,7 @@ struct StaffPreferencesSheet: View {
                 TextField("\u{2014}", text: $hours)
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.trailing)
-                    .font(.cavnarNumber(17, weight: 600))
+                    .font(.cavnar(.figureS))
                     .foregroundStyle(Color.cavnarInk)
                     .frame(width: 70)
                     .accessibilityLabel("Hours a week")

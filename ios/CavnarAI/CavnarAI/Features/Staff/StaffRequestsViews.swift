@@ -1,33 +1,34 @@
 import SwiftUI
 
 // The Requests tab (employee audit wave 2, I3 — UX-06/07/13/14/34, W2–W5,
-// H2/H9/M6/M7): what waits on you first, then your own requests, then one
-// primary, "Ask for time off". Availability and preferences moved to Me.
+// H2/H9/M6/M7): what waits on you first — each with its yes (Accept / Take
+// it) as the primary and Decline as plain text, both confirmed — then your
+// own requests; "Ask for time off" is the tab's one primary, pinned in thumb
+// reach by the portal. Availability and preferences moved to Me.
 // Same /staff/api routes as the web portal had, one for one; the payloads
 // are in StaffRequestModels.swift.
 
 // MARK: - Shared pieces for the staff screens (I3)
 
+@MainActor
 enum StaffUI {
     /// A section heading: the Account kicker (ink3, never ember inside the
     /// page — UX-16), and a VoiceOver heading so the rotor can jump (UX-18).
     static func header(_ text: String) -> some View {
-        AccountKicker(text: text)
-            .padding(.top, 8)
-            .accessibilityAddTraits(.isHeader)
+        CavnarKicker(text)
+            .padding(.top, CavnarSpace.xs)
     }
 
-    static func note(_ text: String, color: Color = .cavnarInk3) -> some View {
-        HomeMixedText.make(text, size: CavnarType.secondary, color: color)
-            .fixedSize(horizontal: false, vertical: true)
+    /// A helper sentence — Ink2 (readable; Ink3 is for meta only).
+    static func note(_ text: String, color: Color = .cavnarInk2) -> some View {
+        CavnarMixedText(text, role: .secondary, color: color)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// A failure, said under the control that failed (DS §7, UX-13).
     static func errorLine(_ text: String) -> some View {
         Text(text)
-            .font(.cavnarBody(CavnarType.secondary, weight: 600))
-            .foregroundStyle(Color.cavnarRed)
+            .cavnarText(.secondary, color: .cavnarRedText)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityLabel("Error: \(text)")
@@ -48,7 +49,7 @@ enum StaffUI {
     static func loading(_ label: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             CavnarSkeletonBar(height: 3).frame(width: 180)
-            Text(label).font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+            Text(label).cavnarText(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -90,7 +91,7 @@ struct StaffTextButton: View {
             Group {
                 if busy { StaffShimmerLabel(text: busyTitle ?? title, color: tone) } else { Text(title) }
             }
-            .font(.cavnarBody(14.5, weight: 700))
+            .font(.cavnar(.label))
             .foregroundStyle(disabled ? Color.cavnarInk3 : tone)
             .frame(minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
@@ -110,8 +111,7 @@ struct StaffUndoCapsule: View {
     var body: some View {
         HStack(spacing: 12) {
             Text(text)
-                .font(.cavnarBody(14.5, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.secondary, color: .cavnarInk)
                 .lineLimit(2)
             Spacer(minLength: 8)
             Button {
@@ -119,8 +119,7 @@ struct StaffUndoCapsule: View {
                 undo()
             } label: {
                 Text("Undo")
-                    .font(.cavnarBody(14.5, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarText(.label, color: .cavnarEmber2)
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -202,12 +201,19 @@ struct StaffRequestsView: View {
     /// Scrolls the tab's scroll view to a row (the container's
     /// ScrollViewReader), for a push that opened a request.
     var scrollTo: ((String) -> Void)?
+    /// The container's "Ask for time off" (pinned in its CavnarPinnedBar).
+    /// Without one, the view draws the button itself at its foot.
+    var askingTimeOff: Binding<Bool>?
 
-    init(refresh: Int = 0, portal: StaffPortalStore? = nil, scrollTo: ((String) -> Void)? = nil) {
+    init(refresh: Int = 0, portal: StaffPortalStore? = nil, askingTimeOff: Binding<Bool>? = nil,
+         scrollTo: ((String) -> Void)? = nil) {
         self.refresh = refresh
         self.portal = portal
+        self.askingTimeOff = askingTimeOff
         self.scrollTo = scrollTo
     }
+
+    private var timeOffPresented: Binding<Bool> { askingTimeOff ?? $showingTimeOff }
 
     @Environment(StaffSessionStore.self) private var staff
     @Environment(\.scenePhase) private var scenePhase
@@ -225,15 +231,20 @@ struct StaffRequestsView: View {
     /// The rows a push opened (portal.focus), ringed until the next load.
     @State private var focused: Set<String> = []
 
-    /// The tier-2 confirms: what moves, named (UX-14).
+    /// The tier-2 confirms: what moves, named (UX-14). A decline is
+    /// confirmed too (iOS readability round): it can't be taken back, so it
+    /// never goes on one stray tap.
     enum Confirm: Identifiable {
         case ask(StaffSwapAsk), offer(StaffShiftOffer), claim(StaffOpenShift)
+        case declineAsk(StaffSwapAsk), declineOffer(StaffShiftOffer)
 
         var id: String {
             switch self {
             case .ask(let a): return "ask\(a.id)"
             case .offer(let o): return "offer\(o.id)"
             case .claim(let s): return "open\(s.id)"
+            case .declineAsk(let a): return "decline-ask\(a.id)"
+            case .declineOffer(let o): return "decline-offer\(o.id)"
             }
         }
 
@@ -242,6 +253,8 @@ struct StaffRequestsView: View {
             case .ask: return "Accept the swap?"
             case .offer(let o): return "Take \(o.shiftLabel)?"
             case .claim(let s): return "Pick up \(s.shiftLabel)?"
+            case .declineAsk(let a): return "Decline \(a.employeeName)\u{2019}s swap?"
+            case .declineOffer(let o): return "Turn down \(o.shiftLabel)?"
             }
         }
 
@@ -254,6 +267,8 @@ struct StaffRequestsView: View {
             case .claim(let s):
                 return ["It goes on your schedule\(s.role.map { " as \($0)" } ?? "").", s.overtimeNote ?? ""]
                     .filter { !$0.isEmpty }.joined(separator: " ")
+            case .declineAsk(let a): return "\(a.employeeName) is told you said no. You keep your shift."
+            case .declineOffer: return "Your manager is told you said no."
             }
         }
 
@@ -262,6 +277,14 @@ struct StaffRequestsView: View {
             case .ask: return "Accept the swap"
             case .offer: return "Take it"
             case .claim: return "Pick it up"
+            case .declineAsk, .declineOffer: return "Decline"
+            }
+        }
+
+        var isDecline: Bool {
+            switch self {
+            case .declineAsk, .declineOffer: return true
+            default: return false
             }
         }
     }
@@ -278,16 +301,18 @@ struct StaffRequestsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             waitingSection
             yourRequestsSection
-            Button {
-                showingTimeOff = true
-            } label: {
-                Text("Ask for time off").frame(maxWidth: .infinity)
+            if askingTimeOff == nil {
+                Button {
+                    showingTimeOff = true
+                } label: {
+                    Text("Ask for time off").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle())
+                .padding(.top, 10)
             }
-            .buttonStyle(CavnarPrimaryButtonStyle())
-            .padding(.top, 10)
         }
         .task { await reload() }
         .onChange(of: refresh) { _, _ in Task { await reload() } }
@@ -295,7 +320,7 @@ struct StaffRequestsView: View {
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await reload() } } }
         // Leaving inside the Undo window keeps the request — the safe side.
         .onDisappear { cancelUndo() }
-        .sheet(isPresented: $showingTimeOff, onDismiss: { Task { await reload(); await portal?.reloadShifts() } }) {
+        .sheet(isPresented: timeOffPresented, onDismiss: { Task { await reload(); await portal?.reloadShifts() } }) {
             StaffTimeOffSheet().environment(staff)
         }
         .sheet(item: $messaging) { sheet in
@@ -311,7 +336,7 @@ struct StaffRequestsView: View {
         .confirmationDialog(confirming?.title ?? "", isPresented: Binding(
             get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
                             titleVisibility: .visible, presenting: confirming) { c in
-            Button(c.action) { Task { await perform(c) } }
+            Button(c.action, role: c.isDecline ? .destructive : nil) { Task { await perform(c) } }
             Button("Not now", role: .cancel) {}
         } message: { c in
             Text(c.message)
@@ -339,8 +364,7 @@ struct StaffRequestsView: View {
                 ForEach(b.offers) { offerRow($0) }
                 if !b.open.isEmpty {
                     Text("Open shifts")
-                        .font(.cavnarBody(CavnarType.body, weight: 700))
-                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.label, color: .cavnarInk2)
                         .padding(.top, 4)
                         .accessibilityAddTraits(.isHeader)
                     ForEach(b.open) { openRow($0) }
@@ -353,31 +377,17 @@ struct StaffRequestsView: View {
         let key = "ask\(ask.id)"
         return VStack(alignment: .leading, spacing: 6) {
             Text("\(ask.employeeName) asked to swap")
-                .font(.cavnarBody(CavnarType.body, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-            HomeMixedText.make("Their shift: \(ask.theirShift)", size: CavnarType.secondary, color: .cavnarInk2)
-            HomeMixedText.make("Your shift: \(ask.yourShift)", size: CavnarType.secondary, color: .cavnarInk2)
+                .cavnarText(.label)
+            CavnarMixedText("Their shift: \(ask.theirShift)", role: .secondary)
+            CavnarMixedText("Your shift: \(ask.yourShift)", role: .secondary)
             if ask.managerApproved {
                 StaffUI.note("Your manager already said yes.")
             }
-            HStack(spacing: 10) {
-                Button {
-                    Task { await act(key, "/staff/api/shift-requests/\(ask.id)/respond",
-                                     body: StaffAcceptBody(accept: false), posted: "Declined — \(ask.employeeName) is told") }
-                } label: { Text("Decline").frame(maxWidth: .infinity) }
-                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy.contains(key)))
-                Button {
-                    confirming = .ask(ask)
-                } label: {
-                    Group {
-                        if busy.contains(key) { StaffShimmerLabel(text: "Answering", color: .cavnarInk) } else { Text("Accept") }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy.contains(key)))
-            }
-            .disabled(busy.contains(key))
-            .padding(.top, 2)
+            // Accept is the primary, in thumb reach on the right; Decline is
+            // plain text and confirmed first (it can't be taken back).
+            answerRow(key: key, accept: "Accept",
+                      decline: { confirming = .declineAsk(ask) },
+                      accepting: { confirming = .ask(ask) })
             if let e = rowError[key] { StaffUI.errorLine(e) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -391,10 +401,8 @@ struct StaffRequestsView: View {
         let key = "offer\(offer.id)"
         return VStack(alignment: .leading, spacing: 6) {
             Text(offer.headline)
-                .font(.cavnarBody(CavnarType.body, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-            HomeMixedText.make(offer.shiftLabel + (offer.role.map { " · \($0)" } ?? ""),
-                               size: CavnarType.secondary, color: .cavnarInk2)
+                .cavnarText(.label)
+            CavnarMixedText(offer.shiftLabel + (offer.role.map { " · \($0)" } ?? ""), role: .secondary)
             if let note = offer.note {
                 StaffUI.note("\u{201C}\(note)\u{201D}", color: .cavnarInk2)
             }
@@ -404,24 +412,9 @@ struct StaffRequestsView: View {
             if let ot = offer.overtimeNote {
                 StaffUI.note(ot, color: .cavnarAmber)
             }
-            HStack(spacing: 10) {
-                Button {
-                    Task { await act(key, "/staff/api/offers/\(offer.id)/respond",
-                                     body: StaffAcceptBody(accept: false), posted: "Declined — your manager is told") }
-                } label: { Text("Decline").frame(maxWidth: .infinity) }
-                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy.contains(key)))
-                Button {
-                    confirming = .offer(offer)
-                } label: {
-                    Group {
-                        if busy.contains(key) { StaffShimmerLabel(text: "Answering", color: .cavnarInk) } else { Text("Take it") }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy.contains(key)))
-            }
-            .disabled(busy.contains(key))
-            .padding(.top, 2)
+            answerRow(key: key, accept: "Take it",
+                      decline: { confirming = .declineOffer(offer) },
+                      accepting: { confirming = .offer(offer) })
             if let e = rowError[key] { StaffUI.errorLine(e) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -431,15 +424,33 @@ struct StaffRequestsView: View {
         .id(key)
     }
 
+    /// Decline as plain text on the left; the yes (Accept / Take it) as the
+    /// one primary on the right, in thumb reach. Both confirm first.
+    private func answerRow(key: String, accept: String, decline: @escaping () -> Void,
+                           accepting: @escaping () -> Void) -> some View {
+        HStack(spacing: CavnarSpace.s) {
+            StaffTextButton(title: "Decline", tone: .cavnarInk2, disabled: busy.contains(key), action: decline)
+                .accessibilityHint("Asks you to confirm before it\u{2019}s sent.")
+            Spacer(minLength: 0)
+            Button(action: accepting) {
+                Group {
+                    if busy.contains(key) { StaffShimmerLabel(text: "Answering") } else { Text(accept) }
+                }
+                .frame(minWidth: 120)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy.contains(key)))
+        }
+        .disabled(busy.contains(key))
+        .padding(.top, 2)
+    }
+
     private func openRow(_ shift: StaffOpenShift) -> some View {
         let key = "open\(shift.id)"
         return VStack(alignment: .leading, spacing: 4) {
-            HomeMixedText.make(shift.shiftLabel + (shift.role.map { " · \($0)" } ?? ""),
-                               size: CavnarType.body, weight: 700, color: .cavnarInk)
+            CavnarMixedText(shift.shiftLabel + (shift.role.map { " · \($0)" } ?? ""), role: .label)
             Text(shift.postedByManager ? "Posted by your manager"
                                        : (shift.employeeName.map { "\($0) can't work it" } ?? "Open"))
-                .font(.cavnarBody(CavnarType.secondary))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
             if let ot = shift.overtimeNote {
                 StaffUI.note(ot, color: .cavnarAmber)
             }
@@ -491,7 +502,7 @@ struct StaffRequestsView: View {
             }
             if items.isEmpty, pendingUndo == nil, offs != nil, shifts != nil {
                 CavnarEmptyHearth(title: "No requests yet",
-                                  message: "Can\u{2019}t make a shift? Open it on Today and choose Give up this shift or Swap this shift. Days away go in a time-off request.")
+                                  message: "Can\u{2019}t make a shift? Open it on Today and choose Give up shift or Swap shift. Days away go in a time-off request.")
             }
         }
     }
@@ -500,7 +511,7 @@ struct StaffRequestsView: View {
         let key = "to\(t.id)"
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HomeMixedText.make("Time off \(t.rangeLabel)", size: CavnarType.body, weight: 700, color: .cavnarInk)
+                CavnarMixedText("Time off \(t.rangeLabel)", role: .label)
                 Spacer(minLength: 6)
                 TonePill(text: t.chip.text, tone: t.chip.tone)
             }
@@ -547,17 +558,15 @@ struct StaffRequestsView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(r.tag.uppercased())
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(1.0)
-                        .foregroundStyle(Color.cavnarInk3)
-                    HomeMixedText.make(r.shiftLabel, size: CavnarType.body, weight: 700, color: .cavnarInk)
+                    Text(r.tag)
+                        .cavnarText(.kicker, color: .cavnarInk2)
+                    CavnarMixedText(r.shiftLabel, role: .label)
                 }
                 Spacer(minLength: 6)
                 TonePill(text: r.chip.text, tone: r.chip.tone)
             }
             if let target = r.targetLabel, let who = r.targetName {
-                HomeMixedText.make("For \(who)\u{2019}s \(target)", size: CavnarType.secondary, color: .cavnarInk2)
+                CavnarMixedText("For \(who)\u{2019}s \(target)", role: .secondary)
             }
             if let detail = r.detail {
                 StaffUI.note(detail)
@@ -597,6 +606,12 @@ struct StaffRequestsView: View {
         case .offer(let o):
             await act("offer\(o.id)", "/staff/api/offers/\(o.id)/respond", body: StaffAcceptBody(accept: true),
                       posted: "It\u{2019}s on your schedule")
+        case .declineAsk(let a):
+            await act("ask\(a.id)", "/staff/api/shift-requests/\(a.id)/respond", body: StaffAcceptBody(accept: false),
+                      posted: "Declined — \(a.employeeName) is told")
+        case .declineOffer(let o):
+            await act("offer\(o.id)", "/staff/api/offers/\(o.id)/respond", body: StaffAcceptBody(accept: false),
+                      posted: "Declined — your manager is told")
         case .claim(let s):
             await act("open\(s.id)", "/staff/api/open-shifts/\(s.id)/claim", body: StaffEmptyBody(),
                       posted: "It\u{2019}s on your schedule")
@@ -754,13 +769,13 @@ struct StaffTimeOffSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    StaffUI.note("Your manager answers it in Cavnar AI. An approved range stays off the next schedule. Your usual week goes in My availability, on Me.")
+                    StaffUI.note("Your manager will approve or decline it.")
                     DatePicker("First day off", selection: $start, in: Date()..., displayedComponents: .date)
-                        .font(.cavnarBody(CavnarType.body))
+                        .font(.cavnar(.body))
                         .tint(Color.cavnarEmber)
                         .frame(minHeight: 44)
                     DatePicker("Last day off", selection: $end, in: start..., displayedComponents: .date)
-                        .font(.cavnarBody(CavnarType.body))
+                        .font(.cavnar(.body))
                         .tint(Color.cavnarEmber)
                         .frame(minHeight: 44)
                     partOfDay
@@ -793,8 +808,7 @@ struct StaffTimeOffSheet: View {
     private var partOfDay: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Part of the day")
-                .font(.cavnarBody(CavnarType.body))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
             AccountFlowLayout(spacing: 6) {
                 ForEach(Part.allCases, id: \.self) { p in
                     Button {
@@ -808,13 +822,13 @@ struct StaffTimeOffSheet: View {
             switch part {
             case .until:
                 HStack(spacing: 8) {
-                    Text("Off until").font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                    Text("Off until").cavnarText(.secondary)
                     CavnarTimeChip(time: $untilTime, accessibilityName: "Off until")
                     Spacer(minLength: 0)
                 }
             case .from:
                 HStack(spacing: 8) {
-                    Text("Off from").font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                    Text("Off from").cavnarText(.secondary)
                     CavnarTimeChip(time: $fromTime, accessibilityName: "Off from")
                     Spacer(minLength: 0)
                 }
@@ -853,7 +867,7 @@ struct StaffTimeOffSheet: View {
 
 // MARK: - Give up or swap a shift
 
-/// "Give up this shift" (a drop) or "Swap this shift" (their shift for
+/// "Give up shift" (a drop) or "Swap shift" (their shift for
 /// yours: your manager's yes and theirs). Opened from a shift on Today, or
 /// from a conflict after an availability save.
 ///
@@ -898,8 +912,11 @@ struct StaffShiftChangeSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    HomeMixedText.make(StaffDay.shift(date, shiftStart, shiftEnd), size: CavnarType.emphasis,
-                                       weight: 700, color: .cavnarInk)
+                    CavnarMixedText(StaffDay.shift(date, shiftStart, shiftEnd), role: .lead)
+                    // What happens next, before the button that does it.
+                    StaffUI.note(mode == .swap
+                                 ? "Both shifts move once your manager approves and your colleague says yes."
+                                 : "Your manager decides. If they approve, you\u{2019}re still on it until someone on the team picks it up.")
                     if mode == .swap { swapPickers }
                     TextField(mode == .swap ? "Why (optional)" : "Why can\u{2019}t you work it? (optional)",
                               text: $reason, axis: .vertical)
@@ -917,13 +934,10 @@ struct StaffShiftChangeSheet: View {
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: sending || !ready))
                     .disabled(sending || !ready)
                     if let error { StaffUI.errorLine(error) }
-                    StaffUI.note(mode == .swap
-                                 ? "Both shifts move once your manager approves and your colleague says yes."
-                                 : "Your manager decides. If they approve, you\u{2019}re still on it until someone on the team picks it up.")
                 }
                 .padding(20)
             }
-            .accountSheetChrome(mode == .swap ? "Swap this shift" : "Give up this shift")
+            .accountSheetChrome(mode == .swap ? "Swap shift" : "Give up shift")
         }
         .task { if mode == .swap { await loadCandidates() } }
         .cavnarPostedOverlay(posted) { dismiss() }
@@ -960,7 +974,7 @@ struct StaffShiftChangeSheet: View {
                             VStack(spacing: 0) {
                                 ForEach(chosen.shifts) { s in
                                     choiceRow(s.label + (s.role.map { " · \($0)" } ?? ""), selected: s.id == theirShiftId,
-                                              detail: s.checked ? nil : "Not checked yet — checked when you ask") {
+                                              detail: s.checked ? nil : "We\u{2019}ll check this when you ask") {
                                         theirShiftId = s.id
                                         pickingShift = false
                                     }
@@ -983,15 +997,15 @@ struct StaffShiftChangeSheet: View {
         } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    HomeMixedText.make(title, size: CavnarType.body, weight: selected ? 700 : 400, color: .cavnarInk)
+                    HomeMixedText.make(title, role: selected ? .label : .body, color: .cavnarInk)
                     if let detail {
-                        Text(detail).font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
+                        Text(detail).cavnarText(.caption, color: .cavnarInk2)
                     }
                 }
                 Spacer(minLength: 8)
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.cavnar(.secondary).weight(.bold))
                         .foregroundStyle(Color.cavnarEmber)
                 }
             }

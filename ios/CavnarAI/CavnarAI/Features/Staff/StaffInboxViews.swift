@@ -7,8 +7,8 @@ import SwiftUI
 // MARK: - Inbox
 
 /// `StaffInboxView(store: StaffPortalStore)` — a full sheet (the container
-/// opens it from Today's tray button): announcements with Got it, then the
-/// thread with the managers. Calls go through the environment's
+/// opens it from Today's tray button): the thread with the managers first,
+/// then announcements, each with a right-aligned Got it. Calls go through the environment's
 /// StaffSessionStore; `store.reloadBadges()` runs after an ack.
 struct StaffInboxView: View {
     let store: StaffPortalStore
@@ -32,6 +32,10 @@ struct StaffInboxView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     StaffPulseCard(store: store)
+                    // The managers' replies first: a conversation waits on
+                    // this person; an announcement is read and acknowledged.
+                    StaffUI.header("Your manager")
+                    messagesRow
                     StaffUI.header("Announcements")
                     switch inbox {
                     case .loading:
@@ -46,8 +50,6 @@ struct StaffInboxView: View {
                             ForEach(payload.announcements) { announcementRow($0).id($0.id) }
                         }
                     }
-                    StaffUI.header("Your manager")
-                    messagesRow
                 }
                 .padding(20)
             }
@@ -77,20 +79,17 @@ struct StaffInboxView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Messages")
-                        .font(.cavnarBody(CavnarType.body, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                    Text(unreadMessages > 0
-                         ? (unreadMessages == 1 ? "1 new reply" : "\(unreadMessages) new replies")
-                         : "Ask a question or follow up on a request. Your managers answer here.")
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .cavnarText(.label)
+                    CavnarMixedText(unreadMessages > 0
+                                    ? (unreadMessages == 1 ? "1 new reply" : "\(unreadMessages) new replies")
+                                    : "Ask a question or follow up on a request. Your managers answer here.",
+                                    role: .secondary)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 8)
                 if unreadMessages > 0 {
                     Text("\(unreadMessages)")
-                        .font(.cavnarNumber(14, weight: 700))
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
@@ -112,17 +111,13 @@ struct StaffInboxView: View {
     private func announcementRow(_ a: StaffAnnouncement) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if a.isUrgent {
-                Text("URGENT")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarRed)
+                CavnarKicker("Urgent", tint: .cavnarRedText)
             }
             let text = a.shown(original: showingOriginal.contains(a.id))
             HomeMixedText.make(text.title, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             if !text.body.isEmpty {
-                HomeMixedText.make(text.body, size: CavnarType.body, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(text.body, role: .body)
             }
             if a.translated {
                 // Translated for this reader at delivery (S9): one tap shows
@@ -133,35 +128,48 @@ struct StaffInboxView: View {
                 }
                 .accessibilityHint(original ? "Shows this in your language" : "Shows what your manager wrote")
             }
-            if !a.byline.isEmpty {
-                HomeMixedText.make(a.byline, size: CavnarType.caption, color: .cavnarInk3)
-            }
-            if let until = a.expiresOn {
-                HomeMixedText.make("Until \(CavnarDate.mdy(until))", size: CavnarType.caption, color: .cavnarInk3)
-            }
-            if a.isRead {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
-                    Text("Got it")
-                }
-                .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                .foregroundStyle(Color.cavnarGreen)
-                .frame(minHeight: 30)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("You marked this read")
-            } else {
-                Button {
-                    Task { await ack(a.id) }
-                } label: {
-                    Group {
-                        if acking.contains(a.id) { StaffShimmerLabel(text: "Saving", color: .cavnarInk) } else { Text("Got it") }
+            // The byline and "Got it" on one line: the ack is a right-
+            // aligned 44pt ember text button, not a full-width bar per card.
+            HStack(alignment: .center, spacing: CavnarSpace.xs) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if !a.byline.isEmpty {
+                        CavnarMixedText(a.byline, role: .caption)
                     }
-                    .frame(maxWidth: .infinity)
+                    if let until = a.expiresOn {
+                        CavnarMixedText("Until \(CavnarDate.mdy(until))", role: .caption)
+                    }
                 }
-                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: acking.contains(a.id)))
-                .disabled(acking.contains(a.id))
-                .padding(.top, 4)
-                .accessibilityHint("Tells your manager you read it.")
+                Spacer(minLength: CavnarSpace.xs)
+                if a.isRead {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark").font(.cavnar(.caption).weight(.bold))
+                        Text("Got it")
+                    }
+                    .font(.cavnar(.label))
+                    .foregroundStyle(Color.cavnarGreen)
+                    .frame(minHeight: 44)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("You marked this read")
+                } else {
+                    Button {
+                        Task { await ack(a.id) }
+                    } label: {
+                        Group {
+                            if acking.contains(a.id) {
+                                StaffShimmerLabel(text: "Saving", color: .cavnarEmber2)
+                            } else {
+                                Text("Got it")
+                            }
+                        }
+                        .font(.cavnar(.label))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .padding(.horizontal, CavnarSpace.xs)
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(acking.contains(a.id))
+                    .accessibilityHint("Tells your manager you read it.")
+                }
             }
             if let e = ackError[a.id] { StaffUI.errorLine(e) }
         }
@@ -314,11 +322,10 @@ struct StaffMessageThreadView: View {
     private func bubble(_ m: StaffThreadMessage, seen: Bool) -> some View {
         VStack(alignment: m.isMine ? .trailing : .leading, spacing: 4) {
             if let about = m.contextLabel {
-                HomeMixedText.make(about, size: CavnarType.caption, color: .cavnarInk3)
+                CavnarMixedText(about, role: .caption)
             }
             Text(m.body)
-                .font(.cavnarBody(CavnarType.body))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.body, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -326,10 +333,10 @@ struct StaffMessageThreadView: View {
                             in: RoundedRectangle(cornerRadius: CavnarRadius.card))
                 .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card)
                     .strokeBorder(Color.cavnarPaper3.opacity(m.isMine ? 0 : 0.6), lineWidth: 1))
-            HomeMixedText.make([m.isMine ? "You" : m.senderName, m.timeLabel].filter { !$0.isEmpty }
-                                .joined(separator: " · "), size: CavnarType.caption, color: .cavnarInk3)
+            CavnarMixedText([m.isMine ? "You" : m.senderName, m.timeLabel].filter { !$0.isEmpty }
+                                .joined(separator: " · "), role: .caption)
             if seen {
-                Text("Seen").font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                Text("Seen").cavnarText(.caption)
             }
         }
         .frame(maxWidth: .infinity, alignment: m.isMine ? .trailing : .leading)
@@ -343,15 +350,15 @@ struct StaffMessageThreadView: View {
         VStack(alignment: .leading, spacing: 8) {
             if let context {
                 HStack(spacing: 8) {
-                    HomeMixedText.make("About \(context.label)", size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
+                    CavnarMixedText("About \(context.label)", role: .secondary)
                         .lineLimit(2)
                     Spacer(minLength: 4)
                     Button {
                         self.context = nil
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.caption).weight(.bold))
+                            .foregroundStyle(Color.cavnarInk2)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
@@ -361,27 +368,46 @@ struct StaffMessageThreadView: View {
                 .padding(.leading, 12)
                 .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
             }
-            TextField("Message your manager", text: $text, axis: .vertical)
-                .lineLimit(1...5)
-                .focused($composing)
-                .cavnarTextFieldStyle()
-                .onChange(of: text) { _, v in if v.count > Self.limit { text = String(v.prefix(Self.limit)) } }
-            Button {
-                Task { await send() }
-            } label: {
-                Group {
-                    if sending { StaffShimmerLabel(text: "Sending") } else { Text("Send") }
-                }
-                .frame(maxWidth: .infinity)
+            // The field and its send button on one line, the button 44pt
+            // in thumb reach (a chat composer, not a form).
+            HStack(alignment: .bottom, spacing: CavnarSpace.xs) {
+                TextField("Message your manager", text: $text, axis: .vertical)
+                    .lineLimit(1...5)
+                    .focused($composing)
+                    .cavnarTextFieldStyle()
+                    .onChange(of: text) { _, v in if v.count > Self.limit { text = String(v.prefix(Self.limit)) } }
+                sendButton
             }
-            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: sending || trimmed.isEmpty))
-            .disabled(sending || trimmed.isEmpty)
             if let error { StaffUI.errorLine(error) }
         }
         .padding(.horizontal, 20)
         .padding(.top, 10)
         .padding(.bottom, 12)
         .background(Color.cavnarPaper.opacity(0.97))
+    }
+
+    /// The ember send disc beside the field — the Team thread's composer
+    /// (TeamMessagesView): 44pt, paper until there is something to send,
+    /// the shimmer line while sending.
+    private var sendButton: some View {
+        Button {
+            Task { await send() }
+        } label: {
+            Group {
+                if sending {
+                    CavnarShimmerLine(color: .white).frame(width: 22)
+                } else {
+                    Image(systemName: "arrow.up").font(.cavnar(.figureS).weight(.bold))
+                }
+            }
+            .foregroundStyle(Color.white)
+            .frame(width: 44, height: 44)
+            .background(Circle().fill(trimmed.isEmpty ? Color.cavnarPaper3 : Color.cavnarEmber))
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(sending || trimmed.isEmpty)
+        .accessibilityLabel(sending ? "Sending" : "Send")
     }
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -468,17 +494,21 @@ struct StaffPulseCard: View {
                 .font(.cavnarBody(CavnarType.emphasis, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .accessibilityAddTraits(.isHeader)
-            HomeMixedText.make(due.line, size: CavnarType.secondary, color: .cavnarInk3)
+            CavnarMixedText(due.line, role: .secondary)
             HStack(spacing: 8) {
                 ForEach(StaffPulseScale.ratings, id: \.self) { r in
                     Button {
                         Haptic.selection()
                         rating = r
                     } label: {
+                        // The figure alone; the word only on the chosen one
+                        // (five words never fit five chips at a readable size).
                         VStack(spacing: 2) {
-                            Text("\(r)").font(.cavnarNumber(18, weight: 600))
-                            Text(StaffPulseScale.word(r)).font(.cavnarBody(CavnarType.caption))
-                                .lineLimit(1).minimumScaleFactor(0.7)
+                            Text("\(r)").font(.cavnar(.figureS))
+                            if rating == r {
+                                Text(StaffPulseScale.word(r)).font(.cavnar(.caption))
+                                    .lineLimit(1)
+                            }
                         }
                         .foregroundStyle(rating == r ? Color.cavnarInk : Color.cavnarInk2)
                         .frame(maxWidth: .infinity, minHeight: 52)
@@ -492,6 +522,11 @@ struct StaffPulseCard: View {
                     .accessibilityLabel("\(r) of 5, \(StaffPulseScale.word(r))")
                     .accessibilityAddTraits(rating == r ? .isSelected : [])
                 }
+            }
+            if rating == nil {
+                CavnarMixedText("1 is \(StaffPulseScale.word(1).lowercased()), 5 is \(StaffPulseScale.word(5).lowercased())",
+                                role: .caption)
+                    .accessibilityHidden(true)
             }
             if rating != nil {
                 TextField("Anything to add? (optional)", text: $note, axis: .vertical)

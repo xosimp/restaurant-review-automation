@@ -422,4 +422,113 @@ final class StaffTodayTests: XCTestCase {
         XCTAssertEqual(store.requestsBadge, 0)
         XCTAssertEqual(store.inboxBadge, 3)
     }
+
+    // MARK: iOS readability round (10/8/26) — the hero's one primary, the
+    // week's one line, the manager strip, the folded checklist
+
+    func testTheHerosPrimaryFollowsTheMomentInTheDay() throws {
+        let week = try XCTUnwrap(try decode(StaffShiftsResponse.self, doubleWeek).week)
+        // Two hours before the 11am leg: Running late.
+        let early = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(9), calendar: utc))
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(early, now: at(9), hasTasks: true, calendar: utc), .late)
+        // Within 30 minutes of it: Tasks, when there are any…
+        let soon = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(10, 45), calendar: utc))
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(soon, now: at(10, 45), hasTasks: true, calendar: utc), .tasks)
+        // …else still Running late, since it hasn't started.
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(soon, now: at(10, 45), hasTasks: false, calendar: utc), .late)
+        // On shift: Tasks; with none, nothing is primary.
+        let on = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(12), calendar: utc))
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(on, now: at(12), hasTasks: true, calendar: utc), .tasks)
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(on, now: at(12), hasTasks: false, calendar: utc), .none)
+        // Not today: nothing is primary.
+        let tomorrow = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(23), calendar: utc))
+        XCTAssertFalse(tomorrow.day.isToday)
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(tomorrow, now: at(23), hasTasks: true, calendar: utc), .none)
+    }
+
+    func testEachDayOfTheWeekIsOneLine() throws {
+        let week = try XCTUnwrap(try decode(StaffShiftsResponse.self, doubleWeek).week)
+        XCTAssertEqual(StaffTodayPlan.dayLine(week[0]), "11am – 3pm + 5pm – 10:30pm \u{00B7} Server")
+        XCTAssertEqual(StaffTodayPlan.dayLine(week[1]), "4pm – 10pm \u{00B7} Server")
+        XCTAssertEqual(StaffTodayPlan.dayLine(week[2]), "Off")
+        XCTAssertEqual(StaffTodayPlan.dayLine(week[3]), "Not posted yet")
+        XCTAssertTrue(StaffTodayPlan.dayHasDetail(week[1]), "the swap request opens on a tap")
+        XCTAssertFalse(StaffTodayPlan.dayHasDetail(week[2]))
+    }
+
+    func testTheManagerStripIsOnlyUrgentNotesAndReplies() throws {
+        let urgent = try decode(StaffInboxBadge.self, """
+            {"ok": true, "unread": 2, "unread_messages": 0, "announcements": [
+              {"id": 1, "title": "Walk-in is down", "priority": "urgent", "acked_at": null},
+              {"id": 2, "title": "New menu", "priority": "normal", "acked_at": null},
+              {"id": 3, "title": "Old", "priority": "urgent", "acked_at": "2026-10-01T09:00:00"}]}
+            """)
+        let u = try XCTUnwrap(StaffManagerStrip.content(urgent))
+        XCTAssertEqual(u.text, "Urgent: Walk-in is down")
+        XCTAssertTrue(u.urgent)
+        XCTAssertFalse(u.opensThread)
+
+        let replies = try decode(StaffInboxBadge.self, #"{"ok": true, "unread": 1, "unread_messages": 2, "announcements": [{"id": 2, "priority": "normal"}]}"#)
+        let r = try XCTUnwrap(StaffManagerStrip.content(replies))
+        XCTAssertEqual(r.text, "2 new replies from your manager")
+        XCTAssertTrue(r.opensThread)
+
+        // An ordinary unread announcement stays behind the tray.
+        XCTAssertNil(StaffManagerStrip.content(try decode(StaffInboxBadge.self,
+            #"{"ok": true, "unread": 1, "unread_messages": 0, "announcements": [{"id": 2, "priority": "normal"}]}"#)))
+        // A list that won't read never costs the counts.
+        let odd = try decode(StaffInboxBadge.self, #"{"ok": true, "unread": 4, "unread_messages": 1, "announcements": "x"}"#)
+        XCTAssertEqual(odd.total, 5)
+        XCTAssertTrue(odd.urgentUnread.isEmpty)
+    }
+
+    func testTheCachedWeekSaysOfflineAtTheTop() {
+        XCTAssertEqual(StaffFreshness.warning(at: at(15, 42), offline: true, now: at(16), calendar: utc),
+                       "As of 3:42pm \u{00B7} offline")
+        XCTAssertEqual(StaffFreshness.warning(at: at(15), offline: false, now: at(16), calendar: utc),
+                       "As of 3pm \u{00B7} couldn\u{2019}t refresh")
+        XCTAssertNil(StaffFreshness.warning(at: nil, offline: true))
+    }
+
+    func testOverlappingCoworkersComeFirst() throws {
+        let week = try XCTUnwrap(try decode(StaffShiftsResponse.self, doubleWeek).week)
+        let people = try decode([StaffCoworker].self, """
+            [{"name": "Ana", "shift_start": "6:00am", "shift_end": "10:00am"},
+             {"name": "Bo", "shift_start": "2:00pm", "shift_end": "6:00pm"},
+             {"name": "Cy"},
+             {"name": "Di", "shift_start": "9:00pm", "shift_end": "1:00am"}]
+            """)
+        XCTAssertEqual(StaffTodayPlan.coworkersByOverlap(people, legs: week[0].legs).map(\.name), ["Bo", "Di", "Ana", "Cy"])
+    }
+
+    func testAChecklistFoldsItsDoneLinesBySection() throws {
+        let sheet = try JSONDecoder().decode(StaffSheet.self, from: Data("""
+            {"id": 9, "title": "Server opening", "shift_kind": "opening", "assignees": [], "unassigned": false,
+             "status": "open", "done": 2, "total": 4, "lines": [
+               {"line_id": 1, "label": "Roll silverware", "section": "Floor", "done": true},
+               {"line_id": 2, "label": "Wipe menus", "section": "Floor", "done": false, "overdue": true},
+               {"line_id": 3, "label": "Ice the well", "section": "Bar", "done": true},
+               {"line_id": 4, "label": "Cut fruit", "section": "Bar", "done": false}]}
+            """.utf8))
+        let groups = StaffSheetProgress.groups(sheet.lines)
+        XCTAssertEqual(groups.map(\.section), ["Floor", "Bar"])
+        XCTAssertEqual(groups.map(\.doneCount), [1, 1])
+        XCTAssertEqual(StaffSheetProgress.next(in: sheet)?.label, "Wipe menus")
+        XCTAssertEqual(StaffSheetProgress.overdue([sheet]), 1)
+        XCTAssertEqual(StaffSheetProgress.totals([sheet])?.done, 2)
+        XCTAssertEqual(StaffSheetProgress.totals([sheet])?.total, 4)
+        var closed = sheet
+        closed.status = "closed"
+        XCTAssertEqual(StaffSheetProgress.overdue([closed]), 0, "a closed sheet asks nothing of anyone")
+        XCTAssertNil(StaffSheetProgress.totals([]))
+    }
+
+    func testAttendanceSaysItselfInOneLine() throws {
+        let a = try decode(StaffAttendance.self, """
+            {"tracked": true, "days": 30, "shifts_checked": 4, "recent": [
+              {"date": "2026-10-01", "outcome": "on_time"}, {"date": "2026-09-30", "outcome": "late", "minutes_late": 12},
+              {"date": "2026-09-29", "outcome": "on_time"}, {"date": "2026-09-28", "outcome": "on_time"}]}
+            """)
+        XCTAssertEqual(a.summaryLine, "4 shifts in 30 days \u{00B7} 3 on time \u{00B7} 1 late")
+    }
 }

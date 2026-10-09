@@ -86,7 +86,7 @@ struct StaffLoginView: View {
         VStack(alignment: .leading, spacing: 14) {
             StaffSignInKicker(text: "STAFF SIGN IN")
             Text("Enter your restaurant code")
-                .font(.cavnarHeadline(25))
+                .font(.cavnar(.title))
                 .foregroundStyle(Color.cavnarInk)
                 .accessibilityAddTraits(.isHeader)
             Text("It's on the poster in the back, or ask your manager. This phone remembers it.")
@@ -98,7 +98,7 @@ struct StaffLoginView: View {
                 .autocorrectionDisabled()
                 .submitLabel(.continue)
                 .onSubmit { Task { await loadRoster(code: portalCode) } }
-                .font(.cavnarNumber(20, weight: 600))
+                .font(.cavnar(.figureM))
                 .padding(14)
                 .frame(minHeight: 50)
                 .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
@@ -158,7 +158,7 @@ struct StaffLoginView: View {
         VStack(alignment: .leading, spacing: 14) {
             StaffSignInKicker(text: restaurantName.uppercased())
             Text("Who's signing in?")
-                .font(.cavnarHeadline(25))
+                .font(.cavnar(.title))
                 .foregroundStyle(Color.cavnarInk)
                 .accessibilityAddTraits(.isHeader)
 
@@ -193,7 +193,7 @@ struct StaffLoginView: View {
                         choose(person, fromMemory: false)
                     } label: {
                         Text(person.name)
-                            .font(.cavnarBody(15.5, weight: 600))
+                            .font(.cavnar(.label))
                             .foregroundStyle(Color.cavnarInk)
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
@@ -236,7 +236,7 @@ struct StaffLoginView: View {
                         StaffSignInKicker(text: restaurantName.uppercased())
                     }
                     Text(person.name)
-                        .font(.cavnarHeadline(24))
+                        .font(.cavnar(.title))
                         .foregroundStyle(Color.cavnarInk)
                         .accessibilityAddTraits(.isHeader)
                 }
@@ -474,7 +474,7 @@ struct StaffPinPad: View {
                         .foregroundStyle(Color.cavnarInk2)
                 } else {
                     Text(label ?? "")
-                        .font(small ? .cavnarBody(14) : .cavnarNumber(24, weight: 600))
+                        .font(small ? .cavnar(.secondary) : .cavnar(.figureM))
                         .foregroundStyle(small ? Color.cavnarInk3 : Color.cavnarInk)
                 }
             }
@@ -584,15 +584,13 @@ struct StaffBusyLabel: View {
     }
 }
 
+/// The sign-in screens' kicker — now the one kicker, `CavnarKicker` (iOS
+/// readability round, 10/8/26).
 struct StaffSignInKicker: View {
     let text: String
 
     var body: some View {
-        Text(text)
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .kerning(1.5)
-            .foregroundStyle(Color.cavnarEmber2)
-            .accessibilityAddTraits(.isHeader)
+        CavnarKicker(text)
     }
 }
 
@@ -604,8 +602,8 @@ struct StaffErrorLine: View {
     var body: some View {
         if let text, !text.isEmpty {
             Text(text)
-                .font(.cavnarBody(14, weight: 600))
-                .foregroundStyle(Color.cavnarRed)
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
+                .foregroundStyle(Color.cavnarRedText)
                 .multilineTextAlignment(centered ? .center : .leading)
                 .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -671,7 +669,7 @@ struct StaffNameSearch: View {
             TextField("Find your name", text: $text)
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
-                .font(.cavnarBody(16))
+                .font(.cavnar(.body))
                 .foregroundStyle(Color.cavnarInk)
             if !text.isEmpty {
                 Button { text = "" } label: {

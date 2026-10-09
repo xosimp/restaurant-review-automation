@@ -5,7 +5,7 @@ import UIKit
 // the employee's own settings as Account rows. My availability and What
 // I'd like open sheets; schedule texts and reminders are state switches
 // (never a native Toggle for a network setting); language, calendar,
-// docs and help open sheets; Sign out is red text at the foot.
+// docs and help open sheets; Sign out is red text above Leaving.
 
 /// `StaffMeView(store: StaffPortalStore)` — the Me tab, whole: it brings its
 /// own scroll view and ember pull-to-refresh (the container's contract for
@@ -43,13 +43,11 @@ struct StaffMeView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Me")
-                            .font(.cavnarHeadline(CavnarType.section))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.headline)
                             .accessibilityAddTraits(.isHeader)
                         if let m = me.value {
                             Text([m.name, m.restaurant].filter { !$0.isEmpty }.joined(separator: " \u{00B7} "))
-                                .font(.cavnarBody(CavnarType.body))
-                                .foregroundStyle(Color.cavnarInk2)
+                                .cavnarText(.body)
                         }
                     }
                     if let failure = me.failure {
@@ -61,13 +59,8 @@ struct StaffMeView: View {
                     languageSection
                     accountSection
                     helpSection
-                    AccountSection(kicker: "Leaving") {
-                        AccountActionRow(label: "Delete my account",
-                                         detail: "Removes your login here. Your manager is told.",
-                                         symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
-                            sheet = .deleteAccount
-                        }
-                    }
+                    // Sign out (the everyday way off a shared phone) above
+                    // Leaving (closing the login for good).
                     Button {
                         Haptic.light()
                         // An explicit sign-out leaves no copy of this
@@ -77,13 +70,18 @@ struct StaffMeView: View {
                         staff.signOut()
                     } label: {
                         Text("Sign out")
-                            .font(.cavnarBody(CavnarType.body, weight: 700))
-                            .foregroundStyle(Color.cavnarRed)
+                            .cavnarText(.label, color: .cavnarRedText)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 4)
+                    AccountSection(kicker: "Leaving") {
+                        AccountActionRow(label: "Delete my account",
+                                         detail: "Removes your login here. Your manager is told.",
+                                         symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                            sheet = .deleteAccount
+                        }
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
@@ -138,11 +136,23 @@ struct StaffMeView: View {
     @ViewBuilder
     private var noticesSection: some View {
         AccountSection(kicker: "Notices") {
-            AccountKVRow(label: "This phone") {
-                if let m = me.value {
-                    AccountPill(text: m.pushOn ? "Getting notices" : "Not set up", on: m.pushOn)
-                } else {
-                    AccountValue(text: "\u{2014}", tone: .cavnarInk3)
+            if let m = me.value, !m.pushOn {
+                // Not set up: one tap asks iOS for notifications (the same
+                // ask as the card after sign-in), then reads Me again.
+                AccountNavRow(label: "This phone", value: "Not set up \u{00B7} Turn on") {
+                    Task {
+                        await staff.enableNotifications()
+                        await reload()
+                    }
+                }
+                .accessibilityHint("Asks to turn on notifications on this phone")
+            } else {
+                AccountKVRow(label: "This phone") {
+                    if let m = me.value {
+                        AccountPill(text: "Getting notices", on: m.pushOn)
+                    } else {
+                        AccountValue(text: "\u{2014}", tone: .cavnarInk3)
+                    }
                 }
             }
             switch notices {
@@ -333,7 +343,7 @@ struct StaffLanguageSheet: View {
                                                 .font(.cavnarBody(CavnarType.secondary))
                                         } else if choice.code == langs.language {
                                             Image(systemName: "checkmark")
-                                                .font(.system(size: 14, weight: .bold))
+                                                .font(.cavnar(.secondary).weight(.bold))
                                                 .foregroundStyle(Color.cavnarEmber)
                                         }
                                     }
@@ -578,13 +588,10 @@ struct StaffDocsSheet: View {
             HomeMixedText.make(a.answer, size: CavnarType.body, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             if !a.sources.isEmpty {
-                Text("FROM")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.0)
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarKicker("From")
                 ForEach(a.sources) { s in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(s.source).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                        Text(s.source).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarInk2)
                         HomeMixedText.make("\u{201C}\(s.line)\u{201D}", size: CavnarType.secondary, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -683,7 +690,7 @@ struct StaffHelpSheet: View {
 
     private static let topics: [(String, String)] = [
         ("Can\u{2019}t make a shift?",
-         "Open it on Today and choose Give up this shift or Swap this shift. You\u{2019}re still on it until your manager approves and someone picks it up."),
+         "Open it on Today and choose Give up shift or Swap shift. You\u{2019}re still on it until your manager approves and someone picks it up."),
         ("Days away?", "Ask for time off on Requests. Your manager answers, and an approved range stays off the schedule."),
         ("Your usual week?", "Set My availability on Me \u{2014} the days and hours you can work. The next schedule reads it."),
         ("Picking up shifts", "Open shifts you can take are on Requests, under Waiting on you."),

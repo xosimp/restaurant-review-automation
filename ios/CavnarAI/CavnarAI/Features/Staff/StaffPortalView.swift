@@ -7,7 +7,8 @@ import SwiftUI
 ///
 /// The frame (employee audit M1 / Part C, wave 2 I2): a bottom tab bar —
 /// Today · Tasks · Requests · Me — on the owner app's true-black chrome,
-/// with a red count on Requests for what waits on this person. A TabView
+/// with a red count on Requests for what waits on this person and on Tasks
+/// for lines past due. A TabView
 /// keeps every tab alive, so leaving Requests mid-edit loses nothing and
 /// coming back doesn't refetch (UX-12). All state lives in one
 /// StaffPortalStore handed to each tab (`store:`); see its CONTRACT.
@@ -20,6 +21,8 @@ struct StaffPortalView: View {
     /// An iPad on the host stand (parity audit #99): a regular width puts
     /// the four tabs in a sidebar; a compact one keeps the tab bar.
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// The Tasks tab's red count (overdue lines) reads I4's one store.
+    private let tasks = StaffTasksStore.shared
 
     var body: some View {
         Group {
@@ -44,6 +47,8 @@ struct StaffPortalView: View {
 
             StaffTasksTab(store: store)
                 .tabItem { Label(StaffTab.tasks.portalTitle, systemImage: StaffTab.tasks.portalSymbol) }
+                // Red is for what needs this person: lines past due.
+                .badge(tasks.overdueCount)
                 .tag(StaffTab.tasks)
 
             StaffRequestsTab(store: store)
@@ -72,14 +77,13 @@ struct StaffPortalView: View {
                 ForEach(StaffTab.bar, id: \.self) { tab in
                     Label {
                         Text(tab.portalTitle)
-                            .font(.cavnarBody(15, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
                     } icon: {
                         Image(systemName: tab.portalSymbol)
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.cavnar(.body).weight(.semibold))
                             .foregroundStyle(Color.cavnarEmber)
                     }
-                    .badge(tab == .requests ? store.requestsBadge : 0)
+                    .badge(tab == .requests ? store.requestsBadge : (tab == .tasks ? tasks.overdueCount : 0))
                     .tag(tab)
                 }
             }
@@ -241,9 +245,14 @@ private struct StaffTasksTab: View {
     let store: StaffPortalStore
 
     var body: some View {
-        StaffTabScroll(refresh: { await store.reloadTasks() }) {
-            StaffScreenTitle(title: "Tasks")
-            StaffTaskSheetsSection()
+        ScrollViewReader { proxy in
+            StaffTabScroll(refresh: { await store.reloadTasks() }) {
+                StaffScreenTitle(title: "Tasks")
+                // A sheet's "Next:" line scrolls to its first open line.
+                StaffTaskSheetsSection(scrollTo: { id in
+                    withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) }
+                })
+            }
         }
     }
 }
@@ -251,10 +260,12 @@ private struct StaffTasksTab: View {
 /// Requests: I3's StaffRequestsView (it loads its own lists). A pull bumps
 /// `refresh`, which reloads them, and catches the badge up; a tab switch
 /// never does (it stays mounted, UX-12). With `portal`, every answer
-/// reloads the badges and the week.
+/// reloads the badges and the week. "Ask for time off" is pinned in thumb
+/// reach (CavnarPinnedBar), not at the end of the scroll.
 private struct StaffRequestsTab: View {
     let store: StaffPortalStore
     @State private var generation = 0
+    @State private var askingTimeOff = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -263,9 +274,17 @@ private struct StaffRequestsTab: View {
                 await store.reloadBadges()
             }) {
                 StaffScreenTitle(title: "Requests")
-                StaffRequestsView(refresh: generation, portal: store) { id in
+                StaffRequestsView(refresh: generation, portal: store, askingTimeOff: $askingTimeOff) { id in
                     withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) }
                 }
+            }
+            .cavnarPinnedBar {
+                Button {
+                    askingTimeOff = true
+                } label: {
+                    Text("Ask for time off").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle())
             }
         }
     }
@@ -279,24 +298,20 @@ struct StaffScreenTitle: View {
 
     var body: some View {
         Text(title)
-            .font(.cavnarHeadline(CavnarType.section))
-            .foregroundStyle(Color.cavnarInk)
+            .cavnarText(.headline)
             .accessibilityAddTraits(.isHeader)
     }
 }
 
-/// An uppercase tracked kicker in ink3 (never ember inside a card, DS §4),
-/// marked as a header so the rotor can jump between sections (UX-18).
+/// The staff screens' kicker — now the one kicker, `CavnarKicker` (iOS
+/// readability round, 10/8/26). Today's cards call CavnarKicker directly;
+/// this name stays for any caller still using it (a candidate for future
+/// cleanup after additional verification).
 struct StaffKicker: View {
     let text: String
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .kerning(1.3)
-            .foregroundStyle(Color.cavnarInk3(contrast))
-            .accessibilityAddTraits(.isHeader)
+        CavnarKicker(text)
     }
 }
 
@@ -309,8 +324,7 @@ struct StaffLoadingLine: View {
         VStack(alignment: .leading, spacing: 8) {
             CavnarSkeletonBar(height: 3).frame(width: 180)
             Text(text)
-                .font(.cavnarBody(CavnarType.secondary))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -328,8 +342,7 @@ struct StaffLoadFailed: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Couldn\u{2019}t load \(what). \(message ?? "")".trimmingCharacters(in: .whitespaces))
-                .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                .foregroundStyle(Color.cavnarRed)
+                .cavnarText(.secondary, color: .cavnarRedText)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
                 Task {
@@ -340,8 +353,7 @@ struct StaffLoadFailed: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Try again")
-                        .font(.cavnarBody(CavnarType.body, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarText(.label, color: .cavnarEmber2)
                     if retrying { CavnarSkeletonBar(height: 3).frame(width: 72) }
                 }
                 .frame(minHeight: 44, alignment: .leading)

@@ -63,6 +63,10 @@ final class StaffTasksStore {
 
     var sheets: [StaffSheet] { StaffSheetMerge.applying(overlays, to: payload?.sheets ?? []) }
     var floor: [StaffSheet] { payload?.floor ?? [] }
+    /// The person's own lines past due — the red count on the Tasks tab.
+    var overdueCount: Int { StaffSheetProgress.overdue(sheets) }
+    /// Done of all, across the person's own sheets — Today's hero.
+    var progress: (done: Int, total: Int)? { StaffSheetProgress.totals(sheets) }
 
     /// Last night's note, shown on the opening sheet only.
     var lastNightNote: StaffLastNightNote? {

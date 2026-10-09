@@ -1,21 +1,27 @@
 import SwiftUI
 
 /// Today — the staff app's first tab and its daily companion (employee
-/// audit V1, UX-09/10/16, C6/C7, H6). Top to bottom:
-///   a small header ("Hi, Jordan", the restaurant, the inbox)
-///   the hero: the next shift, EVERY leg of a double, role · station ·
-///     section · hours, notes, the break, "Starts in 2h 15m", and the
-///     one-tap row (Running late · Give up / Swap · Checklist · Message)
-///   How did your shift go? (only after a finished shift due a rating)
+/// audit V1, UX-09/10/16, C6/C7, H6; iOS readability round 10/8/26). Top to
+/// bottom, most urgent first:
+///   a small header ("Hi, Jordan", the restaurant, the inbox), and under it
+///     an amber "As of 3:42pm · offline" while the week is the phone's copy
+///   the hero: the next shift, EVERY leg of a double, when it starts, and
+///     ONE primary for where the person is in the day — Tasks · 3/12 on
+///     shift or within 30 minutes of it, Running late before a shift today
+///     — with the rest (Running late · Change shift · Tasks · Message) quiet
+///     in one row
+///   From your manager (only an urgent note not yet "Got it", or a reply)
 ///   Waiting on you (only when a swap or an offer waits)
-///   hours this week, the overtime heads-up, last shift's tips
 ///   Before service (only on a working day)
-///   who's on with me
+///   who's on with me (the first four, overlapping hours first)
+///   How did your shift go? (only after a finished shift due a rating)
+///   hours this week, the overtime heads-up, last shift's tips
 ///   a guest named you (only when one did)
-///   the week, then later shifts
+///   the week, one line a day (tap a day for its break, notes and request),
+///     then later shifts
 ///   "Updated 3:42pm"
-/// Ember is spent once: the hero's ambient light. Every section that can
-/// fail says so in place with Try again.
+/// Ember is spent once: the hero. Every section that can fail says so in
+/// place with Try again.
 struct StaffTodayView: View {
     let store: StaffPortalStore
     @Environment(StaffSessionStore.self) private var staff
@@ -24,6 +30,8 @@ struct StaffTodayView: View {
     @State private var lateLeg: LateTarget?
     @State private var clock = CavnarEntranceClock()
     @State private var now = Date()
+    private let tasks = StaffTasksStore.shared
+    private let network = NetworkMonitor.shared
 
     struct ShiftChange: Identifiable {
         let day: StaffWeekDay
@@ -40,10 +48,12 @@ struct StaffTodayView: View {
     var body: some View {
         StaffTabScroll(refresh: { await store.refreshAll() }) {
             header
+            offlineWarning
             content
             stamp
         }
-        // The relative line ("Starts in 2h 15m") moves with the clock.
+        // The relative line ("Starts in 2h 15m") and the hero's primary
+        // move with the clock.
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -68,20 +78,19 @@ struct StaffTodayView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .center, spacing: CavnarSpace.s) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                 if let restaurant = store.profile.value?.restaurant, !restaurant.isEmpty {
-                    StaffKicker(text: restaurant)
+                    CavnarKicker(restaurant)
                 }
                 Text(greeting)
-                    .font(.cavnarBody(CavnarType.emphasis, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.headline)
                     .accessibilityAddTraits(.isHeader)
             }
             Spacer(minLength: 0)
             inboxButton
         }
-        .padding(.top, 6)
+        .padding(.top, CavnarSpace.xxs)
     }
 
     private var greeting: String {
@@ -96,12 +105,12 @@ struct StaffTodayView: View {
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: "tray")
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(.cavnar(.lead).weight(.semibold))
                     .foregroundStyle(Color.cavnarInk2)
                     .frame(width: 44, height: 44)
                 if store.inboxBadge > 0 {
                     Text(store.inboxBadge > 99 ? "99+" : "\(store.inboxBadge)")
-                        .font(.cavnarNumber(11, weight: 700))
+                        .font(.cavnarNumber(CavnarType.tag, weight: 700))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .frame(minWidth: 18, minHeight: 18)
@@ -109,11 +118,41 @@ struct StaffTodayView: View {
                         .offset(x: 2, y: 2)
                 }
             }
-            .contentShape(Rectangle())
+            .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Inbox")
         .accessibilityValue(store.inboxBadge > 0 ? "\(store.inboxBadge) unread" : "Nothing unread")
+    }
+
+    // MARK: Offline / cached — said at the top, not only at the foot
+
+    @ViewBuilder
+    private var offlineWarning: some View {
+        let s = store.shifts
+        let offline = !network.isOnline
+        if s.value != nil, s.isStale || (s.fromCache && (offline || s.error != nil)),
+           let line = StaffFreshness.warning(at: s.loadedAt, offline: offline, now: now) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    Image(systemName: offline ? "wifi.slash" : "exclamationmark.arrow.circlepath")
+                        .font(.cavnar(.secondary).weight(.semibold))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .accessibilityHidden(true)
+                    CavnarMixedText(line, role: .secondary, color: .cavnarAmber)
+                }
+                if !offline, let error = s.error {
+                    Text(error)
+                        .cavnarText(.caption, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, CavnarSpace.s)
+            .padding(.vertical, CavnarSpace.xs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.cavnarAmberBg, in: RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
+            .accessibilityElement(children: .combine)
+        }
     }
 
     // MARK: Content
@@ -123,12 +162,11 @@ struct StaffTodayView: View {
         switch store.shifts.phase {
         case .loading:
             StaffLoadingLine(text: "Loading your shifts")
-                .padding(.vertical, 8)
+                .padding(.vertical, CavnarSpace.xs)
         case .failed:
             StaffLoadFailed(what: "your shifts", message: store.shifts.error) {
                 await store.reloadShifts()
             }
-            .padding(16)
             .cavnarCard()
             // The portal didn't load: leaving must not depend on Me
             // loading either (a shared phone handed on mid-outage).
@@ -152,23 +190,37 @@ struct StaffTodayView: View {
             let hero = StaffTodayPlan.hero(week: week, now: now)
             heroCard(hero, shifts: shifts)
                 .staffRise(0, clock)
-            // "How did your shift go?" — only after a finished shift the
-            // server says is due a rating (V6); otherwise it draws nothing.
-            StaffPulseCard(store: store)
+            // Urgent and unread from a manager, right under the hero; an
+            // ordinary announcement stays behind the tray.
+            if let strip = StaffManagerStrip.content(store.inbox.value) {
+                StaffManagerStripView(text: strip.text, urgent: strip.urgent) {
+                    if strip.opensThread {
+                        store.messageShiftDate = nil
+                        store.showingMessages = true
+                    } else {
+                        store.showingInbox = true
+                    }
+                }
+                .staffRise(1, clock)
+            }
             if let sentence = StaffWaiting.sentence(store.waiting.value) {
                 StaffWaitingStrip(sentence: sentence) { store.selectedTab = .requests }
                     .staffRise(1, clock)
             }
-            StaffStatsTiles(store: store, shifts: shifts)
-                .staffRise(2, clock)
             StaffBriefCard(section: store.brief, reload: { await store.reloadBrief() })
             if let hero {
                 StaffCoworkersCard(section: store.coworkers, hero: hero) {
                     await store.reloadCoworkers()
                 }
             }
+            // "How did your shift go?" — only after a finished shift the
+            // server says is due a rating (V6); otherwise it draws nothing.
+            StaffPulseCard(store: store)
+            StaffStatsTiles(store: store, shifts: shifts)
+                .staffRise(2, clock)
             StaffRecognitionCard(section: store.recognition)
-            weekList(week)
+            weekList(week, heroDate: hero?.day.date)
+                .staffRise(3, clock)
             laterList(StaffTodayPlan.later(upcoming: shifts.upcoming ?? [], week: week))
         }
     }
@@ -178,25 +230,27 @@ struct StaffTodayView: View {
     @ViewBuilder
     private func heroCard(_ hero: StaffHero?, shifts: StaffShiftsResponse) -> some View {
         if let hero {
+            let progress = tasks.progress
             StaffHeroCard(hero: hero,
+                          primary: StaffTodayPlan.heroPrimary(hero, now: now, hasTasks: progress != nil),
+                          tasks: progress,
                           lateReport: { leg in store.lateReport(date: hero.day.date, shiftStart: leg.shiftStart) },
                           onLate: { lateLeg = LateTarget(date: hero.day.date, leg: hero.nextLeg) },
                           onChange: { leg, mode in changing = ShiftChange(day: hero.day.focused(on: leg), mode: mode) },
-                          onChecklist: { store.selectedTab = .tasks },
+                          onTasks: { store.selectedTab = .tasks },
                           onMessage: {
                               store.messageShiftDate = hero.day.date
                               store.showingMessages = true
                           })
         } else {
             // Off for the whole week (UX-09): said in the hero's own place.
-            VStack(alignment: .leading, spacing: 8) {
-                StaffKicker(text: "Next shift")
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("Next shift")
                 Text("You\u{2019}re off for the next 7 days")
-                    .font(.cavnarHeadline(CavnarType.section))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                 if let next = StaffTodayPlan.nextBeyondWeek(upcoming: shifts.upcoming ?? [], week: shifts.week ?? []) {
-                    HomeMixedText.make(next, size: CavnarType.body, color: .cavnarInk2)
+                    CavnarMixedText(next, role: .body)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -207,56 +261,67 @@ struct StaffTodayView: View {
 
     // MARK: The week
 
+    /// One card, one line a day. The hero's day points up at the hero
+    /// instead of repeating it; a tap opens a day's break, notes and
+    /// request.
     @ViewBuilder
-    private func weekList(_ week: [StaffWeekDay]) -> some View {
+    private func weekList(_ week: [StaffWeekDay], heroDate: String?) -> some View {
         if !week.isEmpty {
-            HStack(alignment: .firstTextBaseline) {
-                StaffKicker(text: "The next 7 days")
-                Spacer()
-                if let h = store.shifts.value?.weekHours, let label = StaffTime.hoursLabel(h) {
-                    HomeMixedText.make(label, size: CavnarType.caption, weight: 600, color: .cavnarInk3)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("The next 7 days")
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(week.enumerated()), id: \.element.id) { index, day in
+                        if index > 0 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
+                        }
+                        StaffDayRow(day: day, isHeroDay: day.date == heroDate,
+                                    onChange: { leg, mode in changing = ShiftChange(day: day.focused(on: leg), mode: mode) })
+                    }
                 }
+                .padding(.horizontal, CavnarSpace.m)
+                .padding(.vertical, CavnarSpace.xxs)
+                .background(Color.cavnarPaper2.opacity(0.6),
+                            in: RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
             }
-            .padding(.top, 8)
-            ForEach(Array(week.enumerated()), id: \.element.id) { index, day in
-                StaffDayRow(day: day,
-                            onChange: { leg, mode in changing = ShiftChange(day: day.focused(on: leg), mode: mode) })
-                    .staffRise(index + 3, clock)
-            }
+            .padding(.top, CavnarSpace.xs)
         }
     }
 
     @ViewBuilder
     private func laterList(_ later: [(date: String, legs: [StaffShift])]) -> some View {
         if !later.isEmpty {
-            StaffKicker(text: "Later")
-                .padding(.top, 8)
-            ForEach(later, id: \.date) { item in
-                StaffLaterRow(date: item.date, legs: item.legs)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("Later")
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(later.enumerated()), id: \.element.date) { index, item in
+                        if index > 0 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
+                        }
+                        StaffLaterRow(date: item.date, legs: item.legs)
+                    }
+                }
+                .padding(.horizontal, CavnarSpace.m)
+                .padding(.vertical, CavnarSpace.xxs)
+                .background(Color.cavnarPaper2.opacity(0.6),
+                            in: RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
             }
+            .padding(.top, CavnarSpace.xs)
         }
     }
 
     // MARK: Freshness
 
+    /// "Updated 3:42pm" at the foot. A cached or failed refresh is said at
+    /// the top (`offlineWarning`); here it is only the time.
     @ViewBuilder
     private var stamp: some View {
         let cached = store.shifts.fromCache
         if let line = StaffFreshness.stamp(at: cached ? store.shifts.loadedAt : (store.lastRefresh ?? store.shifts.loadedAt),
                                            fromCache: cached, now: now) {
-            VStack(spacing: 4) {
-                HomeMixedText.make(line, size: CavnarType.caption, weight: cached ? 600 : 400,
-                                   color: cached ? .cavnarAmber : .cavnarInk3)
-                if store.shifts.isStale, let error = store.shifts.error {
-                    Text("Couldn\u{2019}t refresh: \(error)")
-                        .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarRed)
-                        .multilineTextAlignment(.center)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 10)
-            .accessibilityElement(children: .combine)
+            CavnarMixedText(line, role: .caption, color: .cavnarInk3)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, CavnarSpace.xs)
         }
     }
 }
@@ -264,31 +329,35 @@ struct StaffTodayView: View {
 // MARK: - The hero card
 
 /// The next shift as the screen's one hero (`.cavnarCard(.hero)`, UX-09):
-/// kicker, "Tonight" in Clash, each leg's time in the number face at the
-/// card size, what the leg is, its break and note, its request state, the
-/// relative line, and the one-tap row.
+/// kicker, "Tonight" in Clash, when it starts, each leg's time in the number
+/// face, what the leg is, its break and note, its request state; then ONE
+/// primary chosen by the moment (`StaffHeroPrimary`) and the rest quiet in
+/// one row.
 struct StaffHeroCard: View {
     let hero: StaffHero
+    let primary: StaffHeroPrimary
+    let tasks: (done: Int, total: Int)?
     let lateReport: (StaffShift) -> StaffRunningLateReport?
     let onLate: () -> Void
     let onChange: (StaffShift, StaffShiftChangeSheet.Mode) -> Void
-    let onChecklist: () -> Void
+    let onTasks: () -> Void
     let onMessage: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                StaffKicker(text: "Next shift")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                CavnarKicker("Next shift")
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) { title; date }
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) { title; date }
                     VStack(alignment: .leading, spacing: 2) { title; date }
                 }
+                CavnarMixedText(hero.relative, role: .lead, color: .cavnarInk)
+                    .accessibilityLabel(hero.relative)
             }
             ForEach(Array(hero.day.legs.enumerated()), id: \.offset) { _, leg in
-                StaffLegBlock(leg: leg, large: true, late: lateReport(leg))
+                StaffLegBlock(leg: leg, timeRole: hero.day.legs.count > 1 ? .figureM : .figureL,
+                              late: lateReport(leg))
             }
-            HomeMixedText.make(hero.relative, size: CavnarType.body, weight: 700, color: .cavnarInk)
-                .accessibilityLabel(hero.relative)
             actions
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -298,138 +367,213 @@ struct StaffHeroCard: View {
 
     private var title: some View {
         Text(hero.title)
-            .font(.cavnarHeadline(CavnarType.section))
-            .foregroundStyle(Color.cavnarInk)
+            .cavnarText(.headline)
             .accessibilityAddTraits(.isHeader)
     }
 
     private var date: some View {
-        HomeMixedText.make("\(hero.day.weekday) \(CavnarDate.mdy(hero.day.date))", size: CavnarType.secondary,
-                           color: .cavnarInk3)
+        CavnarMixedText("\(hero.day.weekday) \(CavnarDate.mdy(hero.day.date))", role: .secondary)
     }
 
-    // MARK: One-tap row
+    // MARK: Actions
 
     private var changeable: [StaffShift] { hero.day.legs.filter { $0.canDrop || $0.canSwap } }
 
-    enum Action: Hashable { case late, change, checklist, message }
+    enum Action: Hashable { case late, change, tasks, message }
 
-    /// Running late only for today's shift before it ends (H1); Give up /
-    /// Swap only while a leg can still change hands; Checklist only today.
+    /// Running late only for today's shift before it ends (H1); Change
+    /// shift only while a leg can still change hands; Tasks only today.
     var actionList: [Action] {
         var out: [Action] = []
         if hero.canRunLate { out.append(.late) }
         if !changeable.isEmpty { out.append(.change) }
-        if hero.day.isToday { out.append(.checklist) }
+        if hero.day.isToday { out.append(.tasks) }
         out.append(.message)
         return out
     }
 
+    /// Everything but the primary, quiet.
+    var quietList: [Action] {
+        switch primary {
+        case .tasks: return actionList.filter { $0 != .tasks }
+        case .late: return actionList.filter { $0 != .late }
+        case .none: return actionList
+        }
+    }
+
     @ViewBuilder
     private var actions: some View {
-        let list = actionList
-        // Two across, one across when the text is large (UX-20).
-        ViewThatFits(in: .horizontal) {
-            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                ForEach(Array(stride(from: 0, to: list.count, by: 2)), id: \.self) { i in
-                    GridRow {
-                        button(list[i])
-                        if i + 1 < list.count {
-                            button(list[i + 1])
-                        } else {
-                            Color.clear.frame(height: 1)
-                        }
-                    }
-                }
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            switch primary {
+            case .tasks: tasksPrimary
+            case .late: latePrimary
+            case .none: EmptyView()
             }
-            VStack(spacing: 8) {
-                ForEach(list, id: \.self) { button($0) }
-            }
+            quietRow
         }
         .padding(.top, 2)
     }
 
+    private var tasksPrimary: some View {
+        let done = tasks?.done ?? 0, total = tasks?.total ?? 0
+        let fraction = total > 0 ? min(1, CGFloat(done) / CGFloat(total)) : 0
+        return Button(action: onTasks) {
+            VStack(spacing: CavnarSpace.xs) {
+                HStack(spacing: CavnarSpace.xs) {
+                    Image(systemName: "checklist").accessibilityHidden(true)
+                    HomeMixedText.make("Tasks \u{00B7} \(done)/\(total)", role: .label, color: .white)
+                }
+                // The count's own progress, white on the ember.
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.28))
+                        Capsule().fill(Color.white)
+                            .frame(width: fraction > 0 ? max(6, geo.size.width * fraction) : 0)
+                    }
+                }
+                .frame(height: 4)
+                .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarPrimaryButtonStyle())
+        .accessibilityLabel("Tasks, \(done) of \(total) done")
+        .accessibilityHint("Opens your tasks")
+    }
+
+    private var latePrimary: some View {
+        Button(action: onLate) {
+            Label("Running late", systemImage: "clock.badge.exclamationmark")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarPrimaryButtonStyle())
+        .accessibilityHint("Tells your manager how late you'll be")
+    }
+
+    /// One row when it fits; two across, then one across, as the text grows
+    /// (UX-20).
     @ViewBuilder
-    private func button(_ action: Action) -> some View {
-        switch action {
-        case .late: quiet("Running late", "clock.badge.exclamationmark", action: onLate)
-        case .change: changeMenu
-        case .checklist: quiet("Checklist", "checklist", action: onChecklist)
-        case .message: quiet("Message", "bubble.left", action: onMessage)
+    private var quietRow: some View {
+        let list = quietList
+        if !list.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: CavnarSpace.xs) {
+                    ForEach(list, id: \.self) { button($0, icon: false) }
+                }
+                Grid(horizontalSpacing: CavnarSpace.xs, verticalSpacing: CavnarSpace.xs) {
+                    ForEach(Array(stride(from: 0, to: list.count, by: 2)), id: \.self) { i in
+                        GridRow {
+                            button(list[i], icon: true)
+                            if i + 1 < list.count {
+                                button(list[i + 1], icon: true)
+                            } else {
+                                Color.clear.frame(height: 1)
+                            }
+                        }
+                    }
+                }
+                VStack(spacing: CavnarSpace.xs) {
+                    ForEach(list, id: \.self) { button($0, icon: true) }
+                }
+            }
         }
     }
 
-    private func quiet(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+    @ViewBuilder
+    private func button(_ action: Action, icon: Bool) -> some View {
+        switch action {
+        case .late: quiet("Running late", "clock.badge.exclamationmark", icon: icon, action: onLate)
+        case .change: changeMenu(icon: icon)
+        case .tasks: quiet("Tasks", "checklist", icon: icon, action: onTasks)
+        case .message: quiet("Message", "bubble.left", icon: icon, action: onMessage)
+        }
+    }
+
+    private func quiet(_ title: String, _ systemImage: String, icon: Bool,
+                       action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: icon)
-                .labelStyle(.titleAndIcon)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .frame(maxWidth: .infinity, minHeight: 20)
+            label(title, systemImage, icon: icon)
         }
         .buttonStyle(StaffQuietButtonStyle())
     }
 
-    /// Give up / Swap — per leg on a double, so the evening half can move
-    /// on its own (C6). Opens I3's StaffShiftChangeSheet.
-    private var changeMenu: some View {
+    @ViewBuilder
+    private func label(_ title: String, _ systemImage: String, icon: Bool) -> some View {
+        Group {
+            if icon {
+                Label(title, systemImage: systemImage).labelStyle(.titleAndIcon)
+            } else {
+                Text(title)
+            }
+        }
+        .lineLimit(1)
+        .fixedSize(horizontal: !icon, vertical: false)
+        .frame(maxWidth: .infinity, minHeight: 20)
+    }
+
+    /// Change shift — Give up shift or Swap shift, per leg on a double, so
+    /// the evening half can move on its own (C6). Opens I3's
+    /// StaffShiftChangeSheet.
+    private func changeMenu(icon: Bool) -> some View {
         Menu {
             ForEach(Array(changeable.enumerated()), id: \.offset) { _, leg in
                 let suffix = changeable.count > 1 ? " \(leg.timeRange)" : ""
                 if leg.canDrop {
-                    Button("Give up\(suffix)") { onChange(leg, .drop) }
+                    Button("Give up shift\(suffix)") { onChange(leg, .drop) }
                 }
                 if leg.canSwap {
-                    Button("Swap\(suffix)") { onChange(leg, .swap) }
+                    Button("Swap shift\(suffix)") { onChange(leg, .swap) }
                 }
             }
         } label: {
-            Label("Give up / Swap", systemImage: "arrow.left.arrow.right")
-                .labelStyle(.titleAndIcon)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .frame(maxWidth: .infinity, minHeight: 20)
+            label("Change shift", "arrow.left.arrow.right", icon: icon)
                 .modifier(StaffQuietSurface())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Give up or swap this shift")
+        .accessibilityLabel("Change shift")
+        .accessibilityHint("Give up shift or swap shift")
     }
 }
 
 /// One leg: its time in the number face, what it is, the break, the note,
-/// and the live request on it. `large` is the hero's size (cardNumber);
-/// the week rows use the body size.
+/// and the live request on it. `timeRole` is the hero's figure size; the
+/// week's expanded rows use FigureS, or no time at all when the day's one
+/// line already said it.
 struct StaffLegBlock: View {
     let leg: StaffShift
-    var large: Bool = false
+    var timeRole: CavnarText? = .figureS
     var late: StaffRunningLateReport? = nil
 
+    private var large: Bool { timeRole == .figureL || timeRole == .figureM }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(leg.timeRange.isEmpty ? "Time to be set" : leg.timeRange)
-                .font(leg.timeRange.isEmpty ? .cavnarBody(CavnarType.body)
-                                            : .cavnarNumber(large ? CavnarType.cardNumber : 17, weight: 600))
-                .foregroundStyle(leg.timeRange.isEmpty ? Color.cavnarInk3 : Color.cavnarInk)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            if let timeRole {
+                if leg.timeRange.isEmpty {
+                    Text("Time to be set").cavnarText(.body)
+                } else {
+                    Text(leg.timeRange)
+                        .cavnarText(timeRole)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if !leg.detailLine.isEmpty {
-                HomeMixedText.make(leg.detailLine, size: large ? CavnarType.body : CavnarType.secondary,
-                                   color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(leg.detailLine, role: large ? .body : .secondary)
             }
             if let line = leg.breakLine {
-                HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk3)
+                CavnarMixedText(line, role: .secondary)
             }
             if let note = leg.noteLine {
-                HomeMixedText.make("Note: \(note)", size: CavnarType.secondary, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText("Note: \(note)", role: .secondary)
             }
             if let request = leg.request {
                 StaffRequestChip(request: request, showDetail: large)
             }
             if let late {
-                HomeMixedText.make("You told your manager about \(late.etaMinutes) min late.",
-                                   size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
+                CavnarMixedText("You told your manager about \(late.etaMinutes) min late.",
+                                role: .secondary, color: .cavnarAmber)
             }
         }
     }
@@ -445,15 +589,13 @@ struct StaffRequestChip: View {
         let tone: CavnarTone = request.isWatch ? .warning : .neutral
         VStack(alignment: .leading, spacing: 3) {
             Text(request.chipLabel)
-                .font(.cavnarBody(CavnarType.caption, weight: 700))
-                .foregroundStyle(tone.foreground)
-                .padding(.horizontal, 8)
+                .cavnarText(.tag, color: tone.foreground)
+                .padding(.horizontal, CavnarSpace.xs)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(tone.background))
             if showDetail {
                 Text(request.detail)
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -464,114 +606,125 @@ struct StaffRequestChip: View {
 
 // MARK: - Day rows
 
-/// One day of the week: every leg, its hours, notes, section and request
-/// state; "Not posted yet" for a day no published week covers; today
-/// labelled (a kicker and a brighter row), never coloured green (UX-16).
-/// One VoiceOver stop per day (UX-18); the change menu is its own.
+/// One day of the week as ONE line — "Wed 10/8/26 · 4pm – 10pm · Server" —
+/// at full contrast whether it is a shift, "Off" or "Not posted yet". The
+/// hero's day points up at the hero. A tap opens the day's station, hours,
+/// break, note and request; the ⋯ menu (Give up shift · Swap shift) is its
+/// own control. One VoiceOver stop per day with the whole day in it (UX-18).
 struct StaffDayRow: View {
     let day: StaffWeekDay
+    var isHeroDay: Bool = false
     let onChange: (StaffShift, StaffShiftChangeSheet.Mode) -> Void
 
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var changeable: [StaffShift] { day.legs.filter { $0.canDrop || $0.canSwap } }
+    private var canExpand: Bool { !isHeroDay && StaffTodayPlan.dayHasDetail(day) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(day.weekday)
-                        .font(.cavnarBody(CavnarType.body, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(CavnarDate.mdy(day.date), size: CavnarType.caption, color: .cavnarInk3)
-                    if day.isToday {
-                        Text("TODAY")
-                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                            .kerning(1.2)
-                            .foregroundStyle(Color.cavnarInk)
-                    }
-                }
-                if day.legs.isEmpty {
-                    Text(day.isPosted ? "Off" : "Not posted yet")
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
-                } else {
-                    ForEach(Array(day.legs.enumerated()), id: \.offset) { _, leg in
-                        StaffLegBlock(leg: leg)
-                    }
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(StaffTodayPlan.accessibilityLabel(day))
-            Spacer(minLength: 0)
-            if !changeable.isEmpty {
-                Menu {
-                    ForEach(Array(changeable.enumerated()), id: \.offset) { _, leg in
-                        let suffix = changeable.count > 1 ? " \(leg.timeRange)" : ""
-                        if leg.canDrop { Button("Can\u{2019}t work this\(suffix)") { onChange(leg, .drop) } }
-                        if leg.canSwap { Button("Swap with a colleague\(suffix)") { onChange(leg, .swap) } }
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .center, spacing: CavnarSpace.xs) {
+                Button {
+                    guard canExpand else { return }
+                    Haptic.light()
+                    if reduceMotion { expanded.toggle() } else {
+                        withAnimation(.easeOut(duration: 0.22)) { expanded.toggle() }
                     }
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                        line
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        if canExpand {
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption).weight(.semibold))
+                                .foregroundStyle(Color.cavnarInk3)
+                                .rotationEffect(.degrees(expanded ? 180 : 0))
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .padding(.vertical, CavnarSpace.xs)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Change this shift")
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(isHeroDay ? StaffTodayPlan.accessibilityLabel(day) + ". Your next shift, shown above"
+                                              : StaffTodayPlan.accessibilityLabel(day))
+                .accessibilityValue(canExpand ? (expanded ? "Expanded" : "Collapsed") : "")
+                .accessibilityAddTraits(canExpand ? .isButton : [])
+                .accessibilityRemoveTraits(canExpand ? [] : .isButton)
+                if !changeable.isEmpty && !isHeroDay {
+                    Menu {
+                        ForEach(Array(changeable.enumerated()), id: \.offset) { _, leg in
+                            let suffix = changeable.count > 1 ? " \(leg.timeRange)" : ""
+                            if leg.canDrop { Button("Give up shift\(suffix)") { onChange(leg, .drop) } }
+                            if leg.canSwap { Button("Swap shift\(suffix)") { onChange(leg, .swap) } }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.cavnar(.body).weight(.semibold))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Change shift")
+                    .accessibilityHint("Give up shift or swap shift")
+                }
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                    ForEach(Array(day.legs.enumerated()), id: \.offset) { _, leg in
+                        StaffLegBlock(leg: leg, timeRole: day.legs.count > 1 ? .figureS : nil)
+                    }
+                }
+                .padding(.bottom, CavnarSpace.s)
+                .transition(reduceMotion ? .identity : .opacity)
             }
         }
-        .padding(.vertical, 12)
-        .padding(.leading, 14)
-        .padding(.trailing, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(day.isToday ? Color.cavnarPaper3.opacity(0.55) : Color.cavnarPaper2.opacity(0.6),
-                    in: RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
-                .strokeBorder(day.isToday ? Color.cavnarInk.opacity(0.18) : Color.cavnarPaper3.opacity(0.5),
-                              lineWidth: 1)
-        )
-        .opacity(day.legs.isEmpty ? 0.75 : 1)
+    }
+
+    /// "Today 10/8/26 · 4pm – 10pm · Server" — weekday in the label face,
+    /// the date and times in the number face, everything at full contrast.
+    private var line: Text {
+        let name = day.isToday ? "Today" : String(day.weekday.prefix(3))
+        let what = isHeroDay ? "Next shift, above \u{2191}" : StaffTodayPlan.dayLine(day)
+        return Text(name).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
+            + Text(" ").font(.cavnar(.body))
+            + HomeMixedText.make(CavnarDate.mdy(day.date), role: .secondary, color: .cavnarInk2)
+            + Text(" \u{00B7} ").font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
+            + HomeMixedText.make(what, role: .body, color: day.legs.isEmpty || isHeroDay ? .cavnarInk2 : .cavnarInk)
     }
 }
 
-/// A shift past the seven days (`upcoming`, UX-10).
+/// A shift past the seven days (`upcoming`, UX-10), in the week's one-line
+/// form.
 struct StaffLaterRow: View {
     let date: String
     let legs: [StaffShift]
 
     var body: some View {
-        let times = legs.map(\.timeRange).filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+        let times = legs.map(\.timeRange).filter { !$0.isEmpty }.joined(separator: " + ")
         let role = legs.compactMap(\.role).first(where: { !$0.isEmpty })
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Text(legs.first?.day ?? "")
-                    .font(.cavnarBody(CavnarType.body, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
-                HomeMixedText.make(CavnarDate.mdy(date), size: CavnarType.caption, color: .cavnarInk3)
-            }
-            if !times.isEmpty {
-                Text(times)
-                    .font(.cavnarNumber(15, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-            }
-            if let role {
-                Text(role).font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 10)
-        .padding(.horizontal, 14)
-        .background(Color.cavnarPaper2.opacity(0.6),
-                    in: RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
-        .accessibilityElement(children: .combine)
+        let what = [times.isEmpty ? nil : times, role].compactMap { $0 }.joined(separator: " \u{00B7} ")
+        (Text(String((legs.first?.day ?? "").prefix(3))).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
+            + Text(" ").font(.cavnar(.body))
+            + HomeMixedText.make(CavnarDate.mdy(date), role: .secondary, color: .cavnarInk2)
+            + (what.isEmpty ? Text("") : Text(" \u{00B7} ").font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
+               + HomeMixedText.make(what, role: .body, color: .cavnarInk)))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, CavnarSpace.xs)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .accessibilityElement(children: .combine)
     }
 }
 
 // MARK: - The quiet action surface
 
-/// The hero's one-tap actions: the quiet secondary look (white 5% surface,
-/// 1pt ink hairline at 16%, ink text — CavnarSecondaryButtonStyle's)
-/// sized for a 2×2 row, at least 44pt tall. Ember stays on the hero.
+/// The hero's quiet actions: the secondary look (white 5% surface, 1pt ink
+/// hairline at 16%, ink text — CavnarSecondaryButtonStyle's), at least
+/// 44pt tall. Ember stays on the hero's one primary.
 struct StaffQuietButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -586,10 +739,10 @@ struct StaffQuietSurface: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+            .font(.cavnar(.label))
             .foregroundStyle(Color.cavnarInk)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 12)
+            .padding(.horizontal, CavnarSpace.xs)
+            .padding(.vertical, CavnarSpace.s)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                 .fill(Color.white.opacity(pressed ? 0.09 : 0.05)))
