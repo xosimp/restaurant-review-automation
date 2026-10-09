@@ -2983,6 +2983,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-status .nt{display:inline-flex;align-items:baseline;gap:5px}
 .hb-status .nt small{font-size:13.5px;color:var(--ink3)}
 .hb-status .go{flex:1 0 100%;display:flex;margin-top:2px}
+/* Under the report link: the night's net (and vs budget when it is read). */
+.hb-status .ln{flex:1 0 100%;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:12px;cursor:pointer;padding:0;display:inline-flex;gap:5px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
 .hb-top{display:flex;justify-content:space-between;gap:28px;align-items:flex-start;flex-wrap:wrap}
@@ -3770,9 +3772,9 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-foot{margin-top:56px;font-size:12.5px;color:var(--ink3);line-height:1.55;max-width:80ch}
 .dn-empty{margin-top:24px;padding:28px;border-radius:22px;border:1px dashed var(--hb-line);color:var(--ink2);font-size:15px;line-height:1.55}
 /* Home: the DNA card, under Before service */
-.dn-home{display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:24px;align-items:center;margin-top:34px;padding:22px 26px;border-radius:24px;position:relative;overflow:hidden;color:var(--ink);text-decoration:none;background:linear-gradient(115deg,rgba(212,88,58,.14),rgba(255,255,255,.02) 58%);border:1px solid rgba(212,88,58,.3);box-shadow:0 0 44px -10px rgba(212,88,58,.42),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s}
+.dn-home{display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:24px;align-items:center;margin-top:34px;padding:22px 26px;border-radius:24px;position:relative;overflow:hidden;color:var(--ink);text-decoration:none;background:linear-gradient(115deg,rgba(212,88,58,.14),rgba(255,255,255,.02) 58%);border:1px solid rgba(212,88,58,.3);box-shadow:0 0 34px -12px rgba(212,88,58,.24),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s}
 .dn-home:before{content:'';position:absolute;left:-80px;top:-110px;width:300px;height:300px;border-radius:50%;background:radial-gradient(closest-side,rgba(212,88,58,.2),transparent);pointer-events:none}
-.dn-home:hover{transform:translateY(-2px);border-color:rgba(212,88,58,.55);box-shadow:0 0 52px -8px rgba(212,88,58,.55),inset 0 1px 0 rgba(255,255,255,.08)}
+.dn-home:hover{transform:translateY(-2px);border-color:rgba(212,88,58,.55);box-shadow:0 0 40px -10px rgba(212,88,58,.34),inset 0 1px 0 rgba(255,255,255,.08)}
 .dn-home:focus-visible{outline:2px solid var(--ember2);outline-offset:3px}
 .dn-home .mini{position:relative}
 .dn-home .mini .dn-radar{max-width:132px}
@@ -6588,24 +6590,21 @@ svg:hover .hb-xh{opacity:1}
     if(!x||!x.ok)return null;
     var r=(x.reports||[])[0];if(!r)return null;
     var running=!(r.status==='final'||r.status==='provisional'||r.status==='failed');
-    // No "Last night" kicker (9/26/26): the Report link names the night,
-    // and the line reads as the verdict itself.
-    var bits=[];
-    // Which night the line is, first: "Mixed day 58/100" read as today's
-    // live score (owner, 10/5/26). Yesterday, Today, else "Sat 10/3/26".
+    // One orange link that names the night (owner, 10/9/26): "Last night's
+    // report", with the net under it. The day pill and the verdict/score
+    // line are gone; the score lives in the report itself.
     var dayTag=hbReportDay(r.business_date,x.tonight);
-    if(running)bits.push('<span class="miss">the report is still coming in</span>');
+    var label=dayTag==='Yesterday'?'Last night’s report':(dayTag==='Today'?'Tonight’s report':(dayTag?dayTag+' report':'Last night’s report'));
+    var bits=[];
+    if(running)bits.push('<span class="miss">still coming in</span>');
     else{
-      if(r.verdict)bits.push('<span class="vd"><i></i>'+esc(r.verdict)+(r.overall!=null?' <span class="hb-num">'+(+r.overall)+'/100</span>':'')+'</span>');
       if(typeof r.net==='number'&&isFinite(r.net))bits.push('<span class="nt"><span class="fig hb-num">$'+Math.round(r.net).toLocaleString('en-US')+'</span><small>net</small></span>');
       else bits.push('<span class="miss">'+esc((r.missing||[])[0]||(r.status==='failed'?'The report couldn’t finish':'Sales weren’t measured'))+'</span>');
       if(typeof r.vs_budget==='number'&&isFinite(r.vs_budget)){var vb=Math.round(r.vs_budget);
         bits.push('<span class="nt"><span class="fig hb-num '+(vb>=0?'up':'down')+'">'+(vb>0?'+':(vb<0?'−':''))+'$'+Math.abs(vb).toLocaleString('en-US')+'</span><small>vs budget</small></span>');}
     }
-    return {tone:(!running&&r.tone)||'',html:(dayTag?'<span class="day">'+esc(dayTag)+'</span>':'')+bits.join('<span class="sep">·</span>')
-      // The Report link on its own row under the line, never after a
-      // divider beside it (owner, 9/30/26).
-      +'<span class="go"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Report')+' →</button></span>'};
+    return {tone:'',html:'<span class="go"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+esc(label)+' →</button></span>'
+      +'<span class="ln">'+bits.join('<span class="sep">·</span>')+'</span>'};
   }
 // A confidence pill's tip opens above; in a card that clips its overflow
 // (the Reviews diagnosis) that cut it off. Measured on hover: when the

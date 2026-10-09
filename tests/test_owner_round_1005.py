@@ -132,8 +132,8 @@ def test_home_says_which_night_the_report_line_is():
     st = SRC[_at("  function hbStatusHtml(x){"):]
     st = st[:st.index("\n  }\n")]
     assert "var dayTag=hbReportDay(r.business_date,x.tonight);" in st
-    assert "(dayTag?'<span class=\"day\">'+esc(dayTag)+'</span>':'')+bits.join(" in st
-    assert ".hb-status .day{display:inline-flex;" in SRC
+    # The night is named in the report link itself (owner, 10/9/26).
+    assert "dayTag==='Yesterday'?'Last night’s report'" in st
 
 
 def test_the_late_night_hour_is_the_owners_to_set():

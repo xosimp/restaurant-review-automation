@@ -192,7 +192,7 @@ HELPERS = ("function esc(v){return String(v==null?'':v).replace(/[&<>\"']/g,func
            "function mdy(x){return 'M('+x+')';}var _hbScope='location';\n")
 
 
-def test_the_status_line_says_verdict_score_net_and_budget_in_its_tone():
+def test_the_status_line_is_the_nights_report_link_then_its_net():
     js = HELPERS + _fn("hbDayGap") + _fn("hbReportDay") + _fn("hbStatusHtml") + """
 console.log(JSON.stringify([
  hbStatusHtml({ok:true,tonight:'2026-09-20',reports:[{business_date:'2026-09-19',status:'final',verdict:'Good day',tone:'good',overall:78,net:8420,vs_budget:420}]}),
@@ -201,14 +201,13 @@ console.log(JSON.stringify([
  hbStatusHtml({ok:true,reports:[]})]));"""
     owner, manager, missing, none = _node(js)
     text = " ".join(re.sub(r"<[^>]+>", " ", owner["html"]).split())
-    assert owner["tone"] == "good"
-    # No "Last night" kicker on the line (owner, 9/26/26); Report names the night.
-    assert "Last night" not in text and "Good day 78/100" in text and "$8,420 net" in text and "+$420 vs budget" in text
-    # ...but which night it is, first (owner, 10/5/26): it read as today's live score.
-    assert text.startswith("Yesterday Good day 78/100")
+    # One orange link naming the night, the net under it (owner, 10/9/26):
+    # no day pill and no verdict/score line on Home any more.
+    assert text.startswith("Last night’s report →") and "$8,420 net" in text and "+$420 vs budget" in text
+    assert "Good day" not in text and "/100" not in text and 'class="day"' not in owner["html"]
+    assert owner["html"].index('class="go"') < owner["html"].index('class="ln"')
+    assert owner["tone"] == ""
     t2 = " ".join(re.sub(r"<[^>]+>", " ", manager["html"]).split())
-    # the Report link on its own row, no divider beside the line (9/30/26)
-    assert 'class="go"' in owner["html"] and "rdiv" not in owner["html"]
     assert "$8,420 net" in t2 and "budget" not in t2 and "/100" not in t2 and manager["tone"] == ""
     assert "Sales weren" in missing["html"] and "$0" not in missing["html"]      # a missing net is never 0
     assert none is None
