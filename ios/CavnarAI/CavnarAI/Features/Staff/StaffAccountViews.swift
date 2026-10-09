@@ -53,8 +53,7 @@ struct StaffForgotPinView: View {
     }
 
     var body: some View {
-        StaffSheetFrame(title: "Reset your PIN", onBack: step == .number ? nil : { back() },
-                        onClose: { dismiss() }) {
+        StaffSheetFrame(title: "Reset your PIN", onBack: step == .number ? nil : { back() }) {
             switch step {
             case .number:  numberStep
             case .verify:  verifyStep
@@ -76,8 +75,7 @@ struct StaffForgotPinView: View {
                 .keyboardType(.phonePad)
                 .textContentType(.telephoneNumber)
             Text("Message and data rates may apply.")
-                .font(.cavnarBody(CavnarType.caption))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption, color: .cavnarInk2)
             StaffErrorLine(text: error)
             Button {
                 Task { await start() }
@@ -268,8 +266,7 @@ struct StaffChangePinView: View {
     }
 
     var body: some View {
-        StaffSheetFrame(title: "Change your PIN", onBack: step == .current ? nil : { back() },
-                        onClose: { dismiss() }) {
+        StaffSheetFrame(title: "Change your PIN", onBack: step == .current ? nil : { back() }) {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(heading)
@@ -396,7 +393,7 @@ struct StaffDeleteAccountView: View {
     }
 
     var body: some View {
-        StaffSheetFrame(title: "Delete your account", onBack: nil, onClose: { dismiss() }) {
+        StaffSheetFrame(title: "Delete your account", onBack: nil) {
             VStack(alignment: .leading, spacing: 14) {
                 StaffSheetHelper(text: "This deletes your login at \(restaurant):")
                 VStack(alignment: .leading, spacing: 8) {
@@ -476,8 +473,7 @@ struct StaffEmailEditView: View {
     private var trimmed: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
-        StaffSheetFrame(title: current.isEmpty ? "Add your email" : "Your email", onBack: nil,
-                        onClose: { dismiss() }) {
+        StaffSheetFrame(title: current.isEmpty ? "Add your email" : "Your email", onBack: nil) {
             VStack(alignment: .leading, spacing: 14) {
                 StaffSheetHelper(text: "If a notice can't reach this phone, it comes here. Your manager sees the same address.")
                 StaffSheetField(text: $email, placeholder: "you@example.com", label: "Email")
@@ -497,7 +493,7 @@ struct StaffEmailEditView: View {
                 if !current.isEmpty {
                     Button("Remove my email") { Task { await save("") } }
                         .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                        .foregroundStyle(Color.cavnarRed)
+                        .foregroundStyle(Color.cavnarRedText)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(Rectangle())
                         .disabled(loading)
@@ -552,8 +548,7 @@ struct StaffLocationSwitcherView: View {
 
     var body: some View {
         StaffSheetFrame(title: target == nil ? "Your locations" : "Switch location",
-                        onBack: target == nil ? nil : { target = nil; pin = ""; error = nil },
-                        onClose: { dismiss() }) {
+                        onBack: target == nil ? nil : { target = nil; pin = ""; error = nil }) {
             if let target {
                 pinPad(target)
             } else {
@@ -580,8 +575,7 @@ struct StaffLocationSwitcherView: View {
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(location.restaurant)
-                                    .font(.cavnarBody(CavnarType.body, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk)
+                                    .cavnarText(.label)
                                 Text(location.current ? "You're here" : "Sign in with your PIN there")
                                     .font(.cavnarBody(CavnarType.caption))
                                     .foregroundStyle(location.current ? Color.cavnarGreen : Color.cavnarInk3)
@@ -732,8 +726,7 @@ struct StaffNotificationAskCard: View {
                     .foregroundStyle(Color.cavnarEmber2)
                     .accessibilityHidden(true)
                 Text("Get a heads-up when your schedule is posted or a request is answered.")
-                    .font(.cavnarBody(CavnarType.body, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.body, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) {
@@ -760,39 +753,42 @@ struct StaffNotificationAskCard: View {
 
 // MARK: - Sheet chrome shared by the views above
 
+/// The one sheet chrome for the staff account screens — `accountSheetChrome`,
+/// the same top bar every other staff sheet wears (re-audit L13: these
+/// had their own title row and a "Close" word). The chrome's back chevron
+/// closes the sheet; `onBack`, for a multi-step flow, steps back inside it.
 struct StaffSheetFrame<Content: View>: View {
     let title: String
     var onBack: (() -> Void)?
-    var onClose: () -> Void
     @ViewBuilder var content: Content
 
     var body: some View {
-        ZStack {
-            Color.cavnarPaper.ignoresSafeArea()
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack(spacing: 4) {
-                        if let onBack {
-                            StaffBackButton(action: onBack)
+                    if let onBack {
+                        // A step back inside the flow, in words — the
+                        // chrome's chevron closes the sheet.
+                        Button(action: onBack) {
+                            HStack(spacing: CavnarSpace.xxs) {
+                                Image(systemName: "chevron.left").accessibilityHidden(true)
+                                Text("Previous step")
+                            }
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
                         }
-                        Text(title)
-                            .cavnarText(.headline)
-                            .accessibilityAddTraits(.isHeader)
-                        Spacer()
-                        Button("Close", action: onClose)
-                            .font(.cavnar(.label))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
+                        .buttonStyle(.plain)
                     }
                     content
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 14)
-                .padding(.bottom, 24)
+                .padding(.horizontal, CavnarSpace.gutter)
+                .padding(.top, CavnarSpace.s)
+                .padding(.bottom, CavnarSpace.xl)
             }
             .scrollBounceBehavior(.basedOnSize)
             .scrollDismissesKeyboard(.interactively)
+            .background(Color.cavnarPaper.ignoresSafeArea())
+            .accountSheetChrome(title)
         }
     }
 }

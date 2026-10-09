@@ -24,7 +24,7 @@ struct StaffChoiceChip: View {
                 .font(isNumber ? .cavnarNumber(CavnarType.secondary, weight: 600) : .cavnar(.label))
                 .foregroundStyle(on ? Color.cavnarInk : Color.cavnarInk2)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.85)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(on ? Color.cavnarEmber.opacity(0.18) : Color.cavnarPaper3.opacity(0.45),
                             in: RoundedRectangle(cornerRadius: CavnarRadius.control))
@@ -75,6 +75,19 @@ struct StaffAvailabilitySheet: View {
     @State private var posted: String?
     @State private var giving: StaffAvailabilityConflict?
     @State private var askingTimeOff = false
+    /// Conflicts this person asked to give up from here (re-audit L2): the
+    /// row says so instead of offering the button again.
+    @State private var askedToGiveUp: Set<String> = []
+    /// Weekdays whose Starting / Until dates are open — folded until asked
+    /// for or set (re-audit, web-only list: rare, and staff have no web
+    /// dashboard to send them to).
+    @State private var datesOpen: Set<String> = []
+
+    /// An edit not yet saved (re-audit M3): swipe-down asks first.
+    private var isDirty: Bool {
+        guard let draft, let record = load.value, !saving, posted == nil else { return false }
+        return draft != StaffAvailabilityDraft(record)
+    }
 
     var body: some View {
         NavigationStack {
@@ -110,12 +123,13 @@ struct StaffAvailabilitySheet: View {
                     }
                 }
             }
-            .accountSheetChrome("My availability")
+            .accountSheetChrome("My availability", isDirty: isDirty)
         }
         .task { await reload() }
         .cavnarPostedOverlay(posted) { dismiss() }
         .sheet(item: $giving) { c in
-            StaffShiftChangeSheet(date: c.date, shiftStart: c.shiftStart, shiftEnd: c.shiftEnd, mode: .drop)
+            StaffShiftChangeSheet(date: c.date, shiftStart: c.shiftStart, shiftEnd: c.shiftEnd, mode: .drop,
+                                  onSent: { askedToGiveUp.insert(c.id) })
                 .environment(staff)
         }
         .sheet(isPresented: $askingTimeOff) {
@@ -176,7 +190,13 @@ struct StaffAvailabilitySheet: View {
                         Text(reason.prefix(1).uppercased() + reason.dropFirst())
                             .cavnarText(.secondary)
                     }
-                    StaffTextButton(title: "Give up shift") { giving = c }
+                    if askedToGiveUp.contains(c.id) {
+                        Label("Asked to give up", systemImage: "checkmark")
+                            .cavnarText(.label, color: .cavnarInk2)
+                            .frame(minHeight: 44, alignment: .leading)
+                    } else {
+                        StaffTextButton(title: "Give up shift") { giving = c }
+                    }
                 }
             }
             StaffUI.note("Your manager has been told about these.")
@@ -212,11 +232,18 @@ struct StaffAvailabilitySheet: View {
                         }
                     }
                     if day.status != .any {
-                        dateRow(label: "Starting", value: day.from, allowPast: true) { draft?.days[i].from = $0 }
-                        dateRow(label: "Until", value: day.until, allowPast: false) { draft?.days[i].until = $0 }
-                        StaffUI.note(day.from == nil && day.until == nil
-                                     ? "Every week, until you change it."
-                                     : "Only between these dates.")
+                        if day.from != nil || day.until != nil || datesOpen.contains(day.day) {
+                            dateRow(label: "Starting", value: day.from, allowPast: true) { draft?.days[i].from = $0 }
+                            dateRow(label: "Until", value: day.until, allowPast: false) { draft?.days[i].until = $0 }
+                            StaffUI.note(day.from == nil && day.until == nil
+                                         ? "Every week, until you change it."
+                                         : "Only between these dates.")
+                        } else {
+                            StaffUI.note("Every week, until you change it.")
+                            StaffTextButton(title: "Only for some dates?", tone: .cavnarInk2) {
+                                datesOpen.insert(day.day)
+                            }
+                        }
                     }
                 }
                 .padding(.bottom, 6)
@@ -335,6 +362,7 @@ struct StaffAvailabilitySheet: View {
             let r: StaffAvailabilitySaved = try await staff.authed("/staff/api/availability", method: .post, body: d.body())
             Haptic.success()
             adopt(r.record)
+            askedToGiveUp = []
             conflicts = r.conflicts
             conflictsText = r.conflictsText
             hint = r.hint
@@ -375,6 +403,13 @@ struct StaffPreferencesSheet: View {
     @State private var error: String?
     @State private var posted: String?
 
+    /// A choice changed and not saved (re-audit M3).
+    private var isDirty: Bool {
+        guard let r = load.value, !saving, posted == nil else { return false }
+        let savedHours = r.desiredHours.map { String(Int($0.rounded())) } ?? ""
+        return dayparts != Set(r.preferredDayparts) || hours != savedHours
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -390,7 +425,7 @@ struct StaffPreferencesSheet: View {
                 }
                 .padding(20)
             }
-            .accountSheetChrome("What I\u{2019}d like")
+            .accountSheetChrome("What I\u{2019}d like", isDirty: isDirty)
         }
         .task { await reload() }
         .cavnarPostedOverlay(posted) { dismiss() }
@@ -462,7 +497,7 @@ struct StaffPreferencesSheet: View {
                 body: StaffPreferencesSaveBody(preferredDayparts: order, desiredHours: Int(hours)))
             if r.ok {
                 Haptic.success()
-                posted = "Saved — the next draft reads it"
+                posted = "Saved — your manager\u{2019}s next schedule reads it"
             } else {
                 error = r.error ?? "Could not save."
             }

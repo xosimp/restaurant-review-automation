@@ -252,17 +252,14 @@ enum StaffSheetFormat {
         ["opening": "Opening", "closing": "Closing", "mid": "Mid", "any": "All day"][k] ?? k
     }
 
-    /// "4:05pm" today, "9/30/26 4:05pm" another day — for "as of …".
+    /// "4:05pm" today, "9/30/26 · 4pm" another day — for "as of …". The
+    /// house formatters (CavnarDate), as StaffFreshness uses, not a
+    /// DateFormatter of its own (re-audit L18).
     static func asOf(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.calendar = calendar
-        f.timeZone = calendar.timeZone
-        f.dateFormat = "h:mma"
-        let time = f.string(from: date).lowercased().replacingOccurrences(of: ":00", with: "")
-        if calendar.isDate(date, inSameDayAs: now) { return time }
-        f.dateFormat = "M/d/yy"
-        return f.string(from: date) + " " + time
+        let tz = calendar.timeZone
+        let when = calendar.isDate(date, inSameDayAs: now) ? CavnarDate.time(date, in: tz)
+                                                             : CavnarDate.mdyTime(date, in: tz)
+        return when.replacingOccurrences(of: ":00", with: "")
     }
 }
 

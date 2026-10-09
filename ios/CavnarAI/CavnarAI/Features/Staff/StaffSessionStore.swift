@@ -29,6 +29,10 @@ final class StaffSessionStore {
     private(set) var token: String?
     private(set) var profile: StaffProfile?
     var lastError: String?
+    /// The last sign-in failed because the server refused the PIN (a
+    /// refusal it answered), not a network or transport failure — what
+    /// turns the PIN dots red (re-audit L16).
+    private(set) var lastErrorWasPin = false
     /// One sentence for the sign-in screen the person lands on after the
     /// session ended without them asking: "Your shift session ended — sign
     /// in again.", "PIN changed — sign in with your new PIN.", the idle
@@ -252,6 +256,7 @@ final class StaffSessionStore {
     func signIn(portal: String, membershipID: Int, pin: String,
                 name: String? = nil, restaurant: String? = nil) async -> Bool {
         lastError = nil
+        lastErrorWasPin = false
         if loginNonce == nil { await refreshNonce(portal: portal) }
         return await attemptSignIn(portal: portal, membershipID: membershipID, pin: pin, name: name,
                                    restaurant: restaurant, retryOnStaleNonce: true)
@@ -290,6 +295,7 @@ final class StaffSessionStore {
             }
             if resp.nonceExpired == true { loginNonce = nil }
             lastError = resp.error ?? "That PIN didn't match."
+            lastErrorWasPin = resp.nonceExpired != true
             return false
         }
         didSignIn(token: token, code: portal, restaurant: restaurant, membershipID: membershipID, name: name)

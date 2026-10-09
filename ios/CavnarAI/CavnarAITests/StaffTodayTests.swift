@@ -170,11 +170,14 @@ final class StaffTodayTests: XCTestCase {
         let hero = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(23), calendar: utc))
         XCTAssertEqual(hero.day.date, "2026-10-03")
         XCTAssertEqual(hero.title, "Tomorrow")
-        XCTAssertEqual(hero.relative, "Tomorrow at 4pm", "past 12 hours it names the day, not a countdown")
+        XCTAssertEqual(hero.relative, "",
+                       "past 12 hours there is no relative line: the title, date and times say when (re-audit M6)")
         XCTAssertFalse(hero.canRunLate, "running late is for today's shift only (H1)")
 
         let morning = try XCTUnwrap(StaffTodayPlan.hero(week: Array(week.dropFirst()), now: at(2), calendar: utc))
-        XCTAssertEqual(morning.relative, "Saturday at 4pm")
+        XCTAssertEqual(morning.relative, "")
+        let within = try XCTUnwrap(StaffTodayPlan.hero(week: Array(week.dropFirst()), now: at(5, day: 3), calendar: utc))
+        XCTAssertEqual(within.relative, "Starts in 11h")
     }
 
     func testNoShiftInTheWeekPointsPastIt() throws {
@@ -296,6 +299,26 @@ final class StaffTodayTests: XCTestCase {
              "message": "Your restaurant's POS isn't connected.", "shifts": []}
             """)
         XCTAssertNil(none.lastShift, "no POS is said, never shown as $0")
+        XCTAssertNil(none.missingTipsLine, "no POS here: nothing to say on Today (re-audit M1)")
+        XCTAssertNil(e.missingTipsLine, "a tile is showing")
+
+        // Re-audit M2: a cook's punches carry 0 tips every day — no tile.
+        let cook = try decode(StaffEarnings.self, """
+            {"ok": true, "available": true, "lag_note": "A day behind.",
+             "shifts": [{"business_date": "2026-10-01", "date_label": "10/1/26", "still_open": false, "tips_total": 0},
+                        {"business_date": "2026-09-30", "date_label": "9/30/26", "still_open": false, "tips_total": 0}]}
+            """)
+        XCTAssertNil(cook.lastShift)
+        XCTAssertNil(cook.missingTipsLine, "punches with no tips are not a POS lag")
+        let nothingYet = try decode(StaffEarnings.self, """
+            {"ok": true, "available": true, "lag_note": "A day behind.", "shifts": []}
+            """)
+        XCTAssertEqual(nothingYet.missingTipsLine, "A day behind.")
+        let ambiguous = try decode(StaffEarnings.self, """
+            {"ok": true, "available": false, "reason": "ambiguous", "message": "Two people have your name.",
+             "lag_note": "A day behind.", "shifts": []}
+            """)
+        XCTAssertEqual(ambiguous.missingTipsLine, "Two people have your name.")
     }
 
     func testStatsAreHoursAndTheOvertimeHeadsUpOnlyWhenItApplies() throws {
@@ -428,9 +451,14 @@ final class StaffTodayTests: XCTestCase {
 
     func testTheHerosPrimaryFollowsTheMomentInTheDay() throws {
         let week = try XCTUnwrap(try decode(StaffShiftsResponse.self, doubleWeek).week)
-        // Two hours before the 11am leg: Running late.
+        // Two hours before the 11am leg: nothing is primary yet — Running
+        // late waits for the hour before (re-audit H3), quiet till then.
         let early = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(9), calendar: utc))
-        XCTAssertEqual(StaffTodayPlan.heroPrimary(early, now: at(9), hasTasks: true, calendar: utc), .late)
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(early, now: at(9), hasTasks: true, calendar: utc), .none)
+        XCTAssertTrue(StaffTodayPlan.offersRunningLate(early, now: at(9), calendar: utc))
+        // Forty-five minutes before: Running late.
+        let hourBefore = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(10, 15), calendar: utc))
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(hourBefore, now: at(10, 15), hasTasks: true, calendar: utc), .late)
         // Within 30 minutes of it: Tasks, when there are any…
         let soon = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(10, 45), calendar: utc))
         XCTAssertEqual(StaffTodayPlan.heroPrimary(soon, now: at(10, 45), hasTasks: true, calendar: utc), .tasks)
@@ -440,6 +468,10 @@ final class StaffTodayTests: XCTestCase {
         let on = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(12), calendar: utc))
         XCTAssertEqual(StaffTodayPlan.heroPrimary(on, now: at(12), hasTasks: true, calendar: utc), .tasks)
         XCTAssertEqual(StaffTodayPlan.heroPrimary(on, now: at(12), hasTasks: false, calendar: utc), .none)
+        // Running late leaves the quiet row 15 minutes into the leg.
+        let justStarted = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(11, 10), calendar: utc))
+        XCTAssertTrue(StaffTodayPlan.offersRunningLate(justStarted, now: at(11, 10), calendar: utc))
+        XCTAssertFalse(StaffTodayPlan.offersRunningLate(on, now: at(12), calendar: utc))
         // Not today: nothing is primary.
         let tomorrow = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: at(23), calendar: utc))
         XCTAssertFalse(tomorrow.day.isToday)

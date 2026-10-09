@@ -347,7 +347,8 @@ final class StaffTasksTests: XCTestCase {
         let read = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 10, day: 2, hour: 16, minute: 5)))
         XCTAssertEqual(StaffSheetFormat.asOf(read, now: now, calendar: cal), "4:05pm")
         let yesterday = try XCTUnwrap(cal.date(from: DateComponents(year: 2026, month: 9, day: 30, hour: 16)))
-        XCTAssertEqual(StaffSheetFormat.asOf(yesterday, now: now, calendar: cal), "9/30/26 4pm")
+        // Re-audit L18: the house date-and-time form, as StaffFreshness says it.
+        XCTAssertEqual(StaffSheetFormat.asOf(yesterday, now: now, calendar: cal), "9/30/26 \u{00B7} 4pm")
     }
 
     // MARK: Next-shift widget

@@ -11,14 +11,26 @@ import SwiftUI
 /// Requests, where they answer it (UX-06).
 struct StaffWaitingStrip: View {
     let sentence: String
+    /// The name the sentence opens with, set in the label weight; the rest
+    /// reads in body (re-audit L9 — a whole bold sentence shouted).
+    var lead: String? = nil
     let open: () -> Void
+
+    private var text: Text {
+        if let lead, !lead.isEmpty, sentence.hasPrefix(lead) {
+            return HomeMixedText.make(lead, role: .label, color: .cavnarInk)
+                + HomeMixedText.make(String(sentence.dropFirst(lead.count)), role: .body, color: .cavnarInk)
+        }
+        return HomeMixedText.make(sentence, role: .body, color: .cavnarInk)
+    }
 
     var body: some View {
         Button(action: open) {
             HStack(alignment: .center, spacing: CavnarSpace.s) {
                 VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                     CavnarKicker("Waiting on you")
-                    CavnarMixedText(sentence, role: .label)
+                    text
+                        .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
@@ -87,10 +99,14 @@ struct StaffManagerStripView: View {
 struct StaffStatsTiles: View {
     let store: StaffPortalStore
     let shifts: StaffShiftsResponse
+    /// The tips tile's "where these come from" note, behind a tap on the
+    /// tile (re-audit M2).
+    @State private var showingTipsNote = false
 
     var body: some View {
         let hours = StaffTodayPlan.weekHours(stats: store.stats.value, shifts: shifts)
-        let tips = store.earnings.value?.lastShift
+        let earnings = store.earnings.value
+        let tips = earnings?.lastShift
         let tipsTotal = tips?.tipsTotal
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             if hours != nil || tipsTotal != nil {
@@ -100,19 +116,38 @@ struct StaffStatsTiles: View {
                                     detail: StaffTodayPlan.workedLine(store.stats.value) ?? "scheduled")
                     }
                     if let tips, let total = tipsTotal {
-                        DSRStatTile(label: "Tips \u{00B7} \(tipsDay(tips))", value: StaffMoney.label(total),
-                                    detail: store.earnings.value?.asOfLabel.map { "as of \($0)" })
+                        Button {
+                            Haptic.selection()
+                            showingTipsNote.toggle()
+                        } label: {
+                            DSRStatTile(label: "Tips \u{00B7} \(tipsDay(tips))", value: StaffMoney.label(total),
+                                        detail: earnings?.asOfLabel.map { "as of \($0)" })
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint(showingTipsNote ? "Hides where tips come from" : "Shows where tips come from")
                     }
                 }
+            }
+            // The week against the overtime line, then the heads-up in
+            // words (re-audit V1).
+            if let meter = store.stats.value?.overtimeMeter {
+                StaffHoursMeter(hours: meter.hours, line: meter.line, projected: meter.projected)
             }
             if let line = store.stats.value?.overtimeLine {
                 CavnarMixedText(line, role: .secondary,
                                 color: store.stats.value?.overtime?.over == true ? .cavnarAmber : .cavnarInk2)
             }
-            // Why there are no tips yet (the POS lags a day) — only when
-            // the tile is missing; beside a figure it is noise.
-            if tipsTotal == nil, let lag = store.earnings.value?.lagNote, !lag.isEmpty {
-                Text(lag)
+            if showingTipsNote, tipsTotal != nil, let note = earnings?.tipsNote, !note.isEmpty {
+                Text(note)
+                    .cavnarText(.caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // Why there is no tips tile, only when there's something true
+            // to say (re-audit M1): the POS lag while nothing is in yet,
+            // or the server's reason it can't find this person's punches.
+            if tipsTotal == nil, let line = earnings?.missingTipsLine {
+                Text(line)
                     .cavnarText(.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -122,9 +157,55 @@ struct StaffStatsTiles: View {
         }
     }
 
+    /// The day the tips are for, M/D/YY (re-audit M2: a bare "Wed" didn't
+    /// say which Wednesday).
     private func tipsDay(_ shift: StaffEarnings.Shift) -> String {
-        let weekday = String((shift.weekday ?? "").prefix(3))
-        return weekday.isEmpty ? (shift.dateLabel ?? CavnarDate.mdy(shift.businessDate)) : weekday
+        if let label = shift.dateLabel, !label.isEmpty { return label }
+        return CavnarDate.mdy(shift.businessDate)
+    }
+}
+
+/// The week's hours against the overtime line (re-audit V1): a thin bar
+/// with the line marked, Ink2 under it and amber past it. The figure is
+/// the server's projection (worked so far plus what's still scheduled),
+/// else the scheduled hours.
+struct StaffHoursMeter: View {
+    let hours: Double
+    let line: Double
+    /// The figure is the server's projection, not just the schedule.
+    var projected: Bool = false
+
+    private var over: Bool { hours > line }
+    private var scale: Double { max(line * 1.25, hours) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            GeometryReader { geo in
+                let w = geo.size.width
+                let fill = max(4, w * CGFloat(min(hours, scale) / scale))
+                let mark = w * CGFloat(line / scale)
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.cavnarPaper3.opacity(0.7))
+                        .frame(height: 6)
+                    Capsule().fill(over ? Color.cavnarAmber : Color.cavnarInk2)
+                        .frame(width: fill, height: 6)
+                    Rectangle().fill(Color.cavnarInk)
+                        .frame(width: 2, height: 12)
+                        .offset(x: mark - 1)
+                }
+                .frame(height: 12)
+            }
+            .frame(height: 12)
+            HStack(spacing: CavnarSpace.xs) {
+                HomeMixedText.make(projected ? "On course for \(StaffTime.figure(hours))h"
+                                             : "\(StaffTime.figure(hours))h scheduled",
+                                   role: .caption, color: over ? .cavnarAmber : .cavnarInk2)
+                Spacer(minLength: CavnarSpace.xs)
+                HomeMixedText.make("Overtime past \(StaffTime.figure(line))h", role: .caption, color: .cavnarInk2)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(projected ? "On course for" : "Scheduled for") \(StaffTime.figure(hours)) hours this week. Overtime starts past \(StaffTime.figure(line)) hours.")
     }
 }
 
@@ -136,11 +217,31 @@ struct StaffStatsTiles: View {
 /// Tags are neutral ink; a stock line ("86 risk", "86'd") is amber.
 struct StaffBriefCard: View {
     let section: StaffSection<StaffPersonalBrief>
+    /// "Tonight's focus" before a dinner shift, "Today's focus" otherwise
+    /// (re-audit L7 — a lunch shift read "Tonight's").
+    var focusLabel: String = "Today\u{2019}s focus"
     let reload: () async -> Void
+
+    /// The day's lines shown before "+N more" (re-audit L8).
+    static let shownItems = 3
 
     private static let tags = ["volume": "Volume", "rush": "Rush", "watch": "Watch", "stock": "86 risk",
                                "eighty_sixed": "86\u{2019}d", "event": "Today", "weather": "Weather",
                                "promotion": "Promotion"]
+
+    /// The focus line's label for the hero's shift: "Tonight's focus" when
+    /// today's next leg is an evening one, else "Today's focus".
+    static func focusLabel(_ hero: StaffHero?) -> String {
+        guard let hero, hero.day.isToday, hero.title == "Tonight" else { return "Today\u{2019}s focus" }
+        return "Tonight\u{2019}s focus"
+    }
+
+    /// An event line under the "Today" tag without its own "Today: "
+    /// (re-audit L7: "TODAY  Today: Bears game.").
+    static func itemText(_ item: StaffBriefItem) -> String {
+        guard item.kind == "event", item.text.hasPrefix("Today: ") else { return item.text }
+        return String(item.text.dropFirst("Today: ".count))
+    }
 
     var body: some View {
         switch section.phase {
@@ -168,27 +269,39 @@ struct StaffBriefCard: View {
             }
             if let focus = brief.focus {
                 VStack(alignment: .leading, spacing: 2) {
-                    CavnarMixedText("Tonight\u{2019}s focus: \(focus.item)", role: .label)
+                    CavnarMixedText("\(focusLabel): \(focus.item)", role: .label)
                     if let line = focus.line, !line.isEmpty {
                         CavnarMixedText(line, role: .secondary)
                     }
                 }
             }
-            ForEach(Array(brief.dayItems.enumerated()), id: \.offset) { _, item in
-                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                    let tone: CavnarTone = (item.kind == "stock" || item.kind == "eighty_sixed") ? .warning : .neutral
-                    Text(Self.tags[item.kind] ?? item.kind.capitalized)
-                        .cavnarText(.tag, color: tone.foreground)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(tone.background))
-                    CavnarMixedText(item.text, role: .body, color: .cavnarInk)
+            let items = brief.dayItems
+            ForEach(Array(items.prefix(Self.shownItems).enumerated()), id: \.offset) { _, item in
+                itemRow(item)
+            }
+            if items.count > Self.shownItems {
+                CavnarMoreDisclosure(hiddenCount: items.count - Self.shownItems) {
+                    ForEach(Array(items.dropFirst(Self.shownItems).enumerated()), id: \.offset) { _, item in
+                        itemRow(item)
+                    }
                 }
-                .accessibilityElement(children: .combine)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+    }
+
+    private func itemRow(_ item: StaffBriefItem) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+            let tone: CavnarTone = (item.kind == "stock" || item.kind == "eighty_sixed") ? .warning : .neutral
+            Text(Self.tags[item.kind] ?? item.kind.capitalized)
+                .cavnarText(.tag, color: tone.foreground)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(tone.background))
+            CavnarMixedText(Self.itemText(item), role: .body, color: .cavnarInk)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -311,7 +424,12 @@ struct StaffRunningLateSheet: View {
     @State private var error: String?
     @State private var posted: String?
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private var choices: [Int] { store.late.value?.etaChoices ?? [10, 20, 30, 45] }
+    private var isDirty: Bool {
+        posted == nil && !sending && !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     private var existing: StaffRunningLateReport? { store.lateReport(date: date, shiftStart: leg.shiftStart) }
 
     var body: some View {
@@ -324,9 +442,21 @@ struct StaffRunningLateSheet: View {
                                         role: .secondary)
                     }
                     CavnarKicker("About how late?")
-                    HStack(spacing: CavnarSpace.xs) {
-                        ForEach(choices, id: \.self) { minutes in
-                            chip(minutes)
+                    // One row while the four fit; two by two at large text
+                    // sizes (re-audit L6).
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: CavnarSpace.xs) {
+                            ForEach(choices, id: \.self) { minutes in
+                                chip(minutes).fixedSize(horizontal: true, vertical: false)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: CavnarSpace.xs),
+                                            GridItem(.flexible(), spacing: CavnarSpace.xs)],
+                                  spacing: CavnarSpace.xs) {
+                            ForEach(choices, id: \.self) { minutes in
+                                chip(minutes)
+                            }
                         }
                     }
                     TextField("Note for your manager (optional)", text: $note, axis: .vertical)
@@ -356,10 +486,13 @@ struct StaffRunningLateSheet: View {
                 .padding(CavnarSpace.gutter)
             }
             .background(Color.cavnarPaper.ignoresSafeArea())
-            .accountSheetChrome("Running late")
+            // A note typed and not sent isn't lost to a swipe (re-audit M3).
+            .accountSheetChrome("Running late", isDirty: isDirty)
         }
         .cavnarPostedOverlay(posted) { dismiss() }
-        .presentationDetents([.medium, .large])
+        // At accessibility text sizes "Tell my manager" would sit below a
+        // medium sheet's fold (re-audit L6): open it full height.
+        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
         .onAppear { if eta == nil { eta = existing?.etaMinutes } }
     }
 
@@ -371,6 +504,8 @@ struct StaffRunningLateSheet: View {
         } label: {
             Text("\(minutes) min")
                 .cavnarText(.figureS, color: on ? Color.cavnarPaper : Color.cavnarInk)
+                .lineLimit(1)
+                .padding(.horizontal, CavnarSpace.xs)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                     .fill(on ? Color.cavnarInk : Color.cavnarPaper3.opacity(0.6)))

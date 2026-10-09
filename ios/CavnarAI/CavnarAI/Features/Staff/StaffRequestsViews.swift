@@ -132,6 +132,63 @@ struct StaffUndoCapsule: View {
     }
 }
 
+/// A request's three steps as dots on a line — Asked → Manager → Picked up
+/// (re-audit M10): done steps filled, the next one ringed, the rest hollow.
+/// Words, not colour, carry it: each step is labelled under its dot.
+struct StaffStatusTrack: View {
+    let steps: [String]
+    /// How many steps are done (1…steps.count).
+    let done: Int
+
+    private func alignment(_ i: Int) -> Alignment {
+        i == 0 ? .leading : (i == steps.count - 1 ? .trailing : .center)
+    }
+
+    var body: some View {
+        VStack(spacing: CavnarSpace.xxs) {
+            // Dots at the two ends and the middle, joined by equal lines.
+            HStack(spacing: 0) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { i, _ in
+                    dot(i)
+                    if i < steps.count - 1 {
+                        Rectangle()
+                            .fill(i + 1 < done ? Color.cavnarInk2 : Color.cavnarPaper3)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 2)
+                    }
+                }
+            }
+            HStack(spacing: 0) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+                    Text(step)
+                        .cavnarText(.caption, color: i < done ? .cavnarInk : .cavnarInk2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .frame(maxWidth: .infinity, alignment: alignment(i))
+                }
+            }
+        }
+        .padding(.vertical, CavnarSpace.xxs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(steps.enumerated().map { i, s in
+            "\(s): \(i < done ? "done" : (i == done ? "next" : "not yet"))"
+        }.joined(separator: ", "))
+    }
+
+    private func dot(_ i: Int) -> some View {
+        ZStack {
+            Circle().fill(Color.cavnarPaper)
+            if i < done {
+                Circle().fill(Color.cavnarInk2)
+            } else {
+                Circle().strokeBorder(i == done ? Color.cavnarInk2 : Color.cavnarPaper3, lineWidth: 2)
+            }
+        }
+        .frame(width: 10, height: 10)
+        .accessibilityHidden(true)
+    }
+}
+
 extension StaffSessionStore {
     /// A staff GET with a query string — `authed(_:query:)`, so it shares
     /// the store's transport, bearer and ended-session rule (an ended
@@ -304,6 +361,7 @@ struct StaffRequestsView: View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
             waitingSection
             yourRequestsSection
+            openShiftsSection
             if askingTimeOff == nil {
                 Button {
                     showingTimeOff = true
@@ -318,8 +376,10 @@ struct StaffRequestsView: View {
         .onChange(of: refresh) { _, _ in Task { await reload() } }
         .onChange(of: portal?.focus) { _, _ in takeFocus() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await reload() } } }
-        // Leaving inside the Undo window keeps the request — the safe side.
-        .onDisappear { cancelUndo() }
+        // Leaving inside the Undo window SENDS the withdraw (re-audit H1):
+        // the capsule already said "Withdrew…", so a tab switch (or the iPad
+        // shell rebuilding the tab) must not quietly drop it.
+        .onDisappear { commitPendingNow() }
         .sheet(isPresented: timeOffPresented, onDismiss: { Task { await reload(); await portal?.reloadShifts() } }) {
             StaffTimeOffSheet().environment(staff)
         }
@@ -362,14 +422,18 @@ struct StaffRequestsView: View {
                 }
                 ForEach(b.asks) { askRow($0) }
                 ForEach(b.offers) { offerRow($0) }
-                if !b.open.isEmpty {
-                    Text("Open shifts")
-                        .cavnarText(.label, color: .cavnarInk2)
-                        .padding(.top, 4)
-                        .accessibilityAddTraits(.isHeader)
-                    ForEach(b.open) { openRow($0) }
-                }
             }
+        }
+    }
+
+    /// Shifts anyone on the team can pick up — a chance, not something
+    /// waiting on this person, so their own header after Your requests
+    /// (re-audit M11: they sat under "Waiting on you" even alone).
+    @ViewBuilder
+    private var openShiftsSection: some View {
+        if let open = board.value?.open, !open.isEmpty {
+            StaffUI.header("Open shifts you can pick up")
+            ForEach(open) { openRow($0) }
         }
     }
 
@@ -495,7 +559,7 @@ struct StaffRequestsView: View {
             if let f = timeOff.failure {
                 StaffUI.failedCard("Your time off didn't load. \(f)") { Task { await reload() } }
             } else if board.failure != nil, offs != nil {
-                StaffUI.note("Your shift changes didn't load — Try again above.", color: .cavnarRed)
+                StaffUI.note("Your shift changes didn't load — Try again above.", color: .cavnarRedText)
             }
             if let refreshNote {
                 StaffUI.note(refreshNote, color: .cavnarAmber)
@@ -567,6 +631,9 @@ struct StaffRequestsView: View {
             }
             if let target = r.targetLabel, let who = r.targetName {
                 CavnarMixedText("For \(who)\u{2019}s \(target)", role: .secondary)
+            }
+            if let steps = r.trackSteps {
+                StaffStatusTrack(steps: steps, done: r.trackDone)
             }
             if let detail = r.detail {
                 StaffUI.note(detail)
@@ -656,6 +723,15 @@ struct StaffRequestsView: View {
             guard !Task.isCancelled, pendingUndo == p else { return }
             await commit(p)
         }
+    }
+
+    /// The Undo window ends early — the screen is going away: what the
+    /// capsule promised is sent now, never dropped.
+    private func commitPendingNow() {
+        guard let p = pendingUndo else { return }
+        undoTask?.cancel()
+        undoTask = nil
+        Task { await commit(p) }
     }
 
     private func cancelUndo() {
@@ -751,6 +827,16 @@ struct StaffTimeOffSheet: View {
     @State private var part: Part = .whole
     @State private var untilTime = "4:00pm"
     @State private var fromTime = "5:00pm"
+    /// The dates the sheet opened on, so a swipe only asks "Discard
+    /// changes?" once something was changed (re-audit M3).
+    @State private var openedOn = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+
+    private var isDirty: Bool {
+        guard posted == nil, !sending else { return false }
+        let cal = Calendar.current
+        return !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || part != .whole
+            || !cal.isDate(start, inSameDayAs: openedOn) || !cal.isDate(end, inSameDayAs: openedOn)
+    }
 
     enum Part: String, CaseIterable {
         case whole, until, from, lunch, dinner
@@ -796,7 +882,7 @@ struct StaffTimeOffSheet: View {
                 }
                 .padding(20)
             }
-            .accountSheetChrome("Time off")
+            .accountSheetChrome("Time off", isDirty: isDirty)
         }
         .onChange(of: start) { _, new in if end < new { end = new } }
         .cavnarPostedOverlay(posted) { dismiss() }
@@ -809,14 +895,11 @@ struct StaffTimeOffSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Part of the day")
                 .cavnarText(.body)
-            AccountFlowLayout(spacing: 6) {
+            // 44pt choice chips, three across (re-audit M9: the ~30pt
+            // AccountChips had no hit target).
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
                 ForEach(Part.allCases, id: \.self) { p in
-                    Button {
-                        Haptic.selection()
-                        part = p
-                    } label: { AccountChip(text: p.label, muted: part != p) }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(part == p ? .isSelected : [])
+                    StaffChoiceChip(title: p.label, on: part == p) { part = p }
                 }
             }
             switch part {
@@ -880,12 +963,16 @@ struct StaffShiftChangeSheet: View {
     let shiftStart: String
     let shiftEnd: String?
     let mode: Mode
+    /// Called once the ask went through — an availability conflict marks
+    /// its row "Asked to give up" (re-audit L2).
+    var onSent: (() -> Void)?
 
-    init(date: String, shiftStart: String, shiftEnd: String? = nil, mode: Mode) {
+    init(date: String, shiftStart: String, shiftEnd: String? = nil, mode: Mode, onSent: (() -> Void)? = nil) {
         self.date = date
         self.shiftStart = shiftStart
         self.shiftEnd = shiftEnd
         self.mode = mode
+        self.onSent = onSent
     }
 
     init(day: StaffWeekDay, mode: Mode) {
@@ -907,6 +994,11 @@ struct StaffShiftChangeSheet: View {
     private var chosen: StaffSwapCandidate? { candidates.value?.colleagues.first { $0.name == colleague } }
     private var theirShift: StaffSwapCandidate.Shift? { chosen?.shifts.first { $0.id == theirShiftId } }
     private var ready: Bool { mode == .drop || theirShift != nil }
+    /// A reason typed or a swap chosen and not sent (re-audit M3).
+    private var isDirty: Bool {
+        guard posted == nil, !sending else { return false }
+        return !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || colleague != nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -937,7 +1029,7 @@ struct StaffShiftChangeSheet: View {
                 }
                 .padding(20)
             }
-            .accountSheetChrome(mode == .swap ? "Swap shift" : "Give up shift")
+            .accountSheetChrome(mode == .swap ? "Swap shift" : "Give up shift", isDirty: isDirty)
         }
         .task { if mode == .swap { await loadCandidates() } }
         .cavnarPostedOverlay(posted) { dismiss() }
@@ -1045,6 +1137,7 @@ struct StaffShiftChangeSheet: View {
                 Haptic.success()
                 posted = mode == .swap ? "Asked — your manager and \(colleague ?? "your colleague") are told"
                                        : "Sent to your manager"
+                onSent?()
             } else {
                 error = r.error ?? "That didn\u{2019}t go through."
             }

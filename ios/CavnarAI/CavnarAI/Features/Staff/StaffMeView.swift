@@ -35,6 +35,10 @@ struct StaffMeView: View {
     @State private var remindersBusy = false
     @State private var remindersError: String?
     @State private var sheet: Sheet?
+    /// Notifications are off for this app in iPhone Settings: iOS won't
+    /// show its prompt again, so the row opens Settings (re-audit H2).
+    @State private var pushDenied = false
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         ZStack {
@@ -76,11 +80,23 @@ struct StaffMeView: View {
                     }
                     .buttonStyle(.plain)
                     AccountSection(kicker: "Leaving") {
-                        AccountActionRow(label: "Delete my account",
-                                         detail: "Removes your login here. Your manager is told.",
-                                         symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                        // The whole row opens it (re-audit L14), not only the
+                        // 28pt chip; the chip still answers on its own.
+                        Button {
                             sheet = .deleteAccount
+                        } label: {
+                            AccountActionRow(label: "Delete my account",
+                                             detail: "Removes your login here. Your manager is told.",
+                                             symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                                sheet = .deleteAccount
+                            }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Delete my account")
+                        .accessibilityHint("Removes your login here. Your manager is told.")
+                        .accessibilityAddTraits(.isButton)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -91,6 +107,7 @@ struct StaffMeView: View {
             .cavnarEmberRefreshable { await reload() }
         }
         .task { await reload() }
+        // Back from Settings: the permission is read again with everything.
         .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await reload() } } }
         .sheet(item: $sheet, onDismiss: { Task { await reload() } }) { which in
             sheetView(which).environment(staff)
@@ -136,12 +153,21 @@ struct StaffMeView: View {
     @ViewBuilder
     private var noticesSection: some View {
         AccountSection(kicker: "Notices") {
-            if let m = me.value, !m.pushOn {
+            if let m = me.value, !m.pushOn, pushDenied {
+                // Turned off in iPhone Settings: iOS answers "no" without
+                // asking, so "Turn on" did nothing (re-audit H2). Settings
+                // is the only way back.
+                AccountNavRow(label: "This phone", value: "Off in iPhone Settings \u{00B7} Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+                .accessibilityHint("Opens Settings, where notifications for this app are turned on")
+            } else if let m = me.value, !m.pushOn {
                 // Not set up: one tap asks iOS for notifications (the same
                 // ask as the card after sign-in), then reads Me again.
                 AccountNavRow(label: "This phone", value: "Not set up \u{00B7} Turn on") {
                     Task {
                         await staff.enableNotifications()
+                        pushDenied = PushManager.shared.authorizationDenied
                         await reload()
                     }
                 }
@@ -233,8 +259,9 @@ struct StaffMeView: View {
 
     private var helpSection: some View {
         AccountSection(kicker: "Help") {
+            // "Message your manager" is on Today's hero and in the Inbox
+            // (re-audit L12: six ways in was five too many).
             AccountNavRow(label: "Docs & house rules") { sheet = .docs }
-            AccountNavRow(label: "Message your manager") { sheet = .messages }
             AccountNavRow(label: "How the app works", showsDivider: false) { sheet = .help }
         }
     }
@@ -304,6 +331,10 @@ struct StaffMeView: View {
             if languages.value == nil { languages = .failed(StaffErrorText.message(error)) }
         }
         availability = try? await a
+        // What iOS says about this app's notifications now (the person may
+        // have changed it in Settings while away).
+        await PushManager.shared.refreshAuthorization()
+        pushDenied = PushManager.shared.authorizationDenied
         // Your attendance reads the week's stats; Me opened before Today
         // still shows it.
         if store.stats.value == nil { await store.reloadStats() }
@@ -404,6 +435,7 @@ struct StaffCalendarSheet: View {
     @State private var confirmReset = false
     @State private var confirmOff = false
     @State private var turnedOff = false
+    @State private var linkActionsOpen = false
 
     var body: some View {
         NavigationStack {
@@ -466,11 +498,20 @@ struct StaffCalendarSheet: View {
             HomeMixedText.make("A calendar last checked it \(CavnarDate.mdyTime(date)).",
                                size: CavnarType.caption, color: .cavnarInk3)
         }
-        StaffUI.note("Anyone with this link can see your shifts. Shared it by mistake? Get a new one.")
-        HStack(spacing: 18) {
-            StaffTextButton(title: "Get a new link", busy: busy == "reset", busyTitle: "Getting one") { confirmReset = true }
-            StaffTextButton(title: "Turn it off", tone: .cavnarRed, busy: busy == "off", busyTitle: "Turning off") {
-                confirmOff = true
+        StaffUI.note("Anyone with this link can see your shifts.")
+        // Rare and both confirmed: folded behind the question that leads to
+        // them (re-audit, web-only list — staff have no web dashboard to
+        // send them to).
+        if linkActionsOpen || busy != nil {
+            HStack(spacing: 18) {
+                StaffTextButton(title: "Get a new link", busy: busy == "reset", busyTitle: "Getting one") { confirmReset = true }
+                StaffTextButton(title: "Turn it off", tone: .cavnarRedText, busy: busy == "off", busyTitle: "Turning off") {
+                    confirmOff = true
+                }
+            }
+        } else {
+            StaffTextButton(title: "Shared it by mistake?", tone: .cavnarInk2) {
+                withAnimation(.easeOut(duration: 0.22)) { linkActionsOpen = true }
             }
         }
     }
@@ -523,6 +564,10 @@ struct StaffDocsSheet: View {
     @State private var answer: StaffAskAnswer?
     @State private var askError: String?
     @State private var messaging: String?
+    /// The house rules folded to two lines until opened (re-audit L11).
+    @State private var rulesOpen = false
+    /// An answer's cited lines, behind "From N lines".
+    @State private var sourcesOpen = false
 
     var body: some View {
         NavigationStack {
@@ -588,14 +633,33 @@ struct StaffDocsSheet: View {
             HomeMixedText.make(a.answer, size: CavnarType.body, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             if !a.sources.isEmpty {
-                CavnarKicker("From")
-                ForEach(a.sources) { s in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(s.source).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarInk2)
-                        HomeMixedText.make("\u{201C}\(s.line)\u{201D}", size: CavnarType.secondary, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.22)) { sourcesOpen.toggle() }
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs + 2) {
+                        HomeMixedText.make(a.sources.count == 1 ? "From 1 line" : "From \(a.sources.count) lines",
+                                           role: .label, color: .cavnarEmber2)
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .rotationEffect(.degrees(sourcesOpen ? 180 : 0))
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
                     }
-                    .accessibilityElement(children: .combine)
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(sourcesOpen ? "Expanded" : "Collapsed")
+                if sourcesOpen {
+                    ForEach(a.sources) { s in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.source).cavnarText(.label, color: .cavnarInk2)
+                            HomeMixedText.make("\u{201C}\(s.line)\u{201D}", size: CavnarType.secondary, color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
                 }
             }
             if a.suggestMessage {
@@ -611,9 +675,15 @@ struct StaffDocsSheet: View {
             if let rules = docs.houseRules {
                 VStack(alignment: .leading, spacing: 8) {
                     StaffUI.header(rules.title.isEmpty ? "House rules" : rules.title)
+                    // The first two lines, then the rest on a tap — the
+                    // whole wall sat above the role docs (re-audit L11).
                     HomeMixedText.make(rules.body, size: CavnarType.body, color: .cavnarInk2)
+                        .lineLimit(rulesOpen ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
+                    StaffTextButton(title: rulesOpen ? "Show less" : "Read all the house rules") {
+                        withAnimation(.easeOut(duration: 0.22)) { rulesOpen.toggle() }
+                    }
                     if let at = rules.updatedAt {
                         HomeMixedText.make("Updated \(CavnarDate.mdyLocal(at))", size: CavnarType.caption, color: .cavnarInk3)
                     }
@@ -664,6 +734,7 @@ struct StaffDocsSheet: View {
         asking = true
         askError = nil
         answer = nil
+        sourcesOpen = false
         defer { asking = false }
         do {
             answer = try await staff.authed("/staff/api/ask", method: .post, body: StaffQuestionBody(question: q))
@@ -693,7 +764,7 @@ struct StaffHelpSheet: View {
          "Open it on Today and choose Give up shift or Swap shift. You\u{2019}re still on it until your manager approves and someone picks it up."),
         ("Days away?", "Ask for time off on Requests. Your manager answers, and an approved range stays off the schedule."),
         ("Your usual week?", "Set My availability on Me \u{2014} the days and hours you can work. The next schedule reads it."),
-        ("Picking up shifts", "Open shifts you can take are on Requests, under Waiting on you."),
+        ("Picking up shifts", "Open shifts you can take are on Requests, under Open shifts you can pick up."),
         ("Notices", "Reminders come before your shift and before a critical task. Between 10pm and 8am they arrive silently."),
     ]
 
@@ -704,8 +775,7 @@ struct StaffHelpSheet: View {
                     ForEach(Self.topics, id: \.0) { topic in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(topic.0)
-                                .font(.cavnarBody(CavnarType.body, weight: 700))
-                                .foregroundStyle(Color.cavnarInk)
+                                .cavnarText(.label)
                                 .accessibilityAddTraits(.isHeader)
                             StaffUI.note(topic.1, color: .cavnarInk2)
                         }

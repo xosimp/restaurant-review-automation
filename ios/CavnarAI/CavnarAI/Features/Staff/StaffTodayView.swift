@@ -7,9 +7,9 @@ import SwiftUI
 ///     an amber "As of 3:42pm · offline" while the week is the phone's copy
 ///   the hero: the next shift, EVERY leg of a double, when it starts, and
 ///     ONE primary for where the person is in the day — Tasks · 3/12 on
-///     shift or within 30 minutes of it, Running late before a shift today
-///     — with the rest (Running late · Change shift · Tasks · Message) quiet
-///     in one row
+///     shift or within 30 minutes of it, Running late in the hour before a
+///     shift today — with the rest (Running late, until 15 minutes in ·
+///     Change shift · Tasks · Message) quiet in one row
 ///   From your manager (only an urgent note not yet "Got it", or a reply)
 ///   Waiting on you (only when a swap or an offer waits)
 ///   Before service (only on a working day)
@@ -163,14 +163,18 @@ struct StaffTodayView: View {
         case .loading:
             StaffLoadingLine(text: "Loading your shifts")
                 .padding(.vertical, CavnarSpace.xs)
+            strips
         case .failed:
+            // What a manager or a teammate is waiting on doesn't depend on
+            // the week loading (re-audit L10).
+            strips
             StaffLoadFailed(what: "your shifts", message: store.shifts.error) {
                 await store.reloadShifts()
             }
             .cavnarCard()
             // The portal didn't load: leaving must not depend on Me
             // loading either (a shared phone handed on mid-outage).
-            StaffTextButton(title: "Sign out", tone: .cavnarRed) { staff.signOut() }
+            StaffTextButton(title: "Sign out", tone: .cavnarRedText) { staff.signOut() }
                 .accessibilityHint("Signs you out of this phone. The next person signs in with their PIN.")
         case .ready:
             if let shifts = store.shifts.value {
@@ -182,6 +186,7 @@ struct StaffTodayView: View {
     @ViewBuilder
     private func ready(_ shifts: StaffShiftsResponse) -> some View {
         if shifts.published == false {
+            strips
             CavnarEmptyHearth(title: "No schedule posted yet",
                               message: "It shows up here the moment your manager publishes one.")
                 .cavnarCard()
@@ -190,24 +195,9 @@ struct StaffTodayView: View {
             let hero = StaffTodayPlan.hero(week: week, now: now)
             heroCard(hero, shifts: shifts)
                 .staffRise(0, clock)
-            // Urgent and unread from a manager, right under the hero; an
-            // ordinary announcement stays behind the tray.
-            if let strip = StaffManagerStrip.content(store.inbox.value) {
-                StaffManagerStripView(text: strip.text, urgent: strip.urgent) {
-                    if strip.opensThread {
-                        store.messageShiftDate = nil
-                        store.showingMessages = true
-                    } else {
-                        store.showingInbox = true
-                    }
-                }
-                .staffRise(1, clock)
-            }
-            if let sentence = StaffWaiting.sentence(store.waiting.value) {
-                StaffWaitingStrip(sentence: sentence) { store.selectedTab = .requests }
-                    .staffRise(1, clock)
-            }
-            StaffBriefCard(section: store.brief, reload: { await store.reloadBrief() })
+            strips
+            StaffBriefCard(section: store.brief, focusLabel: StaffBriefCard.focusLabel(hero),
+                           reload: { await store.reloadBrief() })
             if let hero {
                 StaffCoworkersCard(section: store.coworkers, hero: hero) {
                     await store.reloadCoworkers()
@@ -225,6 +215,31 @@ struct StaffTodayView: View {
         }
     }
 
+    /// Urgent and unread from a manager, then what a teammate is waiting
+    /// on — right under the hero, or at the top when there is no hero card
+    /// (no published week, or the week didn't load: re-audit L10). An
+    /// ordinary announcement stays behind the tray.
+    @ViewBuilder
+    private var strips: some View {
+        if let strip = StaffManagerStrip.content(store.inbox.value) {
+            StaffManagerStripView(text: strip.text, urgent: strip.urgent) {
+                if strip.opensThread {
+                    store.messageShiftDate = nil
+                    store.showingMessages = true
+                } else {
+                    store.showingInbox = true
+                }
+            }
+            .staffRise(1, clock)
+        }
+        if let sentence = StaffWaiting.sentence(store.waiting.value) {
+            StaffWaitingStrip(sentence: sentence, lead: StaffWaiting.lead(store.waiting.value)) {
+                store.selectedTab = .requests
+            }
+            .staffRise(1, clock)
+        }
+    }
+
     // MARK: Hero
 
     @ViewBuilder
@@ -233,6 +248,7 @@ struct StaffTodayView: View {
             let progress = tasks.progress
             StaffHeroCard(hero: hero,
                           primary: StaffTodayPlan.heroPrimary(hero, now: now, hasTasks: progress != nil),
+                          offersLate: StaffTodayPlan.offersRunningLate(hero, now: now),
                           tasks: progress,
                           lateReport: { leg in store.lateReport(date: hero.day.date, shiftStart: leg.shiftStart) },
                           onLate: { lateLeg = LateTarget(date: hero.day.date, leg: hero.nextLeg) },
@@ -336,6 +352,9 @@ struct StaffTodayView: View {
 struct StaffHeroCard: View {
     let hero: StaffHero
     let primary: StaffHeroPrimary
+    /// Running late is still offered (StaffTodayPlan.offersRunningLate):
+    /// until 15 minutes into today's leg, then it leaves the quiet row.
+    var offersLate: Bool = true
     let tasks: (done: Int, total: Int)?
     let lateReport: (StaffShift) -> StaffRunningLateReport?
     let onLate: () -> Void
@@ -351,8 +370,10 @@ struct StaffHeroCard: View {
                     HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) { title; date }
                     VStack(alignment: .leading, spacing: 2) { title; date }
                 }
-                CavnarMixedText(hero.relative, role: .lead, color: .cavnarInk)
-                    .accessibilityLabel(hero.relative)
+                if !hero.relative.isEmpty {
+                    CavnarMixedText(hero.relative, role: .lead, color: .cavnarInk)
+                        .accessibilityLabel(hero.relative)
+                }
             }
             ForEach(Array(hero.day.legs.enumerated()), id: \.offset) { _, leg in
                 StaffLegBlock(leg: leg, timeRole: hero.day.legs.count > 1 ? .figureM : .figureL,
@@ -385,7 +406,7 @@ struct StaffHeroCard: View {
     /// shift only while a leg can still change hands; Tasks only today.
     var actionList: [Action] {
         var out: [Action] = []
-        if hero.canRunLate { out.append(.late) }
+        if hero.canRunLate && offersLate { out.append(.late) }
         if !changeable.isEmpty { out.append(.change) }
         if hero.day.isToday { out.append(.tasks) }
         out.append(.message)

@@ -32,14 +32,19 @@ struct StaffAttendanceSection: View {
                                 withAnimation(.easeOut(duration: 0.22)) { expanded.toggle() }
                             }
                         } label: {
-                            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                                CavnarMixedText(a.summaryLine, role: .body, color: .cavnarInk)
-                                Spacer(minLength: CavnarSpace.xs)
-                                Image(systemName: "chevron.down")
-                                    .font(.cavnar(.caption).weight(.semibold))
-                                    .foregroundStyle(Color.cavnarInk3)
-                                    .rotationEffect(.degrees(expanded ? 180 : 0))
-                                    .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                                // One dot a shift, oldest to newest, over the
+                                // counts (re-audit V2): a miss is amber.
+                                StaffAttendanceDots(entries: a.recent)
+                                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                                    CavnarMixedText(a.summaryLine, role: .body, color: .cavnarInk)
+                                    Spacer(minLength: CavnarSpace.xs)
+                                    Image(systemName: "chevron.down")
+                                        .font(.cavnar(.caption).weight(.semibold))
+                                        .foregroundStyle(Color.cavnarInk2)
+                                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                                        .accessibilityHidden(true)
+                                }
                             }
                             .padding(.vertical, CavnarSpace.xs)
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -48,18 +53,20 @@ struct StaffAttendanceSection: View {
                         .buttonStyle(.plain)
                         .accessibilityValue(expanded ? "Expanded" : "Collapsed")
                         if expanded {
-                            ForEach(Array(a.recent.prefix(10).enumerated()), id: \.element.id) { _, entry in
-                                AccountRowDivider()
-                                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                    CavnarMixedText(entry.dateLabel ?? CavnarDate.mdy(entry.date), role: .label)
-                                    Spacer(minLength: 8)
-                                    CavnarMixedText(entry.outcomeLabel
-                                                    + (entry.minutesLate.map { $0 > 0 ? ", \($0) min" : "" } ?? ""),
-                                                    role: .label,
-                                                    color: entry.isMiss ? .cavnarAmber : .cavnarInk2)
+                            ForEach(Array(a.recent.prefix(Self.shown).enumerated()), id: \.element.id) { _, entry in
+                                row(entry)
+                            }
+                            // The rest behind "+N more" — the summary counts
+                            // every shift listed (re-audit L1).
+                            if a.recent.count > Self.shown {
+                                CavnarMoreDisclosure(hiddenCount: a.recent.count - Self.shown) {
+                                    VStack(alignment: .leading, spacing: 0) {
+                                        ForEach(Array(a.recent.dropFirst(Self.shown).enumerated()), id: \.element.id) { _, entry in
+                                            row(entry)
+                                        }
+                                    }
                                 }
-                                .frame(minHeight: 40)
-                                .accessibilityElement(children: .combine)
+                                .padding(.top, CavnarSpace.xxs)
                             }
                             Text("An approved drop isn\u{2019}t a miss.")
                                 .cavnarText(.caption, color: .cavnarInk2)
@@ -72,6 +79,62 @@ struct StaffAttendanceSection: View {
         }
     }
 
+    /// The shifts listed before "+N more".
+    static let shown = 10
+
+    private func row(_ entry: StaffAttendance.Entry) -> some View {
+        VStack(spacing: 0) {
+            AccountRowDivider()
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                CavnarMixedText(entry.dateLabel ?? CavnarDate.mdy(entry.date), role: .label)
+                Spacer(minLength: 8)
+                CavnarMixedText(entry.outcomeLabel
+                                + (entry.minutesLate.map { $0 > 0 ? ", \($0) min" : "" } ?? ""),
+                                role: .label,
+                                color: entry.isMiss ? .cavnarAmber : .cavnarInk2)
+            }
+            .frame(minHeight: 40)
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// One dot a watched shift, oldest on the left: green on time, amber a
+/// miss, ink for an approved drop or a cover. Decoration under a summary
+/// line that says the same in words, so VoiceOver skips it.
+struct StaffAttendanceDots: View {
+    let entries: [StaffAttendance.Entry]
+    /// More than this and the oldest drop off the row.
+    static let cap = 30
+
+    var body: some View {
+        if !entries.isEmpty {
+            // The server lists newest first.
+            let shown = Array(entries.prefix(Self.cap).reversed())
+            ViewThatFits(in: .horizontal) {
+                dots(shown, size: 8, spacing: 4)
+                dots(shown, size: 6, spacing: 3)
+                dots(Array(shown.suffix(20)), size: 6, spacing: 3)
+            }
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func dots(_ list: [StaffAttendance.Entry], size: CGFloat, spacing: CGFloat) -> some View {
+        HStack(spacing: spacing) {
+            ForEach(Array(list.enumerated()), id: \.offset) { _, e in
+                Circle()
+                    .fill(color(e))
+                    .frame(width: size, height: size)
+            }
+        }
+    }
+
+    private func color(_ e: StaffAttendance.Entry) -> Color {
+        if e.isMiss { return .cavnarAmber }
+        if e.outcome == "on_time" { return .cavnarGreen }
+        return .cavnarInk2
+    }
 }
 
 extension StaffAttendance {
