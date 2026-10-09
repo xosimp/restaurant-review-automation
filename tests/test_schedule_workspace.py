@@ -251,7 +251,7 @@ def test_publish_reads_the_rows_on_screen_and_folds_the_saved_weeks_list():
     pub = _fn("ssRenderPublish")
     assert "al.hidden = _schedDirty" in pub and "Your edits are saved" not in pub
     assert '<details class="ss-pub-alerts" id="ss-pub-alerts">' in s
-    assert ".ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}" in s
+    assert ".ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:stretch}" in s
     assert ".ss-pub-go{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;justify-content:center}" in s
     assert ".ss-pub-go .cbtn{height:50px;width:240px;" in s
 
