@@ -97,7 +97,7 @@ struct StaffForgotPinView: View {
             StaffSheetField(text: $smsCode, placeholder: "000000", label: "Six-digit code")
                 .keyboardType(.numberPad)
                 .textContentType(.oneTimeCode)
-                .font(.cavnarNumber(22, weight: 600))
+                .font(.cavnar(.figureM))
                 .multilineTextAlignment(.center)
                 .onChange(of: smsCode) { _, value in
                     let digits = String(value.filter(\.isNumber).prefix(6))
@@ -127,7 +127,7 @@ struct StaffForgotPinView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if !restaurant.isEmpty { StaffSignInKicker(text: restaurant.uppercased()) }
                 Text(confirming ? "Type it again" : (who.isEmpty ? "Choose a new PIN" : "A new PIN for \(who)"))
-                    .font(.cavnarHeadline(22))
+                    .font(.cavnar(.headline))
                     .foregroundStyle(Color.cavnarInk)
                     .accessibilityAddTraits(.isHeader)
                 StaffSheetHelper(text: confirming
@@ -273,7 +273,7 @@ struct StaffChangePinView: View {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(heading)
-                        .font(.cavnarHeadline(22))
+                        .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
                         .accessibilityAddTraits(.isHeader)
                     StaffSheetHelper(text: helper)
@@ -635,7 +635,7 @@ struct StaffLocationSwitcherView: View {
             VStack(alignment: .leading, spacing: 4) {
                 StaffSignInKicker(text: (target.restaurant ?? "").uppercased())
                 Text(target.employeeName ?? "Your PIN")
-                    .font(.cavnarHeadline(22))
+                    .font(.cavnar(.headline))
                     .foregroundStyle(Color.cavnarInk)
                     .accessibilityAddTraits(.isHeader)
                 StaffSheetHelper(text: "Each location has its own PIN. Enter the one you use at \(target.restaurant ?? "this location").")
@@ -738,8 +738,8 @@ struct StaffNotificationAskCard: View {
             }
             HStack(spacing: 12) {
                 Button("Not now") { staff.declineNotifications() }
-                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.label))
+                    .foregroundStyle(Color.cavnarInk2)
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
                 Spacer()
@@ -776,13 +776,12 @@ struct StaffSheetFrame<Content: View>: View {
                             StaffBackButton(action: onBack)
                         }
                         Text(title)
-                            .font(.cavnarHeadline(20))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.headline)
                             .accessibilityAddTraits(.isHeader)
                         Spacer()
                         Button("Close", action: onClose)
-                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.label))
+                            .foregroundStyle(Color.cavnarInk2)
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Rectangle())
                     }
@@ -803,8 +802,7 @@ struct StaffSheetHelper: View {
 
     var body: some View {
         Text(text)
-            .font(.cavnarBody(CavnarType.body))
-            .foregroundStyle(Color.cavnarInk3)
+            .cavnarText(.body)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -816,7 +814,7 @@ struct StaffSheetField: View {
 
     var body: some View {
         TextField(placeholder, text: $text)
-            .font(.cavnarBody(17))
+            .font(.cavnar(.lead))
             .padding(14)
             .frame(minHeight: 50)
             .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))

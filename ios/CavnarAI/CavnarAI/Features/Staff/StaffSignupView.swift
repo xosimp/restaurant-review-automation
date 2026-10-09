@@ -92,16 +92,31 @@ struct StaffSignupView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 4) {
-            StaffBackButton(label: step == .phone ? "Close" : "Back") { back() }
-            Text(chosen?.name ?? (restaurantName.isEmpty ? "Create your account" : restaurantName))
-                .font(.cavnarHeadline(20))
-                .foregroundStyle(Color.cavnarInk)
-                .lineLimit(2)
-            Spacer()
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(spacing: 4) {
+                StaffBackButton(label: step == .phone ? "Close" : "Back") { back() }
+                Text(chosen?.name ?? (restaurantName.isEmpty ? "Create your account" : restaurantName))
+                    .cavnarText(.headline)
+                    .lineLimit(2)
+                Spacer()
+            }
+            // Where they are in it: the PIN and its retyping are one step,
+            // and a restaurant's own link skips the code step.
+            if !expired, let (n, total) = stepNumber {
+                HomeMixedText.make("Step \(n) of \(total)", role: .caption, color: .cavnarInk2)
+                    .accessibilityLabel("Step \(n) of \(total)")
+            }
         }
         .padding(.top, 20)
         .padding(.bottom, 20)
+    }
+
+    private var stepNumber: (Int, Int)? {
+        let skipsRestaurant = !(knownJoinCode ?? "").isEmpty
+        let order: [Step] = skipsRestaurant ? [.phone, .code, .name, .pin]
+                                            : [.phone, .code, .restaurant, .name, .pin]
+        guard let i = order.firstIndex(of: step == .confirm ? .pin : step) else { return nil }
+        return (i + 1, order.count)
     }
 
     // MARK: - Steps
@@ -114,7 +129,7 @@ struct StaffSignupView: View {
             field($phone, placeholder: "(555) 014-2233", label: "Mobile number")
                 .keyboardType(.phonePad)
                 .textContentType(.telephoneNumber)
-                .font(.cavnarNumber(18, weight: 500))
+                .font(.cavnar(.figureS))
 
             // Unchecked by default, on purpose — this is the consent record
             // Twilio's A2P 10DLC review requires, and a pre-selected box is a
@@ -129,9 +144,11 @@ struct StaffSignupView: View {
                         .font(.system(size: 20))
                         .padding(.top, 1)
                         .accessibilityHidden(true)
+                    // Wording verbatim (the A2P consent record); only its
+                    // contrast moved, Ink3 → Ink2, so it can be read.
                     Text("I consent to receive a one-time SMS verification code from Cavnar AI at this number. Message and data rates may apply.")
                         .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -166,8 +183,7 @@ struct StaffSignupView: View {
         VStack(alignment: .leading, spacing: 14) {
             title("Enter the code")
             Text("We texted a 6-digit code to \(PhoneFormat.display(phone)).")
-                .font(.cavnarBody(CavnarType.body))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
 
             if let devCode {
                 StaffDevCode(code: devCode)
@@ -176,7 +192,7 @@ struct StaffSignupView: View {
             field($smsCode, placeholder: "000000", label: "Six-digit code")
                 .keyboardType(.numberPad)
                 .textContentType(.oneTimeCode)
-                .font(.cavnarNumber(22, weight: 600))
+                .font(.cavnar(.figureM))
                 .multilineTextAlignment(.center)
                 // Submit on the sixth digit, the way every OTP field does now
                 // — including when iOS autofills the whole code from the SMS,
@@ -218,7 +234,7 @@ struct StaffSignupView: View {
             field($joinCode, placeholder: "ABC123", label: "Restaurant code")
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
-                .font(.cavnarNumber(22, weight: 600))
+                .font(.cavnar(.figureM))
                 .multilineTextAlignment(.center)
 
             StaffErrorLine(text: error)
@@ -252,8 +268,7 @@ struct StaffSignupView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(entry.name)
-                                .font(.cavnarBody(15.5, weight: 600))
-                                .foregroundStyle(Color.cavnarInk)
+                                .cavnarText(.label)
                             if let job = entry.jobRole {
                                 Text(job)
                                     .font(.cavnarBody(CavnarType.caption))
@@ -370,22 +385,20 @@ struct StaffSignupView: View {
 
     private func title(_ text: String) -> some View {
         Text(text)
-            .font(.cavnarHeadline(25))
-            .foregroundStyle(Color.cavnarInk)
+            .cavnarText(.title)
             .accessibilityAddTraits(.isHeader)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private func helper(_ text: String) -> some View {
         Text(text)
-            .font(.cavnarBody(CavnarType.body))
-            .foregroundStyle(Color.cavnarInk3)
+            .cavnarText(.body)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private func field(_ text: Binding<String>, placeholder: String, label: String) -> some View {
         TextField(placeholder, text: text)
-            .font(.cavnarBody(17))
+            .font(.cavnar(.lead))
             .padding(14)
             .frame(minHeight: 50)
             .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
@@ -554,8 +567,7 @@ struct StaffDevCode: View {
 
     var body: some View {
         Text("Texting isn't set up on this server, so here's your code: \(code)")
-            .font(.cavnarBody(13))
-            .foregroundStyle(Color.cavnarEmber2)
+            .cavnarText(.caption, color: .cavnarEmber2)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .overlay(RoundedRectangle(cornerRadius: 10)

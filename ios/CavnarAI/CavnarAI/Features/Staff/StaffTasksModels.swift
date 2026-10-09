@@ -266,6 +266,56 @@ enum StaffSheetFormat {
     }
 }
 
+/// What the Tasks tab's badge, Today's hero and a sheet's "Next:" line read
+/// off the person's own sheets (iOS readability round, 10/8/26).
+enum StaffSheetProgress {
+    /// Lines done and lines in all, across the sheets; nil with no lines.
+    static func totals(_ sheets: [StaffSheet]) -> (done: Int, total: Int)? {
+        let total = sheets.reduce(0) { $0 + $1.total }
+        guard total > 0 else { return nil }
+        return (sheets.reduce(0) { $0 + $1.done }, total)
+    }
+
+    /// Open lines past due on open sheets — the Tasks tab's red count.
+    static func overdue(_ sheets: [StaffSheet]) -> Int {
+        sheets.filter { $0.status == "open" }
+            .reduce(0) { $0 + $1.lines.filter { !$0.done && $0.overdue == true }.count }
+    }
+
+    /// The sheet's next line to do: the first one not done, in order.
+    static func next(in sheet: StaffSheet) -> StaffSheetLine? {
+        sheet.lines.first { !$0.done }
+    }
+
+    /// A run of lines under one section heading (nil: no heading), in the
+    /// sheet's order — what folds its done lines behind "12 done · Show".
+    struct Group: Identifiable {
+        let index: Int
+        let section: String?
+        let lines: [StaffSheetLine]
+        var id: Int { index }
+        var doneCount: Int { lines.filter(\.done).count }
+    }
+
+    static func groups(_ lines: [StaffSheetLine]) -> [Group] {
+        var out: [Group] = []
+        var current: [StaffSheetLine] = []
+        var section: String?
+        func flush() {
+            if !current.isEmpty { out.append(Group(index: out.count, section: section, lines: current)) }
+            current = []
+        }
+        for line in lines {
+            let s = (line.section?.isEmpty == false) ? line.section : nil
+            if !current.isEmpty && s != section { flush() }
+            section = s
+            current.append(line)
+        }
+        flush()
+        return out
+    }
+}
+
 // MARK: - Pure sheet logic (unit-tested)
 
 /// A line's state the app is showing before the server has said so: a tick

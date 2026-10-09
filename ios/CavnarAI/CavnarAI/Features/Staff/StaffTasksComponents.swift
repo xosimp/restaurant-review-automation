@@ -35,7 +35,7 @@ struct StaffCheckDisc: View {
                     .offset(y: size * 0.01)
             } else {
                 Circle()
-                    .strokeBorder(overdue ? Color.cavnarRed : Color.cavnarInk3.opacity(0.65), lineWidth: 1.75)
+                    .strokeBorder(overdue ? Color.cavnarRed : Color.cavnarInk3.opacity(0.9), lineWidth: 1.75)
             }
         }
         .frame(width: size, height: size)
@@ -170,26 +170,24 @@ struct StaffLineNoteView: View {
             VStack(alignment: .leading, spacing: 4) {
                 VStack(alignment: .leading, spacing: 4) {
                     Label {
-                        Text(alert.title).font(.cavnarBody(CavnarType.body, weight: 700))
+                        Text(alert.title).font(.cavnar(.label))
                     } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13, weight: .bold))
+                        Image(systemName: "exclamationmark.triangle.fill").font(.cavnar(.secondary).weight(.bold))
                     }
-                    .foregroundStyle(Color.cavnarRed)
+                    .foregroundStyle(Color.cavnarRedText)
                     if let message = alert.message, !message.isEmpty {
                         Text(Self.body(of: message, title: alert.title))
-                            .font(.cavnarBody(CavnarType.secondary))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.secondary, color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if !offline, alert.managerAlerted != true {
                         Text("The app couldn't reach a manager for you, so tell them in person.")
                             .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                            .foregroundStyle(Color.cavnarRed)
+                            .foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if !offline {
                         Text("Your manager has been sent this too.")
-                            .font(.cavnarBody(CavnarType.caption))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption, color: .cavnarInk2)
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -205,21 +203,19 @@ struct StaffLineNoteView: View {
             .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarRed.opacity(0.5), lineWidth: 1))
         case let .error(text):
             Text(text)
-                .font(.cavnarBody(CavnarType.secondary))
-                .foregroundStyle(Color.cavnarRed)
+                .cavnarText(.secondary, color: .cavnarRedText)
                 .fixedSize(horizontal: false, vertical: true)
         case let .info(text):
             Text(text)
-                .font(.cavnarBody(CavnarType.secondary))
-                .foregroundStyle(Color.cavnarInk2)
+                .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         case let .queued(text):
             Label {
                 Text(text).fixedSize(horizontal: false, vertical: true)
             } icon: {
-                Image(systemName: "icloud.slash").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "icloud.slash").font(.cavnar(.caption).weight(.semibold))
             }
-            .font(.cavnarBody(CavnarType.secondary))
+            .font(.cavnar(.secondary))
             .foregroundStyle(Color.cavnarAmber)
         }
     }

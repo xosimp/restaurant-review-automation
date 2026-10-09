@@ -292,4 +292,105 @@ enum StaffFreshness {
                            : CavnarDate.mdyTime(at, in: calendar.timeZone).replacingOccurrences(of: ":00", with: "")
         return fromCache ? "As of \(when) \u{00B7} saved on this phone" : "Updated \(when)"
     }
+
+    /// The amber line under Today's header while the week on screen is the
+    /// phone's copy or a refresh failed (iOS readability round): "As of
+    /// 3:42pm · offline", or "· couldn't refresh" when the phone is online
+    /// but the read failed.
+    static func warning(at: Date?, offline: Bool, now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let at else { return nil }
+        let sameDay = calendar.isDate(at, inSameDayAs: now)
+        let when = sameDay ? CavnarDate.time(at, in: calendar.timeZone).replacingOccurrences(of: ":00", with: "")
+                           : CavnarDate.mdyTime(at, in: calendar.timeZone).replacingOccurrences(of: ":00", with: "")
+        return "As of \(when) \u{00B7} \(offline ? "offline" : "couldn\u{2019}t refresh")"
+    }
+}
+
+// MARK: - The hero's one primary (iOS readability round, 10/8/26)
+
+/// The one primary the hero spends its ember on, by where the person is in
+/// the day: on shift or within 30 minutes of the start → Tasks (with the
+/// count done); before a shift today → Running late; otherwise none, and
+/// every action stays quiet.
+enum StaffHeroPrimary: Equatable {
+    case tasks, late, none
+}
+
+extension StaffTodayPlan {
+    /// How close "about to start" is: the half hour before a leg.
+    static let tasksLeadMinutes = 30
+
+    static func heroPrimary(_ hero: StaffHero, now: Date, hasTasks: Bool,
+                            calendar: Calendar = .current) -> StaffHeroPrimary {
+        guard hero.day.isToday else { return .none }
+        let span = StaffTime.span(dayISO: hero.day.date, start: hero.nextLeg.shiftStart,
+                                  end: hero.nextLeg.shiftEnd, calendar: calendar)
+        let started = span.map { $0.start <= now } ?? false
+        let soon = span.map { $0.start.timeIntervalSince(now) <= TimeInterval(tasksLeadMinutes * 60) } ?? false
+        if (started || soon) && hasTasks { return .tasks }
+        if hero.canRunLate && !started { return .late }
+        return .none
+    }
+
+    /// One line for a day of the week: "4pm – 10pm · Server", a double as
+    /// "11am – 3pm + 5pm – 10pm · Server"; "Off" / "Not posted yet".
+    static func dayLine(_ day: StaffWeekDay) -> String {
+        let legs = day.legs
+        guard !legs.isEmpty else { return day.isPosted ? "Off" : "Not posted yet" }
+        let times = legs.map { $0.timeRange.isEmpty ? "Time to be set" : $0.timeRange }
+            .joined(separator: " + ")
+        let role = legs.compactMap(\.role).first(where: { !$0.isEmpty })
+        return [times, role].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
+    /// Whether a day has more than its one line to show on a tap: a
+    /// station, section, hours, break, note or a request on a leg.
+    static func dayHasDetail(_ day: StaffWeekDay) -> Bool {
+        day.legs.contains { leg in
+            (leg.station?.isEmpty == false) || (leg.section?.isEmpty == false) || leg.hoursLabel != nil
+                || leg.breakLine != nil || leg.noteLine != nil || leg.request != nil
+        }
+    }
+
+    /// Coworkers on the hero's day, the ones whose hours overlap mine
+    /// first (otherwise in the order the server sent).
+    static func coworkersByOverlap(_ people: [StaffCoworker], legs: [StaffShift]) -> [StaffCoworker] {
+        func range(_ start: String?, _ end: String?) -> (Int, Int)? {
+            guard let s = start.flatMap(StaffTime.minutes) else { return nil }
+            var e = end.flatMap(StaffTime.minutes) ?? (s + 60)
+            if e <= s { e += 1440 }
+            return (s, e)
+        }
+        let mine = legs.compactMap { range($0.shiftStart, $0.shiftEnd) }
+        func overlaps(_ c: StaffCoworker) -> Bool {
+            guard let r = range(c.shiftStart, c.shiftEnd) else { return false }
+            return mine.contains { r.0 < $0.1 && $0.0 < r.1 }
+        }
+        return people.filter(overlaps) + people.filter { !overlaps($0) }
+    }
+}
+
+// MARK: - From your manager (urgent and unread, on Today)
+
+enum StaffManagerStrip {
+    /// One sentence for Today's strip under the hero: urgent announcements
+    /// not yet "Got it", and manager replies not yet read. Nil when neither
+    /// waits — ordinary announcements stay behind the inbox tray.
+    /// `opensThread` when only replies wait.
+    static func content(_ badge: StaffInboxBadge?) -> (text: String, urgent: Bool, opensThread: Bool)? {
+        guard let badge else { return nil }
+        let urgent = badge.urgentUnread
+        let replies = max(0, badge.unreadMessages ?? 0)
+        var parts: [String] = []
+        if let first = urgent.first {
+            let title = (first.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            parts.append(urgent.count > 1 ? "\(urgent.count) urgent notes from your manager"
+                                          : (title.isEmpty ? "An urgent note from your manager" : "Urgent: \(title)"))
+        }
+        if replies > 0 {
+            parts.append(replies == 1 ? "1 new reply from your manager" : "\(replies) new replies from your manager")
+        }
+        guard !parts.isEmpty else { return nil }
+        return (parts.joined(separator: " \u{00B7} "), !urgent.isEmpty, urgent.isEmpty)
+    }
 }

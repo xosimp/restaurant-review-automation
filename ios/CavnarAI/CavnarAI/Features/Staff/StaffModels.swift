@@ -541,20 +541,53 @@ struct StaffRunningLateResult: Decodable {
     }
 }
 
-/// The inbox's two counts — GET /staff/api/inbox (B5). Only the counts:
-/// the Inbox screen decodes the announcements itself.
+/// The inbox's two counts — GET /staff/api/inbox (B5) — and, from the same
+/// read, just enough of each announcement for Today's "From your manager"
+/// strip (an urgent one not yet "Got it"). The Inbox screen decodes the
+/// announcements in full itself.
 struct StaffInboxBadge: Codable {
     let ok: Bool
     var unread: Int? = nil
     var unreadMessages: Int? = nil
     var error: String? = nil
+    var announcements: [Notice]? = nil
+
+    struct Notice: Codable, Hashable {
+        var id: Int? = nil
+        var title: String? = nil
+        var priority: String? = nil
+        var ackedAt: String? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, priority
+            case ackedAt = "acked_at"
+        }
+
+        var isUrgentUnread: Bool { priority == "urgent" && (ackedAt ?? "").isEmpty }
+    }
 
     enum CodingKeys: String, CodingKey {
-        case ok, unread, error
+        case ok, unread, error, announcements
         case unreadMessages = "unread_messages"
     }
 
     var total: Int { max(0, unread ?? 0) + max(0, unreadMessages ?? 0) }
+
+    /// Urgent announcements this person hasn't marked "Got it".
+    var urgentUnread: [Notice] { (announcements ?? []).filter(\.isUrgentUnread) }
+}
+
+extension StaffInboxBadge {
+    /// The counts decode as before; the announcement list is best-effort —
+    /// a list that won't read leaves the strip empty, never the badge.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try c.decode(Bool.self, forKey: .ok)
+        unread = try? c.decodeIfPresent(Int.self, forKey: .unread)
+        unreadMessages = try? c.decodeIfPresent(Int.self, forKey: .unreadMessages)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        announcements = (try? c.decodeIfPresent([Notice].self, forKey: .announcements)) ?? nil
+    }
 }
 
 /// A swap asked of this person, or a shift offered to them by name — what

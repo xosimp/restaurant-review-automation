@@ -15,16 +15,15 @@ struct StaffWaitingStrip: View {
 
     var body: some View {
         Button(action: open) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    StaffKicker(text: "Waiting on you")
-                    HomeMixedText.make(sentence, size: CavnarType.body, weight: 600, color: .cavnarInk)
+            HStack(alignment: .center, spacing: CavnarSpace.s) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("Waiting on you")
+                    CavnarMixedText(sentence, role: .label)
                         .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.cavnar(.secondary).weight(.semibold))
                     .foregroundStyle(Color.cavnarInk3)
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -35,6 +34,48 @@ struct StaffWaitingStrip: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Waiting on you. \(sentence)")
         .accessibilityHint("Opens Requests")
+    }
+}
+
+// MARK: - From your manager (urgent and unread)
+
+/// Under the hero, only for an urgent announcement not yet "Got it" or a
+/// manager's reply not yet read (`StaffManagerStrip`). An urgent one is
+/// ringed red, as in the inbox; a tap opens the inbox (or, for replies
+/// alone, the thread). Everything else stays behind the tray.
+struct StaffManagerStripView: View {
+    let text: String
+    let urgent: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(alignment: .center, spacing: CavnarSpace.s) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("From your manager", icon: urgent ? "exclamationmark.circle" : "bubble.left",
+                                 tint: urgent ? .cavnarRedText : .cavnarEmber2)
+                    CavnarMixedText(text, role: .label)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.secondary).weight(.semibold))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .cavnarCard()
+            .overlay {
+                if urgent {
+                    RoundedRectangle(cornerRadius: CavnarRadius.card)
+                        .strokeBorder(Color.cavnarRed.opacity(0.7), lineWidth: 1.5)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("From your manager. \(text)")
+        .accessibilityHint(urgent ? "Opens your inbox" : "Opens your messages")
     }
 }
 
@@ -50,28 +91,29 @@ struct StaffStatsTiles: View {
     var body: some View {
         let hours = StaffTodayPlan.weekHours(stats: store.stats.value, shifts: shifts)
         let tips = store.earnings.value?.lastShift
-        VStack(alignment: .leading, spacing: 8) {
-            if hours != nil || tips != nil {
-                HStack(alignment: .top, spacing: 8) {
+        let tipsTotal = tips?.tipsTotal
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            if hours != nil || tipsTotal != nil {
+                HStack(alignment: .top, spacing: CavnarSpace.xs) {
                     if let hours {
                         DSRStatTile(label: hours.label, value: StaffTime.figure(hours.hours),
                                     detail: StaffTodayPlan.workedLine(store.stats.value) ?? "scheduled")
                     }
-                    if let tips, let total = tips.tipsTotal {
+                    if let tips, let total = tipsTotal {
                         DSRStatTile(label: "Tips \u{00B7} \(tipsDay(tips))", value: StaffMoney.label(total),
-                                    detail: store.earnings.value?.asOfLabel.map { "POS as of \($0)" })
+                                    detail: store.earnings.value?.asOfLabel.map { "as of \($0)" })
                     }
                 }
             }
             if let line = store.stats.value?.overtimeLine {
-                HomeMixedText.make(line, size: CavnarType.secondary, weight: 600,
-                                   color: store.stats.value?.overtime?.over == true ? .cavnarAmber : .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(line, role: .secondary,
+                                color: store.stats.value?.overtime?.over == true ? .cavnarAmber : .cavnarInk2)
             }
-            if tips != nil, let lag = store.earnings.value?.lagNote, !lag.isEmpty {
+            // Why there are no tips yet (the POS lags a day) — only when
+            // the tile is missing; beside a figure it is noise.
+            if tipsTotal == nil, let lag = store.earnings.value?.lagNote, !lag.isEmpty {
                 Text(lag)
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if store.stats.phase == .failed && hours == nil {
@@ -107,8 +149,8 @@ struct StaffBriefCard: View {
                 card(brief)
             }
         case .failed:
-            VStack(alignment: .leading, spacing: 8) {
-                StaffKicker(text: "Before service")
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("Before service")
                 StaffLoadFailed(what: "today\u{2019}s brief", message: section.error, retry: reload)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -119,34 +161,28 @@ struct StaffBriefCard: View {
     }
 
     private func card(_ brief: StaffPersonalBrief) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            StaffKicker(text: "Before service")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Before service")
             if let text = brief.briefText, !text.isEmpty {
-                HomeMixedText.make(text, size: CavnarType.body, color: .cavnarInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(text, role: .body, color: .cavnarInk)
             }
             if let focus = brief.focus {
                 VStack(alignment: .leading, spacing: 2) {
-                    HomeMixedText.make("Tonight\u{2019}s focus: \(focus.item)", size: CavnarType.body, weight: 700,
-                                       color: .cavnarInk)
+                    CavnarMixedText("Tonight\u{2019}s focus: \(focus.item)", role: .label)
                     if let line = focus.line, !line.isEmpty {
-                        HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk2)
+                        CavnarMixedText(line, role: .secondary)
                     }
                 }
-                .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array(brief.dayItems.enumerated()), id: \.offset) { _, item in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                     let tone: CavnarTone = (item.kind == "stock" || item.kind == "eighty_sixed") ? .warning : .neutral
-                    Text((Self.tags[item.kind] ?? item.kind.capitalized).uppercased())
-                        .font(.cavnarBody(10.5, weight: 700))
-                        .kerning(0.6)
-                        .foregroundStyle(tone.foreground)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                    Text(Self.tags[item.kind] ?? item.kind.capitalized)
+                        .cavnarText(.tag, color: tone.foreground)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
                         .background(Capsule().fill(tone.background))
-                    HomeMixedText.make(item.text, size: CavnarType.secondary + 1, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(item.text, role: .body, color: .cavnarInk)
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -158,10 +194,14 @@ struct StaffBriefCard: View {
 
 // MARK: - Who's on with me (H7)
 
+/// The first four on the hero's day — the ones whose hours overlap yours
+/// first — and "Show all N" for the rest.
 struct StaffCoworkersCard: View {
     let section: StaffSection<StaffCoworkersResponse>
     let hero: StaffHero
     let reload: () async -> Void
+
+    static let shown = 4
 
     private var title: String {
         switch hero.title {
@@ -176,53 +216,55 @@ struct StaffCoworkersCard: View {
         case .loading:
             EmptyView()
         case .failed:
-            VStack(alignment: .leading, spacing: 8) {
-                StaffKicker(text: title)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker(title)
                 StaffLoadFailed(what: "who\u{2019}s on", message: section.error, retry: reload)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard()
         case .ready:
             if let r = section.value, r.date == hero.day.date || r.date == nil {
-                let people = r.coworkers ?? []
-                VStack(alignment: .leading, spacing: 10) {
-                    StaffKicker(text: title)
+                let people = StaffTodayPlan.coworkersByOverlap(r.coworkers ?? [], legs: hero.day.legs)
+                VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                    CavnarKicker(title)
                     if people.isEmpty {
                         Text(r.posted == false ? "That day isn\u{2019}t posted yet."
                                                : "Nobody else is on the schedule that day.")
-                            .font(.cavnarBody(CavnarType.secondary))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                     }
-                    ForEach(people) { person in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(person.name)
-                                    .font(.cavnarBody(CavnarType.body, weight: 700))
-                                    .foregroundStyle(Color.cavnarInk)
-                                let what = [person.role, person.station.map { "On \($0)" }]
-                                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
-                                if !what.isEmpty {
-                                    Text(what)
-                                        .font(.cavnarBody(CavnarType.secondary))
-                                        .foregroundStyle(Color.cavnarInk2)
-                                }
-                            }
-                            Spacer(minLength: 8)
-                            if !person.timeRange.isEmpty {
-                                Text(person.timeRange)
-                                    .font(.cavnarNumber(CavnarType.secondary, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk2)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                            }
+                    ForEach(people.prefix(Self.shown)) { row($0) }
+                    if people.count > Self.shown {
+                        CavnarMoreDisclosure(hiddenCount: people.count - Self.shown, total: people.count) {
+                            ForEach(people.dropFirst(Self.shown)) { row($0) }
                         }
-                        .accessibilityElement(children: .combine)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()
             }
         }
+    }
+
+    private func row(_ person: StaffCoworker) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(person.name).cavnarText(.label)
+                let what = [person.role, person.station.map { "On \($0)" }]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+                if !what.isEmpty {
+                    Text(what).cavnarText(.secondary)
+                }
+            }
+            Spacer(minLength: CavnarSpace.xs)
+            if !person.timeRange.isEmpty {
+                Text(person.timeRange)
+                    .font(.cavnarNumber(CavnarType.secondary, weight: 600))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -233,20 +275,17 @@ struct StaffRecognitionCard: View {
 
     var body: some View {
         if let r = section.value, let first = r.items?.first {
-            VStack(alignment: .leading, spacing: 8) {
-                StaffKicker(text: "A guest named you")
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("A guest named you")
                 if let excerpt = first.excerpt, !excerpt.isEmpty {
-                    HomeMixedText.make("\u{201C}\(excerpt)\u{201D}", size: CavnarType.body, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText("\u{201C}\(excerpt)\u{201D}", role: .body, color: .cavnarInk)
                 } else {
                     Text("A guest named you in a review.")
-                        .font(.cavnarBody(CavnarType.body))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.body, color: .cavnarInk)
                 }
                 let count = r.count ?? r.items?.count ?? 1
                 let when = first.dateLabel ?? first.date.map(CavnarDate.mdy) ?? ""
-                HomeMixedText.make(count > 1 ? "\(when) \u{00B7} \(count) mentions this year" : when,
-                                   size: CavnarType.caption, color: .cavnarInk3)
+                CavnarMixedText(count > 1 ? "\(when) \u{00B7} \(count) mentions this year" : when, role: .caption)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard()
@@ -278,16 +317,14 @@ struct StaffRunningLateSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HomeMixedText.make("For your \(StaffTime.label(leg.shiftStart ?? "")) shift today",
-                                       size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
+                VStack(alignment: .leading, spacing: CavnarSpace.m) {
+                    CavnarMixedText("For your \(StaffTime.label(leg.shiftStart ?? "")) shift today", role: .lead)
                     if let existing {
-                        HomeMixedText.make("You already said about \(existing.etaMinutes) min. Sending again updates it; your manager isn\u{2019}t paged twice.",
-                                           size: CavnarType.secondary, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText("You already said about \(existing.etaMinutes) min. Sending again updates it; your manager isn\u{2019}t paged twice.",
+                                        role: .secondary)
                     }
-                    StaffKicker(text: "About how late?")
-                    HStack(spacing: 8) {
+                    CavnarKicker("About how late?")
+                    HStack(spacing: CavnarSpace.xs) {
                         ForEach(choices, id: \.self) { minutes in
                             chip(minutes)
                         }
@@ -309,16 +346,14 @@ struct StaffRunningLateSheet: View {
                     .disabled(eta == nil || sending)
                     if let error {
                         Text(error)
-                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                            .foregroundStyle(Color.cavnarRed)
+                            .cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Text("Running much later than 45 minutes? Call your manager, or ask to give the shift up.")
-                        .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .background(Color.cavnarPaper.ignoresSafeArea())
             .accountSheetChrome("Running late")
@@ -335,8 +370,7 @@ struct StaffRunningLateSheet: View {
             eta = minutes
         } label: {
             Text("\(minutes) min")
-                .font(.cavnarNumber(CavnarType.body, weight: 600))
-                .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk)
+                .cavnarText(.figureS, color: on ? Color.cavnarPaper : Color.cavnarInk)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                     .fill(on ? Color.cavnarInk : Color.cavnarPaper3.opacity(0.6)))

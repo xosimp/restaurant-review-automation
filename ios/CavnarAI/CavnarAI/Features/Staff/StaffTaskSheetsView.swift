@@ -12,7 +12,10 @@ import UIKit
 ///
 /// The whole row is the tick (UX-05), at once on screen and put back if the
 /// server refuses; the server's answer replaces the sheet in place
-/// (PERF-08). With no connection the phone's copy stays up "as of 4:05pm"
+/// (PERF-08). Done lines fold per section behind "12 done · Show" and a
+/// "Next: <line> · due 4pm" line under the progress bar scrolls to the
+/// first open one (iOS readability round, 10/8/26), so the next thing to
+/// do never drifts off the screen. With no connection the phone's copy stays up "as of 4:05pm"
 /// and ticks and readings wait to send (PERF-09); a photo is taken with the
 /// camera first and shrunk on the phone before it goes (UX-24, PERF-06).
 ///
@@ -27,14 +30,21 @@ struct StaffTaskSheetsSection: View {
     private let seed: StaffTasksResponse?
     private let store: StaffTasksStore
     let reload: () async -> Void
+    /// Scrolls the tab's scroll view to a line (`"line-<key>"`) — a sheet's
+    /// "Next:" line takes the person to the first one still open.
+    private let scrollTo: ((String) -> Void)?
 
     init(response: StaffTasksResponse? = nil, store: StaffTasksStore? = nil,
-         reload: @escaping () async -> Void = {}) {
+         reload: @escaping () async -> Void = {}, scrollTo: ((String) -> Void)? = nil) {
         self.seed = response
         self.store = store ?? StaffTasksStore.shared
         self.reload = reload
+        self.scrollTo = scrollTo
     }
 
+    /// Sections whose done lines are shown ("<sheet>|<group>"); folded by
+    /// default so the next open line never drifts off the screen.
+    @State private var showingDone: Set<String> = []
     @State private var values: [String: String] = [:]
     @FocusState private var focused: String?
     @State private var untick: LineRef?
@@ -138,7 +148,7 @@ struct StaffTaskSheetsSection: View {
             } icon: {
                 Image(systemName: "icloud.slash")
             }
-            .font(.cavnarBody(CavnarType.secondary, weight: 600))
+            .font(.cavnar(.label))
             .foregroundStyle(Color.cavnarAmber)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -149,8 +159,7 @@ struct StaffTaskSheetsSection: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Your sheets as of \(StaffSheetFormat.asOf(asOf))"
                      + (store.loadError.map { ". \($0)" } ?? ""))
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 tryAgain
@@ -158,8 +167,7 @@ struct StaffTaskSheetsSection: View {
         }
         if let banner = store.banner {
             Text(banner)
-                .font(.cavnarBody(CavnarType.secondary))
-                .foregroundStyle(Color.cavnarRed)
+                .cavnarText(.secondary, color: .cavnarRedText)
                 .onTapGesture { store.banner = nil }
         }
     }
@@ -169,8 +177,7 @@ struct StaffTaskSheetsSection: View {
             Task { await store.load() }
         } label: {
             Text(store.isLoading ? "Checking" : "Try again")
-                .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                .foregroundStyle(Color.cavnarEmber2)
+                .cavnarText(.label, color: .cavnarEmber2)
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
@@ -184,9 +191,8 @@ struct StaffTaskSheetsSection: View {
             if let note = store.lastNightNote { lastNightCard(note) }
             let sheets = store.sheets
             if sheets.isEmpty {
-                Text("No task sheet is yours today. Your sheets show here on the days the schedule puts you on a shift that has one.")
-                    .font(.cavnarBody(CavnarType.body))
-                    .foregroundStyle(Color.cavnarInk3)
+                Text("No tasks for you today.")
+                    .cavnarText(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .cavnarCard()
             }
@@ -195,8 +201,7 @@ struct StaffTaskSheetsSection: View {
         } else if let error = store.loadError, !store.isLoading {
             VStack(alignment: .leading, spacing: 6) {
                 Text(error)
-                    .font(.cavnarBody(CavnarType.body))
-                    .foregroundStyle(Color.cavnarRed)
+                    .cavnarText(.body, color: .cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
                 tryAgain
             }
@@ -206,7 +211,7 @@ struct StaffTaskSheetsSection: View {
             // The house loading state (DESIGN_SYSTEM §10).
             VStack(alignment: .leading, spacing: 8) {
                 CavnarSkeletonBar(height: 3).frame(width: 180)
-                Text("Loading your sheets").font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                Text("Loading your sheets").cavnarText(.body)
             }
             .accessibilityElement(children: .combine)
         }
@@ -216,20 +221,14 @@ struct StaffTaskSheetsSection: View {
 
     private func lastNightCard(_ note: StaffLastNightNote) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("LAST NIGHT'S NOTE")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .kerning(1.3)
-                .foregroundStyle(Color.cavnarInk3)
-                .accessibilityAddTraits(.isHeader)
+            CavnarKicker("Last night\u{2019}s note")
             Text(note.note)
-                .font(.cavnarBody(CavnarType.body))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.body, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             let by = [note.signedBy, note.dateLabel].compactMap { $0 }.filter { !$0.isEmpty }
             if !by.isEmpty {
-                Text("\(note.shiftKind == "any" ? "Signed off" : "Closing signed off") by " + by.joined(separator: " · "))
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarMixedText("\(note.shiftKind == "any" ? "Signed off" : "Closing signed off") by " + by.joined(separator: " · "),
+                                role: .caption)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -239,6 +238,9 @@ struct StaffTaskSheetsSection: View {
 
     // MARK: One sheet
 
+    /// The title, the count and the progress bar, then "Next: <line> · due
+    /// 4pm" (a tap scrolls to it); then each section with its done lines
+    /// folded behind "12 done · Show" — done/total stays in the header.
     private func sheetCard(_ s: StaffSheet) -> some View {
         let open = s.status == "open"
         return VStack(alignment: .leading, spacing: 0) {
@@ -248,15 +250,14 @@ struct StaffTaskSheetsSection: View {
                         Text(s.title)
                             .font(.cavnarBody(CavnarType.emphasis, weight: 700))
                             .foregroundStyle(Color.cavnarInk)
-                        let meta = meta(s)
+                        let meta = meta(s, open: open)
                         if !meta.isEmpty {
-                            Text(meta).font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                            CavnarMixedText(meta, role: .secondary)
                         }
                     }
                     Spacer(minLength: 8)
                     Text("\(s.done)/\(s.total)")
-                        .font(.cavnarNumber(16, weight: 700))
-                        .foregroundStyle(s.total > 0 && s.done == s.total ? Color.cavnarGreen : Color.cavnarInk2)
+                        .cavnarText(.figureS, color: s.total > 0 && s.done == s.total ? Color.cavnarGreen : Color.cavnarInk2)
                 }
                 StaffEmberProgressBar(done: s.done, total: s.total)
             }
@@ -265,31 +266,102 @@ struct StaffTaskSheetsSection: View {
                                 + ((s.overdue ?? 0) > 0 ? ", \(s.overdue ?? 0) overdue" : ""))
             .accessibilityAddTraits(.isHeader)
             .padding(.bottom, 6)
-            if !open {
-                Text("This sheet closed at the end of the shift.")
-                    .font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3).padding(.vertical, 6)
+            if open, let next = StaffSheetProgress.next(in: s) {
+                nextLine(s, next)
             }
-            ForEach(Array(s.lines.enumerated()), id: \.element.id) { i, line in
-                if let sec = line.section, !sec.isEmpty, i == 0 || s.lines[i - 1].section != sec {
-                    Text(sec.uppercased())
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700)).kerning(1.2)
-                        .foregroundStyle(Color.cavnarInk3)
-                        .padding(.top, 10).padding(.bottom, 2)
-                        .accessibilityAddTraits(.isHeader)
-                }
-                lineRow(s, line, open: open)
+            ForEach(StaffSheetProgress.groups(s.lines)) { group in
+                sectionGroup(s, group, open: open)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
     }
 
-    private func meta(_ s: StaffSheet) -> String {
+    /// "Next: Restock the bar · due 4pm" — a tap scrolls to that line.
+    private func nextLine(_ s: StaffSheet, _ l: StaffSheetLine) -> some View {
+        let key = StaffSheetMerge.key(s.id, l.lineID)
+        let due = l.dueAt.map { StaffSheetFormat.clock($0) }.flatMap { $0.isEmpty ? nil : $0 }
+        let late = l.overdue == true
+        return Button {
+            Haptic.light()
+            scrollTo?("line-" + key)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                (Text("Next: ").font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
+                    + Text(l.label).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk)
+                    + (due.map {
+                        HomeMixedText.make(late ? " \u{00B7} overdue since \($0)" : " \u{00B7} due \($0)",
+                                           role: .secondary, color: late ? .cavnarRedText : .cavnarInk2)
+                    } ?? Text("")))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.down")
+                    .font(.cavnar(.caption).weight(.semibold))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Scrolls to it")
+    }
+
+    /// One section: its heading, its open lines, and its done lines folded
+    /// behind "12 done · Show". A done line that still has something to say
+    /// (an out-of-range alert, a refusal, a tick waiting to send) stays out.
+    @ViewBuilder
+    private func sectionGroup(_ s: StaffSheet, _ group: StaffSheetProgress.Group, open: Bool) -> some View {
+        let foldKey = "\(s.id)|\(group.index)"
+        let showAll = showingDone.contains(foldKey)
+        let visible = group.lines.filter { l in
+            let key = StaffSheetMerge.key(s.id, l.lineID)
+            return showAll || !l.done || store.note(key) != nil || store.overlay(key) != nil
+        }
+        let folded = group.lines.count - visible.count
+        if let sec = group.section {
+            Text(sec)
+                .cavnarText(.kicker, color: .cavnarInk2)
+                .padding(.top, 10).padding(.bottom, 2)
+                .accessibilityAddTraits(.isHeader)
+        }
+        ForEach(visible) { line in
+            lineRow(s, line, open: open)
+        }
+        if folded > 0 || (showAll && group.doneCount > 0) {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.22)) {
+                    if showAll { showingDone.remove(foldKey) } else { showingDone.insert(foldKey) }
+                }
+            } label: {
+                HStack(spacing: CavnarSpace.xs) {
+                    HomeMixedText.make(showAll ? "Hide done" : "\(folded) done \u{00B7} Show",
+                                       role: .label, color: .cavnarEmber2)
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(showAll ? 180 : 0))
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .top) { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+            .accessibilityLabel(showAll ? "Hide done lines" : "\(folded) done. Show them")
+        }
+    }
+
+    private func meta(_ s: StaffSheet, open: Bool) -> String {
         var bits: [String] = []
         if s.shiftStart != nil {
             bits.append("\(StaffSheetFormat.clock(s.shiftStart))–\(StaffSheetFormat.clock(s.shiftEnd))")
         }
-        if s.unassigned { bits.append("no schedule published — yours if you're on it") }
+        if !open { bits.append("Closed") }
+        if s.unassigned { bits.append("Shared sheet") }
         if s.assignees.count > 1 { bits.append("with " + s.assignees.joined(separator: ", ")) }
         return bits.joined(separator: " · ")
     }
@@ -309,12 +381,11 @@ struct StaffTaskSheetsSection: View {
                     StaffCheckDisc(done: l.done, overdue: l.overdue == true, pending: overlay?.state, size: discSize)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(l.label)
-                            .font(.cavnarBody(CavnarType.body + 0.5))
-                            .foregroundStyle(l.done ? Color.cavnarInk3 : Color.cavnarInk)
+                            .cavnarText(.body, color: l.done ? Color.cavnarInk2 : Color.cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                         tags(l)
                         if let sub = subline(l, overlay: overlay) {
-                            Text(sub).font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
+                            CavnarMixedText(sub, role: .caption, color: .cavnarInk2)
                         }
                     }
                     .padding(.top, 3)
@@ -351,6 +422,7 @@ struct StaffTaskSheetsSection: View {
         }
         .padding(.vertical, 8)
         .overlay(alignment: .top) { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+        .id("line-" + key)
     }
 
     /// The row's one tap: tick a plain line; ask before un-ticking; go to
@@ -402,7 +474,7 @@ struct StaffTaskSheetsSection: View {
                 .submitLabel(.done)
                 .focused($focused, equals: key)
                 .onSubmit(save)
-                .font(.cavnarBody(CavnarType.body))
+                .font(.cavnar(.body))
                 .padding(.horizontal, 12)
                 .frame(minHeight: 44)
                 .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
@@ -431,7 +503,7 @@ struct StaffTaskSheetsSection: View {
             if busy {
                 HStack(spacing: 10) {
                     CavnarSkeletonBar(height: 3).frame(width: 80)
-                    Text("Sending the photo").font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarInk3)
+                    Text("Sending the photo").cavnarText(.secondary)
                 }
                 .frame(minHeight: 44)
                 .accessibilityElement(children: .combine)
@@ -457,8 +529,7 @@ struct StaffTaskSheetsSection: View {
                         library = LineRef(sheet: s, line: l)
                     } label: {
                         Text(StaffCameraPicker.isAvailable ? "Choose from library" : "Choose a photo")
-                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarText(.label, color: .cavnarEmber2)
                             .frame(minHeight: 44)
                             .contentShape(Rectangle())
                     }
@@ -472,18 +543,17 @@ struct StaffTaskSheetsSection: View {
     @ViewBuilder
     private func tags(_ l: StaffSheetLine) -> some View {
         let items: [(String, Color)] = [
-            l.critical == true ? ("CRITICAL", Color.cavnarEmber2) : nil,
-            l.overdue == true ? ("OVERDUE", Color.cavnarRed) : nil,
-            l.late == true ? ("LATE", Color.cavnarAmber) : nil,
-            l.flagged == true ? ("OUT OF RANGE", Color.cavnarRed) : nil,
+            l.critical == true ? ("Critical", Color.cavnarEmber2) : nil,
+            l.overdue == true ? ("Overdue", Color.cavnarRedText) : nil,
+            l.late == true ? ("Late", Color.cavnarAmber) : nil,
+            l.flagged == true ? ("Out of range", Color.cavnarRedText) : nil,
         ].compactMap { $0 }
         if !items.isEmpty {
             HStack(spacing: 6) {
                 ForEach(items, id: \.0) { t in
                     Text(t.0)
-                        .font(.cavnarBody(10.5, weight: 700)).kerning(0.8)
-                        .foregroundStyle(t.1)
-                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .cavnarText(.tag, color: t.1)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
                         .overlay(Capsule().stroke(t.1, lineWidth: 1))
                 }
             }
@@ -530,26 +600,23 @@ struct StaffTaskSheetsSection: View {
 
     @ViewBuilder
     private func floorSection(_ payload: StaffTasksPayload) -> some View {
-        Text("THE FLOOR · TODAY")
-            .font(.cavnarBody(CavnarType.kicker, weight: 700)).kerning(1.3)
-            .foregroundStyle(Color.cavnarInk3)
+        CavnarKicker("The floor \u{00B7} today")
             .padding(.top, 10)
-            .accessibilityAddTraits(.isHeader)
         if payload.floor.isEmpty {
-            Text("No other sheets went out today.").font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+            Text("No other sheets went out today.").cavnarText(.body)
         }
         ForEach(payload.floor) { s in
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(s.title).font(.cavnarBody(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    Text(s.title).cavnarText(.label)
                     Text(s.unassigned ? "Unassigned" : s.assignees.joined(separator: ", "))
-                        .font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption, color: .cavnarInk2)
                 }
                 Spacer()
                 if let o = s.overdue, o > 0 {
-                    Text("\(o) overdue").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarRed)
+                    CavnarMixedText("\(o) overdue", role: .caption, color: .cavnarRedText)
                 }
-                Text("\(s.done)/\(s.total)").font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                Text("\(s.done)/\(s.total)").cavnarText(.figureS, color: .cavnarInk2)
             }
             .cavnarCard()
             .accessibilityElement(children: .combine)
@@ -558,7 +625,7 @@ struct StaffTaskSheetsSection: View {
         ForEach(payload.canSignOff, id: \.self) { kind in
             if let s = signed[kind] {
                 Text("\(StaffSheetFormat.kind(kind)) signed off by \(s.signedBy ?? "a manager").")
-                    .font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.body)
             } else {
                 // Secondary: the sheets' ticks are the work here, and one
                 // screen spends one primary (DESIGN_SYSTEM §5, UX-17).
