@@ -263,9 +263,14 @@ def _dsr_yesterday_line(night):
         else:
             text += f", a normal {weekday}"
     if night.get("labor_pct") is not None:
-        text += f"; labor {night['labor_pct']:.1f}%"
+        hourly = night.get("labor_hourly_pct")
+        # All-in for the owner, salaries included, the hourly part beside it
+        # so the two figures can't be mistaken for each other (10/9/26).
+        text += f"; labor {night['labor_pct']:.1f}%" + (" with salaries" if hourly is not None else "")
         if night.get("labor_target_pct") is not None:
             text += f" against a {night['labor_target_pct']:g}% target"
+        if hourly is not None:
+            text += f" ({hourly:.1f}% hourly staff alone)"
     text += "."
     if night.get("provisional"):
         text += " Provisional — some data was still syncing."

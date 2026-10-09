@@ -286,7 +286,13 @@ def last_night(restaurant_id, today, user=None, db_path=None):
             "net": sm["net"],
             "forecast_net": sm.get("forecast_net") if _num(sm.get("forecast_net")) else None,
             "vs_forecast_pct": sm.get("vs_forecast_pct") if _num(sm.get("vs_forecast_pct")) else None,
-            "labor_pct": lm.get("pct") if _num(lm.get("pct")) else None,
+            # The owner's labor is all-in, salaries included (owner, 9/30/26;
+            # the report's own headline): the brief said the hourly-only 29.5%
+            # beside the report's 44.4% (10/9/26). The salaried keys survive
+            # redact() only for the owner, so a manager still reads hourly.
+            "labor_pct": (lm["salaried_total_pct"] if _num(lm.get("salaried_total_pct"))
+                          else lm.get("pct") if _num(lm.get("pct")) else None),
+            "labor_hourly_pct": lm.get("pct") if _num(lm.get("pct")) and _num(lm.get("salaried_total_pct")) else None,
             "labor_target_pct": lm.get("target_pct") if _num(lm.get("target_pct")) else None,
             "missing": facts.get("missing") or []}
 

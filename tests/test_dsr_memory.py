@@ -342,6 +342,27 @@ def test_the_morning_brief_reads_last_nights_dsr(db):
     assert "budget" not in my["text"].lower()
 
 
+def test_the_morning_brief_says_the_owners_labor_with_salaries_and_the_hourly_part(db):
+    # Owner, 10/9/26: the brief said "labor 29.5%" (hourly staff only) while
+    # the night's report said 44.4% with salaries in. The owner's figure is
+    # all-in (9/30/26), with the hourly part named beside it; a manager,
+    # whose view never carries the salaries, still reads hourly.
+    import morning_brief
+    from dsr import store as _st
+    r = _ejs(db)
+    rep = _night(db, r.id, TUE, net=9491.67, labor_pct=29.5)
+    _st.save_block(rep["id"], "labor", dsr.block(dsr.READY, source="rpower", metrics={
+        "pct": 29.5, "cost": 2799.99, "target_pct": 35.0, "salaried_cost": 1412.09,
+        "salaried_total_cost": 4212.08, "salaried_total_pct": 44.4, "salaried_vs_target_pts": 9.4}), db_path=db)
+    brief = morning_brief.build(r.id, restaurant=r, today=TUE + timedelta(days=1), db_path=db)
+    (y,) = [l for l in brief["lines"] if l["key"] == "yesterday"]
+    assert "labor 44.4% with salaries against a 35% target (29.5% hourly staff alone)" in y["text"]
+    mgr = morning_brief.build(r.id, restaurant=r, today=TUE + timedelta(days=1), db_path=db,
+                              viewer=dict(MANAGER, restaurant_id=r.id))
+    (my,) = [l for l in mgr["lines"] if l["key"] == "yesterday"]
+    assert "44.4" not in my["text"] and "salar" not in my["text"]
+
+
 def test_the_morning_brief_says_provisional_and_falls_back_without_a_report(db):
     import morning_brief
     r = _ejs(db)
