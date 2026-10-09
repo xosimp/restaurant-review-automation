@@ -239,3 +239,15 @@ def test_setup_never_lands_on_an_empty_build_stage():
     go = SRC[_at("function studioGo(stage) {"):]
     go = go[:go.index("if (stage === 'setup' && _ssGenerating)")]
     assert "ssBuilding();" in go
+
+
+def test_the_bell_refresh_lands_in_place_and_never_replays_the_rows():
+    """Owner, 10/9/26: opening the bell flickered. It drew the cached rows
+    with their entrance, then the fresh read replaced them while .hp-enter
+    was still on, so every row faded in twice. Same rows: DOM untouched;
+    changed rows: swapped without the entrance."""
+    fn = SRC[_at("  function renderList() {"):]
+    fn = fn[:fn.index("\n  }\n")]
+    assert "if (list._nbHtml !== html) {" in fn
+    assert "if (!_animate) list.classList.remove('hp-enter');" in fn
+    assert fn.index("list._nbHtml !== html") < fn.index("list.innerHTML = html;")

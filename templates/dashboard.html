@@ -33655,7 +33655,7 @@ document.addEventListener('click', function(e) {
     var list = document.getElementById('notif-list'), tools = document.getElementById('notif-tools');
     if (!list) return;
     if (tools) tools.innerHTML = _unreadCount() ? '<button type="button" class="cbtn cbtn-text cbtn-icon cbtn-sm hp-tool" data-notif-readall="1" aria-label="Mark all read" title="Mark all read">' + NB_CHECKS + '</button>' : '';
-    if (!_items.length) { list.innerHTML = _calm('All caught up', true); return; }
+    if (!_items.length) { list.innerHTML = _calm('All caught up', true); list._nbHtml = null; return; }
     var rows = [], rest = [], i;
     for (i = 0; i < _items.length; i++) (_items[i].urgent && !_items[i].resolved ? rows : rest).push(_items[i]);
     rows = rows.concat(rest);
@@ -33687,11 +33687,20 @@ document.addEventListener('click', function(e) {
             + (n._askWhy && typeof cavUndoWhyHtml === 'function' ? '<div class="notif-why" data-why-for="' + k + '">' + cavUndoWhyHtml(n._askWhy) + '</div>' : '')
             + '</div>';
     }
-    list.innerHTML = html;
-    // Answered or skipped: the question is not asked again on this row.
-    var whys = list.querySelectorAll('.notif-why');
-    for (i = 0; i < whys.length; i++) { var st = whys[i].querySelector('.cav-undo-why');
-      if (st) (function(row) { st._after = function() { if (row) row._askWhy = null; }; })(_find(whys[i].getAttribute('data-why-for'))); }
+    // The fresh read lands in place (owner, 10/9/26: the bell flickered).
+    // Opening drew the cached rows with their entrance, then the fetch
+    // replaced them while .hp-enter was still on the list, so every row
+    // vanished and faded in again. Same rows: the DOM is left alone. Changed
+    // rows: swapped without replaying the entrance.
+    if (list._nbHtml !== html) {
+      if (!_animate) list.classList.remove('hp-enter');
+      list.innerHTML = html;
+      list._nbHtml = html;
+      // Answered or skipped: the question is not asked again on this row.
+      var whys = list.querySelectorAll('.notif-why');
+      for (i = 0; i < whys.length; i++) { var st = whys[i].querySelector('.cav-undo-why');
+        if (st) (function(row) { st._after = function() { if (row) row._askWhy = null; }; })(_find(whys[i].getAttribute('data-why-for'))); }
+    }
     _enter(list);
   }
   function _rowKey(n) { return n.id != null ? 'a' + n.id : (n.type + '|' + n.fired_at); }
@@ -33895,7 +33904,7 @@ document.addEventListener('click', function(e) {
     }).catch(function(){
       _busy = false;
       var list = document.getElementById('notif-list');
-      if (list && !_items.length) list.innerHTML = _calm('Couldn\u2019t load notifications');
+      if (list && !_items.length) { list.innerHTML = _calm('Couldn\u2019t load notifications'); list._nbHtml = null; }
     });
   }
 
