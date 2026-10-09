@@ -31,7 +31,7 @@ struct RecoverableGaugeChart: View {
             CavnarAnimatedCanvas(duration: 2.8, height: 230, replayKey: "\(Int(monthly))-\(Int(ceiling))") { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
-            HomeMixedText.make(basis, size: 12.5, color: .cavnarInk3)
+            HomeMixedText.make(basis, role: .caption, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

@@ -40,9 +40,11 @@ struct AIVisibilitySection: View {
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     @State private var showGbpChecklist = false
     @State private var expandedWhy: Set<String> = []
+    /// The hero's range, background, recall and summary lines.
+    @State private var showHeroDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxl) {
             if viewModel.result == nil || viewModel.result?.isNotMeasured == true {
                 preCheckHero
                 storedState
@@ -50,8 +52,7 @@ struct AIVisibilitySection: View {
             } else if let result = viewModel.result {
                 if !result.ok {
                     Text(result.error ?? "Couldn't check AI visibility.")
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.body, color: .cavnarRedText)
                     checkButton
                 } else {
                     heroPanel(result)
@@ -59,26 +60,7 @@ struct AIVisibilitySection: View {
                         gbpChecklistGrid(checklist)
                     }
                     if let queries = result.queries {
-                        // Each row's own .zIndex(isPressed ? 1 : 0) only
-                        // controls paint order among ITS siblings inside
-                        // queriesSection's own inner VStack — it has no
-                        // effect on queriesSection's paint order relative
-                        // to roadmapSection, an entirely separate sibling
-                        // section right after it in THIS outer VStack.
-                        // Only the last query row sits close enough to
-                        // queriesSection's own bottom edge that its
-                        // popped-up card can overflow into where
-                        // roadmapSection begins — and since roadmapSection
-                        // is declared after queriesSection with no zIndex
-                        // difference, it was painting on top of that
-                        // overflow, which is what made the "YOUR AI
-                        // VISIBILITY ROADMAP" heading look like it was
-                        // sitting inside the popup. queriesSection always
-                        // sits above roadmapSection in normal layout, so
-                        // this has zero effect on the non-pressed state —
-                        // it only matters for exactly this overflow case.
                         queriesSection(queries, demand: result.searchDemand)
-                            .zIndex(1)
                     }
                     if let checklist = result.checklist {
                         roadmapSection(result, checklist: checklist)
@@ -87,15 +69,16 @@ struct AIVisibilitySection: View {
                     // screen and says so here (re-audit P8).
                     if let err = viewModel.checkError {
                         Text(err)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarRed)
+                            .cavnarText(.body, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     checkButton
                 }
             }
             // The restaurant's own website — Google Analytics and Search
-            // Console, read every morning (parity audit 10/7/26 #52).
+            // Console, read every morning (parity audit 10/7/26 #52). The
+            // tab is "Online" now (iOS readability round, 10/8/26): the
+            // website was never AI visibility.
             WebsiteAnalyticsSection()
         }
         // The recorded check first (re-audit P1: a GET, never a live run),
@@ -115,14 +98,13 @@ struct AIVisibilitySection: View {
             CavnarShimmerLine()
                 .frame(width: 120)
         } else if let reason = viewModel.notMeasuredReason ?? viewModel.result?.reason?.value {
-            HStack(alignment: .top, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                 Image(systemName: "clock")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .padding(.top, 2)
-                Text("Not measured yet. \(reason)")
-                    .font(.cavnarBody(13))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk2)
+                    .accessibilityHidden(true)
+                Text("Not measured yet. \(reason)")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -170,12 +152,10 @@ struct AIVisibilitySection: View {
     // unexplained button with no context for what it's about to do.
 
     private var preCheckHero: some View {
-        VStack(alignment: .leading, spacing: 26) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xl) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 Text("Is \(restaurantName ?? "your restaurant") visible to AI search?")
-                    .font(.cavnarHeadline(21))
-                    .foregroundStyle(Color.cavnarInk)
-                    .lineSpacing(3)
+                    .cavnarText(.headline)
                 // Precise about what actually runs. The old wording —
                 // "asking ChatGPT, Perplexity and Google AI … this checks
                 // whether you show up in those answers" — reads as a claim
@@ -187,9 +167,8 @@ struct AIVisibilitySection: View {
                 // footer says what an assistant answers from is not
                 // something we can see (NS1 #9).
                 Text("This runs real guest-style queries through one AI search system \u{2014} Perplexity's live web search \u{2014} and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.")
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .lineSpacing(4)
+                    .cavnarText(.body)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(alignment: .leading, spacing: 16) {
@@ -213,25 +192,24 @@ struct AIVisibilitySection: View {
     }
 
     private func previewRow(icon: String, tone: Color, title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: CavnarSpace.s) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8).fill(tone.opacity(0.16)).frame(width: 32, height: 32)
-                Image(systemName: icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(tone)
+                Image(systemName: icon).font(.cavnar(.secondary)).foregroundStyle(tone)
             }
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Text(detail).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3).lineSpacing(2)
+                Text(title).cavnarText(.label)
+                Text(detail).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    // MARK: - Hero — was two separately-boxed score tiles plus a whole
-    // extra bordered "disclaimer" card for the 0%-score case. One panel
-    // now, mirroring FoodCost's own heroCard gradient/border/glow
-    // treatment: both numbers side by side, one computed summary sentence
-    // (folds the old disclaimer's reassurance in for the 0%-score case
-    // instead of giving it a separate box), and the GBP number stays the
-    // one interactive element — tap it to reveal the breakdown grid below.
+    // MARK: - Hero — the score ring, the two figures and one status line
+    // (iOS readability round, 10/8/26). The range, the background note,
+    // branded recall, who else was named, the setup count and the computed
+    // summary are behind "Details": it used to stack up to seven caveat
+    // lines under the two figures.
 
     private func heroPanel(_ result: AIVisibilityResult) -> some View {
         // `result.aiScore ?? 0` rendered a MISSING measurement as zero, and
@@ -255,16 +233,16 @@ struct AIVisibilitySection: View {
             VisibilityOrbitChart(score: result.aiScore, runs: viewModel.history,
                                  low: result.aiScoreLow, high: result.aiScoreHigh,
                                  band: measured ? result.aiChipText : "An estimate, not a measurement")
-                .padding(.bottom, 14)
-                .opacity(measured ? 1 : 0.35)
+                .padding(.bottom, CavnarSpace.s)
+                .opacity(measured ? 1 : 0.6)
             HStack(spacing: 0) {
                 heroStat(
                     value: scoreText,
                     // The server's chip, read from the 90% range (I4); the
                     // point breakpoints only for an older server.
-                    tone: measured ? (result.aiScoreTone?.color ?? aiScoreTone(result.aiScore ?? 0)) : Color.cavnarInk3,
+                    tone: measured ? (result.aiScoreTone?.color ?? aiScoreTone(result.aiScore ?? 0)) : Color.cavnarInk2,
                     // Named, not "AI". One system is asked.
-                    label: (result.platform ?? "AI").uppercased(),
+                    label: result.platform ?? "AI",
                     sub: measured ? (result.aiChipText ?? aiScoreLabel(result.aiScore ?? 0)) : "Not measured",
                     claim: result.aiScore == nil ? nil : result.claimKinds?["ai_score"]
                 )
@@ -287,8 +265,8 @@ struct AIVisibilitySection: View {
                         // The server's tone when it sends one (I10: one
                         // source for the thresholds); the client's own
                         // breakpoints only for an older server.
-                        tone: listing.map { Self.presenceColor(server: result.presenceTone, score: $0) } ?? Color.cavnarInk3,
-                        label: result.presenceHeading.uppercased(),
+                        tone: listing.map { Self.presenceColor(server: result.presenceTone, score: $0) } ?? Color.cavnarInk2,
+                        label: result.presenceHeading,
                         // The band in the server's words (I10), one table
                         // with the tone above.
                         sub: listing.map { (result.presenceChipText ?? gbpScoreLabel($0)) + ((result.presenceUnmeasured ?? 0) > 0
@@ -300,83 +278,11 @@ struct AIVisibilitySection: View {
                 }
                 .buttonStyle(.plain)
             }
-            // Why this number is not a measurement, when it is not one.
-            if let caveat = result.scoreCaveat {
-                HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarAmber)
-                        .padding(.top, 2)
-                    Text(caveat)
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 12)
-            } else if let lo = result.aiScoreLow, let hi = result.aiScoreHigh,
-                      let a = result.answeredQueries, hi > lo {
-                Text("Across \(a) questions. The range is how precise that sample can be.")
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .padding(.top, 10)
-            }
-            // When this check was actually run — a served result is the
-            // last recorded run, not a new one (#35) — and, once it is a
-            // week old, the same "background" rule Intel's competitors use.
-            if let measured = result.measuredLine {
-                HomeMixedText.make(measured, size: 13, color: .cavnarInk3)
-                    .padding(.top, 10)
-            }
-            if let note = result.backgroundNote() {
-                HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarAmber)
-                        .padding(.top, 2)
-                    HomeMixedText.make(note, size: 13, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 8)
-            }
-            // Branded recall and competitor appearance, both decoded and
-            // neither rendered — the exact pattern these audits keep
-            // finding. A number computed and never shown is a number
-            // nobody can act on.
-            if let b = result.brandedScore, (result.brandedQueries ?? 0) > 0 {
-                Text(b >= 50
-                     ? "Asked about you by name, \(result.platform ?? "it") recognised you."
-                     : "Asked about you by name, \(result.platform ?? "it") didn't recognise you. That's separate from whether you come up in an open search.")
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 8)
-            }
-            if let comps = result.competitorAppearances, !comps.isEmpty {
-                Text("Also named in these answers: "
-                     + comps.prefix(3).map { "\($0.name) (\($0.queries))" }.joined(separator: ", ")
-                     + (comps.count > 3 ? " and \(comps.count - 3) more" : ""))
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 8)
-            }
-            if let done = result.setupDone, let total = result.setupTotal, total > 0 {
-                Text("\(done) of \(total) Cavnar AI connections set up. These help us read your listing; they don't change what AI search sees.")
-                    .font(.cavnarBody(12.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 8)
-            }
-            if let insight = heroInsightText(result) {
-                Rectangle().fill(Color.cavnarEmber.opacity(0.25)).frame(height: 1).padding(.top, 16)
-                insight
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .lineSpacing(3)
-                    .padding(.top, 12)
-            }
+            heroStatusLine(result)
+                .padding(.top, CavnarSpace.s)
+            heroDetails(result)
         }
-        .padding(18)
+        .padding(CavnarSpace.l)
         .background(
             LinearGradient(
                 colors: [Color.cavnarEmber.opacity(0.5), Color.cavnarEmber.opacity(0.08)],
@@ -393,36 +299,126 @@ struct AIVisibilitySection: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 
+    /// The one status line: why the number is not a measurement when it is
+    /// not one (amber), else when the check ran.
+    @ViewBuilder
+    private func heroStatusLine(_ result: AIVisibilityResult) -> some View {
+        if result.scoreCaveat != nil {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarAmber)
+                    .accessibilityHidden(true)
+                Text("An estimate, not a measurement \u{2014} why is in Details")
+                    .cavnarText(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if let measured = result.measuredLine {
+            CavnarMixedText(measured, role: .secondary)
+        }
+    }
+
+    /// Everything else the check says, behind one tap.
+    private func heroDetails(_ result: AIVisibilityResult) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.2)) { showHeroDetails.toggle() }
+            } label: {
+                HStack(spacing: CavnarSpace.xxs) {
+                    Text(showHeroDetails ? "Hide details" : "Details")
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(showHeroDetails ? 180 : 0))
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .cavnarText(.label, color: .cavnarEmber2)
+                .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showHeroDetails ? "Expanded" : "Collapsed")
+            if showHeroDetails {
+                VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                    // Why this number is not a measurement, when it is not one.
+                    if let caveat = result.scoreCaveat {
+                        Text(caveat).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if let measured = result.measuredLine {
+                            CavnarMixedText(measured, role: .secondary)
+                        }
+                    } else if let lo = result.aiScoreLow, let hi = result.aiScoreHigh,
+                              let a = result.answeredQueries, hi > lo {
+                        CavnarMixedText("Across \(a) questions. The range is how precise that sample can be.", role: .secondary)
+                    }
+                    // Once the check is a week old, the same "background"
+                    // rule Intel's competitors use (#35).
+                    if let note = result.backgroundNote() {
+                        CavnarMixedText(note, role: .secondary, color: .cavnarAmber)
+                    }
+                    // Branded recall and competitor appearance — a number
+                    // computed and never shown is a number nobody can act on.
+                    if let b = result.brandedScore, (result.brandedQueries ?? 0) > 0 {
+                        Text(b >= 50
+                             ? "Asked about you by name, \(result.platform ?? "it") recognised you."
+                             : "Asked about you by name, \(result.platform ?? "it") didn't recognise you. That's separate from whether you come up in an open search.")
+                            .cavnarText(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let comps = result.competitorAppearances, !comps.isEmpty {
+                        Text("Also named in these answers: "
+                             + comps.prefix(3).map { "\($0.name) (\($0.queries))" }.joined(separator: ", ")
+                             + (comps.count > 3 ? " and \(comps.count - 3) more" : ""))
+                            .cavnarText(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let done = result.setupDone, let total = result.setupTotal, total > 0 {
+                        Text("\(done) of \(total) Cavnar AI connections set up. These help us read your listing; they don't change what AI search sees.")
+                            .cavnarText(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let insight = heroInsightText(result) {
+                        insight
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .padding(.top, CavnarSpace.xxs)
+    }
+
     /// value arrives pre-styled by the caller (glow tint differs per stat) —
-    /// mirrors statTile's own doc comment in IntelView for why this never
-    /// applies its own color on top of what's passed in.
+    /// this never applies its own color on top of what's passed in.
     private func heroStat(value: String, tone: Color, label: String, sub: String, expandable: Bool = false,
                           isExpanded: Bool = false, claim: String? = nil) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: CavnarSpace.xxs) {
             Text(value)
-                .font(.cavnarNumber(28, weight: 700))
+                .font(.cavnar(.figureM))
                 .foregroundStyle(tone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
                 .cavnarNumberGlow(tone)
             HStack(spacing: 3) {
-                Text(label)
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .tracking(0.6)
-                    .foregroundStyle(Color.cavnarInk.opacity(0.55))
+                Text(label).cavnarText(.label, color: .cavnarInk2)
                 if expandable {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(Color.cavnarInk.opacity(0.5))
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .accessibilityHidden(true)
                 }
             }
             // Mixed: a range chip ("somewhere between 30% and 90%…") keeps
             // its figures in Space Grotesk.
-            HomeMixedText.make(sub, size: 14, color: Color.cavnarInk.opacity(0.55))
+            HomeMixedText.make(sub, role: .secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             // Measured, or a partial check's estimate (claim_kinds) — J5.
             ClaimKindTag(kind: claim)
         }
         .frame(maxWidth: .infinity)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     /// Computed client-side from real fields (appearedCount/totalQueries/
@@ -468,15 +464,15 @@ struct AIVisibilitySection: View {
 
     private func highlightedNumber(_ value: Int) -> Text {
         Text("\(value)")
-            .font(.cavnarNumber(16, weight: 700))
-            .foregroundStyle(Color.cavnarEmber)
+            .font(.cavnar(.figureS))
+            .foregroundStyle(Color.cavnarEmber2)
     }
 
     /// The named thing the owner actually has to go do — set bigger and in
     /// ember against the 14.5pt Ink2 prose the call site applies.
     private func highlightedPhrase(_ phrase: String) -> Text {
         Text(phrase)
-            .font(.cavnarBody(16.5, weight: 700))
+            .font(.cavnar(.label))
             .foregroundStyle(Color.cavnarEmber2)
     }
 
@@ -515,26 +511,21 @@ struct AIVisibilitySection: View {
         server?.color ?? gbpTone(score)
     }
 
-    // MARK: - GBP checklist breakdown — was a full-width, single-column
-    // bordered card with one row per item; a 2-column grid gets the same
-    // six items into roughly half the vertical space, unboxed to match
-    // every other section on this screen now.
+    // MARK: - Listing strength — one column (iOS readability round,
+    // 10/8/26): two columns truncated every item's action to one line.
 
     private func gbpChecklistGrid(_ checklist: [AIVisibilityChecklistItem]) -> some View {
         let doneCount = checklist.filter(\.done).count
-        return VStack(alignment: .leading, spacing: 12) {
+        // Open gaps first, then what is done.
+        let ordered = checklist.filter { !$0.done } + checklist.filter(\.done)
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             HStack {
-                Text("LISTING STRENGTH")
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+                CavnarKicker("LISTING STRENGTH")
                 Spacer()
-                Text("\(doneCount)/\(checklist.count) done")
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarMixedText("\(doneCount) of \(checklist.count) done", role: .secondary)
             }
-            LazyVGrid(columns: [GridItem(.flexible(), alignment: .top), GridItem(.flexible(), alignment: .top)], alignment: .leading, spacing: 0) {
-                ForEach(checklist) { item in
+            VStack(spacing: 0) {
+                ForEach(ordered) { item in
                     gbpGridItem(item)
                 }
             }
@@ -542,62 +533,63 @@ struct AIVisibilitySection: View {
     }
 
     private func gbpGridItem(_ item: AIVisibilityChecklistItem) -> some View {
-        HStack(alignment: .top, spacing: 7) {
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
             Image(systemName: item.done ? "checkmark.circle.fill" : (item.needsGmb ? "lock.fill" : "circle"))
-                .font(.system(size: 11))
-                .foregroundStyle(item.done ? Color.cavnarGreen : Color.cavnarInk3)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
+                .font(.cavnar(.secondary))
+                .foregroundStyle(item.done ? Color.cavnarGreen : Color.cavnarInk2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xxs) {
                     Text(item.label)
-                        .font(.cavnarBody(14.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                        .lineLimit(1)
-                    Text("+\(item.pts)")
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: item.done ? .cavnarInk2 : .cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("+\(item.pts)").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                 }
                 if !item.done {
-                    Text(item.needsGmb ? item.action + " (needs GBP)" : item.action)
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarEmber)
-                        .lineLimit(1)
+                    Text(item.needsGmb ? item.action + " (needs your Google listing)" : item.action)
+                        .cavnarText(.secondary, color: .cavnarEmber2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 9)
-        .padding(.trailing, 6)
-        .opacity(item.done ? 0.5 : 1)
+        .padding(.vertical, CavnarSpace.xs)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(item.done ? "Done" : "Open")
         .overlay(alignment: .bottom) {
             Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
         }
     }
 
-    // MARK: - AI query results — was a full paragraph answer under every
-    // query in its own bordered card; a single-line truncated answer plus
-    // a status chip carries the same "did we appear" signal at a glance.
+    // MARK: - AI query results — "Missed 5 of 7 questions" and the
+    // questions it missed, each tapped open for the answer (iOS readability
+    // round, 10/8/26: the full answer was press-and-hold only). Every
+    // question and answer is on the web.
 
     private func queriesSection(_ queries: [AIVisibilityQuery], demand: AIVisibilitySearchDemand?) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("LATEST CHECK: WHAT AI SAID")
-                .font(.cavnarBody(14, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+        let missed = queries.filter { !$0.appeared }
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Latest check")
+            CavnarMixedText(missed.isEmpty
+                            ? "Came up in all \(queries.count) questions"
+                            : "Missed \(missed.count) of \(queries.count) question\(queries.count == 1 ? "" : "s")",
+                            role: .lead)
             if let demand, let n = demand.questions, n > 0 {
                 googleVsAIText(demand, questions: n)
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             VStack(spacing: 0) {
-                ForEach(Array(queries.enumerated()), id: \.element.id) { index, q in
+                ForEach(Array(missed.enumerated()), id: \.element.id) { index, q in
                     queryRow(q)
-                    if index < queries.count - 1 {
+                    if index < missed.count - 1 {
                         Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
                     }
                 }
             }
+            CavnarWebLinkRow(title: "Every question and answer", subtitle: "What AI said each time, and the sites it read",
+                             path: "intel", actionLabel: "Open on the web")
         }
     }
 
@@ -610,11 +602,11 @@ struct AIVisibilitySection: View {
     /// their search volume whose answer named the restaurant.
     private func googleVsAIText(_ d: AIVisibilitySearchDemand, questions: Int) -> Text {
         Text("Google vs AI: ")
-            + Text("\(questions)").font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+            + Text("\(questions)").font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
             + Text(" of these questions are searches where Google showed your website (")
-            + Text((d.impressions ?? 0).formatted()).font(.cavnarNumber(14, weight: 500))
+            + Text((d.impressions ?? 0).formatted()).font(.cavnarNumber(CavnarType.secondary, weight: 500))
             + Text(" times in 28 days). AI named you on ")
-            + Text(d.coveredPct.map { "\($0)%" } ?? "\u{2014}").font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarInk)
+            + Text(d.coveredPct.map { "\($0)%" } ?? "\u{2014}").font(.cavnarNumber(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk)
             + Text(" of that search volume.")
     }
 
@@ -703,18 +695,13 @@ struct AIVisibilitySection: View {
 
         let pointsLeft = cards.filter { !$0.done }.count
 
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("GAPS IN YOUR PUBLIC RECORD")
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(alignment: .firstTextBaseline) {
+                CavnarKicker("GAPS IN YOUR PUBLIC RECORD")
                 Spacer()
                 // A count of gaps, not a promise about the score: nothing
                 // measures what closing one does to it (NS1 #10).
-                Text(pointsLeft > 0 ? "\(pointsLeft) gap\(pointsLeft == 1 ? "" : "s") still open" : "No open gaps")
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber)
+                CavnarMixedText(pointsLeft > 0 ? "\(pointsLeft) still open" : "None open", role: .secondary)
             }
             VStack(spacing: 0) {
                 ForEach(Array(sortedCards.enumerated()), id: \.element.id) { index, card in
@@ -837,21 +824,23 @@ struct AIVisibilitySection: View {
     /// matching Competitors' own competitorRow construction directly.
     private func roadmapRow(_ card: RoadmapCard) -> some View {
         let isExpanded = expandedWhy.contains(card.id)
-        return HStack(alignment: .top, spacing: 12) {
-            Rectangle().fill(card.color).frame(width: 2.5)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(card.title).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+        return HStack(alignment: .top, spacing: CavnarSpace.s) {
+            Rectangle().fill(card.done ? Color.cavnarPaper3 : card.color).frame(width: 2.5)
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    // A done gap reads quieter in Ink2 — it used to dim the
+                    // whole row to 55%, words included.
+                    Text(card.title).cavnarText(.label, color: card.done ? .cavnarInk2 : .cavnarInk)
                     if card.done {
-                        Label("Done", systemImage: "checkmark").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                        Label("Done", systemImage: "checkmark").cavnarText(.secondary, color: .cavnarGreen)
                     } else {
                         // The impact tiers are fixed labels with no
                         // measurement behind them, so the row says only
                         // that the gap is open; the tier still orders it.
-                        Text("OPEN").font(.cavnarBody(14, weight: 600)).tracking(0.4).foregroundStyle(card.color)
+                        Text("Open").cavnarText(.tag, color: card.color)
                     }
                 }
-                Text(card.detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text(card.detail).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
                 if isExpanded {
                     // The surrounding VStack's own spacing (6) is shared
                     // uniformly by every row here — title, detail, why,
@@ -862,9 +851,8 @@ struct AIVisibilitySection: View {
                     // real breathing room without loosening the rest of
                     // the card's normally-tighter rhythm.
                     Text(card.why)
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .lineSpacing(5)
+                        .cavnarText(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 6)
                         .padding(.bottom, 8)
                 }
@@ -880,7 +868,7 @@ struct AIVisibilitySection: View {
                                 // that heading's own "things trending
                                 // outward" meaning.
                                 Image(systemName: "arrow.up.right")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.cavnar(.caption))
                             }
                         }
                         .buttonStyle(CavnarChipButtonStyle(tone: card.color))
@@ -907,11 +895,13 @@ struct AIVisibilitySection: View {
                         HStack(spacing: 3) {
                             Text("Why this matters")
                             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.cavnar(.caption))
+                                .accessibilityHidden(true)
                         }
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: .cavnarInk2)
+                        .cavnarHitTarget()
                     }
+                    .buttonStyle(.plain)
                 }
                 // The server's open cards are recommendations like any
                 // other: Done / Not for us (Intel has nothing to Track).
@@ -921,23 +911,21 @@ struct AIVisibilitySection: View {
             }
             .animation(nil, value: isExpanded)
         }
-        .padding(.vertical, 14)
-        .opacity(card.done ? 0.55 : 1)
+        .padding(.vertical, CavnarSpace.s)
     }
 }
 
-/// A query result's answer is truncated to one line by default — most of
-/// it gets cut off. Press and hold to read the full thing; release to
-/// collapse back. Its own View struct (not a plain function like the rest
-/// of this file's rows) so each row owns an independent press state rather
-/// than sharing one across all of them.
+/// One question the check asked: the question, the first line of the
+/// answer, and — tapped — the whole answer in place (iOS readability round,
+/// 10/8/26). It used to show the full answer only while a finger was held
+/// on the row, in a card floating over the rows below it.
 private struct QueryResultRow: View {
     let q: AIVisibilityQuery
     /// This question across the recent checks (the web's dot strip).
     var history: AIVisibilityQueryHistory.Question? = nil
     var runs: [AIVisibilityQueryHistory.Run] = []
 
-    @State private var isPressed = false
+    @State private var isExpanded = false
 
     /// "AI read: tripadvisor.com, opentable.com", each site a link to the
     /// page the answer read.
@@ -958,120 +946,87 @@ private struct QueryResultRow: View {
     private func googleLine(_ s: AIVisibilitySearch) -> Text {
         var t = Text("On Google: ")
         if let p = s.position {
-            t = t + Text("about ") + Text("#\(max(1, Int(p.rounded())))").font(.cavnarNumber(12.5, weight: 600))
+            t = t + Text("about ") + Text("#\(max(1, Int(p.rounded())))").font(.cavnarNumber(CavnarType.caption, weight: 600))
                 + Text(" \u{00B7} ")
         }
-        return t + Text("shown in ") + Text((s.impressions ?? 0).formatted()).font(.cavnarNumber(12.5, weight: 600))
+        return t + Text("shown in ") + Text((s.impressions ?? 0).formatted()).font(.cavnarNumber(CavnarType.caption, weight: 600))
             + Text(" searches in 28 days")
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                if q.search != nil {
-                    Text("FROM YOUR GOOGLE SEARCHES")
-                        .font(.cavnarBody(10.5, weight: 700))
-                        .tracking(1.0)
-                        .foregroundStyle(Color.cavnarEmber2)
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.2)) { isExpanded.toggle() }
+            } label: {
+                HStack(alignment: .top, spacing: CavnarSpace.s) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if q.search != nil {
+                            CavnarKicker("From your Google searches")
+                        }
+                        Text("\u{201C}\(q.query)\u{201D}")
+                            .cavnarText(.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(q.answer)
+                            .cavnarText(.secondary)
+                            .lineLimit(isExpanded ? nil : 1)
+                            .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: CavnarSpace.xs)
+                    VStack(alignment: .trailing, spacing: CavnarSpace.xxs) {
+                        badge
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                            .accessibilityHidden(true)
+                    }
                 }
-                Text("\u{201C}\(q.query)\u{201D}")
-                    .font(.cavnarBody(14.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                if let search = q.search {
-                    googleLine(search)
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if !q.appeared, !q.sourceLinks.isEmpty {
-                    Text(aiReadLinks(Array(q.sourceLinks.prefix(4))))
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .tint(Color.cavnarInk2)
-                        .lineLimit(2)
-                }
-                Text(q.answer)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                // What the answer was grounded in, and which of your
-                // competitors it named. Both came back on every run and
-                // were decoded by nothing, so an answer on screen was as
-                // unverifiable as one with citations suppressed.
-                HStack(spacing: 6) {
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isExpanded ? "Hides the answer" : "Shows the whole answer")
+            if isExpanded {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    if let search = q.search {
+                        googleLine(search)
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !q.appeared, !q.sourceLinks.isEmpty {
+                        Text(aiReadLinks(Array(q.sourceLinks.prefix(4))))
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .tint(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // What the answer was grounded in, and which of your
+                    // competitors it named.
                     if let n = q.sources?.count, n > 0 {
                         Label("\(n) source\(n == 1 ? "" : "s")", systemImage: "link")
-                            .font(.cavnarBody(12))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption)
                     }
                     if let comps = q.competitorsNamed, !comps.isEmpty {
-                        Text((q.appeared ? "also named " : "AI named instead: ") + comps.prefix(2).joined(separator: ", ")
-                             + (comps.count > 2 ? " +\(comps.count - 2)" : ""))
-                            .font(.cavnarBody(12))
-                            .foregroundStyle(Color.cavnarAmber)
-                            .lineLimit(1)
+                        Text((q.appeared ? "Also named " : "AI named instead: ") + comps.prefix(3).joined(separator: ", ")
+                             + (comps.count > 3 ? " +\(comps.count - 3)" : ""))
+                            .cavnarText(.caption, color: .cavnarAmber)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if q.kind == "branded" {
-                        Text("asked about you by name")
-                            .font(.cavnarBody(12))
-                            .foregroundStyle(Color.cavnarInk3)
+                        Text("Asked about you by name").cavnarText(.caption)
+                    }
+                    if let history, history.asked > 0 {
+                        historyStrip(history)
+                            .padding(.top, 3)
                     }
                 }
-                if let history, history.asked > 0 {
-                    historyStrip(history)
-                        .padding(.top, 3)
-                }
-            }
-            Spacer(minLength: 8)
-            badge
-        }
-        .padding(.vertical, 11)
-        // .overlay (not inline lineLimit(nil)) — the base row's own
-        // reported height never changes with press state, so nothing
-        // below it in the list shifts. The full-text card floats above
-        // it instead, matching how Apple's own long-press previews work
-        // (Messages, Mail): the row underneath doesn't grow, a separate
-        // elevated surface appears over it.
-        .overlay {
-            if isPressed {
-                expandedCard
-                    .transition(.scale(scale: 0.92, anchor: .center).combined(with: .opacity))
+                .transition(.opacity)
             }
         }
-        // Paints above the next row's own divider/content once its card
-        // is taller than one line — zIndex has to live on this row itself
-        // (not just inside expandedCard) since paint order between
-        // sibling rows is decided at the outer ForEach's level, not
-        // inside any one row's own subtree.
-        .zIndex(isPressed ? 1 : 0)
-        .animation(.cavnarEase(0.2), value: isPressed)
-        .contentShape(Rectangle())
-        // .onLongPressGesture, NOT a LongPressGesture sequenced before a
-        // DragGesture(minimumDistance: 0).
-        //
-        // That sequenced form is what froze this screen. Once the long
-        // press succeeded, the zero-distance drag behind it CLAIMED the
-        // touch stream — and while it holds the touch, the enclosing
-        // ScrollView cannot pan. Rest a finger on a query row for a beat
-        // and then try to scroll and nothing moves, which is exactly the
-        // reported "screen randomly gets stuck and won't scroll up or
-        // down". The drag was only ever there to work around a bare
-        // LongPressGesture reporting its value once and letting
-        // @GestureState immediately reset; fighting the scroll view for
-        // the touch is far too high a price for that.
-        //
-        // This API solves the same problem directly and without competing
-        // for the gesture: `perform` fires once the hold is recognised
-        // (so a scroll, which cancels the press, never expands a card),
-        // and `pressing` reports false on release OR cancellation, which
-        // is what collapses it again.
-        .onLongPressGesture(minimumDuration: 0.3, maximumDistance: 10) {
-            Haptic.light()
-            isPressed = true
-        } onPressingChanged: { pressing in
-            if !pressing { isPressed = false }
-        }
+        .padding(.vertical, CavnarSpace.xs)
     }
 
     /// A dot per check, oldest first: green where the answer named you,
@@ -1087,7 +1042,7 @@ private struct QueryResultRow: View {
                         .frame(width: 7, height: 7)
                 }
             }
-            HomeMixedText.make(AIVisibilityQueryHistory.line(h), size: 12, weight: 500, color: .cavnarInk3)
+            HomeMixedText.make(AIVisibilityQueryHistory.line(h), role: .caption)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(historySpoken(h))
@@ -1101,54 +1056,11 @@ private struct QueryResultRow: View {
 
     private var badge: some View {
         Text(q.appeared ? "Appeared" : "Missed")
-            .font(.cavnarBody(14, weight: 700))
-            .foregroundStyle(q.appeared ? Color.cavnarGreen : Color.cavnarInk3)
+            .cavnarText(.tag, color: q.appeared ? .cavnarGreen : .cavnarInk2)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(q.appeared ? Color.cavnarGreenBg : Color.cavnarPaper2)
             .overlay(Capsule().strokeBorder(q.appeared ? Color.clear : Color.cavnarPaper3, lineWidth: 1))
             .clipShape(Capsule())
-    }
-
-    // Bigger shadow + a slight scale-up is the standard "lifted off the
-    // surface toward the viewer" cue — the same visual language Apple's
-    // own long-press previews use — rather than a flat in-place cross-fade.
-    private var expandedCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
-                Text("\u{201C}\(q.query)\u{201D}")
-                    .font(.cavnarBody(14.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                Spacer(minLength: 8)
-                badge
-            }
-            Text(q.answer)
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarInk2)
-                .lineSpacing(3)
-                // .overlay proposes this card the BASE row's own compact,
-                // single-line height — without this, a VStack asked to fit
-                // into a proposal smaller than it needs will compress its
-                // flexible children to match rather than grow past it, so
-                // this Text was silently losing lines to that compression
-                // (not to any lineLimit, which was never set) instead of
-                // reporting its own true multi-line height. This forces it
-                // to keep its real ideal height regardless of what's proposed.
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Same reasoning one level up — the whole card needs to report ITS
-        // real ideal size too, not just the Text inside it, or the outer
-        // VStack this is an overlay on top of would still cap it.
-        .fixedSize(horizontal: false, vertical: true)
-        .background(Color.cavnarPaper2)
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .strokeBorder(Color.cavnarPaper3.opacity(0.7), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-        .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
-        .scaleEffect(1.04)
     }
 }

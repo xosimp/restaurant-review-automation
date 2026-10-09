@@ -25,14 +25,14 @@ struct SupplierOrderSheet: View {
                         CavnarSkeletonLines(widths: [1.0, 0.86, 0.7, 0.55, 0.4])
                     } else if let error = viewModel.errorMessage, viewModel.draft == nil {
                         Text(error)
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
                     } else if let draft = viewModel.draft {
                         // A refused send (the draft changed, or it already
                         // went) — shown above the reloaded draft.
                         if let error = viewModel.errorMessage {
                             Text(error)
-                                .font(.cavnarBody(14))
+                                .font(.cavnar(.secondary))
                                 .foregroundStyle(Color.cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -42,25 +42,41 @@ struct SupplierOrderSheet: View {
                         if let game {
                             GameWeekCard(game: game)
                         }
+                        // Deliveries waiting to arrive lead: receiving is
+                        // the job at the back door, and it sat under every
+                        // supplier card (iOS readability round, 10/8/26).
+                        if !deliveries.waiting.isEmpty {
+                            DeliveriesSection(viewModel: deliveries, title: "Waiting to arrive", waitingOnly: true)
+                        }
                         if draft.isEmpty {
                             emptyState
                         } else {
                             ForEach(draft.groups) { group in
-                                supplierCard(group)
+                                supplierCard(group, pinned: draft.groups.count == 1)
                             }
                             if !draft.unassigned.isEmpty {
                                 unassignedCard(draft.unassigned)
                             }
-                            if draft.groups.count > 1 {
-                                sendAllButton(draft)
-                            }
                         }
-                        if !deliveries.orders.isEmpty || deliveries.loadError != nil {
-                            DeliveriesSection(viewModel: deliveries)
+                        // Received and earlier orders, under the drafts.
+                        if deliveries.orders.contains(where: { $0.isReceived }) || deliveries.loadError != nil {
+                            DeliveriesSection(viewModel: deliveries, title: "Recent orders", receivedOnly: true)
                         }
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
+            }
+            // The send in thumb reach (iOS readability round): one supplier's
+            // "Send to …", or "Send all" when there are several — each still
+            // only asks; the confirmation sends.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let draft = viewModel.draft, !draft.isEmpty {
+                    if draft.groups.count == 1, let group = draft.groups.first {
+                        CavnarPinnedBar { sendButton(group) }
+                    } else if draft.groups.count > 1 {
+                        CavnarPinnedBar { sendAllButton(draft) }
+                    }
+                }
             }
             .cavnarModuleBackground()
             .navigationTitle("Send order")
@@ -72,7 +88,7 @@ struct SupplierOrderSheet: View {
                         Haptic.light()
                         dismiss()
                     } label: {
-                        Text("Done").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Done").font(.cavnar(.label)).foregroundStyle(Color.cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -120,16 +136,13 @@ struct SupplierOrderSheet: View {
 
     // MARK: - Draft
 
-    private func supplierCard(_ group: SupplierOrderGroup) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(group.supplierName)
-                    .font(.cavnarHeadline(17))
-                    .foregroundStyle(Color.cavnarInk)
-                Text(group.supplierEmail)
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-            }
+    /// One supplier's order. `pinned`: the only supplier, whose Send is in
+    /// the pinned bar; with several, each card keeps its own (secondary)
+    /// Send and the pinned bar sends them all.
+    private func supplierCard(_ group: SupplierOrderGroup, pinned: Bool) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // The name alone — the email is in the send confirmation.
+            Text(group.displayName).cavnarText(.lead)
 
             VStack(spacing: 0) {
                 ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
@@ -141,35 +154,53 @@ struct SupplierOrderSheet: View {
             }
 
             HStack {
-                Text("Estimated")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                Text("Estimated").cavnarText(.secondary)
                 Spacer()
                 // The total at the owner's quantities, not the draft's.
                 Text(SupplierOrderViewModel.money(viewModel.summary(group).total))
-                    .font(.cavnarNumber(15, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.figureS)
                     .cavnarSensitive()
             }
 
-            Button {
-                Haptic.light()
-                focusedLine = nil
-                viewModel.askToSend(group)
-            } label: {
-                Group {
-                    if viewModel.isSending {
-                        CavnarShimmerText(text: "Sending…")
-                    } else {
-                        Text("Send to \(group.displayName)")
-                    }
-                }
-                .frame(maxWidth: .infinity)
+            if !pinned {
+                sendButton(group, primary: false)
             }
-            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSending))
-            .disabled(viewModel.isSending)
         }
         .cavnarCard()
+    }
+
+    /// Asks to send one supplier's order — the confirmation sends it.
+    private func sendButton(_ group: SupplierOrderGroup, primary: Bool = true) -> some View {
+        Button {
+            Haptic.light()
+            focusedLine = nil
+            viewModel.askToSend(group)
+        } label: {
+            Group {
+                if viewModel.isSending {
+                    CavnarShimmerText(text: "Sending…")
+                } else {
+                    Text("Send to \(group.displayName)")
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(SendButtonStyle(primary: primary, isDisabled: viewModel.isSending))
+        .disabled(viewModel.isSending)
+    }
+
+    /// Primary in the pinned bar; secondary on a card when the bar sends all.
+    private struct SendButtonStyle: ButtonStyle {
+        let primary: Bool
+        let isDisabled: Bool
+        @ViewBuilder
+        func makeBody(configuration: Configuration) -> some View {
+            if primary {
+                CavnarPrimaryButtonStyle(isDisabled: isDisabled).makeBody(configuration: configuration)
+            } else {
+                CavnarSecondaryButtonStyle(isDisabled: isDisabled).makeBody(configuration: configuration)
+            }
+        }
     }
 
     /// A line with its quantity open to change (0 takes it off the order).
@@ -183,16 +214,16 @@ struct SupplierOrderSheet: View {
                 .clipShape(Capsule())
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.item)
-                    .font(.cavnarBody(15))
+                    .font(.cavnar(.body))
                     .foregroundStyle(Color.cavnarInk)
                 if item.trimmedForWaste == true {
                     Text("trimmed for last week\u{2019}s waste")
-                        .font(.cavnarBody(12.5))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 // The owner's own ordering habit applied (memory round).
                 if let adjusted = item.adjustmentLine {
-                    HomeMixedText.make(adjusted, size: 12.5, weight: 500, color: .cavnarEmber2)
+                    HomeMixedText.make(adjusted, role: .caption, color: .cavnarEmber2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -202,16 +233,16 @@ struct SupplierOrderSheet: View {
                 set: { viewModel.setQuantity($0, group: group, item: item) }))
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
-                .font(.cavnarNumber(15, weight: 700))
-                .foregroundStyle(valid ? Color.cavnarInk : Color.cavnarRed)
-                .frame(width: 64)
-                .padding(.vertical, 5).padding(.horizontal, 8)
+                .font(.cavnar(.figureS))
+                .foregroundStyle(valid ? Color.cavnarInk : Color.cavnarRedText)
+                .frame(width: 64, height: 44)
+                .padding(.horizontal, 8)
                 .background(RoundedRectangle(cornerRadius: 8).stroke(valid ? Color.cavnarPaper3 : Color.cavnarRed, lineWidth: 1))
                 .focused($focusedLine, equals: key)
                 .accessibilityLabel("\(item.item) quantity")
             Text(item.unit)
-                .font(.cavnarBody(13.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.secondary))
+                .foregroundStyle(Color.cavnarInk2)
                 .frame(minWidth: 28, alignment: .leading)
         }
         .padding(.vertical, 7)
@@ -219,19 +250,16 @@ struct SupplierOrderSheet: View {
 
     private func unassignedCard(_ items: [SupplierOrderItem]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("NO SUPPLIER YET")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarAmber)
+            CavnarKicker("No supplier yet", tint: .cavnarAmber)
             if let source, source.synced {
                 // Synced: suppliers are set in the inventory system (#8).
                 HomeMixedText.make("These are on the order list but have nowhere to go. "
-                                   + source.line("Suppliers") + " \u{2014} set theirs there.", size: 14, color: .cavnarInk3)
+                                   + source.line("Suppliers") + " \u{2014} set theirs there.", role: .secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("These are on the order list but have nowhere to go. Add a supplier and they'll be included next time.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             VStack(spacing: 0) {
@@ -243,12 +271,12 @@ struct SupplierOrderSheet: View {
                     } label: {
                         HStack(spacing: 10) {
                             Text(item.item)
-                                .font(.cavnarBody(15))
+                                .font(.cavnar(.body))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer(minLength: 8)
-                            (Text(SupplierOrderItem.qtyString(item.qty)).font(.cavnarNumber(15, weight: 700))
-                                + Text(item.unit.isEmpty ? "" : " \(item.unit)").font(.cavnarBody(13.5)))
-                                .foregroundStyle(Color.cavnarInk3)
+                            (Text(SupplierOrderItem.qtyString(item.qty)).font(.cavnar(.figureS))
+                                + Text(item.unit.isEmpty ? "" : " \(item.unit)").font(.cavnar(.secondary)))
+                                .foregroundStyle(Color.cavnarInk2)
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(Color.cavnarEmber2)
@@ -283,18 +311,18 @@ struct SupplierOrderSheet: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(CavnarSecondaryButtonStyle())
+        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSending))
         .disabled(viewModel.isSending)
     }
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Nothing to order")
-                .font(.cavnarHeadline(17))
+                .font(.cavnar(.lead))
                 .foregroundStyle(Color.cavnarInk)
             Text("Everything is above par right now. This fills in as stock runs down.")
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.secondary))
+                .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .cavnarCard()
@@ -310,9 +338,9 @@ struct SupplierOrderSheet: View {
                     Image(systemName: "clock")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarEmber2)
-                    (Text("Goes out in ").font(.cavnarBody(14))
-                        + Text("\(minutes)").font(.cavnarNumber(14, weight: 700))
-                        + Text(" min — undo from Home").font(.cavnarBody(14)))
+                    (Text("Goes out in ").font(.cavnar(.secondary))
+                        + Text("\(minutes)").font(.cavnar(.figureS))
+                        + Text(" min — undo from Home").font(.cavnar(.secondary)))
                         .foregroundStyle(Color.cavnarInk)
                 }
             }
@@ -321,8 +349,8 @@ struct SupplierOrderSheet: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarGreen)
-                    (Text("\(sent.poNumber) ").font(.cavnarNumber(14, weight: 700))
-                        + Text("sent to \(sent.supplierName)").font(.cavnarBody(14)))
+                    (Text("\(sent.poNumber) ").font(.cavnar(.figureS))
+                        + Text("sent to \(sent.supplierName)").font(.cavnar(.secondary)))
                         .foregroundStyle(Color.cavnarInk)
                 }
             }
@@ -332,7 +360,7 @@ struct SupplierOrderSheet: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarRed)
                     Text("\(failure.supplierEmail) — \(failure.error)")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -369,8 +397,8 @@ private struct SupplierAssignSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Text("Where do you order \(item.item) from? Orders for every ingredient from the same supplier are sent together as one order.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
 
                     CavnarFloatingField(
@@ -383,7 +411,7 @@ private struct SupplierAssignSheet: View {
                     )
 
                     if let error = viewModel.supplierError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     VStack(spacing: 10) {

@@ -62,8 +62,8 @@ struct AddCompetitorSheet: View {
                 // search field; after its .onChange, which belongs to the field.
                 if let addError {
                     Text(addError)
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarRed)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarRedText)
                         .lineSpacing(3)
                         .padding(.horizontal, 20)
                         .padding(.bottom, 8)
@@ -75,8 +75,8 @@ struct AddCompetitorSheet: View {
                     CavnarLoadingOrb(size: 32).frame(maxWidth: .infinity).padding(.top, 40)
                 } else if hasSearchedOnce && results.isEmpty {
                     Text("No matches found")
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
                 } else if !results.isEmpty {
@@ -93,8 +93,8 @@ struct AddCompetitorSheet: View {
                     }
                 } else {
                     Text("Search for a nearby restaurant to track it in your competitor comparison — even ones our automatic search doesn't catch.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
                         .lineSpacing(3)
                         .padding(.horizontal, 20)
                         .padding(.top, 12)
@@ -102,9 +102,9 @@ struct AddCompetitorSheet: View {
                 Spacer(minLength: 0)
             }
             .cavnarModuleBackground()
-            .navigationTitle("Add a Competitor")
+            .navigationTitle("Add a competitor")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { cavnarTitleToolbar("Add a Competitor") }
+            .toolbar { cavnarTitleToolbar("Add a competitor") }
             .keyboardDoneToolbar { focusedField = nil }
             .cavnarPostedOverlay(postedLabel) { dismiss() }
             .toolbar {
@@ -135,13 +135,13 @@ struct AddCompetitorSheet: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.name)
-                        .font(.cavnarBody(15, weight: 600))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
                     if !result.address.isEmpty {
                         Text(result.address)
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
                             .lineLimit(1)
                     }
                     if result.reviewCount > 0 {
@@ -150,8 +150,8 @@ struct AddCompetitorSheet: View {
                                 .font(.system(size: 8))
                                 .foregroundStyle(Color.cavnarAmber)
                             Text(String(format: "%.1f", result.rating) + " · \(result.reviewCount) reviews")
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnar(.secondary))
+                                .foregroundStyle(Color.cavnarInk2)
                         }
                     }
                 }
@@ -182,12 +182,12 @@ struct AddCompetitorSheet: View {
         VStack(spacing: 14) {
             Spacer(minLength: 48)
             CavnarShimmerText(text: "Adding \(result.name)…", color: Color.cavnarInk)
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnar(.label))
             CavnarShimmerLine(color: .cavnarEmber2)
                 .frame(width: 140)
             Text("Fetching reviews and updating your competitive analysis — this usually takes 20–40 seconds.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.secondary))
+                .foregroundStyle(Color.cavnarInk2)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
                 .padding(.horizontal, 36)

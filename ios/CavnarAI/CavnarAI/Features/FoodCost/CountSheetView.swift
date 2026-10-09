@@ -537,26 +537,24 @@ struct CountSheetView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: CavnarSpace.m) {
                     header
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.body, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let n = viewModel.savedCount {
-                        HomeMixedText.make("\(n) recount\(n == 1 ? "" : "s") saved. Food cost reads them tonight."
-                                           + (viewModel.supersededCount.map { " \($0) already counted again since, so the newer count stands." } ?? ""),
-                                           size: 15, weight: 600, color: .cavnarGreen)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText("\(n) recount\(n == 1 ? "" : "s") saved. Food cost reads them tonight."
+                                        + (viewModel.supersededCount.map { " \($0) already counted again since, so the newer count stands." } ?? ""),
+                                        role: .body, color: .cavnarGreen)
                     }
                     if let line = viewModel.notSavedLine {
-                        HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarAmber)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(line, role: .body, color: .cavnarAmber)
                     }
                     if viewModel.returnedFromQueue {
                         Label {
                             Text("Your kept count couldn\u{2019}t be sent, so it\u{2019}s back on the sheet. Save it again.")
-                                .font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                                .cavnarText(.body)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
                             Image(systemName: "arrow.uturn.backward.circle").foregroundStyle(Color.cavnarEmber2)
@@ -565,8 +563,8 @@ struct CountSheetView: View {
                     }
                     if let n = viewModel.queuedCount {
                         Label {
-                            HomeMixedText.make("\(n) recount\(n == 1 ? "" : "s") kept on this phone. "
-                                               + RecAnswer.queuedLine + ".", size: 15, weight: 600, color: .cavnarInk2)
+                            CavnarMixedText("\(n) recount\(n == 1 ? "" : "s") kept on this phone. "
+                                            + RecAnswer.queuedLine + ".", role: .body)
                         } icon: {
                             Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color.cavnarInk3)
                         }
@@ -581,10 +579,15 @@ struct CountSheetView: View {
                         CavnarWorkingLine().padding(.vertical, 12)
                     } else if viewModel.items.isEmpty {
                         Text("No ingredients on file yet — add the fifteen or twenty you buy most weeks first.")
-                            .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
                             .cavnarCard()
                     } else {
+                        // The walk-in count is the way to count (iOS
+                        // readability round, 10/8/26): search, big steppers,
+                        // Next. The list below is for a quick fix. Waste is
+                        // logged from Food Cost's own Waste button, not from
+                        // inside the count.
                         if !viewModel.isSynced {
                             countModeButton
                         }
@@ -595,23 +598,17 @@ struct CountSheetView: View {
                             }
                         }
                         .cavnarCard()
-                        if !viewModel.isSynced {
-                            saveButton
-                        }
-                        // One line of waste (U2-32), as on the web's count
-                        // sheet — synced or not: logged as counted waste
-                        // instead of turning up later as an unexplained gap.
-                        WasteLogForm(items: viewModel.items) {
-                            // Logged waste lowers what the ledger expects;
-                            // re-read it, but never over recounts typed and
-                            // not yet saved.
-                            if viewModel.changed.isEmpty { Task { await viewModel.load() } }
-                        }
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .scrollDismissesKeyboard(.immediately)
+            // Save in thumb reach, not after the whole list.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !viewModel.isSynced && !viewModel.items.isEmpty {
+                    CavnarPinnedBar { saveButton }
+                }
+            }
             .cavnarModuleBackground()
             .navigationTitle("Count sheet")
             .navigationBarTitleDisplayMode(.inline)
@@ -622,7 +619,7 @@ struct CountSheetView: View {
                         Haptic.light()
                         if viewModel.hasUnsaved { confirmingLeave = true } else { dismiss() }
                     } label: {
-                        Text("Done").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Done").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -656,48 +653,58 @@ struct CountSheetView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("COUNT SHEET")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             if let source = viewModel.source, source.synced {
                 // Synced (parity audit #8): its counts, read-only — count
                 // there; this sheet follows.
-                HomeMixedText.make(source.line("Counts") + ". Count there; this sheet follows.",
-                                   size: 14, weight: 500, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(source.line("Counts") + ". Count there; this sheet follows.", role: .body)
             } else {
-                Text("Filled with what the ledger expects on hand. Change only what differs, then save — each change is a recount.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                Text("Change only what\u{2019}s different, then save.")
+                    .cavnarText(.lead)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Each line starts at what the ledger expects on hand; each change is a recount.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !viewModel.items.isEmpty {
-                    HomeMixedText.make(viewModel.lastCountedLine, size: 13, color: .cavnarInk3)
+                    CavnarMixedText(viewModel.lastCountedLine, role: .caption)
                 }
             }
         }
-        .cavnarCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The walk-in count: the primary until a recount is typed — then the
+    /// pinned Save is, and this steps down to "back to the walk-in".
     private var countModeButton: some View {
         Button {
             Haptic.medium()
             focused = nil
             counting = true
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "rectangle.and.hand.point.up.left").font(.system(size: 14, weight: .semibold))
-                Text("Count in the walk-in")
-                Spacer(minLength: 6)
+            HStack(spacing: CavnarSpace.xs) {
+                Image(systemName: "rectangle.and.hand.point.up.left").accessibilityHidden(true)
+                Text(viewModel.editedCount > 0 ? "Back to the walk-in count" : "Count in the walk-in")
+                Spacer(minLength: CavnarSpace.xxs)
                 if viewModel.editedCount > 0 {
-                    Text(viewModel.progressLine).font(.cavnarNumber(13, weight: 600))
+                    Text(viewModel.progressLine).font(.cavnar(.figureS))
                 }
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(CavnarSecondaryButtonStyle())
+        .buttonStyle(WalkInButtonStyle(primary: viewModel.editedCount == 0))
         .accessibilityHint("Full screen, with search and large steppers")
+    }
+
+    private struct WalkInButtonStyle: ButtonStyle {
+        let primary: Bool
+        @ViewBuilder
+        func makeBody(configuration: Configuration) -> some View {
+            if primary {
+                CavnarPrimaryButtonStyle().makeBody(configuration: configuration)
+            } else {
+                CavnarSecondaryButtonStyle().makeBody(configuration: configuration)
+            }
+        }
     }
 
     private var saveButton: some View {
@@ -716,19 +723,18 @@ struct CountSheetView: View {
 
     @ViewBuilder
     private func row(_ it: CountSheetItem) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: CavnarSpace.s) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(it.name).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk)
+                Text(it.name).cavnarText(.body, color: .cavnarInk)
                 if let u = it.unit, !u.isEmpty {
-                    Text(u).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                    Text(u).cavnarText(.caption)
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: CavnarSpace.xs)
             if viewModel.isSynced {
                 Text(CountSheetViewModel.expectedString(it.expected).isEmpty ? DSRFormat.dash
                      : CountSheetViewModel.expectedString(it.expected))
-                    .font(.cavnarNumber(16, weight: 600))
-                    .foregroundStyle(Color.cavnarInk2)
+                    .cavnarText(.figureS, color: .cavnarInk2)
                     .accessibilityLabel("\(it.name): \(CountSheetViewModel.expectedString(it.expected))")
             } else {
                 TextField("0", text: Binding(
@@ -736,11 +742,10 @@ struct CountSheetView: View {
                     set: { viewModel.counts[it.ingredientId] = $0 }))
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
-                    .font(.cavnarNumber(16, weight: 600))
+                    .font(.cavnar(.figureS))
                     .foregroundStyle((viewModel.counts[it.ingredientId] ?? "") == CountSheetViewModel.expectedString(it.expected)
-                                     ? Color.cavnarInk3 : Color.cavnarEmber2)
-                    .frame(width: 84)
-                    .padding(.vertical, 6)
+                                     ? Color.cavnarInk2 : Color.cavnarEmber2)
+                    .frame(width: 84, height: 44)
                     .padding(.horizontal, 10)
                     .background(Color.cavnarPaper3.opacity(0.35))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -753,16 +758,14 @@ struct CountSheetView: View {
     private func restoredNote(_ at: Date) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: "tray.and.arrow.up").foregroundStyle(Color.cavnarInk3).accessibilityHidden(true)
-            HomeMixedText.make("Your unsaved count from \(CavnarDate.mdyTime(at)) is back.", size: 13.5, weight: 600,
-                               color: .cavnarInk2)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 6)
-            Button("Start over") {
+            CavnarMixedText("Your unsaved count from \(CavnarDate.mdyTime(at)) is back.", role: .secondary)
+            Spacer(minLength: CavnarSpace.xxs)
+            Button {
                 Haptic.light()
                 viewModel.discard()
+            } label: {
+                Text("Start over").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
             }
-            .font(.cavnarBody(13.5, weight: 700))
-            .foregroundStyle(Color.cavnarEmber2)
             .buttonStyle(.plain)
         }
         .cavnarCard()
@@ -772,12 +775,11 @@ struct CountSheetView: View {
     private func deliveryPrompt(_ question: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(question)
-                .font(.cavnarBody(14.5, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.label)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(viewModel.pendingDeliveries) { d in
-                HomeMixedText.make("\(d.name): \(CountSheetViewModel.expectedString(d.qty))\(d.unit.map { " \($0)" } ?? "") received",
-                                   size: 13.5, weight: 500, color: .cavnarInk3)
+                CavnarMixedText("\(d.name): \(CountSheetViewModel.expectedString(d.qty))\(d.unit.map { " \($0)" } ?? "") received",
+                                role: .secondary)
             }
             HStack(spacing: 10) {
                 Button {
@@ -829,16 +831,15 @@ struct WalkInCountView: View {
                         progress
                         if shown.isEmpty {
                             Text("Nothing on the sheet matches \u{201C}\(search)\u{201D}.")
-                                .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.body)
                                 .cavnarCard()
                         }
                         ForEach(shown) { it in
                             countRow(it).id(it.ingredientId)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .padding(.bottom, 120)
+                    .padding(.horizontal, CavnarSpace.m)
+                    .padding(.vertical, CavnarSpace.s)
                 }
                 .onChange(of: focused) { _, id in
                     guard let id else { return }
@@ -858,7 +859,7 @@ struct WalkInCountView: View {
                         focused = nil
                         close(false)
                     } label: {
-                        Text("Back").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Back").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Your counts stay on the sheet")
@@ -868,11 +869,11 @@ struct WalkInCountView: View {
                         Haptic.selection()
                         focused = nextId
                     }
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarEmber2)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .cavnarPinnedBar {
                 Button {
                     Haptic.medium()
                     focused = nil
@@ -884,9 +885,6 @@ struct WalkInCountView: View {
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.changed.isEmpty))
                 .disabled(viewModel.changed.isEmpty)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Color.cavnarPaper.opacity(0.94))
             }
         }
     }
@@ -901,9 +899,9 @@ struct WalkInCountView: View {
         let total = max(viewModel.items.count, 1)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(viewModel.progressLine).font(.cavnarNumber(18, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text(viewModel.progressLine).cavnarText(.figureS)
                 Spacer()
-                Text("Change only what differs").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                Text("Change only what\u{2019}s different").cavnarText(.caption)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -926,10 +924,10 @@ struct WalkInCountView: View {
         let edited = text != expected
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(it.name).font(.cavnarBody(17, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Spacer(minLength: 8)
-                HomeMixedText.make("Expected \(expected.isEmpty ? DSRFormat.dash : expected)\(it.unit.map { $0.isEmpty ? "" : " \($0)" } ?? "")",
-                                   size: 12.5, color: .cavnarInk3)
+                Text(it.name).cavnarText(.lead)
+                Spacer(minLength: CavnarSpace.xs)
+                CavnarMixedText("Expected \(expected.isEmpty ? DSRFormat.dash : expected)\(it.unit.map { $0.isEmpty ? "" : " \($0)" } ?? "")",
+                                role: .caption)
             }
             HStack(spacing: 12) {
                 stepButton("minus", label: "One less \(it.name)") { viewModel.step(it.ingredientId, by: -1) }
@@ -938,7 +936,7 @@ struct WalkInCountView: View {
                     set: { viewModel.counts[it.ingredientId] = $0 }))
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.center)
-                    .font(.cavnarNumber(26, weight: 700))
+                    .font(.cavnar(.figureM))
                     .foregroundStyle(edited ? Color.cavnarEmber2 : Color.cavnarInk2)
                     .frame(maxWidth: .infinity, minHeight: 56)
                     .background(Color.cavnarPaper3.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))

@@ -32,10 +32,7 @@ struct FoodCostAnalyticsSkeleton: View {
     /// (see CavnarMotion).
     private var heroBlock: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("COUNTING THE PANTRY")
-                .font(.cavnarBody(14, weight: 600))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker("Counting the pantry")
             CavnarLedgerFill()
             // The hero carries the AI consultant strip along its bottom
             // edge, after a divider — reserved here so it doesn't appear

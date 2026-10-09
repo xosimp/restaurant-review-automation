@@ -290,8 +290,12 @@ final class InvoiceScanViewModel {
     private func show(_ inv: ScannedInvoice) {
         invoice = inv
         appliedCount = nil
+        // A line with no ingredient is matched on the web (iOS readability
+        // round, 10/8/26): the phone approves matched lines, so an unmatched
+        // one is never ticked here — it would only block the update.
         choices = Dictionary(uniqueKeysWithValues: inv.lines.map { line in
-            (line.index, Choice(include: line.selected && line.applied != true, ingredientId: line.ingredientId,
+            (line.index, Choice(include: line.selected && line.applied != true && line.ingredientId != nil,
+                                ingredientId: line.ingredientId,
                                 cost: line.proposedCost.map { Self.costString($0) } ?? ""))
         })
     }
@@ -513,7 +517,7 @@ struct InvoiceScanSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
                     intro
                     pendingList
                     if viewModel.isOpening {
@@ -528,20 +532,24 @@ struct InvoiceScanSheet: View {
                     }
                     if let error = viewModel.errorMessage {
                         Text(error)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarRed)
+                            .cavnarText(.body, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let applied = viewModel.appliedCount {
-                        Text("\(applied) ingredient cost\(applied == 1 ? "" : "s") updated. Plate costs and margins now use them.")
-                            .font(.cavnarBody(15, weight: 600))
-                            .foregroundStyle(Color.cavnarGreen)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText("\(applied) ingredient cost\(applied == 1 ? "" : "s") updated. Plate costs and margins now use them.",
+                                        role: .body, color: .cavnarGreen)
                     } else if let inv = viewModel.invoice {
                         invoiceCard(inv)
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
+            }
+            // The update in thumb reach, not under every line.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if viewModel.appliedCount == nil, let inv = viewModel.invoice, inv.isOpen,
+                   inv.lines.contains(where: { $0.applied != true && $0.ingredientId != nil }) {
+                    CavnarPinnedBar { applyButton }
+                }
             }
             .cavnarModuleBackground()
             .navigationTitle("Scan invoice")
@@ -553,7 +561,7 @@ struct InvoiceScanSheet: View {
                         Haptic.light()
                         dismiss()
                     } label: {
-                        Text("Done").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Done").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -596,14 +604,9 @@ struct InvoiceScanSheet: View {
     }
 
     private var intro: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("KEEP COSTS CURRENT")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
-            Text("Photograph a supplier invoice. Cavnar AI reads the prices and proposes updates — nothing changes until you confirm each line.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            Text("Photograph a supplier invoice. Cavnar AI reads the prices and proposes updates — nothing changes until you confirm them.")
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
             // The camera is the way in; the photo library is the fallback
             // (and the only way on a device without a camera).
@@ -612,8 +615,8 @@ struct InvoiceScanSheet: View {
                     Haptic.light()
                     showingCamera = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "camera.viewfinder").font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "camera.viewfinder").accessibilityHidden(true)
                         Text(viewModel.invoice == nil ? "Scan with camera" : "Scan another")
                     }
                     .frame(maxWidth: .infinity)
@@ -621,8 +624,8 @@ struct InvoiceScanSheet: View {
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
                 .disabled(viewModel.isScanning)
                 PhotosPicker(selection: $pickerItem, matching: .images) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "photo.on.rectangle").font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "photo.on.rectangle").accessibilityHidden(true)
                         Text("Choose a photo instead")
                     }
                     .frame(maxWidth: .infinity)
@@ -631,8 +634,8 @@ struct InvoiceScanSheet: View {
                 .disabled(viewModel.isScanning)
             } else {
                 PhotosPicker(selection: $pickerItem, matching: .images) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc.text.viewfinder").font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "doc.text.viewfinder").accessibilityHidden(true)
                         Text(viewModel.invoice == nil ? "Choose invoice photo" : "Scan another")
                     }
                     .frame(maxWidth: .infinity)
@@ -646,8 +649,8 @@ struct InvoiceScanSheet: View {
                 Haptic.light()
                 importingFile = true
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.richtext").font(.system(size: 13, weight: .semibold))
+                HStack(spacing: CavnarSpace.xs) {
+                    Image(systemName: "doc.richtext").accessibilityHidden(true)
                     Text("Choose a PDF or file")
                 }
                 .frame(maxWidth: .infinity)
@@ -655,8 +658,7 @@ struct InvoiceScanSheet: View {
             .buttonStyle(CavnarSecondaryButtonStyle())
             .disabled(viewModel.isScanning)
             if let note = viewModel.extraPagesNote {
-                HomeMixedText.make(note, size: 13.5, color: .cavnarAmber)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(note, role: .secondary, color: .cavnarAmber)
             }
         }
         .cavnarCard()
@@ -669,22 +671,20 @@ struct InvoiceScanSheet: View {
     private var pendingList: some View {
         let rows = viewModel.pending.filter { $0.id != viewModel.invoice?.id }
         if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                HomeMixedText.make("WAITING ON YOU · \(rows.count) SCANNED INVOICE\(rows.count == 1 ? "" : "S")",
-                                   size: 13.5, weight: 700, color: .cavnarEmber2)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("Waiting on you \u{00B7} \(rows.count) scanned invoice\(rows.count == 1 ? "" : "s")")
                 ForEach(rows) { row in
-                    HStack(spacing: 10) {
+                    HStack(spacing: CavnarSpace.s) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(row.supplier ?? "Supplier not read")
-                                .font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            HomeMixedText.make(pendingDetail(row), size: 12.5, weight: 500, color: .cavnarInk3)
+                            Text(row.supplier ?? "Supplier not read").cavnarText(.label)
+                            CavnarMixedText(pendingDetail(row), role: .secondary)
                         }
-                        Spacer(minLength: 8)
+                        Spacer(minLength: CavnarSpace.xs)
                         Button {
                             Haptic.light()
                             Task { await viewModel.open(row.id) }
                         } label: {
-                            Text("Open").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                            Text("Open").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
                         }
                         .buttonStyle(.plain)
                         .disabled(viewModel.isOpening || viewModel.isScanning)
@@ -703,76 +703,98 @@ struct InvoiceScanSheet: View {
         return parts.joined(separator: " · ")
     }
 
+    /// The invoice's matched lines to approve, each ticked or not with its
+    /// cost open to change; lines Cavnar AI could not match to an
+    /// ingredient are matched on the web (iOS readability round, 10/8/26).
     private func invoiceCard(_ inv: ScannedInvoice) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             // The invoice's own date, M/D/YY — it used to print as sent,
             // 2026-09-18 (CLIENT-45).
             Text(([inv.supplier ?? "Supplier not read", inv.invoiceDate.map(CavnarDate.mdy)].compactMap { $0 })
-                .joined(separator: " · ").uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarInk3)
+                .joined(separator: " · "))
+                .cavnarText(.lead)
             if let tc = inv.totalCheck, !tc.plausible {
-                HomeMixedText.make("Lines add up to \(Self.money(tc.linesSum)) against a total of \(Self.money(tc.invoiceTotal)) — check them against the paper.",
-                                   size: 13.5, weight: 500, color: .cavnarAmber)
+                CavnarMixedText("Lines add up to \(Self.money(tc.linesSum)) against a total of \(Self.money(tc.invoiceTotal)) — check them against the paper.",
+                                role: .secondary, color: .cavnarAmber)
             }
             if !inv.isOpen {
-                Text("This invoice was already applied.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                Text("This invoice was already applied.").cavnarText(.body)
             } else {
                 if inv.awaitingOwner == true {
                     let n = inv.autoAppliedCount ?? 0
-                    HomeMixedText.make("Cavnar AI applied \(n) checked line\(n == 1 ? "" : "s") from this trusted supplier. The lines below still need you.",
-                                       size: 13.5, weight: 500, color: .cavnarAmber)
+                    CavnarMixedText("Cavnar AI applied \(n) checked line\(n == 1 ? "" : "s") from this trusted supplier. The lines below still need you.",
+                                    role: .secondary, color: .cavnarAmber)
                 }
                 let open = inv.lines.filter { $0.applied != true }
-                VStack(spacing: 0) {
-                    ForEach(Array(open.enumerated()), id: \.element.id) { i, line in
-                        lineRow(line, ingredients: inv.ingredients)
-                        if i < open.count - 1 {
-                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                let matched = open.filter { $0.ingredientId != nil }
+                let unmatched = open.filter { $0.ingredientId == nil }
+                if !matched.isEmpty {
+                    CavnarKicker("Approve matched lines")
+                    VStack(spacing: 0) {
+                        ForEach(Array(matched.enumerated()), id: \.element.id) { i, line in
+                            lineRow(line, ingredients: inv.ingredients)
+                            if i < matched.count - 1 {
+                                Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                            }
                         }
                     }
                 }
-                Button {
-                    Task { await viewModel.apply() }
-                } label: {
-                    Group {
-                        if viewModel.isApplying {
-                            CavnarShimmerText(text: "Updating…")
-                        } else {
-                            Text("Update ticked costs")
-                        }
+                if !unmatched.isEmpty {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        CavnarMixedText("\(unmatched.count) line\(unmatched.count == 1 ? "" : "s") not matched to an ingredient",
+                                        role: .label, color: .cavnarAmber)
+                        Text(unmatched.prefix(4).map(\.description).joined(separator: ", ")
+                             + (unmatched.count > 4 ? " and \(unmatched.count - 4) more" : ""))
+                            .cavnarText(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarWebLinkRow(title: "Match them", subtitle: "Pick or add the ingredient for each line",
+                                         path: "inventory/invoices", actionLabel: "Open on the web")
                     }
-                    .frame(maxWidth: .infinity)
+                    .padding(.top, CavnarSpace.xxs)
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isApplying))
-                .disabled(viewModel.isApplying)
             }
         }
         .cavnarCard()
+    }
+
+    private var applyButton: some View {
+        Button {
+            Task { await viewModel.apply() }
+        } label: {
+            Group {
+                if viewModel.isApplying {
+                    CavnarShimmerText(text: "Updating…")
+                } else {
+                    Text("Update selected prices")
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isApplying))
+        .disabled(viewModel.isApplying)
     }
 
     private func lineRow(_ line: InvoiceLine, ingredients: [InvoiceIngredient]) -> some View {
         let binding = Binding<InvoiceScanViewModel.Choice>(
             get: { viewModel.choices[line.index] ?? .init(include: false, ingredientId: nil, cost: "") },
             set: { viewModel.choices[line.index] = $0 })
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
+        let ingredient = ingredients.first { $0.id == binding.wrappedValue.ingredientId }
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .top, spacing: CavnarSpace.xxs) {
                 Button {
                     Haptic.light()
                     binding.wrappedValue.include.toggle()
                 } label: {
                     Image(systemName: binding.wrappedValue.include ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 20))
-                        .foregroundStyle(binding.wrappedValue.include ? Color.cavnarEmber : Color.cavnarInk3)
+                        .font(.cavnar(.figureS))
+                        .foregroundStyle(binding.wrappedValue.include ? Color.cavnarEmber : Color.cavnarInk2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(binding.wrappedValue.include ? "Included" : "Not included")
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text(line.description).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(line.description).cavnarText(.label)
                         // Whether both checks ran and agreed (invoices.py
                         // "verified") — never shown on the phone before.
                         if let verified = line.verified {
@@ -781,57 +803,43 @@ struct InvoiceScanSheet: View {
                                                    : "Not every check could run on this line. Look before applying.")
                         }
                     }
-                    HomeMixedText.make(detail(line), size: 12.5, weight: 500, color: .cavnarInk3)
+                    CavnarMixedText(detail(line), role: .secondary)
                     if let match = line.matchNote {
-                        HStack(spacing: 5) {
-                            Image(systemName: "checkmark.circle")
-                                .font(.system(size: 10, weight: .bold))
-                            Text(match).font(.cavnarBody(12.5, weight: 600))
+                        HStack(spacing: CavnarSpace.xxs) {
+                            Image(systemName: "checkmark.circle").accessibilityHidden(true)
+                            Text(match)
                         }
-                        .foregroundStyle(Color.cavnarGreen)
+                        .cavnarText(.caption, color: .cavnarGreen)
                     }
                     if let note = line.note {
-                        Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarAmber)
+                        Text(note).cavnarText(.caption, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
-            HStack(spacing: 10) {
-                Picker("Ingredient", selection: Binding(
-                    get: { binding.wrappedValue.ingredientId },
-                    set: { picked in
-                        // -1 is "New ingredient from this line", not an id.
-                        if picked == Self.newIngredientTag {
-                            Task { await viewModel.createIngredient(from: line) }
-                        } else {
-                            binding.wrappedValue.ingredientId = picked
-                        }
-                    })) {
-                    Text(viewModel.creatingFor == line.index ? "Adding…" : "Pick ingredient").tag(Int?.none)
-                    Text("+ New ingredient from this line").tag(Int?.some(Self.newIngredientTag))
-                    ForEach(ingredients) { ing in
-                        Text(ing.unit.map { "\(ing.name) (\($0))" } ?? ing.name).tag(Int?.some(ing.id))
-                    }
-                }
-                .pickerStyle(.menu)
-                .tint(Color.cavnarEmber2)
-                Spacer(minLength: 6)
+            // The ingredient it updates — matched by Cavnar AI; re-matching
+            // a line is on the web.
+            HStack(spacing: CavnarSpace.s) {
+                Text(ingredient.map { ing in ing.unit.map { "\(ing.name) (\($0))" } ?? ing.name }
+                     ?? line.ingredientName ?? "Matched ingredient")
+                    .cavnarText(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: CavnarSpace.xxs)
                 TextField("Cost", text: Binding(
                     get: { binding.wrappedValue.cost },
                     set: { binding.wrappedValue.cost = $0 }))
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
-                    .font(.cavnarNumber(15, weight: 600))
-                    .frame(width: 92)
-                    .padding(.vertical, 6).padding(.horizontal, 8)
+                    .font(.cavnar(.figureS))
+                    .frame(width: 92, height: 44)
+                    .padding(.horizontal, 8)
                     .background(RoundedRectangle(cornerRadius: 8).stroke(Color.cavnarPaper3, lineWidth: 1))
+                    .accessibilityLabel("Cost for \(line.description)")
             }
-            .padding(.leading, 30)
+            .padding(.leading, 48)
         }
-        .padding(.vertical, 11)
+        .padding(.vertical, CavnarSpace.xs)
     }
-
-    private static let newIngredientTag = -1
 
     private func detail(_ line: InvoiceLine) -> String {
         var parts: [String] = []

@@ -126,11 +126,11 @@ struct MenuMarginsSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xl) {
                     if viewModel.isLoading && viewModel.data == nil {
                         CavnarSkeletonLines(widths: [1.0, 0.86, 0.7, 0.55])
                     } else if let error = viewModel.errorMessage, viewModel.data == nil {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                        Text(error).cavnarText(.body)
                     } else if let data = viewModel.data {
                         if data.isEmpty {
                             emptyState
@@ -144,16 +144,15 @@ struct MenuMarginsSheet: View {
                             if !data.unpriced.isEmpty {
                                 unpricedCard(data.unpriced)
                             }
-                            if !data.uncosted.isEmpty {
-                                uncostedCard(data.uncosted)
-                            }
-                            if !data.unmapped.isEmpty {
-                                unmappedCard(data.unmapped)
+                            // Dishes that can't be costed yet — named and
+                            // fixed on the web (iOS readability round).
+                            if !data.uncosted.isEmpty || !data.unmapped.isEmpty {
+                                notCostedCard(uncosted: data.uncosted, unmapped: data.unmapped)
                             }
                         }
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .cavnarModuleBackground()
             .navigationTitle("Menu margins")
@@ -165,7 +164,7 @@ struct MenuMarginsSheet: View {
                         Haptic.light()
                         dismiss()
                     } label: {
-                        Text("Done").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Done").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -184,14 +183,10 @@ struct MenuMarginsSheet: View {
     }
 
     private func summaryCard(average: Double, data: MenuProfitability) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("AVERAGE FOOD COST")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Average food cost")
             Text(Self.pct(average))
-                .font(.cavnarNumber(38, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.figureL)
                 .cavnarNumberGlow()
                 .cavnarSensitive()
             // The basis matters more than the number. An unweighted mean of
@@ -203,37 +198,40 @@ struct MenuMarginsSheet: View {
             Text(data.hasSalesData == true
                  ? "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price, weighted by what actually sold."
                  : "Across the \(data.priced.count) dish\(data.priced.count == 1 ? "" : "es") with a recipe and a price. No sales data yet, so every dish counts equally.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(data.costReference?.basis.map { "Dish colours read against \($0)." }
                  ?? "No food-cost target and no published figure for your type, so dishes are not coloured \u{2014} set a target in Account to colour them.")
-                .font(.cavnarBody(13))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
     }
 
+    private static let pricedShown = 5
+
+    /// The five thinnest margins, each one tap from its price; every dish's
+    /// margin is a table for the web (iOS readability round, 10/8/26).
     private func pricedCard(_ items: [MenuMarginItem]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("WORST MARGIN FIRST")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+        let shown = Array(items.prefix(Self.pricedShown))
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Thinnest margins")
             VStack(spacing: 0) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
                     Button {
                         Haptic.light()
                         viewModel.pricingItem = item
                     } label: { marginRow(item) }
                     .buttonStyle(.plain)
-                    if index < items.count - 1 {
+                    if index < shown.count - 1 {
                         Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                     }
                 }
             }
+            CavnarWebLinkRow(title: items.count > Self.pricedShown ? "All \(items.count) dishes" : "Every dish\u{2019}s margin",
+                             subtitle: "Plate cost, price and margin for each", path: "inventory/margins",
+                             actionLabel: "Open on the web")
         }
         .cavnarCard()
     }
@@ -245,23 +243,19 @@ struct MenuMarginsSheet: View {
                 .frame(width: 3, height: 30)
                 .clipShape(Capsule())
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
-                    .font(.cavnarBody(15, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                HomeMixedText.make(costLine(item), size: 12.5, weight: 500, color: .cavnarInk3)
+                Text(item.name).cavnarText(.label)
+                CavnarMixedText(costLine(item), role: .caption)
                     .cavnarSensitive()
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: CavnarSpace.xs)
             VStack(alignment: .trailing, spacing: 2) {
                 Text(Self.pct(item.foodCostPct ?? 0))
-                    .font(.cavnarNumber(16, weight: 700))
-                    .foregroundStyle(bandColor(item.costBand))
-                Text("food cost")
-                    .font(.cavnarBody(11.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.figureS, color: bandTextColor(item.costBand))
+                Text("food cost").cavnarText(.caption)
             }
         }
-        .padding(.vertical, 11)
+        .padding(.vertical, CavnarSpace.xs)
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
     }
 
@@ -273,14 +267,10 @@ struct MenuMarginsSheet: View {
     }
 
     private func unpricedCard(_ items: [MenuMarginItem]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("NO PRICE YET")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarAmber)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("No price yet", tint: .cavnarAmber)
             Text("These have a recipe, so the plate cost is known — add what they sell for and the margin follows.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
@@ -288,17 +278,17 @@ struct MenuMarginsSheet: View {
                         Haptic.light()
                         viewModel.pricingItem = item
                     } label: {
-                        HStack(spacing: 10) {
-                            Text(item.name).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk)
-                            Spacer(minLength: 8)
-                            HomeMixedText.make("\(Self.money(item.plateCost ?? 0)) cost",
-                                               size: 13, weight: 600, color: .cavnarInk3)
+                        HStack(spacing: CavnarSpace.s) {
+                            Text(item.name).cavnarText(.body, color: .cavnarInk)
+                            Spacer(minLength: CavnarSpace.xs)
+                            CavnarMixedText("\(Self.money(item.plateCost ?? 0)) cost", role: .caption)
                                 .cavnarSensitive()
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarEmber2)
+                                .accessibilityHidden(true)
                         }
-                        .padding(.vertical, 11)
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -311,51 +301,40 @@ struct MenuMarginsSheet: View {
         .cavnarCard()
     }
 
-    /// Dishes with a recipe whose ingredients aren't all priced. These used
-    /// to be costed as if the missing prices were zero, so a dish whose main
-    /// protein had never been priced showed an excellent margin with nothing
-    /// indicating the number was incomplete.
-    private func uncostedCard(_ items: [MenuMarginItem]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("MISSING INGREDIENT COSTS")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarAmber)
-            Text("\(items.count) dish\(items.count == 1 ? "" : "es") can't be costed accurately yet — some ingredients have no unit cost: \(items.prefix(6).map(\.name).joined(separator: ", "))\(items.count > 6 ? "…" : "").")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard()
-    }
-
-    private func unmappedCard(_ items: [MenuMarginItem]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("NO RECIPE MAPPED")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarInk3)
-            Text("\(items.count) dish\(items.count == 1 ? "" : "es") can't be costed until their ingredients are mapped: \(items.prefix(6).map(\.name).joined(separator: ", "))\(items.count > 6 ? "…" : "").")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+    /// Dishes that can't be costed yet: a recipe with an ingredient that has
+    /// no unit cost (costed as zero once, so a dish whose main protein was
+    /// never priced showed an excellent margin), or no recipe at all. Said
+    /// here as a count; each is fixed on the web.
+    private func notCostedCard(uncosted: [MenuMarginItem], unmapped: [MenuMarginItem]) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Can\u{2019}t be costed yet", tint: .cavnarAmber)
+            if !uncosted.isEmpty {
+                CavnarMixedText("\(uncosted.count) dish\(uncosted.count == 1 ? "" : "es") with an ingredient that has no unit cost",
+                                role: .secondary)
+            }
+            if !unmapped.isEmpty {
+                CavnarMixedText("\(unmapped.count) dish\(unmapped.count == 1 ? "" : "es") with no recipe yet", role: .secondary)
+            }
+            CavnarWebLinkRow(title: "Fix their recipes", subtitle: "Add the missing costs and recipes",
+                             path: "inventory/menu", actionLabel: "Open on the web")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("No menu items yet")
-                .font(.cavnarHeadline(17))
-                .foregroundStyle(Color.cavnarInk)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            Text("No menu items yet").cavnarText(.lead)
             Text("Once dishes are mapped to their ingredients, this shows what each one actually earns.")
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .cavnarCard()
+    }
+
+    /// The band as text: small red text takes the text-safe red.
+    private func bandTextColor(_ band: MenuCostBand) -> Color {
+        band == .high ? .cavnarRedText : bandColor(band)
     }
 
     private func bandColor(_ band: MenuCostBand) -> Color {
@@ -394,8 +373,7 @@ private struct MenuPriceSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("What does \(item.name) sell for? The plate costs \(String(format: "$%.2f", item.plateCost ?? 0)) to make, so the price is what turns that into a margin.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
 
                     CavnarFloatingField(
@@ -404,7 +382,7 @@ private struct MenuPriceSheet: View {
                     )
 
                     if let error = viewModel.priceError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.body, color: .cavnarRedText)
                     }
 
                     VStack(spacing: 10) {

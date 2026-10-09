@@ -32,8 +32,12 @@ def test_the_phone_logs_waste():
     import client_api
     for reason in client_api.WASTE_REASONS:
         assert f'("{reason}", ' in src
-    assert "WasteLogForm(items: viewModel.items)" in _swift("Features/FoodCost/CountSheetView.swift")
+    # Waste is logged from its own sheet, opened by the action row's Waste
+    # tile (iOS readability round, 10/8/26) — no longer inside the count.
+    assert "WasteLogForm(items: countSheet.items)" in src
+    assert "WasteLogForm(" not in _swift("Features/FoodCost/CountSheetView.swift")
     assert "case .waste: WasteLogSheet()" in _swift("Features/FoodCost/FoodCostQuickEntryView.swift")
+    assert 'item("Waste", icon: "trash"' in _swift("Features/FoodCost/FoodCostActionRow.swift")
 
 
 def test_the_tracker_starts_from_the_saved_rows():

@@ -94,11 +94,11 @@ struct VisibilityOrbitChart: View {
         // a single line of copy, not an empty plot.
         let L = size.width * 0.52, Rr = size.width - 18, T: CGFloat = 40, B = size.height - 40
         guard runs.count >= 2 else {
-            CavnarChart.text(&ctx, CavnarChart.label("FIRST CHECK", size: 10.5, weight: 700), at: CGPoint(x: L, y: center.y - 12), anchor: .leading)
-            CavnarChart.text(&ctx, CavnarChart.label("Run another check to start the trend line.", size: 11.5, color: .cavnarInk2), at: CGPoint(x: L, y: center.y + 8), anchor: .leading)
+            CavnarChart.text(&ctx, CavnarChart.label("FIRST CHECK", size: CavnarType.kicker, weight: 700), at: CGPoint(x: L, y: center.y - 12), anchor: .leading)
+            CavnarChart.text(&ctx, CavnarChart.label("Run another check to start the trend line.", size: CavnarType.caption, color: .cavnarInk2), at: CGPoint(x: L, y: center.y + 8), anchor: .leading)
             return
         }
-        CavnarChart.text(&ctx, CavnarChart.label("LAST \(runs.count) RUNS", size: 10.5, weight: 700), at: CGPoint(x: L, y: T - 14), anchor: .leading)
+        CavnarChart.text(&ctx, CavnarChart.label("LAST \(runs.count) RUNS", size: CavnarType.kicker, weight: 700), at: CGPoint(x: L, y: T - 14), anchor: .leading)
         let n = runs.count
         let vals = runs.map { Double($0.aiScore) }
         let lo = max(0, (vals.min() ?? 0) - 10), hi = min(100, (vals.max() ?? 100) + 10)
@@ -123,7 +123,7 @@ struct VisibilityOrbitChart: View {
             let text = delta == 0 ? "No change since last run" : (delta > 0 ? "+\(delta) since last run" : "\(delta) since last run")
             ctx.drawLayer { layer in
                 layer.opacity = ln
-                CavnarChart.text(&layer, CavnarChart.number(text, size: 12, weight: 700, color: delta >= 0 ? .cavnarGreen : .cavnarRed),
+                CavnarChart.text(&layer, CavnarChart.number(text, size: CavnarType.caption, weight: 700, color: delta >= 0 ? .cavnarGreen : .cavnarRedText),
                                  at: CGPoint(x: Rr, y: size.height - 14), anchor: .trailing)
             }
         }

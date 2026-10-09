@@ -61,7 +61,7 @@ struct WasteLedgerChart: View {
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double) {
         let left: CGFloat = 18, right: CGFloat = 92, top: CGFloat = 44, rh: CGFloat = 40
-        CavnarChart.text(&ctx, CavnarChart.label(headline.uppercased(), size: 10.5, weight: 700), at: CGPoint(x: left, y: 22), anchor: .leading)
+        CavnarChart.text(&ctx, CavnarChart.label(headline.uppercased(), size: CavnarType.kicker, weight: 700), at: CGPoint(x: left, y: 22), anchor: .leading)
         let maxValue = max(1, shown.map(\.value).max() ?? 1) * 1.08
         for (i, row) in shown.enumerated() {
             let s = CavnarChart.easeOut(CavnarChart.window(t, from: Double(i) * 0.1, length: 0.7))
@@ -94,7 +94,7 @@ struct WasteLedgerChart: View {
                                                      startPoint: CGPoint(x: sx - 18, y: 0), endPoint: CGPoint(x: sx + 6, y: 0)))
                 }
             }
-            CavnarChart.text(&ctx, CavnarChart.label(row.name, size: 12, weight: 700, color: .cavnarInk), at: CGPoint(x: left + 12, y: y + bh / 2), anchor: .leading)
+            CavnarChart.text(&ctx, CavnarChart.label(row.name, size: CavnarType.caption, weight: 700, color: .cavnarInk), at: CGPoint(x: left + 12, y: y + bh / 2), anchor: .leading)
             CavnarChart.text(&ctx, CavnarChart.number("$\(Int((row.value * s).rounded()).formatted())", size: 14, weight: 700),
                              at: CGPoint(x: size.width - 16, y: y + bh / 2 - (row.detail == nil ? 0 : 7)), anchor: .trailing)
             if let detail = row.detail {
@@ -103,7 +103,7 @@ struct WasteLedgerChart: View {
                 // 10pt it was too small to read at arm's length. Through
                 // HomeMixedText so the figures in it land in Space Grotesk
                 // like every other number in the app.
-                CavnarChart.text(&ctx, HomeMixedText.make(detail, size: 12, weight: 600, color: .cavnarInk3),
+                CavnarChart.text(&ctx, HomeMixedText.make(detail, size: CavnarType.caption, weight: 600, color: .cavnarInk3),
                                  at: CGPoint(x: size.width - 16, y: y + bh / 2 + 10), anchor: .trailing)
             }
         }

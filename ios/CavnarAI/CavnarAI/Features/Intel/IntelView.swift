@@ -2,7 +2,7 @@ import SwiftUI
 
 enum IntelSubTab: String, CaseIterable, Identifiable {
     case competitors = "Competitors"
-    case aiVisibility = "AI Visibility"
+    case aiVisibility = "Online"
     var id: String { rawValue }
 
     /// The tab a nav path's section opens on (nav.py: "intel",
@@ -49,8 +49,14 @@ struct IntelView: View {
         _subTab = State(initialValue: IntelSubTab(section: focusSection) ?? .competitors)
     }
     @State private var expandedCompetitors: Set<String> = []
-    /// Recommendations whose cited competitor reviews are open.
-    @State private var expandedCites: Set<String> = []
+    /// Recommendations whose evidence and Ask link are open.
+    @State private var expandedRecs: Set<String> = []
+    /// The AI intro past its first three lines.
+    @State private var introExpanded = false
+    /// Every competitor, not just the five nearest.
+    @State private var showingAllCompetitors = false
+    /// The notes on how far the ratings compare (caveat, staleness).
+    @State private var showingRatingNotes = false
     @State private var showAddCompetitor = false
     // Removal is fast now (a cached-blob filter, not the full refresh job
     // add uses — see removeCompetitor's own doc comment), but even a ~1s
@@ -90,9 +96,12 @@ struct IntelView: View {
                         } else if viewModel.isLoading {
                             CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
-                            VStack(spacing: 8) {
-                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                                Button("Retry") { Task { await viewModel.load() } }
+                            VStack(spacing: CavnarSpace.xs) {
+                                Text(error).cavnarText(.body)
+                                Button { Task { await viewModel.load() } } label: {
+                                    Text("Retry").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
+                                }
+                                .buttonStyle(.plain)
                             }
                             .padding(.top, 60)
                             .frame(maxWidth: .infinity)
@@ -101,8 +110,8 @@ struct IntelView: View {
                         AIVisibilitySection(viewModel: aiVisibilityViewModel, restaurantName: viewModel.summary?.restaurantName)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 24)
+                .padding(.horizontal, CavnarSpace.gutter)
+                .padding(.vertical, CavnarSpace.xl)
             }
             .cavnarEmberRefreshable { await viewModel.load() }
         }
@@ -110,17 +119,15 @@ struct IntelView: View {
             if let pending = pendingRemoval {
                 HStack(spacing: 12) {
                     Text("Stopped tracking \(pending.name)")
-                        .font(.cavnarBody(14.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.label)
                         .lineLimit(1)
                     Button {
                         Haptic.light()
                         undoRemoval()
                     } label: {
                         Text("Undo")
-                            .font(.cavnarBody(14.5, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 44)
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -167,6 +174,11 @@ struct IntelView: View {
             keys.contains(c.placeId.lowercased()) || keys.contains(c.name.lowercased())
         }) {
             expandedCompetitors.insert(hit.id)
+            // Past the five nearest: the list opens in full so it shows.
+            if let i = Self.nearestFirst(summary.competitors).firstIndex(where: { $0.id == hit.id }),
+               i >= Self.competitorsShown {
+                showingAllCompetitors = true
+            }
         }
     }
 
@@ -201,7 +213,7 @@ struct IntelView: View {
                 .transition(.opacity)
             }
             if let error = viewModel.refreshError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
         }
         .frame(maxWidth: .infinity)
@@ -237,9 +249,9 @@ struct IntelView: View {
                 .animation(.easeOut(duration: 0.5).delay(0.15), value: contentAppeared)
         }
 
-        if let ownRating = summary.ownRating, !summary.competitors.isEmpty {
-            ratingComparisonSection(summary, ownRating: ownRating)
-        }
+        // The rating-comparison bars that stood here are gone (iOS
+        // readability round, 10/8/26): they drew every competitor's rating
+        // a second time, beside the list below that already carries it.
 
         if !summary.sections.isEmpty || !summary.displayRecommendations.isEmpty
             || summary.emptyRecommendationsNote != nil {
@@ -284,7 +296,7 @@ struct IntelView: View {
             return leadingWindow.range(of: name)
         }
 
-        return Group {
+        let text = Group {
             if let nameRange {
                 (Text(String(intro[intro.startIndex..<nameRange.lowerBound])).foregroundStyle(Color.cavnarInk2)
                     + Text(String(intro[nameRange])).foregroundStyle(Color.cavnarEmber)
@@ -293,11 +305,30 @@ struct IntelView: View {
                 Text(intro).foregroundStyle(Color.cavnarInk2)
             }
         }
-        // Body size (density #35): a paragraph of AI prose at 22pt Clash was
+        // Lead size (density #35): a paragraph of AI prose at 22pt Clash was
         // the heaviest text on the screen, louder than the standing above.
-        .font(.cavnarBody(CavnarType.emphasis))
-        .lineSpacing(4)
+        // Three lines, then "Read more" (iOS readability round, 10/8/26):
+        // it ran the whole paragraph above the standing's reasons.
+        .font(.cavnar(.lead))
+        .lineSpacing(CavnarText.lead.lineSpacing)
+        .lineLimit(introExpanded ? nil : 3)
         .fixedSize(horizontal: false, vertical: true)
+
+        return VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            text
+            if intro.count > 160 {
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.2)) { introExpanded.toggle() }
+                } label: {
+                    Text(introExpanded ? "Show less" : "Read more")
+                        .cavnarText(.label, color: .cavnarEmber2)
+                        .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(introExpanded ? "Expanded" : "Collapsed")
+            }
+        }
     }
 
     // MARK: - Market analysis — well/poorly/recommendations read as one
@@ -306,20 +337,14 @@ struct IntelView: View {
     // bar down the left edge instead of each getting its own kicker.
 
     private func marketAnalysisGroup(_ summary: IntelSummary) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("CAVNAR AI COMPETITIVE ANALYSIS")
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(1.1)
-                    .foregroundStyle(Color.cavnarEmber)
+        VStack(alignment: .leading, spacing: CavnarSpace.l) {
+            HStack(spacing: CavnarSpace.xs) {
+                CavnarKicker("Cavnar AI\u{2019}s read of the market", icon: "sparkles")
                 Spacer(minLength: 0)
                 // The sections are the model's read of Google-selected
                 // reviews (claim_kinds "sections": inferred) — J5.
                 ClaimKindTag(kind: summary.claimKinds?["sections"])
             }
-            .foregroundStyle(Color.cavnarEmber)
 
             // What to do comes first, directly under the rating bars
             // (density #35); the analysis it rests on follows.
@@ -330,8 +355,7 @@ struct IntelView: View {
                 // because the read carried something unverified, or
                 // genuinely nothing worth doing this week.
                 Text(note)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -339,8 +363,8 @@ struct IntelView: View {
                 marketSection(section)
             }
         }
-        .padding(.vertical, 18)
-        .padding(.horizontal, 22)
+        .padding(.vertical, CavnarSpace.m)
+        .padding(.horizontal, CavnarSpace.l)
         // Was 0.12 — at that strength the panel's own orange wash blended
         // into the "doing poorly" section's red row tint right on top of
         // it, making the two hard to tell apart. Dimmed so the panel reads
@@ -400,7 +424,7 @@ struct IntelView: View {
             // why there is none yet.
             if let basis = summary.standingLine != nil ? summary.standingBasis
                 : summary.standingWhyNot.map({ "No standing yet \u{2014} " + $0 }) {
-                HomeMixedText.make(basis, size: 12, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(basis, role: .caption)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
@@ -435,221 +459,144 @@ struct IntelView: View {
         return own >= market ? .cavnarGreen : (own >= market - 0.3 ? .cavnarAmber : .cavnarRed)
     }
 
-    /// value arrives already fully styled (font + color on every segment)
-    /// — this only lays it out, it never applies its own font/color on
-    /// top, since a later blanket modifier here would silently win over
-    /// per-segment styling set by ratingText below (SwiftUI resolves
-    /// Text-concatenation styling closest-to-the-literal-segment-wins, so
-    /// stacking a second, outer style call is never safe to rely on).
-    private func statTile(value: Text, label: String) -> some View {
-        VStack(spacing: 5) {
-            value
-            Text(label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(0.4)
-                .foregroundStyle(Color.cavnarInk3)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func plainStatValue(_ s: String) -> Text {
-        Text(s).font(.cavnarNumber(20, weight: 700)).foregroundStyle(Color.cavnarInk)
-    }
-
-    /// Number at the given size, star noticeably smaller — was one Text
-    /// with "%.1f★" formatting into a single font/size, which made the
-    /// star render as big as the digits next to it.
-    private func ratingText(_ rating: Double, numberSize: CGFloat, tone: Color) -> Text {
+    /// Number at the given size, star smaller — was one Text with "%.1f★"
+    /// formatting into a single font/size, which made the star render as
+    /// big as the digits next to it. `starScale` keeps a small rating's
+    /// star legible.
+    private func ratingText(_ rating: Double, numberSize: CGFloat, tone: Color, starScale: CGFloat = 0.55) -> Text {
         Text(String(format: "%.1f", rating)).font(.cavnarNumber(numberSize, weight: 700)).foregroundStyle(tone)
-            + Text(" ★").font(.cavnarNumber(numberSize * 0.55, weight: 700)).foregroundStyle(tone)
-    }
-
-    // MARK: - Rating comparison
-
-    private func ratingComparisonSection(_ summary: IntelSummary, ownRating: Double) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("RATING COMPARISON")
-                .font(.cavnarBody(14, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber)
-            VStack(spacing: 16) {
-                ratingBar(name: summary.restaurantName ?? "Your restaurant", rating: ownRating, tone: Color.cavnarEmber, isYou: true)
-                // Was green/red per competitor based on ahead-or-behind —
-                // stacked next to the client's own ember bar, that read as
-                // too many colors at once ("kiddish"). Every competitor
-                // bar is the same neutral gray now; only the client's own
-                // restaurant keeps the brand color, so it's the one thing
-                // that actually stands out.
-                ForEach(summary.competitors) { c in
-                    ratingBar(name: c.name, rating: c.rating, tone: Color.cavnarInk3, isYou: false)
-                }
-            }
-        }
-        .opacity(contentAppeared ? 1 : 0)
-        .offset(y: contentAppeared ? 0 : 20)
-        .animation(.easeOut(duration: 0.5).delay(0.3), value: contentAppeared)
-    }
-
-    /// Was a flat gray capsule for every competitor regardless of how they
-    /// actually compare — no color, no depth, nothing to look at twice.
-    /// Now: a real gradient fill with a matching glow (green/red by
-    /// whether you're ahead of THIS specific competitor, same logic the
-    /// competitor rows below already use), a thicker/brighter treatment
-    /// for your own bar so it reads as the anchor of the comparison, and
-    /// the fill animates in from zero width on load instead of just
-    /// appearing static.
-    private func ratingBar(name: String, rating: Double, tone: Color, isYou: Bool) -> some View {
-        HStack(spacing: 12) {
-            Text(name)
-                .font(.cavnarBody(isYou ? 13 : 12, weight: isYou ? 700 : 500))
-                .foregroundStyle(isYou ? Color.cavnarInk : Color.cavnarInk2)
-                .lineLimit(1)
-                .frame(width: 104, alignment: .leading)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.cavnarPaper3.opacity(0.5))
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [tone.opacity(0.6), tone],
-                                startPoint: .leading, endPoint: .trailing
-                            )
-                        )
-                        .frame(width: geo.size.width * (contentAppeared ? min(rating / 5, 1) : 0))
-                        .shadow(color: tone.opacity(0.65), radius: isYou ? 7 : 4, x: 0, y: 0)
-                }
-            }
-            .frame(height: isYou ? 14 : 10)
-            .animation(.easeOut(duration: 0.7).delay(0.4), value: contentAppeared)
-            // Bar fill already counted up from 0 on load; the number next
-            // to it just appeared at full value instantly, which read as
-            // inconsistent once you were watching the bar animate right
-            // beside it. Same trigger, same timing as the bar above so
-            // they land together.
-            Group {
-                if isYou {
-                    AnimatedRatingText(rating: contentAppeared ? rating : 0, numberSize: 15, tone: tone).cavnarNumberGlow(tone)
-                } else {
-                    AnimatedRatingText(rating: contentAppeared ? rating : 0, numberSize: 12, tone: tone)
-                }
-            }
-            .frame(width: 42, alignment: .trailing)
-            .animation(.easeOut(duration: 0.7).delay(0.4), value: contentAppeared)
-        }
-    }
-
-    /// Same count-up-once technique as DesignSystem's CavnarAnimatableNumber,
-    /// but building ratingText's own two-segment Text (bigger digits,
-    /// smaller star) each frame instead of a single formatted string — that
-    /// dual-font-size treatment needs to survive every intermediate
-    /// animated frame, not just the final value, which a String-based
-    /// formatter can't carry. Kept local to this one call site rather than
-    /// generalizing CavnarAnimatableNumber itself, since nowhere else needs
-    /// a two-segment animated number.
-    private struct AnimatedRatingText: View, Animatable {
-        var rating: Double
-        let numberSize: CGFloat
-        let tone: Color
-
-        // nonisolated — see CavnarSealMark.animatableData (audit 2.3).
-        nonisolated var animatableData: Double {
-            get { rating }
-            set { rating = newValue }
-        }
-
-        var body: some View {
-            Text(String(format: "%.1f", rating)).font(.cavnarNumber(numberSize, weight: 700)).foregroundStyle(tone)
-                + Text(" ★").font(.cavnarNumber(numberSize * 0.55, weight: 700)).foregroundStyle(tone)
-        }
+            + Text(" ★").font(.cavnarNumber(numberSize * starScale, weight: 700)).foregroundStyle(tone)
     }
 
     // MARK: - What the market's doing (well/poorly sections)
 
-    /// Well/poorly used to share one flat treatment — ember kicker, gray
-    /// body text, and only a tiny checkmark/xmark icon told them apart.
-    /// Now each carries its own color end to end (kicker, icon, per-row
-    /// tint) so "doing well" reads unmistakably positive and "doing
-    /// poorly" unmistakably negative at a glance, not just on close read.
+    private static let bulletsShown = 2
+
+    /// Each section carries its own colour end to end (kicker, icon, row
+    /// tint) so "doing well" reads positive and "doing poorly" negative at
+    /// a glance. Two bullets each, the rest behind "+n more" (iOS
+    /// readability round, 10/8/26).
     private func marketSection(_ section: IntelSection) -> some View {
         let isGood = section.name.localizedCaseInsensitiveContains("well")
         let isBad = section.name.localizedCaseInsensitiveContains("poorly")
         // Price positioning is a fact about the market, not a verdict: its
         // own neutral treatment (M-28 — it used to be dropped entirely).
-        let tone = isGood ? Color.cavnarGreen : (isBad ? Color.cavnarRed : Color.cavnarInk3)
+        let tone = isGood ? Color.cavnarGreen : (isBad ? Color.cavnarRed : Color.cavnarInk2)
+        let textTone = isBad ? Color.cavnarRedText : tone
         let icon = isGood ? "checkmark" : (isBad ? "xmark" : "tag")
 
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 6) {
-                Image(systemName: isGood ? "arrow.up.right" : (isBad ? "arrow.down.right" : "dollarsign"))
-                    .font(.system(size: 9, weight: .bold))
-                Text(section.name.uppercased())
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-            }
-            .foregroundStyle(tone)
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(section.bullets, id: \.self) { bullet in
-                    HStack(alignment: .top, spacing: 10) {
-                        ZStack {
-                            Circle().fill(tone.opacity(0.2)).frame(width: 18, height: 18)
-                            Image(systemName: icon)
-                                .font(.system(size: 8.5, weight: .bold))
-                                .foregroundStyle(tone)
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker(section.name,
+                         icon: isGood ? "arrow.up.right" : (isBad ? "arrow.down.right" : "dollarsign"),
+                         tint: textTone)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                ForEach(Array(section.bullets.prefix(Self.bulletsShown)), id: \.self) { bullet in
+                    marketBullet(bullet, tone: tone, icon: icon)
+                }
+                if section.bullets.count > Self.bulletsShown {
+                    CavnarMoreDisclosure(hiddenCount: section.bullets.count - Self.bulletsShown) {
+                        ForEach(Array(section.bullets.dropFirst(Self.bulletsShown)), id: \.self) { bullet in
+                            marketBullet(bullet, tone: tone, icon: icon)
                         }
-                        .padding(.top, 1)
-                        Text(bullet)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .lineSpacing(3)
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 10)
-                    .background(tone.opacity(0.07))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
     }
 
+    private func marketBullet(_ bullet: String, tone: Color, icon: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+            Image(systemName: icon)
+                .font(.cavnar(.caption))
+                .foregroundStyle(tone)
+                .accessibilityHidden(true)
+            Text(bullet)
+                .cavnarText(.body)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, CavnarSpace.xs)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tone.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     // MARK: - Recommendations
 
-    /// Deliberately the loudest of the three market-analysis sections — a
-    /// solid (not outlined) glowing number badge and a stronger row tint
-    /// than well/poorly's bullets, so these read as the actionable next
-    /// steps rather than more descriptive analysis in the same voice.
+    private static let recsShown = 3
+
+    /// What to do — the loudest of the market-analysis sections. The top
+    /// three, each with its answer row; the reviews it rests on and "Ask
+    /// about this" are behind "See the evidence" (iOS readability round,
+    /// 10/8/26: each carried four controls in a row).
     private func recommendationsSection(_ recommendations: [IntelRecommendation]) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 6) {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 9, weight: .bold))
-                Text("HOW TO IMPROVE")
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(1.2)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("What to do", icon: "bolt.fill")
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                ForEach(Array(recommendations.prefix(Self.recsShown).enumerated()), id: \.element.id) { index, rec in
+                    recommendationRow(rec, number: index + 1)
+                }
+                if recommendations.count > Self.recsShown {
+                    CavnarMoreDisclosure(hiddenCount: recommendations.count - Self.recsShown) {
+                        ForEach(Array(recommendations.dropFirst(Self.recsShown).enumerated()), id: \.element.id) { index, rec in
+                            recommendationRow(rec, number: index + 1 + Self.recsShown)
+                        }
+                    }
+                }
             }
-            .foregroundStyle(Color.cavnarEmber)
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(recommendations.enumerated()), id: \.element.id) { index, rec in
-                    HStack(alignment: .top, spacing: 10) {
-                        Text("\(index + 1)")
-                            .font(.cavnarNumber(14, weight: 700))
-                            .foregroundStyle(.white)
-                            .frame(width: 20, height: 20)
-                            .background(Color.cavnarEmber)
-                            .clipShape(Circle())
-                            .shadow(color: Color.cavnarEmber.opacity(0.55), radius: 4, x: 0, y: 0)
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(rec.text)
-                                .font(.cavnarBody(14.5, weight: 500))
-                                .foregroundStyle(Color.cavnarInk)
-                                .lineSpacing(3)
-                                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func recommendationRow(_ rec: IntelRecommendation, number: Int) -> some View {
+        let open = expandedRecs.contains(rec.id)
+        let hasEvidence = !(rec.cites ?? []).isEmpty || rec.key != nil
+        return HStack(alignment: .top, spacing: CavnarSpace.s) {
+            Text("\(number)")
+                .font(.cavnar(.caption))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(Color.cavnarEmber)
+                .clipShape(Circle())
+                .shadow(color: Color.cavnarEmber.opacity(0.55), radius: 4, x: 0, y: 0)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                Text(rec.text)
+                    .cavnarText(.body, color: .cavnarInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let key = rec.key {
+                    RecAnswerRow(key: key, surface: "intel")
+                }
+                if hasEvidence {
+                    Button {
+                        Haptic.selection()
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            if open { expandedRecs.remove(rec.id) } else { expandedRecs.insert(rec.id) }
+                        }
+                        // Reading the reviews it rests on is evidence viewed (#38).
+                        if !open, !(rec.cites ?? []).isEmpty {
+                            RecEvidenceLog.viewed(key: rec.key, surface: "intel", module: "intel")
+                        }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs) {
+                            Text(open ? "Hide the evidence" : "See the evidence")
+                            Image(systemName: "chevron.down")
+                                .rotationEffect(.degrees(open ? 180 : 0))
+                                .accessibilityHidden(true)
+                        }
+                        .cavnarText(.label, color: .cavnarEmber2)
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(open ? "Expanded" : "Collapsed")
+                    if open {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                             if let cites = rec.cites, !cites.isEmpty {
-                                citesDisclosure(rec.id, cites, recKey: rec.key)
+                                CavnarMixedText("Reviews this rests on (\(cites.count))", role: .label, color: .cavnarInk2)
+                                ForEach(cites) { cite in
+                                    citeRow(cite)
+                                }
                             }
                             if let key = rec.key {
-                                RecAnswerRow(key: key, surface: "intel")
                                 // The web's "Ask about this" on each Intel
                                 // recommendation: the same question, with the
                                 // recommendation (its rec key) as the screen.
@@ -659,80 +606,39 @@ struct IntelView: View {
                                 )
                             }
                         }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 10)
-                    .background(Color.cavnarEmber.opacity(0.09))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            }
-        }
-    }
-
-    /// "Reviews this rests on (n)" — tap to open the competitor reviews the
-    /// recommendation cites, so the owner can judge the evidence rather than
-    /// take the line on trust. The same kicker the Reviews diagnosis uses.
-    private func citesDisclosure(_ id: String, _ cites: [IntelRecommendation.Cite],
-                                 recKey: String? = nil) -> some View {
-        let open = expandedCites.contains(id)
-        return VStack(alignment: .leading, spacing: 8) {
-            Button {
-                Haptic.selection()
-                withAnimation(.easeOut(duration: 0.2)) {
-                    if open { expandedCites.remove(id) } else { expandedCites.insert(id) }
-                }
-                // Reading the reviews it rests on is evidence viewed (#38).
-                if !open { RecEvidenceLog.viewed(key: recKey, surface: "intel", module: "intel") }
-            } label: {
-                HStack(spacing: 5) {
-                    (Text("Reviews this rests on (") + Text("\(cites.count)").font(.cavnarNumber(11, weight: 700)) + Text(")"))
-                        .font(.cavnarBody(11, weight: 700))
-                        .tracking(0.6)
-                    Image(systemName: open ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .accessibilityHidden(true)
-                }
-                .foregroundStyle(Color.cavnarInk3)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Reviews this rests on, \(cites.count)")
-            .accessibilityHint(open ? "Hides them" : "Shows them")
-
-            if open {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(cites) { cite in
-                        citeRow(cite)
+                        .padding(.leading, CavnarSpace.xs)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(Color.cavnarInk3.opacity(0.6)).frame(width: 1)
+                        }
+                        .transition(.opacity)
                     }
                 }
-                .padding(.leading, 8)
-                .overlay(alignment: .leading) {
-                    Rectangle().fill(Color.cavnarInk3.opacity(0.3)).frame(width: 1)
-                }
-                .transition(.opacity)
             }
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, CavnarSpace.xs)
+        .padding(.horizontal, 10)
+        .background(Color.cavnarEmber.opacity(0.09))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     /// competitor · 4★ · 2 weeks ago — "text"
     private func citeRow(_ cite: IntelRecommendation.Cite) -> some View {
-        var head = Text(cite.competitor ?? "A competitor").font(.cavnarBody(12.5, weight: 600))
+        var head = Text(cite.competitor ?? "A competitor").font(.cavnar(.label))
         if let rating = cite.rating {
             let stars = rating.truncatingRemainder(dividingBy: 1) == 0
                 ? String(Int(rating)) : String(format: "%.1f", rating)
-            head = head + Text(" \u{00B7} ") + Text("\(stars)\u{2605}").font(.cavnarNumber(12.5, weight: 600))
+            head = head + Text(" \u{00B7} ") + Text("\(stars)\u{2605}").font(.cavnar(.figureS))
         }
         if let time = cite.time, !time.isEmpty {
-            head = head + Text(" \u{00B7} ") + HomeMixedText.make(time, size: 12.5, color: .cavnarInk2)
+            head = head + Text(" \u{00B7} ") + HomeMixedText.make(time, role: .secondary)
         }
         return VStack(alignment: .leading, spacing: 2) {
             head
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk2)
             if let text = cite.text, !text.isEmpty {
-                HomeMixedText.make("\u{201C}\(text)\u{201D}", size: 12.5, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText("\u{201C}\(text)\u{201D}", role: .secondary)
             }
         }
         .accessibilityElement(children: .combine)
@@ -740,26 +646,40 @@ struct IntelView: View {
 
     // MARK: - Competitor list (hairline dividers + colored accent bar, no cards)
 
+    private static let competitorsShown = 5
+
+    /// The five nearest first (distance, then the server's order for the
+    /// ones with none), the rest behind "Show all" (iOS readability round,
+    /// 10/8/26).
+    static func nearestFirst(_ competitors: [Competitor]) -> [Competitor] {
+        competitors.enumerated().sorted { a, b in
+            switch (a.element.distanceM, b.element.distanceM) {
+            case let (x?, y?) where x != y: return x < y
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return a.offset < b.offset
+            }
+        }.map(\.element)
+    }
+
     private func competitorsSection(_ summary: IntelSummary) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("NEARBY COMPETITORS")
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber)
+        let all = Self.nearestFirst(summary.competitors.filter { $0.placeId != pendingRemoval?.placeId })
+        let shown = showingAllCompetitors ? all : Array(all.prefix(Self.competitorsShown))
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(spacing: CavnarSpace.xs) {
+                Text("Nearby competitors").cavnarText(.headline)
                 Spacer()
                 addCompetitorLink
                 refreshLink
             }
             if let error = viewModel.refreshError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
             if viewModel.isRefreshing {
                 CavnarRadarSweep(size: 140, caption: "Re-reading the neighborhood")
                     .padding(.vertical, 10)
                     .transition(.opacity)
             }
-            let shown = summary.competitors.filter { $0.placeId != pendingRemoval?.placeId }
             if CavnarLayout.isWide(sizeClass) {
                 // Two columns on an iPad (#99), a hairline under every row
                 // but the last pair's.
@@ -786,42 +706,66 @@ struct IntelView: View {
                     }
                 }
             }
-            if let caveat = summary.ratingComparisonCaveat {
-                HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarAmber)
-                        .padding(.top, 2)
-                    Text(caveat)
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            if all.count > Self.competitorsShown {
+                CavnarMoreToggle(hiddenCount: all.count - Self.competitorsShown, total: all.count,
+                                 isExpanded: $showingAllCompetitors)
             }
-            if let note = summary.stalenessNote {
-                HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarAmber)
-                        .padding(.top, 2)
-                    Text(note)
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            if let updatedAt = summary.updatedAt {
-                updatedLabel(updatedAt)
-            }
+            // How far these ratings compare, and how fresh they are — one
+            // line, the sentences behind it (iOS readability round).
+            ratingNotes(summary)
             if let movement = viewModel.movement {
                 movementSection(movement)
-                // The market's history and your own rating over time — kept
-                // forever, where the weekly checks above age out.
-                IntelHistorySection(movement: movement)
             }
+            // The market's history and your own rating over time are a
+            // chart for the web; the phone keeps what changed this week.
+            CavnarWebLinkRow(title: "Ratings over time", subtitle: "The market\u{2019}s average and yours, week by week",
+                             path: "intel", actionLabel: "Open on the web")
             // How current the sources behind Intel are, from data health.
             DataHealthModuleBadge(module: "intel")
         }
+    }
+
+    /// "Last updated 10/6/26 · 2 notes on these ratings ›" — the comparison
+    /// caveat and the staleness note behind one tap.
+    @ViewBuilder
+    private func ratingNotes(_ summary: IntelSummary) -> some View {
+        let notes = [summary.ratingComparisonCaveat, summary.stalenessNote].compactMap { $0 }
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            if let updatedAt = summary.updatedAt {
+                updatedLabel(updatedAt)
+            }
+            if !notes.isEmpty {
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.2)) { showingRatingNotes.toggle() }
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Color.cavnarAmber)
+                            .accessibilityHidden(true)
+                        Text(notes.count == 1 ? "A note on these ratings" : "\(notes.count) notes on these ratings")
+                            .foregroundStyle(Color.cavnarInk2)
+                        Image(systemName: "chevron.down")
+                            .rotationEffect(.degrees(showingRatingNotes ? 180 : 0))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .font(.cavnar(.secondary))
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(showingRatingNotes ? "Expanded" : "Collapsed")
+                if showingRatingNotes {
+                    ForEach(notes, id: \.self) { note in
+                        Text(note)
+                            .cavnarText(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.top, CavnarSpace.xxs)
     }
 
     /// Tier 1 of the confirm-and-undo policy: gone from the list now, and
@@ -858,22 +802,18 @@ struct IntelView: View {
     /// under Nearby competitors. Before two checks exist it says so, never
     /// "nothing changed".
     private func movementSection(_ m: IntelMovement) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("WHAT CHANGED")
-                .font(.cavnarBody(13, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("What changed")
                 .padding(.top, 10)
             if let from = m.comparedFrom {
                 HomeMixedText.make(m.hasChanges
                                    ? "Since your check on \(CavnarDate.mdy(from)): new places that opened near you, places Google marks closed, and ratings that really moved"
                                    : "No new places, no closures, and no rating moved past normal ups and downs since \(CavnarDate.mdy(from))",
-                                   size: 13.5, color: .cavnarInk3)
+                                   role: .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Openings and closings show once there are two weekly checks to compare.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(m.arrived) { p in movementRow(p.name, tag: "Newly opened", detail: nil) }
@@ -887,21 +827,17 @@ struct IntelView: View {
     }
 
     private func movementRow(_ name: String, tag: String?, detail: String?) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(name)
-                .font(.cavnarBody(15, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+            Text(name).cavnarText(.label)
             if let tag {
-                Text(tag.uppercased())
-                    .font(.cavnarBody(CavnarType.tag, weight: 700))
-                    .tracking(0.6)
-                    .foregroundStyle(Color.cavnarEmber)
+                Text(tag)
+                    .cavnarText(.tag, color: .cavnarEmber2)
                     .padding(.horizontal, 7).padding(.vertical, 2)
                     .background(Capsule().fill(Color.cavnarEmber.opacity(0.14)))
             }
             Spacer(minLength: 0)
             if let detail {
-                HomeMixedText.make(detail, size: 13.5, color: .cavnarInk2)
+                HomeMixedText.make(detail, role: .secondary)
             }
         }
         .padding(.vertical, 6)
@@ -939,13 +875,10 @@ struct IntelView: View {
             // pushed it down instead of just instantly relaying out.
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(c.name)
-                        .font(.cavnarBody(15, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
+                    Text(c.name).cavnarText(.label)
                     if let basis = c.matchBasis, basis.contains("widened") {
                         Text("loose match")
-                            .font(.cavnarBody(11, weight: 700))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.tag)
                             .padding(.horizontal, 5).padding(.vertical, 1)
                             .background(Capsule().fill(Color.cavnarPaper2))
                     }
@@ -953,8 +886,7 @@ struct IntelView: View {
                         // A rating on too few reviews to lean on — not a
                         // new restaurant (J10).
                         Text("few reviews")
-                            .font(.cavnarBody(11, weight: 700))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.tag)
                             .padding(.horizontal, 5).padding(.vertical, 1)
                             .background(Capsule().fill(Color.cavnarPaper2))
                     }
@@ -969,34 +901,35 @@ struct IntelView: View {
                             Haptic.light()
                             stopTracking(c)
                         } label: {
-                            if removingPlaceId == c.placeId {
-                                CavnarShimmerLine(color: .cavnarEmber2)
-                                    .frame(width: 14)
-                            } else {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Color.cavnarInk3)
+                            Group {
+                                if removingPlaceId == c.placeId {
+                                    CavnarShimmerLine(color: .cavnarEmber2)
+                                        .frame(width: 14)
+                                } else {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.cavnar(.body))
+                                        .foregroundStyle(Color.cavnarInk2)
+                                }
                             }
+                            .cavnarHitTarget()
                         }
                         .disabled(removingPlaceId != nil)
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Stop tracking \(c.name)")
                     }
                     Spacer()
                     if let diff {
                         Text(diff == 0 ? "tied" : (diff > 0 ? "▲\(String(format: "%.1f", diff)) ahead" : "▼\(String(format: "%.1f", abs(diff))) behind"))
-                            .font(.cavnarBody(13.5, weight: 700))
-                            .foregroundStyle(diff > 0 ? Color.cavnarGreen : (diff < 0 ? Color.cavnarRed : Color.cavnarInk3))
+                            .cavnarText(.label, color: diff > 0 ? Color.cavnarGreen : (diff < 0 ? Color.cavnarRedText : Color.cavnarInk2))
                     }
                 }
                 HStack(spacing: 6) {
-                    ratingText(c.rating, numberSize: 11, tone: Color.cavnarAmber)
+                    ratingText(c.rating, numberSize: CavnarType.secondary, tone: Color.cavnarAmber, starScale: 0.8)
                     Text("\(c.reviewCount) reviews")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                     if !c.vicinity.isEmpty {
                         Text("· \(c.vicinity)")
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                             .lineLimit(1)
                     }
                     // How far away, when we know. A competitor selected on
@@ -1006,26 +939,23 @@ struct IntelView: View {
                     // through Measurement — it was always m / km.
                     if let m = c.distanceM, m > 0 {
                         Text("\u{00B7} \(Self.distanceText(meters: m))")
-                            .font(.cavnarNumber(14))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnarNumber(CavnarType.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
                     }
                     if c.isCustom {
                         Text("· Added by you")
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarText(.secondary, color: .cavnarEmber2)
                     }
                 }
                 ForEach(visibleReviews) { r in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 8))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(r.rating >= 4 ? Color.cavnarGreen : Color.cavnarRed)
-                            .padding(.top, 2)
+                            .accessibilityHidden(true)
                         Text(r.text)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .lineLimit(2)
-                            .lineSpacing(2)
+                            .cavnarText(.secondary)
+                            .lineLimit(isExpanded ? nil : 2)
                     }
                     .padding(.top, 2)
                 }
@@ -1052,10 +982,10 @@ struct IntelView: View {
                         }
                     } label: {
                         Text(isExpanded ? "Show less" : "Show \(remaining) more review\(remaining == 1 ? "" : "s")")
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
                     }
-                    .padding(.top, 1)
+                    .buttonStyle(.plain)
                 }
             }
             .animation(nil, value: isExpanded)
@@ -1077,19 +1007,17 @@ struct IntelView: View {
                 display = CavnarDate.mdy(datePart)
             }
         }
-        return HStack(spacing: 8) {
-            HomeMixedText.make("Last updated \(display)", size: 14, color: .cavnarInk3)
+        return HStack(spacing: CavnarSpace.xs) {
+            HomeMixedText.make("Last updated \(display)", role: .secondary)
             if let daysOld, daysOld >= 7 {
-                Text("Consider refreshing")
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .foregroundStyle(Color.cavnarAmber)
+                Text("Worth a refresh")
+                    .cavnarText(.tag, color: .cavnarAmber)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(Color.cavnarAmberBg)
                     .clipShape(Capsule())
             }
         }
-        .padding(.top, 4)
     }
 
     /// Prominent CTA — the empty state's only action on screen.
@@ -1116,17 +1044,19 @@ struct IntelView: View {
             Haptic.light()
             showAddCompetitor = true
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
+            HStack(spacing: CavnarSpace.xxs) {
+                Image(systemName: "plus").font(.cavnar(.caption))
                 Text("Add")
             }
+            .font(.cavnar(.label))
+            .foregroundStyle(Color.cavnarEmber2)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
+            .cavnarHitTarget()
         }
-        .font(.cavnarBody(14, weight: 700))
-        .foregroundStyle(Color.cavnarEmber2)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 5)
-        .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add a competitor")
     }
 
     /// Small pill next to the "NEARBY COMPETITORS" kicker — quiet enough
@@ -1139,19 +1069,23 @@ struct IntelView: View {
         } label: {
             if viewModel.isRefreshing {
                 PulsingText("Refreshing…")
+                    .font(.cavnar(.label))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarHitTarget()
             } else {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 9, weight: .bold))
+                HStack(spacing: CavnarSpace.xxs) {
+                    Image(systemName: "arrow.clockwise").font(.cavnar(.caption))
                     Text("Refresh")
                 }
+                .font(.cavnar(.label))
+                .foregroundStyle(Color.cavnarEmber2)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 5)
+                .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
+                .cavnarHitTarget()
             }
         }
-        .font(.cavnarBody(14, weight: 700))
-        .foregroundStyle(Color.cavnarEmber2)
-        .padding(.horizontal, 11)
-        .padding(.vertical, 5)
-        .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
+        .buttonStyle(.plain)
         .disabled(viewModel.isRefreshing)
     }
 }

@@ -197,24 +197,27 @@ struct DeliveriesSection: View {
     let viewModel: DeliveriesViewModel
     /// Counts-only: only what is waiting to arrive, and never a cost.
     var showMoney = true
-    var title = "RECENT ORDERS"
+    var title = "Recent orders"
+    /// Only the orders still to receive (the Receive sheet, and the top of
+    /// Send order); counts-only always shows only those.
+    var waitingOnly = false
+    /// Only the orders already received (the history under Send order's
+    /// drafts, when the waiting ones are shown above them).
+    var receivedOnly = false
 
     var body: some View {
-        let shown = showMoney ? viewModel.orders : viewModel.waiting
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
-            if let line = viewModel.receivedLine {
-                HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarGreen)
-                    .fixedSize(horizontal: false, vertical: true)
+        let shown = (waitingOnly || !showMoney) ? viewModel.waiting
+            : (receivedOnly ? viewModel.orders.filter(\.isReceived) : viewModel.orders)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker(title)
+            if let line = viewModel.receivedLine, !receivedOnly {
+                CavnarMixedText(line, role: .secondary, color: .cavnarGreen)
             }
             if let error = viewModel.loadError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             } else if shown.isEmpty {
-                Text("Nothing waiting to arrive.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text(receivedOnly ? "Nothing received yet." : "Nothing waiting to arrive.")
+                    .cavnarText(.secondary)
             }
             VStack(spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, order in
@@ -235,21 +238,19 @@ struct DeliveriesSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    (Text(order.poNumber).font(.cavnarNumber(14.5, weight: 700))
-                        + Text(" · \(order.supplierName.isEmpty ? order.supplierEmail : order.supplierName)").font(.cavnarBody(14.5)))
+                    (Text(order.supplierName.isEmpty ? order.supplierEmail : order.supplierName).font(.cavnar(.label))
+                        + Text(" \u{00B7} ").font(.cavnar(.secondary))
+                        + Text(order.poNumber).font(.cavnar(.secondary)))
                         .foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(detail(order), size: 13.5, weight: 500, color: .cavnarInk3)
+                    CavnarMixedText(detail(order), role: .secondary)
                         .cavnarSensitive()
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: CavnarSpace.xs)
                 if order.isReceived {
-                    Text("Received")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .foregroundStyle(Color.cavnarGreen)
+                    Text("Received").cavnarText(.label, color: .cavnarGreen)
                 } else if viewModel.queued.contains(order.id) {
                     Label("Waiting to send", systemImage: "clock.arrow.circlepath")
-                        .font(.cavnarBody(13, weight: 700))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption, color: .cavnarInk2)
                 }
             }
             if !order.isReceived {
@@ -273,8 +274,8 @@ struct DeliveriesSection: View {
                         viewModel.toggleShort(order)
                     } label: {
                         Text("Some were short")
-                            .font(.cavnarBody(14, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -283,7 +284,7 @@ struct DeliveriesSection: View {
                     shortLines(order)
                 }
                 if let error = viewModel.errors[order.id] {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -293,14 +294,13 @@ struct DeliveriesSection: View {
 
     private func shortLines(_ order: PurchaseOrder) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Change what arrived, then receive.")
-                .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+            Text("Change what arrived, then receive.").cavnarText(.secondary)
             ForEach(order.items) { item in
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.item).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk)
-                        HomeMixedText.make("Ordered \(SupplierOrderItem.qtyString(item.qty))\(item.unit.isEmpty ? "" : " \(item.unit)")",
-                                           size: 12.5, weight: 500, color: .cavnarInk3)
+                        Text(item.item).cavnarText(.body, color: .cavnarInk)
+                        CavnarMixedText("Ordered \(SupplierOrderItem.qtyString(item.qty))\(item.unit.isEmpty ? "" : " \(item.unit)")",
+                                        role: .caption)
                     }
                     Spacer(minLength: 8)
                     TextField("0", text: Binding(
@@ -308,9 +308,9 @@ struct DeliveriesSection: View {
                         set: { viewModel.setArrived($0, order: order, item: item) }))
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
-                        .font(.cavnarNumber(15, weight: 600))
-                        .frame(width: 80)
-                        .padding(.vertical, 6).padding(.horizontal, 8)
+                        .font(.cavnar(.figureS))
+                        .frame(width: 80, height: 44)
+                        .padding(.horizontal, 8)
                         .background(RoundedRectangle(cornerRadius: 8).stroke(Color.cavnarPaper3, lineWidth: 1))
                         .accessibilityLabel("\(item.item) arrived")
                 }

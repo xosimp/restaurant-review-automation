@@ -134,37 +134,34 @@ struct FoodCostTrendChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+                CavnarKicker(title)
                 if notMeasured {
                     Spacer()
                     // Nothing logged is not nothing wasted (I8): said, in
                     // ink, with no rate and no status colour.
                     Text("No waste logged")
-                        .font(.cavnarBody(13.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.label))
+                        .foregroundStyle(Color.cavnarInk2)
                 } else if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
                     Spacer()
                     HStack(spacing: 5) {
                         Circle().fill(benchmarkColor(benchmarkLabel)).frame(width: 6, height: 6)
                         Text(String(format: "%.1f%%", wasteRatePct))
-                            .font(.cavnarNumber(14, weight: 700))
+                            .font(.cavnar(.figureS))
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
                         // Against a target, never "industry": no published
                         // waste benchmark exists (benchmark_registry.ABSENT).
                         Text("vs. target")
-                            .font(.cavnarBody(13.5))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
                     }
                 }
             }
 
             if weeks.count < 2 {
                 Text("Not enough history yet — check back after a couple more weekly submissions.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarInk2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 20)
             } else {
@@ -180,7 +177,7 @@ struct FoodCostTrendChart: View {
                         .annotation(position: .top, alignment: .trailing) {
                             // Rounded, not truncated: Int(347.90) is 347,
                             // and the rest of this module rounds first.
-                            HomeMixedText.make("your avg $\(Int(average.rounded()))", size: 13.5, weight: 700, color: .cavnarPaper)
+                            HomeMixedText.make("your avg $\(Int(average.rounded()))", role: .label, color: .cavnarPaper)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
                                 .background(Color.cavnarInk)
@@ -196,8 +193,7 @@ struct FoodCostTrendChart: View {
                             .annotation(position: .top, alignment: .leading) {
                                 // Named as the server names it (#10): a
                                 // starting target is never "your target".
-                                HomeMixedText.make("\(target?.label ?? "target") ~$\(Int(industryTargetDollar.rounded()))",
-                                                   size: 13.5, weight: 700, color: .cavnarPaper)
+                                HomeMixedText.make("\(target?.label ?? "target") ~$\(Int(industryTargetDollar.rounded()))", role: .label, color: .cavnarPaper)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
                                     .background(Self.industryBandColor)
@@ -212,7 +208,7 @@ struct FoodCostTrendChart: View {
                         AxisValueLabel {
                             if let d = value.as(Double.self) {
                                 Text("$\(Int(d))")
-                                    .font(.cavnarNumber(10))
+                                    .font(.cavnarNumber(CavnarType.tag))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                         }
@@ -220,7 +216,7 @@ struct FoodCostTrendChart: View {
                 }
                 .chartXAxis {
                     AxisMarks { _ in
-                        AxisValueLabel().font(.cavnarNumber(10)).foregroundStyle(Color.cavnarInk3)
+                        AxisValueLabel().font(.cavnarNumber(CavnarType.tag)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 .chartOverlay { proxy in
@@ -236,8 +232,8 @@ struct FoodCostTrendChart: View {
                 // below doesn't interpolate it.
                 if notMeasured {
                     Text("No waste logged this week \u{2014} not measured, so not scored against the target.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let benchmarkLabel, wasteRatePct != nil, benchmarkLabel != "—" {
                     HStack(spacing: 5) {
@@ -246,8 +242,8 @@ struct FoodCostTrendChart: View {
                         Text("· you're \(benchmarkLabel.lowercased())")
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
                     }
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarInk2)
                 }
             }
         }
@@ -296,10 +292,10 @@ struct FoodCostTrendChart: View {
     private func weekTooltip(_ week: FoodCostTrendWeek) -> some View {
         VStack(spacing: 2) {
             Text(week.label)
-                .font(.cavnarBody(13.5, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.label))
+                .foregroundStyle(Color.cavnarInk2)
             Text("$\(Int(week.waste.rounded()))")
-                .font(.cavnarNumber(14, weight: 700))
+                .font(.cavnar(.figureS))
                 .foregroundStyle(barColor(week.waste))
         }
         .padding(.horizontal, 10)
