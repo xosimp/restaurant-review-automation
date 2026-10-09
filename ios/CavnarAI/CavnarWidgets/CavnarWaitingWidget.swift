@@ -131,9 +131,11 @@ struct WaitingWidgetView: View {
                     .accessibilityHidden(true)
             }
             Text(date.map { "LAST NIGHT · \($0)" } ?? "LAST NIGHT")
-                .font(.cavnarBody(9.5, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
     }
 
@@ -148,7 +150,7 @@ struct WaitingWidgetView: View {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text((entry.locationName ?? snap.restaurantName ?? "Cavnar AI").uppercased())
-                        .font(.cavnarBody(10.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.tag, weight: 700))
                         .tracking(1.2)
                         .foregroundStyle(Color.cavnarEmber2)
                         .lineLimit(1)
@@ -273,16 +275,18 @@ struct WaitingWidgetView: View {
     private func costFigure(_ title: String, _ label: String?, value: Double?, target: Double?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.cavnarBody(9.5, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             Text(label ?? "—")
                 .font(.cavnarNumber(20, weight: 600))
                 .foregroundStyle(CostsWidgetView.tone(value: value, target: target))
                 .privacySensitive()
             if let target, value != nil {
                 Text("target \(String(format: "%g", target))%")
-                    .font(.cavnarNumber(11))
+                    .font(.cavnarNumber(12))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
@@ -314,7 +318,7 @@ struct WaitingWidgetView: View {
                 Text("\(snap.waitingCount)")
                     .font(.cavnarNumber(22, weight: 700))
                 Text("waiting")
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
             }
         } else {
             Image(systemName: "sparkles")
@@ -357,7 +361,7 @@ struct WaitingWidgetView: View {
         VStack(alignment: .leading, spacing: 6) {
             // Which store, for an owner with more than one.
             Text((entry.locationName ?? snap?.restaurantName ?? "Cavnar AI").uppercased())
-                .font(.cavnarBody(10.5, weight: 700))
+                .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
                 .lineLimit(1)
@@ -380,7 +384,7 @@ struct WaitingWidgetView: View {
                                 .font(.cavnarNumber(12, weight: 700))
                                 .foregroundStyle(snap.changeIsUp == false ? Color.cavnarRed : Color.cavnarGreen)
                             Text(snap.changeBasis ?? "")
-                                .font(.cavnarBody(11))
+                                .font(.cavnarBody(12))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .lineLimit(1)
                         }

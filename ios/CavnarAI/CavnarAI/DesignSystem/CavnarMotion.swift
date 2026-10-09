@@ -1321,13 +1321,15 @@ struct CavnarAlertBadge: View {
         if urgent > 0 {
             ZStack {
                 CavnarRippleBurst(fromDiameter: 16, toDiameter: 16 * 4, rings: 1, duration: 0.9, delay: 0.1)
+                // 11pt (the tag floor) white on RedFill, 5.0:1 — it was
+                // 10.5pt on Red at 4.4:1 (re-audit S12, 10/8/26).
                 Text(label)
-                    .font(.cavnarNumber(10.5, weight: 700))
+                    .font(.cavnarNumber(CavnarType.tag, weight: 700))
                     .monospacedDigit()
                     .foregroundStyle(Color.white)
                     .padding(.horizontal, 4)
-                    .frame(minWidth: 16, minHeight: 16)
-                    .background(Capsule().fill(Color.cavnarRed))
+                    .frame(minWidth: 17, minHeight: 17)
+                    .background(Capsule().fill(Color.cavnarRedFill))
                     .scaleEffect(shown ? 1 : 0.01)
             }
             .fixedSize()

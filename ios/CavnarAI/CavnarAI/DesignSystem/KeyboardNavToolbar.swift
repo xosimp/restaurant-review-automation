@@ -125,12 +125,26 @@ func keyboardIconButton(systemName: String, enabled: Bool, action: @escaping @Ma
             .background(enabled ? Color.cavnarEmber : Color.cavnarPaper3, in: Circle())
             .overlay(Circle().strokeBorder(Color.white.opacity(enabled ? 0.22 : 0.08), lineWidth: 1))
             .shadow(color: .black.opacity(0.45), radius: 6, y: 3)
-            .contentShape(Circle())
+            // A 34pt circle drawn, a 44pt target (re-audit S14, 10/8/26).
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
     }
+    // The glyphs alone read as "chevron up" / "checkmark".
+    .accessibilityLabel(keyboardIconLabel(systemName))
     .disabled(!enabled)
     .fixedSize()
     .buttonStyle(.plain)
     .tint(nil)
+}
+
+/// What VoiceOver says for a keyboard-bar glyph.
+func keyboardIconLabel(_ systemName: String) -> String {
+    switch systemName {
+    case "chevron.up": return "Previous"
+    case "chevron.down": return "Next"
+    case "checkmark": return "Done"
+    default: return systemName.split(separator: ".").first.map { String($0).capitalized } ?? systemName
+    }
 }
 
 /// A keyboard bar whose one control sits at the trailing edge, as in every

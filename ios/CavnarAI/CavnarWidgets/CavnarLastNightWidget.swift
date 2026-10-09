@@ -52,7 +52,7 @@ struct LastNightWidgetView: View {
         VStack(alignment: .leading, spacing: 4) {
             if let name = entry.locationName ?? entry.snapshot?.restaurantName {
                 Text(name.uppercased())
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                     .lineLimit(1)
@@ -62,13 +62,17 @@ struct LastNightWidgetView: View {
                     Circle().fill(dot).frame(width: 7, height: 7).accessibilityHidden(true)
                 }
                 Text("LAST NIGHT")
-                    .font(.cavnarBody(9.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.tag, weight: 700))
                     .tracking(0.8)
                     .foregroundStyle(Color.cavnarInk3)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 if let date = snap?.nightLabel {
                     Text(date)
-                        .font(.cavnarNumber(9.5, weight: 700))
+                        .font(.cavnarNumber(12, weight: 700))
                         .foregroundStyle(Color.cavnarInk3)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                 }
             }
             if let snap, let net = snap.netLabel {
@@ -79,7 +83,7 @@ struct LastNightWidgetView: View {
                     .lineLimit(1)
                     .privacySensitive()
                 Text("net sales")
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer(minLength: 2)
                 if let change = snap.changeLabel {
@@ -111,7 +115,7 @@ struct LastNightWidgetView: View {
                 .font(.cavnarNumber(12, weight: 700))
                 .foregroundStyle(up == false ? down : Color.cavnarGreen)
             Text(basis)
-                .font(.cavnarBody(11))
+                .font(.cavnarBody(12))
                 .foregroundStyle(Color.cavnarInk3)
                 .lineLimit(1)
         }

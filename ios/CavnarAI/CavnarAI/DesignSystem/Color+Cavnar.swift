@@ -55,6 +55,14 @@ extension Color {
 
     static let cavnarEmber = Color("Ember")
     static let cavnarEmber2 = Color("Ember2")
+    /// Ember for a FILL that carries white text — the primary and split
+    /// buttons (`CavnarPremiumButtonSurface`). The look is the brand ember
+    /// (#D4583A, white 4.0:1 at the buttons' 16pt bold); its Increase
+    /// Contrast variant goes DARKER (#B84529, white 5.4:1), where Ember's
+    /// own goes lighter (#E0664A — right for ember text on Paper, but white
+    /// on it fell to 3.4:1). Re-audit S1, 10/8/26. Ember stays the brand
+    /// colour everywhere else.
+    static let cavnarEmberFill = Color("EmberFill")
 
     static let cavnarGreen = Color("Green")
     static let cavnarGreenBg = Color("GreenBg")
@@ -64,6 +72,10 @@ extension Color {
     /// Red for small text (an error line, an over-target figure under
     /// 18pt): #F05A63, 5.9:1 on Paper, 5.8:1 on a card.
     static let cavnarRedText = Color("RedText")
+    /// Red for a small FILL that carries white text — the bell's count
+    /// badge: #D42C38, white 5.0:1 (white on Red was 4.4:1); Increase
+    /// Contrast #C42430, 5.8:1. Re-audit S12, 10/8/26.
+    static let cavnarRedFill = Color("RedFill")
     static let cavnarRedBg = Color("RedBg")
     static let cavnarAmber = Color("Amber")
     static let cavnarAmberBg = Color("AmberBg")

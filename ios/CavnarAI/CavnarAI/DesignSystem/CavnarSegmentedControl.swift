@@ -11,12 +11,31 @@ import SwiftUI
 /// feel of the home row's own tab bar.
 // Heights here are floors rather than fixed values so a scaled label grows
 // the control instead of being clipped inside it (audit 7.2).
+//
+// Accessibility (re-audit S3, 10/8/26): the segments are plain Text under
+// one DragGesture, so VoiceOver saw a row of static words — no buttons, no
+// selected state, nothing to adjust. The control now hands VoiceOver,
+// Voice Control and Switch Control a real segmented `Picker` over the same
+// binding (`accessibilityRepresentation`): each segment is a button with
+// the Selected trait, named by its label. The drawn segments stay 34pt; the
+// row's touch area is 44pt (padding inside the gesture's content shape).
 struct CavnarSegmentedControl<T: Hashable>: View {
     @Binding var selection: T
     let options: [T]
+    /// What the control chooses, for VoiceOver ("View", "Send to") — nil
+    /// leaves the segments to speak for themselves.
+    var accessibilityTitle: String? = nil
     let label: (T) -> String
 
     @State private var rowWidth: CGFloat = 0
+
+    init(selection: Binding<T>, options: [T], accessibilityTitle: String? = nil,
+         label: @escaping (T) -> String) {
+        self._selection = selection
+        self.options = options
+        self.accessibilityTitle = accessibilityTitle
+        self.label = label
+    }
 
     var body: some View {
         // A bare GeometryReader has no intrinsic size, so wrapping `segments`
@@ -36,6 +55,10 @@ struct CavnarSegmentedControl<T: Hashable>: View {
                         .onChange(of: geo.size.width) { _, newWidth in rowWidth = newWidth }
                 }
             )
+            // 34pt drawn, 44pt to touch: the padding sits inside the
+            // content shape the gesture reads, and outside the segments'
+            // width measurement (x is all `select` uses).
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -46,6 +69,14 @@ struct CavnarSegmentedControl<T: Hashable>: View {
         // Toggle/UISwitch) — .sensoryFeedback is the one deliberate source
         // here, not stacked with anything else.
         .sensoryFeedback(.selection, trigger: selection) { _, _ in AppPreferences.hapticsEnabledSnapshot }
+        .accessibilityRepresentation {
+            Picker(accessibilityTitle ?? "", selection: $selection) {
+                ForEach(options, id: \.self) { option in
+                    Text(label(option)).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
     }
 
     @ViewBuilder
@@ -81,7 +112,7 @@ struct CavnarSegmentedControl<T: Hashable>: View {
     @ViewBuilder
     private func segment(_ option: T, isSelected: Bool) -> some View {
         let text = Text(label(option))
-            .font(.cavnarBody(16, weight: 600))
+            .font(.cavnar(.label))
             .foregroundStyle(isSelected ? Color.cavnarInk : Color.cavnarInk2)
             .frame(maxWidth: .infinity)
             .frame(minHeight: 34)

@@ -9,6 +9,15 @@ import UIKit
 actor APIClient {
     static let shared = APIClient()
 
+    /// The app's two fallback sentences, used only when the server sent no
+    /// message of its own (re-audit S11, 10/8/26). There used to be four
+    /// session wordings ("sign in again" / "log in again" / "Session
+    /// expired") and a raw status code ("Something went wrong (500).");
+    /// the code means nothing to an owner and is still on the error's
+    /// `status` for the code that needs it.
+    static let genericFailureMessage = "Something went wrong \u{2014} try again in a moment."
+    static let sessionEndedMessage = "Your session ended \u{2014} sign in again."
+
     enum HTTPMethod: String {
         case get = "GET"
         case post = "POST"
@@ -103,7 +112,7 @@ actor APIClient {
         /// many wrong PINs — you've been signed out." — shown on the sign-in
         /// screen the person lands on.
         var message: String? = nil
-        var errorDescription: String? { message ?? "Your session expired — please sign in again." }
+        var errorDescription: String? { message ?? APIClient.sessionEndedMessage }
     }
 
     private let baseURL: URL
@@ -605,7 +614,7 @@ actor APIClient {
                 throw SessionExpiredError()
             }
             if hapticOnError { await Haptic.error() }
-            throw APIError(message: envelope?.error ?? "Your session expired — please log in again.",
+            throw APIError(message: envelope?.error ?? Self.sessionEndedMessage,
                            status: 401, body: data)
         }
 
@@ -613,7 +622,7 @@ actor APIClient {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             if hapticOnError { await Haptic.error() }
             throw APIError(kind: envelope?.kind ?? .server,
-                           message: envelope?.error ?? "Something went wrong (\(http.statusCode)).",
+                           message: envelope?.error ?? Self.genericFailureMessage,
                            status: http.statusCode, body: data)
         }
 
@@ -641,7 +650,7 @@ actor APIClient {
         guard (200..<300).contains(http.statusCode) else {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             throw APIError(kind: envelope?.kind ?? .server,
-                           message: envelope?.error ?? "Couldn\u{2019}t download that (\(http.statusCode)).",
+                           message: envelope?.error ?? "Couldn\u{2019}t download that \u{2014} try again in a moment.",
                            status: http.statusCode, body: data)
         }
         return data
@@ -664,7 +673,7 @@ actor APIClient {
                 expireIfCurrent(sentToken)
                 throw SessionExpiredError()
             }
-            throw APIError(message: "Session expired", status: 401)
+            throw APIError(message: Self.sessionEndedMessage, status: 401)
         }
         if http.statusCode >= 400 {
             // The status rides along so the queue can tell "try again later"
@@ -672,7 +681,7 @@ actor APIClient {
             // — see PendingWriteQueue.isRefusal.
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             throw APIError(kind: envelope?.kind ?? .server,
-                           message: envelope?.error ?? "Something went wrong (\(http.statusCode)).",
+                           message: envelope?.error ?? Self.genericFailureMessage,
                            status: http.statusCode, body: data)
         }
         // A few routes refuse with 200 `{ok: false, error}` — save-draft on

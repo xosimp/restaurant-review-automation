@@ -39,11 +39,10 @@ struct CavnarDropdown<Content: View>: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text(title)
-                                .font(.cavnarBody(14.5, weight: 700))
-                                .foregroundStyle(Color.cavnarInk)
+                                .cavnarText(.label)
                             if let badge {
                                 Text("\(badge)")
-                                    .font(.cavnarNumber(14, weight: 700))
+                                    .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                                     .foregroundStyle(tone.foreground)
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 2)
@@ -53,20 +52,21 @@ struct CavnarDropdown<Content: View>: View {
                         }
                         if let subtitle {
                             Text(subtitle)
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.secondary)
                         }
                     }
                     Spacer()
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                        .accessibilityHidden(true)
                 }
                 .padding(.vertical, 4)
                 .cavnarHitTarget()
             }
             .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
             if isExpanded {
                 content()

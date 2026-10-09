@@ -79,8 +79,12 @@ private struct AIConsultantStripContent: View {
                     }
                 }
                 .font(.cavnar(.body))
-                .lineLimit(1)
+                // Two lines, not one (re-audit S8): one clipped line rarely
+                // reached the verb of the AI's opening sentence.
+                .lineLimit(2)
                 .truncationMode(.tail)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
                 // The sentence itself is body copy and reads as the app's
                 // other small text does — ember stays on the sparkle and
                 // the chevron, which is what actually says "this is the AI,
@@ -216,7 +220,14 @@ struct AIConsultantView: View {
 /// first sentence is the headline, the rest is Body; the unverified-figures
 /// and unverified-causes caveats sit at the top; recommendation #1 is the
 /// hero and the others wait behind "+N more". Keeps the module's own
-/// ember-wash background. No
+/// ember-wash background.
+///
+/// Re-audit S8 (10/8/26): the answer-card anatomy — the headline (the
+/// intro's first sentence), ONE summary sentence, the top recommendation as
+/// the action with its answer row and, when the server measured one, its
+/// ConfidenceLine (`insight_rec_confidence`; never invented), and
+/// everything else — the rest of the intro, the other recommendations, the
+/// forecast — behind "See the evidence". No
 /// explicit close button — swipe-down-to-dismiss, same as every other sheet
 /// in this app (NotificationsListView is the established precedent).
 private struct AIConsultantSheet: View {
@@ -250,11 +261,14 @@ private struct AIConsultantSheet: View {
                             .consultantReveal(stage >= 1)
                     }
                     if !insight.recommendations.isEmpty {
-                        recommendations
+                        topRecommendation
+                            .consultantReveal(stage >= 2)
                     }
-                    if showForecast, let forecast = insight.forecast, !forecast.isEmpty {
-                        forecastPanel(forecast)
-                            .consultantReveal(stage >= 3)
+                    if hasEvidence {
+                        CavnarEvidenceSection(label: "See the evidence") {
+                            evidence
+                        }
+                        .consultantReveal(stage >= 3)
                     }
                     footer
                         .consultantReveal(stage >= 4)
@@ -282,9 +296,28 @@ private struct AIConsultantSheet: View {
     /// leading "Brian," when there is one) in ember, every number in Space
     /// Grotesk, the rest in ink — and the rest of the intro under it as Body.
     /// The whole intro used to be one 22pt Clash block.
+    /// The intro in three parts: the headline sentence, the one summary
+    /// sentence under it, and the rest (behind "See the evidence").
+    private var introParts: (headline: String, summary: String, rest: String) {
+        let (first, tail) = Self.splitFirstSentence(insight.intro)
+        let (summary, rest) = Self.splitFirstSentence(tail)
+        return (first, summary, rest)
+    }
+
+    private var forecastText: String? {
+        guard showForecast, let forecast = insight.forecast?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !forecast.isEmpty else { return nil }
+        return forecast
+    }
+
+    private var hasEvidence: Bool {
+        !introParts.rest.isEmpty || insight.recommendations.count > 1 || forecastText != nil
+    }
+
     private var openingLine: some View {
-        let (first, rest) = Self.splitFirstSentence(insight.intro)
-        let (name, headline) = Self.splitLeadingName(first)
+        let parts = introParts
+        let rest = parts.summary
+        let (name, headline) = Self.splitLeadingName(parts.headline)
         let numberFont = Font.cavnarNumber(CavnarText.headline.size, weight: 600,
                                            relativeTo: CavnarText.headline.textStyle)
         var text = Text("")
@@ -296,6 +329,7 @@ private struct AIConsultantSheet: View {
             text
                 .cavnarText(.headline)
                 .fixedSize(horizontal: false, vertical: true)
+                .cavnarReadingSize(upTo: .accessibility2)
                 .accessibilityAddTraits(.isHeader)
             if !rest.isEmpty {
                 CavnarMixedText(rest, role: .body)
@@ -340,25 +374,51 @@ private struct AIConsultantSheet: View {
         .background(Color.cavnarPaper3, in: Capsule())
     }
 
-    private var recommendations: some View {
-        let recs = Array(insight.recommendations.enumerated())
-        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+    /// L1 — the top recommendation is the sheet's action: its card, its
+    /// answer row, and its measured confidence when the server has one.
+    private var topRecommendation: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             CavnarKicker("Suggested \u{2014} your call", icon: "bolt.fill")
-                .consultantReveal(stage >= 2)
-
-            // #1 is the hero; the rest wait behind "+N more".
-            if let first = recs.first {
-                recommendationCard(index: first.offset, text: first.element, isHero: true)
-                    .consultantReveal(stage >= 2)
+            if let first = insight.recommendations.first {
+                recommendationCard(index: 0, text: first, isHero: true)
+                confidenceLine(at: 0)
             }
-            if recs.count > 1 {
-                CavnarMoreDisclosure(hiddenCount: recs.count - 1) {
-                    ForEach(recs.dropFirst(), id: \.offset) { index, rec in
-                        recommendationCard(index: index, text: rec, isHero: false)
+        }
+    }
+
+    /// L2 — the rest of the intro, the other recommendations (each with its
+    /// own measured confidence) and the forecast.
+    private var evidence: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.l) {
+            let rest = introParts.rest
+            if !rest.isEmpty {
+                CavnarMixedText(rest, role: .body)
+            }
+            let others = Array(insight.recommendations.enumerated().dropFirst())
+            if !others.isEmpty {
+                VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                    CavnarKicker(others.count == 1 ? "One more suggestion" : "\(others.count) more suggestions")
+                    ForEach(others, id: \.offset) { index, rec in
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            recommendationCard(index: index, text: rec, isHero: false)
+                            confidenceLine(at: index)
+                        }
                     }
                 }
-                .consultantReveal(stage >= 2)
             }
+            if let forecast = forecastText {
+                forecastPanel(forecast)
+            }
+        }
+    }
+
+    /// The server's measured confidence for one recommendation, or nothing.
+    @ViewBuilder
+    private func confidenceLine(at index: Int) -> some View {
+        if let confidence = insight.recConfidence(at: index) {
+            // The evidence view is logged only for a surface that opted in.
+            ConfidenceLine(confidence: confidence, recKey: recSurface == nil ? nil : insight.recKey(at: index),
+                           surface: recSurface ?? "insight", module: recSurface ?? "insight")
         }
     }
 
@@ -377,7 +437,7 @@ private struct AIConsultantSheet: View {
             }
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 CavnarMixedText(rec, role: isHero ? .lead : .body, color: .cavnarInk)
-                // Done / Not for us / Track — only for a line the
+                // Done / Pass / Measure it — only for a line the
                 // server keyed, on a surface that opted in.
                 if let recSurface, let key = insight.recKey(at: index) {
                     RecAnswerRow(key: key, surface: recSurface)

@@ -82,7 +82,7 @@ enum CavnarEmberFade {
 struct CavnarTextFieldStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .font(.cavnarBody(15))
+            .font(.cavnar(.body))
             .padding(14)
             .background(Color.cavnarPaper2)
             .foregroundStyle(Color.cavnarInk)
@@ -133,7 +133,12 @@ struct CavnarPremiumButtonSurface: ViewModifier {
                 // glass/material or gradient sheen (both tried here in
                 // earlier rounds and asked to go). No gradient stops
                 // either — this used to be a 3-stop bright-to-deep fade.
-                shape.fill(Color.cavnarEmber.opacity(isDisabled ? 0.4 : 1))
+                //
+                // EmberFill, not Ember (re-audit S1, 10/8/26): the same
+                // #D4583A normally, but its Increase Contrast variant goes
+                // darker so the white label gains contrast (5.4:1) instead
+                // of losing it on Ember's lighter high-contrast twin.
+                shape.fill(Color.cavnarEmberFill.opacity(isDisabled ? 0.4 : 1))
             }
             .clipShape(shape)
             // Thin ember border at the true outer edge — the same accent
@@ -141,7 +146,7 @@ struct CavnarPremiumButtonSurface: ViewModifier {
             // own real/fallback glass material renders that edge
             // implicitly; this is the explicit equivalent for a plain
             // gradient fill).
-            .overlay(shape.stroke(Color.cavnarEmber.opacity(isDisabled ? 0 : 0.7), lineWidth: 1.5))
+            .overlay(shape.stroke(Color.cavnarEmberFill.opacity(isDisabled ? 0 : 0.7), lineWidth: 1.5))
             // True inner border — inset further within the shape than the
             // outer ember one, not centered on the edge. Ember2 (the
             // brighter/lighter accent), same as the outer border's darker
@@ -257,7 +262,9 @@ struct CavnarSoftButtonStyle: ButtonStyle {
             .font(.cavnarBody(16, weight: 600))
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
-            .foregroundStyle(Color.cavnarEmber)
+            // Ember2 words on the ember wash: Ember on it was 4.0:1, Ember2
+            // is 6.7:1 (re-audit S15, 10/8/26). The wash stays ember.
+            .foregroundStyle(Color.cavnarEmber2)
             .background(
                 CavnarPremiumButtonSurface.defaultShape
                     .fill(Color.cavnarEmber.opacity(configuration.isPressed ? 0.24 : 0.18))
@@ -279,18 +286,77 @@ struct CavnarSoftButtonStyle: ButtonStyle {
 /// tappable. A colored shadow that recedes on press (rather than a
 /// scale-only change) is what actually sells "this is a physical button"
 /// at this small a size.
+///
+/// The label's ink follows the tone (re-audit S2, 10/8/26): white on a
+/// solid fill only where white clears 4.5:1 (a dark tone such as Paper3);
+/// any lighter tone — Amber, Green, Blue (white 2.4–2.8:1), Ember, Red —
+/// draws a tinted chip instead: the tone at 20% with a tone hairline, the
+/// words in the tone where it clears 4.5:1 on that wash (Amber, Green,
+/// Blue) and in Ink where it doesn't (Ember, Red). Decided here from the
+/// resolved colour, so no call site changes.
 struct CavnarChipButtonStyle: ButtonStyle {
     var tone: Color
 
+    @Environment(\.self) private var environment
+
+    /// How the chip draws for a tone, from its resolved colour.
+    enum Treatment: Equatable {
+        /// Solid tone, white words.
+        case solid
+        /// Tone at 20%, tone hairline; `toneText` false → Ink words.
+        case tinted(toneText: Bool)
+    }
+
+    /// WCAG relative luminance from linear sRGB components.
+    static func luminance(_ r: Float, _ g: Float, _ b: Float) -> Double {
+        0.2126 * Double(max(0, r)) + 0.7152 * Double(max(0, g)) + 0.0722 * Double(max(0, b))
+    }
+
+    static func contrast(_ a: Double, _ b: Double) -> Double {
+        (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
+    /// The card ground a chip sits on (Paper2, #121212), linear.
+    static let groundLinear: Float = 0.006
+
+    static func treatment(linearRed r: Float, green g: Float, blue b: Float) -> Treatment {
+        let tone = luminance(r, g, b)
+        if contrast(1.0, tone) >= 4.5 { return .solid }
+        // The wash: 20% tone over the ground, mixed in linear light (a
+        // touch lighter than a display-space mix, so the check errs safe).
+        let mix: (Float) -> Float = { $0 * 0.2 + groundLinear * 0.8 }
+        let wash = luminance(mix(r), mix(g), mix(b))
+        return .tinted(toneText: contrast(tone, wash) >= 4.5)
+    }
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let resolved = tone.resolve(in: environment)
+        let treatment = Self.treatment(linearRed: resolved.linearRed, green: resolved.linearGreen,
+                                       blue: resolved.linearBlue)
+        let ink: Color
+        let fill: Color
+        let edge: Color
+        switch treatment {
+        case .solid:
+            ink = .white; fill = tone; edge = .clear
+        case .tinted(let toneText):
+            ink = toneText ? tone : .cavnarInk
+            fill = tone.opacity(configuration.isPressed ? 0.28 : 0.2)
+            edge = tone.opacity(0.55)
+        }
+        return configuration.label
             .font(.cavnarBody(14, weight: 600))
-            .foregroundStyle(.white)
+            .foregroundStyle(ink)
             .padding(.horizontal, 13)
             .padding(.vertical, 6)
-            .background(tone)
+            .background(fill)
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                    .strokeBorder(edge, lineWidth: 1)
+            )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
-            .shadow(color: tone.opacity(configuration.isPressed ? 0.1 : 0.45), radius: configuration.isPressed ? 1 : 4, x: 0, y: configuration.isPressed ? 0 : 2)
+            .shadow(color: tone.opacity(treatment == .solid ? (configuration.isPressed ? 0.1 : 0.45) : 0),
+                    radius: configuration.isPressed ? 1 : 4, x: 0, y: configuration.isPressed ? 0 : 2)
             // The chip is ~28pt tall; the tap area is 44.
             .cavnarHitTarget()
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
@@ -965,6 +1031,8 @@ private struct CavnarEmberBackButton: ViewModifier {
                     }
                     .buttonStyle(.plain)
                     .tint(nil)
+                    // An unlabelled glyph read as "chevron left" (re-audit S12).
+                    .accessibilityLabel("Back")
                 }
             }
     }
@@ -1076,6 +1144,8 @@ private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
                     }
                     .buttonStyle(.plain)
                     .tint(nil)
+                    // An unlabelled glyph read as "chevron left" (re-audit S12).
+                    .accessibilityLabel("Back")
                 }
             }
             // .simultaneousGesture (not .gesture) so this never steals a
