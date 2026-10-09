@@ -42,6 +42,12 @@ struct AIVisibilitySection: View {
     @State private var expandedWhy: Set<String> = []
     /// The hero's range, background, recall and summary lines.
     @State private var showHeroDetails = false
+    /// The Google-vs-AI share's basis (questions, Google showings).
+    @State private var showDemandBasis = false
+    /// The listing checklist as a sheet, from a roadmap card's "See what's
+    /// missing" — it used to open in place far above the card, off screen
+    /// (re-audit I4).
+    @State private var showChecklistSheet = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xxl) {
@@ -80,6 +86,19 @@ struct AIVisibilitySection: View {
             // tab is "Online" now (iOS readability round, 10/8/26): the
             // website was never AI visibility.
             WebsiteAnalyticsSection()
+        }
+        .sheet(isPresented: $showChecklistSheet) {
+            NavigationStack {
+                ScrollView {
+                    if let checklist = viewModel.result?.checklist {
+                        gbpChecklistGrid(checklist)
+                            .padding(CavnarSpace.gutter)
+                    }
+                }
+                .accountSheetChrome("Listing strength")
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         // The recorded check first (re-audit P1: a GET, never a live run),
         // then the history the Orbit draws.
@@ -230,11 +249,14 @@ struct AIVisibilitySection: View {
             // The Orbit: today's score as a ring, every past run as a line.
             // A missing score is "not measured" on the ring too — never a
             // 0% ring (J10).
+            // The ring draws no figure of its own: the score (or its range)
+            // is the stat below, once (re-audit I8). An estimate draws its
+            // ring in Ink2 at full strength, never the chart dimmed to 60%.
             VisibilityOrbitChart(score: result.aiScore, runs: viewModel.history,
                                  low: result.aiScoreLow, high: result.aiScoreHigh,
-                                 band: measured ? result.aiChipText : "An estimate, not a measurement")
+                                 band: measured ? result.aiChipText : "An estimate, not a measurement",
+                                 showsCenterFigure: false, muted: !measured)
                 .padding(.bottom, CavnarSpace.s)
-                .opacity(measured ? 1 : 0.6)
             HStack(spacing: 0) {
                 heroStat(
                     value: scoreText,
@@ -246,7 +268,7 @@ struct AIVisibilitySection: View {
                     sub: measured ? (result.aiChipText ?? aiScoreLabel(result.aiScore ?? 0)) : "Not measured",
                     claim: result.aiScore == nil ? nil : result.claimKinds?["ai_score"]
                 )
-                Rectangle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 1).padding(.vertical, 6)
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(width: 1).padding(.vertical, 6)
                 Button {
                     Haptic.light()
                     withAnimation(.easeOut(duration: 0.2)) { showGbpChecklist.toggle() }
@@ -283,18 +305,15 @@ struct AIVisibilitySection: View {
             heroDetails(result)
         }
         .padding(CavnarSpace.l)
-        .background(
-            LinearGradient(
-                colors: [Color.cavnarEmber.opacity(0.5), Color.cavnarEmber.opacity(0.08)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        )
+        // A neutral card with one ember accent, the top edge (re-audit
+        // I14): the 50% ember wash fought the ring and the two figures.
+        .background(Color.cavnarPaper2.opacity(0.7))
         .overlay(alignment: .top) {
             Rectangle().fill(Color.cavnarEmber.opacity(0.7)).frame(height: 1)
         }
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1)
+                .strokeBorder(Color.cavnarPaper3.opacity(0.5), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
@@ -516,8 +535,10 @@ struct AIVisibilitySection: View {
 
     private func gbpChecklistGrid(_ checklist: [AIVisibilityChecklistItem]) -> some View {
         let doneCount = checklist.filter(\.done).count
-        // Open gaps first, then what is done.
-        let ordered = checklist.filter { !$0.done } + checklist.filter(\.done)
+        // The open gaps are the decision; what is already done folds behind
+        // one tap (re-audit I15: the full list ran the length of the tab).
+        let open = checklist.filter { !$0.done }
+        let done = checklist.filter(\.done)
         return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             HStack {
                 CavnarKicker("LISTING STRENGTH")
@@ -525,8 +546,17 @@ struct AIVisibilitySection: View {
                 CavnarMixedText("\(doneCount) of \(checklist.count) done", role: .secondary)
             }
             VStack(spacing: 0) {
-                ForEach(ordered) { item in
+                ForEach(open) { item in
                     gbpGridItem(item)
+                }
+            }
+            if !done.isEmpty {
+                CavnarMoreDisclosure(hiddenCount: done.count) {
+                    VStack(spacing: 0) {
+                        ForEach(done) { item in
+                            gbpGridItem(item)
+                        }
+                    }
                 }
             }
         }
@@ -566,19 +596,24 @@ struct AIVisibilitySection: View {
     // round, 10/8/26: the full answer was press-and-hold only). Every
     // question and answer is on the web.
 
+    /// The open questions — a branded "tell me about <name>" is recall, not
+    /// discovery, and Details counts it apart (re-audit I3: the count here
+    /// included it while Details left it out).
+    static func openQueries(_ queries: [AIVisibilityQuery]) -> [AIVisibilityQuery] {
+        queries.filter { $0.kind?.lowercased() != "branded" }
+    }
+
     private func queriesSection(_ queries: [AIVisibilityQuery], demand: AIVisibilitySearchDemand?) -> some View {
-        let missed = queries.filter { !$0.appeared }
+        let open = Self.openQueries(queries)
+        let missed = open.filter { !$0.appeared }
         return VStack(alignment: .leading, spacing: CavnarSpace.s) {
             CavnarKicker("Latest check")
             CavnarMixedText(missed.isEmpty
-                            ? "Came up in all \(queries.count) questions"
-                            : "Missed \(missed.count) of \(queries.count) question\(queries.count == 1 ? "" : "s")",
+                            ? "Came up in all \(open.count) open question\(open.count == 1 ? "" : "s")"
+                            : "Missed \(missed.count) of \(open.count) open question\(open.count == 1 ? "" : "s")",
                             role: .lead)
             if let demand, let n = demand.questions, n > 0 {
-                googleVsAIText(demand, questions: n)
-                    .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                googleVsAI(demand, questions: n)
             }
             VStack(spacing: 0) {
                 ForEach(Array(missed.enumerated()), id: \.element.id) { index, q in
@@ -588,8 +623,10 @@ struct AIVisibilitySection: View {
                     }
                 }
             }
+            // "intel/visibility" lands on the web's AI visibility section
+            // (re-audit I2) — "intel" opened the competitors above it.
             CavnarWebLinkRow(title: "Every question and answer", subtitle: "What AI said each time, and the sites it read",
-                             path: "intel", actionLabel: "Open on the web")
+                             path: "intel/visibility", actionLabel: "Open on the web")
         }
     }
 
@@ -598,16 +635,41 @@ struct AIVisibilitySection: View {
                        runs: viewModel.queryHistory?.runs ?? [])
     }
 
-    /// Google vs AI (10/7/26): the Google searches put to AI, and the share of
-    /// their search volume whose answer named the restaurant.
-    private func googleVsAIText(_ d: AIVisibilitySearchDemand, questions: Int) -> Text {
-        Text("Google vs AI: ")
-            + Text("\(questions)").font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
-            + Text(" of these questions are searches where Google showed your website (")
-            + Text((d.impressions ?? 0).formatted()).font(.cavnarNumber(CavnarType.secondary, weight: 500))
-            + Text(" times in 28 days). AI named you on ")
-            + Text(d.coveredPct.map { "\($0)%" } ?? "\u{2014}").font(.cavnarNumber(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk)
-            + Text(" of that search volume.")
+    /// Google vs AI (10/7/26): the share of the Google search volume behind
+    /// these questions whose AI answer named the restaurant — one figure;
+    /// how many questions and how many Google showings it rests on are
+    /// behind a tap (re-audit I9: it was one dense sentence of three).
+    /// A share the server didn't compute is a dash, never 0%.
+    @ViewBuilder
+    private func googleVsAI(_ d: AIVisibilitySearchDemand, questions: Int) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.2)) { showDemandBasis.toggle() }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xxs) {
+                    HomeMixedText.make("AI named you on \(d.coveredPct.map { "\($0)%" } ?? "\u{2014}") of the Google search volume behind these questions",
+                                       role: .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .rotationEffect(.degrees(showDemandBasis ? 180 : 0))
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showDemandBasis ? "Expanded" : "Collapsed")
+            if showDemandBasis {
+                HomeMixedText.make("\(questions) of these questions are searches where Google showed your website"
+                                   + (d.impressions.map { " \($0.formatted()) times in 28 days" } ?? "")
+                                   + ". The share is of that search volume.", role: .caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            }
+        }
     }
 
     // MARK: - Roadmap
@@ -661,7 +723,7 @@ struct AIVisibilitySection: View {
                 detail: gbpDetail(result, checklist: checklist),
                 why: gbpWhy(result),
                 actionLabel: "See what's missing", impact: "Fast win", done: gbpDone,
-                action: { withAnimation(.easeOut(duration: 0.2)) { showGbpChecklist = true } }
+                action: { showChecklistSheet = true }
             ),
             RoadmapCard(
                 id: "social", color: .cavnarEmber,
@@ -730,7 +792,7 @@ struct AIVisibilitySection: View {
             action = { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = "reviews" }
         case "gbp":
             color = .cavnarBlue
-            action = { withAnimation(.easeOut(duration: 0.2)) { showGbpChecklist = true } }
+            action = { showChecklistSheet = true }
         default:
             color = .cavnarEmber
             action = { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = card.module ?? "marketing" }
@@ -818,90 +880,77 @@ struct AIVisibilitySection: View {
         return "You've published \(posts) post\(posts == 1 ? "" : "s") this month. Posts that name your restaurant, neighbourhood and cuisine give search engines more text about you to index."
     }
 
-    /// Was a fully bordered/backgrounded box per card, each with its own
-    /// icon badge — the same "container everywhere" problem the rest of
-    /// this screen had. Now an accent-bar row with a hairline divider,
-    /// matching Competitors' own competitorRow construction directly.
+    /// An accent-bar row with a hairline divider, matching Competitors' own
+    /// competitorRow. Two controls (re-audit I10): the card's action and its
+    /// answer row. Why it matters opens by tapping the row itself — it was a
+    /// third control, "Why this matters", beside the other two.
     private func roadmapRow(_ card: RoadmapCard) -> some View {
         let isExpanded = expandedWhy.contains(card.id)
+        let hasWhy = !card.why.isEmpty
         return HStack(alignment: .top, spacing: CavnarSpace.s) {
             Rectangle().fill(card.done ? Color.cavnarPaper3 : card.color).frame(width: 2.5)
             VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                    // A done gap reads quieter in Ink2 — it used to dim the
-                    // whole row to 55%, words included.
-                    Text(card.title).cavnarText(.label, color: card.done ? .cavnarInk2 : .cavnarInk)
-                    if card.done {
-                        Label("Done", systemImage: "checkmark").cavnarText(.secondary, color: .cavnarGreen)
-                    } else {
-                        // The impact tiers are fixed labels with no
-                        // measurement behind them, so the row says only
-                        // that the gap is open; the tier still orders it.
-                        Text("Open").cavnarText(.tag, color: card.color)
+                Button {
+                    guard hasWhy else { return }
+                    // disablesAnimations: ScrollView's implicit content-resize
+                    // animation otherwise drops and fades the why in.
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        if isExpanded { expandedWhy.remove(card.id) } else { expandedWhy.insert(card.id) }
                     }
-                }
-                Text(card.detail).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
-                if isExpanded {
-                    // The surrounding VStack's own spacing (6) is shared
-                    // uniformly by every row here — title, detail, why,
-                    // actions — so dropping the why text straight into it
-                    // squeezed it to that same tight 6pt on both sides as
-                    // everything else, which is what read as crammed.
-                    // Extra padding here (only on this element) gives it
-                    // real breathing room without loosening the rest of
-                    // the card's normally-tighter rhythm.
-                    Text(card.why)
-                        .cavnarText(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                        .padding(.bottom, 8)
-                }
-                HStack {
-                    if !card.done {
-                        Button(action: card.action) {
-                            HStack(spacing: 5) {
-                                Text(card.actionLabel)
-                                // Same external-link arrow the "doing
-                                // well" heading uses (marketSection) —
-                                // these buttons route the owner
-                                // somewhere else in the app, same as
-                                // that heading's own "things trending
-                                // outward" meaning.
-                                Image(systemName: "arrow.up.right")
+                    // Opening a keyed card's reasoning is evidence viewed
+                    // (#38) — once per card per launch.
+                    if !isExpanded, card.recKey != nil {
+                        RecEvidenceLog.viewed(key: card.recKey, surface: "intel", module: "intel")
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                            // A done gap reads quieter in Ink2 — it used to dim
+                            // the whole row to 55%, words included.
+                            Text(card.title).cavnarText(.label, color: card.done ? .cavnarInk2 : .cavnarInk)
+                            if card.done {
+                                Label("Done", systemImage: "checkmark").cavnarText(.secondary, color: .cavnarGreen)
+                            } else {
+                                // The impact tiers are fixed labels with no
+                                // measurement behind them, so the row says only
+                                // that the gap is open; the tier still orders it.
+                                Text("Open").cavnarText(.tag, color: card.color)
+                            }
+                            Spacer(minLength: 0)
+                            if hasWhy {
+                                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                     .font(.cavnar(.caption))
+                                    .foregroundStyle(Color.cavnarInk2)
+                                    .accessibilityHidden(true)
                             }
                         }
-                        .buttonStyle(CavnarChipButtonStyle(tone: card.color))
+                        Text(card.detail).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
+                        if isExpanded {
+                            Text(card.why)
+                                .cavnarText(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 6)
+                                .padding(.bottom, 8)
+                        }
                     }
-                    Spacer()
-                    Button {
-                        // Same fix as the "show more reviews" animation
-                        // glitch — .animation(nil, value:) alone wasn't
-                        // enough to stop the "why" text from visibly
-                        // dropping/fading in as it appears (ScrollView's
-                        // own implicit content-resize animation leaking
-                        // in); disablesAnimations is the actual override.
-                        var transaction = Transaction(animation: nil)
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) {
-                            if isExpanded { expandedWhy.remove(card.id) } else { expandedWhy.insert(card.id) }
-                        }
-                        // Opening a keyed card's reasoning is evidence
-                        // viewed (#38) — once per card per launch.
-                        if !isExpanded, card.recKey != nil {
-                            RecEvidenceLog.viewed(key: card.recKey, surface: "intel", module: "intel")
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text("Why this matters")
-                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(hasWhy ? (isExpanded ? "Hides why this matters" : "Shows why this matters") : "")
+                if !card.done {
+                    Button(action: card.action) {
+                        HStack(spacing: 5) {
+                            Text(card.actionLabel)
+                            // These route the owner somewhere else in the app.
+                            Image(systemName: "arrow.up.right")
                                 .font(.cavnar(.caption))
-                                .accessibilityHidden(true)
                         }
-                        .cavnarText(.label, color: .cavnarInk2)
-                        .cavnarHitTarget()
                     }
-                    .buttonStyle(.plain)
+                    // The chip's own style carries the 44pt tap area.
+                    .buttonStyle(CavnarChipButtonStyle(tone: card.color))
                 }
                 // The server's open cards are recommendations like any
                 // other: Done / Not for us (Intel has nothing to Track).

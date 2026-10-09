@@ -32,8 +32,7 @@ struct SupplierOrderSheet: View {
                         // went) — shown above the reloaded draft.
                         if let error = viewModel.errorMessage {
                             Text(error)
-                                .font(.cavnar(.secondary))
-                                .foregroundStyle(Color.cavnarInk2)
+                                .cavnarText(.secondary, color: .cavnarRedText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if let result = viewModel.lastResult {
@@ -217,9 +216,8 @@ struct SupplierOrderSheet: View {
                     .font(.cavnar(.body))
                     .foregroundStyle(Color.cavnarInk)
                 if item.trimmedForWaste == true {
-                    Text("trimmed for last week\u{2019}s waste")
-                        .font(.cavnar(.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                    Text("Trimmed for last week\u{2019}s waste")
+                        .cavnarText(.caption, color: .cavnarInk2)
                 }
                 // The owner's own ordering habit applied (memory round).
                 if let adjusted = item.adjustmentLine {
@@ -359,15 +357,27 @@ struct SupplierOrderSheet: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarRed)
-                    Text("\(failure.supplierEmail) — \(failure.error)")
-                        .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk2)
+                    // The supplier by name and a plain sentence, not an
+                    // address and the server's error (re-audit F10).
+                    Text(Self.failureLine(supplier: supplierName(for: failure.supplierEmail)))
+                        .cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+    }
+
+    /// The draft's name for a supplier's order address; the address only
+    /// when the draft no longer lists it.
+    private func supplierName(for email: String) -> String {
+        viewModel.draft?.groups.first { $0.supplierEmail.lowercased() == email.lowercased() }?.displayName ?? email
+    }
+
+    /// "The order to Sysco didn’t go out. Check the draft and send it again."
+    static func failureLine(supplier: String) -> String {
+        "The order to \(supplier) didn\u{2019}t go out. Check the draft and send it again."
     }
 
     private static func currency(_ value: Double) -> String {

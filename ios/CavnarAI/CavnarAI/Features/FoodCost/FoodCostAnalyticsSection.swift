@@ -8,11 +8,13 @@ import SwiftUI
 ///   2. the decision card — what is driving the cost, the one thing to do
 ///      first, the top driver's dollars and where to act on it, with the
 ///      rest of the read behind "Show the full read";
-///   3. what to order now, sent through the order sheet;
-///   4. dishes to reprice, one Set button each;
+///   3. what to order now, sent through the order sheet (pinned when
+///      something has to be ordered now);
+///   4. dishes to reprice, one Set button each, asked before it changes
+///      the menu;
 ///   5. pars to raise;
-///   6. one "More analysis" disclosure (the ledgers, price watch, the
-///      waste trend's read) with the trend and How you compare on the web.
+///   6. one "More analysis" disclosure (the waste trend's read) with the
+///      ledgers, price watch, the trend and How you compare on the web.
 ///
 /// It used to stack about thirteen sections, three separate "why" reads, a
 /// stat strip that repeated the urgent count and a second row of every
@@ -28,6 +30,17 @@ struct FoodCostAnalyticsSection: View {
     @State private var showingMore = false
     /// Dishes whose "Why" is open under their reprice row.
     @State private var repriceWhyOpen: Set<String> = []
+    /// A menu price waiting on the owner's yes (re-audit F1): a reprice
+    /// changes the live menu, so it is asked first, as Your dishes asks.
+    @State private var confirmingReprice: PendingReprice?
+
+    private struct PendingReprice: Identifiable {
+        let suggestion: RepriceSuggestions.Suggestion
+        /// Nil — the suggested price; set — the owner's usual price.
+        let chosen: Double?
+        var price: Double { chosen ?? suggestion.suggestedPrice ?? 0 }
+        var id: String { suggestion.dish }
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -60,7 +73,8 @@ struct FoodCostAnalyticsSection: View {
                     // thing to do first. Everything above is a position;
                     // this is the step after it.
                     if viewModel.hasCFORead {
-                        decisionCard(viewModel.cfo)
+                        decisionCard(viewModel.cfo,
+                                     heroShowsRecoverable: hasHeroData(analytics) && (analytics.recoverableMonthly ?? 0) > 0)
                     }
                     // What to order now — the page's actions.
                     orderSection(analytics)
@@ -92,6 +106,30 @@ struct FoodCostAnalyticsSection: View {
             .padding(.horizontal, CavnarSpace.gutter)
             .padding(.vertical, CavnarSpace.xl)
         }
+        // Something has to be ordered now: the send is pinned in thumb
+        // reach (re-audit F6), not at the foot of the order list.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let a = viewModel.analytics, !a.criticalLow.isEmpty {
+                CavnarPinnedBar {
+                    sendOrderButton(primary: true)
+                }
+            }
+        }
+        // A price change goes out to the menu: asked first, never one tap
+        // (re-audit F1) — the same question Your dishes asks.
+        .confirmationDialog(confirmingReprice.map { "Set \($0.suggestion.dish) to \(Self.price($0.price))?" } ?? "",
+                            isPresented: Binding(get: { confirmingReprice != nil },
+                                                 set: { if !$0 { confirmingReprice = nil } }),
+                            titleVisibility: .visible, presenting: confirmingReprice) { pending in
+            Button("Set \(Self.price(pending.price))") {
+                Task { await viewModel.applyReprice(pending.suggestion, price: pending.chosen) }
+            }
+            Button("Type a different price") { open?(.menu(dish: pending.suggestion.dish)) }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.suggestion.whyLine.map { "Why: \($0)" }
+                 ?? "The price that restores this dish\u{2019}s food cost %.")
+        }
         // nav "inventory/pars" — the par section brought into view.
         .onChange(of: viewModel.scrollToPars && !viewModel.parSuggestions.isEmpty, initial: true) { _, go in
             guard go else { return }
@@ -122,7 +160,7 @@ struct FoodCostAnalyticsSection: View {
 
     // MARK: - More analysis (L2 and L3)
 
-    /// The ledgers, price watch and the waste trend's read, behind one tap;
+    /// The waste trend's read, behind one tap; the ledgers, price watch,
     /// the trend chart and How you compare open on the web.
     private func moreAnalysis(_ a: FoodCostAnalytics) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.l) {
@@ -146,23 +184,21 @@ struct FoodCostAnalyticsSection: View {
 
             if showingMore {
                 VStack(alignment: .leading, spacing: CavnarSpace.xxl) {
-                    // The two ledgers side by side on an iPad when both have
-                    // rows (#99); stacked on the phone.
-                    if !a.wasteItems.isEmpty && !a.overstock.isEmpty {
-                        CavnarTwoUp {
-                            wasteLedger(a)
-                        } trailing: {
-                            overstockLedger(a)
-                        }
-                    } else {
-                        if !a.wasteItems.isEmpty { wasteLedger(a) }
-                        if !a.overstock.isEmpty { overstockLedger(a) }
-                    }
-                    if !a.priceWatch.isEmpty {
-                        priceWatchDetail(a.priceWatch)
-                    }
                     wasteTrendRead(a)
+                    // The ledgers and price watch are tables to read, not
+                    // decisions — on the web (re-audit F17). The decisions
+                    // they lead to (order, reprice, pars) are above.
                     VStack(alignment: .leading, spacing: 0) {
+                        if !a.wasteItems.isEmpty || !a.overstock.isEmpty {
+                            CavnarWebLinkRow(title: "Waste and overstock",
+                                             subtitle: "Biggest waste items and cash sitting over par, item by item",
+                                             path: "inventory", actionLabel: "Open on the web")
+                        }
+                        if !a.priceWatch.isEmpty {
+                            CavnarWebLinkRow(title: "Price watch",
+                                             subtitle: "\(a.priceWatch.count) ingredient price\(a.priceWatch.count == 1 ? "" : "s") that moved",
+                                             path: "inventory/invoices", actionLabel: "Open on the web")
+                        }
                         CavnarWebLinkRow(title: "Waste trend", subtitle: "Every week on file, against your target",
                                          path: "inventory/waste", actionLabel: "Open on the web")
                         CavnarWebLinkRow(title: "How you compare", subtitle: "Food cost against restaurants like yours",
@@ -363,11 +399,16 @@ struct FoodCostAnalyticsSection: View {
     /// what would confirm the cause, the cross-checks and the prime-cost
     /// projection are behind "Show the full read".
     @ViewBuilder
-    private func decisionCard(_ cfo: FoodCostCFO?) -> some View {
+    private func decisionCard(_ cfo: FoodCostCFO?, heroShowsRecoverable: Bool) -> some View {
         if let cfo {
             let dg = cfo.diagnosis
             let drivers = Array(viewModel.drivers.prefix(5))
-            let summary = Self.atStakeLine(cfo, driverCount: viewModel.drivers.count)
+            let atStake = Self.atStakeLine(cfo, driverCount: viewModel.drivers.count)
+            // One monthly opportunity figure on screen (re-audit F4): when
+            // the hero already carries "Recoverable a month", the drivers'
+            // at-stake total waits in the full read. The two are different
+            // measures and are never summed.
+            let summary = heroShowsRecoverable ? nil : atStake
             let caveat = Self.caveatLine(dg)
             let whyKind = cfo.claimKinds?["why"]?.lowercased()
             VStack(alignment: .leading, spacing: CavnarSpace.s) {
@@ -399,7 +440,8 @@ struct FoodCostAnalyticsSection: View {
                 ) {
                     decisionActions(dg, top: drivers.first)
                 } detail: {
-                    fullRead(cfo, drivers: Array(drivers.dropFirst()))
+                    fullRead(cfo, drivers: Array(drivers.dropFirst()),
+                             atStake: heroShowsRecoverable ? atStake : nil)
                 }
             }
             .cavnarCard(.ai)
@@ -453,9 +495,14 @@ struct FoodCostAnalyticsSection: View {
 
     /// Everything else the read holds, for the owner who wants the proof.
     @ViewBuilder
-    private func fullRead(_ cfo: FoodCostCFO, drivers rest: [FoodCostCFO.Driver]) -> some View {
+    private func fullRead(_ cfo: FoodCostCFO, drivers rest: [FoodCostCFO.Driver], atStake: String?) -> some View {
         let dg = cfo.diagnosis
         VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            // The drivers' monthly total, when the hero's recoverable figure
+            // is the one on the card (F4) — an opportunity, never savings.
+            if let atStake {
+                readRow("At stake across the drivers", atStake + " \u{2014} an opportunity, not money saved")
+            }
             // The server's own sentence for a read that hasn't been
             // refreshed — the same caveat the Reviews diagnosis carries.
             if let note = dg?.staleNote, !note.isEmpty {
@@ -589,8 +636,11 @@ struct FoodCostAnalyticsSection: View {
                     ConfidenceLine(confidence: c, recKey: d.recKey, surface: "food", module: "food")
                 }
             }
-            CavnarMixedText("\(Self.effortWords(d.difficulty)) \u{00B7} costs $\(d.dollarsMonthly.commaFormatted)/mo if ignored",
-                            role: .caption)
+            // The dollars are the row's figure above; the caption says what
+            // they are without printing them a second time (re-audit F3).
+            Text("\(Self.effortWords(d.difficulty)) \u{00B7} about that a month if left alone")
+                .cavnarText(.caption)
+                .fixedSize(horizontal: false, vertical: true)
             // Where it is acted on (U4-9), the server's own nav path — the
             // web's "Open the order →" (parity audit #76).
             if let act = d.act, let path = NavPath(act.nav), let action = FoodCostAction(path: path) {
@@ -669,15 +719,19 @@ struct FoodCostAnalyticsSection: View {
             }
             .padding(CavnarSpace.l)
 
-            Rectangle().fill(Color.cavnarEmber.opacity(0.35)).frame(height: 1)
+            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
 
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                // One "why" on the page (re-audit F7): with the decision card
+                // below carrying the cause, the hero's analysis folds to one
+                // line that opens it; without that card it reads in full.
                 AIConsultantEmbeddedStrip(
                     title: "Cavnar AI Food Cost Analysis",
                     insight: a.insight,
                     isLoading: isLoading,
                     showForecastInSheet: false,
-                    recSurface: "food"
+                    recSurface: "food",
+                    readable: !viewModel.hasCFORead
                 )
                 // The server computes this flag and every other module renders
                 // it; Food Cost declared no such key, so figures it could not
@@ -693,18 +747,15 @@ struct FoodCostAnalyticsSection: View {
             // identical fix so the ribbon's pill doesn't touch the AI strip.
             .padding(.bottom, CavnarSpace.l)
         }
-        .background(
-            LinearGradient(
-                colors: [Color.cavnarEmber.opacity(0.5), Color.cavnarEmber.opacity(0.1)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-        )
+        // A neutral card with one ember accent, the top edge (re-audit
+        // F16): the 50% ember wash competed with the figures it holds.
+        .background(Color.cavnarPaper2.opacity(0.7))
         .overlay(alignment: .top) {
             Rectangle().fill(Color.cavnarEmber.opacity(0.7)).frame(height: 1)
         }
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1)
+                .strokeBorder(Color.cavnarPaper3.opacity(0.5), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
         // Mimics Labor's forecast ribbon exactly (DesignSystem/
@@ -746,37 +797,6 @@ struct FoodCostAnalyticsSection: View {
         }
     }
 
-    // MARK: - The two ledgers
-
-    private func wasteLedger(_ analytics: FoodCostAnalytics) -> some View {
-        WasteLedgerChart(
-            kicker: "Top waste offenders", title: "Waste Ledger",
-            // total_waste_cost_week covers every item; waste_items is only
-            // those above their category tolerance, capped at six — the
-            // fallback is the server's own flagged total.
-            headline: "This week · $\(Int((analytics.wasteItemsTotal ?? analytics.wasteItems.reduce(0) { $0 + $1.wasteCost }).rounded()).formatted()) flagged",
-            rows: analytics.wasteItems.map {
-                WasteLedgerChart.Row(id: $0.id, name: $0.item, value: $0.wasteCost, detail: String(format: "%.0f%% waste", $0.wastePct))
-            }
-        )
-    }
-
-    private func overstockLedger(_ analytics: FoodCostAnalytics) -> some View {
-        WasteLedgerChart(
-            kicker: "Overstocked", title: "Tied-Up Capital",
-            // The server's total over every overstocked item — the list
-            // here is truncated to five.
-            headline: "$\(Int((analytics.overstockTotal ?? analytics.overstock.reduce(0) { $0 + $1.overstockCost }).rounded()).formatted()) sitting on shelves",
-            rows: analytics.overstock.map {
-                WasteLedgerChart.Row(
-                    id: $0.id, name: $0.item, value: $0.overstockCost,
-                    detail: [$0.currentStock, $0.parLevel].compactMap { $0 }.count == 2 ? "\(Int($0.currentStock ?? 0)) / \(Int($0.parLevel ?? 0)) par" : nil
-                )
-            },
-            tint: Color.cavnarAmber
-        )
-    }
-
     // MARK: - What to order
 
     /// The order list and the one action it leads to: "Send order to
@@ -802,19 +822,39 @@ struct FoodCostAnalyticsSection: View {
                                 items: a.orderReduction, showDays: false)
                 }
                 // The step that sends the list to the supplier who fills it.
-                if !a.criticalLow.isEmpty || !a.reorderSoon.isEmpty {
-                    Button {
-                        Haptic.light()
-                        open?(.order)
-                    } label: {
-                        HStack(spacing: CavnarSpace.xs) {
-                            Image(systemName: "paperplane.fill").accessibilityHidden(true)
-                            Text("Send order to suppliers")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
+                // With something to order now it is pinned at the foot of
+                // the screen (F6); "order soon" alone keeps a secondary here
+                // — the decision card's step leads the page (F5).
+                if a.criticalLow.isEmpty && !a.reorderSoon.isEmpty {
+                    sendOrderButton(primary: false)
                 }
+            }
+        }
+    }
+
+    /// "Send order to suppliers", through the screen's own order sheet.
+    private func sendOrderButton(primary: Bool) -> some View {
+        Button {
+            Haptic.light()
+            open?(.order)
+        } label: {
+            HStack(spacing: CavnarSpace.xs) {
+                Image(systemName: "paperplane.fill").accessibilityHidden(true)
+                Text("Send order to suppliers")
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(SendOrderButtonStyle(primary: primary))
+    }
+
+    private struct SendOrderButtonStyle: ButtonStyle {
+        let primary: Bool
+        @ViewBuilder
+        func makeBody(configuration: Configuration) -> some View {
+            if primary {
+                CavnarPrimaryButtonStyle(isDisabled: false).makeBody(configuration: configuration)
+            } else {
+                CavnarSecondaryButtonStyle(isDisabled: false).makeBody(configuration: configuration)
             }
         }
     }
@@ -984,20 +1024,6 @@ struct FoodCostAnalyticsSection: View {
     // Every dish's margin, the uncosted and unmatched lists and the
     // scorecard's numbers are on the web.
 
-    /// The one-tap reprice: primary, or secondary under a guard.
-    private struct RepriceButtonStyle: ButtonStyle {
-        let guarded: Bool
-        let isDisabled: Bool
-        @ViewBuilder
-        func makeBody(configuration: Configuration) -> some View {
-            if guarded {
-                CavnarSecondaryButtonStyle(isDisabled: isDisabled).makeBody(configuration: configuration)
-            } else {
-                CavnarPrimaryButtonStyle(isDisabled: isDisabled).makeBody(configuration: configuration)
-            }
-        }
-    }
-
     private func repriceSection(_ items: [RepriceSuggestions.Suggestion], assumption: String?) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
             sectionTitle("Dishes to reprice", count: items.count + viewModel.scorecardReprice.count)
@@ -1084,7 +1110,8 @@ struct FoodCostAnalyticsSection: View {
                     HStack(alignment: .center, spacing: CavnarSpace.m) {
                         if let suggested = s.suggestedPrice, !dismissed {
                             Button {
-                                Task { await viewModel.applyReprice(s) }
+                                Haptic.light()
+                                confirmingReprice = PendingReprice(suggestion: s, chosen: nil)
                             } label: {
                                 if busy {
                                     CavnarShimmerText(text: "Setting\u{2026}")
@@ -1093,10 +1120,12 @@ struct FoodCostAnalyticsSection: View {
                                      + Text(Self.price(suggested)).font(.cavnar(.figureS)))
                                 }
                             }
-                            // Demoted under a guard (memory round, "links").
-                            .buttonStyle(RepriceButtonStyle(guarded: s.repriceGuard != nil, isDisabled: busy))
+                            // Secondary (re-audit F5): the decision card's
+                            // step leads the page; a reprice is one of the
+                            // moves under it. Asked before it is set (F1).
+                            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy))
                             .disabled(busy)
-                            .accessibilityHint("Changes \(s.dish)'s menu price")
+                            .accessibilityHint("Asks before changing \(s.dish)'s menu price")
                         }
                         if let key = s.recKey {
                             RecAnswerRow(key: key, surface: "food", answers: [.notForUs],
@@ -1188,7 +1217,7 @@ struct FoodCostAnalyticsSection: View {
             if let typical = s.typicalPrice, !dismissed, !busy, !applied, typical != s.suggestedPrice {
                 Button {
                     Haptic.light()
-                    Task { await viewModel.applyReprice(s, price: typical) }
+                    confirmingReprice = PendingReprice(suggestion: s, chosen: typical)
                 } label: {
                     (Text("Set ") + Text(Self.price(typical)).font(.cavnar(.figureS)))
                         .cavnarText(.label, color: .cavnarEmber2)
@@ -1199,55 +1228,6 @@ struct FoodCostAnalyticsSection: View {
             }
         }
         .padding(.leading, CavnarSpace.xxs)
-    }
-
-    // MARK: - Price watch
-
-    private static let priceWatchShown = 3
-
-    private func priceWatchDetail(_ items: [PriceWatchItem]) -> some View {
-        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-            CavnarKicker("Price watch")
-            VStack(spacing: 0) {
-                ForEach(Array(items.prefix(Self.priceWatchShown).enumerated()), id: \.element.id) { index, item in
-                    if index > 0 { hairline }
-                    priceWatchRow(item)
-                }
-            }
-            if items.count > Self.priceWatchShown {
-                CavnarMoreDisclosure(hiddenCount: items.count - Self.priceWatchShown) {
-                    VStack(spacing: 0) {
-                        ForEach(Array(items.dropFirst(Self.priceWatchShown))) { item in
-                            hairline
-                            priceWatchRow(item)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func priceWatchRow(_ item: PriceWatchItem) -> some View {
-        let accent = item.isTrend ? Color.cavnarRed : Color.cavnarAmber
-        return HStack(alignment: .top, spacing: CavnarSpace.s) {
-            Rectangle().fill(accent).frame(width: 2.5)
-            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-                Text(item.item).cavnarText(.label)
-                Text("$\(String(format: "%.2f", item.oldPrice)) → $\(String(format: "%.2f", item.newPrice))")
-                    .cavnarText(.figureS, color: .cavnarInk2)
-                Text(item.actionHint)
-                    .cavnarText(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: CavnarSpace.xs)
-            VStack(alignment: .trailing, spacing: 2) {
-                // Sign from the value — a drop would have rendered "+-6%".
-                Text("\(item.changePct >= 0 ? "+" : "")\(String(format: "%.0f", item.changePct))%")
-                    .cavnarText(.figureS, color: item.isTrend ? .cavnarRedText : .cavnarAmber)
-                Text(item.timeframeLabel).cavnarText(.caption)
-            }
-        }
-        .padding(.vertical, CavnarSpace.s)
     }
 }
 

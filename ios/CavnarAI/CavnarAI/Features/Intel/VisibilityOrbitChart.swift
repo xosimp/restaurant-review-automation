@@ -16,6 +16,13 @@ struct VisibilityOrbitChart: View {
     var low: Int? = nil
     var high: Int? = nil
     var band: String? = nil
+    /// The score in the ring's centre. Off where the card already states the
+    /// score beside the ring (AI visibility's hero, re-audit I8): the ring
+    /// then carries only its "AI visibility" label.
+    var showsCenterFigure: Bool = true
+    /// An estimate, not a measurement: the ring in Ink2 at full strength,
+    /// not the ember glow — the chart used to be dimmed to 60% instead.
+    var muted: Bool = false
 
     private var delta: Int? {
         guard runs.count >= 2 else { return nil }
@@ -30,7 +37,7 @@ struct VisibilityOrbitChart: View {
     }
 
     var body: some View {
-        CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score.map(String.init) ?? "none")-\(runs.count)", ambient: true) { ctx, size, t, clock in
+        CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score.map(String.init) ?? "none")-\(runs.count)-\(muted)", ambient: true) { ctx, size, t, clock in
             draw(&ctx, size: size, t: t, clock: clock)
         }
         .accessibilityElement(children: .ignore)
@@ -74,20 +81,33 @@ struct VisibilityOrbitChart: View {
             var arc = Path()
             arc.addArc(center: center, radius: R, startAngle: .degrees(-90), endAngle: .degrees(-90 + sweep), clockwise: false)
             if sweep > 0.5 {
-                CavnarChart.glowStroke(&ctx, arc, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 10, blur: 8)
+                if muted {
+                    ctx.stroke(arc, with: .color(.cavnarInk2), style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                } else {
+                    CavnarChart.glowStroke(&ctx, arc, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 10, blur: 8)
+                }
             }
             let orbit = (-90 + sweep) * Double.pi / 180
             let dot = CGPoint(x: center.x + CGFloat(cos(orbit)) * R, y: center.y + CGFloat(sin(orbit)) * R)
-            let r = 5 + CGFloat(sin(clock * 3))
-            ctx.drawLayer { layer in
-                layer.addFilter(.shadow(color: cavnarEmberHot.opacity(0.9), radius: 8))
-                layer.fill(Path(ellipseIn: CGRect(x: dot.x - r, y: dot.y - r, width: r * 2, height: r * 2)), with: .color(cavnarEmberHot))
+            if !muted {
+                let r = 5 + CGFloat(sin(clock * 3))
+                ctx.drawLayer { layer in
+                    layer.addFilter(.shadow(color: cavnarEmberHot.opacity(0.9), radius: 8))
+                    layer.fill(Path(ellipseIn: CGRect(x: dot.x - r, y: dot.y - r, width: r * 2, height: r * 2)), with: .color(cavnarEmberHot))
+                }
             }
-            CavnarChart.text(&ctx, CavnarChart.number(Self.centerText(score, progress: s), size: 26, weight: 700), at: CGPoint(x: center.x, y: center.y - 4))
-            CavnarChart.text(&ctx, CavnarChart.kicker("AI visibility"), at: CGPoint(x: center.x, y: center.y + 15))
-        } else {
+            if showsCenterFigure {
+                CavnarChart.text(&ctx, CavnarChart.number(Self.centerText(score, progress: s), size: 26, weight: 700), at: CGPoint(x: center.x, y: center.y - 4))
+                CavnarChart.text(&ctx, CavnarChart.kicker("AI visibility"), at: CGPoint(x: center.x, y: center.y + 15))
+            } else {
+                CavnarChart.text(&ctx, CavnarChart.kicker("AI visibility", color: muted ? .cavnarInk2 : .cavnarEmber2),
+                                 at: CGPoint(x: center.x, y: center.y))
+            }
+        } else if showsCenterFigure {
             CavnarChart.text(&ctx, CavnarChart.number(Self.centerText(nil), size: 26, weight: 700, color: .cavnarInk3), at: CGPoint(x: center.x, y: center.y - 4))
             CavnarChart.text(&ctx, CavnarChart.kicker("Not measured", color: .cavnarInk3), at: CGPoint(x: center.x, y: center.y + 15))
+        } else {
+            CavnarChart.text(&ctx, CavnarChart.kicker("Not measured", color: .cavnarInk2), at: CGPoint(x: center.x, y: center.y))
         }
 
         // History — a trend needs two runs; until then the right half is

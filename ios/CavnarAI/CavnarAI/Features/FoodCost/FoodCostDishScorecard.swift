@@ -284,11 +284,26 @@ struct DishScorecardSheet: View {
         }
     }
 
+    /// A dish with a decision on the phone: a reprice (or its units check),
+    /// a Pass, or a move that changes the plate — Protect, Fix, Cut.
+    /// Promote, Review and "no move" are reading, and they are the web's
+    /// (re-audit F17: the whole-menu list is a table).
+    private func hasDecision(_ dish: DishScorecard.Dish) -> Bool {
+        dish.waitsOnUnits || dish.action == "reprice" || viewModel.suggestion(for: dish) != nil
+            || ["urgent", "fix", "cut"].contains(dish.action ?? "")
+    }
+
     private func list(_ card: DishScorecard) -> some View {
-        List {
+        let groups = card.groups.compactMap { g -> (title: String, dishes: [DishScorecard.Dish])? in
+            let ds = g.dishes.filter(hasDecision)
+            return ds.isEmpty ? nil : (g.title, ds)
+        }
+        let restCount = card.dishes.filter { !hasDecision($0) }.count
+        return List {
             Section {
                 VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                    Text("Every dish with a recipe and a price, grouped by the move it calls for.")
+                    Text(groups.isEmpty ? "Nothing on the menu needs a move from you right now."
+                         : "The dishes that need a move from you, grouped by the move.")
                         .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let note = card.note {
@@ -304,12 +319,12 @@ struct DishScorecardSheet: View {
                     }
                     // What each dish sold and what guests said — the
                     // numbers behind the moves — are a table for the web.
-                    CavnarWebLinkRow(title: "Every dish\u{2019}s numbers", subtitle: "Cost, sales and guest mentions for each",
-                                     path: "inventory/margins", actionLabel: "Open on the web")
+                    CavnarWebLinkRow(title: "Every dish\u{2019}s numbers", subtitle: restCount > 0 ? "\(restCount) more dish\(restCount == 1 ? "" : "es") to promote, review or keep, with cost, sales and guest mentions" : "Cost, sales and guest mentions for each",
+                                     path: "inventory/menu", actionLabel: "Open on the web")
                 }
                 .listRowBackground(Color.clear)
             }
-            ForEach(card.groups, id: \.title) { group in
+            ForEach(groups, id: \.title) { group in
                 Section {
                     ForEach(group.dishes) { dish in
                         row(dish)

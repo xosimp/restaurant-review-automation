@@ -288,6 +288,47 @@ final class RecipeDraftsViewModel {
         enum CodingKeys: String, CodingKey { case yield }
     }
 
+    // MARK: - Not right, with a short Undo (re-audit F12)
+
+    /// How long "Not right" waits before the draft is deleted, so Undo can
+    /// stop it.
+    static let undoSeconds: Double = 4
+    /// A draft the owner said is not right, hidden and waiting out its Undo.
+    var pendingReject: RecipeDraft?
+    private var rejectTask: Task<Void, Never>?
+
+    /// The drafts on screen — the one waiting out its Undo is hidden.
+    var visibleDrafts: [RecipeDraft] { drafts.filter { $0.id != pendingReject?.id } }
+
+    func rejectWithUndo(_ draft: RecipeDraft) {
+        // One at a time: an earlier "Not right" goes now.
+        commitPendingReject()
+        errorMessage = nil
+        lastMessage = nil
+        pendingReject = draft
+        rejectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(RecipeDraftsViewModel.undoSeconds))
+            guard !Task.isCancelled, let self else { return }
+            self.commitPendingReject()
+        }
+    }
+
+    func undoReject() {
+        rejectTask?.cancel()
+        rejectTask = nil
+        pendingReject = nil
+    }
+
+    /// Sends the waiting "Not right" now — its window ran out, or the sheet
+    /// is closing (Undo is a window, never a cancel).
+    func commitPendingReject() {
+        rejectTask?.cancel()
+        rejectTask = nil
+        guard let draft = pendingReject else { return }
+        pendingReject = nil
+        Task { await self.answer(draft, accept: false) }
+    }
+
     func answer(_ draft: RecipeDraft, accept: Bool, yield: Double? = nil) async {
         busyId = draft.id; errorMessage = nil
         defer { busyId = nil }
@@ -319,7 +360,12 @@ struct RecipeDraftsSheet: View {
     @State private var showingCamera = false
     /// The yield typed for each batch draft (H6), by draft id.
     @State private var yieldText: [Int: String] = [:]
+    /// Drafts whose every line is open.
+    @State private var linesExpanded: Set<Int> = []
     @Environment(\.dismiss) private var dismiss
+
+    /// Lines shown on a draft before "+N more".
+    private static let linesShown = 4
 
     /// The typed yield as a positive number, or nil.
     static func parsedYield(_ text: String?) -> Double? {
@@ -350,17 +396,23 @@ struct RecipeDraftsSheet: View {
                     if let m = viewModel.lastMessage {
                         CavnarMixedText(m, role: .body, color: .cavnarGreen)
                     }
+                    if let removed = viewModel.pendingReject {
+                        undoRow(removed)
+                    }
                     if viewModel.isLoading && viewModel.drafts.isEmpty {
                         CavnarWorkingLine().padding(.vertical, CavnarSpace.s)
-                    } else if viewModel.drafts.isEmpty {
+                    } else if viewModel.visibleDrafts.isEmpty && viewModel.pendingReject == nil {
                         Text("Every dish on your POS has a recipe, or drafts arrive Tuesday mornings for any that don't.")
                             .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
                             .cavnarCard()
                     } else {
-                        ForEach(viewModel.drafts) { draft in
-                            draftCard(draft, pinned: draft.id == viewModel.drafts.first?.id)
+                        ForEach(viewModel.visibleDrafts) { draft in
+                            draftCard(draft, pinned: draft.id == viewModel.visibleDrafts.first?.id)
                         }
+                        CavnarWebLinkRow(title: "Recipe drafts",
+                                         subtitle: "Every draft line by line, under This week\u{2019}s work",
+                                         path: "inventory", actionLabel: "Open on the web")
                     }
                     }
                 }
@@ -369,8 +421,8 @@ struct RecipeDraftsSheet: View {
             // The first draft's answer in thumb reach (iOS readability
             // round, 10/8/26); any others keep theirs on their cards.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if !viewModel.isSynced, let first = viewModel.drafts.first {
-                    CavnarPinnedBar(note: viewModel.drafts.count > 1 ? (first.menuItemName ?? "The first draft") : nil) {
+                if !viewModel.isSynced, let first = viewModel.visibleDrafts.first {
+                    CavnarPinnedBar(note: viewModel.visibleDrafts.count > 1 ? (first.menuItemName ?? "The first draft") : nil) {
                         answerButtons(first)
                     }
                 }
@@ -391,6 +443,8 @@ struct RecipeDraftsSheet: View {
                 }
             }
             .task { await viewModel.load() }
+            // A "Not right" still in its Undo window goes when the sheet does.
+            .onDisappear { viewModel.commitPendingReject() }
             .onChange(of: pickerItem) { _, item in
                 guard let item else { return }
                 Task {
@@ -480,7 +534,7 @@ struct RecipeDraftsSheet: View {
     private func draftCard(_ draft: RecipeDraft, pinned: Bool) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                Text(draft.menuItemName ?? "Dish #\(draft.menuItemId ?? 0)")
+                Text(Self.dishName(draft))
                     .cavnarText(.lead)
                 // Drafted from your ingredient list, not read off a card —
                 // an estimate until you accept it (H6).
@@ -500,8 +554,13 @@ struct RecipeDraftsSheet: View {
                              detail: warnings.joined(separator: " \u{00B7} ")
                                 + ". These lines are left out when you accept; add them by hand.")
             }
+            // The first few lines, the rest behind "+N more"; changing a
+            // line is the web's (re-audit F17). Accept and Not right stay.
+            // A line marked for a look never hides behind the fold.
+            let flaggedBelow = draft.lines.dropFirst(Self.linesShown).contains { $0.mark != nil || $0.unitUnconverted }
+            let linesOpen = flaggedBelow || linesExpanded.contains(draft.id)
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(draft.lines) { line in
+                ForEach(Array(draft.lines.prefix(linesOpen ? draft.lines.count : Self.linesShown))) { line in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 8) {
                             Text(line.name).cavnarText(.secondary)
@@ -532,6 +591,12 @@ struct RecipeDraftsSheet: View {
                             CavnarMixedText(card, role: .caption)
                         }
                     }
+                }
+                if draft.lines.count > Self.linesShown && !flaggedBelow {
+                    CavnarMoreToggle(hiddenCount: draft.lines.count - Self.linesShown,
+                                     isExpanded: Binding(
+                                        get: { linesExpanded.contains(draft.id) },
+                                        set: { if $0 { linesExpanded.insert(draft.id) } else { linesExpanded.remove(draft.id) } }))
                 }
             }
             // A batch card never said how many plates it makes: its lines
@@ -567,7 +632,8 @@ struct RecipeDraftsSheet: View {
         let blockedOnYield = draft.requiresYield && typedYield == nil
         Button {
             Haptic.light()
-            Task { await viewModel.answer(draft, accept: false) }
+            // Deletes the draft — after a short Undo (re-audit F12).
+            viewModel.rejectWithUndo(draft)
         } label: {
             Text("Not right").frame(maxWidth: .infinity)
         }
@@ -581,6 +647,30 @@ struct RecipeDraftsSheet: View {
         }
         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.busyId == draft.id || blockedOnYield))
         .disabled(viewModel.busyId == draft.id || blockedOnYield)
+    }
+
+    /// The dish's name, never an internal id ("Dish #412" was one).
+    static func dishName(_ draft: RecipeDraft) -> String {
+        if let name = draft.menuItemName?.trimmingCharacters(in: .whitespaces), !name.isEmpty { return name }
+        return "A dish without a name"
+    }
+
+    /// "Mac and cheese draft removed · Undo" while the delete waits.
+    private func undoRow(_ draft: RecipeDraft) -> some View {
+        HStack(spacing: CavnarSpace.s) {
+            CavnarMixedText("\(Self.dishName(draft)) draft removed", role: .label)
+            Spacer(minLength: CavnarSpace.xs)
+            Button {
+                Haptic.light()
+                viewModel.undoReject()
+            } label: {
+                Text("Undo").frame(minWidth: 88)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .accessibilityHint("Brings the draft back")
+        }
+        .frame(minHeight: 44)
+        .cavnarCard()
     }
 
     private static func qty(_ q: Double) -> String {

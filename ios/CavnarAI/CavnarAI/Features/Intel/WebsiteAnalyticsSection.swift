@@ -58,7 +58,7 @@ struct WebsiteAnalyticsSection: View {
             VStack(alignment: .leading, spacing: 0) {
                 CavnarWebLinkRow(title: "Visits, sources and searches",
                                  subtitle: "The daily chart, where visits came from, clicks and Google searches",
-                                 path: "marketing", actionLabel: "Open on the web")
+                                 path: "marketing/website", actionLabel: "Open on the web")
                 CavnarWebLinkRow(title: "Website connection", subtitle: "Google Analytics and Search Console",
                                  path: "account/integrations")
             }

@@ -51,8 +51,8 @@ struct IntelView: View {
     @State private var expandedCompetitors: Set<String> = []
     /// Recommendations whose evidence and Ask link are open.
     @State private var expandedRecs: Set<String> = []
-    /// The AI intro past its first three lines.
-    @State private var introExpanded = false
+    /// The market sections (doing well / poorly / price) opened.
+    @State private var showingMarketRead = false
     /// Every competitor, not just the five nearest.
     @State private var showingAllCompetitors = false
     /// The notes on how far the ratings compare (caveat, staleness).
@@ -222,7 +222,7 @@ struct IntelView: View {
 
     @ViewBuilder
     private func content(_ summary: IntelSummary) -> some View {
-        statRow(summary)
+        statRow(summary, showsLine: !Self.showsAnswerCard(summary))
             .opacity(contentAppeared ? 1 : 0)
             .offset(y: contentAppeared ? 0 : 20)
             .animation(.easeOut(duration: 0.5), value: contentAppeared)
@@ -242,8 +242,8 @@ struct IntelView: View {
                 contentAppeared = true
             }
 
-        if let intro = summary.intro, !intro.isEmpty {
-            heroInsight(intro, ownerName: summary.ownerName)
+        if Self.showsAnswerCard(summary) {
+            answerCard(summary)
                 .opacity(contentAppeared ? 1 : 0)
                 .offset(y: contentAppeared ? 0 : 20)
                 .animation(.easeOut(duration: 0.5).delay(0.15), value: contentAppeared)
@@ -253,7 +253,7 @@ struct IntelView: View {
         // readability round, 10/8/26): they drew every competitor's rating
         // a second time, beside the list below that already carries it.
 
-        if !summary.sections.isEmpty || !summary.displayRecommendations.isEmpty
+        if !summary.sections.isEmpty || summary.displayRecommendations.count > 1
             || summary.emptyRecommendationsNote != nil {
             marketAnalysisGroup(summary)
                 // Continues the same fade/rise sequence statRow (0s) and
@@ -274,59 +274,77 @@ struct IntelView: View {
         }
     }
 
-    // MARK: - Hero insight — this is the AI's own opening line, and it's
-    // meant to be the one sentence on this page that actually grabs you,
-    // not unattributed body copy sitting quietly at the top. No kicker,
-    // no icon, no accent bar — just size and the owner's name in the
-    // brand's own ember, same treatment Home's own greeting headline uses
-    // for the exact same reason (HomeView.heroHeadline).
+    // MARK: - The answer (re-audit I6)
+    //
+    // Where you stand and the one thing to do, on the answer card's anatomy:
+    // the standing is the headline, the top recommendation the action with
+    // its answer row, its confidence only when the server sent one, and
+    // Cavnar AI's paragraph — greeting stripped — behind "See the evidence".
+    // It used to open on that paragraph ("Hi Brian, here is your…") at
+    // three lines with a "Read more" that never appeared at large type.
 
-    private func heroInsight(_ intro: String, ownerName: String?) -> some View {
-        // The real AI prompt opens with "Hi {name}, here is your..." — a
-        // plain hasPrefix(ownerName) check misses it since the sentence
-        // starts with "Hi ", not the name itself. Search a short leading
-        // window instead of anchoring to the very first character, so
-        // "Hi Brian," and a bare "Brian," (this screen's demo copy before
-        // real API access) both highlight correctly — capped at 20 chars
-        // so a name that happens to reappear later in a long insight
-        // doesn't get matched instead.
-        let leadingWindow = intro.prefix(20)
-        let nameRange = ownerName.flatMap { name -> Range<String.Index>? in
-            guard !name.isEmpty else { return nil }
-            return leadingWindow.range(of: name)
-        }
+    static func showsAnswerCard(_ s: IntelSummary) -> Bool {
+        !(s.intro ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !s.displayRecommendations.isEmpty
+    }
 
-        let text = Group {
-            if let nameRange {
-                (Text(String(intro[intro.startIndex..<nameRange.lowerBound])).foregroundStyle(Color.cavnarInk2)
-                    + Text(String(intro[nameRange])).foregroundStyle(Color.cavnarEmber)
-                    + Text(String(intro[nameRange.upperBound...])).foregroundStyle(Color.cavnarInk2))
-            } else {
-                Text(intro).foregroundStyle(Color.cavnarInk2)
+    /// The standing as a sentence: the hero line, capitalised.
+    static func standingHeadline(_ s: IntelSummary) -> String {
+        let count = s.competitors.count
+        let market = s.marketRating
+            ?? (count > 0 ? s.competitors.reduce(0.0) { $0 + $1.rating } / Double(count) : nil)
+        let line = heroLine(s, market: count > 0 ? market : nil, nearby: count)
+        return line.prefix(1).uppercased() + line.dropFirst()
+    }
+
+    /// The model's paragraph without its greeting: "Hi Brian, here is your
+    /// read…" → "Here is your read…". A bare "Brian, …" opening goes too.
+    static func strippedGreeting(_ intro: String, ownerName: String?) -> String {
+        var s = intro.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let r = s.range(of: #"^(hi|hello|hey|good (morning|afternoon|evening))\b[^,.!\n]{0,40}[,.!]\s*"#,
+                           options: [.regularExpression, .caseInsensitive]) {
+            s.removeSubrange(r)
+        } else if let name = ownerName?.trimmingCharacters(in: .whitespaces), !name.isEmpty,
+                  s.lowercased().hasPrefix(name.lowercased()) {
+            let rest = s.dropFirst(name.count)
+            if let first = rest.first, first == "," || first == "!" || first == "." {
+                s = String(rest.dropFirst()).trimmingCharacters(in: .whitespaces)
             }
         }
-        // Lead size (density #35): a paragraph of AI prose at 22pt Clash was
-        // the heaviest text on the screen, louder than the standing above.
-        // Three lines, then "Read more" (iOS readability round, 10/8/26):
-        // it ran the whole paragraph above the standing's reasons.
-        .font(.cavnar(.lead))
-        .lineSpacing(CavnarText.lead.lineSpacing)
-        .lineLimit(introExpanded ? nil : 3)
-        .fixedSize(horizontal: false, vertical: true)
+        guard let first = s.first else { return intro }
+        return first.uppercased() + s.dropFirst()
+    }
 
-        return VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-            text
-            if intro.count > 160 {
-                Button {
-                    Haptic.light()
-                    withAnimation(.easeOut(duration: 0.2)) { introExpanded.toggle() }
-                } label: {
-                    Text(introExpanded ? "Show less" : "Read more")
-                        .cavnarText(.label, color: .cavnarEmber2)
-                        .cavnarHitTarget()
+    private func answerCard(_ summary: IntelSummary) -> some View {
+        let top = summary.displayRecommendations.first
+        let paragraph = (summary.intro?.isEmpty == false)
+            ? Self.strippedGreeting(summary.intro ?? "", ownerName: summary.ownerName) : nil
+        return CavnarAnswerCard(
+            kicker: "Where you stand",
+            headline: Self.standingHeadline(summary),
+            headlineRole: .headline,
+            confidence: top?.confidence.map {
+                ConfidenceLine(confidence: $0, recKey: top?.key, surface: "intel", module: "intel")
+            },
+            detailLabel: "See the evidence"
+        ) {
+            if let top {
+                (Text("Do this first: ").font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
+                 + HomeMixedText.make(top.text, role: .body))
+                    .lineSpacing(CavnarText.body.lineSpacing)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let key = top.key {
+                    RecAnswerRow(key: key, surface: "intel")
                 }
-                .buttonStyle(.plain)
-                .accessibilityValue(introExpanded ? "Expanded" : "Collapsed")
+            }
+        } detail: {
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if let paragraph {
+                    CavnarMixedText(paragraph, role: .body, color: .cavnarInk2)
+                }
+                if let top {
+                    recEvidence(top)
+                }
             }
         }
     }
@@ -346,10 +364,10 @@ struct IntelView: View {
                 ClaimKindTag(kind: summary.claimKinds?["sections"])
             }
 
-            // What to do comes first, directly under the rating bars
-            // (density #35); the analysis it rests on follows.
-            if !summary.displayRecommendations.isEmpty {
-                recommendationsSection(summary.displayRecommendations)
+            // What else to do comes first (density #35) — the top line is
+            // the answer card's action above (I6); the analysis follows.
+            if summary.displayRecommendations.count > 1 {
+                recommendationsSection(Array(summary.displayRecommendations.dropFirst()), firstNumber: 2)
             } else if let note = summary.emptyRecommendationsNote {
                 // An empty list is explained, never left blank: held back
                 // because the read carried something unverified, or
@@ -359,8 +377,34 @@ struct IntelView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            ForEach(summary.sections) { section in
-                marketSection(section)
+            // The doing-well / doing-poorly / price read is the evidence
+            // behind the moves, so it waits behind one tap (re-audit I15);
+            // the moves stay out.
+            if !summary.sections.isEmpty {
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.22)) { showingMarketRead.toggle() }
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs + 2) {
+                        Text(showingMarketRead ? "Hide the market read" : "What the market is doing")
+                            .cavnarText(.label, color: .cavnarEmber2)
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .rotationEffect(.degrees(showingMarketRead ? 180 : 0))
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(showingMarketRead ? "Expanded" : "Collapsed")
+                if showingMarketRead {
+                    ForEach(summary.sections) { section in
+                        marketSection(section)
+                    }
+                    .transition(.opacity)
+                }
             }
         }
         .padding(.vertical, CavnarSpace.m)
@@ -388,7 +432,9 @@ struct IntelView: View {
     /// equal tiles (Tracked / Market avg / You) and the owner had to compare
     /// two of them to learn where they stood; "Tracked: 6" weighed the same
     /// as their own rating. The rating is the screen's one 40pt figure.
-    private func statRow(_ summary: IntelSummary) -> some View {
+    /// `showsLine`: the standing sentence under the figure — off when the
+    /// answer card below carries it as its headline (re-audit I6).
+    private func statRow(_ summary: IntelSummary, showsLine: Bool = true) -> some View {
         let count = summary.competitors.count
         // Volume-weighted, computed server-side. The old figure was a flat
         // mean over competitor ratings, so a twelve-review venue counted as
@@ -408,15 +454,18 @@ struct IntelView: View {
                 VStack(spacing: 4) {
                     ratingText(own, numberSize: CavnarType.heroNumber, tone: tone)
                         .cavnarSensitive()
-                    HomeMixedText.make(line, size: CavnarType.body, weight: 700,
-                                       color: tone == .cavnarInk ? .cavnarInk2 : tone)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if showsLine {
+                        // The label role, not a literal bold body (I13).
+                        HomeMixedText.make(line, role: .label,
+                                           color: tone == .cavnarInk ? .cavnarInk2 : tone)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .accessibilityElement(children: .combine)
-            } else {
-                HomeMixedText.make(line, size: CavnarType.body, weight: 700, color: .cavnarInk2)
+            } else if showsLine {
+                HomeMixedText.make(line, role: .label, color: .cavnarInk2)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
             }
@@ -457,6 +506,20 @@ struct IntelView: View {
         }
         guard summary.ratingsAreComparable else { return .cavnarInk }
         return own >= market ? .cavnarGreen : (own >= market - 0.3 ? .cavnarAmber : .cavnarRed)
+    }
+
+    /// The owner's rating to judge each competitor row against — or nil, and
+    /// the rows say no "ahead"/"behind" and draw no green or red accent
+    /// (re-audit I1). The same guard as the hero (ownRatingTone): the
+    /// server's standing when it sent one, and nothing when it declined to
+    /// compare; only an older server with no standing falls back to whether
+    /// the two ratings are the same kind.
+    static func comparableOwnRating(_ summary: IntelSummary) -> Double? {
+        guard let own = summary.ownRating else { return nil }
+        if summary.standingTone != nil || summary.standing != nil {
+            return summary.standing != nil ? own : nil
+        }
+        return summary.ratingsAreComparable ? own : nil
     }
 
     /// Number at the given size, star smaller — was one Text with "%.1f★"
@@ -529,17 +592,17 @@ struct IntelView: View {
     /// three, each with its answer row; the reviews it rests on and "Ask
     /// about this" are behind "See the evidence" (iOS readability round,
     /// 10/8/26: each carried four controls in a row).
-    private func recommendationsSection(_ recommendations: [IntelRecommendation]) -> some View {
+    private func recommendationsSection(_ recommendations: [IntelRecommendation], firstNumber: Int = 1) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
-            CavnarKicker("What to do", icon: "bolt.fill")
+            CavnarKicker(firstNumber > 1 ? "More to do" : "What to do", icon: "bolt.fill")
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 ForEach(Array(recommendations.prefix(Self.recsShown).enumerated()), id: \.element.id) { index, rec in
-                    recommendationRow(rec, number: index + 1)
+                    recommendationRow(rec, number: index + firstNumber)
                 }
                 if recommendations.count > Self.recsShown {
                     CavnarMoreDisclosure(hiddenCount: recommendations.count - Self.recsShown) {
                         ForEach(Array(recommendations.dropFirst(Self.recsShown).enumerated()), id: \.element.id) { index, rec in
-                            recommendationRow(rec, number: index + 1 + Self.recsShown)
+                            recommendationRow(rec, number: index + firstNumber + Self.recsShown)
                         }
                     }
                 }
@@ -563,6 +626,12 @@ struct IntelView: View {
                 Text(rec.text)
                     .cavnarText(.body, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
+                // How sure, as the server measured it (re-audit I7). The
+                // payload carries no expected outcome for an Intel line, so
+                // none is shown — never one written on the phone.
+                if let c = rec.confidence {
+                    ConfidenceLine(confidence: c, recKey: rec.key, surface: "intel", module: "intel")
+                }
                 if let key = rec.key {
                     RecAnswerRow(key: key, surface: "intel")
                 }
@@ -589,28 +658,12 @@ struct IntelView: View {
                     .buttonStyle(.plain)
                     .accessibilityValue(open ? "Expanded" : "Collapsed")
                     if open {
-                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                            if let cites = rec.cites, !cites.isEmpty {
-                                CavnarMixedText("Reviews this rests on (\(cites.count))", role: .label, color: .cavnarInk2)
-                                ForEach(cites) { cite in
-                                    citeRow(cite)
-                                }
+                        recEvidence(rec)
+                            .padding(.leading, CavnarSpace.xs)
+                            .overlay(alignment: .leading) {
+                                Rectangle().fill(Color.cavnarInk3.opacity(0.6)).frame(width: 1)
                             }
-                            if let key = rec.key {
-                                // The web's "Ask about this" on each Intel
-                                // recommendation: the same question, with the
-                                // recommendation (its rec key) as the screen.
-                                HomeAskLink(
-                                    question: "About this Intel recommendation: \(rec.text)",
-                                    screen: AskScreen(panel: "competitor", entityType: "rec", entityId: key)
-                                )
-                            }
-                        }
-                        .padding(.leading, CavnarSpace.xs)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(Color.cavnarInk3.opacity(0.6)).frame(width: 1)
-                        }
-                        .transition(.opacity)
+                            .transition(.opacity)
                     }
                 }
             }
@@ -620,6 +673,29 @@ struct IntelView: View {
         .padding(.horizontal, 10)
         .background(Color.cavnarEmber.opacity(0.09))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// The reviews a recommendation rests on and "Ask about this" — under a
+    /// row's "See the evidence", and in the answer card's.
+    @ViewBuilder
+    private func recEvidence(_ rec: IntelRecommendation) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            if let cites = rec.cites, !cites.isEmpty {
+                CavnarMixedText("Reviews this rests on (\(cites.count))", role: .label, color: .cavnarInk2)
+                ForEach(cites) { cite in
+                    citeRow(cite)
+                }
+            }
+            if let key = rec.key {
+                // The web's "Ask about this" on each Intel
+                // recommendation: the same question, with the
+                // recommendation (its rec key) as the screen.
+                HomeAskLink(
+                    question: "About this Intel recommendation: \(rec.text)",
+                    screen: AskScreen(panel: "competitor", entityType: "rec", entityId: key)
+                )
+            }
+        }
     }
 
     /// competitor · 4★ · 2 weeks ago — "text"
@@ -687,7 +763,7 @@ struct IntelView: View {
                                     GridItem(.flexible(), alignment: .top)], spacing: 0) {
                     ForEach(Array(shown.enumerated()), id: \.element.id) { index, c in
                         VStack(spacing: 0) {
-                            competitorRow(c, ownRating: summary.ownRating)
+                            competitorRow(c, ownRating: Self.comparableOwnRating(summary))
                             if index < shown.count - (shown.count.isMultiple(of: 2) ? 2 : 1) {
                                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
                                     .padding(.leading, 14)
@@ -698,7 +774,7 @@ struct IntelView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(shown.enumerated()), id: \.element.id) { index, c in
-                        competitorRow(c, ownRating: summary.ownRating)
+                        competitorRow(c, ownRating: Self.comparableOwnRating(summary))
                         if index < shown.count - 1 {
                             Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
                                 .padding(.leading, 14)

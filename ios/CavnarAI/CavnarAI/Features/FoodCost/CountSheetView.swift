@@ -356,6 +356,25 @@ final class CountSheetViewModel {
     /// "12 of 48 changed".
     var progressLine: String { "\(editedCount) of \(items.count) changed" }
 
+    /// Lines the owner has been through in the walk-in — stepped, typed, or
+    /// moved past with the count as it stood (re-audit F15). A line that
+    /// matches the shelf is counted too; progress used to move only when a
+    /// figure changed, so a walk-in that agreed with the ledger read 0 done.
+    var checked: Set<Int> = []
+
+    func markChecked(_ id: Int) { checked.insert(id) }
+
+    /// Lines checked or changed, out of the sheet.
+    var checkedCount: Int {
+        items.filter { checked.contains($0.ingredientId)
+            || (counts[$0.ingredientId] ?? "") != Self.expectedString($0.expected) }.count
+    }
+
+    /// "12 of 48 checked · 3 changed".
+    var walkInProgressLine: String {
+        "\(checkedCount) of \(items.count) checked \u{00B7} \(editedCount) changed"
+    }
+
     /// ±1 from what the line says now (or the ledger's figure), never below 0.
     func step(_ id: Int, by delta: Double) {
         let base = Double(counts[id] ?? "") ?? items.first(where: { $0.ingredientId == id })?.expected ?? 0
@@ -377,6 +396,7 @@ final class CountSheetViewModel {
         applying = true
         counts = Dictionary(uniqueKeysWithValues: items.map { ($0.ingredientId, Self.expectedString($0.expected)) })
         applying = false
+        checked = []
         CountSheetDraft.clear()
         restoredAt = nil
     }
@@ -806,7 +826,7 @@ struct CountSheetView: View {
 // MARK: - Walk-in count mode (parity audit #41)
 
 /// The count, full screen, for the walk-in: search the sheet, big −/+
-/// steppers, Next moves to the next line, and "12 of 48 changed" at the
+/// steppers, Next moves to the next line, and "12 of 48 checked · 3 changed" at the
 /// top. Every change lands in the same view model (and its draft on the
 /// phone), so leaving this screen never loses a figure.
 struct WalkInCountView: View {
@@ -841,7 +861,10 @@ struct WalkInCountView: View {
                     .padding(.horizontal, CavnarSpace.m)
                     .padding(.vertical, CavnarSpace.s)
                 }
-                .onChange(of: focused) { _, id in
+                .onChange(of: focused) { old, id in
+                    // Moving off a line — Next, Done or another line —
+                    // confirms it as counted, changed or not (F15).
+                    if let old { viewModel.markChecked(old) }
                     guard let id else { return }
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
                 }
@@ -899,7 +922,7 @@ struct WalkInCountView: View {
         let total = max(viewModel.items.count, 1)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(viewModel.progressLine).cavnarText(.figureS)
+                CavnarMixedText(viewModel.walkInProgressLine, role: .label)
                 Spacer()
                 Text("Change only what\u{2019}s different").cavnarText(.caption)
             }
@@ -908,8 +931,8 @@ struct WalkInCountView: View {
                     Capsule().fill(Color.cavnarPaper3.opacity(0.6))
                     Capsule().fill(LinearGradient(colors: [Color.cavnarEmber, Color.cavnarEmber2],
                                                   startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(4, geo.size.width * CGFloat(viewModel.editedCount) / CGFloat(total)))
-                        .animation(.easeOut(duration: 0.25), value: viewModel.editedCount)
+                        .frame(width: max(4, geo.size.width * CGFloat(viewModel.checkedCount) / CGFloat(total)))
+                        .animation(.easeOut(duration: 0.25), value: viewModel.checkedCount)
                 }
             }
             .frame(height: 6)
@@ -930,7 +953,10 @@ struct WalkInCountView: View {
                                 role: .caption)
             }
             HStack(spacing: 12) {
-                stepButton("minus", label: "One less \(it.name)") { viewModel.step(it.ingredientId, by: -1) }
+                stepButton("minus", label: "One less \(it.name)") {
+                    viewModel.step(it.ingredientId, by: -1)
+                    viewModel.markChecked(it.ingredientId)
+                }
                 TextField(expected.isEmpty ? "0" : expected, text: Binding(
                     get: { viewModel.counts[it.ingredientId] ?? "" },
                     set: { viewModel.counts[it.ingredientId] = $0 }))
@@ -942,7 +968,10 @@ struct WalkInCountView: View {
                     .background(Color.cavnarPaper3.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .focused($focused, equals: it.ingredientId)
                     .accessibilityLabel("Count for \(it.name)")
-                stepButton("plus", label: "One more \(it.name)") { viewModel.step(it.ingredientId, by: 1) }
+                stepButton("plus", label: "One more \(it.name)") {
+                    viewModel.step(it.ingredientId, by: 1)
+                    viewModel.markChecked(it.ingredientId)
+                }
             }
         }
         .padding(14)

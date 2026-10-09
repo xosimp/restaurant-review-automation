@@ -116,7 +116,7 @@ struct PendingInvoice: Decodable, Identifiable {
 final class InvoiceScanViewModel {
     /// The owner's working copy of each line: include it, which ingredient,
     /// what cost. Seeded from the server's proposal.
-    struct Choice {
+    struct Choice: Equatable {
         var include: Bool
         var ingredientId: Int?
         var cost: String
@@ -124,6 +124,15 @@ final class InvoiceScanViewModel {
 
     var invoice: ScannedInvoice?
     var choices: [Int: Choice] = [:]
+    /// The proposal as it was put on screen — what `choices` started as.
+    private(set) var seededChoices: [Int: Choice] = [:]
+
+    /// Lines ticked, unticked or re-costed and not yet sent (re-audit F2):
+    /// closing the sheet would lose them, so it asks first.
+    var hasUnsavedEdits: Bool {
+        guard invoice != nil, appliedCount == nil, !isApplying else { return false }
+        return choices != seededChoices
+    }
     var isScanning = false
     var isApplying = false
     var errorMessage: String?
@@ -298,6 +307,7 @@ final class InvoiceScanViewModel {
                                 ingredientId: line.ingredientId,
                                 cost: line.proposedCost.map { Self.costString($0) } ?? ""))
         })
+        seededChoices = choices
     }
 
     // MARK: - Pending invoices (U2-2)
@@ -512,6 +522,8 @@ struct InvoiceScanSheet: View {
     @State private var didAutoOpenCamera = false
     /// Files — a supplier's emailed PDF (parity audit #43).
     @State private var importingFile = false
+    /// Done pressed with lines changed and not sent (re-audit F2).
+    @State private var confirmingLeave = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -559,12 +571,23 @@ struct InvoiceScanSheet: View {
                 cavnarToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptic.light()
-                        dismiss()
+                        if viewModel.hasUnsavedEdits { confirmingLeave = true } else { dismiss() }
                     } label: {
                         Text("Done").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
+            }
+            // Ticked lines and typed costs are never lost to a swipe: with
+            // edits on screen the sheet closes only through Done, which asks
+            // (re-audit F2, as the count sheet does).
+            .interactiveDismissDisabled(viewModel.hasUnsavedEdits)
+            .confirmationDialog("Leave without updating costs?", isPresented: $confirmingLeave,
+                                titleVisibility: .visible) {
+                Button("Discard changes", role: .destructive) { dismiss() }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text("The lines you ticked and the costs you changed aren\u{2019}t saved. The invoice stays in Waiting on you.")
             }
             .onChange(of: pickerItem) { _, item in
                 guard let item else { return }

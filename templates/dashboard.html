@@ -14223,7 +14223,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     {# Your website (web_analytics, 10/2/26): the site's Google Analytics and
        Search Console, read every morning; what moved and what else happened
        that day - moved together, never "caused". Filled by loadMktWebsite. #}
-    <section class="hb-card wa-site" id="mkt-web" aria-labelledby="mkt-web-h" style="margin-bottom:16px">
+    <section class="hb-card wa-site" id="mkt-web" data-nav="marketing/website" aria-labelledby="mkt-web-h" style="margin-bottom:16px">
       <div class="hb-kicker" id="mkt-web-h">Your website</div>
       <div id="mkt-web-body"><div class="hb-load mkt-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="48" height="48" style="width:48px;height:48px"></canvas><span>Reading your website…</span></div></div>
     </section>
@@ -14607,7 +14607,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {% endif %}
 
   <!-- ── AI visibility ── -->
-  <div id="in2-aiv">
+  <div id="in2-aiv" data-nav="intel/visibility">
     <div id="aiv-card"><div id="aiv-body">
     <div class="in2-pre" id="aiv-idle">
       <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?</h2>
