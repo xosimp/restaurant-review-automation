@@ -730,6 +730,17 @@ struct StaffStats: Codable {
         guard overtime?.applies == true, let m = overtime?.message, !m.isEmpty else { return nil }
         return m
     }
+
+    /// Today's hours meter (re-audit V1): the week's hours — the server's
+    /// projection when it has one, else what's scheduled — against the
+    /// overtime line. Only when overtime applies (never for a salaried
+    /// person) and the line is known; nil otherwise, never a made-up 40.
+    var overtimeMeter: (hours: Double, line: Double, projected: Bool)? {
+        guard overtime?.applies == true, let line = overtime?.lineHours, line > 0, line.isFinite else { return nil }
+        if let p = overtime?.projectedHours, p >= 0, p.isFinite { return (p, line, true) }
+        if let s = scheduled?.hours, s >= 0, s.isFinite { return (s, line, false) }
+        return nil
+    }
 }
 
 /// GET /staff/api/earnings (B6 H11): the caller's own punches and tips as
@@ -774,10 +785,30 @@ struct StaffEarnings: Codable {
 
     /// The newest finished shift with its tips — what Today's tile shows.
     /// Nil when the POS isn't connected or nothing is in yet (never $0
-    /// standing in for "unknown").
+    /// standing in for "unknown"), and nil when no shift in the window
+    /// carried a tip at all (re-audit M2): the server sends 0 for a punch
+    /// with no tips, so a cook or a host saw "Tips $0" every day.
     var lastShift: Shift? {
         guard available == true else { return nil }
-        return (shifts ?? []).first { $0.stillOpen != true && $0.tipsTotal != nil }
+        let finished = (shifts ?? []).filter { $0.stillOpen != true && $0.tipsTotal != nil }
+        guard finished.contains(where: { ($0.tipsTotal ?? 0) > 0 }) else { return nil }
+        return finished.first
+    }
+
+    /// The one line Today shows when there is no tips tile (re-audit M1):
+    /// the POS-lag note only while the POS is connected and nothing is in
+    /// yet; the server's own reason when it can't tell which punches are
+    /// this person's (not on file, or two people with the name); nothing
+    /// when the restaurant's POS isn't connected, or the person's punches
+    /// simply carry no tips.
+    var missingTipsLine: String? {
+        guard lastShift == nil else { return nil }
+        if available == true {
+            guard (shifts ?? []).isEmpty, let lag = lagNote, !lag.isEmpty else { return nil }
+            return lag
+        }
+        if available == false, reason != "pos_not_connected", let m = message, !m.isEmpty { return m }
+        return nil
     }
 }
 

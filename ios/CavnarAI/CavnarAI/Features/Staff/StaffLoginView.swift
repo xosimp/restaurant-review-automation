@@ -30,6 +30,9 @@ struct StaffLoginView: View {
     @State private var search = ""
     @State private var pin = ""
     @State private var error: String?
+    /// The server refused the PIN itself — the only error that turns the
+    /// dots red (re-audit L16); a network or roster failure doesn't.
+    @State private var pinRefused = false
     @State private var shake = 0
     @State private var loading = false
     @State private var showingSignup = false
@@ -59,8 +62,7 @@ struct StaffLoginView: View {
 
             if let onClose {
                 Button("Close", action: onClose)
-                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.label, color: .cavnarInk2)
                     .frame(minWidth: 44, minHeight: 44)
                     .padding(.horizontal, 12)
                     .contentShape(Rectangle())
@@ -90,8 +92,7 @@ struct StaffLoginView: View {
                 .foregroundStyle(Color.cavnarInk)
                 .accessibilityAddTraits(.isHeader)
             Text("It's on the poster in the back, or ask your manager. This phone remembers it.")
-                .font(.cavnarBody(CavnarType.body))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
 
             TextField("Restaurant code", text: $portalCode)
                 .textInputAutocapitalization(.characters)
@@ -126,8 +127,7 @@ struct StaffLoginView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(saved.restaurant.isEmpty ? saved.code : saved.restaurant)
-                                    .font(.cavnarBody(CavnarType.body, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk)
+                                    .cavnarText(.label)
                                 if let name = saved.employeeName {
                                     Text(name)
                                         .font(.cavnarBody(CavnarType.caption))
@@ -176,8 +176,7 @@ struct StaffLoginView: View {
                 .accessibilityElement(children: .combine)
             } else if rosterLoaded && roster.isEmpty {
                 Text("Nobody has a PIN here yet. If you're new, create your account below.")
-                    .font(.cavnarBody(CavnarType.body))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.body)
             }
 
             StaffErrorLine(text: error)
@@ -218,8 +217,7 @@ struct StaffLoginView: View {
                 error = nil
                 step = .code
             }
-            .font(.cavnarBody(CavnarType.secondary))
-            .foregroundStyle(Color.cavnarInk3)
+            .cavnarText(.label, color: .cavnarInk2)
             .frame(maxWidth: .infinity, minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -255,7 +253,7 @@ struct StaffLoginView: View {
 
             StaffNoticeLine(text: staff.signInNotice)
 
-            StaffPinField(pin: $pin, isError: error != nil, shakeTrigger: shake, disabled: loading)
+            StaffPinField(pin: $pin, isError: pinRefused && error != nil, shakeTrigger: shake, disabled: loading)
 
             StaffErrorLine(text: error, centered: true)
 
@@ -278,7 +276,7 @@ struct StaffLoginView: View {
                 .contentShape(Rectangle())
         }
         .onChange(of: pin) { _, value in
-            if !value.isEmpty, error != nil { error = nil }
+            if !value.isEmpty, error != nil { error = nil; pinRefused = false }
         }
     }
 
@@ -302,8 +300,7 @@ struct StaffLoginView: View {
     private var ownerDoor: some View {
         if let onOwnerSignIn {
             Button("Owner or manager? Sign in here", action: onOwnerSignIn)
-                .font(.cavnarBody(CavnarType.caption, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.label, color: .cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
                 .padding(.top, 20)
@@ -421,10 +418,12 @@ struct StaffLoginView: View {
                                     name: person.name, restaurant: restaurantName)
         if ok {
             Haptic.success()
+            pinRefused = false
         } else {
             Haptic.error()
             pin = ""
             error = staff.lastError
+            pinRefused = staff.lastErrorWasPin
             shake += 1
         }
     }

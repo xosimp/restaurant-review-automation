@@ -114,6 +114,8 @@ struct StaffTaskSheetsSection: View {
             library = nil
             Task {
                 guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+                    // Said, never a silent nothing (re-audit L15).
+                    store.banner = "That photo couldn\u{2019}t be read. Try another, or take one."
                     return
                 }
                 await store.sendPhoto(image, sheet: ref.sheet, line: ref.line)
@@ -176,10 +178,18 @@ struct StaffTaskSheetsSection: View {
         Button {
             Task { await store.load() }
         } label: {
-            Text(store.isLoading ? "Checking" : "Try again")
-                .cavnarText(.label, color: .cavnarEmber2)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+            // While it reads: the same words with the house shimmer, never
+            // a loading word (re-audit L17).
+            Group {
+                if store.isLoading {
+                    StaffShimmerLabel(text: "Try again", color: .cavnarEmber2)
+                } else {
+                    Text("Try again")
+                }
+            }
+            .cavnarText(.label, color: .cavnarEmber2)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(store.isLoading)
@@ -248,8 +258,7 @@ struct StaffTaskSheetsSection: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(s.title)
-                            .font(.cavnarBody(CavnarType.emphasis, weight: 700))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
                         let meta = meta(s, open: open)
                         if !meta.isEmpty {
                             CavnarMixedText(meta, role: .secondary)

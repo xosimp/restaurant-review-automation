@@ -105,6 +105,11 @@ final class StaffPortalStore {
     var earnings = StaffSection<StaffEarnings>()
     var recognition = StaffSection<StaffRecognition>()
     var late = StaffSection<StaffRunningLateList>()
+    /// "How did your shift go?" — the one due shift, held here so Today's
+    /// card and a send anywhere agree (re-audit M5: answered in the Inbox,
+    /// Today kept asking and a second rating met a 409). Nil when nothing
+    /// is due or the read failed.
+    var pulseDue: StaffPulseDue?
 
     /// The last time a full refresh finished — "Updated 3:42pm", and the
     /// foreground rule's clock (reload after 5 minutes away).
@@ -159,6 +164,7 @@ final class StaffPortalStore {
             group.addTask { await self.reloadEarnings() }
             group.addTask { await self.reloadRecognition() }
             group.addTask { await self.reloadLate() }
+            group.addTask { await self.reloadPulse() }
         }
         lastAttempt = Date()
         // "Updated 3:42pm" only for a week that really came in.
@@ -263,6 +269,15 @@ final class StaffPortalStore {
     func reloadLate() async {
         await load("/staff/api/running-late", into: \.late) { (r: StaffRunningLateList) in r }
     }
+
+    func reloadPulse() async {
+        guard let session else { return }
+        let r: StaffPulseState? = try? await session.authed("/staff/api/pulse")
+        pulseDue = r?.due
+    }
+
+    /// A pulse answered (or refused as already answered): nothing is due.
+    func pulseAnswered() { pulseDue = nil }
 
     /// Who's on with me, for the hero's day (the next working day, today
     /// when today has a shift left).

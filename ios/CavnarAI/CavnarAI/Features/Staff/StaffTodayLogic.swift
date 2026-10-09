@@ -100,7 +100,8 @@ struct StaffHero: Equatable {
     /// The leg the relative line and Running late are about: the first
     /// one on the day that hasn't ended.
     let nextLeg: StaffShift
-    /// "Starts in 2h 15m", "On now · until 10pm", "Tomorrow at 4pm".
+    /// "Starts in 2h 15m", "On now · until 10pm"; empty more than 12
+    /// hours ahead (re-audit M6).
     let relative: String
     /// Whether the next leg is today's and hasn't ended — Running late
     /// is for today's shift only (H1).
@@ -143,23 +144,21 @@ enum StaffTodayPlan {
     }
 
     /// "Starts in 2h 15m" within 12 hours; "On now · until 10pm" once it
-    /// has started; "Tomorrow at 4pm" / "Thursday at 4pm" further ahead.
+    /// has started; nothing further ahead (re-audit M6): the hero's title
+    /// ("Thursday"), its date and the leg's times already say when, so a
+    /// fourth "Thursday at 4pm" was the same fact again.
     static func relative(dayTitle: String, start: Date?, startText: String?, endText: String?,
                          now: Date) -> String {
-        let at = StaffTime.label(startText ?? "")
-        guard let start else { return at.isEmpty ? dayTitle : "\(dayTitle) at \(at)" }
+        guard let start else { return "" }
         if start <= now {
             let until = StaffTime.label(endText ?? "")
             return until.isEmpty ? "On now" : "On now \u{00B7} until \(until)"
         }
         let minutes = Int((start.timeIntervalSince(now) / 60).rounded(.up))
-        if minutes <= 12 * 60 {
-            if minutes < 60 { return "Starts in \(minutes)m" }
-            let h = minutes / 60, m = minutes % 60
-            return m == 0 ? "Starts in \(h)h" : "Starts in \(h)h \(m)m"
-        }
-        let name = (dayTitle == "Today" || dayTitle == "Tonight") ? "Today" : dayTitle
-        return "\(name) at \(at)"
+        guard minutes <= 12 * 60 else { return "" }
+        if minutes < 60 { return "Starts in \(minutes)m" }
+        let h = minutes / 60, m = minutes % 60
+        return m == 0 ? "Starts in \(h)h" : "Starts in \(h)h \(m)m"
     }
 
     /// The shifts past the seven-day week (`upcoming` runs from today and
@@ -253,6 +252,13 @@ enum StaffWaiting {
         return more > 0 ? "\(first) And \(more) more." : first
     }
 
+    /// The name the sentence opens with — a swap's asker, set in the label
+    /// weight with the rest in body (re-audit L9); nil for an offer.
+    static func lead(_ waiting: StaffWaitingResponse?) -> String? {
+        guard let waiting, waiting.count > 0, let ask = waiting.asks?.first else { return nil }
+        return ask.employeeName ?? "A teammate"
+    }
+
     /// "Wed 10/1/26 11am".
     static func when(_ iso: String?, _ start: String?) -> String {
         var parts: [String] = []
@@ -310,8 +316,9 @@ enum StaffFreshness {
 
 /// The one primary the hero spends its ember on, by where the person is in
 /// the day: on shift or within 30 minutes of the start → Tasks (with the
-/// count done); before a shift today → Running late; otherwise none, and
-/// every action stays quiet.
+/// count done); in the hour before a shift today → Running late (re-audit
+/// H3: it was the ember button from the start of the service day, eight
+/// hours before a 4pm shift); otherwise none, and every action stays quiet.
 enum StaffHeroPrimary: Equatable {
     case tasks, late, none
 }
@@ -319,6 +326,23 @@ enum StaffHeroPrimary: Equatable {
 extension StaffTodayPlan {
     /// How close "about to start" is: the half hour before a leg.
     static let tasksLeadMinutes = 30
+    /// Running late is the primary only in the hour before the start.
+    static let lateLeadMinutes = 60
+    /// …and stays in the quiet row until 15 minutes in — the grace the
+    /// server gives a late clock-in before it holds the "hasn't clocked
+    /// in" issue (staff_comms.LATE_HOLD_GRACE_MINUTES). Someone stuck in
+    /// traffic five minutes past the start still needs it; an hour into
+    /// the shift nobody does.
+    static let lateGraceMinutes = 15
+
+    /// Whether Running late is offered at all (quiet or primary): today's
+    /// leg, until 15 minutes after it starts.
+    static func offersRunningLate(_ hero: StaffHero, now: Date, calendar: Calendar = .current) -> Bool {
+        guard hero.canRunLate else { return false }
+        guard let span = StaffTime.span(dayISO: hero.day.date, start: hero.nextLeg.shiftStart,
+                                        end: hero.nextLeg.shiftEnd, calendar: calendar) else { return true }
+        return now < span.start.addingTimeInterval(TimeInterval(lateGraceMinutes * 60))
+    }
 
     static func heroPrimary(_ hero: StaffHero, now: Date, hasTasks: Bool,
                             calendar: Calendar = .current) -> StaffHeroPrimary {
@@ -328,7 +352,8 @@ extension StaffTodayPlan {
         let started = span.map { $0.start <= now } ?? false
         let soon = span.map { $0.start.timeIntervalSince(now) <= TimeInterval(tasksLeadMinutes * 60) } ?? false
         if (started || soon) && hasTasks { return .tasks }
-        if hero.canRunLate && !started { return .late }
+        let withinLateLead = span.map { $0.start.timeIntervalSince(now) <= TimeInterval(lateLeadMinutes * 60) } ?? false
+        if hero.canRunLate && !started && withinLateLead { return .late }
         return .none
     }
 

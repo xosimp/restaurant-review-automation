@@ -55,8 +55,10 @@ final class StaffRequestsMeInboxTests: XCTestCase {
         XCTAssertEqual(b.waitingCount, 2, "asks and offers wait on you; open shifts are a chance, not a wait")
 
         let open = b.requests[0]
-        XCTAssertEqual(open.chip, StaffStatusChip(text: "Open — you're still on it", tone: .warning))
+        XCTAssertEqual(open.chip, StaffStatusChip(text: "Open", tone: .warning))
         XCTAssertTrue(open.detail?.contains("still on this shift until someone picks it up") == true)
+        XCTAssertEqual(open.trackSteps, ["Asked", "Manager", "Picked up"])
+        XCTAssertEqual(open.trackDone, 2)
         XCTAssertEqual(open.tag, "Giving up")
         XCTAssertTrue(open.canWithdraw, "approved and open drops can be withdrawn too")
         XCTAssertEqual(open.decisionNote, "Thanks for the heads up")
@@ -64,7 +66,11 @@ final class StaffRequestsMeInboxTests: XCTestCase {
         let swap = b.requests[1]
         XCTAssertEqual(swap.tag, "Swap")
         XCTAssertEqual(swap.chip.text, "Ben T said yes")
-        XCTAssertEqual(swap.detail, "Ben T said yes — waiting on your manager.")
+        // Re-audit M10: the line under the pill never says the pill again.
+        XCTAssertEqual(swap.detail, "Your manager answers next.")
+        XCTAssertEqual(swap.trackSteps, ["Asked", "Both say yes", "Swapped"])
+        XCTAssertNil(b.requests[2].trackSteps, "a cancelled request has no track; the pill says it")
+        XCTAssertNil(b.requests[3].trackSteps, "a shift the manager posted has no track")
         XCTAssertEqual(swap.targetLabel, "Sun 10/11/26 · 4pm – 10pm")
 
         XCTAssertEqual(b.requests[2].chip.text, "Cancelled")
@@ -124,6 +130,9 @@ final class StaffRequestsMeInboxTests: XCTestCase {
         XCTAssertEqual(t.stillScheduled.map(\.label), ["Wed 10/21/26 · 4pm – 10pm"])
         XCTAssertEqual(t.chip, StaffStatusChip(text: "Approved", tone: .good))
         XCTAssertEqual(t.rangeLabel, "10/20/26 – 10/22/26")
+        // Re-audit L19: the server's "4:00pm" reads "4pm"; a half hour stays.
+        XCTAssertEqual(StaffClock.houseTimes("10/7/26, until 4:00pm"), "10/7/26, until 4pm")
+        XCTAssertEqual(StaffClock.houseTimes("10/7/26, 11:00am–2:30pm"), "10/7/26, 11am–2:30pm")
         XCTAssertFalse(list.requests[1].canCancel)
         XCTAssertEqual(list.requests[1].chip.tone, .bad)
     }

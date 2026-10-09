@@ -84,6 +84,13 @@ enum StaffClock {
         return m == 0 ? "\(h12)\(suffix)" : "\(h12):\(String(format: "%02d", m))\(suffix)"
     }
 
+    /// Every "4:00pm" in a server sentence as "4pm" (the half hours stay
+    /// "4:30pm") — DESIGN_SYSTEM → Dates and times.
+    static func houseTimes(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\b(\d{1,2}):00\s?([ap]m)\b"#, with: "$1$2",
+                                  options: [.regularExpression, .caseInsensitive])
+    }
+
     /// "4pm – 10pm", "4pm", or "".
     static func range(_ start: String?, _ end: String?) -> String {
         let s = display(start), e = display(end)
@@ -232,7 +239,9 @@ struct StaffMyShiftRequest: Decodable, Identifiable, Hashable {
         case "approved":
             return StaffStatusChip(text: "Approved", tone: .neutral)
         case "open":
-            return StaffStatusChip(text: "Open — you're still on it", tone: .warning)
+            // The pill names the state; the line under it says you're still
+            // on it (re-audit M10 — it was said in both).
+            return StaffStatusChip(text: "Open", tone: .warning)
         case "covered":
             return StaffStatusChip(text: isSwap ? "Swapped" : "Covered", tone: .good)
         case "denied":
@@ -248,20 +257,21 @@ struct StaffMyShiftRequest: Decodable, Identifiable, Hashable {
         }
     }
 
-    /// The sentence under the chip: who it waits on, or what happened.
+    /// The one line under the pill, saying only what the pill and the
+    /// status track don't (re-audit M10: "GIVING UP · Waiting · Waiting on
+    /// your manager." said one state three times). Nil when they say it all.
     var detail: String? {
         let who = (targetName ?? "").isEmpty ? "your colleague" : targetName!
         switch status {
         case "pending":
             if isSwap {
-                return targetAccepted ? "\(who) said yes — waiting on your manager."
-                                      : "Waiting on your manager and \(who)."
+                return targetAccepted ? "Your manager answers next." : "Your manager and \(who) both answer."
             }
-            return "Waiting on your manager."
+            return nil
         case "approved":
-            return isSwap ? "Your manager said yes — waiting on \(who)." : "Your manager said yes."
+            return isSwap ? "\(who) answers next." : nil
         case "open":
-            return "Your manager approved it. You're still on this shift until someone picks it up — we'll tell you when they do."
+            return "You're still on this shift until someone picks it up — we'll tell you when they do."
         case "covered":
             if isSwap { return "The swap went through." }
             return replacementName.map { "\($0) took it. It's off your schedule." } ?? "Someone took it. It's off your schedule."
@@ -269,6 +279,25 @@ struct StaffMyShiftRequest: Decodable, Identifiable, Hashable {
             return "The shift passed before anyone answered."
         default:
             return nil
+        }
+    }
+
+    /// The status track's three steps (re-audit M10): Asked → Manager →
+    /// Picked up for a drop; Asked → Both say yes → Swapped for a swap.
+    /// Nil for a shift the manager posted, and once it ended any other way
+    /// than going through (the pill says how).
+    var trackSteps: [String]? {
+        guard kind != "post", isLive || status == "covered" else { return nil }
+        return isSwap ? ["Asked", "Both say yes", "Swapped"] : ["Asked", "Manager", "Picked up"]
+    }
+
+    /// How many of the track's steps are done: asked (1), the manager's
+    /// yes (2), through (3).
+    var trackDone: Int {
+        switch status {
+        case "covered": return 3
+        case "approved", "open": return 2
+        default: return 1
         }
     }
 }
@@ -474,7 +503,9 @@ struct StaffRequestsBoard: Decodable, Equatable {
     /// offered to them by name. Open shifts are a chance, not a wait, so
     /// they don't count toward the Requests badge.
     var waitingCount: Int { asks.count + offers.count }
-    var hasWaiting: Bool { !asks.isEmpty || !offers.isEmpty || !open.isEmpty }
+    /// "Waiting on you" is only what waits on this person's answer; open
+    /// shifts are their own section, after Your requests (re-audit M11).
+    var hasWaiting: Bool { !asks.isEmpty || !offers.isEmpty }
 }
 
 // MARK: - Time off (GET /staff/api/time-off)
@@ -537,8 +568,13 @@ struct StaffTimeOffRequest: Decodable, Identifiable, Hashable {
     }
 
     var isLive: Bool { status == "pending" || status == "approved" }
-    /// The server's span ("10/7/26, until 4:00pm"), else the dates alone.
-    var rangeLabel: String { spanLabel ?? CavnarDate.mdyRange(startDate, endDate) }
+    /// The server's span, its times in the house style ("10/7/26, until
+    /// 4pm" — the server writes "4:00pm": re-audit L19), else the dates
+    /// alone.
+    var rangeLabel: String {
+        guard let spanLabel else { return CavnarDate.mdyRange(startDate, endDate) }
+        return StaffClock.houseTimes(spanLabel)
+    }
 
     var chip: StaffStatusChip {
         switch status {

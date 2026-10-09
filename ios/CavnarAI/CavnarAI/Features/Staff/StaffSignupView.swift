@@ -311,8 +311,7 @@ struct StaffSignupView: View {
             .buttonStyle(CavnarPrimaryButtonStyle())
             .disabled(loading)
             Button("Close") { showingNotListed = false }
-                .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.label, color: .cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
         }

@@ -284,8 +284,26 @@ private struct StaffRequestsTab: View {
                 } label: {
                     Text("Ask for time off").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle())
+                // While a swap or an offer waits on this person, its Accept /
+                // Take it is the screen's primary; the pinned ask steps down
+                // to secondary (re-audit M4 — three ember buttons at once).
+                .modifier(StaffPinnedAskStyle(secondary: store.requestsBadge > 0))
             }
+        }
+    }
+}
+
+/// The pinned "Ask for time off": primary, or secondary while an answer
+/// waits on this person.
+private struct StaffPinnedAskStyle: ViewModifier {
+    let secondary: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if secondary {
+            content.buttonStyle(CavnarSecondaryButtonStyle())
+        } else {
+            content.buttonStyle(CavnarPrimaryButtonStyle())
         }
     }
 }

@@ -31,7 +31,7 @@ struct StaffInboxView: View {
             ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    StaffPulseCard(store: store)
+                    // The post-shift pulse lives on Today only (re-audit M5).
                     // The managers' replies first: a conversation waits on
                     // this person; an announcement is read and acknowledged.
                     StaffUI.header("Your manager")
@@ -114,7 +114,7 @@ struct StaffInboxView: View {
                 CavnarKicker("Urgent", tint: .cavnarRedText)
             }
             let text = a.shown(original: showingOriginal.contains(a.id))
-            HomeMixedText.make(text.title, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
+            HomeMixedText.make(text.title, role: .label, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             if !text.body.isEmpty {
                 CavnarMixedText(text.body, role: .body)
@@ -313,7 +313,8 @@ struct StaffMessageThreadView: View {
                 .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .safeAreaInset(edge: .bottom) { composer }
-            .accountSheetChrome("Your manager")
+            // A message typed and not sent isn't lost to a swipe (re-audit M3).
+            .accountSheetChrome("Your manager", isDirty: !trimmed.isEmpty && !sending)
         }
         .task { await reload() }
         .cavnarPostedOverlay(posted) { posted = nil }
@@ -454,14 +455,17 @@ struct StaffMessageThreadView: View {
 /// `StaffPulseCard()` or `StaffPulseCard(store: StaffPortalStore)` — after a
 /// shift that has started (today's, or one of the last few days with no
 /// answer yet), one tap 1–5 and an optional note. Shows nothing when
-/// nothing is due or the read failed. Today can mount it under the hero;
-/// the Inbox shows it at the top. Calls use the environment's session.
+/// nothing is due or the read failed. Today mounts it under the hero; it
+/// is on Today only (re-audit M5). Calls use the environment's session.
 struct StaffPulseCard: View {
     private let portal: StaffPortalStore?
     init() { portal = nil }
-    /// With the portal store, the card reads again on each portal refresh
-    /// (pull, foreground), so one answered in the Inbox leaves Today too.
+    /// With the portal store, what's due is the store's (`pulseDue`, read on
+    /// every portal refresh) and a send clears it there, so no other
+    /// screen keeps asking.
     init(store: StaffPortalStore) { portal = store }
+
+    private var shownDue: StaffPulseDue? { portal != nil ? portal?.pulseDue : due }
 
     @Environment(StaffSessionStore.self) private var staff
     @State private var due: StaffPulseDue?
@@ -476,13 +480,15 @@ struct StaffPulseCard: View {
         Group {
             if thanked {
                 CavnarInlinePosted(label: "Thanks \u{2014} sent") { thanked = false }
-            } else if let due, !closed {
+            } else if let due = shownDue, !closed {
                 card(due)
             } else if closed, let error {
                 StaffUI.note(error)
             }
         }
-        .task(id: portal?.lastAttempt) {
+        .task {
+            // Without the portal (a screen of its own), the card reads it.
+            guard portal == nil else { return }
             let r: StaffPulseState? = try? await staff.authed("/staff/api/pulse")
             due = r?.due
         }
@@ -491,8 +497,7 @@ struct StaffPulseCard: View {
     private func card(_ due: StaffPulseDue) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("How did your shift go?")
-                .font(.cavnarBody(CavnarType.emphasis, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.label)
                 .accessibilityAddTraits(.isHeader)
             CavnarMixedText(due.line, role: .secondary)
             HStack(spacing: 8) {
@@ -565,6 +570,7 @@ struct StaffPulseCard: View {
                 Haptic.success()
                 closed = true
                 thanked = true
+                portal?.pulseAnswered()
             } else {
                 error = r.error ?? "That didn\u{2019}t go through."
             }
@@ -574,6 +580,7 @@ struct StaffPulseCard: View {
             error = e.message
             self.rating = nil
             closed = true
+            portal?.pulseAnswered()
         } catch {
             self.error = StaffErrorText.message(error)
         }
