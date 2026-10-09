@@ -44,13 +44,10 @@ struct AskCavnarHistoryView: View {
                 .foregroundStyle(Color.cavnarEmber.opacity(0.7))
                 .padding(.bottom, 4)
             Text("No chats yet")
-                .font(.cavnarHeadline(19))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.headline)
             Text("Every conversation you have with Cavnar AI is kept here, so you can pick one back up later.")
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .multilineTextAlignment(.center)
-                .lineSpacing(3)
                 .padding(.horizontal, 32)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -96,11 +93,7 @@ struct AskCavnarHistoryView: View {
                     }
                 }
             } header: {
-                Text("\(viewModel.conversations.count) \(viewModel.conversations.count == 1 ? "conversation" : "conversations") · swipe left to delete")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .textCase(.uppercase)
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarKicker("\(viewModel.conversations.count) \(viewModel.conversations.count == 1 ? "conversation" : "conversations") · swipe left to delete")
                     .padding(.bottom, 2)
                     // Matches the rows' own leading inset (20, set below)
                     // exactly, rather than relying on the list style's
@@ -123,8 +116,7 @@ private struct ConversationRow: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(conversation.title)
-                    .font(.cavnarBody(16, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.label)
                     .lineLimit(1)
                 Spacer(minLength: 6)
                 if isOpen {
@@ -133,23 +125,20 @@ private struct ConversationRow: View {
             }
             if !conversation.preview.isEmpty {
                 Text(conversation.preview)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 6) {
-                Text(AccountRelativeTime.describe(conversation.updatedAt))
-                    .font(.cavnarNumber(13))
-                Text("·").font(.cavnarBody(13))
-                Text("\(conversation.messageCount) \(conversation.messageCount == 1 ? "message" : "messages")")
-                    .font(.cavnarNumber(13))
+                HomeMixedText.make(AccountRelativeTime.describe(conversation.updatedAt)
+                                   + " \u{00B7} \(conversation.messageCount) \(conversation.messageCount == 1 ? "message" : "messages")",
+                                   role: .caption)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Color.cavnarEmber)
             }
-            .foregroundStyle(Color.cavnarInk3.opacity(0.85))
+            .foregroundStyle(Color.cavnarInk3)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)

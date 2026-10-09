@@ -325,22 +325,24 @@ struct AskVoiceStatus: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.cavnarEmber)
                 Text("Listening. Tap stop when you're done, then send.")
-                    .font(.cavnarBody(13, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
             }
             .padding(.horizontal, 4)
             .transition(.opacity)
         } else if let notice = voice.notice {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(notice)
-                    .font(.cavnarBody(13, weight: 600))
-                    .foregroundStyle(Color.cavnarAmber)
+                    .cavnarText(.secondary, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
                 if voice.noticeNeedsSettings, let url = URL(string: UIApplication.openSettingsURLString) {
-                    Button("Settings") { UIApplication.shared.open(url) }
-                        .font(.cavnarBody(13, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber)
-                        .buttonStyle(.plain)
+                    Button {
+                        UIApplication.shared.open(url)
+                    } label: {
+                        Text("Settings")
+                            .cavnarText(.label, color: .cavnarEmber)
+                            .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 4)

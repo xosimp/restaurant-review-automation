@@ -225,6 +225,17 @@ enum SiriAsk {
         let answer: String?
         let error: String?
         let proposals: [Ignored]?
+        /// The iPhone card (iOS readability round #92) — the mobile route
+        /// writes to the phone's contract — and the answer's measured
+        /// confidence, so Siri says the headline, the first thing to do and
+        /// how sure, not the first 600 characters of an essay.
+        var card: AskLenientCard? = nil
+        var confidenceDetail: TrustConfidence? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case ok, answer, error, proposals, card
+            case confidenceDetail = "confidence_detail"
+        }
     }
 
     /// The longest answer Siri reads out; the snippet shows all of it.
@@ -253,7 +264,8 @@ enum SiriAsk {
                 let why = r.error ?? "Cavnar AI couldn\u{2019}t answer that just now."
                 return Outcome(spoken: why, text: why, proposals: 0, ok: false)
             }
-            return outcome(answer: answer, proposals: r.proposals?.count ?? 0)
+            return outcome(answer: answer, proposals: r.proposals?.count ?? 0,
+                           card: r.card?.card, confidence: r.confidenceDetail)
         } catch let error as APIClient.APIError {
             return Outcome(spoken: error.message, text: error.message, proposals: 0, ok: false)
         } catch {
@@ -262,15 +274,64 @@ enum SiriAsk {
         }
     }
 
-    static func outcome(answer: String, proposals: Int) -> Outcome {
-        let text = plain(answer)
-        var spoken = text.count > spokenLimit ? clip(text, to: spokenLimit) : text
+    static func outcome(answer: String, proposals: Int, card: AskCard? = nil,
+                        confidence: TrustConfidence? = nil) -> Outcome {
+        var text = plain(answer)
+        var spoken = spokenLead(answer: answer, card: card, confidence: confidence)
+        if let card {
+            // The snippet shows the card, not the whole analysis.
+            text = [card.headline, card.summary, card.action.map { "Do first: " + $0 },
+                    card.outcome.map { "Expect: " + $0 }]
+                .compactMap { $0 }.map(sentence).joined(separator: " ")
+        }
+        if spoken.count > spokenLimit { spoken = clip(spoken, to: spokenLimit) }
         if proposals > 0 {
             spoken += proposals == 1
                 ? " Cavnar AI suggested one thing to do. It\u{2019}s waiting in Ask for you to look over; nothing was done."
                 : " Cavnar AI suggested \(proposals) things to do. They\u{2019}re waiting in Ask for you to look over; nothing was done."
         }
         return Outcome(spoken: spoken, text: text, proposals: proposals, ok: true)
+    }
+
+    /// What Siri says first (#92): with a card, the headline, the first
+    /// thing to do and how sure; without one, the answer's first sentence
+    /// and its "Do first" line when it has one.
+    static func spokenLead(answer: String, card: AskCard?, confidence: TrustConfidence?) -> String {
+        var parts: [String] = []
+        if let card {
+            parts.append(card.headline)
+            if let action = card.action { parts.append("Do first: " + action) }
+        } else {
+            let lines = answer.components(separatedBy: .newlines)
+            let doFirst = lines.first { $0.range(of: #"^\s*\**\s*do\s+first\s*\**\s*:"#,
+                                                  options: [.regularExpression, .caseInsensitive]) != nil }
+            let body = lines.filter { $0 != doFirst }.joined(separator: "\n")
+            if let first = firstSentence(plain(body)) { parts.append(first) }
+            if let doFirst { parts.append(plain(doFirst)) }
+        }
+        if let confidence {
+            let d = ConfidenceDisplay(confidence)
+            if d.isRenderable, d.pct != nil { parts.append(d.lineLabel) }
+        }
+        return parts.map(sentence).joined(separator: " ")
+    }
+
+    /// The first sentence of plain text, or nil when there is none.
+    static func firstSentence(_ text: String) -> String? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        if let r = t.range(of: #"[.!?](\s|$)"#, options: .regularExpression) {
+            return String(t[..<r.upperBound]).trimmingCharacters(in: .whitespaces)
+        }
+        return t
+    }
+
+    /// A line as a spoken sentence: ends in a full stop unless it already
+    /// ends a sentence.
+    static func sentence(_ s: String) -> String {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = t.last else { return t }
+        return (last == "." || last == "?" || last == "!") ? t : t + "."
     }
 
     /// Markdown to plain sentences: no **bold**, # headings, bullets,
@@ -314,24 +375,18 @@ struct SiriAskSnippet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("ASK CAVNAR AI")
-                .font(.cavnarBody(11, weight: 700))
-                .tracking(1.1)
-                .foregroundStyle(Color.cavnarEmber)
+            CavnarKicker("Ask Cavnar AI")
             Text(question)
-                .font(.cavnarBody(14, weight: 600))
-                .foregroundStyle(Color.cavnarInk2)
+                .cavnarText(.secondary)
                 .lineLimit(2)
-            Text(outcome.text.isEmpty ? outcome.spoken : outcome.text)
-                .font(.cavnarBody(15))
-                .foregroundStyle(outcome.ok ? Color.cavnarInk : Color.cavnarAmber)
+            CavnarMixedText(outcome.text.isEmpty ? outcome.spoken : outcome.text, role: .body,
+                            color: outcome.ok ? Color.cavnarInk : Color.cavnarAmber)
                 .lineLimit(14)
-                .fixedSize(horizontal: false, vertical: true)
             if outcome.proposals > 0 {
                 HomeMixedText.make(outcome.proposals == 1
                                    ? "1 suggestion waiting in Ask \u{2014} nothing was done."
                                    : "\(outcome.proposals) suggestions waiting in Ask \u{2014} nothing was done.",
-                                   size: 13, weight: 600, color: .cavnarEmber2)
+                                   role: .secondary, color: .cavnarEmber2)
             }
         }
         .padding(16)

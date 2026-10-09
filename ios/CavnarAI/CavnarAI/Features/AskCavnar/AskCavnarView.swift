@@ -5,6 +5,10 @@ import UIKit
 /// comment at its scrollTo call site in AskCavnarView.body.
 private let chatScrollBottomID = "chat-scroll-bottom"
 
+/// The chat's scroll view, as a coordinate space: a bubble's minY in it is
+/// where its top sits on screen (0 = the top of the visible chat).
+private let chatSpace = "ask-chat"
+
 /// Holds the reveal-driven scroll throttle's clock OUTSIDE SwiftUI's
 /// dependency tracking. As an `@State var Date` this was written up to
 /// 10x/sec during every answer's reveal, and each write invalidated the
@@ -14,6 +18,23 @@ private let chatScrollBottomID = "chat-scroll-bottom"
 @MainActor
 private final class ScrollThrottle {
     var last = Date.distantPast
+    /// Where the newest answer's (or the in-flight bubble's) top sits in
+    /// the chat's visible frame. The bottom-follow stops once it reaches
+    /// the top (#36): from there the owner reads down from the start of
+    /// the answer, never chased to its end.
+    var liveTop: CGFloat = .infinity
+
+    /// True while following the bottom still keeps the answer's start on
+    /// screen.
+    var shouldFollow: Bool { liveTop > 8 }
+
+    /// Throttled to ~10/sec (audit 3.3).
+    func tick() -> Bool {
+        let now = Date()
+        guard now.timeIntervalSince(last) > 0.1 else { return false }
+        last = now
+        return true
+    }
 }
 
 /// The Ask Cavnar tab. Owns nothing — the view model lives in RootView so
@@ -50,7 +71,7 @@ struct AskCavnarView: View {
                         // whole conversation (including full UIKit text
                         // measurement for user bubbles) on every re-render.
                         // LazyVStack only builds what's on screen.
-                        LazyVStack(alignment: .leading, spacing: 16) {
+                        LazyVStack(alignment: .leading, spacing: CavnarSpace.m) {
                             if viewModel.isOpeningConversation {
                                 CavnarLoadingOrb()
                                     .padding(.top, 60)
@@ -63,26 +84,27 @@ struct AskCavnarView: View {
                                     // Fires on every word TypewriterText
                                     // reveals — the bubble grows taller over
                                     // that ~1.4s window entirely on the client
-                                    // side, so nothing else would re-scroll as
-                                    // the reveal grew it and a long answer's
-                                    // tail ended up hidden behind the
-                                    // keyboard. No withAnimation — an animated
+                                    // side. It follows the growth only while
+                                    // the answer's top is still below the top
+                                    // of the chat (#36): once its first line
+                                    // reaches the top, the owner reads down
+                                    // from there instead of being carried to
+                                    // the end. No withAnimation — an animated
                                     // scroll re-triggered on every word would
                                     // stack/fight itself at this frequency.
                                     // Targets the trailing spacer below (not
                                     // the bubble's own id) so a consistent gap
-                                    // stays above the input bar. Throttled to
-                                    // ~10/sec (audit 3.3).
-                                    let now = Date()
-                                    guard now.timeIntervalSince(scrollThrottle.last) > 0.1 else { return }
-                                    scrollThrottle.last = now
-                                    proxy.scrollTo(chatScrollBottomID, anchor: .bottom)
+                                    // stays above the input bar.
+                                    followBottom(proxy)
                                 }
                                 .id(message.id)
+                                .reportsTop(message.id == viewModel.messages.last?.id && !message.isUser,
+                                            into: scrollThrottle)
                             }
                             if viewModel.isLoading {
                                 LoadingBubble(label: viewModel.statusLabel, trail: viewModel.progressTrail, orbState: viewModel.orbState,
                                               paused: motionPaused, preview: viewModel.streamingPreview)
+                                    .reportsTop(true, into: scrollThrottle)
                             }
                             // Scroll target for the in-progress reveal above
                             // — reserved space the scroll view can settle into.
@@ -90,10 +112,11 @@ struct AskCavnarView: View {
                                 .frame(height: 8)
                                 .id(chatScrollBottomID)
                         }
-                        .padding(16)
+                        .padding(CavnarSpace.m)
                         // The conversation reads as one column on an iPad (#99).
                         .cavnarReadableWidth()
                     }
+                    .coordinateSpace(.named(chatSpace))
                     // .immediately, not .interactively — interactive mode
                     // installs its own pan gesture recognizer on the scroll
                     // view, which competed with taps on the text field below
@@ -101,14 +124,24 @@ struct AskCavnarView: View {
                     // first). .immediately still lets a scroll dismiss the
                     // keyboard, without the second recognizer.
                     .scrollDismissesKeyboard(.immediately)
-                    // anchor: .center — a new bubble landing flush against
-                    // the input bar read as abrupt/cramped; centering it
-                    // gives it breathing room, the settle-into-view feel
-                    // most chat apps use.
+                    // A new answer lands with its top at the top of the chat
+                    // (#36) — the headline first, read downward, never its
+                    // tail. The owner's own question (and a confirm's status
+                    // line) settles at the bottom, where the answer will grow.
                     .onChange(of: viewModel.messages.count) { _, _ in
-                        if let last = viewModel.messages.last {
-                            withAnimation { proxy.scrollTo(last.id, anchor: .center) }
+                        guard let last = viewModel.messages.last else { return }
+                        if last.isUser {
+                            withAnimation { proxy.scrollTo(chatScrollBottomID, anchor: .bottom) }
+                        } else {
+                            // Until its geometry reports, nothing follows.
+                            scrollThrottle.liveTop = 0
+                            withAnimation { proxy.scrollTo(last.id, anchor: .top) }
                         }
+                    }
+                    // The streamed preview grows sentence by sentence; it is
+                    // followed like a reveal, until its top reaches the top.
+                    .onChange(of: viewModel.streamingPreview) { _, _ in
+                        followBottom(proxy)
                     }
                     // A reopened chat lands scrolled to its latest turn, no
                     // animation — it's a page, not a new message arriving.
@@ -172,33 +205,43 @@ struct AskCavnarView: View {
         }
     }
 
+    /// The bottom-follow for a growing answer or preview: throttled, and
+    /// only while the answer's top is still below the top of the chat.
+    private func followBottom(_ proxy: ScrollViewProxy) {
+        guard scrollThrottle.shouldFollow, scrollThrottle.tick() else { return }
+        proxy.scrollTo(chatScrollBottomID, anchor: .bottom)
+    }
+
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: CavnarSpace.s) {
             // Idle orb — a slow breathing ring while nothing is in flight;
             // its reserved `listening` wave while the mic is live.
             CavnarOrb(state: voice.isListening ? .listening : .breathing, size: 40, paused: motionPaused)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask Cavnar AI")
-                    .font(.cavnarHeadline(20.5))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.headline)
                 Text("Your restaurant intelligence consultant")
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: CavnarSpace.xs)
             if inputFocused {
                 // Fixed top-right, not a .keyboard-placement toolbar item —
                 // that accessory row floats in the exact strip the input
                 // bar's Send button occupies. Only while there's a keyboard
                 // to dismiss.
-                Button("Done") { inputFocused = false }
-                    .font(.cavnarBody(15.5, weight: 600))
-                    .foregroundStyle(Color.cavnarEmber)
-                    .transition(.opacity)
+                Button {
+                    inputFocused = false
+                } label: {
+                    Text("Done")
+                        .cavnarText(.label, color: .cavnarEmber)
+                        .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: CavnarSpace.xs) {
                     headerChip("clock.arrow.circlepath", label: "Chat history") {
                         showingHistory = true
                     }
@@ -206,13 +249,13 @@ struct AskCavnarView: View {
                         viewModel.startNewChat()
                     }
                     .disabled(viewModel.isLoading)
-                    .opacity(viewModel.isLoading ? 0.45 : 1)
+                    .opacity(viewModel.isLoading ? 0.6 : 1)
                 }
                 .transition(.opacity)
             }
         }
         .animation(.easeOut(duration: 0.15), value: inputFocused)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, CavnarSpace.gutter)
         .padding(.top, 18)
         .padding(.bottom, 14)
     }
@@ -228,15 +271,11 @@ struct AskCavnarView: View {
 
     private func briefing(_ opening: AskOpening, headline: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(headline)
-                .font(.cavnarHeadline(21))
-                .foregroundStyle(Color.cavnarInk)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarMixedText(headline, role: .headline)
             if let subtitle = briefingSubtitle(opening) {
                 Text(subtitle)
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .padding(.top, 3)
+                    .cavnarText(.caption)
+                    .padding(.top, CavnarSpace.xxs)
             }
             ForEach(Array((opening.briefing ?? []).enumerated()), id: \.element.id) { index, item in
                 if index > 0 {
@@ -246,17 +285,11 @@ struct AskCavnarView: View {
                     Circle()
                         .fill(severityTone(item.severity))
                         .frame(width: 7, height: 7)
-                        .padding(.top, 6)
+                        .padding(.top, 7)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title ?? "")
-                            .font(.cavnarBody(14.5, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(item.title ?? "", role: .label)
                         if let detail = item.detail, !detail.isEmpty {
-                            Text(detail)
-                                .font(.cavnarBody(13.5))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(detail, role: .secondary)
                         }
                     }
                     Spacer(minLength: 0)
@@ -265,7 +298,7 @@ struct AskCavnarView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 8)
+        .padding(.top, CavnarSpace.xs)
     }
 
     private func briefingSubtitle(_ opening: AskOpening) -> String? {
@@ -291,6 +324,7 @@ struct AskCavnarView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Color.cavnarEmber)
                 .cavnarToolbarIconGlass(size: 34)
+                .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -315,50 +349,25 @@ struct AskCavnarView: View {
             } else {
                 VStack(spacing: 6) {
                     Text("Ask me anything")
-                        .font(.cavnarHeadline(21.5))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.headline)
                     Text("Your numbers, or general advice on running the place — I'll pull in your real data whenever it's relevant.")
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .multilineTextAlignment(.center)
-                        .lineSpacing(3)
                         .padding(.horizontal, 24)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("START HERE")
-                    .font(.cavnarBody(11, weight: 700))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.cavnarInk3)
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("Start here")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 ForEach(activeSuggestions, id: \.self) { question in
-                    Button {
-                        Haptic.light()
+                    AskQuestionChip(question: question) {
                         viewModel.question = question
                         Task { await viewModel.submit() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "sparkle")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(question)
-                                .font(.cavnarBody(14.5, weight: 600))
-                            Spacer()
-                        }
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 11)
-                        .background(Color.cavnarEmber.opacity(0.10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                                .strokeBorder(Color.cavnarEmber.opacity(0.25), lineWidth: 1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(.top, 4)
+            .padding(.top, CavnarSpace.xxs)
 
             // Past chats are one tap away even from an empty screen — the
             // header chip is small, and a returning owner looks here first.
@@ -369,18 +378,18 @@ struct AskCavnarView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("\(viewModel.conversations.count) earlier \(viewModel.conversations.count == 1 ? "chat" : "chats")")
-                            .font(.cavnarBody(14, weight: 600))
+                            .font(.cavnar(.secondary))
+                        HomeMixedText.make("\(viewModel.conversations.count) earlier \(viewModel.conversations.count == 1 ? "chat" : "chats")",
+                                           role: .label, color: .cavnarInk2)
                     }
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
+                    .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 6)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.bottom, 20)
+        .padding(.bottom, CavnarSpace.gutter)
     }
 
     // The gray band is gone (that was .ultraThinMaterial doubling up on
@@ -403,9 +412,9 @@ struct AskCavnarView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let error = viewModel.errorBanner {
                 Text(error)
-                    .font(.cavnarBody(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarRed)
-                    .padding(.horizontal, 4)
+                    .cavnarText(.secondary, color: .cavnarRedText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, CavnarSpace.xxs)
             }
             AskVoiceStatus(voice: voice)
                 .animation(.easeOut(duration: 0.2), value: voice.isListening)
@@ -413,16 +422,15 @@ struct AskCavnarView: View {
             // 2000 characters silently, so the limit has to be visible before
             // it bites (audit 5.2).
             if viewModel.remainingCharacters < 80 {
-                Text("\(viewModel.remainingCharacters)")
-                    .font(.cavnarNumber(12, weight: 600))
-                    .foregroundStyle(viewModel.remainingCharacters <= 0 ? Color.cavnarRed : Color.cavnarInk3)
-                    .padding(.horizontal, 4)
+                HomeMixedText.make("\(viewModel.remainingCharacters)", role: .caption,
+                                   color: viewModel.remainingCharacters <= 0 ? Color.cavnarRedText : Color.cavnarInk3)
+                    .padding(.horizontal, CavnarSpace.xxs)
             }
             inputRow
         }
         .padding(.horizontal, 14)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
+        .padding(.top, CavnarSpace.xs)
+        .padding(.bottom, CavnarSpace.s)
         .background(Color.cavnarPaper)
     }
 
@@ -473,7 +481,7 @@ struct AskCavnarView: View {
 
     private var fieldContent: some View {
         TextField("How can I help?", text: $viewModel.question, axis: .vertical)
-            .font(.cavnarBody(15.5))
+            .font(.cavnar(.body))
             .foregroundStyle(Color.cavnarInk)
             .focused($inputFocused)
             .lineLimit(1...5)
@@ -499,6 +507,55 @@ struct AskCavnarView: View {
     }
 }
 
+private extension View {
+    /// Reports this bubble's top (in the chat's visible frame) to the
+    /// scroll follow, when it is the newest answer or the in-flight bubble.
+    func reportsTop(_ enabled: Bool, into throttle: ScrollThrottle) -> some View {
+        onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.frame(in: .named(chatSpace)).minY
+        } action: { top in
+            if enabled { throttle.liveTop = top }
+        }
+    }
+}
+
+/// One question to ask, as a tappable ember chip — the empty state's
+/// "Start here" questions and the follow-ups under an answer (#91).
+private struct AskQuestionChip: View {
+    let question: String
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                Image(systemName: "sparkle")
+                    .font(.cavnar(.caption))
+                    .accessibilityHidden(true)
+                HomeMixedText.make(question, role: .label, color: .cavnarEmber2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Color.cavnarEmber2)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(minHeight: 44)
+            .background(Color.cavnarEmber.opacity(0.10))
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(Color.cavnarEmber.opacity(0.25), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Asks Cavnar AI this question")
+    }
+}
+
 /// Same asymmetric "tail" corner on every bubble — the corner nearest the
 /// avatar/sender stays sharp (4pt), the other three stay fully rounded
 /// (18pt) — the standard chat-bubble directional cue (iMessage etc.).
@@ -517,8 +574,8 @@ private struct ChatBubble: View {
     var motionPaused: Bool = false
     var onReveal: (() -> Void)? = nil
 
-    // Bubble's outer cap, minus its own horizontal padding (15pt each
-    // side) — the width actually available to the text itself.
+    // The owner's bubble's outer cap, minus its own horizontal padding
+    // (15pt each side) — the width actually available to the text itself.
     private static let maxBubbleWidth: CGFloat = 280
     private static let maxTextWidth: CGFloat = maxBubbleWidth - 30
     /// Measurement font for cavnarMeasuredTextWidth. Falls back to the system
@@ -526,13 +583,14 @@ private struct ChatBubble: View {
     /// custom font fails to register, and this is a static let on the app's
     /// main AI screen — the unwrap crashed the whole surface (audit 2.1).
     private static let baseTextFont: UIFont =
-        UIFont(name: "ApfelGrotezk-Regular", size: 16) ?? .systemFont(ofSize: 16)
+        UIFont(name: "ApfelGrotezk-Regular", size: CavnarText.body.size) ?? .systemFont(ofSize: CavnarText.body.size)
 
-    /// Scaled to the user's current text size. Measuring with a frozen 16pt
-    /// font while the rendered Text scales with Dynamic Type would under-
-    /// measure and clip every bubble (audit 7.1/7.2).
+    /// Scaled to the user's current text size, by the Body role's own text
+    /// style — measuring with a frozen font (or another style) while the
+    /// rendered Text scales would under-measure and clip every bubble
+    /// (audit 7.1/7.2).
     private static var textFont: UIFont {
-        UIFontMetrics(forTextStyle: .body).scaledFont(for: baseTextFont)
+        UIFontMetrics(forTextStyle: CavnarText.body.uiTextStyle).scaledFont(for: baseTextFont)
     }
 
     // Sidesteps SwiftUI's content-hugging negotiation entirely (four
@@ -558,14 +616,14 @@ private struct ChatBubble: View {
         let confirmed = parts.verb == "Confirmed"
         return HStack(spacing: 6) {
             Image(systemName: confirmed ? "checkmark.circle.fill" : "minus.circle")
-                .font(.system(size: 11, weight: .bold))
+                .font(.cavnar(.caption))
             Text("\(parts.verb) · \(parts.label)")
-                .font(.cavnarBody(12.5, weight: 600))
+                .cavnarText(.caption, color: confirmed ? Color.cavnarGreen : Color.cavnarInk2)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
         }
-        .foregroundStyle(confirmed ? Color.cavnarGreen : Color.cavnarInk3)
-        .padding(.horizontal, 12)
+        .foregroundStyle(confirmed ? Color.cavnarGreen : Color.cavnarInk2)
+        .padding(.horizontal, CavnarSpace.s)
         .padding(.vertical, 6)
         .background((confirmed ? Color.cavnarGreen : Color.cavnarInk3).opacity(0.1), in: Capsule())
         .frame(maxWidth: .infinity)
@@ -573,70 +631,29 @@ private struct ChatBubble: View {
     }
 
     private var bubble: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: CavnarSpace.xs) {
+            // The avatar names the speaker; the bubble carries no "CAVNAR AI"
+            // label of its own any more (iOS readability round).
             if !message.isUser {
                 GlowBadge(systemImage: "sparkles", size: 28)
                     .padding(.top, 2)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                if !message.isUser {
-                    Text("CAVNAR AI")
-                        .font(.cavnarBody(14, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 if message.isUser {
                     Text(message.text)
-                        .font(.cavnarBody(16))
-                        .lineSpacing(5)
-                        .foregroundStyle(.white)
+                        .cavnarText(.body, color: .white)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(width: userTextWidth, alignment: .leading)
                 } else {
-                    // Word-by-word reveal, block by block (paragraphs,
-                    // bullets, numbered lists, headings — see
-                    // CavnarMarkdown) instead of the answer just snapping
-                    // in. Plays once per message ever: hasRevealed lives on
-                    // the model (see ChatMessage).
-                    TypewriterText(
-                        fullText: message.text, size: 16, color: Color.cavnarInk, lineSpacing: 5,
-                        maxWidth: Self.maxTextWidth, measuringFont: Self.textFont,
-                        onReveal: onReveal,
-                        startRevealed: message.hasRevealed,
-                        onComplete: { viewModel?.markRevealed(message.id) }
-                    )
-                    if message.wasTruncated {
-                        // The model hit max_tokens, so this answer stops
-                        // mid-thought. Saying so is the difference between
-                        // advice and half a sentence read as advice (audit 5.1).
-                        Label("Answer was cut short", systemImage: "text.append")
-                            .font(.cavnarBody(13, weight: 600))
-                            .foregroundStyle(Color.cavnarAmber)
-                            .padding(.top, 4)
-                    }
-                    if let evidence = message.evidence {
-                        EvidenceStrip(evidence: evidence)
-                            .padding(.top, 8)
-                    }
-                    ForEach(message.proposals) { proposal in
-                        ProposalCard(proposal: proposal, viewModel: viewModel)
-                            .padding(.top, 10)
-                    }
-                    // The answer's own concrete advice, keyed — each one
-                    // answerable like any recommendation (#48).
-                    if !message.suggestions.isEmpty {
-                        AskSuggestionsBlock(suggestions: message.suggestions)
-                            .padding(.top, 10)
-                    }
-                    if message.messageId != nil {
-                        AskFeedbackRow(message: message, viewModel: viewModel)
-                            .padding(.top, 8)
-                    }
+                    AskAnswerBody(message: message, viewModel: viewModel, onReveal: onReveal)
                 }
             }
+            // An answer takes the whole column: the card, the evidence and
+            // the actions all need the width a hugging bubble never gave.
+            .frame(maxWidth: message.isUser ? nil : .infinity, alignment: .leading)
             .padding(.horizontal, 15)
-            .padding(.vertical, 12)
+            .padding(.vertical, CavnarSpace.s)
             // The shadow sits on the background SHAPE, not on the finished
             // bubble. `.shadow` on a composite view renders that whole view
             // (text, proposal cards and all) to an offscreen buffer and
@@ -664,88 +681,451 @@ private struct ChatBubble: View {
     }
 }
 
-/// What an answer rests on, under the answer.
-///
-/// Two jobs. The chips say which parts of the business were actually read,
-/// which is the difference between "your food cost is high" and the same
-/// sentence backed by something. The warning says a figure in the text could
-/// not be found in anything the model was handed — the answer still shows,
-/// because deleting half an analysis is worse than caveating it, but the
-/// owner is told before they act on the number.
-private struct EvidenceStrip: View {
+// MARK: - The answer
+
+/// Splitting an answer's text for the phone: the first paragraph to lead
+/// with, and the lines the action list already shows taken out (#33, #34).
+/// Pure, so the rules are pinned by tests.
+enum AskAnswerText {
+    /// The text without any line that is one of `actions` (a suggestion the
+    /// answer's own "Worth doing" list or the card shows): each action
+    /// appears once, as the thing to answer, never again in the prose.
+    /// Matched on the words, ignoring list markers, bold and case.
+    static func removingLines(_ text: String, matching actions: [String]) -> String {
+        let wanted = Set(actions.map(normalized).filter { !$0.isEmpty })
+        guard !wanted.isEmpty else { return text }
+        let kept = text.components(separatedBy: "\n").filter { !wanted.contains(normalized($0)) }
+        // A blank run left where a list was is one paragraph break.
+        var out: [String] = []
+        for line in kept {
+            let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
+            if blank, let last = out.last, last.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+            out.append(line)
+        }
+        return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A line's words: no list marker, "Do first:" label, bold, punctuation
+    /// at the ends or case.
+    static func normalized(_ line: String) -> String {
+        var t = line.trimmingCharacters(in: .whitespaces)
+        if let r = t.range(of: #"^(?:[-*•]|\d{1,2}[.)])\s+"#, options: .regularExpression) { t.removeSubrange(r) }
+        if let r = t.range(of: #"^\**\s*do\s+first\s*(?::\s*\**|\**\s*:)\s*"#,
+                           options: [.regularExpression, .caseInsensitive]) { t.removeSubrange(r) }
+        t = t.replacingOccurrences(of: "**", with: "")
+        t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return t.trimmingCharacters(in: CharacterSet(charactersIn: " .;:!")).lowercased()
+    }
+
+    /// (lead, rest): the answer's first paragraph block — with the block
+    /// after it when the first is only a heading — and everything after.
+    /// `rest` is empty when there is nothing more.
+    static func split(_ text: String) -> (lead: String, rest: String) {
+        let lines = text.components(separatedBy: "\n")
+        var i = 0
+        while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).isEmpty { i += 1 }
+        func isStructural(_ line: String) -> Bool {
+            line.range(of: #"^\s*(?:#{1,6}\s|[-•]\s|\d+\.\s)"#, options: .regularExpression) != nil
+        }
+        func blockEnd(from start: Int) -> Int {
+            guard start < lines.count else { return start }
+            if isStructural(lines[start]) { return start + 1 }
+            var j = start
+            while j < lines.count, !lines[j].trimmingCharacters(in: .whitespaces).isEmpty,
+                  j == start || !isStructural(lines[j]) { j += 1 }
+            return j
+        }
+        var end = blockEnd(from: i)
+        if i < lines.count, lines[i].range(of: #"^\s*#{1,6}\s"#, options: .regularExpression) != nil {
+            var k = end
+            while k < lines.count, lines[k].trimmingCharacters(in: .whitespaces).isEmpty { k += 1 }
+            end = blockEnd(from: k)
+        }
+        let lead = lines[i..<min(end, lines.count)].joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let rest = end < lines.count
+            ? lines[end...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        return (lead, rest)
+    }
+
+    /// Whether an answer without a card folds behind "Full answer" (#33):
+    /// more than three blocks, or written to the executive contract — and
+    /// only when there is something after the first block to fold.
+    static func folds(_ text: String, depth: String?) -> Bool {
+        let blocks = CavnarMarkdown.parse(text).count
+        guard blocks > 1, !split(text).rest.isEmpty else { return false }
+        return blocks > 3 || depth == "executive"
+    }
+}
+
+/// The assistant's side of a bubble: the card when the answer has one, the
+/// text (first paragraph first) when it does not.
+private struct AskAnswerBody: View {
+    let message: ChatMessage
+    var viewModel: AskCavnarViewModel?
+    var onReveal: (() -> Void)?
+
+    var body: some View {
+        if let card = message.card {
+            AskCardAnswer(card: card, message: message, viewModel: viewModel)
+        } else {
+            AskPlainAnswer(message: message, viewModel: viewModel, onReveal: onReveal)
+        }
+    }
+}
+
+/// The confidence line an answer carries — the shared one (K5), "72%
+/// confidence" in the one colour map, with "Why?".
+private func askConfidenceLine(_ message: ChatMessage) -> ConfidenceLine? {
+    guard let ev = message.evidence, let c = ev.confidence, ev.confidenceLabel != nil else { return nil }
+    return ConfidenceLine(confidence: c, recKey: nil, surface: "ask", module: "ask")
+}
+
+/// The one compressed caveat line an answer carries, when anything in it
+/// did not check out.
+private func askCaveatSummary(_ message: ChatMessage) -> String? {
+    if let s = message.evidence?.caveatSummary { return s }
+    let n = message.caveats.count
+    guard n > 0 else { return nil }
+    return n == 1 ? "1 thing to check" : "\(n) things to check"
+}
+
+/// "Answer was cut short" — the model hit max_tokens, so the answer stops
+/// mid-thought. Saying so is the difference between advice and half a
+/// sentence read as advice (audit 5.1).
+private struct AskCutShortNote: View {
+    var body: some View {
+        Label("Answer was cut short", systemImage: "text.append")
+            .cavnarText(.secondary, color: .cavnarAmber)
+    }
+}
+
+/// An answer written to the iPhone contract (#9): headline, the one
+/// sentence, the cause, the first thing to do with its confirm card or its
+/// Done / Pass row, what to expect and how sure — and everything else
+/// behind "Full analysis". Proposals stay in full view: a confirm card
+/// always shows exactly what will be sent before Confirm.
+private struct AskCardAnswer: View {
+    let card: AskCard
+    let message: ChatMessage
+    var viewModel: AskCavnarViewModel?
+
+    /// The suggestion the Do first line was recorded as.
+    private var actionSuggestion: AskSuggestion? {
+        guard let key = card.actionKey else { return nil }
+        return message.suggestions.first { $0.recKey == key }
+    }
+
+    /// The suggestion that leads the actions: the Do first line's own, or —
+    /// when the card names no action and no confirm card leads — the first.
+    private var leadSuggestion: AskSuggestion? {
+        if let s = actionSuggestion { return s }
+        if card.action == nil && message.proposals.isEmpty { return message.suggestions.first }
+        return nil
+    }
+
+    private var otherSuggestions: [AskSuggestion] {
+        let lead = leadSuggestion?.recKey
+        return message.suggestions.filter { $0.recKey != lead }
+    }
+
+    /// The detail with every suggestion line taken out (#34): each action
+    /// is answered once, where it is listed.
+    private var detailText: String? {
+        guard let d = message.detail else { return nil }
+        let t = AskAnswerText.removingLines(d, matching: message.suggestions.map(\.text) + [card.action ?? ""])
+        return t.isEmpty ? nil : t
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarAnswerCard(
+                headline: card.headline,
+                summary: card.summary,
+                cause: card.cause,
+                isHypothesis: card.causeFlagged,
+                expectedOutcome: card.outcome,
+                confidence: askConfidenceLine(message),
+                detailLabel: "Full analysis",
+                surface: nil
+            ) {
+                actions
+            } detail: {
+                detail
+            }
+            if message.wasTruncated {
+                AskCutShortNote()
+            }
+            if !card.followUps.isEmpty {
+                AskFollowUps(questions: card.followUps, viewModel: viewModel)
+            }
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        if let summary = askCaveatSummary(message) {
+            AskCaveatLine(summary: summary, caveats: message.evidence?.caveatCards ?? [], extra: message.caveats)
+        }
+        if let action = card.action {
+            (Text("Do first: ").font(.cavnar(.label)).foregroundStyle(Color.cavnarEmber2)
+                + HomeMixedText.make(action, role: .label, color: .cavnarInk))
+                .lineSpacing(CavnarText.label.lineSpacing)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if let lead = leadSuggestion {
+            CavnarMixedText(lead.text, role: .label, color: .cavnarInk)
+        }
+        if let first = message.proposals.first {
+            ProposalCard(proposal: first, viewModel: viewModel)
+        } else if let lead = leadSuggestion {
+            RecAnswerRow(key: lead.recKey, surface: "ask", module: "ask")
+        }
+        ForEach(message.proposals.dropFirst()) { proposal in
+            ProposalCard(proposal: proposal, viewModel: viewModel)
+        }
+    }
+
+    @ViewBuilder private var detail: some View {
+        if let text = detailText {
+            TypewriterText(fullText: text, size: CavnarText.body.size, color: Color.cavnarInk, lineSpacing: 5,
+                           startRevealed: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if let evidence = message.evidence {
+            AskEvidenceDetail(evidence: evidence)
+        }
+        if !otherSuggestions.isEmpty {
+            AskSuggestionsBlock(suggestions: otherSuggestions)
+        }
+        if message.messageId != nil {
+            AskFeedbackRow(message: message, viewModel: viewModel)
+        }
+    }
+}
+
+/// An answer without a card — an older server, a web-asked chat reopened,
+/// or a reply that did not follow the contract. The text leads; a long or
+/// executive one shows its first paragraph and folds the rest behind "Full
+/// answer · N more" (#33); confidence and confirm cards sit right under it,
+/// evidence below (#35); the action list owns the actions (#34).
+private struct AskPlainAnswer: View {
+    let message: ChatMessage
+    var viewModel: AskCavnarViewModel?
+    var onReveal: (() -> Void)?
+
+    @State private var expanded = false
+    @State private var showingSources = false
+
+    /// The answer with the action list's own lines taken out (#34).
+    private var bodyText: String {
+        let t = AskAnswerText.removingLines(message.text, matching: message.suggestions.map(\.text))
+        return t.isEmpty ? message.text : t
+    }
+
+    var body: some View {
+        let text = bodyText
+        let folds = AskAnswerText.folds(text, depth: message.depth)
+        let parts = folds ? AskAnswerText.split(text) : (lead: text, rest: "")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // Word-by-word reveal, block by block (paragraphs, bullets,
+            // numbered lists, headings — see CavnarMarkdown) instead of the
+            // answer just snapping in. Plays once per message ever:
+            // hasRevealed lives on the model (see ChatMessage).
+            TypewriterText(
+                fullText: parts.lead, size: CavnarText.body.size, color: Color.cavnarInk, lineSpacing: 5,
+                onReveal: onReveal,
+                startRevealed: message.hasRevealed,
+                onComplete: { viewModel?.markRevealed(message.id) }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if folds {
+                if expanded {
+                    TypewriterText(fullText: parts.rest, size: CavnarText.body.size, color: Color.cavnarInk,
+                                   lineSpacing: 5, startRevealed: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                    if let evidence = message.evidence {
+                        AskEvidenceDetail(evidence: evidence)
+                    }
+                }
+                AskDisclosureToggle(label: "Full answer \u{00B7} \(CavnarMarkdown.parse(parts.rest).count) more",
+                                    isExpanded: $expanded)
+            }
+            if message.wasTruncated {
+                AskCutShortNote()
+            }
+            if let summary = askCaveatSummary(message) {
+                AskCaveatLine(summary: summary, caveats: message.evidence?.caveatCards ?? [], extra: message.caveats)
+            }
+            if let line = askConfidenceLine(message) {
+                line
+            }
+            ForEach(message.proposals) { proposal in
+                ProposalCard(proposal: proposal, viewModel: viewModel)
+            }
+            // The answer's own concrete advice, keyed — each one answerable
+            // like any recommendation (#48).
+            if !message.suggestions.isEmpty {
+                AskSuggestionsBlock(suggestions: message.suggestions)
+            }
+            // What it read and what the owner passed on before: proof, one
+            // tap away (#35) — inside "Full answer" when the answer folds.
+            if !folds, let evidence = message.evidence, evidence.hasDetail {
+                if showingSources {
+                    AskEvidenceDetail(evidence: evidence)
+                        .transition(.opacity)
+                }
+                AskDisclosureToggle(label: "What this rests on", isExpanded: $showingSources)
+            }
+            if message.messageId != nil {
+                AskFeedbackRow(message: message, viewModel: viewModel)
+            }
+        }
+    }
+}
+
+/// A 44pt "Full answer · 3 more" / "Show less" toggle in the answer kit's
+/// look (CavnarMoreToggle), with a label of its own.
+private struct AskDisclosureToggle: View {
+    let label: String
+    @Binding var isExpanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            if reduceMotion {
+                isExpanded.toggle()
+            } else {
+                withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
+            }
+        } label: {
+            HStack(spacing: CavnarSpace.xxs + 2) {
+                HomeMixedText.make(isExpanded ? "Show less" : label, role: .label, color: .cavnarEmber2)
+                Image(systemName: "chevron.down")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
+            }
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+}
+
+/// "2 figures unverified · Details" — one amber line on the answer; its
+/// Details opens the shared amber caveats in full ("Hypothesis" for a
+/// cause). Replaces the red 12.5pt warning lines: an untraced figure is a
+/// reason to check, not an error.
+private struct AskCaveatLine: View {
+    let summary: String
+    let caveats: [CavnarCaveat]
+    /// The validation's own caveats — shown when nothing more specific is.
+    var extra: [String] = []
+    @State private var open = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            Button {
+                Haptic.light()
+                if reduceMotion { open.toggle() } else { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarAmber)
+                        .accessibilityHidden(true)
+                    (HomeMixedText.make(summary, role: .secondary, color: .cavnarAmber)
+                        + Text(open ? " \u{00B7} Hide" : " \u{00B7} Details")
+                            .font(.cavnar(.label)).foregroundStyle(Color.cavnarEmber2))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(open ? "Expanded" : "Collapsed")
+            if open {
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                    if caveats.isEmpty {
+                        if !extra.isEmpty {
+                            CavnarCaveat(title: "Check before acting", detail: extra.joined(separator: " "))
+                        }
+                    } else {
+                        ForEach(Array(caveats.enumerated()), id: \.offset) { _, caveat in
+                            caveat
+                        }
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+}
+
+/// The follow-up questions under a card (#91): two or three chips in the
+/// empty state's style; a tap asks it.
+private struct AskFollowUps: View {
+    let questions: [String]
+    var viewModel: AskCavnarViewModel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Ask next")
+            ForEach(questions, id: \.self) { q in
+                AskQuestionChip(question: q) {
+                    Task { await viewModel?.askFollowUp(q) }
+                }
+                .disabled(viewModel?.isLoading == true)
+                .opacity(viewModel?.isLoading == true ? 0.6 : 1)
+            }
+        }
+        .padding(.top, CavnarSpace.xxs)
+    }
+}
+
+/// What an answer rests on, for the detail (#35): the parts of the business
+/// it actually read, as wrapping chips, and the advice in it the owner said
+/// not for us to before. Proof, so it sits behind a tap.
+private struct AskEvidenceDetail: View {
     let evidence: AskEvidence
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            // Untraced figures, then unsupported causes and names — each
-            // inline, the answer kept (NS1 H1).
-            ForEach(evidence.warnings, id: \.self) { warning in
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .bold))
-                    Text(warning)
-                        .font(.cavnarBody(12.5))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .foregroundStyle(Color.cavnarRed)
-            }
-            // Wraps rather than scrolls: a cross-module answer can name five
-            // modules, and a strip that scrolls sideways under a paragraph is
-            // something nobody discovers.
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             if !evidence.modules.isEmpty {
-                FlowChips(labels: evidence.modules.map { ($0, Color.cavnarInk3) })
+                AccountFlowLayout(spacing: 6, lineSpacing: 6) {
+                    ForEach(evidence.modules, id: \.self) { module in
+                        Text(module)
+                            .cavnarText(.tag, color: .cavnarInk2)
+                            .padding(.horizontal, CavnarSpace.xs)
+                            .padding(.vertical, 3)
+                            .overlay(Capsule().stroke(Color.cavnarInk3.opacity(0.6), lineWidth: 1))
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Read: " + evidence.modules.joined(separator: ", "))
             }
             // Advice the owner already said not for us to, repeated in the
             // answer — kept and marked in the prose; said here once (M1).
             if let declined = evidence.declinedLine {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarInk2)
                         .accessibilityHidden(true)
-                    HomeMixedText.make(declined, size: 12.5, weight: 500, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(declined, role: .secondary)
                 }
-                .foregroundStyle(Color.cavnarInk3)
-            }
-            // How sure — the shared confidence line (K5): "72% confidence"
-            // in the one colour map (low is amber, never red — CA4 F9),
-            // with "Why?" when the server sent what it rests on.
-            if let c = evidence.confidence, evidence.confidenceLabel != nil {
-                ConfidenceLine(confidence: c, recKey: nil, surface: "ask", module: "ask")
             }
         }
     }
 }
 
-/// Small wrapping row of labels. SwiftUI has no flow layout before the
-/// Layout protocol, and this needs to work as a plain wrap of short chips.
-private struct FlowChips: View {
-    let labels: [(String, Color)]
-
-    var body: some View {
-        // Two rows at most in practice — modules top out at five and the
-        // confidence chip makes six.
-        let rows = stride(from: 0, to: labels.count, by: 3).map {
-            Array(labels[$0..<min($0 + 3, labels.count)])
-        }
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                HStack(spacing: 5) {
-                    ForEach(Array(row.enumerated()), id: \.offset) { _, chip in
-                        Text(chip.0.uppercased())
-                            .font(.cavnarBody(CavnarType.tag, weight: 700))
-                            .tracking(0.6)
-                            .foregroundStyle(chip.1)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .overlay(
-                                Capsule().stroke(chip.1.opacity(0.35), lineWidth: 1)
-                            )
-                    }
-                }
-            }
-        }
-    }
+extension AskEvidence {
+    /// Anything for the "What this rests on" disclosure to hold.
+    var hasDetail: Bool { !modules.isEmpty || declinedLine != nil }
 }
 
 /// The in-flight bubble: the thinking orb, whose motion changes with what
@@ -764,37 +1144,31 @@ private struct LoadingBubble: View {
     var paused: Bool = false
     /// The answer's validated sentences so far (AI cost audit 10/7/26 #68),
     /// rendered as the answer will be; the final answer replaces the whole
-    /// bubble without retyping it.
+    /// bubble without retyping it. The chat follows it as it grows (#36).
     var preview: String = ""
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: CavnarSpace.xs) {
             CavnarOrb(state: orbState, size: 28, paused: paused)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 10) {
-                Text("CAVNAR AI")
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
                 if !preview.isEmpty {
-                    TypewriterText(fullText: preview, size: 16, color: Color.cavnarInk, lineSpacing: 5,
-                                   startRevealed: true)
+                    TypewriterText(fullText: preview, size: CavnarText.body.size, color: Color.cavnarInk,
+                                   lineSpacing: 5, startRevealed: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else if let label {
                     ForEach(Array(trail.enumerated()), id: \.offset) { _, done in
-                        HStack(spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarGreen)
                             Text(done)
-                                .font(.cavnarBody(12.5))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.caption)
                         }
                         .transition(.opacity.combined(with: .move(edge: .leading)))
                     }
                     Text(label + "\u{2026}")
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.secondary)
                         .id(label)
                         .transition(.opacity)
                 } else {
@@ -805,7 +1179,7 @@ private struct LoadingBubble: View {
                 }
             }
             .padding(.horizontal, 15)
-            .padding(.vertical, 12)
+            .padding(.vertical, CavnarSpace.s)
             .background(Color.cavnarPaper2, in: chatBubbleShape(isUser: false))
             .overlay(
                 chatBubbleShape(isUser: false)
@@ -818,26 +1192,34 @@ private struct LoadingBubble: View {
 
 
 /// "Worth doing" — the answer's own list items that start with a verb and
-/// carry no untraced figure, each with Done / Not for us (surface `ask`).
+/// carry no untraced figure, each with its measured confidence as a compact
+/// meter and Done / Pass (surface `ask`).
 private struct AskSuggestionsBlock: View {
     let suggestions: [AskSuggestion]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("WORTH DOING")
-                .font(.cavnarBody(11, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Worth doing")
             ForEach(suggestions) { s in
-                VStack(alignment: .leading, spacing: 4) {
-                    HomeMixedText.make(s.text, size: 14, weight: 600, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarMixedText(s.text, role: .label, color: .cavnarInk)
+                    if let c = s.confidence {
+                        let d = ConfidenceDisplay(c)
+                        if d.isRenderable {
+                            HStack(alignment: .center, spacing: CavnarSpace.xs) {
+                                ConfidenceMeter(fraction: d.meterFraction, tone: d.tone)
+                                HomeMixedText.make(d.lineLabel, role: .caption, color: .cavnarInk2)
+                            }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(d.lineLabel)
+                        }
+                    }
                     RecAnswerRow(key: s.recKey, surface: "ask", module: "ask")
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(CavnarSpace.s)
         .background(Color.cavnarEmber.opacity(0.06), in: RoundedRectangle(cornerRadius: CavnarRadius.control))
         .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
             .strokeBorder(Color.cavnarEmber.opacity(0.22), lineWidth: 1))
@@ -867,13 +1249,12 @@ private struct AskFeedbackRow: View {
     private var noteRow: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("What was missing?")
-                .font(.cavnarBody(12.5, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
-            HStack(spacing: 8) {
+                .cavnarText(.secondary)
+            HStack(spacing: CavnarSpace.xs) {
                 TextField("Optional", text: $note)
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.body))
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, CavnarSpace.xs)
                     .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
                     .foregroundStyle(Color.cavnarInk)
                     .focused($noteFocused)
@@ -912,25 +1293,24 @@ private struct AskFeedbackRow: View {
     }
 
     private var ratingRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: CavnarSpace.xs) {
             if let rating = message.rating {
-                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
+                Image(systemName: "checkmark").font(.cavnar(.caption))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} this goes into future answers")
-                        .font(.cavnarBody(12.5, weight: 500))
+                        .cavnarText(.secondary)
                     // What the ratings now say about answer length — a
                     // preference kept for this login, forgettable in
                     // Account → Memory (M2).
                     if let pref = message.preferenceNote {
                         Text(pref)
-                            .font(.cavnarBody(12.5, weight: 600))
-                            .foregroundStyle(Color.cavnarGreen)
+                            .cavnarText(.secondary, color: .cavnarGreen)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             } else {
                 Text("Was this useful?")
-                    .font(.cavnarBody(12.5, weight: 600))
+                    .cavnarText(.secondary)
                 ForEach([true, false], id: \.self) { helpful in
                     Button {
                         Haptic.light()
@@ -947,7 +1327,7 @@ private struct AskFeedbackRow: View {
                 }
             }
         }
-        .foregroundStyle(Color.cavnarInk3)
+        .foregroundStyle(Color.cavnarInk2)
         .opacity(busy ? 0.6 : 1)
         .animation(.easeOut(duration: 0.2), value: message.rating)
     }
@@ -991,38 +1371,27 @@ struct ProposalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(proposal.summary)
-                .font(.cavnarBody(15, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarMixedText(proposal.summary, role: .label, color: .cavnarInk)
 
             // What confirming actually commits to: the money, the people it
             // reaches, the words that go out (#23).
             if let stake = proposal.atStake, stake > 0 {
                 Text(stake, format: .currency(code: "USD"))
-                    .font(.cavnarNumber(17, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.figureS, color: .cavnarInk)
             }
             if let details = proposal.details, !details.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                     ForEach(details, id: \.self) { d in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                             Text(d.label)
-                                .font(.cavnarBody(13))
-                                .foregroundStyle(Color.cavnarInk3)
-                            Text(d.value)
-                                .font(.cavnarBody(13))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .cavnarText(.caption)
+                            CavnarMixedText(d.value, role: .secondary)
                         }
                     }
                 }
             }
             if let preview = proposal.preview, !preview.isEmpty {
-                Text(preview)
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(preview, role: .secondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.cavnarPaper, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
@@ -1030,20 +1399,13 @@ struct ProposalCard: View {
             // Every field the confirmed route receives (NS5 C1) — what the
             // owner approves is what runs.
             if let shown = proposal.fieldsShown, !shown.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("SENT WITH THIS")
-                        .font(.cavnarBody(10.5, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("Sent with this")
                     ForEach(shown, id: \.self) { f in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                             Text(f.label)
-                                .font(.cavnarBody(13))
-                                .foregroundStyle(Color.cavnarInk3)
-                            Text(f.value)
-                                .font(.cavnarBody(13))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .cavnarText(.caption)
+                            CavnarMixedText(f.value, role: .secondary)
                         }
                     }
                 }
@@ -1054,20 +1416,18 @@ struct ProposalCard: View {
                 // A teammate's goal waits for the owner (M2): said, not
                 // passed off as done.
                 Label(doneNote ?? "Done", systemImage: "checkmark.circle.fill")
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarGreen)
+                    .cavnarText(.label, color: .cavnarGreen)
                 // A decision the route flags (time off over a published
                 // week): its warning stays on the card (parity audit #4).
                 if let warning = doneWarning, !warning.isEmpty {
-                    HomeMixedText.make(warning, size: 13, weight: 600, color: .cavnarAmber)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(warning, role: .secondary, color: .cavnarAmber)
                 }
             case .working:
                 // CavnarShimmerText takes text + color only (see ViewModifiers);
                 // it sets its own type. Same call shape as AddCompetitorSheet.
                 CavnarShimmerText(text: "Working…", color: Color.cavnarInk)
             case .pending, .failed, .uncertain:
-                HStack(spacing: 8) {
+                HStack(spacing: CavnarSpace.xs) {
                     Button {
                         Task {
                             phase = .working
@@ -1082,11 +1442,12 @@ struct ProposalCard: View {
                         // After a timeout the action may already have run,
                         // so a second tap is labelled for what it is.
                         Text(phase == .uncertain ? "Send again anyway" : "Confirm")
-                            .font(.cavnarBody(14, weight: 700))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16).padding(.vertical, 8)
+                            .cavnarText(.label, color: .white)
+                            .padding(.horizontal, CavnarSpace.m)
+                            .frame(minHeight: 44)
                             .background(Color.cavnarEmber)
                             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
 
@@ -1094,20 +1455,20 @@ struct ProposalCard: View {
                         askingWhy = true
                     } label: {
                         Text("Not now")
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .cavnarText(.label, color: .cavnarInk2)
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 44)
                             .overlay(
                                 RoundedRectangle(cornerRadius: CavnarRadius.control)
                                     .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
                             )
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
                 if phase == .failed || phase == .uncertain {
                     Text(failure ?? "That didn't go through — try again.")
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(phase == .uncertain ? Color.cavnarAmber : Color.cavnarRed)
+                        .cavnarText(.secondary, color: phase == .uncertain ? Color.cavnarAmber : Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

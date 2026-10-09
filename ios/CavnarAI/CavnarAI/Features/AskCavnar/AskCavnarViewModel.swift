@@ -40,6 +40,20 @@ struct ChatMessage: Identifiable {
     /// flag, leaving and coming back replayed every answer's typing
     /// animation from scratch, every time.
     var hasRevealed: Bool = false
+    /// The iPhone card (iOS readability round, 10/8/26): the answer's
+    /// labelled lead, read server-side out of the validated text. Nil for
+    /// an answer without one — it then renders as text, as before.
+    var card: AskCard? = nil
+    /// The text after the card's lead — what "Full analysis" holds. Nil
+    /// without a card.
+    var detail: String? = nil
+    /// The depth contract the answer was written to ("brief", "standard",
+    /// "executive"); an executive answer without a card shows its first
+    /// paragraph and folds the rest.
+    var depth: String? = nil
+    /// The validation's own caveats (`validation.caveats`), shown in the
+    /// warning disclosure when no figure, cause or name is listed.
+    var caveats: [String] = []
 
     /// The backend records what the owner did with a proposal as a
     /// "[Confirmed: …]" / "[Dismissed: …]" user turn (so the model knows).
@@ -67,15 +81,170 @@ struct AskSuggestion: Decodable, Hashable, Identifiable, Sendable {
     let text: String
     let recKey: String
     let answerable: Bool?
+    /// The suggestion's own K1 confidence (ask_cavnar.suggestion_confidence)
+    /// — drawn as a compact meter beside it. Nil from an older server.
+    var confidence: TrustConfidence? = nil
     var id: String { recKey }
 
     enum CodingKeys: String, CodingKey {
-        case text, answerable
+        case text, answerable, confidence
         case recKey = "rec_key"
+    }
+
+    init(text: String, recKey: String, answerable: Bool?, confidence: TrustConfidence? = nil) {
+        self.text = text
+        self.recKey = recKey
+        self.answerable = answerable
+        self.confidence = confidence
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        recKey = try c.decode(String.self, forKey: .recKey)
+        answerable = (try? c.decodeIfPresent(Bool.self, forKey: .answerable)) ?? nil
+        confidence = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)) ?? nil
     }
 
     /// Done / Not for us apply (the server sends answerable: true).
     var showsAnswers: Bool { answerable != false && !recKey.isEmpty }
+}
+
+/// The iPhone card (iOS readability round, 10/8/26) — the answer's
+/// labelled lead as the server read it out of the validated text
+/// (ask_cavnar.answer_card): every word is one the answer said. Read
+/// leniently: an odd field is nil; a card with no headline fails to decode
+/// and is carried as no card (`AskLenientCard`), never a failed answer.
+struct AskCard: Decodable, Hashable, Sendable {
+    let headline: String
+    var summary: String? = nil
+    var cause: String? = nil
+    /// The answer's check could not support the Cause line — shown as a
+    /// hypothesis, never a finding.
+    var causeFlagged: Bool = false
+    var action: String? = nil
+    /// The `ask_tip` key the Do first line was recorded under, when it is a
+    /// suggestion — its Done / Pass row goes under it.
+    var actionKey: String? = nil
+    /// Conditional by construction ("If you …, about …"); the server leaves
+    /// a promise, a sum or an untraced figure off.
+    var outcome: String? = nil
+    var followUps: [String] = []
+
+    enum CodingKeys: String, CodingKey {
+        case headline, summary, cause, action, outcome
+        case causeFlagged = "cause_flagged"
+        case actionKey = "action_key"
+        case followUps = "follow_ups"
+    }
+
+    init(headline: String, summary: String? = nil, cause: String? = nil, causeFlagged: Bool = false,
+         action: String? = nil, actionKey: String? = nil, outcome: String? = nil, followUps: [String] = []) {
+        self.headline = headline
+        self.summary = summary
+        self.cause = cause
+        self.causeFlagged = causeFlagged
+        self.action = action
+        self.actionKey = actionKey
+        self.outcome = outcome
+        self.followUps = followUps
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func text(_ k: CodingKeys) -> String? {
+            let v = ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (v?.isEmpty ?? true) ? nil : v
+        }
+        guard let h = text(.headline) else {
+            throw DecodingError.dataCorruptedError(forKey: .headline, in: c, debugDescription: "no headline")
+        }
+        headline = h
+        summary = text(.summary)
+        cause = text(.cause)
+        causeFlagged = ((try? c.decodeIfPresent(Bool.self, forKey: .causeFlagged)) ?? nil) ?? false
+        action = text(.action)
+        actionKey = text(.actionKey)
+        outcome = text(.outcome)
+        let ups = ((try? c.decodeIfPresent([String].self, forKey: .followUps)) ?? nil) ?? []
+        followUps = Array(ups.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }.prefix(3))
+    }
+}
+
+/// A `card` field read so that a malformed one is no card, never an answer
+/// that fails to decode.
+struct AskLenientCard: Decodable, Hashable, Sendable {
+    let card: AskCard?
+    init(card: AskCard?) { self.card = card }
+    init(from decoder: Decoder) throws {
+        card = try? AskCard(from: decoder)
+    }
+}
+
+/// `validation` on an answer — only its caveats are read here.
+struct AskValidation: Decodable, Hashable, Sendable {
+    var caveats: [String] = []
+
+    enum CodingKeys: String, CodingKey { case caveats }
+
+    init(caveats: [String] = []) { self.caveats = caveats }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        caveats = (((try? c.decodeIfPresent([String].self, forKey: .caveats)) ?? nil) ?? [])
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+}
+
+/// What a stored answer was shown with (models.get_ask_history's `meta`,
+/// iOS readability round #90): its confidence as measured then, what it
+/// read, what did not check out and its card — so a reopened chat draws it
+/// the same, never re-measured.
+struct AskStoredView: Decodable, Hashable, Sendable {
+    var confidence: TrustConfidence? = nil
+    var modules: [String] = []
+    var unverifiedFigures: [String] = []
+    var unsupportedCauses: [String] = []
+    var unsupportedNames: [String] = []
+    var declinedRepeats: [AskDeclinedRepeat] = []
+    var caveats: [String] = []
+    var card: AskCard? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case caveats, card
+        case confidence = "confidence_detail"
+        case modules = "modules_consulted"
+        case unverifiedFigures = "unverified_figures"
+        case unsupportedCauses = "unsupported_causes"
+        case unsupportedNames = "unsupported_names"
+        case declinedRepeats = "declined_repeats"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        func strings(_ k: CodingKeys) -> [String] {
+            ((try? c.decodeIfPresent([String].self, forKey: k)) ?? nil) ?? []
+        }
+        confidence = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)) ?? nil
+        modules = strings(.modules)
+        unverifiedFigures = strings(.unverifiedFigures)
+        unsupportedCauses = strings(.unsupportedCauses)
+        unsupportedNames = strings(.unsupportedNames)
+        caveats = strings(.caveats)
+        declinedRepeats = ((try? c.decodeIfPresent(HomeLenientList<AskDeclinedRepeat>.self,
+                                                   forKey: .declinedRepeats)) ?? nil)?.items ?? []
+        card = ((try? c.decodeIfPresent(AskLenientCard.self, forKey: .card)) ?? nil)?.card
+    }
+
+    var evidence: AskEvidence {
+        AskEvidence(modules: modules, confidence: AskMeta.pick(confidence, nil),
+                    unverifiedFigures: unverifiedFigures, unsupportedCauses: unsupportedCauses,
+                    unsupportedNames: unsupportedNames, declinedRepeats: declinedRepeats)
+    }
 }
 
 /// The provenance of one answer.
@@ -144,6 +313,30 @@ struct AskEvidence: Decodable, Hashable {
 
     /// Every warning line, in the order the strip draws them.
     var warnings: [String] { [warning, causeWarning, nameWarning].compactMap { $0 } }
+
+    /// The one compressed line an answer carries for what did not check out
+    /// ("2 figures unverified · 1 reason is a guess"); the full caveats sit
+    /// behind its Details. Nil when everything checked out.
+    var caveatSummary: String? {
+        var parts: [String] = []
+        let figures = unverifiedFigures.filter { !$0.isEmpty }.count
+        if figures > 0 { parts.append("\(figures) figure\(figures == 1 ? "" : "s") unverified") }
+        let causes = unsupportedCauses.filter { !$0.isEmpty }.count
+        if causes > 0 { parts.append("\(causes) reason\(causes == 1 ? " is a guess" : "s are guesses")") }
+        let names = unsupportedNames.filter { !$0.isEmpty }.count
+        if names > 0 { parts.append("\(names) name\(names == 1 ? "" : "s") unverified") }
+        return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// The shared amber caveats, one per kind — what the compressed line's
+    /// Details opens to ("Hypothesis" for a cause).
+    var caveatCards: [CavnarCaveat] {
+        var out: [CavnarCaveat] = []
+        if !unverifiedFigures.isEmpty { out.append(.unverifiedFigures(unverifiedFigures)) }
+        if !unsupportedCauses.isEmpty { out.append(.unverifiedCauses(unsupportedCauses)) }
+        if !unsupportedNames.isEmpty { out.append(.unverifiedNames(unsupportedNames)) }
+        return out
+    }
 
     /// "1 suggestion here is one you said not for us to on 8/12/26 —
     /// marked in the answer." Nil with none.
@@ -564,9 +757,15 @@ final class AskCavnarViewModel {
         var declinedRepeats: HomeLenientList<AskDeclinedRepeat>? = nil
         let messageId: Int?
         let suggestions: [AskSuggestion]?
+        /// The iPhone card and the text after it (iOS readability round).
+        var card: AskLenientCard? = nil
+        var detail: String? = nil
+        var depth: String? = nil
+        var validation: AskValidation? = nil
 
         enum CodingKeys: String, CodingKey {
             case ok, answer, error, truncated, proposals, confidence, suggestions, meta
+            case card, detail, depth, validation
             case declinedRepeats = "declined_repeats"
             case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"
@@ -676,6 +875,9 @@ final class AskCavnarViewModel {
         let role: String
         let content: String
         let proposals: [AskProposal]?
+        /// What the answer was shown with (#90) and the text after its card.
+        var meta: AskStoredView? = nil
+        var detail: String? = nil
     }
 
     private struct ConversationResponse: Decodable {
@@ -764,8 +966,17 @@ final class AskCavnarViewModel {
             messages = stored.map { m in
                 // A reopened answer can still be rated ("Was this useful?");
                 // its suggestions are not re-offered, like its proposals.
-                ChatMessage(text: m.content, isUser: m.role == "user",
-                            messageId: m.role == "assistant" ? m.id : nil, hasRevealed: true)
+                // It keeps its card, confidence and evidence as they were
+                // measured when it was given (#90).
+                let isUser = m.role == "user"
+                let view = isUser ? nil : m.meta
+                let evidence = view?.evidence
+                let card = view?.card
+                return ChatMessage(text: m.content, isUser: isUser,
+                                   evidence: (evidence?.isEmpty == false) ? evidence : nil,
+                                   messageId: isUser ? nil : m.id, hasRevealed: true,
+                                   card: card, detail: card == nil ? nil : m.detail,
+                                   caveats: view?.caveats ?? [])
             }
             self.conversationId = conversationId
             wantsNewConversation = false
@@ -1170,7 +1381,10 @@ final class AskCavnarViewModel {
                             truncated: response.truncated == true, proposals: response.proposals ?? [],
                             evidence: response.ok ? response.evidence : nil,
                             messageId: response.ok ? response.messageId : nil,
-                            suggestions: response.ok ? (response.suggestions ?? []) : [])
+                            suggestions: response.ok ? (response.suggestions ?? []) : [],
+                            card: response.ok ? response.card?.card : nil,
+                            detail: response.detail, depth: response.depth,
+                            caveats: response.validation?.caveats ?? [])
             } catch where answerGeneration != SessionScope.generation {
                 // The scope moved on while the fallback ran; see above.
             } catch is CancellationError {
@@ -1254,7 +1468,8 @@ final class AskCavnarViewModel {
                 appendAnswer(from: event.answer ?? "", truncated: event.truncated == true,
                             proposals: event.proposals ?? [], evidence: event.evidence,
                             messageId: event.messageId, suggestions: event.suggestions ?? [],
-                            revealed: previewed)
+                            revealed: previewed, card: event.card?.card, detail: event.detail,
+                            depth: event.depth, caveats: event.validation?.caveats ?? [])
             case "error":
                 gotAnswer = true
                 streamingPreview = ""
@@ -1277,7 +1492,9 @@ final class AskCavnarViewModel {
 
     private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal],
                               evidence: AskEvidence?, messageId: Int? = nil,
-                              suggestions: [AskSuggestion] = [], revealed: Bool = false) {
+                              suggestions: [AskSuggestion] = [], revealed: Bool = false,
+                              card: AskCard? = nil, detail: String? = nil, depth: String? = nil,
+                              caveats: [String] = []) {
         guard answerGeneration == SessionScope.generation else { return }
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = cleaned.isEmpty
@@ -1286,10 +1503,23 @@ final class AskCavnarViewModel {
         // An empty strip is carried as nil so the view has one thing to check
         // rather than reaching into the struct to decide whether to draw.
         let ev = (evidence?.isEmpty == false) ? evidence : nil
+        // A card lands whole — it has no words to type out; its detail sits
+        // behind "Full analysis", already revealed when opened.
+        let shownCard = cleaned.isEmpty ? nil : card
         messages.append(ChatMessage(text: display, isUser: false, wasTruncated: truncated,
                                     proposals: proposals, evidence: ev, messageId: messageId,
                                     suggestions: suggestions.filter(\.showsAnswers),
-                                    hasRevealed: revealed))
+                                    hasRevealed: revealed || shownCard != nil,
+                                    card: shownCard, detail: shownCard == nil ? nil : detail,
+                                    depth: depth, caveats: caveats))
+    }
+
+    /// A follow-up chip under an answer (#91): asks it as if typed. Ignored
+    /// while an answer is in flight.
+    func askFollowUp(_ text: String) async {
+        guard !isLoading, !isOpeningConversation else { return }
+        question = text
+        await submit()
     }
 }
 

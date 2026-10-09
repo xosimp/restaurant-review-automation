@@ -17507,6 +17507,41 @@ def ask_feedback_rows(restaurant_id, user_id=None, days: int = 180, db_path: str
     return out
 
 
+# How long a stored Ask turn's meta may grow. It was cut at 4,000 characters
+# with a slice, which leaves a string that is not JSON — the rating, the
+# public-text taint and the reopened view then read no meta at all (the same
+# bug issues.META_MAX_CHARS fixed). The turn's view (confidence, evidence,
+# the iPhone card) is dropped piece by piece instead, never cut mid-string.
+ASK_META_MAX_CHARS = 16000
+
+# The stored view's keys (ask_cavnar.turn_view writes exactly these) —
+# what get_ask_history hands a client back with an assistant turn.
+ASK_TURN_VIEW_KEYS = ("confidence_detail", "modules_consulted", "unverified_figures", "unsupported_causes",
+                      "unsupported_names", "declined_repeats", "caveats", "card")
+
+
+def _ask_meta_text(meta):
+    """`meta` as whole JSON within ASK_META_MAX_CHARS, or None: past the cap
+    the view's bulkiest parts go first (the confidence object, the declined
+    repeats and caveats, then the card, then the whole view)."""
+    import json as _json
+    m = dict(meta or {})
+    text = _json.dumps(m, default=str)
+    if len(text) <= ASK_META_MAX_CHARS:
+        return text
+    view = dict(m.get("view") or {})
+    for key in ("confidence_detail", "declined_repeats", "caveats", "card"):
+        if key in view:
+            view[key] = None
+            m["view"] = view
+            text = _json.dumps(m, default=str)
+            if len(text) <= ASK_META_MAX_CHARS:
+                return text
+    m.pop("view", None)
+    text = _json.dumps(m, default=str)
+    return text if len(text) <= ASK_META_MAX_CHARS else None
+
+
 def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
                      conversation_id=None, db_path: str = DB_PATH, tools=None, meta=None, via=None) -> int:
     """Appends a turn and returns the conversation it landed in.
@@ -17537,7 +17572,7 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
                                            "input": (t or {}).get("input") or {}}
                                           for t in tools if isinstance(t, dict)][:20], default=str)[:6000]
             if meta:
-                meta_json = _json.dumps(meta, default=str)[:4000]
+                meta_json = _ask_meta_text(meta)
         except (TypeError, ValueError):
             tools_json = meta_json = None
     conn = get_conn(db_path)
@@ -17596,7 +17631,7 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, role, content, proposals, created_at, tools_json FROM ask_cavnar_messages "
+            "SELECT id, role, content, proposals, created_at, tools_json, meta_json FROM ask_cavnar_messages "
             "WHERE restaurant_id=? AND conversation_id=?" + _viewer_clause(viewer_id)[0] +
             " ORDER BY id DESC LIMIT ?",
             [restaurant_id, conversation_id, *_viewer_clause(viewer_id)[1], limit]
@@ -17619,6 +17654,18 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
                 d["tools"] = _json.loads(raw_tools) or []
             except Exception:
                 pass
+        # What the answer was shown with (iOS readability round #90): its
+        # stored view — confidence as measured then, what it read, what did
+        # not check out, the iPhone card — so a reopened chat draws it the
+        # same. Only the view's own keys; never the turn's tools or ids.
+        raw_meta = d.pop("meta_json", None)
+        if d.get("role") == "assistant" and raw_meta:
+            try:
+                view = (_json.loads(raw_meta) or {}).get("view")
+            except Exception:
+                view = None
+            if isinstance(view, dict):
+                d["meta"] = {k: view.get(k) for k in ASK_TURN_VIEW_KEYS}
         out.append(d)
     return out
 

@@ -1346,6 +1346,33 @@ THIS ONE IS A BUSINESS QUESTION, so answer it the way the owner's most trusted a
 Do not pad this into a template — if one of those has no honest answer, say so in a clause and move on. Lead with the answer, not the method. Priorities go in a numbered list, evidence in bullets, and the whole thing should read like a person who knows the business talking, not a report."""
 
 
+# The iPhone answer contract (iOS readability round, 10/8/26: "Web explains.
+# iPhone decides."). The phone draws a card from a labelled lead, so the
+# answer opens with fixed lines, then a "---" line, then the detail; the
+# card is read out of the validated text deterministically (answer_card) —
+# never a second model call, and never a word the answer did not say. A
+# per-turn block (it changes with the surface, so it never sits in a cached
+# one — PROMPT_LIBRARY, Ask). The depth contract still governs the detail.
+_IPHONE_NOTE = """SURFACE: the owner is reading this on their iPhone, which shows your opening as a card and keeps the rest behind a tap. Open with these lines, each on its own line, in this order, plain text, no markdown on them:
+1. A one-line headline: what happened or the direct answer, with the measured figure behind it.
+2. One sentence on why it matters to them.
+Cause: the reason, written as "because …", and ONLY when the data you read states it. When the evidence does not support a cause, leave this line out.
+Do first: the single most important action, starting with a verb. Leave it out when there is nothing to do.
+Expect: what that action could bring, conditional ("If …, about …"). Never a promise, never several figures added together, never an opportunity presented as money saved or delivered. Leave it out when nothing measured supports a figure.
+Follow-ups: two or three short questions the owner might ask next, separated by " | ".
+Then a line with only --- on it, then the detail exactly as you would otherwise write it (the reasoning, the evidence, the other options). Never repeat the opening lines in the detail."""
+
+# Repeated beside the question, as the brief surface's rule is: after a tool
+# loop the final answer is written with the tool results freshest in context.
+_IPHONE_TURN_NOTE = ("\n\n(On the iPhone: open with the headline, the one sentence, then the Cause / Do first / "
+                     "Expect / Follow-ups lines that apply, then a line with only ---, then the detail.)")
+
+# The phone's executive room: the detail sits behind a tap on a 6-inch
+# screen, and a 4,000-token essay there was read by nobody. Standard and
+# brief are unchanged.
+_IOS_MAX_TOKENS = {"executive": 2500}
+
+
 def _depth_for(question, brief=False, prefer=None):
     """brief | executive | standard, from the question itself.
 
@@ -1942,6 +1969,15 @@ def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions
     meta["validation"] = rv.payload(verdict)
     meta["validation_findings"] = [{k: f.get(k) for k in ("rule", "severity", "span", "detail", "action", "sentence")
                                     if f.get(k) is not None} for f in verdict.findings][:40]
+    # The iPhone card, read out of the text as shown — after every rewrite
+    # and annotation above, so the validation covered each of its words
+    # (iOS readability round, 10/8/26). No labelled lead (every web answer)
+    # is no card. The Cause line is also checked as the cause it states.
+    card, detail = answer_card(shown, meta)
+    if card and card.get("cause") and not card.get("cause_flagged"):
+        card["cause_flagged"] = _card_cause_unsupported(card["cause"], corpus)
+    meta["card"] = card
+    meta["detail"] = detail
     return shown, _recorded(shown, meta, restaurant_id)
 
 
@@ -2321,6 +2357,7 @@ SUGGESTION_VERBS = frozenset((
     "stop", "swap", "test", "text", "track", "train", "trim", "try", "update", "use"))
 MAX_SUGGESTIONS = 3
 _LIST_ITEM = re.compile(r"^\s*(?:[-*\u2022]|\d{1,2}[.)])\s+(.+?)\s*$")
+_DO_FIRST_LINE = re.compile(r"^\s*\**\s*do\s+first\s*(?::\s*\**|\**\s*:)\s*(.+?)\s*$", re.I)
 
 
 def extract_suggestions(answer, unverified=None, limit=MAX_SUGGESTIONS) -> list:
@@ -2332,7 +2369,9 @@ def extract_suggestions(answer, unverified=None, limit=MAX_SUGGESTIONS) -> list:
     out, seen = [], set()
     bad = [str(u) for u in (unverified or []) if str(u).strip()]
     for line in str(answer or "").splitlines():
-        m = _LIST_ITEM.match(line)
+        # The iPhone card's "Do first:" line is the answer's lead action
+        # (iOS readability round, 10/8/26): a suggestion like a list item.
+        m = _LIST_ITEM.match(line) or _DO_FIRST_LINE.match(line)
         if not m:
             continue
         text = re.sub(r"\*\*(.+?)\*\*", r"\1", m.group(1)).strip()
@@ -2444,6 +2483,201 @@ def record_suggestions(restaurant_id, answer, meta=None, user_id=None) -> list:
         return []
 
 
+# ── the iPhone answer card (iOS readability round, 10/8/26) ────────────────
+#
+# The phone answers in five seconds: a headline, one sentence, the cause, the
+# first action, what to expect — and everything else behind "Full analysis".
+# The model is asked for that lead as labelled lines (_IPHONE_NOTE); this
+# reads them out of the VALIDATED answer, deterministically, with no second
+# model call, so every word on the card is a word the owner's answer said
+# and the Response Validation Layer already passed. Anything that does not
+# parse is no card: the client shows the answer as before.
+
+_CARD_SEPARATOR = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+_CARD_LABEL = re.compile(r"^\s*(?:[-*•]\s+)?\**\s*([A-Za-z][A-Za-z \-]{1,24}?)\s*(?::\s*\**|\**\s*:)\s*(.*?)\s*$")
+_CARD_LABELS = {
+    "headline": "headline", "answer": "summary", "summary": "summary", "in short": "summary",
+    "why it matters": "summary", "cause": "cause", "why": "cause", "likely cause": "cause",
+    "do first": "action", "do this first": "action", "first step": "action", "action": "action",
+    "expect": "outcome", "expected": "outcome", "expected outcome": "outcome", "outcome": "outcome",
+    "follow-ups": "follow_ups", "follow ups": "follow_ups", "followups": "follow_ups", "follow-up": "follow_ups",
+    "ask next": "follow_ups",
+}
+# The lead is a handful of lines; anything longer is not the contract.
+_CARD_MAX_LEAD_LINES = 9
+_CARD_MAX_HEADLINE = 200
+_CARD_MAX_FIELD = 400
+MAX_FOLLOW_UPS = 3
+# An "Expect:" line must be worded as what could happen, never a promise.
+_CARD_CONDITIONAL = re.compile(r"\b(?:if|could|would|should|may|might|about|around|roughly|likely|expect|"
+                               r"up to|aim|estimated?|potentially|on track)\b", re.I)
+_CARD_SUMMED = re.compile(r"\b(?:total|totals|combined|together|in all|altogether|all told|added up|sum)\b", re.I)
+_CARD_MONEY = re.compile(r"\$\s?\d")
+
+
+def _card_clean(text) -> str:
+    """One card line as plain words: no markdown emphasis, heading marks,
+    bullets or wrapping quotes."""
+    t = str(text or "").strip()
+    t = re.sub(r"^#{1,6}\s+", "", t)
+    t = re.sub(r"^(?:[-*•]|\d{1,2}[.)])\s+", "", t)
+    t = t.replace("**", "").replace("__", "").replace("`", "")
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) >= 2 and t[0] in "\"“" and t[-1] in "\"”":
+        t = t[1:-1].strip()
+    return t
+
+
+def _card_norm(text) -> str:
+    return re.sub(r"[^a-z0-9%$.]+", " ", str(text or "").lower()).strip()
+
+
+def _card_overlaps(line, flagged) -> bool:
+    """True when a flagged sentence (an unsupported cause) is the card's
+    line, or the line is part of it, or most of the line's words are in it."""
+    a = _card_norm(line)
+    if not a:
+        return False
+    words = set(w for w in a.split() if len(w) > 3)
+    for f in flagged or ():
+        b = _card_norm(f)
+        if not b:
+            continue
+        if a in b or b in a:
+            return True
+        if words:
+            shared = words & set(w for w in b.split() if len(w) > 3)
+            if len(shared) >= max(2, int(0.6 * len(words) + 0.5)):
+                return True
+    return False
+
+
+def _card_follow_ups(value, bad) -> list:
+    raw = str(value or "")
+    parts = raw.split("|") if "|" in raw else (re.findall(r"[^?;]+\?", raw) or raw.split(";"))
+    out, seen = [], set()
+    for p in parts:
+        q = _card_clean(p).strip(" -–—")
+        if not (8 <= len(q) <= 140) or any(b in q for b in bad):
+            continue
+        if q.lower() in seen:
+            continue
+        seen.add(q.lower())
+        out.append(q)
+        if len(out) >= MAX_FOLLOW_UPS:
+            break
+    return out
+
+
+def answer_card(answer, meta=None) -> tuple:
+    """(card, detail) for an answer written to the iPhone contract, else
+    (None, None). Pure; never raises.
+
+    `card` is {headline, summary, cause, cause_flagged, action, action_key,
+    outcome, follow_ups}: the lead's lines, cleaned of markdown and nothing
+    else. `detail` is the text after the "---" line. Read from the answer
+    as validated (call it on what `_finish` returns), so the validation
+    covered every word. `meta` supplies what the check found:
+    - `cause_flagged` when a cause sentence the check could not support
+      (`unsupported_causes`) is the Cause line — shown as a hypothesis;
+    - the Expect line is left off when it carries a figure the check could
+      not trace (`unverified_figures`), is not worded conditionally, or adds
+      dollar figures together — never a promise, never a sum;
+    - a follow-up carrying an untraced figure is left out.
+    `action_key` is the "ask_tip" key the Do first line is recorded under
+    when it is a suggestion (record_suggestions), so the phone can put its
+    Done / Pass row under it."""
+    try:
+        text = str(answer or "").replace("\r\n", "\n")
+        if not text.strip() or text.strip() == ASK_REFUSED_ANSWER:
+            return None, None
+        lines = text.split("\n")
+        sep = next((i for i, ln in enumerate(lines[:_CARD_MAX_LEAD_LINES * 3]) if _CARD_SEPARATOR.match(ln)), None)
+        if sep is None:
+            return None, None
+        lead = [ln for ln in lines[:sep] if ln.strip()]
+        if not lead or len(lead) > _CARD_MAX_LEAD_LINES:
+            return None, None
+        m = meta or {}
+        bad = [str(u) for u in (m.get("unverified_all") or m.get("unverified_figures") or []) if str(u).strip()]
+        fields, plain = {}, []
+        for ln in lead:
+            hit = _CARD_LABEL.match(ln)
+            key = _CARD_LABELS.get(re.sub(r"\s+", " ", hit.group(1).strip().lower())) if hit else None
+            if key:
+                if key in fields:
+                    return None, None            # the same label twice is not the contract
+                fields[key] = hit.group(2)
+            else:
+                plain.append(ln)
+        # The headline and the one sentence are the unlabelled lines, in order.
+        if "headline" not in fields and plain:
+            fields["headline"] = plain.pop(0)
+        if "summary" not in fields and plain:
+            fields["summary"] = plain.pop(0)
+        if plain:
+            return None, None                    # prose in the lead: not the contract
+        card = {k: _card_clean(v) for k, v in fields.items() if k != "follow_ups"}
+        headline = card.get("headline") or ""
+        if not headline or len(headline) > _CARD_MAX_HEADLINE:
+            return None, None
+        if not any(card.get(k) for k in ("cause", "action", "outcome")):
+            return None, None                    # no labelled lead
+        for k in ("summary", "cause", "action", "outcome"):
+            v = card.get(k)
+            if v and len(v) > _CARD_MAX_FIELD:
+                return None, None
+        outcome = card.get("outcome") or None
+        if outcome and (any(b in outcome for b in bad) or not _CARD_CONDITIONAL.search(outcome)
+                        or (_CARD_SUMMED.search(outcome) and len(_CARD_MONEY.findall(outcome)) >= 2)):
+            outcome = None
+        action = card.get("action") or None
+        action_key = None
+        if action:
+            first = re.split(r"[\s,:;]", action, 1)[0].lower().strip(".")
+            if first in SUGGESTION_VERBS and 12 <= len(action) <= 240 and not any(b in action for b in bad):
+                action_key = suggestion_key(action)
+        cause = card.get("cause") or None
+        if cause:
+            # The card labels it ("Why:" / "Hypothesis ·"); the "because"
+            # the contract asks the sentence to carry is the label's job.
+            bare = re.sub(r"(?i)^(?:because(?:\s+of)?|due\s+to|driven\s+by)\s+", "", cause).strip()
+            cause = (bare[:1].upper() + bare[1:]) if bare else cause
+        out = {
+            "headline": headline,
+            "summary": card.get("summary") or None,
+            "cause": cause,
+            "cause_flagged": bool(cause and _card_overlaps(cause, m.get("unsupported_causes"))),
+            "action": action,
+            "action_key": action_key,
+            "outcome": outcome,
+            "follow_ups": _card_follow_ups(fields.get("follow_ups"), bad),
+        }
+        detail = "\n".join(lines[sep + 1:]).strip()
+        return out, (detail or None)
+    except Exception as e:
+        print(f"[ask_cavnar] answer card unavailable: {e}")
+        return None, None
+
+
+def _card_cause_unsupported(cause, corpus) -> bool:
+    """True when the Cause line states a reason nothing the answer read
+    supports. The label carries the "because" the sentence may not, so it
+    is checked as one: "That happened because <cause>" against the
+    corpus's own cause-bearing sentences (unsupported_causes_in, the R5
+    anchors). Never raises; False when it cannot tell."""
+    try:
+        c = str(cause or "").strip()
+        if not c:
+            return False
+        if not re.match(r"(?i)^(?:because|due to|driven by)\b", c):
+            c = "because " + c
+        return bool(unsupported_causes_in("That happened " + c, corpus))
+    except Exception as e:
+        print(f"[ask_cavnar] card cause check unavailable: {e}")
+        return False
+
+
 def _feedback_context(restaurant_id, viewer=None):
     """How THIS login has rated Ask's answers (ask_feedback), so the
     assistant knows whether its answers have been landing for the person
@@ -2538,7 +2772,32 @@ def turn_record(meta) -> dict:
             "read_public_text": bool(m.get("read_public_text")),
             # The turn's id is its ai_runs row's id (AI orchestration,
             # 10/7/26): a rating of the answer is filed on that run.
-            "turn_id": m.get("turn_id")}
+            "turn_id": m.get("turn_id"),
+            # What a reopened chat draws the answer with (iOS readability
+            # round #90): the measured confidence, what it read, what did not
+            # check out and the iPhone card — never re-measured on reopen.
+            "view": turn_view(m)}
+
+
+def turn_view(meta) -> dict:
+    """What an answer was shown with, kept with the stored turn so a
+    reopened chat shows the same confidence, evidence and card: the K1
+    confidence as measured at answer time, the modules it read, the figures,
+    causes and names that did not check out, the declined repeats, the
+    validation's caveats and the iPhone card. Exactly the keys
+    models.ASK_TURN_VIEW_KEYS lists — what get_ask_history hands back."""
+    m = meta or {}
+    detail = m.get("confidence_detail")
+    return {
+        "confidence_detail": detail if isinstance(detail, dict) else None,
+        "modules_consulted": list(m.get("modules_consulted") or [])[:8],
+        "unverified_figures": list(m.get("unverified_figures") or [])[:5],
+        "unsupported_causes": list(m.get("unsupported_causes") or [])[:3],
+        "unsupported_names": list(m.get("unsupported_names") or [])[:3],
+        "declined_repeats": list(m.get("declined_repeats") or [])[:5],
+        "caveats": list(((m.get("validation") or {}).get("caveats") or []))[:5],
+        "card": m.get("card") if isinstance(m.get("card"), dict) else None,
+    }
 
 
 def _ai_turn(fn):
@@ -2659,7 +2918,7 @@ def record_feedback_outcome(restaurant_id, message_id, helpful, authority=None) 
 @_ai_turn
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None,
                    read_only=False, delivery="interactive", screen=None, action="ask_cavnar",
-                   conversation_id=None, memory_block=None, on_sentence=None, _route=None):
+                   conversation_id=None, memory_block=None, on_sentence=None, surface=None, _route=None):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -2714,6 +2973,11 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     1-star") would otherwise run with no confirmation card, and `remember`
     persists it as something the owner said into every future prompt. The
     model is told to ask the owner, whose next message can make the change.
+
+    `surface` is "ios" from the phone's Ask routes (iOS readability round,
+    10/8/26): the turn carries the iPhone answer contract (_IPHONE_NOTE, a
+    per-turn block, so the cached prefix is the web's) and the executive
+    contract gets the phone's room (_IOS_MAX_TOKENS). None is the web.
     """
     def _progress(label, state):
         """`state` is one of ORB_STATES — what the orb should look like
@@ -2891,13 +3155,19 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     # the chat's memory, DATA STATE, the depth contract (#29), the length
     # the owner's ratings asked for, a caller's own memory, where the owner
     # is, and the pre-read's note.
+    _iphone = surface == "ios" and depth != "brief"
     system_blocks = _system_blocks(restaurant.name, snapshot, depth, turn=[
         _now, _conversation, _data_state, _depth_note(depth),
         _LENGTH_NOTES.get(_length_pref, "") if depth != "brief" else "",
+        # The iPhone answer contract: per turn, after the depth note it
+        # shapes, never in a cached block (iOS readability round, 10/8/26).
+        _IPHONE_NOTE if _iphone else "",
         _memory_extra, _screen, _PRERUN_NOTE if _prerun_payload is not None else "",
         _replay_note(_replay[0]) if _replay else "",
     ])
     user_turn = question.strip()[:_MAX_QUESTION_LENGTH]
+    if _iphone:
+        user_turn += _IPHONE_TURN_NOTE
     if depth == "brief":
         # Repeated on the user turn: after a tool loop the final answer is
         # generated with the tool results freshest in context, and a length
@@ -2922,6 +3192,8 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     proposals = []
     truncated = False
     max_tokens = _MAX_TOKENS.get(depth, _MAX_TOKENS["standard"])
+    if _iphone:
+        max_tokens = _IOS_MAX_TOKENS.get(depth, max_tokens)
 
     # Everything the model was actually handed, accumulated as the loop runs.
     # This is the corpus the answer's figures are checked against, and it has

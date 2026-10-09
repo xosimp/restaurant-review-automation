@@ -2152,6 +2152,9 @@ def mobile_ask_cavnar(current_user):
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")),
         user=current_user, screen=data.get("screen"),
+        # The phone gets the iPhone answer contract and its card (iOS
+        # readability round, 10/8/26) — Siri's Ask posts here too.
+        surface="ios",
     )
     return jsonify(**payload), status
 
@@ -2172,7 +2175,7 @@ def mobile_ask_cavnar_stream(current_user):
         current_user["restaurant_id"], _capi._ask_uid(current_user), data.get("question"),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")), user=current_user,
-        screen=data.get("screen"))
+        screen=data.get("screen"), surface="ios")
 
 
 @mobile_bp.route("/ask-cavnar/history")

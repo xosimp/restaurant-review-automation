@@ -740,9 +740,16 @@ actor APIClient {
         let messageId: Int?
         /// The answer's own concrete suggestions, keyed (`ask_tip:<hash>`).
         let suggestions: [AskSuggestion]?
+        /// The iPhone card, the text after it, the depth contract and the
+        /// validation's caveats (iOS readability round, 10/8/26).
+        var card: AskLenientCard? = nil
+        var detail: String? = nil
+        var depth: String? = nil
+        var validation: AskValidation? = nil
 
         enum CodingKeys: String, CodingKey {
             case type, label, state, answer, text, truncated, proposals, error, confidence, suggestions, meta
+            case card, detail, depth, validation
             case declinedRepeats = "declined_repeats"
             case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"

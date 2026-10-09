@@ -3268,7 +3268,31 @@ def _ask_meta(meta):
         # 9/29/26 "relevance"). It stopped at the meta and never reached a
         # client until the UI wave.
         "declined_repeats": meta.get("declined_repeats") or [],
+        # The iPhone card (iOS readability round, 10/8/26): {headline,
+        # summary, cause, cause_flagged, action, action_key, outcome,
+        # follow_ups} read out of the validated answer's labelled lead, and
+        # `detail`, the text after it. Both null when the answer has no
+        # labelled lead — every web answer — and `answer` is always the
+        # whole text, unchanged.
+        "card": meta.get("card"),
+        "detail": meta.get("detail"),
     }
+
+
+def _ask_with_card(answer, meta):
+    """`meta` with the iPhone card (ask_cavnar.answer_card) when the turn
+    did not already read it (`_finish` does, after validation, with the
+    Cause line's own check) — set before the turn is stored, so a reopened
+    chat has the same card. Never raises."""
+    meta = dict(meta or {})
+    if "card" not in meta:
+        try:
+            import ask_cavnar as _ac_card
+            meta["card"], meta["detail"] = _ac_card.answer_card(answer, meta)
+        except Exception as e:
+            print(f"[ask] answer card unavailable: {e}")
+            meta["card"], meta["detail"] = None, None
+    return meta
 
 
 def _ask_uid(user):
@@ -3283,7 +3307,7 @@ def _ask_uid(user):
 
 
 def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversation_id=None,
-                   new_conversation=False, brief=False, user=None, screen=None):
+                   new_conversation=False, brief=False, user=None, screen=None, surface=None):
     """The AI copilot's shared body — answers a plain-English question about
     the restaurant's own live data (reviews/labor/food cost/marketing,
     whichever modules are active) instead of the owner having to piece it
@@ -3299,7 +3323,11 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
 
     `screen` is where the asker is ({panel, entity:{type, id}}, friction
     #15) — ask_cavnar.screen_hint validates and resolves it; it is a hint
-    beside the question, never an instruction."""
+    beside the question, never an instruction.
+
+    `surface` is "ios" from the mobile routes: the answer is written to the
+    iPhone contract and comes back with its `card` (iOS readability round,
+    10/8/26). None — the web — is unchanged."""
     question = (question or "").strip()
     if not question:
         return {"ok": False, "error": "Ask a question first."}, 400
@@ -3344,7 +3372,8 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         with interactive_slot():
             answer, truncated, proposals, meta = ask_with_tools(
                 restaurant, question, history=history, user=user, screen=screen, conversation_id=conversation_id,
-                **({'brief': True} if brief else {}))
+                **({'brief': True} if brief else {}), **({"surface": surface} if surface else {}))
+        meta = _ask_with_card(answer, meta)
 
         message_id = None
         try:
@@ -3417,7 +3446,7 @@ def ask_cavnar_api(current_user):
 
 
 def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_conversation=False, brief=False,
-                                user=None, screen=None):
+                                user=None, screen=None, surface=None):
     """Server-sent events: progress while tools run, then the answer —
     with the answer's validated sentences streamed ahead of it as a preview
     (`sentence` / `sentence_reset`, AI cost audit 10/7/26 #68; the `answer`
@@ -3482,7 +3511,9 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 # audit 10/7/26 #68): a preview the `answer` event replaces.
                 # ASK_STREAM_SENTENCES=0 sends none (ask_with_tools reads it).
                 on_sentence=_ac_stream.sentence_events(events.put),
-                **({"brief": True} if brief else {}))
+                **({"brief": True} if brief else {}), **({"surface": surface} if surface else {}))
+            # The iPhone card rides the `answer` event and the stored turn.
+            meta = _ask_with_card(answer, meta)
             mid = None
             try:
                 import ask_cavnar as _ac_props
@@ -3632,6 +3663,16 @@ def _do_get_ask_conversation(restaurant_id, conversation_id, viewer_id=None):
         return {"ok": False, "error": "That conversation doesn't exist."}, 404
     messages = get_ask_history(restaurant_id, limit=_ASK_TRANSCRIPT_KEEP,
                                conversation_id=conversation_id, viewer_id=viewer_id)
+    # A reopened answer's stored card comes back with its `detail` (the text
+    # after the labelled lead), split again from the stored text — the same
+    # pure split the answer was shown with (iOS readability round #90).
+    for m in messages:
+        if (m.get("meta") or {}).get("card"):
+            try:
+                import ask_cavnar as _ac_reopen
+                m["detail"] = _ac_reopen.answer_card(m.get("content"), m["meta"])[1]
+            except Exception:
+                m["detail"] = None
     return {"ok": True, "conversation": convo, "messages": messages}, 200
 
 
