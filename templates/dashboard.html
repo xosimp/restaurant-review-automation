@@ -19924,10 +19924,14 @@ function rvLoadWhy(){
   var box=document.getElementById('rv-why');if(!box)return;
   fetch('/api/reviews/why-line',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok){box.hidden=true;return;}
-    var rEl=document.getElementById('stat-rating-n'),rating=rEl?String(rEl.textContent||'').trim():'',bits=[];
-    var dl=d.rating_delta,c=d.complaint;
-    if(rating&&dl!=null){
-      bits.push('<span>Rating <b class="hb-num">'+esc(rating)+'★</b> '+(Math.abs(dl)<0.05?'<span>level</span>':('<span class="'+(dl>0?'up':'down')+'">'+(dl>0?'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg>':'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>')+'<span class="hb-num">'+Math.abs(dl).toFixed(1)+'</span></span>'))+' over the last <span class="hb-num">'+(+d.window_days/7)+'</span> weeks</span>');
+    var bits=[],dl=d.rating_delta,c=d.complaint,wk=+d.window_days/7;
+    // The new reviews' average over the window against the window before -
+    // never set beside the all-time rating (owner, 10/9/26: "Rating 4.6★
+    // ▼0.2" read as Google's 4.6 having dropped; the 4.6 is in the pill above).
+    if(dl!=null&&d.recent_avg!=null){
+      bits.push('<span>New reviews averaged <b class="hb-num">'+(+d.recent_avg).toFixed(1)+'★</b> over the last <span class="hb-num">'+wk+'</span> weeks '
+        +(Math.abs(dl)<0.05?'<span>— level with</span>':('<span class="'+(dl>0?'up':'down')+'">'+(dl>0?'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg>':'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>')+'<span class="hb-num">'+Math.abs(dl).toFixed(1)+'</span></span> '+(dl>0?'above':'below')))
+        +' the <span class="hb-num">'+(+d.prior_avg).toFixed(1)+'★</span> of the <span class="hb-num">'+wk+'</span> before</span>');
     }
     if(c&&c.label){
       bits.push('<span>top complaint: <b>'+esc(c.label)+'</b>'+(c.mentions?' (<span class="hb-num">'+esc(c.mentions)+'</span> negative review'+(+c.mentions===1?'':'s')+(c.window_days?' in <span class="hb-num">'+esc(c.window_days)+'</span> days':'')+')':'')+(c.stale&&c.as_of?' · read '+esc(c.as_of):'')+'</span>');
@@ -20132,8 +20136,10 @@ function updateReviewStats(){
     var rrDetail  = document.getElementById('stat-rr-detail');
     if(rrNEl && d.response_rate !== undefined){
       var rr = parseFloat(d.response_rate || 0);
-      var rrStr = Number.isInteger(rr) ? rr.toFixed(1) : rr;
-      rrNEl.innerHTML = rrStr + '<span style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span>';
+      // The number only: the pill's own #stat-rr-pct is its %. This wrote a
+      // second, half-size % inside the number ("96.0%%", owner 10/9/26), and
+      // a decimal the server's render (|int) never shows.
+      rrNEl.textContent = String(Math.floor(rr));
       statGlow(rrNEl, rr >= 70 ? 'stat-glow-green' : rr >= 40 ? 'stat-glow-amber' : 'stat-glow-red');
       if(rrDetail) rrDetail.textContent = (d.responded || d.posted || 0) + ' of ' + (d.total || 0) + ' reviews';
     }

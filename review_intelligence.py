@@ -2804,7 +2804,7 @@ def inbox_why(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     category, its negative-review count and window, and whether the read is
     stale; None when no diagnosis exists. Nothing here is invented.
     """
-    out = {"rating_delta": None, "recent_n": 0, "prior_n": 0,
+    out = {"rating_delta": None, "recent_avg": None, "prior_avg": None, "recent_n": 0, "prior_n": 0,
            "window_days": WHY_WINDOW_DAYS, "complaint": None}
     recent, prior = f"-{WHY_WINDOW_DAYS} days", f"-{WHY_WINDOW_DAYS * 2} days"
     conn = get_conn(db_path)
@@ -2825,6 +2825,11 @@ def inbox_why(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     if (rn >= WHY_MIN_A_SIDE and pn >= WHY_MIN_A_SIDE
             and row["recent_avg"] is not None and row["prior_avg"] is not None):
         out["rating_delta"] = round(float(row["recent_avg"]) - float(row["prior_avg"]), 1)
+        # The two averages the change is between (owner, 10/9/26: "Rating
+        # 4.6★ ▼0.2" read as the all-time 4.6 having dropped - it is the
+        # last four weeks' new reviews against the four before).
+        out["recent_avg"] = round(float(row["recent_avg"]), 1)
+        out["prior_avg"] = round(float(row["prior_avg"]), 1)
     try:
         diags = get_diagnoses(restaurant_id, db_path=db_path, include_stale=True)
     except Exception as e:

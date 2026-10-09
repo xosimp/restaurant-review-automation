@@ -94,7 +94,18 @@ def test_why_line_states_a_direction_only_past_the_floor(db_path):
     _review(db_path, rid, "r2", rating=5, days_ago=1)
     out = ri.inbox_why(rid, db_path=db_path)
     assert out["rating_delta"] == 2.0
+    # The two averages the change is between (owner, 10/9/26: "Rating 4.6★
+    # ▼0.2" read as the all-time rating having dropped).
+    assert (out["recent_avg"], out["prior_avg"]) == (5.0, 3.0)
     assert out["complaint"] is None, "no stored diagnosis, no complaint"
+
+
+def test_the_web_why_line_names_what_the_change_is_between():
+    src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
+    fn = src[src.index("function rvLoadWhy(){"):]
+    fn = fn[:fn.index("\n}")]
+    assert "New reviews averaged" in fn and "d.prior_avg" in fn
+    assert "stat-rating-n" not in fn, "never set beside the all-time rating"
 
 
 def test_why_line_names_the_top_stored_diagnosis(db_path, monkeypatch):
