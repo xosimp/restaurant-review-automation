@@ -10809,14 +10809,23 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 /* Setup: the settings as one card of tabs, and one big Generate */
 .ss-setup{max-width:860px;margin:0 auto;padding:56px 24px 90px}
 .ss-hero p{font-size:17px;line-height:1.55;color:var(--ink3);max-width:60ch;margin:0 0 28px}
+/* Setup fits the Studio's window with Generate in view and sits centred in
+   it (owner, 10/9/26: it needed a scroll to reach Generate). The stage is a
+   column as tall as the scroll area and the card centres with auto margins,
+   which fall to 0 when it is taller than the window - it then scrolls from
+   its top, never clipped. */
+.ss-stage[data-stage="setup"].on{display:flex;flex-direction:column;min-height:100%}
+.ss-stage[data-stage="setup"] .ss-setup{margin:auto;width:100%;box-sizing:border-box;padding:16px 24px 18px}
+.ss-stage[data-stage="setup"] h1{font-size:clamp(28px,2.6vw,36px);margin:6px 0 4px}
+.ss-stage[data-stage="setup"] .ss-hero p{font-size:16px;margin:0 0 14px}
 #ss-settings-setup #ss-settings{position:static;max-height:none;padding:8px 28px 0;border-radius:20px;box-shadow:var(--elev-hero)}
-#ss-settings-setup .ss-tabs{padding:12px 0 6px}
-#ss-settings-setup .sw-sec{padding:18px 0 14px;min-height:150px}
+#ss-settings-setup .ss-tabs{padding:10px 0 4px}
+#ss-settings-setup .sw-sec{padding:12px 0 8px;min-height:120px}
 #ss-settings-setup .lb2-actions{flex-direction:row;flex-wrap:wrap;align-items:center}
 #ss-settings-setup .lb2-weekpick{flex-direction:row;width:auto}
 #ss-settings-setup .lb2-weekpick select,#ss-settings-setup .lb2-weekpick input{width:auto;min-width:200px}
-#ss-settings-setup .sw-gen{padding:18px 0 26px}
-#ss-settings-setup .sw-gen .cbtn{height:52px;font-size:16px;border-radius:14px}
+#ss-settings-setup .sw-gen{padding:10px 0 20px}
+#ss-settings-setup .sw-gen .cbtn{height:48px;font-size:16px;border-radius:14px}
 /* The settings card reads at body size (owner, 9/26/26). */
 #ss-settings .ss-tabs button{font-size:15px;padding:7px 14px}
 #ss-settings .sw-k{font-size:12.5px}
@@ -26299,11 +26308,30 @@ function studioOpen(opts) {
     // never on a direct /schedule/studio load, where Labor is not opened.
     if (window.lb2LoadAutoDraftSwitch) lb2LoadAutoDraftSwitch();
   }
-  studioGo(opts.stage || (_ssGenerating ? 'build' : (_ssHasDraft() ? 'schedule' : 'setup')));
+  // A reload keeps the step and the week that were on screen (owner,
+  // 10/9/26: a reload jumped to Schedule): this tab's last step and draft
+  // come back; the draft opens quietly and the step is held when it lands.
+  var back = (opts.fromBoot && !opts.stage) ? ssSavedPlace() : null;
+  if (back) window._ssRestore = back;
+  studioGo(opts.stage || (back && back.stage) || (_ssGenerating ? 'build' : (_ssHasDraft() ? 'schedule' : 'setup')));
   // A plain open with nothing on screen brings up the latest week staff
   // don't have yet; "Build next week" (a stage asked for) stays in Setup.
-  if (!opts.stage && !_ssHasDraft() && !_ssGenerating) ssOpenLatest();
+  if (back && back.hid && !_ssHasDraft() && window.openScheduleDraft) openScheduleDraft(back.hid, {quiet: true});
+  else if (!opts.stage && !_ssHasDraft() && !_ssGenerating) ssOpenLatest();
   return true;
+}
+function ssSavedPlace() {
+  try {
+    var v = JSON.parse(window.sessionStorage.getItem('cavnar_ss_place') || 'null');
+    return v && typeof v.stage === 'string' && SS_STAGES.indexOf(v.stage) >= 0 && v.stage !== 'build' ? v : null;
+  } catch (e) { return null; }
+}
+function ssSavePlace(stage) {
+  if (stage === 'build') return;
+  try {
+    window.sessionStorage.setItem('cavnar_ss_place', JSON.stringify({stage: stage,
+      hid: (typeof _schedHistoryId !== 'undefined' && _schedHistoryId) ? _schedHistoryId : null}));
+  } catch (e) { }
 }
 function ssOpenLatest() {
   fetch('/api/labor/schedule-history', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
@@ -26401,6 +26429,8 @@ function studioGo(stage) {
   // "Generating… 255s" instead of the week filling in.
   if (stage === 'setup' && _ssGenerating) stage = 'build';
   _ssStage = stage; st.setAttribute('data-stage', stage);
+  // A reload falling back to Setup while its week loads keeps the saved step.
+  if (!window._ssRestore || window._ssRestore.stage === stage) ssSavePlace(stage);
   var secs = st.querySelectorAll('.ss-stage'), i;
   for (i = 0; i < secs.length; i++) secs[i].className = 'ss-stage' + (secs[i].getAttribute('data-stage') === stage ? ' on' : '');
   // A step is done by what exists, not by where the owner is looking: with
@@ -26702,7 +26732,10 @@ function studioOnResult(data, fromGeneration) {
     return;
   }
   ssTopbar();
-  if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build' || _ssStage === 'team')) studioGo('schedule');
+  // A reload's own step, held now that its week is on screen.
+  var back = window._ssRestore;
+  if (back) { window._ssRestore = null; if (_ssOpen) studioGo(back.stage); }
+  else if (_ssOpen && (_ssStage === 'setup' || _ssStage === 'history' || _ssStage === 'build' || _ssStage === 'team')) studioGo('schedule');
   ssRescoreOnOpen();
 }
 // A stored week's score was measured against the staffing history and
@@ -27153,7 +27186,7 @@ document.addEventListener('drop', function (ev) {
 // ── clicks the Studio owns ─────────────────────────────────────────────
 document.addEventListener('click', function (ev) {
   var t = ev.target; if (!t || !t.closest) return;
-  var go = t.closest('[data-ss-go]'); if (go && !go.disabled) { studioGo(go.getAttribute('data-ss-go')); return; }
+  var go = t.closest('[data-ss-go]'); if (go && !go.disabled) { window._ssRestore = null; studioGo(go.getAttribute('data-ss-go')); return; }
   var tb = t.closest('[data-ss-tab]'); if (tb) { ssTab(tb.getAttribute('data-ss-tab')); return; }
   var rt = t.closest('[data-ss-rtab]'); if (rt) { ssRightTab(rt.getAttribute('data-ss-rtab')); return; }
 });
