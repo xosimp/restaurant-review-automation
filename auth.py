@@ -5944,7 +5944,11 @@ def login_required(f):
             if _wants_json_response():
                 from flask import jsonify as _jsonify_lr
                 return _jsonify_lr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
-            return redirect(url_for("auth.login", next=request.path))
+            # The query rides along: the app's "… on the web" rows open
+            # /?nav=<section> in a fresh browser, and a sign-in that dropped
+            # ?nav= landed the owner on Home instead (iOS re-audit 10/8/26).
+            # safe_next_url still refuses anything off this site.
+            return redirect(url_for("auth.login", next=(request.full_path if request.query_string else request.path)))
         # An internal login reaches client routes too (an admin import names
         # a restaurant_id); the same second-factor gate as /admin, or
         # ADMIN_REQUIRE_2FA was one import route away from meaningless.
