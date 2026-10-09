@@ -5441,6 +5441,9 @@ _UNGATED_PREFIXES = (
     # A phone's Live Activity push tokens, filed under its session; who may
     # hold a push-to-start token is checked in live_activities.register_token.
     "/mobile/api/live-activity-tokens",
+    # The app's admin view-as (10/8/26): not a module; every handler refuses
+    # anyone but an internal login (mobile_api._internal_login_refusal).
+    "/mobile/api/admin/",
     "/api/change-password", "/api/update-email", "/api/send-2fa-test", "/api/verify-2fa-setup",
     "/api/toggle-2fa", "/api/toggle-login-notify", "/api/toggle-staff-signin-notify",
     "/api/switch-location", "/mobile/api/switch-location", "/api/group-locations", "/mobile/api/group-locations",

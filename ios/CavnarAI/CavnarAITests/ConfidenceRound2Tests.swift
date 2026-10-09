@@ -118,7 +118,7 @@ final class ConfidenceRound2Tests: XCTestCase {
     func testShiftQualityPillIsAPercentageNeverABandWord() throws {
         let q = try decode(ScheduleQuality.self, Self.quality)
         let label = try XCTUnwrap(q.confidence?.completenessLabel)
-        XCTAssertEqual(label, "Read completeness 45%")
+        XCTAssertEqual(label, "Scored on 45% of what it needs")
         XCTAssertFalse(label.lowercased().contains("low confidence"))
         XCTAssertTrue(q.isProvisional)
         XCTAssertNil(q.confidenceDetail)

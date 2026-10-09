@@ -387,7 +387,7 @@ struct RestaurantDNAScreen: View {
         if s.axes.count >= 3 {
             VStack(alignment: .leading, spacing: 0) {
                 sectionHead("The shape", "How it measures up",
-                            "Each axis runs 0 to 100, and the dashed ring at 50 is a typical restaurant on Cavnar AI\u{2019}s stated benchmarks. Dashed spokes are still learning.")
+                            "Each axis runs 0 to 100, and the dashed ring at 50 is Cavnar AI\u{2019}s stated benchmark. Dashed spokes are still learning.")
                 DNARadar(axes: s.axes)
                     .padding(.horizontal, 22)
                     .padding(.top, 18)

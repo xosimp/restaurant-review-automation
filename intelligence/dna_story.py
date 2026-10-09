@@ -82,7 +82,7 @@ def _t_weekend(d):
     if v >= 0.55:
         return {"key": "weekend_driven", "name": "Weekend Driven", "icon": "calendar", "family": "sales",
                 "figure": _pct(v), "figure_label": "of sales Friday to Sunday",
-                "sentence": f"{_pct(v)} of your sales land Friday to Sunday. A typical restaurant does about 45%.",
+                "sentence": f"{_pct(v)} of your sales land Friday to Sunday. The stated benchmark is about 45%.",
                 "rule": "55% or more of sales Friday to Sunday", "dims": ["weekend_share"],
                 "strength": _strength(_z("weekend_share", v)), "split": round(float(v), 3)}
     if v <= 0.38:
@@ -188,7 +188,7 @@ def _t_labor(d):
         return None
     return {"key": "labor_efficient", "name": "Labor Efficient", "icon": "people", "family": "labor",
             "figure": f"{float(v):.1f}%", "figure_label": "labor %",
-            "sentence": f"Labor runs {float(v):.1f}% of sales — under the 30% a typical restaurant carries.",
+            "sentence": f"Labor runs {float(v):.1f}% of sales — under the stated 30% benchmark.",
             "rule": "labor 28% of sales or less", "dims": ["labor_pct"], "strength": _strength(-_z("labor_pct", v))}
 
 
@@ -455,10 +455,12 @@ def _headline(name, identity, traits, d):
 
 def _nights(restaurant_id, db_path):
     """(nights of sales watched, first night) — final days with sales."""
+    from canonical_facts import FINAL_SQL   # a provisional night is never a data point
     conn = get_conn(db_path)
     try:
         r = conn.execute("SELECT COUNT(DISTINCT substr(date,1,10)) n, MIN(substr(date,1,10)) first "
-                         "FROM labor_daily_history WHERE restaurant_id=? AND sales > 0", (restaurant_id,)).fetchone()
+                         "FROM labor_daily_history WHERE restaurant_id=? AND sales > 0 AND " + FINAL_SQL,
+                         (restaurant_id,)).fetchone()
         return (int(r["n"] or 0), r["first"]) if r else (0, None)
     except Exception:
         return 0, None
@@ -530,5 +532,5 @@ def story(restaurant_id, profile, name=None, db_path=DB_PATH) -> dict:
             "traits": traits, "learning": learning, "axes": _axes(d), "connections": _connections(d),
             "observed": observed, "recent": fresh[:4],
             "basis": ("Traits are named only from a measured figure against the rule shown with it. "
-                      "On the shape, 50 is a typical restaurant on Cavnar AI's stated benchmarks — "
+                      "On the shape, 50 is Cavnar AI's stated benchmark — "
                       "never another restaurant's figures.")}

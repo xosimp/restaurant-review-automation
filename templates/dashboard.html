@@ -42052,9 +42052,9 @@ function sfw2RuleCheck(chk) {
     function v(k) { var x = dm[k]; return x && x.measured ? +x.value : null; }
     var k = t.key, x;
     if ((k === 'weekend_driven' || k === 'weekday_business') && (x = v('weekend_share')) != null) return split(x);
-    if (k === 'long_hours' && (x = v('open_hours')) != null) return '<div class="dn-ringv">' + ring(x / 168, 64, Math.round(x) + 'h', '') + '<span>' + Math.round(x) + ' of the 168 hours in a week. A typical restaurant is open about 70.</span></div>';
+    if (k === 'long_hours' && (x = v('open_hours')) != null) return '<div class="dn-ringv">' + ring(x / 168, 64, Math.round(x) + 'h', '') + '<span>' + Math.round(x) + ' of the 168 hours in a week. The stated benchmark is about 70.</span></div>';
     if (k === 'overtime_controlled' && (x = v('overtime_intensity')) != null) return gauge(0, 0.1, x, 0.03, pctf, 'Overtime share of hours', false);
-    if (k === 'answers_reviews' && (x = v('reply_rate')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Of the last 30 days’ reviews. A typical restaurant answers about 60%.</span></div>';
+    if (k === 'answers_reviews' && (x = v('reply_rate')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Of the last 30 days’ reviews. The stated benchmark is about 60%.</span></div>';
     if (k === 'open_to_advice' && (x = v('rec_uptake')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Of recommendations answered or expired in 90 days.</span></div>';
     if ((k === 'well_rated' || k === 'guest_favorite') && (x = v('rating_level')) != null) return stars(x);
     if (k === 'tight_register') {
@@ -42108,7 +42108,7 @@ function sfw2RuleCheck(chk) {
         + '<div class="bar">' + (l ? '' : '<i data-w="' + a.score + '"></i>') + '<u></u></div><div class="s">' + (l ? '—' : countHtml(String(a.score))) + '</div></div>';
     }
     return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up</h2>'
-      + '<p class="dn-sub">Each axis runs 0 to 100, and the dashed ring at 50 is a typical restaurant on Cavnar AI’s stated benchmarks. Dashed spokes are still learning.</p>'
+      + '<p class="dn-sub">Each axis runs 0 to 100, and the dashed ring at 50 is Cavnar AI’s stated benchmark. Dashed spokes are still learning.</p>'
       + '<div class="dn-shape dn-rv">' + radar(ax, 360, false) + '<div class="dn-axes">' + h + '</div></div></section>';
   }
   function traits(s, dm) {

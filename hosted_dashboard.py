@@ -479,9 +479,9 @@ Sitemap: https://cavnar.ai/sitemap.xml"""
     return Response(txt, mimetype="text/plain")
 
 
+@app.route("/dna")
 @app.route("/")
 @app.route("/schedule/studio")
-@app.route("/dna")
 @login_required
 def index(current_user):
     # /schedule/studio is the same page opened on the Schedule Studio (the

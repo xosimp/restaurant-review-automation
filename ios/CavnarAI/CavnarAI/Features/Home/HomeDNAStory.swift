@@ -358,9 +358,9 @@ struct DNASplitBar: View {
             .font(.cavnarBody(11, weight: 500))
             .foregroundStyle(Color.cavnarInk3)
         }
-        .onAppear { withAnimation(.spring(response: 1.1, dampingFraction: 0.9).delay(0.1)) { shown = true } }
+        .onAppear { withAnimation(.cavnarEase(1.1).delay(0.1)) { shown = true } }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(b)% of sales Friday to Sunday; a typical restaurant does 45%")
+        .accessibilityLabel("\(b)% of sales Friday to Sunday; the stated benchmark is 45%")
     }
 }
 
@@ -476,7 +476,7 @@ struct DNARadar: View {
         }
         .aspectRatio(1, contentMode: .fit)
         .onAppear {
-            if reduceMotion || mini { grown = true } else { withAnimation(.spring(response: 1.2, dampingFraction: 0.82).delay(0.15)) { grown = true } }
+            if reduceMotion || mini { grown = true } else { withAnimation(.cavnarEase(1.2).delay(0.15)) { grown = true } }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Restaurant DNA shape: " + axes.map { "\($0.label) \($0.score.map(String.init) ?? "still learning")" }.joined(separator: ", "))
@@ -653,7 +653,7 @@ private struct DNAReveal: ViewModifier {
             .offset(y: shown || reduceMotion ? 0 : 14)
             .onAppear {
                 guard !shown else { return }
-                withAnimation(.spring(response: 0.7, dampingFraction: 0.9).delay(delay)) { shown = true }
+                withAnimation(.cavnarEase(0.7).delay(delay)) { shown = true }
             }
     }
 }
@@ -737,11 +737,11 @@ struct DNATraitCard: View {
         case "weekend_driven", "weekday_business":
             if let x = v("weekend_share") { DNASplitBar(weekendShare: x) }
         case "long_hours":
-            if let x = v("open_hours") { ringRow(x / 168, "\(Int(x))h", "\(Int(x)) of the 168 hours in a week. A typical restaurant is open about 70.") }
+            if let x = v("open_hours") { ringRow(x / 168, "\(Int(x))h", "\(Int(x)) of the 168 hours in a week. The stated benchmark is about 70.") }
         case "overtime_controlled":
             if let x = v("overtime_intensity") { DNAGauge(lo: 0, hi: 0.1, value: x, typical: 0.03, format: Self.pct, label: "Overtime share of hours") }
         case "answers_reviews":
-            if let x = v("reply_rate") { ringRow(x, Self.pct(x), "Of the last 30 days\u{2019} reviews. A typical restaurant answers about 60%.") }
+            if let x = v("reply_rate") { ringRow(x, Self.pct(x), "Of the last 30 days\u{2019} reviews. The stated benchmark is about 60%.") }
         case "open_to_advice":
             if let x = v("rec_uptake") { ringRow(x, Self.pct(x), "Of recommendations answered or expired in 90 days.") }
         case "well_rated", "guest_favorite":
@@ -777,7 +777,7 @@ struct DNATraitCard: View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 Haptic.light()
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { open.toggle() }
+                withAnimation(.cavnarEase()) { open.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Text("How it was measured").font(.cavnarBody(13, weight: 600))

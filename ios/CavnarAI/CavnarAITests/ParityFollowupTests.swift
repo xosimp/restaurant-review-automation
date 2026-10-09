@@ -124,9 +124,14 @@ final class ParityFollowupTests: XCTestCase {
         // An older server says nothing: no controls it may refuse.
         let old = try decode(ScheduleSetupViewModel.RequestsResponse.self, #"{"ok": true, "requests": [], "open": []}"#)
         XCTAssertFalse(ScheduleSetupViewModel.canDecide(old))
+        // Pending requests are decided in Waiting on you (readability round,
+        // 10/8/26); both surfaces gate every decision on the server's flag.
         let src = try EdgeSource.read("Features/Labor/ShiftRequestsSection.swift")
         XCTAssertFalse(src.contains("canEditRoster"))
-        XCTAssertTrue(src.contains("req.status == \"pending\" && viewModel.canDecideShifts"))
+        XCTAssertTrue(src.contains("viewModel.canDecideShifts"))
+        let waiting = try EdgeSource.read("Features/Labor/LaborWaitingOnYou.swift")
+        XCTAssertFalse(waiting.contains("canEditRoster"))
+        XCTAssertTrue(waiting.contains("setupViewModel.canDecideShifts"))
     }
 
     // MARK: 7 — back from any Marketing tab but Content returns to Content
