@@ -1866,6 +1866,7 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/labor/staff-contacts", "pos_id"): _WEB_TOO,
     ("/mobile/api/labor/staff-settings", "desired_hours"): _WEB_TOO + " (the employee's own, /staff/api/preferences)",
     ("/mobile/api/labor/staff-settings", "preferred_dayparts"): _WEB_TOO + " (the employee's own, /staff/api/preferences)",
+    ("/mobile/api/labor/staff-settings", "work_days"): _WEB_ONLY + " (the web's manager-hours card: a day with no times is any time, 10/9/26)",
     ("/mobile/api/labor/rules", "closed_dates"): _WEB_TOO + " (each date saves on its own, /account/closures)",
     ("/mobile/api/people/identity/<int:question_id>", "keep"): _WEB_TOO + " (both send same)",
     ("/mobile/api/templates", "category"): _WEB_TOO + " ('general')",
