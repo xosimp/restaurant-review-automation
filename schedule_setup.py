@@ -729,7 +729,7 @@ def setup_review(c, leader_status=None, omit=()) -> dict:
     if missing:
         items.append({"kind": "close_times_missing", "line": True, "days": missing,
                       "text": f"No close time for {_and(missing)} — nobody at close, the closers and stays after close "
-                              "aren't checked on those days. Set every trading day's close in Hours."})
+                              "aren't checked on those days. Set a close time for every day you're open in Hours."})
     for text in (leader_status or {}).get("lines") or []:
         items.append({"kind": "leader_rules_inactive", "line": True, "text": text,
                       "can_adopt": bool((leader_status or {}).get("can_adopt"))})

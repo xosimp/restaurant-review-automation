@@ -448,6 +448,15 @@ html:not([data-theme="dark"]) .skeleton{background:rgba(20,15,10,.12)!important}
 body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6;min-height:100vh}
 .hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
 .hdr-left{display:flex;align-items:center;gap:16px;min-width:0;flex:1 1 auto}
+/* Viewing as client: a small amber chip by the restaurant's name; tap for
+   the notice and Back to admin (owner, 10/9/26 - replaces the banner). */
+.vac{position:relative;flex:0 0 auto}
+.vac-pill{list-style:none;cursor:pointer;display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:999px;font:700 10.5px/1 'Space Grotesk',sans-serif;letter-spacing:.12em;color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent)}
+.vac-pill::-webkit-details-marker{display:none}
+.vac-pill:hover,.vac[open] .vac-pill{background:color-mix(in srgb,var(--amber) 24%,transparent)}
+.vac-pill:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.vac-pop{position:absolute;left:0;top:calc(100% + 10px);z-index:1000;width:min(340px,80vw);padding:14px 16px;border-radius:12px;background:rgba(30,27,23,.97);border:1px solid color-mix(in srgb,var(--amber) 35%,transparent);box-shadow:0 18px 40px rgba(0,0,0,.45);display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.vac-pop p{margin:0;font-size:13px;line-height:1.5;color:var(--ink2)}
 #loc-switcher-wrap,#loc-switcher-btn{min-width:0;max-width:100%}
 .hdr-logo{font-family:'Clash Display',sans-serif;font-size:16px;color:var(--paper)}
 .hdr-logo em{color:var(--ember2);font-style:italic}
@@ -2189,19 +2198,6 @@ function loadFailed(el, d){
    current_user.is_admin test never showed it. Every change made here is
    recorded as the admin's (auth.record_view_as_write). "Back to admin" is a
    POST: a GET to /admin/stop-viewing only asks. #}
-{% if current_user.device_type == 'admin-view-as' %}
-<div id="view-as-banner" role="status" style="background:var(--amber);color:var(--paper);padding:8px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-  <span style="font-size:12px;font-weight:600">
-    Viewing as {{ restaurant.name }}, signed in as their owner login{% if current_user.acting_admin %} — {{ current_user.acting_admin }}{% endif %}.
-    {% if current_user.view_as_read_only %}Read-only: nothing can be changed.{% else %}Anything you change is recorded under your name.{% endif %}
-    It closes on its own 2 hours after it opened.
-  </span>
-  <form method="post" action="/admin/stop-viewing" style="margin:0" onsubmit="var m=document.cookie.match(/(?:^|;\s*)csrf_js=([^;]+)/);if(m){this.csrf_token.value=decodeURIComponent(m[1]);}">
-    <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf_js', '') }}">
-    <button type="submit" class="cbtn cbtn-secondary cbtn-sm">Back to admin</button>
-  </form>
-</div>
-{% endif %}
 <header class="hdr">
   <div class="hdr-left">
     <div class="hdr-logo">{% if restaurant.brand_name %}{{ restaurant.brand_name | e }}{% else %}<svg viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span>{% endif %}</div>
@@ -2223,6 +2219,24 @@ function loadFailed(el, d){
     </div>
     {% else %}
     <div class="hdr-restaurant">{{ restaurant.name }}{% if restaurant.location_name and restaurant.location_name != restaurant.name %} — {{ restaurant.location_name }}{% endif %}</div>
+    {% endif %}
+    {# Viewing as client (owner, 10/9/26): a quiet amber VAC chip beside the
+       restaurant's name replaces the full-width banner. The chip opens the
+       same notice and "Back to admin" (a POST; a GET only asks). Every change
+       made here is still recorded as the admin's (auth.record_view_as_write). #}
+    {% if current_user.device_type == 'admin-view-as' %}
+    <details class="vac" id="view-as-banner">
+      <summary class="vac-pill" aria-label="Viewing as client: details and Back to admin">VAC</summary>
+      <div class="vac-pop" role="status">
+        <p>Viewing as {{ restaurant.name }}, signed in as their owner login{% if current_user.acting_admin %} — {{ current_user.acting_admin }}{% endif %}.
+        {% if current_user.view_as_read_only %}Read-only: nothing can be changed.{% else %}Anything you change is recorded under your name.{% endif %}
+        It closes on its own 2 hours after it opened.</p>
+        <form method="post" action="/admin/stop-viewing" style="margin:0" onsubmit="var m=document.cookie.match(/(?:^|;\s*)csrf_js=([^;]+)/);if(m){this.csrf_token.value=decodeURIComponent(m[1]);}">
+          <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf_js', '') }}">
+          <button type="submit" class="cbtn cbtn-secondary cbtn-sm">Back to admin</button>
+        </form>
+      </div>
+    </details>
     {% endif %}
   </div>
   <div class="hdr-right">
@@ -38746,7 +38760,7 @@ window.cavPalette = cavPalette;
     if (warned) h += '<div class="ts-note warn" style="margin-top:0">' + e(warned === 1 ? '1 salaried name matches nobody on your roster.' : warned + ' salaried names match nobody on your roster.') + ' Link each to the name they punch under.</div>';
     for (i = 0; i < sal.length; i++) {
       var w = sal[i].warning ? '<small class="tg-need" style="margin-top:4px">' + e(sal[i].warning) + '</small>' : '';
-      h += '<div class="ac-row"><div class="l"><b>' + e(sal[i].name) + '</b><span><span class="hb-num">' + tgMoney(sal[i].annual) + '</span> a year &middot; <span class="hb-num">' + tgMoney(sal[i].per_day) + '</span> a trading day</span>' + w + '</div>'
+      h += '<div class="ac-row"><div class="l"><b>' + e(sal[i].name) + '</b><span><span class="hb-num">' + tgMoney(sal[i].annual) + '</span> a year &middot; <span class="hb-num">' + tgMoney(sal[i].per_day) + '</span> per day open</span>' + w + '</div>'
         + '<div class="c">' + (sal[i].suggestion ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-tg-sal-link="' + e(sal[i].name) + '" data-to="' + e(sal[i].suggestion) + '" data-annual="' + e(sal[i].annual) + '">Link to ' + e(sal[i].suggestion) + '</button>' : '')
         + '<button type="button" class="cbtn cbtn-ghost cbtn-sm" data-tg-sal-rm="' + e(sal[i].name) + '">Remove</button></div></div>';
     }
