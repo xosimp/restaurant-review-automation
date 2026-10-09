@@ -3591,7 +3591,12 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
    amber a watch, dashed the still-learning. dn- is the prefix. */
 body.dn-open{overflow:hidden}
 body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
-.dn{position:fixed;inset:0;z-index:980;display:flex;flex-direction:column;color:var(--ink);background-color:var(--paper);background-image:radial-gradient(1200px 560px at 78% -200px,rgba(212,88,58,.24),transparent 70%),radial-gradient(900px 600px at -12% 38%,rgba(232,149,106,.06),transparent 70%)}
+.dn{position:fixed;inset:0;z-index:980;display:flex;flex-direction:column;color:var(--ink);background-color:var(--paper);background-image:radial-gradient(1200px 560px at 78% -200px,rgba(212,88,58,.22) 0%,rgba(212,88,58,.185) 12%,rgba(212,88,58,.145) 24%,rgba(212,88,58,.105) 36%,rgba(212,88,58,.07) 48%,rgba(212,88,58,.042) 60%,rgba(212,88,58,.02) 72%,rgba(212,88,58,.006) 84%,rgba(212,88,58,0) 96%),radial-gradient(900px 600px at -12% 38%,rgba(232,149,106,.055) 0%,rgba(232,149,106,.035) 30%,rgba(232,149,106,.015) 60%,rgba(232,149,106,0) 90%)}
+/* The tint is eased over many stops and a fine grain sits over it (owner,
+   10/9/26: the glow banded) - grain breaks the 8-bit steps a dark gradient
+   falls into. Under the content, never over it. */
+.dn:before{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;opacity:.05;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");background-size:180px 180px}
+.dn-scroll{position:relative;z-index:1}
 .dn[hidden]{display:none}
 .dn-bar{flex:0 0 60px;display:flex;align-items:center;gap:14px;padding:0 20px;border-bottom:1px solid var(--hb-line2);background:rgba(20,17,15,.55);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);position:relative;z-index:2}
 .dn-bar-t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:17px;color:var(--ink)}
@@ -3605,7 +3610,11 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-rv{opacity:0;transform:translateY(14px);transition:opacity .7s cubic-bezier(.2,.8,.2,1),transform .7s cubic-bezier(.2,.8,.2,1)}
 .dn-rv.in{opacity:1;transform:none}
 /* hero: the read, the traits it earned, how long it has watched; the strand */
-.dn-hero{display:grid;grid-template-columns:minmax(0,1.38fr) minmax(0,.92fr);gap:44px;align-items:center}
+.dn-hero{display:grid;grid-template-columns:minmax(0,1.38fr) minmax(0,.92fr);grid-template-areas:"k ." "l h";column-gap:44px;row-gap:16px;align-items:stretch}
+/* The helix runs from the top of the read's capitals (dnAlignHelix sets the
+   margin) to the bottom of the stat cards (owner, 10/9/26). */
+.dn-hero>.dn-k{grid-area:k}.dn-hero>.dn-hero-l{grid-area:l;min-width:0}.dn-hero>.dn-helix-box{grid-area:h}
+.dn-hero .dn-read{margin-top:0}
 .dn-read{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(28px,3.4vw,46px);line-height:1.12;letter-spacing:-.012em;margin:16px 0 24px;color:var(--ink);text-wrap:pretty}
 .dn-read .w{display:inline-block;opacity:0;transform:translateY(9px);filter:blur(5px);animation:dnWord .75s cubic-bezier(.2,.8,.2,1) forwards}
 .dn em{font-style:normal;font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
@@ -3626,7 +3635,7 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-stat{padding:15px 16px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid var(--hb-line2);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
 .dn-stat b{display:block;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:29px;line-height:1.05;color:var(--ink);font-variant-numeric:tabular-nums}
 .dn-stat span{display:block;font-size:12.5px;color:var(--ink3);line-height:1.35;margin-top:4px}
-.dn-helix-box{position:relative;height:440px;border-radius:30px;background:radial-gradient(closest-side,rgba(212,88,58,.15),transparent),linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));border:1px solid var(--hb-line2);box-shadow:0 40px 90px -50px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden}
+.dn-helix-box{position:relative;min-height:380px;border-radius:30px;background:radial-gradient(closest-side,rgba(212,88,58,.14) 0%,rgba(212,88,58,.115) 20%,rgba(212,88,58,.085) 38%,rgba(212,88,58,.055) 55%,rgba(212,88,58,.028) 72%,rgba(212,88,58,.009) 87%,rgba(212,88,58,0) 100%),linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));border:1px solid var(--hb-line2);box-shadow:0 40px 90px -50px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden}
 .dn-helix-box canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
 .dn-helix-cap{position:absolute;left:20px;right:20px;bottom:15px;display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink3);pointer-events:none}
 .dn-helix-cap i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:0;background:var(--ember);box-shadow:0 0 8px rgba(212,88,58,.8)}
@@ -3666,8 +3675,7 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 /* traits */
 .dn-traits{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:28px}
 .dn-tr{position:relative;border-radius:24px;padding:22px 22px 18px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.015));border:1px solid var(--hb-line2);box-shadow:0 30px 70px -48px rgba(0,0,0,.95),inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden;transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s,opacity .7s cubic-bezier(.2,.8,.2,1)}
-.dn-tr:hover{transform:translateY(-3px);border-color:rgba(212,88,58,.42);box-shadow:0 0 0 1px rgba(212,88,58,.14),0 0 34px rgba(212,88,58,.26),inset 0 1px 0 rgba(255,255,255,.08)}
-.dn-tr.watch:hover{border-color:rgba(212,160,48,.42);box-shadow:0 0 0 1px rgba(212,160,48,.14),0 0 34px rgba(212,160,48,.22),inset 0 1px 0 rgba(255,255,255,.08)}
+.dn-tr:hover{transform:translateY(-3px)}
 .dn-tr.big{grid-column:span 2}
 .dn-tr .top{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .dn-tr .ic{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;color:var(--ember2);background:rgba(212,88,58,.14);box-shadow:inset 0 0 0 1px rgba(212,88,58,.28),0 0 24px -6px rgba(212,88,58,.5)}
@@ -3774,7 +3782,7 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 /* Home: the DNA card, under Before service */
 .dn-home{display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:24px;align-items:center;margin-top:34px;padding:22px 26px;border-radius:24px;position:relative;overflow:hidden;color:var(--ink);text-decoration:none;background:linear-gradient(115deg,rgba(212,88,58,.14),rgba(255,255,255,.02) 58%);border:1px solid rgba(212,88,58,.3);box-shadow:0 0 34px -12px rgba(212,88,58,.24),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s}
 .dn-home:before{content:'';position:absolute;left:-80px;top:-110px;width:300px;height:300px;border-radius:50%;background:radial-gradient(closest-side,rgba(212,88,58,.2),transparent);pointer-events:none}
-.dn-home:hover{transform:translateY(-2px);border-color:rgba(212,88,58,.55);box-shadow:0 0 40px -10px rgba(212,88,58,.34),inset 0 1px 0 rgba(255,255,255,.08)}
+.dn-home:hover{transform:translateY(-2px)}
 .dn-home:focus-visible{outline:2px solid var(--ember2);outline-offset:3px}
 .dn-home .mini{position:relative}
 .dn-home .mini .dn-radar{max-width:132px}
@@ -3789,6 +3797,8 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
   .dn-wrap{padding:30px 18px 90px}
   .dn-sec{margin-top:64px}
   .dn-hero,.dn-shape{grid-template-columns:minmax(0,1fr);gap:28px}
+  .dn-hero{grid-template-areas:"k" "l" "h";row-gap:16px}
+  .dn-hero>.dn-helix-box{margin-top:12px!important}
   .dn-helix-box{height:300px}
   .dn-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
   .dn-tr.big{grid-column:auto}
@@ -42056,6 +42066,25 @@ function sfw2RuleCheck(chk) {
     return h + '</svg>';
   }
   // ── the strand: every dimension a rung; lit when measured ──
+  // The helix box's top sits on the top of the read's capitals (owner,
+  // 10/9/26): the line box starts above the ink by the half-leading plus the
+  // font's ascent over its cap height, measured from the face itself.
+  function dnAlignHelix(root) {
+    var h1 = root.querySelector('.dn-hero .dn-read'), hb = root.querySelector('.dn-hero .dn-helix-box');
+    if (!h1 || !hb) return;
+    function apply() {
+      if (window.innerWidth <= 900) { hb.style.marginTop = ''; return; }
+      var cs = window.getComputedStyle(h1), c = document.createElement('canvas').getContext('2d');
+      c.font = cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+      var m = c.measureText('H'), fa = m.fontBoundingBoxAscent, fd = m.fontBoundingBoxDescent, cap = m.actualBoundingBoxAscent;
+      var lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.12;
+      if (!(fa > 0) || !(cap > 0)) { hb.style.marginTop = ''; return; }
+      hb.style.marginTop = Math.max(0, (lh - (fa + fd)) / 2 + fa - cap).toFixed(2) + 'px';
+    }
+    apply();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(apply);
+    if (!root._dnAlignBound) { root._dnAlignBound = true; window.addEventListener('resize', function () { dnAlignHelix(root); }); }
+  }
   function Helix(box, list) {
     var cv = box.querySelector('canvas'), tip = box.querySelector('.dn-tip'), ctx = cv.getContext('2d');
     var ember = css('--ember', '#d4583a'), ember2 = css('--ember2', '#e8956a'), ink3 = css('--ink3', '#cdbfa9');
@@ -42110,8 +42139,11 @@ function sfw2RuleCheck(chk) {
     cv.addEventListener('mouseleave', function () { hover = -1; tip.style.opacity = '0'; if (still) draw(0); });
     var onResize = function () { size(); if (still) draw(0); };
     window.addEventListener('resize', onResize);
+    // The box stretches with the read beside it (fonts landing, a resize),
+    // so the strands follow its height, not just the window's.
+    var ro = window.ResizeObserver ? new ResizeObserver(onResize) : null; if (ro) ro.observe(box);
     size(); raf = requestAnimationFrame(draw);
-    return {stop: function () { alive = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); },
+    return {stop: function () { alive = false; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); },
             wake: function () { if (alive && !still) { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); } }};
   }
   // ── reveals: counts, rings, bars and the shape as each comes into view ──
@@ -42191,7 +42223,7 @@ function sfw2RuleCheck(chk) {
     st += stat(o.learning || 0, 'still learning');
     st += stat(o.coverage_pct || 0, '% of the profile filled in');
     var measured = 0; for (i = 0; i < all.length; i++) if (all[i].measured) measured++;
-    return '<section class="dn-hero"><div><div class="dn-k">Restaurant DNA' + (p.as_of ? ' · as of ' + esc(p.as_of) : '') + '</div>'
+    return '<section class="dn-hero"><div class="dn-k">Restaurant DNA' + (p.as_of ? ' · as of ' + esc(p.as_of) : '') + '</div><div class="dn-hero-l">'
       + '<h1 class="dn-read">' + read + '</h1>' + (rest ? '<p class="dn-read2 dn-fadein">' + figs(rest).replace('Watch:', '<span class="wt">Watch:</span>') + '</p>' : '')
       + (s.lede ? '<p class="dn-lede">' + esc(s.lede) + '</p>' : '')
       + '<div class="dn-chips">' + chips + '</div><div class="dn-stats dn-rv">' + st + '</div></div>'
@@ -42300,7 +42332,7 @@ function sfw2RuleCheck(chk) {
       body.innerHTML = page(d);
       var as = document.getElementById('dn-asof'); if (as) as.textContent = d.profile && d.profile.as_of ? 'as of ' + d.profile.as_of : '';
       var hb = document.getElementById('dn-helix');
-      if (hb) HELIX = new Helix(hb, dimsOf(d.profile).list);
+      if (hb) { dnAlignHelix(body); HELIX = new Helix(hb, dimsOf(d.profile).list); }
       reveal(body, sc);
       var rows = body.querySelectorAll('.dn-ax'), i;
       for (i = 0; i < rows.length; i++) (function (r) {

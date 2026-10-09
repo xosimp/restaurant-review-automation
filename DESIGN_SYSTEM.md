@@ -2048,7 +2048,11 @@ revealing the personality of the restaurant"). Data: `GET /api/dna` →
   then the earned trait chips; four counted stats (nights watched, traits
   measured, still learning, % filled). Beside it the **strand**: a canvas
   double helix, one rung per dimension — lit ember when measured, dashed
-  when still learning — slowly turning; hover a rung for its figure.
+  when still learning — slowly turning; hover a rung for its figure. Its box
+  runs from the top of the read's capitals to the bottom of the stat cards
+  (`dnAlignHelix`, 10/9/26), and the rungs space out over that height. The
+  page's ember tint is eased over many stops with a fine grain over it so
+  it never bands; DNA cards lift on hover with no orange glow.
   (2) **The shape**: a radar of the axes (50 = the stated benchmark, a
   dashed ring), measured axes only in the polygon, learning axes dashed
   spokes with a hollow dot; beside it one bar per axis with the 50 tick.
