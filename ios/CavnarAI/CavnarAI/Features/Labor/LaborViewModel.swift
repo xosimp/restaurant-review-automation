@@ -630,7 +630,7 @@ struct QualityConfidence: Codable, Equatable {
     /// a stated penalty per missing input (shift_quality.confidence) — never
     /// a band word (B4 L2; percentages stay). Named for what it measures, so
     /// it is not read as the recommendations' confidence.
-    var completenessLabel: String { "Read completeness \(max(0, min(100, score)))%" }
+    var completenessLabel: String { "Scored on \(max(0, min(100, score)))% of what it needs" }
 }
 
 /// One alternative arrangement the engine tried, and what it bought.

@@ -25,7 +25,7 @@ struct SetupSelectMenu: View {
         } label: {
             HStack(spacing: 6) {
                 Text(current)
-                    .font(.cavnarBody(15, weight: 600))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
@@ -57,7 +57,7 @@ struct SetupChoiceChip: View {
             action()
         } label: {
             Text(label)
-                .font(.cavnarBody(13, weight: on ? 700 : 500))
+                .font(.cavnarBody(CavnarType.caption, weight: on ? 700 : 500))
                 .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: 32)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? tone : Color.cavnarPaper2))
@@ -76,7 +76,7 @@ struct SetupHelp: View {
     let text: String
     var color: Color = .cavnarInk3
     var body: some View {
-        HomeMixedText.make(text, size: 13, color: color)
+        HomeMixedText.make(text, size: CavnarType.caption, color: color)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -100,11 +100,11 @@ struct RosterDormantNotice: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.top, 2)
-                HomeMixedText.make(text, size: 14.5, weight: 600, color: .cavnarInk)
+                HomeMixedText.make(text, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Left off every draft until you answer \u{2014} the generator never chooses them, and open-shift notices skip them.")
-                .font(.cavnarBody(13))
+            Text("Left off every draft until you answer \u{2014} Cavnar AI never chooses them, and open-shift notices skip them.")
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if editable {
@@ -170,13 +170,13 @@ struct FloorManagerSection: View {
                     SetupChoiceChip(label: "Automatic", on: choice == .automatic, enabled: canEdit && !busy,
                                     tone: .cavnarInk2) { onChoose(.automatic) }
                 }
-                HomeMixedText.make(whyLine, size: 13.5, weight: 500,
+                HomeMixedText.make(whyLine, size: CavnarType.secondary, weight: 500,
                                    color: (status?.counts ?? false) || choice == .yes ? .cavnarInk2 : .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(canEdit
                      ? "A manager or owner is on the floor every minute anyone is \u{2014} this says who counts."
                      : "Only the account owner sets who runs the floor.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -204,7 +204,7 @@ struct ActingManagerSection: View {
             VStack(alignment: .leading, spacing: 0) {
                 if ranges.isEmpty {
                     Text("No dates \u{2014} they count as a manager only if they run the floor anyway.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.vertical, 10)
@@ -212,9 +212,9 @@ struct ActingManagerSection: View {
                     ForEach(Array(ranges.enumerated()), id: \.element) { index, range in
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
-                                HomeMixedText.make(range.label, size: 15, weight: 600, color: .cavnarInk)
+                                HomeMixedText.make(range.label, size: CavnarType.body, weight: 600, color: .cavnarInk)
                                 if let note = range.note, !note.isEmpty {
-                                    Text(note).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                                    Text(note).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                                 }
                             }
                             Spacer(minLength: 8)
@@ -234,9 +234,9 @@ struct ActingManagerSection: View {
                     AccountRowDivider()
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
-                            Text("From").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            Text("From").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                             CavnarDateChip(iso: $from, accessibilityName: "Acting from")
-                            Text("until").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            Text("until").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                             CavnarDateChip(iso: $until, earliest: CavnarDateChip.day(from), accessibilityName: "Acting until")
                             Spacer(minLength: 0)
                         }
@@ -292,14 +292,14 @@ struct StandingShiftsSection: View {
             VStack(alignment: .leading, spacing: 0) {
                 if shifts.isEmpty {
                     Text("No standing shifts. Add the days and hours they always work \u{2014} every draft keeps them.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.vertical, 10)
                 } else {
                     ForEach(Array(shifts.enumerated()), id: \.element.id) { index, shift in
                         HStack(spacing: 10) {
-                            HomeMixedText.make(shift.line, size: 15, weight: 600, color: .cavnarInk)
+                            HomeMixedText.make(shift.line, size: CavnarType.body, weight: 600, color: .cavnarInk)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
                             if canEdit {
@@ -337,12 +337,12 @@ struct StandingShiftsSection: View {
             }
             HStack(spacing: 8) {
                 CavnarTimeChip(time: $start, accessibilityName: "Starts")
-                Text("to").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text("to").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                 CavnarTimeChip(time: $end, accessibilityName: "Ends")
                 Spacer(minLength: 0)
             }
             HStack(spacing: 8) {
-                Text("Role").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text("Role").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                 SetupSelectMenu(current: role.isEmpty ? "Their usual role" : role,
                                 options: [("", "Their usual role")] + roles.map { ($0, $0) }) { role = $0 }
                 Spacer(minLength: 0)
@@ -355,14 +355,14 @@ struct StandingShiftsSection: View {
                 HStack(spacing: 8) {
                     Image(systemName: limited ? "checkmark.square.fill" : "square")
                         .foregroundStyle(limited ? Color.cavnarEmber2 : Color.cavnarInk3)
-                    Text("Only between dates").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                    Text("Only between dates").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                 }
             }
             .buttonStyle(.plain)
             if limited {
                 HStack(spacing: 8) {
                     CavnarDateChip(iso: $from, accessibilityName: "From")
-                    Text("until").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    Text("until").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     CavnarDateChip(iso: $until, earliest: CavnarDateChip.day(from), accessibilityName: "Until")
                     Spacer(minLength: 0)
                 }
@@ -412,7 +412,7 @@ struct TraineeSection: View {
                 if let t = trainee {
                     HStack(alignment: .top, spacing: 10) {
                         AccountChip(text: "Training", muted: true)
-                        HomeMixedText.make(t.line, size: 15, weight: 600, color: .cavnarInk)
+                        HomeMixedText.make(t.line, size: CavnarType.body, weight: 600, color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     SetupHelp(text: "Their \(t.targetRole) shifts don\u{2019}t count toward who\u{2019}s on, and the draft "
@@ -424,7 +424,7 @@ struct TraineeSection: View {
                             onSave(.end)
                         } label: {
                             Text("End training")
-                                .font(.cavnarBody(14, weight: 700))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
                                 .frame(minHeight: 36)
                                 .contentShape(Rectangle())
@@ -436,13 +436,13 @@ struct TraineeSection: View {
                     SetupHelp(text: "Put \(name) in training for a role: those shifts won\u{2019}t count toward who\u{2019}s on, "
                               + "and the draft pairs them with their trainer.")
                     HStack(spacing: 8) {
-                        Text("Learning").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        Text("Learning").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                         SetupSelectMenu(current: role.isEmpty ? "Pick a role" : role,
                                         options: roles.map { ($0, $0) }) { role = $0 }
                         Spacer(minLength: 0)
                     }
                     HStack(spacing: 8) {
-                        Text("Trainer").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        Text("Trainer").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                         SetupSelectMenu(current: trainer.isEmpty ? "Anyone in the role" : trainer,
                                         options: [("", "Anyone in the role")] + trainers.filter { $0 != name }.map { ($0, $0) }) {
                             trainer = $0
@@ -450,10 +450,10 @@ struct TraineeSection: View {
                         Spacer(minLength: 0)
                     }
                     HStack(spacing: 8) {
-                        Text("Until").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        Text("Until").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                         CavnarDateChip(iso: Binding(get: { until.isEmpty ? defaultUntil : until }, set: { until = $0 }),
                                        earliest: Date(), accessibilityName: "Training ends")
-                        Text("from").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        Text("from").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                         CavnarDateChip(iso: $from, accessibilityName: "Training starts")
                         Spacer(minLength: 0)
                     }
@@ -468,7 +468,7 @@ struct TraineeSection: View {
                     .disabled(busy || role.isEmpty)
                 } else {
                     Text("Not in training.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -500,7 +500,7 @@ struct ClosesForSection: View {
                 Text(closesFor.isEmpty
                      ? "Their own role\(role.map { " (\($0))" } ?? "") \u{2014} pick roles to close for others."
                      : "Closes for \(closesFor.joined(separator: ", ")).")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                 AccountFlowLayout(spacing: 6) {
@@ -536,25 +536,25 @@ struct PersonAttendanceSection: View {
         AccountSection(kicker: "Attendance") {
             if let r = reliability, let missed = r.missedLine {
                 AccountKVRow(label: "Missed", showsDivider: r.lateLine != nil) {
-                    HomeMixedText.make(missed.replacingOccurrences(of: "Missed ", with: ""), size: 15, weight: 600,
+                    HomeMixedText.make(missed.replacingOccurrences(of: "Missed ", with: ""), size: CavnarType.body, weight: 600,
                                        color: r.isUnreliable ? .cavnarAmber : .cavnarInk)
                         .multilineTextAlignment(.trailing)
                 }
                 if let late = r.lateLine {
                     AccountKVRow(label: "Late", showsDivider: false) {
-                        HomeMixedText.make(late.replacingOccurrences(of: "Late to ", with: ""), size: 15, weight: 600,
+                        HomeMixedText.make(late.replacingOccurrences(of: "Late to ", with: ""), size: CavnarType.body, weight: 600,
                                            color: r.lateRisk == true ? .cavnarAmber : .cavnarInk)
                             .multilineTextAlignment(.trailing)
                     }
                 }
                 Text("From the shifts Cavnar AI watched. A call-out with notice weighs less than a no-show.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 9)
             } else {
                 Text("Not watched yet \u{2014} attendance is read from shifts Cavnar AI watched, at least six of them.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 10)

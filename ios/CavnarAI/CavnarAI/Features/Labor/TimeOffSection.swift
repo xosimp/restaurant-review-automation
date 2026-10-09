@@ -1,91 +1,56 @@
 import SwiftUI
 
-/// Time-off requests — asked for by staff in the portal, decided here.
-/// An approved range is a hard constraint on the next schedule draft
-/// (time_off.py), which is why the decision belongs next to the
-/// availability manager rather than in a message thread.
+/// Time off already decided — the history (iOS readability round, 10/8/26).
+/// A pending request is decided in Waiting on you, the one list of what
+/// staff are waiting on; this dropdown holds what was answered. An
+/// approved range is a hard constraint on the next draft (time_off.py).
 struct TimeOffSection: View {
     @Bindable var viewModel: LaborViewModel
     var onExpand: (() -> Void)? = nil
 
+    private var decided: [TimeOffRequest] { viewModel.timeOff.filter { $0.status != "pending" } }
+
     var body: some View {
         CavnarDropdown(
-            title: "Time off",
-            subtitle: viewModel.timeOffPending == 0
-                ? (viewModel.timeOff.isEmpty ? "Asked for in the staff portal" : "Nothing waiting")
-                : "\(viewModel.timeOffPending) waiting for an answer",
-            badge: viewModel.timeOffPending > 0 ? viewModel.timeOffPending : nil,
+            title: "Time off history",
+            subtitle: viewModel.timeOffPending > 0
+                ? "\(viewModel.timeOffPending) waiting \u{2014} under Needs you"
+                : (decided.isEmpty ? "Asked for in the staff app" : "\(decided.count) answered"),
             isExpanded: $viewModel.timeOffExpanded,
             onExpand: onExpand
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("An approved range is kept off the next schedule draft. The employee sees your answer in the portal.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                if viewModel.timeOff.isEmpty {
-                    Text("No requests yet.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .italic()
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if decided.isEmpty {
+                    Text("Nothing answered yet.")
+                        .cavnarText(.secondary)
                 } else {
-                    VStack(spacing: 8) {
-                        ForEach(viewModel.timeOff) { req in
+                    VStack(spacing: CavnarSpace.xs) {
+                        ForEach(decided) { req in
                             row(req)
                         }
                     }
                 }
                 if let warning = viewModel.timeOffWarning {
-                    HomeMixedText.make(warning, size: 14, color: .cavnarEmber)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(warning, role: .secondary, color: .cavnarEmber2)
                 }
                 if let error = viewModel.timeOffError {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
                 }
             }
         }
     }
 
     private func row(_ req: TimeOffRequest) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(req.employeeName).font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(req.dateLabel + (req.reason.map { " · \($0)" } ?? ""),
-                                       size: 13.5, weight: 500, color: .cavnarInk3)
-                }
-                Spacer(minLength: 6)
-                if req.status != "pending" {
-                    Text(req.status == "approved" ? "Approved" : "Not approved")
-                        .font(.cavnarBody(12.5, weight: 700))
-                        .foregroundStyle(req.status == "approved" ? Color.cavnarGreen : Color.cavnarInk3)
-                }
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(req.employeeName).cavnarText(.label)
+                CavnarMixedText(req.dateLabel + (req.reason.map { " · \($0)" } ?? ""), role: .secondary)
             }
-            if req.status == "pending" {
-                HStack(spacing: 10) {
-                    Button {
-                        Haptic.light()
-                        Task { await viewModel.decideTimeOff(req.id, approve: false) }
-                    } label: { Text("Deny").frame(maxWidth: .infinity) }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                    .disabled(viewModel.timeOffBusyId == req.id)
-                    Button {
-                        Haptic.light()
-                        Task { await viewModel.decideTimeOff(req.id, approve: true) }
-                    } label: {
-                        Group {
-                            // The pulse, never "…" (DESIGN_SYSTEM §10).
-                            if viewModel.timeOffBusyId == req.id { CavnarShimmerText(text: "Approving", color: .white) }
-                            else { Text("Approve") }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.timeOffBusyId == req.id))
-                    .disabled(viewModel.timeOffBusyId == req.id)
-                }
-            }
+            Spacer(minLength: CavnarSpace.xs)
+            Text(req.status == "approved" ? "Approved" : "Not approved")
+                .cavnarText(.label, color: req.status == "approved" ? .cavnarGreen : .cavnarInk2)
         }
-        .padding(12)
+        .padding(CavnarSpace.s)
         .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }

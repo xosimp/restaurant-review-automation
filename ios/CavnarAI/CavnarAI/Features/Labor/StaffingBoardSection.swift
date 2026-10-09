@@ -369,7 +369,7 @@ struct StaffingBoardSection: View {
                 }
             } else {
                 Text("Staffing cards show once your own shifts are in \u{2014} sample data is never scored here.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -382,36 +382,36 @@ struct StaffingBoardSection: View {
         VStack(spacing: 10) {
             tile(kicker: "At stake in this window", hero: true) {
                 Text(s?.atStakeText ?? "$0")
-                    .font(.cavnarNumber(34, weight: 600))
+                    .font(.cavnarNumber(CavnarText.figureL.size, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                     .cavnarNumberGlow()
                 // The two parts do not overlap and add up to the total; on
                 // the assumed wage the dollars above target are withheld.
-                HomeMixedText.make(summaryLine(s), size: 13.5, color: .cavnarInk3)
+                HomeMixedText.make(summaryLine(s), size: CavnarType.secondary, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(alignment: .top, spacing: 10) {
                 tile(kicker: "Costliest") {
                     if let b = s?.biggest {
-                        Text(b.title).font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
+                        Text(b.title).font(.cavnarHeadline(CavnarType.emphasis)).foregroundStyle(Color.cavnarInk)
                             .lineLimit(2).minimumScaleFactor(0.8)
-                        HomeMixedText.make("\(b.dollarsText) \(b.label)", size: 13.5, color: .cavnarInk3)
+                        HomeMixedText.make("\(b.dollarsText) \(b.label)", size: CavnarType.secondary, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("—").font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
-                        Text("Nothing priced in this window").font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                        Text("—").font(.cavnarHeadline(CavnarType.emphasis)).foregroundStyle(Color.cavnarInk)
+                        Text("Nothing priced in this window").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 tile(kicker: "Fastest win") {
                     if let q = s?.quick {
-                        HomeMixedText.make(q.why.prefix(1).uppercased() + q.why.dropFirst(), size: 16, weight: 600,
+                        HomeMixedText.make(q.why.prefix(1).uppercased() + q.why.dropFirst(), size: CavnarType.body, weight: 600,
                                            color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                         Text((q.kind == "overtime" ? "from " : "") + q.title)
-                            .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     } else {
-                        Text("—").font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
-                        Text("Nothing to fix here").font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                        Text("—").font(.cavnarHeadline(CavnarType.emphasis)).foregroundStyle(Color.cavnarInk)
+                        Text("Nothing to fix here").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
             }
@@ -461,14 +461,14 @@ struct StaffingBoardSection: View {
                         .strokeBorder(lane.tone.opacity(0.28), lineWidth: 1))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(lane.title).font(.cavnarBody(17, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    Text(lane.title).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                     Text(lane.subtitle(targetLabel: targetLabel))
-                        .font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 4)
                 Text("\(items.count)")
-                    .font(.cavnarNumber(13, weight: 700))
+                    .font(.cavnarNumber(CavnarType.caption, weight: 700))
                     .foregroundStyle(lane.tone)
                     .padding(.horizontal, 10).padding(.vertical, 3)
                     .background(Capsule().fill(lane.tone.opacity(0.12)))
@@ -480,7 +480,7 @@ struct StaffingBoardSection: View {
                         .foregroundStyle(Color.cavnarGreen)
                         .frame(width: 26, height: 26)
                         .background(Circle().fill(Color.cavnarGreen.opacity(0.14)))
-                    Text(lane.empty).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                    Text(lane.empty).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(14)
@@ -498,7 +498,7 @@ struct StaffingBoardSection: View {
                         Haptic.light()
                         withAnimation(.easeOut(duration: 0.25)) { _ = showAll.insert(lane) }
                     } label: {
-                        HomeMixedText.make("Show all \(items.count) \u{2192}", size: 13.5, weight: 700, color: .cavnarEmber2)
+                        HomeMixedText.make("Show all \(items.count) \u{2192}", size: CavnarType.secondary, weight: 700, color: .cavnarEmber2)
                             .frame(minHeight: 44, alignment: .leading)
                     }
                     .buttonStyle(.plain)
@@ -539,7 +539,7 @@ struct StaffingDecisionCard: View {
         let tc = lane.tone
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
-                HomeMixedText.make(severityText, size: 12, weight: 700, color: tc)
+                HomeMixedText.make(severityText, size: CavnarType.caption, weight: 700, color: tc)
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Capsule().fill(tc.opacity(card.severity == "high" ? 0.2 : 0.12)))
                     .overlay(Capsule().strokeBorder(tc.opacity(0.22), lineWidth: 1))
@@ -548,17 +548,17 @@ struct StaffingDecisionCard: View {
             }
             .frame(minHeight: 38)
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.title).font(.cavnarBody(17, weight: 600)).foregroundStyle(Color.cavnarInk)
-                HomeMixedText.make(when, size: 13, weight: 500, color: .cavnarInk3)
+                Text(card.title).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
+                HomeMixedText.make(when, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(card.dollarsText)
-                    .font(.cavnarNumber(30, weight: 600))
+                    .font(.cavnarNumber(CavnarType.cardNumber, weight: 600))
                     .foregroundStyle(tc)
                     .cavnarNumberGlow(tc)
-                Text(card.label).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                Text(card.label).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
             }
-            HomeMixedText.make(card.say, size: 14.5, color: .cavnarInk2)
+            HomeMixedText.make(card.say, size: CavnarType.secondary, color: .cavnarInk2)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
             AccountFlowLayout(spacing: 6, lineSpacing: 6) {
@@ -569,8 +569,8 @@ struct StaffingDecisionCard: View {
             if explaining {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(explainLines.enumerated()), id: \.offset) { _, line in
-                        (Text(line.head + " ").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk)
-                         + HomeMixedText.make(line.body, size: 14, color: .cavnarInk2))
+                        (Text(line.head + " ").font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk)
+                         + HomeMixedText.make(line.body, size: CavnarType.secondary, color: .cavnarInk2))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -586,7 +586,7 @@ struct StaffingDecisionCard: View {
                     withAnimation(.easeOut(duration: 0.25)) { explaining.toggle() }
                 } label: {
                     Text(explaining ? "Hide the working" : "Explain why")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnarBody(CavnarType.caption, weight: 700))
                         .foregroundStyle(Color.cavnarInk2)
                         .frame(minHeight: 44)
                 }
@@ -633,7 +633,7 @@ struct StaffingDecisionCard: View {
     }
 
     private func chipView(_ text: String, ok: Bool) -> some View {
-        HomeMixedText.make(text, size: 12.5, weight: 500, color: ok ? .cavnarGreen : .cavnarInk3,
+        HomeMixedText.make(text, size: CavnarType.caption, weight: 500, color: ok ? .cavnarGreen : .cavnarInk3,
                            numberColor: ok ? .cavnarGreen : .cavnarInk)
             .padding(.horizontal, 10).padding(.vertical, 4)
             .background(Capsule().fill(ok ? Color.cavnarGreen.opacity(0.1) : Color.white.opacity(0.04)))
@@ -707,10 +707,10 @@ struct StaffingConsistencyRing: View {
             .frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 0) {
                 Text(pct.map { "\($0)%" } ?? "—")
-                    .font(.cavnarNumber(14, weight: 700))
+                    .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                     .foregroundStyle(pct == nil ? Color.cavnarInk3 : Color.cavnarInk)
                 Text(pct == nil ? "first seen" : "consistent")
-                    .font(.cavnarBody(11))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }

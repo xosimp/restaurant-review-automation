@@ -168,10 +168,13 @@ struct TSReportResponse: Decodable {
 
 /// Task sheets (task_sheets.py) for the owner: the day — every sheet, every
 /// line, who ticked it and when, read-only (owners do not tick) — the
-/// consistency report with the managers side by side, and the editor.
+/// consistency report with the managers side by side. Writing the sheets —
+/// lines, order, job codes — is done on the web (iOS readability round,
+/// 10/8/26: "Edit task sheets · Edit on the web"); TSEditorList stays for a
+/// later cleanup.
 struct TaskSheetsScreen: View {
     @Environment(\.dismiss) private var dismiss
-    enum View3: String, CaseIterable { case day = "The day", report = "Consistency", edit = "Edit sheets" }
+    enum View3: String, CaseIterable { case day = "The day", report = "Consistency" }
     @State private var view: View3 = .day
 
     var body: some View {
@@ -179,11 +182,12 @@ struct TaskSheetsScreen: View {
             VStack(spacing: 0) {
                 CavnarSegmentedControl(selection: $view, options: View3.allCases) { $0.rawValue }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+                .padding(.top, 10)
+                CavnarWebLinkRow(title: "Edit task sheets", path: "labor/tasks")
+                    .padding(.horizontal, 20)
                 switch view {
                 case .day: TSDayView()
                 case .report: TSReportView()
-                case .edit: TSEditorList()
                 }
             }
             .background(Color.cavnarPaper.ignoresSafeArea())
@@ -210,7 +214,7 @@ private struct TSDayView: View {
                     HStack(spacing: 12) {
                         Button { shift(-1) } label: { Image(systemName: "chevron.left") }
                         Text((d.isToday == true ? "Today · " : "") + (d.dateLabel ?? ""))
-                            .font(.cavnarBody(16.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            .font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                         Button { shift(1) } label: { Image(systemName: "chevron.right") }
                             .disabled(d.isToday == true)
                         Spacer()
@@ -218,7 +222,7 @@ private struct TSDayView: View {
                     .tint(Color.cavnarEmber2)
                     content(d)
                 } else if let failed {
-                    Text(failed).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(failed).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                 } else {
                     CavnarSkeletonBar(height: 3).frame(width: 180)
                 }
@@ -232,7 +236,7 @@ private struct TSDayView: View {
     @ViewBuilder
     private func content(_ d: TSDayResponse) -> some View {
         if d.hasSheets != true {
-            note("No task sheets yet. Write one for each job code and shift under Edit sheets — each person sees theirs when they sign in to the staff app.")
+            note("No task sheets yet. Write one for each job code and shift on the web — each person sees theirs when they sign in to the staff app.")
         } else if (d.sheets ?? []).isEmpty {
             note("No sheets went out this day — nobody on the published schedule worked a job code that has a sheet.")
         } else if let s = d.summary {
@@ -261,9 +265,9 @@ private struct TSDayView: View {
 
     private func tile(_ k: String, _ v: String, _ sub: String, _ tone: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(k).font(.cavnarBody(11, weight: 700)).kerning(1.1).foregroundStyle(Color.cavnarInk3)
-            Text(v).font(.cavnarNumber(26, weight: 600)).foregroundStyle(tone)
-            if !sub.isEmpty { Text(sub).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3) }
+            Text(k).font(.cavnarBody(CavnarType.caption, weight: 700)).kerning(1.1).foregroundStyle(Color.cavnarInk3)
+            Text(v).font(.cavnarNumber(CavnarText.figureM.size, weight: 600)).foregroundStyle(tone)
+            if !sub.isEmpty { Text(sub).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -272,7 +276,7 @@ private struct TSDayView: View {
 
     private func note(_ text: String, warn: Bool = false) -> some View {
         Text(text)
-            .font(.cavnarBody(14.5))
+            .font(.cavnar(.secondary))
             .foregroundStyle(Color.cavnarInk2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(13)
@@ -307,11 +311,11 @@ private struct TSReadOnlySheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text(sheet.title).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text(sheet.title).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                 Spacer()
-                Text("\(sheet.done)/\(sheet.total)").font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                Text("\(sheet.done)/\(sheet.total)").font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk2)
             }
-            Text(meta).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3).padding(.top, 3)
+            Text(meta).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3).padding(.top, 3)
             // The web's .ts-bar: ember, red when missed, partial or overdue
             // — never a system ProgressView.
             TSProgressBar(done: sheet.done, total: sheet.total, bad: bad)
@@ -321,25 +325,25 @@ private struct TSReadOnlySheet: View {
                     Image(systemName: l.done ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(l.done ? Color.cavnarGreen : (l.overdue == true ? Color.cavnarRed : Color.cavnarInk3))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(l.label).font(.cavnarBody(14.5)).foregroundStyle(l.done ? Color.cavnarInk2 : Color.cavnarInk)
+                        Text(l.label).font(.cavnar(.secondary)).foregroundStyle(l.done ? Color.cavnarInk2 : Color.cavnarInk)
                         let tags = [l.critical == true ? "Critical" : nil, l.overdue == true ? "Overdue" : nil,
                                     l.late == true ? "Late" : nil, l.flagged == true ? "Out of range" : nil].compactMap { $0 }
                         if !tags.isEmpty {
                             Text(tags.joined(separator: " · ").uppercased())
-                                .font(.cavnarBody(10.5, weight: 700)).kerning(0.8)
+                                .font(.cavnarBody(CavnarType.caption, weight: 700)).kerning(0.8)
                                 .foregroundStyle(l.overdue == true || l.flagged == true ? Color.cavnarRed : Color.cavnarEmber2)
                         }
                         if l.done {
                             Text("\(l.completedBy ?? "Someone") · \(StaffSheetFormat.clock(l.completedAt))"
                                  + (l.proofValue.map { " · \(l.proofLabel.map { $0 + ": " } ?? "")\($0)" } ?? ""))
-                                .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                             // The proof photo itself, tap for full screen
                             // (iOS parity #50) — it read " · photo".
                             if let token = l.photo, !token.isEmpty {
                                 TSProofThumb(token: token, caption: l.label)
                             }
                         } else if let due = l.dueAt {
-                            Text("Due \(StaffSheetFormat.clock(due))").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            Text("Due \(StaffSheetFormat.clock(due))").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                         }
                     }
                     Spacer(minLength: 0)
@@ -379,10 +383,10 @@ private struct TSReportView: View {
                 .pickerStyle(.segmented)
                 if let d = data {
                     Text("\(d.windowLabel ?? "") · sheets whose shift has closed")
-                        .font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     if (d.sheets ?? 0) == 0 {
                         Text("Nothing to compare yet. The report reads each sheet once its shift has closed.")
-                            .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     } else {
                         if let m = d.managers, !m.isEmpty {
                             label("YOUR MANAGERS, SIDE BY SIDE")
@@ -392,17 +396,17 @@ private struct TSReportView: View {
                         }
                         if let e = d.signoffsExpected, e > 0 {
                             Text("\(d.signoffsMissed ?? 0) of \(e) shifts that need a sign-off went unsigned.")
-                                .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                                .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                         }
                         label("BY PERSON")
                         ForEach(d.byPerson ?? []) { row($0, min: d.minSheets ?? 3) }
                         label("BY JOB CODE")
                         ForEach(d.byJobCode ?? []) { row($0, min: d.minSheets ?? 3) }
                         Text("Rates show once a person or job code has \(d.minSheets ?? 3) closed sheets; below that, the counts.")
-                            .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     }
                 } else if let failed {
-                    Text(failed).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(failed).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                 } else {
                     CavnarSkeletonBar(height: 3).frame(width: 180)
                 }
@@ -413,18 +417,18 @@ private struct TSReportView: View {
     }
 
     private func label(_ t: String) -> some View {
-        Text(t).font(.cavnarBody(11, weight: 700)).kerning(1.3).foregroundStyle(Color.cavnarEmber2).padding(.top, 8)
+        Text(t).font(.cavnarBody(CavnarType.caption, weight: 700)).kerning(1.3).foregroundStyle(Color.cavnarEmber2).padding(.top, 8)
     }
 
     private func rate(_ r: TSRate, min: Int) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(r.name).font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarInk3)
+            Text(r.name).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarInk3)
             Text(r.enough ? (r.completionPct.map { "\($0)%" } ?? "—") : "\(r.sheets) sheets")
-                .font(.cavnarNumber(24, weight: 600))
+                .font(.cavnarNumber(CavnarText.figureM.size, weight: 600))
                 .foregroundStyle(!r.enough ? Color.cavnarInk : ((r.completionPct ?? 0) >= 90 ? Color.cavnarGreen : ((r.completionPct ?? 0) < 70 ? Color.cavnarRed : Color.cavnarAmber)))
             Text(r.enough ? "\(r.onTimePct.map { "\($0)% on time" } ?? "no timed lines") · \(r.criticalMissed) critical missed"
                           : "rates after \(min) sheets · \(r.criticalMissed) critical missed")
-                .font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(13)
@@ -434,15 +438,15 @@ private struct TSReportView: View {
     private func row(_ r: TSRate, min: Int) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(r.name).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text(r.name).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                 Text("\(r.sheets) sheets · \(r.done)/\(r.lines) lines · \(r.criticalMissed) critical missed")
-                    .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(r.enough ? (r.completionPct.map { "\($0)%" } ?? "—") : "—").font(.cavnarNumber(17, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text(r.enough ? (r.completionPct.map { "\($0)%" } ?? "—") : "—").font(.cavnarNumber(CavnarText.figureS.size, weight: 600)).foregroundStyle(Color.cavnarInk)
                 Text(r.enough ? (r.onTimePct.map { "\($0)% on time" } ?? "") : "after \(min) sheets")
-                    .font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
             }
         }
         .padding(12)
@@ -473,7 +477,7 @@ private struct TSEditorList: View {
                     Button { creating = true } label: { Label("New sheet", systemImage: "plus") }
                         .tint(Color.cavnarEmber)
                 } else {
-                    Text("Only a login that manages the team edits sheets.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    Text("Only a login that manages the team edits sheets.").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                 }
                 let groups = Dictionary(grouping: d.sheets ?? [], by: \.jobCode)
                 ForEach(groups.keys.sorted { $0.lowercased() < $1.lowercased() }, id: \.self) { code in
@@ -484,9 +488,9 @@ private struct TSEditorList: View {
                                               codes: d.jobCodes ?? [], onChange: { await load() })
                             } label: {
                                 HStack {
-                                    Text(s.shiftLabel + (s.daysOfWeek.isEmpty ? "" : " · " + s.daysLabel)).font(.cavnarBody(15))
+                                    Text(s.shiftLabel + (s.daysOfWeek.isEmpty ? "" : " · " + s.daysLabel)).font(.cavnar(.body))
                                     Spacer()
-                                    Text("\(s.lines.count) lines").font(.cavnarNumber(13)).foregroundStyle(Color.cavnarInk3)
+                                    Text("\(s.lines.count) lines").font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
                                 }
                             }
                         }
@@ -611,9 +615,9 @@ private struct TSSheetEditor: View {
             if let s = sheet {
                 if s.carriedOver == true && s.shiftKind == "any" {
                     Text("Carried over from your old checklist as an All day sheet, so it goes to everyone on \(s.jobCode). Set it to Opening or Closing and it goes to just the opener or the closer.")
-                        .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk2)
+                        .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                 }
-                if let note { Text(note).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarAmber) }
+                if let note { Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarAmber) }
                 if canEdit {
                     Section("Settings") {
                         // The job code the sheet goes to, as the schedule
@@ -640,7 +644,7 @@ private struct TSSheetEditor: View {
                             ForEach(0..<7, id: \.self) { i in
                                 let on = days.contains(i)
                                 Text(["M", "T", "W", "T", "F", "S", "S"][i])
-                                    .font(.cavnarBody(13, weight: 700))
+                                    .font(.cavnarBody(CavnarType.caption, weight: 700))
                                     .frame(width: 32, height: 32)
                                     .background(on ? Color.cavnarEmber.opacity(0.18) : Color.cavnarPaper3, in: Circle())
                                     .foregroundStyle(on ? Color.cavnarEmber : Color.cavnarInk2)
@@ -649,7 +653,7 @@ private struct TSSheetEditor: View {
                                     .accessibilityAddTraits(on ? .isSelected : [])
                             }
                         }
-                        Text(days.isEmpty ? "Every day" : "Only the days picked").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                        Text(days.isEmpty ? "Every day" : "Only the days picked").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                         Toggle("The manager on duty signs this shift off", isOn: $signoff).tint(Color.cavnarEmber)
                         Button("Save settings") { Task { await saveSettings() } }
                             .disabled(jobCode.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -659,8 +663,8 @@ private struct TSSheetEditor: View {
                     ForEach(s.lines) { l in
                         Button { if canEdit { editing = l } } label: {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(l.label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk)
-                                Text(meta(l, kind: s.shiftKind)).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                                Text(l.label).font(.cavnar(.body)).foregroundStyle(Color.cavnarInk)
+                                Text(meta(l, kind: s.shiftKind)).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
                     }
@@ -691,7 +695,7 @@ private struct TSSheetEditor: View {
                         if drafts.isEmpty { Text("Nothing new to suggest for this sheet.").foregroundStyle(Color.cavnarInk3) }
                         ForEach(Array(drafts.enumerated()), id: \.offset) { i, d in
                             HStack {
-                                Text(d.label).font(.cavnarBody(14.5))
+                                Text(d.label).font(.cavnar(.secondary))
                                 Spacer()
                                 Button("Add") { Task { await addDraft(i) } }
                                     .buttonStyle(CavnarChipButtonStyle(tone: .cavnarEmber))
@@ -1055,7 +1059,7 @@ private struct TSPhotoViewer: View {
         }
         .overlay(alignment: .bottom) {
             Text(caption)
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarInk2)
                 .padding(16)
         }

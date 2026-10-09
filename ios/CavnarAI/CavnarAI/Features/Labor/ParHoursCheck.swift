@@ -26,31 +26,28 @@ struct ParHoursCheck: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("PAR HOURS CHECK")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .tracking(1)
-                        .foregroundStyle(Color.cavnarEmber2)
+                    CavnarKicker("Hours against the budget")
                     HomeMixedText.make("Hourly budget \(budget.commaFormatted)h"
                                        + (dollars.flatMap { $0 > 0 ? " (\(SetupWords.dollars($0)))" : nil } ?? "")
-                                       + " for the week", size: 14, color: .cavnarInk2)
+                                       + " for the week", size: CavnarType.secondary, color: .cavnarInk2)
                     if let hourly {
                         HomeMixedText.make("\(hourly.commaFormatted)h hourly of \(budget.commaFormatted)h budget"
                                            + ((salaried ?? 0) > 0 ? " \u{00B7} \(salaried!.commaFormatted)h salaried" : ""),
-                                           size: 13, color: .cavnarInk3)
+                                           size: CavnarType.caption, color: .cavnarInk3)
                     }
                 }
                 Spacer()
                 Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
             }
             if let text = basis?.text {
-                HomeMixedText.make(text, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make(text, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let caveat = basis?.caveat {
                 HomeMixedText.make(caveat + " Pay rates are set on the web, in Account \u{2192} Targets & pay rates.",
-                                   size: 12.5, weight: 600, color: .cavnarAmber)
+                                   size: CavnarType.caption, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

@@ -37,7 +37,7 @@ struct LaborStandardsSection: View {
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("How much work one person does in an hour here \u{2014} guests per server-hour, bar tickets per bartender-hour, tickets per cook-hour. Measured from your punches and tickets. Set your own and the draft sizes that role by it and the day\u{2019}s demand.")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -46,12 +46,12 @@ struct LaborStandardsSection: View {
                         .padding(.vertical, 8)
                         .accessibilityLabel("Loading the labor standards")
                 } else if let error = store.standardsError, payload == nil {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if payload != nil {
                     if shown.isEmpty {
                         Text("Nothing measured yet \u{2014} it needs six shifts of a role with tickets on file. You can still set your own below.")
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -66,12 +66,12 @@ struct LaborStandardsSection: View {
                         }
                     }
                     if let error = store.standardsError {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if payload?.canEdit != true {
                         Text("Only the account owner sets the labor standards.")
-                            .font(.cavnarBody(13))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }
@@ -96,14 +96,14 @@ struct LaborStandardsSection: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(Self.label(family))
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                 AccountChip(text: isYours ? "Yours" : "Measured", muted: !isYours)
                 Spacer(minLength: 0)
             }
             ForEach(["morning", "night"], id: \.self) { part in
                 if let s = parts[part] {
-                    HomeMixedText.make(s.text ?? Self.fallbackText(s, part: part, family: family), size: 13.5,
+                    HomeMixedText.make(s.text ?? Self.fallbackText(s, part: part, family: family), size: CavnarType.secondary,
                                        color: s.isYours ? .cavnarInk2 : .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -116,7 +116,7 @@ struct LaborStandardsSection: View {
                         startEditing(family)
                     } label: {
                         Text(isYours ? "Change yours" : "Set yours")
-                            .font(.cavnarBody(13.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 32)
                     }
@@ -126,7 +126,7 @@ struct LaborStandardsSection: View {
                             Task { await store.setStandard(family: family, lunch: nil, dinner: nil, remove: true) }
                         } label: {
                             Text("Back to measured")
-                                .font(.cavnarBody(13.5, weight: 700))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .frame(minHeight: 32)
                         }
@@ -147,7 +147,7 @@ struct LaborStandardsSection: View {
         return VStack(alignment: .leading, spacing: 10) {
             if payload?.standards[family] == nil {
                 Text(Self.label(family))
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
             }
             HStack(spacing: 10) {
@@ -155,7 +155,7 @@ struct LaborStandardsSection: View {
                 field("Dinner", text: $dinner, id: "\(family)|dinner")
             }
             Text("\(unit.capitalized) per \(Self.unitWho(family))-hour. Leave one blank to keep it as it is.")
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
             HStack(spacing: 12) {
                 Button {
@@ -176,7 +176,7 @@ struct LaborStandardsSection: View {
                     focused = nil
                     editing = nil
                 } label: {
-                    Text("Cancel").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                    Text("Cancel").font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk3)
                 }
                 .buttonStyle(.plain)
             }
@@ -190,7 +190,7 @@ struct LaborStandardsSection: View {
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
             TextField("\u{2014}", text: text)
-                .font(.cavnarNumber(15, weight: 700))
+                .font(.cavnarNumber(CavnarType.body, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.center)

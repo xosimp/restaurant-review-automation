@@ -1341,7 +1341,9 @@ def test_the_ios_quality_panel_reads_at_the_labor_tabs_own_type_scale():
     # Both are sub-labels of a figure the reader has already read.
     assert len(small) <= 2, small
     assert all(size >= 11 for _line, size, _text in small), small
-    assert ".cavnarBody(14))" in src, "detail lines should sit at the module's body size"
+    # Since the iOS readability round (10/8/26) sizes are roles: detail
+    # lines sit at the secondary role (14), never a literal under it.
+    assert ".cavnar(.secondary)" in src, "detail lines should sit at the module's body size"
 
 
 # ── Saying the same thing seven times ─────────────────────────────────────
@@ -1692,7 +1694,8 @@ def test_both_surfaces_say_what_the_explanation_is_not():
     say why the AI chose one person over another, and should not imply it."""
     for text in (_source("ios/CavnarAI/CavnarAI/Features/Labor/ShiftQualityPanel.swift"),
                  _source("templates", "dashboard.html")):
-        assert "does not record why the AI" in text
+        # iOS names the AI as Cavnar AI (readability round, 10/8/26).
+        assert "does not record why the AI" in text or "does not record why Cavnar AI" in text
 
 
 def test_a_manager_edit_parses_the_shift_history_once():

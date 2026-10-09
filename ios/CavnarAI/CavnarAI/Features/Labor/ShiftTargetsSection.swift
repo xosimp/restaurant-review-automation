@@ -35,7 +35,7 @@ struct ShiftTargetsSection: View {
             VStack(alignment: .leading, spacing: 16) {
                 if viewModel.team.isEmpty {
                     Text("Rate your team first — targets are built out of Operational Scores.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -69,7 +69,7 @@ struct ShiftTargetsSection: View {
             // the role (schedule audit 10/3/26 SQ-3/SQ-4): a lunch with one
             // bartender is asked for a 4, not for the whole 8.
             Text("Set each role\u{2019}s total for its biggest crew on a shift. Cavnar AI judges it per person: 8 across your largest bartender crew of 2 is about 4 a person, so a lunch with one bartender asks for a 4, not an 8. Leave a role blank to set no target.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -77,16 +77,16 @@ struct ShiftTargetsSection: View {
                 VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 10) {
                     Text(role)
-                        .font(.cavnarBody(14.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     Spacer(minLength: 8)
                     if let best = reachable(role) {
                         Text("max \(best.formatted(.number.precision(.fractionLength(0))))")
-                            .font(.cavnarNumber(12.5))
+                            .font(.cavnarNumber(CavnarType.caption))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     TextField("—", text: binding(for: role))
-                        .font(.cavnarNumber(15, weight: 700))
+                        .font(.cavnarNumber(CavnarType.body, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                         .multilineTextAlignment(.center)
                         .keyboardType(.decimalPad)
@@ -104,7 +104,7 @@ struct ShiftTargetsSection: View {
                 // (schedule audit 10/3/26 SQ-3/SQ-4).
                 if let crew = viewModel.strengthCrews.first(where: { $0.key.caseInsensitiveCompare(role) == .orderedSame })?.value,
                    let line = crew.line(role: role) {
-                    HomeMixedText.make(line, size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 }
@@ -117,7 +117,7 @@ struct ShiftTargetsSection: View {
                         .foregroundStyle(Color.cavnarAmber)
                         .padding(.top, 2)
                     Text(warning)
-                        .font(.cavnarBody(13))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -144,17 +144,17 @@ struct ShiftTargetsSection: View {
     private var leaderRules: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Shift leader requirements")
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             Text("Stricter than a target: this names one person who has to be on that shift.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
 
             ForEach(rules) { rule in
                 HStack(alignment: .top, spacing: 10) {
                     Text(rule.sentence)
-                        .font(.cavnarBody(13.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
@@ -165,7 +165,7 @@ struct ShiftTargetsSection: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Color.cavnarInk3)
-                            .frame(width: 26, height: 26)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -182,7 +182,7 @@ struct ShiftTargetsSection: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.cavnarAmber)
                         .padding(.top, 2)
-                    HomeMixedText.make(warning, size: 13, color: .cavnarInk2)
+                    HomeMixedText.make(warning, size: CavnarType.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -195,7 +195,7 @@ struct ShiftTargetsSection: View {
                     Image(systemName: "plus")
                         .font(.system(size: 11, weight: .bold))
                     Text("Add a requirement")
-                        .font(.cavnarBody(14, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 }
                 .foregroundStyle(Color.cavnarEmber)
             }
@@ -231,7 +231,7 @@ struct ShiftTargetsSection: View {
                         Text(savedFlash ? "Saved" : "Save targets")
                     }
                 }
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarPaper)
                 .frame(maxWidth: .infinity, minHeight: 42)
                 .background(
@@ -328,7 +328,7 @@ private struct LeaderRuleEditor: View {
 
                     if !role.isEmpty {
                         Text(preview.sentence)
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -374,7 +374,7 @@ private struct LeaderRuleEditor: View {
                 .foregroundStyle(Color.cavnarInk3)
             if let hint {
                 Text(hint)
-                    .font(.cavnarBody(13))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -407,7 +407,7 @@ private struct LeaderRuleEditor: View {
             action()
         } label: {
             Text(label)
-                .font(.cavnarBody(13.5, weight: on ? 700 : 500))
+                .font(.cavnarBody(CavnarType.secondary, weight: on ? 700 : 500))
                 .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .background(

@@ -99,7 +99,7 @@ struct ShiftEditSheet: View {
                         HomeMixedText.make([row.role ?? "", "was " + [row.day ?? "", CavnarDate.mdy(row.date ?? "")]
                                                 .filter { !$0.isEmpty }.joined(separator: " ")]
                                             .filter { !$0.isEmpty }.joined(separator: " · "),
-                                           size: 15, weight: 600, color: .cavnarInk2)
+                                           size: CavnarType.body, weight: 600, color: .cavnarInk2)
                         // Move it to another day of the week (#45).
                         VStack(spacing: 0) {
                             pickerRow("Day") {
@@ -152,11 +152,11 @@ struct ShiftEditSheet: View {
                     .cavnarCard()
                     if let hours = LaborViewModel.shiftHours(timeText(start), timeText(end)) {
                         HomeMixedText.make("\(hours) hours · the week is re-scored and saved when you tap Save.",
-                                           size: 13.5, color: .cavnarInk3)
+                                           size: CavnarType.secondary, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let error {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     }
                     VStack(spacing: 10) {
                         Button {
@@ -185,7 +185,7 @@ struct ShiftEditSheet: View {
 
     private func pickerRow<Control: View>(_ label: String, @ViewBuilder control: () -> Control) -> some View {
         HStack {
-            Text(label).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+            Text(label).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
             Spacer(minLength: 8)
             control().tint(Color.cavnarEmber)
         }

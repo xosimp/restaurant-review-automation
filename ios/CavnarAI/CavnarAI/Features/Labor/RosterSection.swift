@@ -16,9 +16,8 @@ struct RosterSection: View {
 
     @State private var selected: RosterMember?
     @State private var showingPairEditor = false
-    @State private var showingRules = false
     @State private var showingClosers = false
-    @State private var showingFamilies = false
+    @State private var showingSectionNames = false
     /// Each pair row's measured height — see CavnarFittedList.
     @State private var pairRowHeights: [StaffPair.ID: CGFloat] = [:]
 
@@ -36,18 +35,15 @@ struct RosterSection: View {
                     await viewModel.loadLearnedPatterns()
                     // "Trained up" chips on the detail sheet read from intel.
                     if viewModel.intel == nil { await viewModel.loadIntel() }
+                    // The closed days and the section cap edit here.
+                    if !viewModel.rulesLoaded { await viewModel.loadRules() }
                 }
             }
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Who the generator may schedule, and how. Tap a person to set hours, days and status.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 if !viewModel.canEditRoster {
                     Text("Read-only on this login — an owner or manager can change these.")
-                        .font(.cavnarBody(13))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarAmber)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -55,10 +51,10 @@ struct RosterSection: View {
                 if viewModel.isLoadingRoster && viewModel.roster.isEmpty {
                     CavnarSkeletonLines(widths: [1.0, 0.85, 0.7])
                 } else if let error = viewModel.rosterError, viewModel.roster.isEmpty {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                 } else if viewModel.roster.isEmpty {
                     Text("The roster fills from your shift history \u{2014} upload a shifts CSV on the web (Labor \u{2192} Schedule Studio) or connect your POS, and everyone appears here. Add someone new by hand below.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -68,21 +64,30 @@ struct RosterSection: View {
                     if away > 0 {
                         HomeMixedText.make("\(away) \(away == 1 ? "person hasn\u{2019}t" : "people haven\u{2019}t") worked in six weeks "
                                            + "\u{2014} open each to deactivate them or keep them on the roster.",
-                                           size: 13.5, weight: 600, color: .cavnarAmber)
+                                           size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(spacing: 0) {
                         ForEach(viewModel.roster) { member in
-                            memberRow(member)
-                                .contextMenu {
-                                    // Only a hand-entered name comes off here;
-                                    // shift history keeps everyone else on.
-                                    if member.isManual == true && viewModel.canEditRoster {
+                            HStack(spacing: 0) {
+                                memberRow(member)
+                                // Only a hand-entered name comes off here —
+                                // shift history keeps everyone else on — with
+                                // a visible ⋯, never a long press to learn.
+                                if member.isManual == true && viewModel.canEditRoster {
+                                    Menu {
                                         Button(role: .destructive) {
                                             removingPerson = member
                                         } label: { Label("Remove from the roster", systemImage: "person.badge.minus") }
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .font(.cavnar(.body))
+                                            .foregroundStyle(Color.cavnarEmber2)
+                                            .cavnarHitTarget()
                                     }
+                                    .accessibilityLabel("More for \(member.name)")
                                 }
+                            }
                             if member.id != viewModel.roster.last?.id {
                                 Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                             }
@@ -98,32 +103,36 @@ struct RosterSection: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarSecondaryButtonStyle())
-                    if viewModel.roster.contains(where: { $0.isManual == true }) {
-                        Text("Someone you added by hand comes off with a long press on their row.")
-                            .font(.cavnarBody(12.5))
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
                 }
                 if let error = viewModel.teamError {
-                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                rulesLink
-
-                // The one-time closer cleanup and the roles each job code
-                // belongs to (schedule audit 10/3/26 D-9, D-13).
-                setupLink(icon: "lock.fill", title: "Closers",
-                          detail: closersDetail) { showingClosers = true }
-                setupLink(icon: "square.stack.3d.up", title: "Roles and job codes",
-                          detail: "Which job codes are one role \u{2014} Server AM and Server PM are Server") {
-                    showingFamilies = true
+                // The two rules an owner changes from the floor stay here —
+                // the days you don't open, and the most front-of-house
+                // people at once; the rest of the rules, the closer cleanup
+                // and the roles each job code belongs to are set on the web
+                // (iOS readability round, 10/8/26).
+                if viewModel.rulesLoaded {
+                    RulesClosedDaysSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules)
+                    RulesDiningSectionsSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules) {
+                        showingSectionNames = true
+                    }
+                }
+                VStack(spacing: 0) {
+                    CavnarWebLinkRow(title: "Schedule rules",
+                                     subtitle: "Rest, shift length, minors, floors, arrivals, certifications",
+                                     path: "labor/team")
+                    CavnarWebLinkRow(title: "Closers", subtitle: closersDetail, path: "labor/closers")
+                    CavnarWebLinkRow(title: "Roles and job codes",
+                                     subtitle: "Which job codes are one role", path: "labor/team")
                 }
 
                 pairsBlock
 
                 if let error = viewModel.pairError {
-                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -145,11 +154,11 @@ struct RosterSection: View {
                 // What the last answer about a pattern did, said once under
                 // every pattern block (Make it a rule, keep, let go, adopt).
                 if let message = viewModel.patternMessage {
-                    Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
+                    Text(message).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error = viewModel.patternError {
-                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -160,14 +169,14 @@ struct RosterSection: View {
         .sheet(isPresented: $showingPairEditor) {
             PairEditorSheet(viewModel: viewModel)
         }
-        .sheet(isPresented: $showingRules) {
-            ScheduleRulesSheet(viewModel: viewModel)
-        }
+        // A labor/closers link (a push, the review's link) still opens the
+        // cleanup here; the row for it is on the web.
         .sheet(isPresented: $showingClosers, onDismiss: { Task { await viewModel.loadRoster() } }) {
             CloserCleanupSheet(viewModel: viewModel)
         }
-        .sheet(isPresented: $showingFamilies) {
-            RoleFamiliesSheet(store: viewModel.teamSetup)
+        .sheet(isPresented: $showingSectionNames) {
+            FloorSectionsSheet()
+                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $addingPerson) { AddTeamMemberSheet(viewModel: viewModel) }
         .confirmationDialog(removingPerson.map { "Remove \($0.name) from your team?" } ?? "",
@@ -197,41 +206,10 @@ struct RosterSection: View {
         return s
     }
 
-    private func setupLink(icon: String, title: String, detail: String, action: @escaping () -> Void) -> some View {
-        Button {
-            Haptic.light()
-            action()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber)
-                    .frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.cavnarBody(14.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(detail, size: 13, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.cavnarEmber2)
-            }
-            .padding(12)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
-                    .fill(Color.cavnarPaper2.opacity(0.5)))
-        }
-        .buttonStyle(.plain)
-    }
-
     private var subtitle: String {
         let active = viewModel.activeRoster.count
         let total = viewModel.roster.count
-        if total == 0 { return "Everyone the generator can schedule" }
+        if total == 0 { return "Everyone Cavnar AI can schedule" }
         if active == total { return "\(total) on the roster" }
         return "\(active) of \(total) on the roster"
     }
@@ -247,36 +225,18 @@ struct RosterSection: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(member.name)
-                            .font(.cavnarBody(15, weight: 600))
+                            .font(.cavnar(.label))
                             .foregroundStyle(member.isActive ? Color.cavnarInk : Color.cavnarInk3)
                         if let type = member.settings?.employmentType, type == "part" {
-                            Text("PT")
-                                .font(.cavnarBody(10, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarInk3)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.white.opacity(0.06)))
+                            ScheduleRowTag(text: "PT", tone: .cavnarInk2)
                         }
                         if member.settings?.isMinor == true {
-                            Text("MINOR")
-                                .font(.cavnarBody(10, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarBlue)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.cavnarBlue.opacity(0.14)))
+                            ScheduleRowTag(text: "Minor", tone: .cavnarBlue)
                         }
                         // In training for a role (schedule audit 10/3/26
                         // D-16): those shifts are not coverage.
                         if member.isTraining {
-                            Text("TRAINING")
-                                .font(.cavnarBody(10, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarInk2)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.white.opacity(0.08)))
+                            ScheduleRowTag(text: "Training", tone: .cavnarInk2)
                         }
                     }
                     if member.isDormant {
@@ -285,23 +245,23 @@ struct RosterSection: View {
                             Image(systemName: "moon.zzz")
                                 .font(.system(size: 10, weight: .semibold))
                             HomeMixedText.make(member.dormantText ?? "Not worked in six weeks \u{2014} deactivate?",
-                                               size: 13.5, color: .cavnarAmber)
+                                               size: CavnarType.secondary, color: .cavnarAmber)
                                 .lineLimit(1)
                         }
                         .foregroundStyle(Color.cavnarAmber)
                     } else if member.isActive {
-                        HomeMixedText.make(detailLine(member), size: 13.5, color: .cavnarInk3)
+                        HomeMixedText.make(detailLine(member), size: CavnarType.secondary, color: .cavnarInk3)
                             .lineLimit(1)
                     } else {
                         Text("Not on the roster")
-                            .font(.cavnarBody(13.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 Spacer(minLength: 8)
                 if let score = member.score, member.isActive {
                     Text("\(score)")
-                        .font(.cavnarNumber(17, weight: 700))
+                        .font(.cavnarNumber(CavnarText.figureS.size, weight: 700))
                         .foregroundStyle(Color.cavnarEmber)
                         .frame(width: 26, alignment: .trailing)
                         .accessibilityLabel("Operational Score \(score)")
@@ -329,46 +289,13 @@ struct RosterSection: View {
         return parts.isEmpty ? "No role on file" : parts.joined(separator: " · ")
     }
 
-    // MARK: Rules link
-
-    private var rulesLink: some View {
-        Button {
-            Haptic.light()
-            showingRules = true
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "checklist")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Schedule rules")
-                        .font(.cavnarBody(14.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                    Text("Rest, shift length, minors, floors, jurisdiction, arrivals, certifications, reservations")
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.cavnarEmber2)
-            }
-            .padding(12)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
-                    .fill(Color.cavnarPaper2.opacity(0.5)))
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: Pairs
 
     private var pairsBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Pairs")
-                    .font(.cavnarBody(14.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
                 if viewModel.canEditRoster && viewModel.activeRoster.count >= 2 {
@@ -378,7 +305,7 @@ struct RosterSection: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "plus").font(.system(size: 11, weight: .bold))
-                            Text("Add").font(.cavnarBody(14, weight: 600))
+                            Text("Add").font(.cavnarBody(CavnarType.secondary, weight: 600))
                         }
                         .foregroundStyle(Color.cavnarEmber)
                     }
@@ -386,11 +313,11 @@ struct RosterSection: View {
                 }
             }
             Text("Two people to keep on the same shift, or apart.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
             if viewModel.pairs.isEmpty {
                 Text("No pairs yet.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -428,10 +355,10 @@ struct RosterSection: View {
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(pair.a) \(pair.isPrefer ? "with" : "apart from") \(pair.b)")
-                    .font(.cavnarBody(14.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 if let note = pair.note, !note.isEmpty {
-                    Text(note).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                    Text(note).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                 }
             }
             Spacer()
@@ -447,10 +374,10 @@ extension RosterSection {
     fileprivate var suggestedPairsBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Suggested pairs")
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             Text("Two people whose shared dayparts ran clean. Nothing is applied until you add it.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(viewModel.openSuggestions) { pair in
@@ -468,10 +395,10 @@ extension RosterSection {
     fileprivate var learnedPatternsBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Learned from your edits")
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             Text("Moves you keep making become the draft's defaults. Stop one here and the next draft ignores it.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
@@ -491,10 +418,10 @@ extension RosterSection {
         VStack(alignment: .leading, spacing: 8) {
             HomeMixedText.make("\(saves.versions) edit\(saves.versions == 1 ? "" : "s") made through Cavnar AI support on "
                                + "\(saves.weeks) week\(saves.weeks == 1 ? "" : "s") don\u{2019}t teach the draft yet \u{2014} "
-                               + "count them as yours?", size: 14, weight: 600, color: .cavnarInk)
+                               + "count them as yours?", size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Only where those edits were your decisions.")
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
             Button {
                 Task { await viewModel.adoptPatternWork(saves: true) }
@@ -523,16 +450,16 @@ extension RosterSection {
                     .frame(width: 18)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 3) {
-                    HomeMixedText.make(pattern.text ?? "", size: 14, color: dismissed ? .cavnarInk3 : .cavnarInk2)
+                    HomeMixedText.make(pattern.text ?? "", size: CavnarType.secondary, color: dismissed ? .cavnarInk3 : .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
                         // Its denominator: "2 of 3 weeks", and how sure
                         // that makes it (schedule audit 10/3/26 L-6).
                         if let evidence = pattern.evidenceLine {
-                            HomeMixedText.make(evidence, size: 12.5, color: .cavnarInk3)
+                            HomeMixedText.make(evidence, size: CavnarType.caption, color: .cavnarInk3)
                         }
                         Text(dismissed ? "not in use" : (pattern.active == true ? "in use" : "not enough weeks yet"))
-                            .font(.cavnarBody(12.5, weight: 600))
+                            .font(.cavnarBody(CavnarType.caption, weight: 600))
                             .foregroundStyle(dismissed ? Color.cavnarInk3 : (pattern.active == true ? Color.cavnarGreen : Color.cavnarInk3))
                     }
                     // A dismissal made through support counts once the
@@ -540,7 +467,7 @@ extension RosterSection {
                     if pattern.dismissedByAdmin == true {
                         HStack(spacing: 10) {
                             Text("Dismissed through Cavnar AI support \u{2014} not counted")
-                                .font(.cavnarBody(12.5, weight: 600))
+                                .font(.cavnarBody(CavnarType.caption, weight: 600))
                                 .foregroundStyle(Color.cavnarAmber)
                                 .fixedSize(horizontal: false, vertical: true)
                             if viewModel.canAdoptPatterns {
@@ -548,7 +475,7 @@ extension RosterSection {
                                     Task { await viewModel.adoptPatternWork(saves: false) }
                                 } label: {
                                     Text("Count as mine")
-                                        .font(.cavnarBody(13, weight: 700))
+                                        .font(.cavnarBody(CavnarType.caption, weight: 700))
                                         .foregroundStyle(Color.cavnarEmber2)
                                         .frame(minHeight: 32)
                                 }
@@ -567,7 +494,7 @@ extension RosterSection {
                     Group {
                         if busy { CavnarShimmerText(text: "Saving…") } else { Text(dismissed ? "Use again" : "Stop using this") }
                     }
-                    .font(.cavnarBody(13.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(dismissed ? Color.cavnarEmber : Color.cavnarInk3)
                 }
                 .buttonStyle(.plain)
@@ -590,10 +517,10 @@ extension RosterSection {
     fileprivate var standingPatternsBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Standing patterns")
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             Text("What the draft keeps doing because your edits taught it. Two reversals retire one; a rule makes it the person\u{2019}s own availability.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(viewModel.patternConflicts) { conflict in
@@ -604,10 +531,10 @@ extension RosterSection {
                         .frame(width: 18)
                         .padding(.top, 2)
                     VStack(alignment: .leading, spacing: 3) {
-                        HomeMixedText.make(conflict.line, size: 14, color: .cavnarInk2)
+                        HomeMixedText.make(conflict.line, size: CavnarType.secondary, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Left out of the draft until you settle it \u{2014} set their availability above.")
-                            .font(.cavnarBody(12.5, weight: 600))
+                            .font(.cavnarBody(CavnarType.caption, weight: 600))
                             .foregroundStyle(Color.cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -638,41 +565,41 @@ extension RosterSection {
                     .frame(width: 18)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 3) {
-                    HomeMixedText.make(pattern.text, size: 14, color: retired ? .cavnarInk3 : .cavnarInk2)
+                    HomeMixedText.make(pattern.text, size: CavnarType.secondary, color: retired ? .cavnarInk3 : .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let history = pattern.historyLine {
-                        HomeMixedText.make(history, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(history, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     // Kept how many of the weeks that tested it, how sure,
                     // and when a manager's hand last confirmed it (L-6, L-30).
                     if let evidence = pattern.evidenceLine {
-                        HomeMixedText.make(evidence, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(evidence, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: 6) {
                         if pattern.evidenceLine == nil, let applied = pattern.timesApplied {
-                            HomeMixedText.make("kept \(applied) \(applied == 1 ? "time" : "times")", size: 12.5,
+                            HomeMixedText.make("kept \(applied) \(applied == 1 ? "time" : "times")", size: CavnarType.caption,
                                                color: .cavnarInk3)
                         }
                         if let overridden = pattern.timesOverridden, overridden > 0 {
-                            HomeMixedText.make("undone \(overridden)", size: 12.5, color: .cavnarInk3)
+                            HomeMixedText.make("undone \(overridden)", size: CavnarType.caption, color: .cavnarInk3)
                         }
                         Text(pattern.statusLabel)
-                            .font(.cavnarBody(12.5, weight: 600))
+                            .font(.cavnarBody(CavnarType.caption, weight: 600))
                             .foregroundStyle(ruled ? Color.cavnarGreen : (retired ? Color.cavnarInk3
                                 : (pattern.isRetest ? Color.cavnarAmber : Color.cavnarEmber2)))
                     }
                     if ruled, let note = pattern.rule?.note {
                         HomeMixedText.make("Rule: " + note + (pattern.rule?.by.map { " \u{00B7} by " + $0 } ?? ""),
-                                           size: 12.5, weight: 500, color: .cavnarInk3)
+                                           size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     // A cut stays a habit: Cavnar AI holds minimums, not
                     // maximums (L-33's refusal, said before anyone asks).
                     if pattern.kind == "headcount_cut", !retired {
                         Text("A cut can\u{2019}t be a rule \u{2014} Cavnar AI holds staffing minimums, not maximums. The draft keeps it as a habit.")
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -684,21 +611,21 @@ extension RosterSection {
                 VStack(alignment: .leading, spacing: 6) {
                     HomeMixedText.make("Left out of the next draft to check you still want it"
                                        + (pattern.retestSince.map { " (since \($0))" } ?? "") + ".",
-                                       size: 13, weight: 600, color: .cavnarAmber)
+                                       size: CavnarType.caption, weight: 600, color: .cavnarAmber)
                         .fixedSize(horizontal: false, vertical: true)
                     if viewModel.canEditPatterns {
                         HStack(spacing: 18) {
                             Button {
                                 Task { await viewModel.answerStanding(pattern, keep: true) }
                             } label: {
-                                Text("Keep it").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                                Text("Keep it").font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber2)
                                     .frame(minHeight: 32)
                             }
                             .buttonStyle(.plain)
                             Button {
                                 Task { await viewModel.answerStanding(pattern, keep: false) }
                             } label: {
-                                Text("Let it go").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                                Text("Let it go").font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk3)
                                     .frame(minHeight: 32)
                             }
                             .buttonStyle(.plain)
@@ -716,7 +643,7 @@ extension RosterSection {
                     Group {
                         if busy { CavnarShimmerText(text: "Saving\u{2026}") } else { Text("Make it a rule") }
                     }
-                    .font(.cavnarBody(13.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
                 }
                 .buttonStyle(.plain)
@@ -774,7 +701,7 @@ struct RosterDetailSheet: View {
                         // The role above is the one worked most lately
                         // (D-17); the others they worked follow it.
                         HomeMixedText.make("Also: " + member.alsoRoles.prefix(4).joined(separator: ", "),
-                                           size: 13.5, color: .cavnarInk3)
+                                           size: CavnarType.secondary, color: .cavnarInk3)
                             .padding(.top, -14)
                     }
                     if let member, member.isDormant {
@@ -804,7 +731,7 @@ struct RosterDetailSheet: View {
                     .buttonStyle(CavnarSecondaryButtonStyle())
                     if !editable {
                         Text("Read-only on this login — an owner or manager can change these.")
-                            .font(.cavnarBody(13.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -855,7 +782,7 @@ struct RosterDetailSheet: View {
                     trainedUpSection
                     if let toast {
                         Text(toast)
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -897,7 +824,7 @@ struct RosterDetailSheet: View {
             ForEach(Array(viewModel.days.enumerated()), id: \.element) { index, day in
                 HStack(spacing: 10) {
                     Text(String(day.prefix(3)))
-                        .font(.cavnarBody(14.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .frame(width: 36, alignment: .leading)
                     Spacer(minLength: 4)
@@ -910,7 +837,7 @@ struct RosterDetailSheet: View {
                 if index < viewModel.days.count - 1 { AccountRowDivider() }
             }
             Text("Times like 10:00am or 9:00pm. Leave blank for no limit.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .padding(.top, 8)
                 .fixedSize(horizontal: false, vertical: true)
@@ -920,10 +847,10 @@ struct RosterDetailSheet: View {
     private func windowField(_ label: String, value: Binding<String>, id: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(CavnarType.caption, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             TextField("—", text: value)
-                .font(.cavnarNumber(14, weight: 700))
+                .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
                 .autocorrectionDisabled()
@@ -968,12 +895,12 @@ struct RosterDetailSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Certifications")
             Text("What they hold. A role that needs one is only given to somebody who has it.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if viewModel.certificationChoices.isEmpty {
                 Text("No certifications are defined yet.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -1046,7 +973,7 @@ struct RosterDetailSheet: View {
                     }
                 }
                 Text("Stated in the staff portal — theirs to change, not yours.")
-                    .font(.cavnarBody(13))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .padding(.top, 8)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1062,7 +989,7 @@ struct RosterDetailSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 AccountKicker(text: "Trained up")
                 Text("Roles the record says they could hold — enough shifts beside a rated colleague.")
-                    .font(.cavnarBody(13))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 AccountFlowLayout(spacing: 6) {
@@ -1076,7 +1003,7 @@ struct RosterDetailSheet: View {
         AccountHero(title: name) {
             GlowBadge(systemImage: "person.fill", size: 52)
         } subtitle: {
-            HomeMixedText.make(subtitle, size: 15.5, color: .cavnarInk3)
+            HomeMixedText.make(subtitle, size: CavnarType.body, color: .cavnarInk3)
         }
     }
 
@@ -1096,7 +1023,7 @@ struct RosterDetailSheet: View {
     private var statusSection: some View {
         AccountSection(kicker: "Status") {
             AccountSwitchRow(label: "On the roster",
-                             detail: active ? "The generator may schedule them." : "Not on the roster — skipped by every draft.",
+                             detail: active ? "Cavnar AI may schedule them." : "Not on the roster — skipped by every draft.",
                              isOn: Binding(get: { active }, set: { newValue in
                                 active = newValue
                                 Task { await viewModel.updateSettings(.init(employeeName: name, active: newValue)) }
@@ -1157,7 +1084,7 @@ struct RosterDetailSheet: View {
                          keyboardType: .decimalPad, isNumber: true, showsDivider: false)
                 .disabled(!editable)
             Text("Leave blank for no floor or ceiling beyond the week's own limit.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .padding(.top, 8)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1169,7 +1096,7 @@ struct RosterDetailSheet: View {
             ForEach(Array(viewModel.days.enumerated()), id: \.element) { index, day in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(day)
-                        .font(.cavnarBody(14.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     HStack(spacing: 6) {
                         ForEach(viewModel.dayparts, id: \.self) { part in
@@ -1197,7 +1124,7 @@ struct RosterDetailSheet: View {
             action()
         } label: {
             Text(label)
-                .font(.cavnarBody(13, weight: on ? 700 : 500))
+                .font(.cavnarBody(CavnarType.caption, weight: on ? 700 : 500))
                 .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: 32)
                 .background(
@@ -1281,7 +1208,7 @@ private struct PairEditorSheet: View {
                     CavnarFloatingField(icon: "text.alignleft", placeholder: "Note (optional)", text: $note,
                                         focus: $focused, field: .note)
                     if let error = viewModel.pairError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     }
                     VStack(spacing: 10) {
                         Button {
@@ -1342,7 +1269,7 @@ private struct PairEditorSheet: View {
             kind = value
         } label: {
             Text(label)
-                .font(.cavnarBody(14, weight: on ? 700 : 500))
+                .font(.cavnarBody(CavnarType.secondary, weight: on ? 700 : 500))
                 .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: 36)
                 .background(

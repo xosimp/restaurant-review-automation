@@ -37,21 +37,20 @@ struct TeamStrengthSection: View {
             }
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Rate each person 1 to 5. The scheduler uses this to avoid putting your weakest people together on your busiest shifts.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                Text("Rate each person 1 to 5. Cavnar AI keeps your weakest people from sharing your busiest shifts.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if viewModel.isLoadingTeam && viewModel.team.isEmpty {
                     CavnarWorkingLine().padding(.vertical, 12)
                 } else if let note = viewModel.teamNote {
                     Text(note)
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if viewModel.team.isEmpty {
                     Text("No staff on file yet.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                 } else {
                     if !viewModel.unmatchedRatings.isEmpty {
@@ -68,7 +67,7 @@ struct TeamStrengthSection: View {
                         // they still count; the owner says they still hold.
                         HomeMixedText.make("\(due) rating\(due == 1 ? " is" : "s are") 90+ days old \u{2014} tap Still right "
                                            + "beside each that still holds, or rate again.",
-                                           size: 13, weight: 600, color: .cavnarAmber)
+                                           size: CavnarType.caption, weight: 600, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     ForEach(viewModel.team) { member in
@@ -81,9 +80,15 @@ struct TeamStrengthSection: View {
 
                 if let error = viewModel.teamError {
                     Text(error)
-                        .font(.cavnarBody(13.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // A score per role (someone can be a 5 behind the bar and
+                // a 3 on the floor) is a wide grid — set on the web.
+                if !viewModel.team.isEmpty {
+                    CavnarWebLinkRow(title: "Ratings by role", path: "labor/team")
                 }
 
                 // Who changed a rating or a target, and when (memory round).
@@ -111,7 +116,7 @@ struct TeamStrengthSection: View {
             Text(cov.rated == 0
                  ? "Nothing changes in your schedules until you rate somebody."
                  : "\(cov.total - cov.rated) still unrated. They count as zero toward a shift's strength, so targets will read low until they're rated.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -127,14 +132,14 @@ struct TeamStrengthSection: View {
         let count = viewModel.unmatchedRatings.count
         return VStack(alignment: .leading, spacing: 10) {
             HomeMixedText.make("\(count) \(count == 1 ? "rating doesn't" : "ratings don't") match anyone on your roster — they judge nobody until they do.",
-                               size: 14, weight: 600, color: .cavnarAmber)
+                               size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(viewModel.unmatchedRatings) { item in
                 unmatchedRow(item)
             }
             if let error = viewModel.matchError {
                 Text(error)
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -154,13 +159,13 @@ struct TeamStrengthSection: View {
         return VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text(item.rated)
-                    .font(.cavnarBody(15, weight: 600))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                 if let score = item.score {
-                    HomeMixedText.make("rated \(Int(score.rounded()))", size: 13, color: .cavnarInk3)
+                    HomeMixedText.make("rated \(Int(score.rounded()))", size: CavnarType.caption, color: .cavnarInk3)
                 }
                 Spacer(minLength: 4)
-                if busy { CavnarShimmerText(text: "Matching", color: .cavnarInk3).font(.cavnarBody(12)) }
+                if busy { CavnarShimmerText(text: "Matching", color: .cavnarInk3).font(.cavnar(.caption)) }
             }
             HStack(spacing: 8) {
                 if let suggestion = item.suggestion {
@@ -180,7 +185,7 @@ struct TeamStrengthSection: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(item.suggestion == nil ? "Pick who this is" : "Someone else")
-                            .font(.cavnarBody(14, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(Color.cavnarEmber)
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.system(size: 10, weight: .semibold))
@@ -199,17 +204,17 @@ struct TeamStrengthSection: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(member.name)
-                        .font(.cavnarBody(15, weight: 600))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk)
                     HStack(spacing: 5) {
                         if let role = member.role, !role.isEmpty {
                             Text(role)
-                                .font(.cavnarBody(13))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         if let label = member.scoreLabel {
                             Text("· \(label)")
-                                .font(.cavnarBody(13))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                     }
@@ -217,25 +222,24 @@ struct TeamStrengthSection: View {
                 Spacer(minLength: 8)
                 if viewModel.savingFor == member.name {
                     CavnarShimmerText(text: "Saving", color: .cavnarInk3)
-                        .font(.cavnarBody(12))
+                        .font(.cavnar(.caption))
                 }
             }
             if member.dormant == true {
                 // Not worked in six weeks (E-3) — answered on the roster.
-                HomeMixedText.make(member.dormantText ?? "Not worked in six weeks", size: 13, color: .cavnarAmber)
+                HomeMixedText.make(member.dormantText ?? "Not worked in six weeks", size: CavnarType.caption, color: .cavnarAmber)
             }
             scorePicker(member)
             if member.ratingDue == true, member.score != nil {
                 rerateRow(member)
             }
-            let roles = roleOptions(member)
-            if roles.count > 1 || !(member.roleScores ?? [:]).isEmpty {
-                roleScoreRows(member, roles: roles)
-            }
+            // Per-role ratings are set on the web (iOS readability round,
+            // 10/8/26: "Ratings by role · Edit on the web" under the list);
+            // roleScoreRows stays for a later cleanup.
             closerToggle(member)
             if member.canClosePending == true {
                 Text("Marked to close through Cavnar AI support \u{2014} counts once you count it as yours.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -266,7 +270,7 @@ struct TeamStrengthSection: View {
     private func roleScoreRows(_ member: RatedEmployee, roles: [String]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("BY ROLE")
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(1)
                 .foregroundStyle(Color.cavnarInk3)
             ForEach(roles, id: \.self) { role in
@@ -274,7 +278,7 @@ struct TeamStrengthSection: View {
                 let busy = viewModel.savingRoleFor == member.name + "|" + role
                 HStack(spacing: 8) {
                     Text(role)
-                        .font(.cavnarBody(13.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(current == nil ? Color.cavnarInk3 : Color.cavnarInk2)
                         .lineLimit(1)
                         .frame(width: 96, alignment: .leading)
@@ -287,7 +291,7 @@ struct TeamStrengthSection: View {
                             }
                         } label: {
                             Text("\(value)")
-                                .font(.cavnarNumber(13, weight: 700))
+                                .font(.cavnarNumber(CavnarType.caption, weight: 700))
                                 .frame(maxWidth: .infinity, minHeight: 28)
                                 .foregroundStyle(current == value ? Color.cavnarPaper : Color.cavnarInk2)
                                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -302,7 +306,7 @@ struct TeamStrengthSection: View {
                 }
             }
             Text("A role left blank uses the overall score.")
-                .font(.cavnarBody(12))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
         }
         .padding(.top, 2)
@@ -311,7 +315,7 @@ struct TeamStrengthSection: View {
     /// "Rated 6/1/26 — still right?" with one tap to keep it.
     private func rerateRow(_ member: RatedEmployee) -> some View {
         HStack(spacing: 10) {
-            HomeMixedText.make(member.ratingDueText ?? "Rated a while ago \u{2014} still right?", size: 13,
+            HomeMixedText.make(member.ratingDueText ?? "Rated a while ago \u{2014} still right?", size: CavnarType.caption,
                                color: .cavnarAmber)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 6)
@@ -320,7 +324,7 @@ struct TeamStrengthSection: View {
                 Task { await viewModel.confirmRating(for: member.name) }
             } label: {
                 Text("Still right")
-                    .font(.cavnarBody(13.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
                     .frame(minHeight: 32)
             }
@@ -337,14 +341,14 @@ struct TeamStrengthSection: View {
     private func leaderStatusBlock(_ status: LeaderRulesStatus) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(status.lines, id: \.self) { line in
-                HomeMixedText.make(line, size: 13.5, weight: 600, color: .cavnarAmber)
+                HomeMixedText.make(line, size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if status.canAdopt, let setup {
                 if status.lines.isEmpty {
                     HomeMixedText.make("\(status.adminRatings + status.adminClosers) entered through Cavnar AI support "
                                        + "don\u{2019}t count until you count them as yours.",
-                                       size: 13.5, weight: 600, color: .cavnarAmber)
+                                       size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button {
@@ -360,11 +364,11 @@ struct TeamStrengthSection: View {
                 .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: setup.isAdopting))
                 .disabled(setup.isAdopting)
                 if let error = setup.adoptError {
-                    Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let message = setup.adoptMessage {
-                    Text(message).font(.cavnarBody(13)).foregroundStyle(Color.cavnarGreen)
+                    Text(message).font(.cavnar(.caption)).foregroundStyle(Color.cavnarGreen)
                 }
             }
         }
@@ -391,7 +395,7 @@ struct TeamStrengthSection: View {
                 // close, the last of their role out — not a key holder
                 // (owner, 10/2/26; schedule audit 10/3/26 D-9).
                 Text("Closes for their role")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle((member.canClose ?? false) ? Color.cavnarInk2 : Color.cavnarInk3)
                 Spacer()
             }
@@ -417,7 +421,7 @@ struct TeamStrengthSection: View {
                     }
                 } label: {
                     Text("\(value)")
-                        .font(.cavnarNumber(15, weight: 700))
+                        .font(.cavnarNumber(CavnarType.body, weight: 700))
                         .frame(maxWidth: .infinity, minHeight: 34)
                         .foregroundStyle(member.score == value ? Color.cavnarPaper : Color.cavnarInk2)
                         .background(

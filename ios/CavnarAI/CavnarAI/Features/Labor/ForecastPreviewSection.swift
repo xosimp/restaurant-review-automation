@@ -27,12 +27,12 @@ struct ForecastPreviewSection: View {
                         .padding(.vertical, 8)
                         .accessibilityLabel("Loading next week\u{2019}s forecast")
                 } else if let error = store.forecastError, forecast == nil {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let f = forecast {
                     if !f.available {
                         Text(f.reason ?? "There isn\u{2019}t enough sales history yet to forecast next week.")
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -63,7 +63,7 @@ struct ForecastPreviewSection: View {
                 CavnarCaveat(title: "Sales stopped coming in",
                              detail: d.message ?? d.line ?? "The forecast can\u{2019}t be trusted until sales are current.")
             } else if let line = d.line {
-                HomeMixedText.make(line, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -90,13 +90,13 @@ struct ForecastPreviewSection: View {
         if let b = f.budgetBasis {
             VStack(alignment: .leading, spacing: 6) {
                 if let text = b.text {
-                    HomeMixedText.make(text, size: 13.5, color: b.salariesExceedTarget == true ? .cavnarAmber : .cavnarInk2)
+                    HomeMixedText.make(text, size: CavnarType.secondary, color: b.salariesExceedTarget == true ? .cavnarAmber : .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let target = b.targetDollars, let salaried = b.salariedWeekCost {
                     HomeMixedText.make("Target \(SetupWords.dollars(target)) for the week \u{2212} salaried pay "
                                        + "\(SetupWords.dollars(salaried)) = \(SetupWords.dollars(max(0, target - salaried))) hourly.",
-                                       size: 13, color: .cavnarInk3)
+                                       size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let caveat = b.caveat {
@@ -125,19 +125,19 @@ struct ForecastPreviewSection: View {
     private func dayRow(_ day: ForecastPreview.Day, reasons: [String]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HomeMixedText.make("\(day.weekday.prefix(3)) \(CavnarDate.mdy(day.date))", size: 15, weight: 600,
+                HomeMixedText.make("\(day.weekday.prefix(3)) \(CavnarDate.mdy(day.date))", size: CavnarType.body, weight: 600,
                                    color: day.closed ? .cavnarInk3 : .cavnarInk)
                 if let pct = day.demand?.pct, Int(pct.rounded()) != 0, !day.closed {
                     Text(SetupWords.signedPct(pct))
-                        .font(.cavnarNumber(13, weight: 700))
+                        .font(.cavnarNumber(CavnarType.caption, weight: 700))
                         .foregroundStyle(pct > 0 ? Color.cavnarGreen : Color.cavnarAmber)
                 }
                 Spacer(minLength: 6)
                 if day.closed {
-                    Text("Closed").font(.cavnarBody(13.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                    Text("Closed").font(.cavnarBody(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk3)
                 } else if let h = day.hours {
                     Text("\(h.commaFormatted)h")
-                        .font(.cavnarNumber(15, weight: 700))
+                        .font(.cavnarNumber(CavnarType.body, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                 }
             }
@@ -145,19 +145,19 @@ struct ForecastPreviewSection: View {
                 if let sales = day.sales {
                     let range = (day.low != nil && day.high != nil)
                         ? " (\(SetupWords.dollars(day.low!))\u{2013}\(SetupWords.dollars(day.high!)))" : ""
-                    HomeMixedText.make("Sales about \(SetupWords.dollars(sales))\(range)", size: 13, color: .cavnarInk3)
+                    HomeMixedText.make("Sales about \(SetupWords.dollars(sales))\(range)", size: CavnarType.caption, color: .cavnarInk3)
                 } else if let why = day.reason {
-                    HomeMixedText.make(why, size: 13, color: .cavnarInk3)
+                    HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 // Why the day sits off a usual one, and why its hours
                 // moved: "+30% — Homecoming", "−15% — rain forecast".
                 ForEach(Array(Set(day.demand?.reasons ?? []).union(reasons)).sorted(), id: \.self) { why in
-                    HomeMixedText.make(why, size: 13, color: .cavnarInk2)
+                    HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !day.effects.isEmpty {
-                    HomeMixedText.make(day.effects.joined(separator: " \u{00B7} "), size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(day.effects.joined(separator: " \u{00B7} "), size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

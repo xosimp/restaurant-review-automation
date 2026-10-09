@@ -22,7 +22,7 @@ struct LaborAnalyticsSection: View {
                 // still in progress named as partial.
                 ForEach(Self.ribbonNotes(stats: stats, trend: viewModel.daily.isEmpty ? viewModel.trend : []),
                         id: \.self) { note in
-                    HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(note, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, -10)
                 }
@@ -149,15 +149,15 @@ struct LaborAnalyticsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Labor % vs \(Self.targetName(stats))")
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .tracking(0.4)
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
                 Text(String(format: "%.1f%%", pct))
-                    .font(.cavnarNumber(14.5, weight: 700))
+                    .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                     .foregroundStyle(bucket.color)
                 Text(bucket.label)
-                    .font(.cavnarBody(14.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -192,7 +192,7 @@ struct LaborAnalyticsSection: View {
                     }
                 }
             }
-            .font(.cavnarBody(14))
+            .font(.cavnar(.secondary))
             .foregroundStyle(Color.cavnarInk3)
 
             // The published mark is CONTEXT, never a standing (Benchmarking
@@ -202,7 +202,7 @@ struct LaborAnalyticsSection: View {
             // only when the server sent one (NS4 H3: no entry, no line).
             if industry != nil, let ind = stats.savingsBreakdown.industryPctText {
                 HomeMixedText.make("Published figure \(ind)" + (stats.savingsBreakdown.laborIndustryBasis.map { ": \($0)" } ?? "")
-                                   + ". \(Self.industryDefinitionNote)", size: 12.5, color: .cavnarInk3)
+                                   + ". \(Self.industryDefinitionNote)", size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -259,7 +259,7 @@ private struct LaborStatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             AnimatableTileNumber(value: animatedValue, format: format)
-                .font(.cavnarNumber(26, weight: 700))
+                .font(.cavnarNumber(CavnarText.figureM.size, weight: 700))
                 .foregroundStyle(tone)
                 .cavnarNumberGlow(tone)
                 .cavnarSensitive()
@@ -274,7 +274,7 @@ private struct LaborStatTile: View {
                     animatedValue = newValue
                 }
             Text(label)
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .tracking(0.6)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarInk3)

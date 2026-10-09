@@ -79,7 +79,7 @@ struct ShiftQualityPanel: View {
                 optimizerBlock(optimizer)
             }
             if let reason = viewModel?.scheduleResult?.gate?.reason, viewModel?.scheduleResult?.gate?.ran == true {
-                HomeMixedText.make(reason, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let viewModel, !viewModel.unratedByHours.isEmpty {
@@ -94,7 +94,7 @@ struct ShiftQualityPanel: View {
             // A broken hard rule holds the whole week under fair (schedule
             // re-audit 10/4/26 SQ-2): said first, in the engine's words.
             if let held = quality.heldBy?.text {
-                HomeMixedText.make(held, size: 13.5, weight: 600, color: .cavnarAmber)
+                HomeMixedText.make(held, size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !warnings.isEmpty { warningBlock }
@@ -127,22 +127,17 @@ struct ShiftQualityPanel: View {
         HStack(alignment: .center, spacing: 16) {
             QualityDial(score: quality.score ?? 0, tone: tone, muted: isRescoring)
             VStack(alignment: .leading, spacing: 5) {
-                Text("SHIFT QUALITY")
-                    .font(.cavnarBody(12.5, weight: 700))
+                Text("How it scored")
+                    .font(.cavnar(.kicker))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarInk3)
                 HStack(spacing: 8) {
                     Text(bandLabel)
-                        .font(.cavnarHeadline(23))
+                        .font(.cavnarHeadline(CavnarType.section))
                         .foregroundStyle(Color.cavnarInk)
                     if quality.isProvisional {
-                        Text("PROVISIONAL")
-                            .font(.cavnarBody(12, weight: 700))
-                            .tracking(0.8)
-                            .foregroundStyle(Color.cavnarAmber)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.cavnarAmber.opacity(0.14)))
+                        // Provisional: built on too little to stand on.
+                        ScheduleRowTag(text: "Early read", tone: .cavnarAmber)
                     }
                     if let delta = viewModel?.scoreDelta {
                         ScoreDeltaChip(delta: delta)
@@ -156,7 +151,7 @@ struct ShiftQualityPanel: View {
                     // The deduction that cost the most, beside the % (D1a-5);
                     // an older server's first reason when it sent none.
                     if let top = confidence.topReason ?? (quality.isProvisional ? confidence.reasons.first : nil) {
-                        HomeMixedText.make(top, size: 13, color: quality.isProvisional ? .cavnarAmber : .cavnarInk3)
+                        HomeMixedText.make(top, size: CavnarType.caption, color: quality.isProvisional ? .cavnarAmber : .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -170,10 +165,10 @@ struct ShiftQualityPanel: View {
             Circle()
                 .fill(confidenceTone(confidence.level))
                 .frame(width: 6, height: 6)
-            HomeMixedText.make(confidence.completenessLabel, size: 14, weight: 600, color: .cavnarInk2)
+            HomeMixedText.make(confidence.completenessLabel, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Read completeness \(max(0, min(100, confidence.score))) percent")
+        .accessibilityLabel("Scored on \(max(0, min(100, confidence.score))) percent of what it needs")
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
         .background(Capsule().fill(Color.cavnarPaper3.opacity(0.7)))
@@ -187,16 +182,16 @@ struct ShiftQualityPanel: View {
         case .idle:
             if showingSaved {
                 Text("Change saved — this is what your staff will receive.")
-                    .font(.cavnarBody(13.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarGreen)
             }
         case .saving:
             Text("Saving your change…")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
         case .failed(let message):
             Text("\(message) The score above is out of date.")
-                .font(.cavnarBody(13.5, weight: 600))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarRed)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -215,18 +210,18 @@ struct ShiftQualityPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 10) {
                         Text(dimension.label)
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
                             .frame(width: 132, alignment: .leading)
                         QualityBar(score: dimension.score, tone: toneFor(dimension.score))
                         Text("\(dimension.score)%")
-                            .font(.cavnarNumber(14.5, weight: 700))
+                            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarInk)
                             .frame(width: 46, alignment: .trailing)
                     }
                     // The floor under which this dimension caps a shift.
                     if let floor = dimension.floor, floor > 0 {
-                        HomeMixedText.make("caps a shift under \(Int(floor))", size: 12, color: .cavnarInk3)
+                        HomeMixedText.make("caps a shift under \(Int(floor))", size: CavnarType.caption, color: .cavnarInk3)
                             .padding(.leading, 142)
                     }
                 }
@@ -244,12 +239,12 @@ struct ShiftQualityPanel: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
                         Text(dim.label)
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
                             .frame(width: 132, alignment: .leading)
                         QualityBar(score: dim.score, tone: toneFor(dim.score))
                         Text("\(dim.score)%")
-                            .font(.cavnarNumber(14.5, weight: 700))
+                            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarInk)
                             .frame(width: 46, alignment: .trailing)
                     }
@@ -260,11 +255,11 @@ struct ShiftQualityPanel: View {
                     ForEach(Array(findings.enumerated()), id: \.offset) { i, line in
                         HomeMixedText.make(
                             line + (i == findings.count - 1 ? (dim.shareText.map { " \($0) of the week score." } ?? "") : ""),
-                            size: 13, color: .cavnarInk3)
+                            size: CavnarType.caption, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     ForEach(Self.weekFactLines(dim), id: \.self) { line in
-                        HomeMixedText.make(line, size: 12.5, weight: 600, color: .cavnarInk3)
+                        HomeMixedText.make(line, size: CavnarType.caption, weight: 600, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -281,11 +276,11 @@ struct ShiftQualityPanel: View {
         VStack(alignment: .leading, spacing: 9) {
             if let headline = o.headline {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    HomeMixedText.make(headline, size: 14.5, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(headline, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if viewModel?.optimizerUnsaved == true {
                         Text("NOT SAVED")
-                            .font(.cavnarBody(12, weight: 700))
+                            .font(.cavnar(.kicker))
                             .tracking(0.8)
                             .foregroundStyle(Color.cavnarEmber)
                     }
@@ -296,7 +291,7 @@ struct ShiftQualityPanel: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text(showingChanges ? "Hide the changes" : "What changed and why")
-                            .font(.cavnarBody(14, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 11, weight: .semibold))
@@ -316,19 +311,19 @@ struct ShiftQualityPanel: View {
                                     .frame(width: 13)
                                     .padding(.top, 4)
                                 HomeMixedText.make((change.isTrade ? "Swap within the day: " : "") + change.reason,
-                                                   size: 14, color: .cavnarInk2)
+                                                   size: CavnarType.secondary, color: .cavnarInk2)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
                                 VStack(alignment: .trailing, spacing: 1) {
                                     if let gain = change.gain, gain > 0 {
                                         Text("+\(Int(gain.rounded()))")
-                                            .font(.cavnarNumber(13, weight: 700))
+                                            .font(.cavnarNumber(CavnarType.caption, weight: 700))
                                             .foregroundStyle(Color.cavnarGreen)
                                     }
                                     // Labor dollars the change moved (D2, P-32).
                                     if let d = change.dollars, d.rounded() != 0 {
                                         Text(d > 0 ? "+$\(d.commaFormatted)" : "\u{2212}$\((-d).commaFormatted)")
-                                            .font(.cavnarNumber(12, weight: 600))
+                                            .font(.cavnarNumber(CavnarType.caption, weight: 600))
                                             .foregroundStyle(Color.cavnarInk3)
                                             .cavnarSensitive()
                                     }
@@ -339,16 +334,16 @@ struct ShiftQualityPanel: View {
                     .transition(.opacity)
                 }
                 if let dollars = o.dollarsLine {
-                    HomeMixedText.make(dollars, size: 13, weight: 600, color: .cavnarInk3)
+                    HomeMixedText.make(dollars, size: CavnarType.caption, weight: 600, color: .cavnarInk3)
                         .cavnarSensitive()
                 }
             } else if let verdict = o.verdict {
-                HomeMixedText.make(verdict, size: 14, color: .cavnarInk2)
+                HomeMixedText.make(verdict, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let unresolved = o.unresolved, !unresolved.isEmpty {
                 Text("STILL NEEDS YOU")
-                    .font(.cavnarBody(12, weight: 700))
+                    .font(.cavnar(.kicker))
                     .tracking(1.1)
                     .foregroundStyle(Color.cavnarRed)
                     .padding(.top, 2)
@@ -368,16 +363,16 @@ struct ShiftQualityPanel: View {
     private func ratePrompt(_ viewModel: LaborViewModel) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Most of this week has no Operational Score, so the number is provisional. Rate the people carrying the most hours:")
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(viewModel.unratedByHours) { person in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Text(person.name)
-                            .font(.cavnarBody(14.5, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
-                        HomeMixedText.make("\(CavnarQualityFormat.hours(person.hours))h this week", size: 13, color: .cavnarInk3)
+                        HomeMixedText.make("\(CavnarQualityFormat.hours(person.hours))h this week", size: CavnarType.caption, color: .cavnarInk3)
                     }
                     HStack(spacing: 6) {
                         ForEach(1...5, id: \.self) { value in
@@ -387,7 +382,7 @@ struct ShiftQualityPanel: View {
                                 Task { await viewModel.rateFromPrompt(person.name, score: value) }
                             } label: {
                                 Text("\(value)")
-                                    .font(.cavnarNumber(14, weight: 700))
+                                    .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                                     .frame(maxWidth: .infinity, minHeight: 30)
                                     .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -454,7 +449,7 @@ struct ShiftQualityPanel: View {
         }.map(\.element)
         return VStack(alignment: .leading, spacing: 8) {
             Text("RECOMMENDATIONS")
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(1.3)
                 .foregroundStyle(Color.cavnarInk3)
             ForEach(recs, id: \.self) { rec in
@@ -465,11 +460,11 @@ struct ShiftQualityPanel: View {
                         .frame(width: 5, height: 5)
                         .padding(.top, 6)
                     VStack(alignment: .leading, spacing: 2) {
-                        HomeMixedText.make(rec, size: 14.5, color: decision == "dismissed" ? .cavnarInk3 : .cavnarInk2)
+                        HomeMixedText.make(rec, size: CavnarType.secondary, color: decision == "dismissed" ? .cavnarInk3 : .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                             .strikethrough(decision == "dismissed", color: Color.cavnarInk3)
                         if let points = quality.item(for: rec)?.points, points >= 0.5 {
-                            HomeMixedText.make("up to +\(Int(points.rounded())) points", size: 12.5, weight: 700,
+                            HomeMixedText.make("up to +\(Int(points.rounded())) points", size: CavnarType.caption, weight: 700,
                                                color: .cavnarGreen)
                         }
                     }
@@ -525,7 +520,7 @@ struct ShiftQualityPanel: View {
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(on ? tone : tone.opacity(0.12)))
                 .overlay(Circle().strokeBorder(tone.opacity(on ? 0 : 0.35), lineWidth: 1))
-                .contentShape(Circle())
+                .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -543,7 +538,7 @@ struct ShiftQualityPanel: View {
                     .padding(.top, 2)
                 HomeMixedText.make(
                     "\(suppressedKinds.count) recommendation \(suppressedKinds.count == 1 ? "kind" : "kinds") hidden — you set them aside. Coverage, leadership, fatigue and hard rules are never hidden.",
-                    size: 12.5, color: .cavnarInk3)
+                    size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let vm = viewModel {
@@ -552,7 +547,7 @@ struct ShiftQualityPanel: View {
                         Task { await vm.restoreRecommendationKind(kind) }
                     } label: {
                         Text("Show \(kind) again")
-                            .font(.cavnarBody(13, weight: 700))
+                            .font(.cavnarBody(CavnarType.caption, weight: 700))
                             .foregroundStyle(Color.cavnarEmber)
                     }
                     .buttonStyle(.plain)
@@ -570,7 +565,7 @@ struct ShiftQualityPanel: View {
                         .frame(width: 5, height: 5)
                         .padding(.top, 6)
                     Text(line)
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -589,7 +584,7 @@ struct ShiftQualityPanel: View {
     private var shiftStrip: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("EVERY SHIFT")
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(1.3)
                 .foregroundStyle(Color.cavnarInk3)
             ForEach(quality.scoredShifts) { shift in
@@ -606,13 +601,13 @@ struct ShiftQualityPanel: View {
             } label: {
                 HStack(spacing: 10) {
                     Text(shift.title)
-                        .font(.cavnarBody(15.5, weight: 600))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
                         .layoutPriority(1)
                     if shift.profile.demand == "peak" || shift.profile.demand == "high" {
                         Text(shift.profile.demand == "peak" ? "PEAK" : "BUSY")
-                            .font(.cavnarBody(11, weight: 700))
+                            .font(.cavnar(.tag))
                             .tracking(0.6)
                             .foregroundStyle(Color.cavnarEmber)
                             .padding(.horizontal, 5)
@@ -621,7 +616,7 @@ struct ShiftQualityPanel: View {
                     }
                     if shift.profile.trainingAllowed == true {
                         Text("TRAINING")
-                            .font(.cavnarBody(11, weight: 700))
+                            .font(.cavnar(.tag))
                             .tracking(0.6)
                             .foregroundStyle(Color.cavnarBlue)
                             .padding(.horizontal, 5)
@@ -634,7 +629,7 @@ struct ShiftQualityPanel: View {
                     QualityBar(score: shift.score ?? 0, tone: toneFor(shift.score ?? 0))
                         .frame(minWidth: 44)
                     Text("\(shift.score ?? 0)")
-                        .font(.cavnarNumber(17, weight: 700))
+                        .font(.cavnarNumber(CavnarText.figureS.size, weight: 700))
                         .foregroundStyle(toneFor(shift.score ?? 0))
                         .frame(width: 30, alignment: .trailing)
                     Image(systemName: "chevron.down")
@@ -674,13 +669,13 @@ struct ShiftQualityPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             if let people = shift.people, !people.isEmpty {
                 Text("On this shift: " + people.joined(separator: ", "))
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("Judged as \(shift.profile.label)"
                  + (shift.profile.minQuality.map { ", which wants \($0)+" } ?? "") + ".")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             // Grouped under quiet labels rather than eight identically
@@ -691,7 +686,7 @@ struct ShiftQualityPanel: View {
             if !capLines.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     HomeMixedText.make("This is what's holding the shift at \(shift.score ?? 0)",
-                                       size: 13.5, weight: 700, color: .cavnarAmber)
+                                       size: CavnarType.secondary, weight: 700, color: .cavnarAmber)
                     ForEach(capLines.prefix(2), id: \.self) { line in
                         detailLine(line, symbol: "circle.fill", color: .cavnarAmber)
                     }
@@ -716,19 +711,21 @@ struct ShiftQualityPanel: View {
             // so a shift with nothing left simply ran like the rest of it.
             if shift.nothingSpecific == true {
                 Text("Nothing specific to this shift — it ran like the rest of the week. See \"Why this schedule?\" below.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             // What holds the shift at its number, in the engine's words —
             // hard rules and unwritten dayparts included (D1a-2).
             if let held = shift.heldBy?.text {
-                HomeMixedText.make(held, size: 13.5, weight: 600, color: .cavnarAmber)
+                HomeMixedText.make(held, size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let capped = shift.cappedBy {
-                Text("Capped by \(capped.replacingOccurrences(of: "_", with: " ")) — a shift is never better than its weakest critical part.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                // The dimension's own label, never its key.
+                let name = (shift.dimensions ?? []).first { $0.key == capped }?.label
+                Text((name.map { "Held down by \($0.lowercased())" } ?? "Held down by its weakest part")
+                     + " \u{2014} a shift is never better than its weakest critical part.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Self.shiftFactLines(shift), id: \.self) { line in
@@ -744,15 +741,15 @@ struct ShiftQualityPanel: View {
                     ForEach(dimensions) { d in
                         VStack(spacing: 2) {
                             Text("\(d.score)")
-                                .font(.cavnarNumber(14, weight: 700))
+                                .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                                 .foregroundStyle(toneFor(d.score))
                             Text(shortLabel(d.label))
-                                .font(.cavnarBody(11))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .lineLimit(1)
                             if let floor = d.floor, floor > 0 {
                                 Text("caps <\(Int(floor))")
-                                    .font(.cavnarNumber(12))
+                                    .font(.cavnarNumber(CavnarType.caption))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                         }
@@ -792,7 +789,7 @@ struct ShiftQualityPanel: View {
         let forName = onShift.first { $0.id == forRow }?.employee
         return VStack(alignment: .leading, spacing: 8) {
             Text("WHAT IF")
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarEmber2)
             HStack(spacing: 8) {
@@ -826,7 +823,7 @@ struct ShiftQualityPanel: View {
             .buttonStyle(CavnarSecondaryButtonStyle())
             .disabled(who.isEmpty || whatIfBusy != nil)
             if let answer = whatIfAnswer[shift.id] {
-                HomeMixedText.make(answer.text, size: 14, color: .cavnarInk2)
+                HomeMixedText.make(answer.text, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                 if answer.applicable {
                     Button {
@@ -840,7 +837,7 @@ struct ShiftQualityPanel: View {
                         }
                     } label: {
                         Text("Put \(answer.who) on")
-                            .font(.cavnarBody(14, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber)
                     }
                     .buttonStyle(.plain)
@@ -853,7 +850,7 @@ struct ShiftQualityPanel: View {
     private func whatIfMenuLabel(_ text: String) -> some View {
         HStack(spacing: 4) {
             Text(text)
-                .font(.cavnarBody(13.5, weight: 600))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
                 .lineLimit(1)
             Image(systemName: "chevron.up.chevron.down")
@@ -918,7 +915,7 @@ struct ShiftQualityPanel: View {
                 .frame(width: 13)
                 .padding(.top, symbol == "circle.fill" ? 7 : 4)
             Text(text)
-                .font(.cavnarBody(14))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -934,7 +931,7 @@ struct ShiftQualityPanel: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(showingReasoning ? "Hide reasoning" : "Why this schedule?")
-                        .font(.cavnarBody(15, weight: 700))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarEmber)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 12, weight: .semibold))
@@ -950,7 +947,7 @@ struct ShiftQualityPanel: View {
                     if let viewModel { arrangementSearch(viewModel) }
                     if let whatIf, whatIf.ran, let verdict = whatIf.verdict {
                         Text(verdict)
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach((whatIf.swaps ?? []).prefix(3)) { swap in
@@ -960,14 +957,13 @@ struct ShiftQualityPanel: View {
                     }
                     group("Across the week", quality.strengths, limit: 3, color: .cavnarGreen)
                     group("Worth a look", quality.weaknesses, limit: 3, color: .cavnarAmber)
-                    Text("Every line here is measured from the finished schedule, not written by the AI. It explains why each shift scored what it did. It does not record why the AI chose one person over another.")
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                    // P2-6: what this explanation is not — said once, here.
+                    Text("It explains each shift\u{2019}s score. It does not record why Cavnar AI chose one person over another.")
+                        .cavnarText(.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 2)
                     if let confidence = quality.confidence, !confidence.reasons.isEmpty {
                         Text(confidence.summary)
-                            .font(.cavnarBody(14, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, 2)
                         // Each deduction with the points it cost (D1a-5);
@@ -976,10 +972,10 @@ struct ShiftQualityPanel: View {
                             ForEach(Array(breakdown.enumerated()), id: \.offset) { _, b in
                                 HStack(alignment: .top, spacing: 8) {
                                     Text(b.points.map { "\u{2212}\(Int($0.rounded()))" } ?? "")
-                                        .font(.cavnarNumber(12.5, weight: 700))
+                                        .font(.cavnarNumber(CavnarType.caption, weight: 700))
                                         .foregroundStyle(Color.cavnarAmber)
                                         .frame(width: 30, alignment: .leading)
-                                    HomeMixedText.make(b.reason, size: 14, color: .cavnarInk2)
+                                    HomeMixedText.make(b.reason, size: CavnarType.secondary, color: .cavnarInk2)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
@@ -1019,15 +1015,15 @@ struct ShiftQualityPanel: View {
             .buttonStyle(CavnarSecondaryButtonStyle())
             .disabled(vm.isSearchingArrangement || vm.isRescoringQuality)
             if let w = whatIf, w.onDemand == true, let reason = w.reason {
-                HomeMixedText.make(reason, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let w = whatIf, w.ran == false, w.onDemand != true, let reason = w.reason {
-                HomeMixedText.make(reason, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if whatIf?.checkedWith == "availability and hours" {
                 Text("Checked against availability and hours only.")
-                    .font(.cavnarBody(12.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.caption, weight: 600))
                     .foregroundStyle(Color.cavnarAmber)
             }
         }
@@ -1053,7 +1049,7 @@ struct ShiftQualityPanel: View {
         let role = miss.role ?? "leader"
         let adding = miss.why == "nobody_on"
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            HomeMixedText.make("Needs \(miss.rule).", size: 13.5, color: .cavnarInk2)
+            HomeMixedText.make("Needs \(miss.rule).", size: CavnarType.secondary, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
             if let vm = viewModel, !vm.whatIfCandidates(for: shift).isEmpty {
                 Button(adding ? "Add a \(role.lowercased())" : "Swap in a \(role.lowercased())") {
@@ -1065,7 +1061,7 @@ struct ShiftQualityPanel: View {
                     }?.id
                     whatIfAnswer[shift.id] = nil
                 }
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(CavnarType.caption, weight: 700))
                 .foregroundStyle(Color.cavnarEmber2)
                 .buttonStyle(.plain)
             }
@@ -1195,10 +1191,10 @@ private struct QualityDial: View {
                 .shadow(color: tone.opacity(0.5), radius: 6)
             VStack(spacing: -2) {
                 Text("\(score)")
-                    .font(.cavnarNumber(30, weight: 700))
+                    .font(.cavnarNumber(CavnarType.cardNumber, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text("/100")
-                    .font(.cavnarNumber(11.5))
+                    .font(.cavnarNumber(CavnarType.tag))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
@@ -1240,7 +1236,7 @@ struct ScoreDeltaChip: View {
     var body: some View {
         let tone: Color = delta > 0 ? .cavnarGreen : (delta < 0 ? .cavnarRed : .cavnarInk3)
         Text(Self.signed(delta))
-            .font(.cavnarNumber(13.5, weight: 700))
+            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
             .foregroundStyle(tone)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)

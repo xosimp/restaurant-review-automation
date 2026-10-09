@@ -16,11 +16,44 @@ struct ScheduleIntelSection: View {
     /// projections have held up here, read beside the projected week.
     var demandAccuracy: DemandAccuracy? = nil
     var weekProjectionAccuracy: ForecastAccuracy? = nil
+    /// The Labor Overview's form (iOS readability round, 10/8/26): the
+    /// record itself is read on the web ("What the record says · See it on
+    /// the web"); only what the owner can act on stays on the phone — the
+    /// auto-publish offer and the pairs the record suggests.
+    var actionsOnly: Bool = false
 
     private static let dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     private static let dayparts = ["morning", "night"]
 
     var body: some View {
+        if actionsOnly {
+            actionsBody
+        } else {
+            fullBody
+        }
+    }
+
+    /// The offer and the pairs, each only when there is one, then the row
+    /// to the full record on the web.
+    private var actionsBody: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            if let intel = viewModel.intel {
+                if let offer = intel.autoPublishOffer, offer.eligible { autoPublishOfferCard(offer) }
+                if let pairs = intel.suggestedPairs,
+                   pairs.contains(where: { !viewModel.ignoredSuggestions.contains($0.id) }) {
+                    pairsBlock(pairs)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .cavnarCard()
+                }
+            }
+            CavnarWebLinkRow(title: "What the record says",
+                             subtitle: "Outcomes, sales per labor hour, rotation and what staff keep doing",
+                             path: "labor/schedule", actionLabel: "See it on the web")
+        }
+        .task { if viewModel.intel == nil { await viewModel.loadIntel() } }
+    }
+
+    private var fullBody: some View {
         CavnarDropdown(
             title: "What the record says",
             subtitle: subtitle,
@@ -32,7 +65,7 @@ struct ScheduleIntelSection: View {
                 if viewModel.isLoadingIntel && viewModel.intel == nil {
                     CavnarSkeletonLines(widths: [1.0, 0.8, 0.9, 0.6])
                 } else if let error = viewModel.intelError, viewModel.intel == nil {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                 } else if let intel = viewModel.intel, !intel.isEmpty {
                     // What the engine is learning: the auto-publish offer,
                     // how much of each draft survives, and whether the
@@ -44,7 +77,7 @@ struct ScheduleIntelSection: View {
                         // setup gap, not a count of good weeks.
                         VStack(alignment: .leading, spacing: 6) {
                             kicker("Auto-publish", tone: .cavnarInk3)
-                            HomeMixedText.make(reason, size: 13.5, color: .cavnarInk3)
+                            HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -71,13 +104,9 @@ struct ScheduleIntelSection: View {
                     } else if let hidden = intel.suppressedRecommendationKinds, !hidden.isEmpty {
                         hiddenKindsLine(hidden)
                     }
-                    Text("Measured from published weeks and the shift ledger — not written by the model.")
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("Nothing recorded yet — the first published week writes the first row.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -109,7 +138,7 @@ struct ScheduleIntelSection: View {
         VStack(alignment: .leading, spacing: 10) {
             kicker("Auto-publish", tone: .cavnarEmber)
             if let reason = offer.reason {
-                HomeMixedText.make(reason, size: 14, color: .cavnarInk2)
+                HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Button {
@@ -129,7 +158,7 @@ struct ScheduleIntelSection: View {
             .disabled(viewModel.isAcceptingAutoPublish)
             if let error = viewModel.autoPublishError {
                 Text(error)
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -146,7 +175,7 @@ struct ScheduleIntelSection: View {
             kicker("How much of the draft you keep")
             if acceptance?.available != true || weeks.isEmpty {
                 Text("Appears after the first published week — how much of the draft went out untouched, week by week.")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -160,7 +189,7 @@ struct ScheduleIntelSection: View {
                                    + (acceptance?.meanChanges.map { ", \(CavnarQualityFormat.hours($0)) changes a week." } ?? ".") }]
                     .compactMap { $0 }.joined(separator: " ")
                 if !summary.isEmpty {
-                    HomeMixedText.make(summary, size: 13, color: .cavnarInk3)
+                    HomeMixedText.make(summary, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -172,7 +201,7 @@ struct ScheduleIntelSection: View {
         return HStack(spacing: 8) {
             // "Week of 9/21/26" in full — the web's label; "Wk" was an
             // abbreviation nothing else in the app uses (parity audit #84).
-            HomeMixedText.make(week.weekStart.map { "Week of \(CavnarDate.mdy($0))" } ?? "A week", size: 12.5, weight: 600, color: .cavnarInk2)
+            HomeMixedText.make(week.weekStart.map { "Week of \(CavnarDate.mdy($0))" } ?? "A week", size: CavnarType.caption, weight: 600, color: .cavnarInk2)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
                 .frame(width: 112, alignment: .leading)
@@ -188,7 +217,7 @@ struct ScheduleIntelSection: View {
             }
             .frame(height: 10)
             Text("\(Int((share * 100).rounded()))%")
-                .font(.cavnarNumber(13, weight: 700))
+                .font(.cavnarNumber(CavnarType.caption, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .frame(width: 44, alignment: .trailing)
         }
@@ -203,7 +232,7 @@ struct ScheduleIntelSection: View {
             kicker("Quality weights")
             if c.ready != true {
                 HomeMixedText.make(c.reason ?? "Not enough published weeks with a stored score to check the weights yet.",
-                                   size: 13.5, color: .cavnarInk3)
+                                   size: CavnarType.secondary, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach((c.dimensions ?? [:]).keys.sorted(), id: \.self) { key in
@@ -211,18 +240,18 @@ struct ScheduleIntelSection: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(key.replacingOccurrences(of: "_", with: " ").capitalized)
-                                    .font(.cavnarBody(14, weight: 600))
+                                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                                     .foregroundStyle(Color.cavnarInk)
                                 Spacer(minLength: 4)
                                 // Where the weight is now → the bounded next step.
                                 HomeMixedText.make(
                                     "\(CavnarQualityFormat.hours(d.current ?? d.default ?? 0)) → \(CavnarQualityFormat.hours(d.suggested ?? 0))"
                                     + ((d.nudgePct ?? 0) != 0 ? " (\((d.nudgePct ?? 0) > 0 ? "+" : "")\(d.nudgePct ?? 0)% vs default)" : ""),
-                                    size: 13.5, weight: 600, color: .cavnarInk2)
+                                    size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                             }
                             // Which outcome moved it, on how many shifts — or why not.
                             if let why = d.explanation ?? d.reading {
-                                HomeMixedText.make(why, size: 12.5, color: .cavnarInk3)
+                                HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -233,14 +262,12 @@ struct ScheduleIntelSection: View {
                 // its own shifts did (schedule audit 10/3/26 SQ-22).
                 profileCalibration(c)
                 if !c.leftOut.isEmpty {
-                    HomeMixedText.make("Left out of this fit: " + c.leftOut.map { $0.replacingOccurrences(of: "_", with: " ") }
-                                        .joined(separator: ", ")
-                                       + " \u{2014} one dimension per ten shifts, the better-observed first.",
-                                       size: 12.5, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // A count, never the dimensions' keys.
+                    CavnarMixedText("\(c.leftOut.count) more \(c.leftOut.count == 1 ? "measure" : "measures") left out "
+                                    + "until there are more shifts to read them by.", role: .caption)
                 }
-                Text(c.note ?? "Suggestions only — the engine keeps its current weights until someone changes them.")
-                    .font(.cavnarBody(12.5))
+                Text(c.note ?? "Suggestions only \u{2014} Cavnar AI keeps its current weights until someone changes them.")
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
@@ -254,7 +281,7 @@ struct ScheduleIntelSection: View {
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 .disabled(viewModel.isApplyingWeights)
                 if let note = viewModel.calibrationNotice {
-                    Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    Text(note).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                 }
             }
         }
@@ -268,15 +295,15 @@ struct ScheduleIntelSection: View {
         if !profiles.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("SHIFT PROFILES")
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnar(.kicker))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarEmber2)
                 ForEach(profiles, id: \.key) { key, p in
                     VStack(alignment: .leading, spacing: 3) {
                         HomeMixedText.make((p.label ?? key) + (p.shifts.map { " \u{00B7} \($0) shifts" } ?? ""),
-                                           size: 14, weight: 600, color: .cavnarInk)
+                                           size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                         if p.ready != true {
-                            HomeMixedText.make(p.explanation ?? "Too few of its own shifts to read yet.", size: 12.5,
+                            HomeMixedText.make(p.explanation ?? "Too few of its own shifts to read yet.", size: CavnarType.caption,
                                                color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
@@ -295,13 +322,13 @@ struct ScheduleIntelSection: View {
     private func readingLine(_ name: String, _ r: LineReading) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
-                Text(name).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                Text(name).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk2)
                 Spacer(minLength: 4)
                 HomeMixedText.make(r.moves ? "\(r.current ?? 0) \u{2192} \(r.suggested ?? 0)" : "stays \(r.current ?? 0)",
-                                   size: 13, weight: 600, color: r.moves ? .cavnarInk : .cavnarInk3)
+                                   size: CavnarType.caption, weight: 600, color: r.moves ? .cavnarInk : .cavnarInk3)
             }
             if let why = r.explanation {
-                HomeMixedText.make(why, size: 12, color: .cavnarInk3)
+                HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -312,7 +339,7 @@ struct ScheduleIntelSection: View {
         VStack(alignment: .leading, spacing: 6) {
             kicker("Predicting your edits")
             if let line = p.line {
-                HomeMixedText.make(line, size: 13.5, color: p.ready == true ? .cavnarInk2 : .cavnarInk3)
+                HomeMixedText.make(line, size: CavnarType.secondary, color: p.ready == true ? .cavnarInk2 : .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -325,7 +352,7 @@ struct ScheduleIntelSection: View {
             kicker("Borrowed starting headcount")
             if start.available == true {
                 if let note = start.note {
-                    HomeMixedText.make(note, size: 13.5, color: .cavnarInk2)
+                    HomeMixedText.make(note, size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 let slots = start.bySlot ?? []
@@ -335,18 +362,18 @@ struct ScheduleIntelSection: View {
                         if !here.isEmpty {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("\(String(day.prefix(3))) \(part == "morning" ? "day" : "night")")
-                                    .font(.cavnarBody(13, weight: 600))
+                                    .font(.cavnarBody(CavnarType.caption, weight: 600))
                                     .foregroundStyle(Color.cavnarInk2)
                                     .frame(width: 72, alignment: .leading)
                                 HomeMixedText.make(here.map { "\($0.role) \($0.people)" }.joined(separator: " · "),
-                                                   size: 13, color: .cavnarInk3)
+                                                   size: CavnarType.caption, color: .cavnarInk3)
                                 Spacer(minLength: 0)
                             }
                         }
                     }
                 }
             } else if let reason = start.reason {
-                HomeMixedText.make(reason, size: 13.5, color: .cavnarInk3)
+                HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -363,14 +390,14 @@ struct ScheduleIntelSection: View {
                         .foregroundStyle(Color.cavnarEmber)
                         .frame(width: 13)
                         .padding(.top, 3)
-                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk2)
+                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             // Weeks the time clock stands in for say so (schedule audit 10/3/26 D-21).
             Text(weeks.map { "Planned from the last \(RecordWeeksWords.say($0, fromPunches: fromPunches)). The draft follows it where the rules allow, and fairness is scored against it." }
                  ?? "The draft follows it where the rules allow, and fairness is scored against it.")
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -382,26 +409,26 @@ struct ScheduleIntelSection: View {
                              weekRecord: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("$\(value.commaFormatted)")
-                .font(.cavnarNumber(22, weight: 700))
+                .font(.cavnarNumber(CavnarType.tileNumber, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarSensitive()
             VStack(alignment: .leading, spacing: 1) {
                 Text("a week, projected")
-                    .font(.cavnarBody(13.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarInk2)
                 if let source = revenue.source, !source.isEmpty {
-                    HomeMixedText.make(source, size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(source, size: CavnarType.caption, color: .cavnarInk3)
                 }
                 // How these projections have held up here (K8) — so the
                 // figure is read with its record beside it.
                 if let record = weekRecord {
                     HomeMixedText.make(record.replacingOccurrences(of: "Past forecasts here",
                                                                    with: "Past weekly projections here"),
-                                       size: 12.5, color: .cavnarInk3)
+                                       size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let record = accuracy?.sentence {
-                    HomeMixedText.make(record, size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(record, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -419,7 +446,7 @@ struct ScheduleIntelSection: View {
         VStack(alignment: .leading, spacing: 8) {
             kicker("How each daypart has gone")
             Text("Average sales and hours over the weeks recorded. A troubled daypart has gone wrong before — the draft will not thin it.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
@@ -440,31 +467,24 @@ struct ScheduleIntelSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text("\(String(day.prefix(3))) \(part == "morning" ? "day" : "night")")
-                            .font(.cavnarBody(14.5, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                         if troubled {
-                            Text("TROUBLED")
-                                .font(.cavnarBody(9, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarAmber)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.cavnarAmber.opacity(0.16)))
+                            ScheduleRowTag(text: "Troubled", tone: .cavnarAmber)
                         }
                     }
-                    HomeMixedText.make(outcomeDetail(o), size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(outcomeDetail(o), size: CavnarType.caption, color: .cavnarInk3)
                 }
                 Spacer(minLength: 6)
                 if let splh = o.splh {
                     VStack(alignment: .trailing, spacing: 1) {
                         Text("$\(splh.commaFormatted)")
-                            .font(.cavnarNumber(15, weight: 700))
+                            .font(.cavnarNumber(CavnarType.body, weight: 700))
                             .foregroundStyle(troubled ? Color.cavnarAmber : Color.cavnarInk)
                             .cavnarSensitive()
                         Text(o.splhBasis == "worked" ? "per worked hour"
                              : o.splhBasis == "scheduled" ? "per scheduled hour" : "per labor hour")
-                            .font(.cavnarBody(10.5))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption)
                     }
                 }
             }
@@ -512,9 +532,9 @@ struct ScheduleIntelSection: View {
                     "Target " + Self.dayparts.compactMap { p in
                         targets[p]?.target.map { "\(p == "morning" ? "lunch" : "dinner") $\($0.commaFormatted)" }
                     }.joined(separator: ", ") + " per labor hour.",
-                    size: 13.5, weight: 600, color: .cavnarInk2)
+                    size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                 if let basis = obj.basis {
-                    HomeMixedText.make(basis + ".", size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(basis + ".", size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -526,7 +546,7 @@ struct ScheduleIntelSection: View {
                 }
             } else {
                 Text("No sales lined up against hours yet.")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
@@ -537,7 +557,7 @@ struct ScheduleIntelSection: View {
         let fraction = max > 0 ? CGFloat(value / max) : 0
         return HStack(spacing: 8) {
             Text("\(String(day.prefix(3))) \(part == "morning" ? "day" : "night")")
-                .font(.cavnarBody(12.5, weight: 600))
+                .font(.cavnarBody(CavnarType.caption, weight: 600))
                 .foregroundStyle(Color.cavnarInk2)
                 .frame(width: 72, alignment: .leading)
             GeometryReader { geo in
@@ -552,7 +572,7 @@ struct ScheduleIntelSection: View {
             }
             .frame(height: 10)
             Text("$\(value.commaFormatted)")
-                .font(.cavnarNumber(13, weight: 700))
+                .font(.cavnarNumber(CavnarType.caption, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .frame(width: 52, alignment: .trailing)
                 .cavnarSensitive()
@@ -573,7 +593,7 @@ struct ScheduleIntelSection: View {
             kicker("Rotation")
             Text(weeks.map { "Weekend and closing shifts over the last \(RecordWeeksWords.say($0, fromPunches: punched)) — who has carried the most, and the least." }
                  ?? "Weekend and closing shifts lately — who has carried the most, and the least.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 12) {
@@ -588,7 +608,7 @@ struct ScheduleIntelSection: View {
     private func ledgerColumn(_ label: String, top: [(String, Int)], bottom: [(String, Int)], count: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             ForEach(Array(top.enumerated()), id: \.offset) { _, e in ledgerLine(e.0, e.1, tone: .cavnarEmber) }
             if count > 3 {
@@ -602,11 +622,11 @@ struct ScheduleIntelSection: View {
     private func ledgerLine(_ name: String, _ n: Int, tone: Color) -> some View {
         HStack(spacing: 6) {
             Text("\(n)")
-                .font(.cavnarNumber(13.5, weight: 700))
+                .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                 .foregroundStyle(tone)
                 .frame(width: 22, alignment: .trailing)
             Text(name)
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk2)
                 .lineLimit(1)
         }
@@ -622,28 +642,28 @@ struct ScheduleIntelSection: View {
             kicker("What staff keep doing")
             if rows.isEmpty {
                 Text("No drops or claims on record yet.")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
             }
             ForEach(rows, id: \.key) { name, b in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(name)
-                            .font(.cavnarBody(14.5, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                         Spacer(minLength: 4)
                         HomeMixedText.make(
                             [(b.drops ?? 0) > 0 ? "\(b.drops ?? 0) dropped" : nil,
                              (b.claims ?? 0) > 0 ? "\(b.claims ?? 0) claimed" : nil]
                                 .compactMap { $0 }.joined(separator: " · "),
-                            size: 12.5, weight: 600, color: .cavnarInk3)
+                            size: CavnarType.caption, weight: 600, color: .cavnarInk3)
                     }
                     if let avoids = b.avoids, !avoids.isEmpty {
-                        HomeMixedText.make("keeps asking to drop \(avoids.joined(separator: ", "))", size: 13, color: .cavnarAmber)
+                        HomeMixedText.make("keeps asking to drop \(avoids.joined(separator: ", "))", size: CavnarType.caption, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let prefers = b.prefers, !prefers.isEmpty {
-                        HomeMixedText.make("keeps picking up \(prefers.joined(separator: ", "))", size: 13, color: .cavnarGreen)
+                        HomeMixedText.make("keeps picking up \(prefers.joined(separator: ", "))", size: CavnarType.caption, color: .cavnarGreen)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -658,13 +678,13 @@ struct ScheduleIntelSection: View {
         VStack(alignment: .leading, spacing: 8) {
             kicker("Trained up")
             Text("Roles somebody has covered enough shifts in, beside a rated colleague, to hold on their own.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(could.keys.sorted(), id: \.self) { name in
                 HStack(alignment: .top, spacing: 8) {
                     Text(name)
-                        .font(.cavnarBody(14, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .frame(minWidth: 70, alignment: .leading)
                     AccountFlowLayout(spacing: 6) {
@@ -686,7 +706,7 @@ struct ScheduleIntelSection: View {
             kicker("Pairs the record suggests")
             if open.isEmpty {
                 Text("Nothing new to suggest.")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
             }
             ForEach(open) { pair in
@@ -705,10 +725,10 @@ struct ScheduleIntelSection: View {
         VStack(alignment: .leading, spacing: 4) {
             HomeMixedText.make("\(quiet.count) recommendation \(quiet.count == 1 ? "kind is" : "kinds are") quiet \u{2014} "
                                + "you set them aside. Each is tried again on its date; Show again on the schedule "
-                               + "review brings one back now.", size: 12.5, color: .cavnarInk3)
+                               + "review brings one back now.", size: CavnarType.caption, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(quiet) { q in
-                HomeMixedText.make("\u{00B7} " + q.line, size: 12.5, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make("\u{00B7} " + q.line, size: CavnarType.caption, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -717,7 +737,7 @@ struct ScheduleIntelSection: View {
     private func hiddenKindsLine(_ hidden: [String]) -> some View {
         HomeMixedText.make(
             "\(hidden.count) recommendation \(hidden.count == 1 ? "kind" : "kinds") hidden because they were set aside or never acted on: \(hidden.joined(separator: ", ")). Use Show again on the schedule review to bring one back.",
-            size: 12.5, color: .cavnarInk3)
+            size: CavnarType.caption, color: .cavnarInk3)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -737,18 +757,18 @@ struct SuggestedPairRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.cavnarGreen)
                 Text("\(pair.a) with \(pair.b)")
-                    .font(.cavnarBody(14.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer(minLength: 4)
                 if let rate = pair.cleanRate {
                     Text("\(Int((rate * 100).rounded()))%")
-                        .font(.cavnarNumber(13.5, weight: 700))
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarGreen)
                         .accessibilityLabel("\(Int((rate * 100).rounded())) percent clean")
                 }
             }
             if let evidence = pair.evidence, !evidence.isEmpty {
-                HomeMixedText.make(evidence, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(evidence, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {

@@ -524,7 +524,9 @@ def test_ios_mounts_the_two_new_sections():
     # Mounted with the setup store and the roster's roles since the
     # per-role ratings (schedule audit 10/3/26 D-12, UI wave).
     assert "TeamStrengthSection(viewModel: viewModel" in swift
-    assert "ShiftTargetsSection(viewModel: viewModel)" in swift
+    # The shift targets are set on the web since the iOS readability round
+    # (10/8/26): Scheduling setup carries the row that opens them there.
+    assert 'CavnarWebLinkRow(title: "Shift targets"' in swift
     assert "viewModel.loadTeam()" in swift
 
 

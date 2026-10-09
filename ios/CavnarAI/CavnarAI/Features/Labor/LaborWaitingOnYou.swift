@@ -23,6 +23,8 @@ struct LaborWaitingOnYou: View {
     @State private var person: PersonSheetTarget?
     /// The one-tap send, asked first (an outward send is never one tap).
     @State private var confirmingSend: (id: Int, label: String)?
+    /// A dropped shift whose cover is being named (ReplacementPickerSheet).
+    @State private var choosingCover: ShiftRequest?
 
     private var pendingTimeOff: [TimeOffRequest] { viewModel.timeOff.filter { $0.status == "pending" } }
     private var pendingShifts: [ShiftRequest] { setupViewModel.pendingRequests }
@@ -40,12 +42,12 @@ struct LaborWaitingOnYou: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("WAITING ON YOU")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnar(.kicker))
                         .tracking(1.2)
                         .foregroundStyle(Color.cavnarEmber2)
                     Spacer()
                     Text("\(total)")
-                        .font(.cavnarNumber(14, weight: 700))
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                 }
                 if let offer = viewModel.redoOffer { redoRow(offer) }
@@ -55,28 +57,31 @@ struct LaborWaitingOnYou: View {
                         Image(systemName: "checkmark")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Color.cavnarGreen)
-                        HomeMixedText.make(note, size: 14, weight: 600, color: .cavnarInk2)
+                        HomeMixedText.make(note, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 ForEach(pendingTimeOff) { req in timeOffRow(req) }
                 ForEach(pendingShifts) { req in shiftRow(req) }
                 if let error = viewModel.draftSendError {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error = viewModel.timeOffError ?? setupViewModel.requestError {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let warning = viewModel.timeOffWarning ?? setupViewModel.requestWarning {
-                    HomeMixedText.make(warning, size: 14, color: .cavnarEmber)
+                    HomeMixedText.make(warning, size: CavnarType.secondary, color: .cavnarEmber)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard()
             .sheet(item: $person) { target in PersonSheet(target: target) }
+            .sheet(item: $choosingCover) { req in
+                ReplacementPickerSheet(viewModel: setupViewModel, request: req)
+            }
         }
     }
 
@@ -86,7 +91,7 @@ struct LaborWaitingOnYou: View {
             person = PersonSheetTarget(key: nil, name: name)
         } label: {
             Text(name)
-                .font(.cavnarBody(15, weight: 700))
+                .font(.cavnar(.label))
                 .foregroundStyle(Color.cavnarInk)
                 .underline(false)
         }
@@ -99,12 +104,12 @@ struct LaborWaitingOnYou: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("\(offer.name) is off \u{2014} the open draft has them on")
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HomeMixedText.make(offer.dates.map(Self.dayLabel).joined(separator: ", "),
-                               size: 13.5, weight: 500, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
                 Haptic.light()
@@ -140,10 +145,10 @@ struct LaborWaitingOnYou: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 HomeMixedText.make("The week of \(CavnarDate.mdy(draft.weekStart ?? "")) is drafted",
-                                   size: 15, weight: 700, color: .cavnarInk)
+                                   size: CavnarType.body, weight: 700, color: .cavnarInk)
                 tag("Schedule")
             }
-            HomeMixedText.make(detail, size: 13.5, weight: 500, color: .cavnarInk3)
+            HomeMixedText.make(detail, size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button {
@@ -235,7 +240,7 @@ struct LaborWaitingOnYou: View {
                 tag("Time off")
             }
             HomeMixedText.make(req.dateLabel + (req.reason.map { " · \($0)" } ?? ""),
-                               size: 13.5, weight: 500, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             decideButtons(busy: busy,
                           deny: { await viewModel.decideTimeOff(req.id, approve: false) },
@@ -251,16 +256,16 @@ struct LaborWaitingOnYou: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 if let name = req.employeeName { nameButton(name) } else {
-                    Text("Open shift").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                    Text("Open shift").font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                 }
                 tag(req.kindLabel)
             }
             if let swap = req.swapLabel {
-                HomeMixedText.make(swap, size: 14, weight: 600, color: .cavnarInk2)
+                HomeMixedText.make(swap, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HomeMixedText.make(req.whenLabel + (req.reason.map { " · \($0)" } ?? ""),
-                               size: 13.5, weight: 500, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             // Only a login the decide route allows (SCHEDULE_DRAFT, the
             // list's can_decide) is offered the buttons.
@@ -269,20 +274,20 @@ struct LaborWaitingOnYou: View {
                               deny: { await setupViewModel.decideShiftRequest(req.id, approve: false) },
                               approve: { await setupViewModel.decideShiftRequest(req.id, approve: true) })
             }
-            if !req.isSwap && setupViewModel.canDecideShifts {
-                // Approving a drop opens it for anyone to claim; naming who
-                // covers it outright is the full section's picker.
+            if !req.isSwap && setupViewModel.canDecideShifts
+                && !setupViewModel.activeNames.filter({ $0 != req.employeeName }).isEmpty {
+                // Approve opens a drop for anyone to claim; this names who
+                // covers it outright (the replacement picker).
                 Button {
                     Haptic.light()
-                    onOpenRequests()
+                    choosingCover = req
                 } label: {
-                    Text("Approve opens it for anyone to claim · Name who covers")
-                        .font(.cavnarBody(12.5, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .multilineTextAlignment(.leading)
-                        .frame(minHeight: 44, alignment: .leading)
+                    Text("Name who covers")
+                        .cavnarText(.label, color: .cavnarEmber2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
+                .disabled(busy)
             }
         }
         .padding(12)
@@ -341,7 +346,7 @@ struct LaborSendBar: View {
         VStack(spacing: 6) {
             if unsaved {
                 Text("Save your changes before sending — staff get the saved week.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -353,7 +358,7 @@ struct LaborSendBar: View {
                     } label: {
                         HStack(spacing: 6) {
                             Text("Review")
-                            Text("\(issues)").font(.cavnarNumber(14, weight: 700))
+                            Text("\(issues)").font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         }
                         .frame(maxWidth: .infinity)
                     }

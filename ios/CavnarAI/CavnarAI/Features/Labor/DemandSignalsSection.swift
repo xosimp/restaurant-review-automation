@@ -33,7 +33,7 @@ struct DemandSignalsSection: View {
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("The next 60 days. A party of forty on a Tuesday is the difference between a quiet night and a slammed one, and the history alone cannot see it coming.")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -45,42 +45,32 @@ struct DemandSignalsSection: View {
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(feed.live == true ? Color.cavnarGreen : Color.cavnarInk3)
                             .padding(.top, 2)
-                        HomeMixedText.make(message, size: 12.5, color: .cavnarInk3)
+                        HomeMixedText.make(message, size: CavnarType.caption, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
-                HStack(spacing: 10) {
-                    Button {
-                        Haptic.light()
-                        showingAdd = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus").font(.system(size: 11, weight: .bold))
-                            Text("Add one")
-                        }
-                        .frame(maxWidth: .infinity)
+                Button {
+                    Haptic.light()
+                    showingAdd = true
+                } label: {
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "plus").font(.cavnar(.secondary))
+                        Text("Add a party")
                     }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                    Button {
-                        Haptic.light()
-                        showingPaste = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "doc.on.clipboard").font(.system(size: 11, weight: .bold))
-                            Text("Paste a list")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                // A whole list of reservations — a CSV or a pasted table —
+                // is imported on the web (iOS readability round, 10/8/26).
+                CavnarWebLinkRow(title: "Import a list of events", path: "labor/team")
 
                 if let outcome = viewModel.signalOutcome {
-                    HomeMixedText.make(outcome, size: 13.5, weight: 600, color: .cavnarGreen)
+                    HomeMixedText.make(outcome, size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
                 }
                 if let error = viewModel.signalError {
                     Text(error)
-                        .font(.cavnarBody(13.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -93,7 +83,7 @@ struct DemandSignalsSection: View {
                     CavnarSkeletonLines(widths: [1.0, 0.8, 0.6])
                 } else if viewModel.signals.isEmpty {
                     Text("Nothing on the books for the next 60 days. Add a party or paste your reservations and the next draft will staff for them.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -143,17 +133,17 @@ struct DemandSignalsSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(CavnarDate.mdy(signal.date))
-                        .font(.cavnarNumber(14.5, weight: 700))
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                     Text(signal.label?.isEmpty == false ? signal.label! : signal.kindLabel)
-                        .font(.cavnarBody(14.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
                 }
-                HomeMixedText.make(detail(signal), size: 13, color: .cavnarInk3)
+                HomeMixedText.make(detail(signal), size: CavnarType.caption, color: .cavnarInk3)
                 // Its measured record here, when the nights have one.
                 if let measured = signal.measured {
-                    HomeMixedText.make(measured.line, size: 12.5, weight: 500,
+                    HomeMixedText.make(measured.line, size: CavnarType.caption, weight: 500,
                                        color: measured.applies ? .cavnarEmber2 : .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -177,14 +167,14 @@ struct DemandSignalsSection: View {
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(follow.name)
-                            .font(.cavnarBody(14, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(follow.following ? Color.cavnarInk : Color.cavnarInk3)
                         if !follow.line.isEmpty {
-                            HomeMixedText.make(follow.line, size: 12.5, color: .cavnarInk3)
+                            HomeMixedText.make(follow.line, size: CavnarType.caption, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if follow.following, let season = follow.seasonText, !season.isEmpty {
-                            HomeMixedText.make(season, size: 12.5, weight: 500, color: .cavnarInk2)
+                            HomeMixedText.make(season, size: CavnarType.caption, weight: 500, color: .cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -219,9 +209,9 @@ struct DemandSignalsSection: View {
             ForEach(viewModel.removedGames) { game in
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        HomeMixedText.make(game.text, size: 14, weight: 600, color: .cavnarInk)
+                        HomeMixedText.make(game.text, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
-                        HomeMixedText.make(game.removedLine, size: 12.5, color: .cavnarInk3)
+                        HomeMixedText.make(game.removedLine, size: CavnarType.caption, color: .cavnarInk3)
                     }
                     Spacer(minLength: 8)
                     Button {
@@ -255,12 +245,12 @@ struct DemandSignalsSection: View {
                     Circle()
                         .fill(lesson.applies ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.6))
                         .frame(width: 6, height: 6)
-                    HomeMixedText.make(lesson.text, size: 13.5, color: lesson.applies ? .cavnarInk2 : .cavnarInk3)
+                    HomeMixedText.make(lesson.text, size: CavnarType.secondary, color: lesson.applies ? .cavnarInk2 : .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Text("Measured on your own nights against a typical same weekday. The forecast uses one only once it has enough nights.")
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -328,11 +318,11 @@ private struct DemandSignalEditor: View {
                                         text: $lift, keyboardType: .numbersAndPunctuation,
                                         focus: $focused, field: .lift)
                     Text("Give covers when you know them; a lift is for a day you expect to be busier without a number to hang on it.")
-                        .font(.cavnarBody(13))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     if let error = viewModel.signalError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(spacing: 10) {
@@ -384,7 +374,7 @@ private struct DemandSignalEditor: View {
             kind = value
         } label: {
             Text(label)
-                .font(.cavnarBody(14, weight: on ? 700 : 500))
+                .font(.cavnarBody(CavnarType.secondary, weight: on ? 700 : 500))
                 .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                 .frame(maxWidth: .infinity, minHeight: 36)
                 .background(
@@ -421,7 +411,7 @@ private struct DemandSignalPasteSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("One reservation day per line as date,covers — the date as 9/21/26 or 2026-09-21. A header line is fine. Or bring your reservation system's own booking export: one row per booking, cancellations and no-shows left out.")
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -440,12 +430,12 @@ private struct DemandSignalPasteSheet: View {
                     }
                     .buttonStyle(CavnarSecondaryButtonStyle())
                     if let fileError {
-                        Text(fileError).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(fileError).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
                     TextEditor(text: $csv)
-                        .font(.cavnarNumber(15))
+                        .font(.cavnarNumber(CavnarType.body))
                         .foregroundStyle(Color.cavnarInk)
                         .scrollContentBackground(.hidden)
                         .autocorrectionDisabled()
@@ -462,7 +452,7 @@ private struct DemandSignalPasteSheet: View {
                         .overlay(alignment: .topLeading) {
                             if csv.isEmpty {
                                 Text("9/26/26,64\n9/27/26,88")
-                                    .font(.cavnarNumber(15))
+                                    .font(.cavnarNumber(CavnarType.body))
                                     .foregroundStyle(Color.cavnarInk3Muted(contrast))
                                     .padding(.horizontal, 15)
                                     .padding(.top, 18)
@@ -471,17 +461,17 @@ private struct DemandSignalPasteSheet: View {
                         }
 
                     if lineCount > 0 {
-                        HomeMixedText.make("\(lineCount) \(lineCount == 1 ? "line" : "lines")", size: 13.5, color: .cavnarInk3)
+                        HomeMixedText.make("\(lineCount) \(lineCount == 1 ? "line" : "lines")", size: CavnarType.secondary, color: .cavnarInk3)
                     }
                     if let outcome = viewModel.signalOutcome {
-                        HomeMixedText.make(outcome, size: 14, weight: 600, color: .cavnarGreen)
+                        HomeMixedText.make(outcome, size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
                     }
                     if let report = viewModel.importReport {
-                        HomeMixedText.make(report.sentence, size: 13.5, color: .cavnarInk2)
+                        HomeMixedText.make(report.sentence, size: CavnarType.secondary, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let error = viewModel.signalError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 

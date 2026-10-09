@@ -67,8 +67,8 @@ struct ScheduleRulesSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("Hard rules the generator will not break, and what it flags for you. Leave a field blank to keep the default shown. Everything here saves with the one button at the bottom.")
-                        .font(.cavnarBody(14.5))
+                    Text("Rules Cavnar AI will not break, and what it flags for you. A blank field keeps the default shown. Everything saves with the button at the bottom.")
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -143,7 +143,7 @@ struct ScheduleRulesSheet: View {
 
                     if let error = viewModel.rulesError {
                         Text(error)
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -252,7 +252,7 @@ struct ScheduleRulesSheet: View {
                 }
             } else if !jurisdiction.isEmpty, viewModel.pack?.code != jurisdiction {
                 Text("Save to apply this pack and read its notes.")
-                    .font(.cavnarBody(13))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
@@ -270,7 +270,7 @@ struct ScheduleRulesSheet: View {
         } label: {
             HStack(spacing: 6) {
                 Text(current)
-                    .font(.cavnarBody(15, weight: 600))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
@@ -295,7 +295,7 @@ struct ScheduleRulesSheet: View {
             // Not a setting (owner, 10/2/26): every minute anybody is on, a
             // manager or owner is too; the server enforces it.
             AccountKVRow(label: "A manager on the floor") {
-                Text("Always").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text("Always").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
             }
             AccountSwitchRow(label: "A closer until close",
                              detail: "Somebody marked to close stays until close every open day, the last of their role to leave.",
@@ -312,12 +312,12 @@ struct ScheduleRulesSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Arrivals")
             Text("How many minutes before their own shift starts each role clocks in. More than 10 minutes past that counts as late. Blank means at the start.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if roles.isEmpty {
                 Text("Roles appear here once there is shift history to read them from.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -325,12 +325,12 @@ struct ScheduleRulesSheet: View {
                     ForEach(Array(roles.enumerated()), id: \.element) { index, role in
                         HStack(spacing: 10) {
                             Text(role)
-                                .font(.cavnarBody(15, weight: 600))
+                                .font(.cavnar(.label))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer(minLength: 6)
                             if viewModel.rolesWithoutClockIn.contains(where: { $0.caseInsensitiveCompare(role) == .orderedSame }) {
                                 Text("Salaried, doesn't clock in")
-                                    .font(.cavnarBody(13.5))
+                                    .font(.cavnar(.secondary))
                                     .foregroundStyle(Color.cavnarInk3)
                             } else {
                                 floorField(label: "MIN", value: Binding(
@@ -356,12 +356,12 @@ struct ScheduleRulesSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Cross-training")
             Text("The share of each role on a shift that should be able to cover a second station. Blank uses the default shown; 0 means not expected.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if roles.isEmpty {
                 Text("Roles appear here once there is shift history to read them from.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -369,7 +369,7 @@ struct ScheduleRulesSheet: View {
                     ForEach(Array(roles.enumerated()), id: \.element) { index, role in
                         HStack(spacing: 10) {
                             Text(role)
-                                .font(.cavnarBody(15, weight: 600))
+                                .font(.cavnar(.label))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer(minLength: 6)
                             percentField(role: role)
@@ -390,7 +390,7 @@ struct ScheduleRulesSheet: View {
             TextField(placeholder, text: Binding(
                 get: { crossTraining[role] ?? "" },
                 set: { crossTraining[role] = $0 }))
-                .font(.cavnarNumber(15, weight: 700))
+                .font(.cavnarNumber(CavnarType.body, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
                 .keyboardType(.numberPad)
@@ -404,7 +404,7 @@ struct ScheduleRulesSheet: View {
                         .strokeBorder(focused == id ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
                 .accessibilityLabel("\(role) cross-training target, percent")
             Text("%")
-                .font(.cavnarNumber(13, weight: 700))
+                .font(.cavnarNumber(CavnarType.caption, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
         }
     }
@@ -415,13 +415,13 @@ struct ScheduleRulesSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Certifications a role needs")
             Text("Only somebody holding every one of these is put on the role.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if roles.isEmpty || viewModel.ruleCertifications.isEmpty {
                 Text(roles.isEmpty ? "Roles appear here once there is shift history to read them from."
                                    : "No certifications are defined yet.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -429,7 +429,7 @@ struct ScheduleRulesSheet: View {
                     ForEach(Array(roles.enumerated()), id: \.element) { index, role in
                         VStack(alignment: .leading, spacing: 6) {
                             Text(role)
-                                .font(.cavnarBody(15, weight: 600))
+                                .font(.cavnar(.label))
                                 .foregroundStyle(Color.cavnarInk)
                             AccountFlowLayout(spacing: 6) {
                                 ForEach(viewModel.ruleCertifications, id: \.self) { cert in
@@ -460,13 +460,13 @@ struct ScheduleRulesSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: title)
             Text(detail)
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             let all = roles + selection.wrappedValue.filter { !roles.contains($0) }
             if all.isEmpty {
                 Text("Roles appear here once there is shift history to read them from.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -510,10 +510,10 @@ struct ScheduleRulesSheet: View {
                     ) { reservationProvider = $0 }
                 }
                 HStack(alignment: .center, spacing: 12) {
-                    Text("API key").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                    Text("API key").font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
                     Spacer(minLength: 8)
                     SecureField(viewModel.reservationFeed?.configured == true ? "on file" : "paste the key", text: $reservationKey)
-                        .font(.cavnarBody(15))
+                        .font(.cavnar(.body))
                         .foregroundStyle(Color.cavnarInk)
                         .multilineTextAlignment(.trailing)
                         .autocorrectionDisabled()
@@ -528,7 +528,7 @@ struct ScheduleRulesSheet: View {
                 HStack(alignment: .top, spacing: 7) {
                     Circle().fill(feed.live == true ? Color.cavnarGreen : Color.cavnarInk3)
                         .frame(width: 6, height: 6).padding(.top, 6)
-                    HomeMixedText.make(message, size: 13, color: .cavnarInk3)
+                    HomeMixedText.make(message, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -553,7 +553,7 @@ struct ScheduleRulesSheet: View {
                 .disabled(viewModel.isSyncingReservations)
             }
             if let message = viewModel.reservationSyncMessage {
-                HomeMixedText.make(message, size: 13.5, weight: 600, color: .cavnarAmber)
+                HomeMixedText.make(message, size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -586,13 +586,13 @@ struct ScheduleRulesSheet: View {
         return VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                    Text(label).font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
                     HomeMixedText.make(subline(key, placeholder: placeholder, hint: hint, isTime: isTime),
-                                       size: 13, color: .cavnarInk3.opacity(0.8))
+                                       size: CavnarType.caption, color: .cavnarInk3.opacity(0.8))
                 }
                 Spacer(minLength: 8)
                 TextField(placeholder, text: binding(for: key))
-                    .font(isTime ? .cavnarBody(15, weight: 700) : .cavnarNumber(15, weight: 700))
+                    .font(isTime ? .cavnar(.label) : .cavnarNumber(CavnarType.body, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                     .multilineTextAlignment(.center)
                     .keyboardType(isTime ? .default : .decimalPad)
@@ -635,7 +635,7 @@ struct ScheduleRulesSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Role floors")
             Text("At least this many in a role on a morning and on a night. Open a role for a different number on one day.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             // Floors from the last eight weeks, filled into the empty
@@ -661,11 +661,11 @@ struct ScheduleRulesSheet: View {
                 .disabled(viewModel.teamSetup.isSuggestingFloors)
             }
             if let note = floorNote {
-                HomeMixedText.make(note, size: 13.5, weight: 600, color: .cavnarInk2)
+                HomeMixedText.make(note, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = viewModel.teamSetup.floorSuggestError {
-                Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarAmber)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
             // Floors that ask for more servers than there are sections —
@@ -676,13 +676,13 @@ struct ScheduleRulesSheet: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.cavnarAmber)
                         .padding(.top, 2)
-                    HomeMixedText.make(conflict.sentence, size: 13.5, color: .cavnarInk2)
+                    HomeMixedText.make(conflict.sentence, size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if roles.isEmpty {
                 Text("Roles appear here once there is shift history to read them from.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -707,14 +707,14 @@ struct ScheduleRulesSheet: View {
         AccountSection(kicker: "Cuts") {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Never cut a role below").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                    Text("Never cut a role below").font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
                     Text("Used for any role without its own floor. Cavnar AI never suggests sending someone home if it would leave fewer than this on.")
-                        .font(.cavnarBody(13))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                HomeMixedText.make("\(cutFloor) \(cutFloor == 1 ? "person" : "people")", size: 15, color: .cavnarInk,
+                HomeMixedText.make("\(cutFloor) \(cutFloor == 1 ? "person" : "people")", size: CavnarType.body, color: .cavnarInk,
                                    numberWeight: 700)
                     .monospacedDigit()
                     .fixedSize()
@@ -740,7 +740,7 @@ struct ScheduleRulesSheet: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text(role)
-                            .font(.cavnarBody(15, weight: 600))
+                            .font(.cavnar(.label))
                             .foregroundStyle(Color.cavnarInk)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 10, weight: .bold))
@@ -760,7 +760,7 @@ struct ScheduleRulesSheet: View {
                     ForEach(LaborDayOfWeek.allNames, id: \.self) { day in
                         HStack(spacing: 10) {
                             Text(String(day.prefix(3)))
-                                .font(.cavnarBody(13.5, weight: 600))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                                 .foregroundStyle(Color.cavnarInk2)
                                 .frame(width: 34, alignment: .leading)
                             Spacer(minLength: 6)
@@ -769,7 +769,7 @@ struct ScheduleRulesSheet: View {
                         }
                     }
                     Text("Blank uses the role's own AM/PM number.")
-                        .font(.cavnarBody(12.5))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -787,11 +787,11 @@ struct ScheduleRulesSheet: View {
                             keyboard: UIKeyboardType = .numberPad) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(0.5)
                 .foregroundStyle(Color.cavnarInk3)
             TextField("—", text: value)
-                .font(.cavnarNumber(15, weight: 700))
+                .font(.cavnarNumber(CavnarType.body, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
                 .keyboardType(keyboard)

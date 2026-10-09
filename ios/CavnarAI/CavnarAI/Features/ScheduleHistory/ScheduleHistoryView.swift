@@ -52,7 +52,7 @@ struct ScheduleHistoryView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     Button("Retry") { Task { await viewModel.load() } }
                 }
             } else {
@@ -162,7 +162,7 @@ struct ScheduleHistoryView: View {
     private func statePill(_ entry: ScheduleHistoryEntry) -> some View {
         let tone: Color = entry.state == "Sent" ? .cavnarGreen : (entry.state == "Draft" ? .cavnarEmber2 : .cavnarInk3)
         let text = entry.state == "Sent" ? "Sent " + CavnarDate.mdyTimeLocal(entry.publishedAt ?? "", in: RestaurantClock.timeZone) : entry.state
-        return HomeMixedText.make(text, size: 11.5, weight: 700, color: tone)
+        return HomeMixedText.make(text, role: .caption, color: tone)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(Capsule().fill(tone.opacity(0.12)))
@@ -173,13 +173,13 @@ struct ScheduleHistoryView: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(weekLabel(entry))
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 if let line = entry.summaryLine, !line.isEmpty {
-                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk3)
+                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk3)
                         .lineLimit(2)
                 } else if let generated = Self.generatedAtParser.date(from: entry.generatedAt) {
                     Text("Generated \(CavnarDate.mdyTime(generated, in: RestaurantClock.timeZone))")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 statePill(entry)
@@ -188,12 +188,12 @@ struct ScheduleHistoryView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 if let q = entry.qualityScore?.value {
                     Text("\(Int(q.rounded()))")
-                        .font(.cavnarNumber(17, weight: 700))
+                        .font(.cavnarNumber(CavnarText.figureS.size, weight: 700))
                         .foregroundStyle(entry.qualityBand == "excellent" ? Color.cavnarGreen : Color.cavnarInk)
-                    Text("quality").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    Text("quality").cavnarText(.caption)
                 } else if let scheduled = entry.hoursScheduled {
                     Text("\(scheduled.commaFormatted)h")
-                        .font(.cavnarNumber(14, weight: 700))
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarInk2)
                 }
             }

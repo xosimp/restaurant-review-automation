@@ -45,7 +45,7 @@ struct CloserCleanupSheet: View {
                         Text(subtitle)
                     }
                     Text("A closer is the one person chosen to close for their role \u{2014} on until close and the last of their role to leave. Not a key holder. Cavnar AI checks every night has one per role that closes.")
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -54,7 +54,7 @@ struct CloserCleanupSheet: View {
                             .padding(.vertical, 10)
                             .accessibilityLabel("Loading the closers")
                     } else if let error = store.closerError, review == nil {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let review {
                         if let warning = review.warning {
@@ -98,12 +98,12 @@ struct CloserCleanupSheet: View {
             VStack(alignment: .leading, spacing: 10) {
                 if r.byRole.isEmpty {
                     Text("No role has a closer yet.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                 } else {
                     ForEach(r.byRole) { group in
                         VStack(alignment: .leading, spacing: 6) {
-                            HomeMixedText.make("\(group.role) \u{00B7} \(group.closers.count)", size: 14.5, weight: 700,
+                            HomeMixedText.make("\(group.role) \u{00B7} \(group.closers.count)", size: CavnarType.secondary, weight: 700,
                                                color: .cavnarInk)
                             AccountFlowLayout(spacing: 6) {
                                 ForEach(group.closers, id: \.self) { AccountChip(text: $0, muted: true) }
@@ -156,9 +156,9 @@ struct CloserCleanupSheet: View {
                         roles = []
                     } label: {
                         Text("Go by my punches instead")
-                            .font(.cavnarBody(13.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 32)
+                            .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
                 }
@@ -175,7 +175,7 @@ struct CloserCleanupSheet: View {
                 HomeMixedText.make("\(r.pendingAdmin.count) closer flag\(r.pendingAdmin.count == 1 ? "" : "s") set through support "
                                    + "don\u{2019}t count until you count them as yours: " + r.pendingAdmin.prefix(8).joined(separator: ", ")
                                    + (r.pendingAdmin.count > 8 ? ", \u{2026}" : "") + ".",
-                                   size: 14, color: .cavnarInk2)
+                                   size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                 if viewModel.canEditOwnerFacts {
                     Button {
@@ -195,8 +195,8 @@ struct CloserCleanupSheet: View {
                     .disabled(store.isAdopting)
                     SetupHelp(text: "Also counts the ratings entered through support as yours.")
                 }
-                if let m = store.adoptMessage { Text(m).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen) }
-                if let e = store.adoptError { Text(e).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed) }
+                if let m = store.adoptMessage { Text(m).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen) }
+                if let e = store.adoptError { Text(e).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed) }
             }
             .padding(.vertical, 10)
         }
@@ -209,7 +209,7 @@ struct CloserCleanupSheet: View {
             VStack(alignment: .leading, spacing: 0) {
                 if r.suggestions.isEmpty {
                     Text("Nothing to suggest \u{2014} the punches agree with who is marked.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.vertical, 10)
                 } else {
@@ -238,9 +238,9 @@ struct CloserCleanupSheet: View {
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 2) {
                     HomeMixedText.make("\(verb): \(s.name)" + (s.role.map { " \u{00B7} \($0)" } ?? ""),
-                                       size: 15, weight: 600, color: .cavnarInk)
+                                       size: CavnarType.body, weight: 600, color: .cavnarInk)
                     if let reason = s.reason {
-                        HomeMixedText.make(reason.prefix(1).uppercased() + reason.dropFirst(), size: 13, color: .cavnarInk3)
+                        HomeMixedText.make(reason.prefix(1).uppercased() + reason.dropFirst(), size: CavnarType.caption, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -283,13 +283,13 @@ struct CloserCleanupSheet: View {
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: store.isApplyingClosers || (n == 0 && !rolesChanged)))
                 .disabled(store.isApplyingClosers || (n == 0 && !rolesChanged))
-                if let m = store.closerMessage { Text(m).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen) }
-                if let e = store.closerError { Text(e).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                if let m = store.closerMessage { Text(m).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen) }
+                if let e = store.closerError { Text(e).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true) }
             }
         } else {
             Text("Only the account owner chooses the closers.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarAmber)
         }
     }
