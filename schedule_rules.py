@@ -1088,6 +1088,7 @@ class Constraints:
     # The days and hours a person always works (D-5: the owners' and
     # managers' real floor days): {lower: [{"day", "start", "end", "role"}]}.
     standing_shifts: dict = field(default_factory=dict)
+    work_days: dict = field(default_factory=dict)       # {key: {"Monday", ...}} days worked, hours left to the draft
     # The restaurant's role families (D-13: "Server AM" and "Server PM" are
     # one role): {role lower: family lower}; family() reads it with
     # shift_quality.role_family as the default.
@@ -2772,6 +2773,9 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
                             **{k: x[k] for k in ("from", "until") if x.get(k)}))
         if out:
             c.standing_shifts[key] = out
+    # The days they work with no fixed hours (owner, 10/9/26: "any time").
+    if st.get("work_days"):
+        c.work_days[key] = set(st["work_days"])
     # In training (D-16), while it lasts this week.
     t = st.get("trainee") or None
     if isinstance(t, dict) and t.get("target_role"):

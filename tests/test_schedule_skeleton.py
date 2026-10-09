@@ -800,3 +800,14 @@ def test_the_question_shows_availability_already_on_file_and_never_counts_it_as_
     assert av["Wednesday"] == "off" and av["Friday"] == "night" and av["Tuesday"] == "any"
     assert "Jim" not in plan["unknown_availability"]          # nothing on file, nothing said
     assert sk.payload(plan)["unknown_availability"] == plan["unknown_availability"]
+
+
+def test_any_time_work_days_count_as_the_managers_days_and_lean_the_split_toward_them():
+    # Owner, 10/9/26: a manager who covers lunch and dinner has no one fixed
+    # shift - ticking the days with the times blank says which days, and
+    # the draft places the hours. They are no longer asked.
+    c = _c()
+    c.work_days = {"erik": {"Monday", "Tuesday", "Thursday", "Friday", "Saturday", "Sunday"}}
+    plan = sk.plan_manager_coverage(c, WEEK)
+    assert "Erik" not in plan["unknown_pattern"]
+    assert "Erik" not in plan["unknown_availability"]

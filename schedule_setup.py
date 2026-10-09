@@ -147,6 +147,8 @@ def manager_status(restaurant_id, week_dates=None, c=None) -> dict:
         if key in c.managers:
             managers.append({"name": name, "role": c.managers[key], "basis": b.get("basis"), "why": b.get("why"),
                              "salaried": c.is_salaried(name), "standing_shifts": list(c.standing_shifts.get(key) or []),
+                             "work_days": [d for d in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+                                                       "Sunday") if d in (c.work_days.get(key) or set())],
                              "acting_dates": []})
         elif b.get("basis") in ("department", "set_not", "trainee"):
             not_counted.append({"name": name, "role": b.get("role"), "basis": b["basis"], "why": b.get("why")})
@@ -157,7 +159,8 @@ def manager_status(restaurant_id, week_dates=None, c=None) -> dict:
                            "label": ", ".join(_date_label(d) for d in sorted(days))})
     line = ("Managers: " + ", ".join(f"{m['name']} ({m['role']})" for m in managers)) if managers else \
         "Managers: nobody yet — set who runs the floor in Team"
-    no_days = [m["name"] for m in managers if not m["standing_shifts"] and not _has_availability(c, m["name"])]
+    no_days = [m["name"] for m in managers if not m["standing_shifts"] and not m.get("work_days")
+               and not _has_availability(c, m["name"])]
     ask = (f"Which days and hours do {_and(no_days)} work? Set {'their' if len(no_days) > 1 else 'the'} standing "
            "shifts in Team so the manager plan starts from the real week.") if no_days else None
     return {"managers": managers, "not_counted": not_counted, "acting": acting, "line": line,

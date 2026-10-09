@@ -647,7 +647,10 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         return uniq
 
     def usual_day(key, d):
-        return 1 if _weekday(d) in ((usual.get(key) or {}).get("days") or {}) else 0
+        # A day the owner says they work (work_days, hours left to the
+        # draft) counts like a day they usually work.
+        wd = _weekday(d)
+        return 1 if wd in ((usual.get(key) or {}).get("days") or {}) or wd in (getattr(c, "work_days", None) or {}).get(key, ()) else 0
 
     def likes_part(key, kind):
         """1 when the leg is the half of the day they mostly work (openers
@@ -805,7 +808,8 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
             continue
         kept_hours[name_of(k)] = round(kept_hours.get(name_of(k), 0.0) + _rules.row_hours(r), 2)
     known = {k for k in managers if (usual.get(k) or {}).get("days")}
-    standing = {k for k in managers if (getattr(c, "standing_shifts", None) or {}).get(k)}
+    standing = {k for k in managers if (getattr(c, "standing_shifts", None) or {}).get(k)
+                or (getattr(c, "work_days", None) or {}).get(k)}
     unknown = [name_of(k) for k in managers if k not in known and k not in standing]
     # Availability is not a pattern (when they CAN work, not which days they
     # DO), but the question shows it so an owner who saved it isn't asked as

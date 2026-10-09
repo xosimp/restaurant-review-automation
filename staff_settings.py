@@ -109,6 +109,10 @@ def _row(r):
         # The roles they close for when marked to close (D-9); empty is
         # their own role.
         "closes_for": [x for x in _json_list(r, "closes_for", keys) if isinstance(x, str)],
+        # The days they work with the hours left to the draft (owner,
+        # 10/9/26: "any time" on a day - a manager who covers lunch and
+        # dinner has no one fixed shift): ["Monday", ...].
+        "work_days": [d for d in _json_list(r, "work_days", keys) if d in DAYS],
         "updated_by": r["updated_by"],
         "updated_at": r["updated_at"],
     }
@@ -371,6 +375,20 @@ def _clean_trainee(raw, today=None):
     return out
 
 
+def _clean_work_days(raw) -> list:
+    """["Monday", ...]: the days someone works with their hours left to the
+    draft. Weekday names in any case; in week order, once each."""
+    if not isinstance(raw, list):
+        raise StaffSettingsError("work days are a list of weekdays")
+    got = set()
+    for d in raw:
+        day = str(d or "").strip().capitalize()
+        if day not in DAYS:
+            raise StaffSettingsError(f"'{d}' is not a weekday")
+        got.add(day)
+    return [d for d in DAYS if d in got]
+
+
 def _clean_closes_for(raw) -> list:
     """The roles a closer closes for ("Bartender", "Server"); empty means
     their own role (D-9)."""
@@ -391,7 +409,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
            experienced=None, minor_age_band=None, floor_manager=None, paid_hourly=None,
            acting_manager=None, standing_shifts=None, trainee=None, closes_for=None,
-           db_path=DB_PATH) -> dict:
+           work_days=None, db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed.
 
@@ -468,6 +486,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         trainee = _clean_trainee(trainee, today=_today(restaurant_id)) or ""
     if closes_for is not None:
         closes_for = _clean_closes_for(closes_for)
+    if work_days is not None:
+        work_days = _clean_work_days(work_days)
     conn = get_conn(db_path)
     try:
         # The row this person already has, whatever case it was saved in:
@@ -483,7 +503,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
                                          "desired_hours": None, "experienced": False, "minor_age_band": None,
                                          "floor_manager": None, "paid_hourly": False, "acting_manager": [],
-                                         "standing_shifts": [], "trainee": None, "closes_for": []}
+                                         "standing_shifts": [], "trainee": None, "closes_for": [], "work_days": []}
         if time_windows is not None:
             time_windows = _keep_window_dates(raw_windows, time_windows, current.get("time_windows") or {})
         new = {
@@ -506,6 +526,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "standing_shifts": standing_shifts if standing_shifts is not None else current.get("standing_shifts") or [],
             "trainee": (trainee or None) if trainee is not None else current.get("trainee"),
             "closes_for": closes_for if closes_for is not None else current.get("closes_for") or [],
+            "work_days": work_days if work_days is not None else current.get("work_days") or [],
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -519,14 +540,16 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                  "preferred_dayparts": preferred_dayparts, "desired_hours": desired_hours,
                  "experienced": experienced, "minor_age_band": minor_age_band,
                  "floor_manager": floor_manager, "paid_hourly": paid_hourly, "acting_manager": acting_manager,
-                 "standing_shifts": standing_shifts, "trainee": trainee, "closes_for": closes_for}
+                 "standing_shifts": standing_shifts, "trainee": trainee, "closes_for": closes_for,
+                 "work_days": work_days}
         sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
         sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
                             preferred_dayparts, desired_hours, experienced, minor_age_band, floor_manager,
-                            paid_hourly, acting_manager, standing_shifts, trainee, closes_for, updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                            paid_hourly, acting_manager, standing_shifts, trainee, closes_for, work_days,
+                            updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
@@ -535,7 +558,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                       new["minor_age_band"], new["floor_manager"], new["paid_hourly"],
                       json.dumps(new["acting_manager"]), json.dumps(new["standing_shifts"]),
                       json.dumps(new["trainee"]) if new["trainee"] else None, json.dumps(new["closes_for"]),
-                      (updated_by or "").strip()[:120] or None))
+                      json.dumps(new["work_days"]), (updated_by or "").strip()[:120] or None))
         if time_windows is not None and time_windows != (current.get("time_windows") or {}):
             # The staff app edits these windows on its availability screen
             # and saves against that row's version (save_own_availability).
@@ -559,7 +582,7 @@ _ROSTER_FIELDS = {"employment_type": "employment type", "min_hours": "minimum ho
                   "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band",
                   "floor_manager": "floor manager", "paid_hourly": "paid hourly",
                   "acting_manager": "acting manager dates", "standing_shifts": "standing shifts",
-                  "trainee": "training", "closes_for": "closes for"}
+                  "trainee": "training", "closes_for": "closes for", "work_days": "work days"}
 
 
 def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PATH):

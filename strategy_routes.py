@@ -1948,7 +1948,8 @@ def _do_roster_get(u):
 # 10/3/26 F1): who runs the floor and stands in for the manager is the
 # owner's highest rule, and an Owner role paid by the hour is pay.
 _OWNER_STAFF_FIELDS = ("floor_manager", "acting_manager", "paid_hourly")
-_F1_STAFF_FIELDS = ("floor_manager", "paid_hourly", "acting_manager", "standing_shifts", "trainee", "closes_for")
+_F1_STAFF_FIELDS = ("floor_manager", "paid_hourly", "acting_manager", "standing_shifts", "trainee", "closes_for",
+                    "work_days")
 
 
 def _do_staff_settings_set(u):
@@ -1984,7 +1985,7 @@ def _do_staff_settings_set(u):
                          floor_manager=b.get("floor_manager"), paid_hourly=b.get("paid_hourly"),
                          acting_manager=b.get("acting_manager"), standing_shifts=b.get("standing_shifts"),
                          trainee=(b.get("trainee") if b.get("trainee") is not None else ({} if "trainee" in b else None)),
-                         closes_for=b.get("closes_for"),
+                         closes_for=b.get("closes_for"), work_days=b.get("work_days"),
                          updated_by=_who(u))
     except _ss.StaffSettingsError as e:
         return {"ok": False, "error": str(e)}, 400

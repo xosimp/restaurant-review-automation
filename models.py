@@ -8271,7 +8271,8 @@ def init_staff_settings(db_path: str = DB_PATH):
                        ("acting_manager", "TEXT"),        # [{"from", "until", "note"}] dates they stand in as the manager
                        ("standing_shifts", "TEXT"),       # [{"day", "start", "end", "role"}] the shifts they always work
                        ("trainee", "TEXT"),               # {"target_role", "trainer", "from", "until"} while in training
-                       ("closes_for", "TEXT")):           # ["Bartender"] the roles a closer closes for; [] = their own
+                       ("closes_for", "TEXT"),            # ["Bartender"] the roles a closer closes for; [] = their own
+                       ("work_days", "TEXT")):            # ["Monday", ...] days they work, hours left to the draft (10/9/26)
         if name not in have:
             conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()

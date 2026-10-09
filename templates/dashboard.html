@@ -37380,7 +37380,7 @@ function sfw1RatingLine(s) {
           + '<select class="ac-select" data-f="start" aria-label="' + e(names[i] + ' starts ' + SFW1_DAYS[j]) + '">' + (window.cavTimeOptions ? cavTimeOptions('') : '') + '</select>'
           + '<select class="ac-select" data-f="end" aria-label="' + e(names[i] + ' ends ' + SFW1_DAYS[j]) + '">' + (window.cavTimeOptions ? cavTimeOptions('') : '') + '</select></div>';
       }
-      h += '</div><div class="ft"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-wk-save="' + e(names[i]) + '">Save ' + e(names[i].split(' ')[0]) + '’s days</button><span class="err" data-sfw1-wk-err></span></div></div>';
+      h += '</div><p class="sfw1-av">Leave a ticked day’s times blank for any time — Cavnar AI places their hours that day.</p><div class="ft"><button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-wk-save="' + e(names[i]) + '">Save ' + e(names[i].split(' ')[0]) + '’s days</button><span class="err" data-sfw1-wk-err></span></div></div>';
     }
     return h + '</div>';
   }
@@ -37388,26 +37388,32 @@ function sfw1RatingLine(s) {
      labor/managers), then saved as their standing shifts (F1's
      staff-settings, both twins). */
   function saveStanding(name, btn) {
-    var box = btn.closest('[data-sfw1-wk]'), err = box ? box.querySelector('[data-sfw1-wk-err]') : null, picked = [], bad = '', ds = box ? box.querySelectorAll('.d') : [], i;
+    var box = btn.closest('[data-sfw1-wk]'), err = box ? box.querySelector('[data-sfw1-wk-err]') : null, picked = [], anyDays = [], bad = '', ds = box ? box.querySelectorAll('.d') : [], i;
     for (i = 0; i < ds.length; i++) {
       var on = ds[i].querySelector('[data-sfw1-wk-on]');
       if (!on || !on.checked) continue;
       var st = ds[i].querySelector('[data-f="start"]').value, en = ds[i].querySelector('[data-f="end"]').value, day = ds[i].getAttribute('data-day');
-      if (!st || !en) { bad = 'Pick when ' + day + '’s shift starts and ends.'; break; }
+      // Both times blank is "any time" (owner, 10/9/26): a work day with
+      // the hours left to the draft - a manager who covers lunch and
+      // dinner has no one fixed shift to give.
+      if (!st && !en) { anyDays.push(day); continue; }
+      if (!st || !en) { bad = 'Pick both times for ' + day + ', or leave both blank for any time.'; break; }
       picked.push({day: day, start: st, end: en});
     }
-    if (err) err.textContent = bad || (picked.length ? '' : 'Tick the days they work.');
-    if (bad || !picked.length) return;
+    if (err) err.textContent = bad || ((picked.length || anyDays.length) ? '' : 'Tick the days they work.');
+    if (bad || !(picked.length || anyDays.length)) return;
     var done = busy(btn, 'Saving…');
     jget('/api/labor/managers', function (m) {
-      var keep = [], k, mine = {};
+      var keep = [], keepDays = [], k, mine = {};
       for (k = 0; k < picked.length; k++) mine[picked[k].day] = 1;
+      for (k = 0; k < anyDays.length; k++) mine[anyDays[k]] = 1;
       var ms = (m && m.managers) || [];
       for (k = 0; k < ms.length; k++) if (String(ms[k].name).toLowerCase() === name.toLowerCase()) {
-        var have = ms[k].standing_shifts || [], q;
+        var have = ms[k].standing_shifts || [], wd = ms[k].work_days || [], q;
         for (q = 0; q < have.length; q++) if (!mine[have[q].day]) keep.push(have[q]);
+        for (q = 0; q < wd.length; q++) if (!mine[wd[q]]) keepDays.push(wd[q]);
       }
-      jpost('/api/labor/staff-settings', {employee_name: name, standing_shifts: keep.concat(picked)}, function (d) {
+      jpost('/api/labor/staff-settings', {employee_name: name, standing_shifts: keep.concat(picked), work_days: keepDays.concat(anyDays)}, function (d) {
         done();
         if (!d.ok) { if (err) err.textContent = d.error || 'Couldn’t save their days.'; return; }
         say(name + '’s days are saved — every draft starts from them');
