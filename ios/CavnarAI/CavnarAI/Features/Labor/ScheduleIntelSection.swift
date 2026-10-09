@@ -48,7 +48,7 @@ struct ScheduleIntelSection: View {
             }
             CavnarWebLinkRow(title: "What the record says",
                              subtitle: "Outcomes, sales per labor hour, rotation and what staff keep doing",
-                             path: "labor/intel", actionLabel: "See it on the web")
+                             path: "labor/intel", actionLabel: "Open on the web")
         }
         .task { if viewModel.intel == nil { await viewModel.loadIntel() } }
     }
@@ -76,8 +76,8 @@ struct ScheduleIntelSection: View {
                         // Why auto-publish can never be offered yet — a
                         // setup gap, not a count of good weeks.
                         VStack(alignment: .leading, spacing: 6) {
-                            kicker("Auto-publish", tone: .cavnarInk3)
-                            HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk3)
+                            kicker("Auto-publish", tone: .cavnarInk2)
+                            HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -122,11 +122,9 @@ struct ScheduleIntelSection: View {
         return parts.isEmpty ? "Outcomes, rotation and what staff keep doing" : parts.joined(separator: " · ")
     }
 
-    private func kicker(_ text: String, tone: Color = .cavnarInk3) -> some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(1.1)
-            .foregroundStyle(tone)
+    /// The one kicker (re-audit W9); a tone only where it is the meaning.
+    private func kicker(_ text: String, tone: Color = .cavnarEmber2) -> some View {
+        CavnarKicker(text, tint: tone)
     }
 
     // MARK: What the draft learns
@@ -136,7 +134,7 @@ struct ScheduleIntelSection: View {
     /// Automation does; the undo window still applies.
     private func autoPublishOfferCard(_ offer: AutoPublishOffer) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            kicker("Auto-publish", tone: .cavnarEmber)
+            kicker("Auto-publish")
             if let reason = offer.reason {
                 HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -294,10 +292,7 @@ struct ScheduleIntelSection: View {
         let profiles = (c.profiles ?? [:]).sorted { ($0.value.label ?? $0.key) < ($1.value.label ?? $1.key) }
         if !profiles.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("SHIFT PROFILES")
-                    .font(.cavnar(.kicker))
-                    .tracking(1)
-                    .foregroundStyle(Color.cavnarEmber2)
+                CavnarKicker("Shift profiles")
                 ForEach(profiles, id: \.key) { key, p in
                     VStack(alignment: .leading, spacing: 3) {
                         HomeMixedText.make((p.label ?? key) + (p.shifts.map { " \u{00B7} \($0) shifts" } ?? ""),
@@ -373,7 +368,7 @@ struct ScheduleIntelSection: View {
                     }
                 }
             } else if let reason = start.reason {
-                HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk3)
+                HomeMixedText.make(reason, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

@@ -219,7 +219,7 @@ struct RestaurantDNAScreen: View {
                             // every measurement are the web's /dna page.
                             CavnarWebLinkRow(title: "Every measurement and what moves together",
                                              subtitle: "Each axis, each dimension\u{2019}s weeks and how it was measured",
-                                             path: "dna", actionLabel: "See it on the web")
+                                             path: "dna", actionLabel: "Open on the web")
                                 .padding(.top, CavnarSpace.section)
                             if let basis = s.basis {
                                 Text(basis + (p.note.map { " " + $0 } ?? ""))

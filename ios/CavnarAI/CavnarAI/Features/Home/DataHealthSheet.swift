@@ -156,7 +156,7 @@ struct DataHealthSheet: View {
                         content(snap)
                     } else if let error = store.errorMessage, !store.isLoading {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                                 .fixedSize(horizontal: false, vertical: true)
                             Button("Try again") { Task { await store.load(force: true) } }
                                 .font(.cavnarBody(CavnarType.secondary, weight: 700))
@@ -350,7 +350,7 @@ struct DataHealthSheet: View {
             }
             if let message = store.syncMessage {
                 HomeMixedText.make(message, size: CavnarType.caption, weight: 500,
-                                   color: store.syncFailed ? .cavnarRed : .cavnarInk2)
+                                   color: store.syncFailed ? .cavnarRedText : .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -463,7 +463,7 @@ struct DataHealthDistrustRow: View {
                     if busy { CavnarSkeletonBar(height: 3) }
                 }
                 if let error {
-                    Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

@@ -49,7 +49,7 @@ struct ReviewsListView: View {
         // inside Home's or the Modules tab's stack, not a tab root, so it
         // shares whichever stack pushed it in.
         VStack(spacing: 0) {
-            CavnarSegmentedControl(selection: $subTab, options: ReviewsSubTab.allCases) { $0.rawValue }
+            CavnarSegmentedControl(selection: $subTab, options: ReviewsSubTab.allCases, accessibilityTitle: "Reviews section") { $0.rawValue }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
@@ -720,6 +720,7 @@ struct StarRatingView: View {
     var animated: Bool = false
 
     @State private var lit = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         stars
@@ -736,7 +737,7 @@ struct StarRatingView: View {
                     .font(.system(size: size))
                     .foregroundStyle(filled ? Color.cavnarAmber : Color.cavnarPaper3)
                     .shadow(color: Color.cavnarAmber.opacity(animated && filled ? 0.55 : 0), radius: 4)
-                    .scaleEffect(animated && filled ? (lit ? 1 : 0.35) : 1)
+                    .scaleEffect(animated && filled && !reduceMotion ? (lit ? 1 : 0.35) : 1)
                     .opacity(animated ? (lit ? 1 : 0) : 1)
                     .animation(
                         animated ? .easeOut(duration: 0.34).delay(Double(index) * 0.08) : nil,

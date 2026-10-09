@@ -21,8 +21,10 @@ import re
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "ios", "CavnarAI", "CavnarAI")
 
-# Today's counts (10/8/26, re-audit fix round). They may only go down.
-BASELINE = {"cavnarRed": 71, "cavnarEmber": 31}
+# Counts after the post-merge sweep (10/8/26, W2/W3): red text is gone;
+# ember text is the owner's name in the AI consultant's headline and the
+# Guest text club's icon-only Copy label. They may only go down.
+BASELINE = {"cavnarRed": 0, "cavnarEmber": 2}
 
 _TEXT_BASE = re.compile(r"\b(?:Text|CavnarMixedText|Label|TextField|SecureField)\(|HomeMixedText\.make\(")
 _NOT_TEXT_BASE = re.compile(r"\b(?:Image|Circle|Capsule|Rectangle|RoundedRectangle|Path|Gauge|ProgressView|Toggle)\b")

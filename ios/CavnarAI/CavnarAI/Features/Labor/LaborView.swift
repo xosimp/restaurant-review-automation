@@ -106,7 +106,7 @@ struct LaborView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CavnarSegmentedControl(selection: $subTab, options: LaborSubTab.allCases) { $0.rawValue }
+            CavnarSegmentedControl(selection: $subTab, options: LaborSubTab.allCases, accessibilityTitle: "Labor section") { $0.rawValue }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
@@ -1395,7 +1395,7 @@ struct LaborView: View {
         }
     }
 
-    /// Everything that explains the week, behind one "Details" — what
+    /// Everything that explains the week, behind one "See the evidence" — what
     /// changed against the last published week (three, then "+N more"),
     /// Cavnar AI's note (three lines, then More), the hourly budget, the
     /// week's notes, How it scored as one tile, what each shift was asked
@@ -1408,7 +1408,7 @@ struct LaborView: View {
                 withAnimation(.easeOut(duration: 0.22)) { showingScheduleDetails.toggle() }
             } label: {
                 HStack(spacing: CavnarSpace.xxs + 2) {
-                    Text(showingScheduleDetails ? "Hide details" : "Details")
+                    Text(showingScheduleDetails ? "Hide the evidence" : "See the evidence")
                         .cavnarText(.label, color: .cavnarEmber2)
                     Image(systemName: "chevron.down")
                         .font(.cavnar(.caption))
@@ -1464,7 +1464,7 @@ struct LaborView: View {
                     // (E) — a wide table, read on the web.
                     if let reqs = result.requirements?.items, !reqs.isEmpty {
                         CavnarWebLinkRow(title: "What each shift was asked for", path: "labor/schedule",
-                                         actionLabel: "See it on the web")
+                                         actionLabel: "Open on the web")
                     }
                 }
                 .transition(.opacity)
@@ -2498,14 +2498,14 @@ private struct LaborSetupSheet: View {
                         // targets the ratings feed.
                         VStack(spacing: 0) {
                             CavnarWebLinkRow(title: "Shift targets",
-                                             subtitle: "How strong each shift should be", path: "labor/team")
+                                             subtitle: "How strong each shift should be", path: "labor/score")
                             // The standards are part of the web's Scheduling
                             // rules (sfw2RulesStandards).
                             CavnarWebLinkRow(title: "Labor standards",
                                              subtitle: "The work one person carries an hour", path: "labor/rules")
                             CavnarWebLinkRow(title: "Next week's forecast",
                                              subtitle: "Sales and hours, day by day", path: "labor/schedule",
-                                             actionLabel: "See it on the web")
+                                             actionLabel: "Open on the web")
                         }
                         .cavnarCard()
                         .id(Self.targetsID)

@@ -231,7 +231,7 @@ struct AskCavnarView: View {
                     inputFocused = false
                 } label: {
                     Text("Done")
-                        .cavnarText(.label, color: .cavnarEmber)
+                        .cavnarText(.label, color: .cavnarEmber2)
                         .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
@@ -1526,7 +1526,7 @@ struct ProposalCard: View {
                             .cavnarText(.label, color: .white)
                             .padding(.horizontal, CavnarSpace.m)
                             .frame(minHeight: 44)
-                            .background(Color.cavnarEmber)
+                            .background(Color.cavnarEmberFill)
                             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                             .cavnarHitTarget()
                     }

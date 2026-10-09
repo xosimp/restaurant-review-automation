@@ -217,7 +217,7 @@ struct CommandSheet: View {
     @ViewBuilder
     private var waitingSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AccountKicker(text: "Waiting on you")
+            AccountKicker(text: "Needs you")
             if viewModel.isLoading && viewModel.waiting.isEmpty && viewModel.pendingSends.isEmpty {
                 CavnarSkeletonLines(widths: [1.0, 0.8, 0.6])
             } else if viewModel.waiting.isEmpty && viewModel.pendingSends.isEmpty {
@@ -352,7 +352,7 @@ struct CommandSheet: View {
                 }
             }
             if let error = viewModel.errorLine {
-                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
             }
             askRow
         }

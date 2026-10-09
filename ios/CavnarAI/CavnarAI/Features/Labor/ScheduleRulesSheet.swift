@@ -786,10 +786,7 @@ struct ScheduleRulesSheet: View {
     private func floorField(label: String, value: Binding<String>, id: String,
                             keyboard: UIKeyboardType = .numberPad) -> some View {
         HStack(spacing: 4) {
-            Text(label)
-                .font(.cavnar(.kicker))
-                .tracking(0.5)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker(label, isHeader: false)
             TextField("—", text: value)
                 .font(.cavnarNumber(CavnarType.body, weight: 700))
                 .foregroundStyle(Color.cavnarInk)

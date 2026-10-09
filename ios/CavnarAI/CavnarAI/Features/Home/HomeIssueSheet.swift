@@ -60,7 +60,7 @@ struct HomeIssueSheet: View {
                     if let error {
                         Text(error)
                             .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                            .foregroundStyle(Color.cavnarRed)
+                            .foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -116,10 +116,7 @@ struct HomeIssueSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(Self.kicker(issue).uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker(Self.kicker(issue))
             HomeMixedText.make(issue.title, size: CavnarType.section, weight: 700, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {

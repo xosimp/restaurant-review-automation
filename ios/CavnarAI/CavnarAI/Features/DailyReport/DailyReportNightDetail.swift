@@ -513,7 +513,7 @@ struct DSRNightDetail: View {
             // iPhone decides."): one link to this night there.
             if hasFullDetail {
                 CavnarWebLinkRow(title: "Every detail of the night", subtitle: Self.webSubtitle(service: service, blocks: blocks),
-                                 path: Self.webPath(businessDate), actionLabel: "See it on the web")
+                                 path: Self.webPath(businessDate), actionLabel: "Open on the web")
             }
         }
         .sheet(item: $openServer) { s in
@@ -630,6 +630,8 @@ struct DSRNightDetail: View {
 struct DSRHourStoryView: View {
     let story: DSRHourStory
     let weekday: String?
+    /// A callout's number badge grows with Dynamic Type (W11).
+    @ScaledMetric(relativeTo: .caption) private var badgeSize: CGFloat = 24
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(DSRScrubState.self) private var scrub: DSRScrubState?
     @State private var grown = false
@@ -755,7 +757,7 @@ struct DSRHourStoryView: View {
                             Text(story.rows[c.index] == peak ? "\u{2605}" : "\(i + 1)")
                                 .font(.cavnarNumber(CavnarType.caption, weight: 700))
                                 .foregroundStyle(Self.tone(c.tone))
-                                .frame(width: 24, height: 24)
+                                .frame(width: badgeSize, height: badgeSize)
                                 .background(Self.tone(c.tone).opacity(0.14), in: Circle())
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(c.title).cavnarText(.label)

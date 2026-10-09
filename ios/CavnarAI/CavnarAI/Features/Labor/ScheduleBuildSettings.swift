@@ -463,7 +463,8 @@ struct GenerateScheduleSheet: View {
             }
             .scrollDismissesKeyboard(.immediately)
             .cavnarPinnedBar(note: viewModel.generateBlocked
-                             ? "Off for this week until newer sales arrive." : nil) {
+                             ? "Off for this week until newer sales arrive." : nil,
+                             noteTone: .warning) {
                 Button {
                     Haptic.medium()
                     onGenerate()

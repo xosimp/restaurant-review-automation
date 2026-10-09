@@ -37,6 +37,10 @@ struct IntelView: View {
     @State private var aiVisibilityViewModel = AIVisibilityViewModel()
     @State private var subTab: IntelSubTab = .competitors
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// A recommendation's number badge grows with Dynamic Type (W11).
+    @ScaledMetric(relativeTo: .caption) private var badgeSize: CGFloat = 22
+    // Reduce Motion: sections fade in place, the bar fades without sliding.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Where the link that opened this was pointing (ModuleRoute's section
     /// and item): the AI-visibility tab, or a competitor opened in the list.
     let focusSection: String?
@@ -78,7 +82,7 @@ struct IntelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CavnarSegmentedControl(selection: $subTab, options: IntelSubTab.allCases) { $0.rawValue }
+            CavnarSegmentedControl(selection: $subTab, options: IntelSubTab.allCases, accessibilityTitle: "Intel section") { $0.rawValue }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
@@ -120,7 +124,7 @@ struct IntelView: View {
                 HStack(spacing: 12) {
                     Text("Stopped tracking \(pending.name)")
                         .cavnarText(.label)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Button {
                         Haptic.light()
                         undoRemoval()
@@ -136,7 +140,7 @@ struct IntelView: View {
                 .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
                 .padding(.horizontal, 20)
                 .padding(.bottom, 18)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .animation(.easeOut(duration: 0.2), value: pendingRemoval?.placeId)
@@ -224,7 +228,7 @@ struct IntelView: View {
     private func content(_ summary: IntelSummary) -> some View {
         statRow(summary, showsLine: !Self.showsAnswerCard(summary))
             .opacity(contentAppeared ? 1 : 0)
-            .offset(y: contentAppeared ? 0 : 20)
+            .offset(y: contentAppeared || reduceMotion ? 0 : 20)
             .animation(.easeOut(duration: 0.5), value: contentAppeared)
             // Flips once this real content has actually rendered its first
             // (hidden) frame — onAppear fires strictly after that commit,
@@ -245,7 +249,7 @@ struct IntelView: View {
         if Self.showsAnswerCard(summary) {
             answerCard(summary)
                 .opacity(contentAppeared ? 1 : 0)
-                .offset(y: contentAppeared ? 0 : 20)
+                .offset(y: contentAppeared || reduceMotion ? 0 : 20)
                 .animation(.easeOut(duration: 0.5).delay(0.15), value: contentAppeared)
         }
 
@@ -262,14 +266,14 @@ struct IntelView: View {
                 // why everything from here down just appeared instantly
                 // while the sections above it were still visibly animating.
                 .opacity(contentAppeared ? 1 : 0)
-                .offset(y: contentAppeared ? 0 : 20)
+                .offset(y: contentAppeared || reduceMotion ? 0 : 20)
                 .animation(.easeOut(duration: 0.5).delay(0.45), value: contentAppeared)
         }
 
         if !summary.competitors.isEmpty {
             competitorsSection(summary)
                 .opacity(contentAppeared ? 1 : 0)
-                .offset(y: contentAppeared ? 0 : 20)
+                .offset(y: contentAppeared || reduceMotion ? 0 : 20)
                 .animation(.easeOut(duration: 0.5).delay(0.6), value: contentAppeared)
         }
     }
@@ -617,8 +621,8 @@ struct IntelView: View {
             Text("\(number)")
                 .font(.cavnar(.caption))
                 .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
-                .background(Color.cavnarEmber)
+                .frame(width: badgeSize, height: badgeSize)
+                .background(Color.cavnarEmberFill)
                 .clipShape(Circle())
                 .shadow(color: Color.cavnarEmber.opacity(0.55), radius: 4, x: 0, y: 0)
                 .accessibilityHidden(true)
@@ -795,7 +799,7 @@ struct IntelView: View {
             // The market's history and your own rating over time are a
             // chart for the web; the phone keeps what changed this week.
             CavnarWebLinkRow(title: "Ratings over time", subtitle: "The market\u{2019}s average and yours, week by week",
-                             path: "intel", actionLabel: "Open on the web")
+                             path: "intel/history", actionLabel: "Open on the web")
             // How current the sources behind Intel are, from data health.
             DataHealthModuleBadge(module: "intel")
         }

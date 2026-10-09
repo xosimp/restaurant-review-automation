@@ -8,6 +8,8 @@ import SwiftUI
 /// Account overview reads it; nothing is scored on the phone.
 struct AccountHealthCard: View {
     let health: AccountHealth
+    /// The ring grows with Dynamic Type, so its figure never clips (W11).
+    @ScaledMetric(relativeTo: .title2) private var ringSize: CGFloat = 84
     /// The Fix link's action, by the item it fixes (profile, people,
     /// integrations, notifications, security, subscription).
     var onFix: (String) -> Void
@@ -97,7 +99,7 @@ struct AccountHealthCard: View {
                     .cavnarText(.caption)
             }
         }
-        .frame(width: 84, height: 84)
+        .frame(width: ringSize, height: ringSize)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(health.score.map { "Account setup score \($0) of 100" } ?? "Account setup score not known yet")
     }

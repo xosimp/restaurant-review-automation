@@ -105,7 +105,7 @@ struct AccountCloseAccountView: View {
                     if let url = URL(string: mailtoLink) {
                         Link(destination: url) {
                             Text(requestedAt != nil ? "Or contact " : "You can also contact ").foregroundStyle(Color.cavnarInk2)
-                                + Text("will@cavnar.ai").foregroundStyle(Color.cavnarEmber)
+                                + Text("will@cavnar.ai").foregroundStyle(Color.cavnarEmber2)
                                 + Text(" directly.").foregroundStyle(Color.cavnarInk2)
                         }
                         .font(.cavnar(.body))

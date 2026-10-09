@@ -51,7 +51,7 @@ struct FoodCostQuickEntryView: View {
         // No NavigationStack of its own — pushed inside Home's or the
         // Modules tab's stack now, not a tab root.
         VStack(spacing: 0) {
-            CavnarSegmentedControl(selection: $subTab, options: FoodCostSubTab.allCases) { $0.rawValue }
+            CavnarSegmentedControl(selection: $subTab, options: FoodCostSubTab.allCases, accessibilityTitle: "Food cost section") { $0.rawValue }
                 .padding(.horizontal, CavnarSpace.m)
                 .padding(.top, CavnarSpace.xs)
                 .padding(.bottom, CavnarSpace.s)

@@ -42,7 +42,7 @@ struct WebsiteAnalyticsSection: View {
                     .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
                 CavnarWebLinkRow(title: "Connect your website", subtitle: "Google Analytics and Search Console",
-                                 path: "account/integrations", actionLabel: "Set up on the web")
+                                 path: "account/integrations", actionLabel: "Edit on the web")
             }
         } else if !s.available {
             Text(s.error ?? ((s.configured ?? true)
@@ -361,7 +361,7 @@ struct WebsiteConnectSheet: View {
         HStack(alignment: .top, spacing: 14) {
             Text("\(n)")
                 .font(.cavnar(.figureS))
-                .foregroundStyle(Color.cavnarEmber)
+                .foregroundStyle(Color.cavnarEmber2)
                 .frame(width: 26, height: 26)
                 .background(Circle().fill(Color.cavnarEmber.opacity(0.16)))
             VStack(alignment: .leading, spacing: 6) {

@@ -47,7 +47,7 @@ struct LocationGroupHomeView: View {
                     // location comparison is analysis (M15).
                     CavnarWebLinkRow(title: "How your locations compare",
                                      subtitle: "Labor, food cost, reviews and sales, location against location",
-                                     path: "locations", actionLabel: "See it on the web")
+                                     path: "locations", actionLabel: "Open on the web")
                 } else if viewModel.isLoading {
                     CavnarSkeletonLines(widths: [0.5, 0.9, 0.75, 0.6], lineHeight: 14, spacing: 12)
                 } else {
@@ -56,7 +56,7 @@ struct LocationGroupHomeView: View {
                         .foregroundStyle(Color.cavnarInk2)
                 }
                 if let error = viewModel.errorMessage, viewModel.group != nil {
-                    Text(error).font(.cavnarBody(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnarBody(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarRedText)
                 }
             }
             .padding(20)
@@ -72,10 +72,7 @@ struct LocationGroupHomeView: View {
 
     private func header(_ g: LocationGroupBrief) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(("All locations" + (g.groupName.map { " \u{00B7} " + $0 } ?? "")).uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.6)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker("All locations" + (g.groupName.map { " \u{00B7} " + $0 } ?? ""))
             if let headline = g.headline {
                 Text(headline)
                     .font(.cavnar(.title))
@@ -90,13 +87,13 @@ struct LocationGroupHomeView: View {
         }
     }
 
-    // MARK: Needs attention, every location
+    // MARK: Needs you, every location
 
     private func attentionCard(_ g: LocationGroupBrief) -> some View {
         let all = g.attention
         let shown = showAllAttention ? all : Array(all.prefix(Self.attentionShown))
         return VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Needs attention", title: "Every location",
+            HomeSectionHeader(kicker: "Needs you", title: "Every location",
                               trailing: all.isEmpty ? nil : "\(all.count)")
             VStack(alignment: .leading, spacing: 0) {
                 if let sentence = g.summaryLine {

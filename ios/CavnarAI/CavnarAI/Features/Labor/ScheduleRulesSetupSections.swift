@@ -35,10 +35,7 @@ struct RulesManagersSection: View {
                     }
                     if !m.notCounted.isEmpty {
                         AccountRowDivider()
-                        Text("NOT COUNTED")
-                            .font(.cavnar(.kicker))
-                            .tracking(1.1)
-                            .foregroundStyle(Color.cavnarInk3)
+                        CavnarKicker("Not counted")
                             .padding(.top, 10)
                         ForEach(m.notCounted) { person in
                             personRow(name: person.name, role: person.role, why: person.why, counts: false,
@@ -213,7 +210,7 @@ struct RulesClosingSection: View {
                             Text("MIN")
                                 .font(.cavnar(.kicker))
                                 .tracking(0.5)
-                                .foregroundStyle(Color.cavnarInk3)
+                                .foregroundStyle(Color.cavnarInk2)
                         }
                         .padding(.vertical, 9)
                         if index < roles.count - 1 { AccountRowDivider() }

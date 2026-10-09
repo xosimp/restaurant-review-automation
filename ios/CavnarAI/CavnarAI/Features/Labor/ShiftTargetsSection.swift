@@ -164,10 +164,11 @@ struct ShiftTargetsSection: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .foregroundStyle(Color.cavnarInk2)
                             .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Remove: \(rule.sentence)")
                 }
                 .padding(.vertical, 2)
             }
@@ -368,10 +369,7 @@ private struct LeaderRuleEditor: View {
     private func field<Content: View>(_ label: String, hint: String? = nil,
                                       @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(0.8)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker(label, isHeader: false)
             if let hint {
                 Text(hint)
                     .font(.cavnar(.caption))

@@ -183,10 +183,7 @@ struct DemandSignalsSection: View {
     /// (DESIGN_SYSTEM → forms, iOS).
     private var followsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("CALENDARS FOLLOWED FOR YOU")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker("Calendars followed for you")
             ForEach(viewModel.eventFollows) { follow in
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -226,10 +223,7 @@ struct DemandSignalsSection: View {
     /// every forecast, brief and report until put back here.
     private var removedGamesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("GAMES YOU REMOVED")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker("Games you removed")
             ForEach(viewModel.removedGames) { game in
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -260,10 +254,7 @@ struct DemandSignalsSection: View {
     /// The ones past the sample floor lead, lit; the rest are dimmer.
     private var nightsTaughtCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("WHAT YOUR NIGHTS HAVE TAUGHT")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker("What your nights have taught")
             ForEach(viewModel.nightLessons.prefix(6)) { lesson in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Circle()
@@ -384,11 +375,9 @@ private struct DemandSignalEditor: View {
         .onAppear { viewModel.signalError = nil }
     }
 
+    /// A field's label — the one kicker (re-audit W9), not a heading.
     private func kicker(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(0.8)
-            .foregroundStyle(Color.cavnarInk3)
+        CavnarKicker(text, isHeader: false)
     }
 
     private func kindChip(_ label: String, value: String) -> some View {

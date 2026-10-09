@@ -365,9 +365,7 @@ struct DSRKPITile: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(kpi.label.uppercased() + (kpi.estimate ? " · EST." : ""))
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.1)
-                    .foregroundStyle(Color.cavnarInk2)
+                CavnarKicker(kpi.label + (kpi.estimate ? " · est." : ""), isHeader: false)
                     .lineLimit(2)
                     .minimumScaleFactor(0.85)
                 Spacer(minLength: 0)

@@ -654,7 +654,7 @@ struct CampaignStudioView: View {
         let note: String? = vm.outcomeUnknown
             ? "The answer was lost, so the send stays off \u{2014} check Campaigns sent before sending again."
             : (canPublish ? nil : "Only the owner can send a campaign \u{2014} ask them to send it from Campaigns.")
-        return CavnarPinnedBar(note: note) {
+        return CavnarPinnedBar(note: note, noteTone: vm.outcomeUnknown ? .warning : .hint) {
             Button {
                 focused = nil
                 Haptic.light()

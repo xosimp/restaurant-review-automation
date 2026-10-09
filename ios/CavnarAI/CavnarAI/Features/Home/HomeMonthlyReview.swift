@@ -156,21 +156,16 @@ struct HomeMonthlyReviewCard: View {
         }
     }
 
+    /// The one kicker (re-audit W9) — orange, a heading for VoiceOver.
     private func kicker(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(1.4)
-            .foregroundStyle(Color.cavnarInk3)
+        CavnarKicker(text)
             .padding(.top, 2)
     }
 
     private func tile(_ m: HomeMonthlyReview.Metric, comparedWith: String?) -> some View {
         let tone = Self.tone(m.verdict)
         return VStack(alignment: .leading, spacing: 4) {
-            Text(m.label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker(m.label, isHeader: false)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             Text(Self.format(m.value ?? 0, unit: m.unit))
@@ -274,7 +269,7 @@ struct HomeMonthlyReviewSheet: View {
                     } else if renderFailed {
                         Text("Couldn\u{2019}t make the PDF \u{2014} take a screenshot of the month instead.")
                             .font(.cavnar(.secondary))
-                            .foregroundStyle(Color.cavnarRed)
+                            .foregroundStyle(Color.cavnarRedText)
                     } else {
                         CavnarSkeletonBar(height: 3)
                     }
@@ -300,10 +295,7 @@ struct HomeMonthlyReviewSheet: View {
     @MainActor
     static func renderPDF(_ month: HomeMonthlyReview) -> URL? {
         let page = VStack(alignment: .leading, spacing: 16) {
-            Text("CAVNAR AI")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.6)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker("Cavnar AI")
             HomeMonthlyReviewCard(month: month, interactive: false, showsAll: true)
         }
         .padding(36)

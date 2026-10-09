@@ -16,6 +16,7 @@ private enum LoginField_: Hashable, CaseIterable {
 /// pattern. All sizes come from LoginMetrics, colors from the palette.
 struct LoginView: View {
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel: LoginViewModel
     @FocusState private var focusedField: LoginField_?
     @State private var showingForgot = false
@@ -144,7 +145,7 @@ struct LoginView: View {
         Group {
             if introReady {
                 EmberCoreView(size: 72)
-                    .transition(.opacity.combined(with: .scale(scale: 0.86)))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.86)))
             } else {
                 Color.clear.frame(width: 72, height: 72)
             }

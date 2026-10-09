@@ -491,8 +491,8 @@ struct StaffingBoardSection: View {
                     }
                 }
                 if items.count > 6 {
-                    CavnarWebLinkRow(title: "All \(items.count) on the web", path: "labor/overtime",
-                                     actionLabel: "See them")
+                    CavnarWebLinkRow(title: "The whole board", subtitle: "All \(items.count) in this lane", path: "labor/overtime",
+                                     actionLabel: "Open on the web")
                 }
 
             }

@@ -38,6 +38,9 @@ struct HomeView: View {
     // one of each, reachable from every screen, not just Home's corner
     // (friction audit #32).
     @Environment(AppChrome.self) private var chrome
+    // Reduce Motion: the hero and the below-the-fold sections fade in place
+    // instead of rising, and the publish card fades without a scale.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Bound from RootView, not owned here — see ModulesGridView.path's doc
     // comment (the identical pattern there) for why: RootView.body swaps
     // this whole view out for LockedView across a Face ID lock/unlock
@@ -134,7 +137,7 @@ struct HomeView: View {
                 if let item = pendingPublish {
                     publishConfirmCard(item)
                         .zIndex(3)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.95)))
                 }
 
                 // The reader lets an issue push scroll Home to the issue
@@ -452,6 +455,8 @@ struct HomeView: View {
                         }
                         .buttonStyle(.plain)
                         .tint(nil)
+                        .accessibilityLabel("Quiet hours on")
+                        .accessibilityHint("Opens Account, where quiet hours are set")
                     }
                 }
                 cavnarToolbarItem(placement: .topBarTrailing) {
@@ -564,7 +569,7 @@ struct HomeView: View {
         .padding(.horizontal, 24)
         .padding(.top, 38)
         .opacity(heroAppeared ? 1 : 0)
-        .offset(y: heroAppeared ? 0 : 26)
+        .offset(y: heroAppeared || reduceMotion ? 0 : 26)
         .animation(Self.introAnimation, value: heroAppeared)
         .onAppear { DebugFrameWatchdog.mark("hero onAppear"); onHeroAppear() }
     }
@@ -978,7 +983,7 @@ struct HomeView: View {
                 // Home's Results on the web.
                 CavnarWebLinkRow(title: "Trends, how you compare and the monthly review",
                                  subtitle: "Every chart and benchmark behind these results",
-                                 path: "home/results", actionLabel: "See it on the web")
+                                 path: "home/results", actionLabel: "Open on the web")
                     .padding(.horizontal, 20)
                     .padding(.top, 22)
 
@@ -1422,11 +1427,12 @@ struct HomeView: View {
 private struct BelowFoldReveal: ViewModifier {
     let appeared: Bool
     let delay: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
             .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 20)
+            .offset(y: appeared || reduceMotion ? 0 : 20)
             // 0.5s each, spaced ~0.2s apart by the call sites. They used to
             // be 0.25/0.25/0.35/0.45/0.5 against a 0.55s duration, which
             // overlapped so heavily that five sections read as one

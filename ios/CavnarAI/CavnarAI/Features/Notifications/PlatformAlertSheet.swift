@@ -63,10 +63,7 @@ struct PlatformAlertSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("PLATFORM NEEDS YOU")
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(1.4)
-                        .foregroundStyle(Color.cavnarEmber2)
+                    CavnarKicker("Platform needs you")
                     Text(alert.subject ?? "A platform alert went out")
                         .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)

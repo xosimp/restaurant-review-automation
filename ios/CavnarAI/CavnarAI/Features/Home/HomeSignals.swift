@@ -51,10 +51,7 @@ struct HomeSignals: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(kicker.uppercased())
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
+                    CavnarKicker(kicker)
                     Spacer(minLength: 8)
                     if let value {
                         Text(value)

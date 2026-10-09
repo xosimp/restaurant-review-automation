@@ -57,7 +57,7 @@ struct RecommendationHistoryView: View {
                     }
                     CavnarWebLinkRow(title: "Your full record",
                                      subtitle: "What you followed by module, what worked best and every recommendation",
-                                     path: "recs", actionLabel: "See it on the web")
+                                     path: "recs", actionLabel: "Open on the web")
 
                     if let error = viewModel.errorMessage {
                         Text(error).cavnarText(.secondary, color: .cavnarRedText)

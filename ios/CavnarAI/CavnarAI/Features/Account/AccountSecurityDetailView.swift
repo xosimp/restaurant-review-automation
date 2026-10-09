@@ -603,7 +603,7 @@ private struct TwoFactorSetupSheet: View {
                         if hasPhone {
                             VStack(alignment: .leading, spacing: 8) {
                                 CavnarKicker("Send code by")
-                                CavnarSegmentedControl(selection: $selectedMethod, options: ["email", "sms"]) { option in
+                                CavnarSegmentedControl(selection: $selectedMethod, options: ["email", "sms"], accessibilityTitle: "Send the code by") { option in
                                     option == "sms" ? "Text" : "Email"
                                 }
                             }

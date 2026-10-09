@@ -227,7 +227,7 @@ struct HomeRecommendations: View {
                             if !open { RecEvidenceLog.viewed(key: rec.key, surface: "home", module: "home") }
                         } label: {
                             HStack(spacing: 4) {
-                                Text(open ? "Less" : "Details")
+                                Text(open ? "Hide the evidence" : "See the evidence")
                                     .font(.cavnar(.label))
                                 Image(systemName: open ? "chevron.up" : "chevron.down")
                                     .font(.cavnar(.caption))

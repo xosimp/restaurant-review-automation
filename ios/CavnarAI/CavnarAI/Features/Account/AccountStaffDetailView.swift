@@ -211,7 +211,7 @@ struct AccountStaffDetailView: View {
                     Text(viewModel.staffJoinCode.isEmpty ? "—" : viewModel.staffJoinCode)
                         .font(.cavnar(.figureL))
                         .kerning(3)
-                        .foregroundStyle(Color.cavnarEmber)
+                        .foregroundStyle(Color.cavnarEmber2)
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                     Spacer()

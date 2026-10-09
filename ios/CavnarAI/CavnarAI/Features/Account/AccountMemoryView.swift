@@ -285,7 +285,8 @@ struct AccountMemoryView: View {
                 AccountEditor(label: "What to remember", placeholder: "We close early the first Sunday of the month",
                               text: $viewModel.draft.fact, focus: $focus, field: .fact, showsDivider: false)
                 choice("Kind") {
-                    CavnarSegmentedControl(selection: $viewModel.draft.kind, options: MemoryKind.addable) {
+                    CavnarSegmentedControl(selection: $viewModel.draft.kind, options: MemoryKind.addable,
+                                           accessibilityTitle: "What to remember") {
                         MemoryKind.singular($0)
                     }
                 }
@@ -314,7 +315,7 @@ struct AccountMemoryView: View {
                 }
                 choice(viewModel.draft.kind == "followup" ? "Due" : "Holds until") {
                     let options = viewModel.draft.kind == "followup" ? MemoryDate.dueOptions : MemoryDate.untilOptions
-                    CavnarSegmentedControl(selection: $viewModel.draft.days, options: options) {
+                    CavnarSegmentedControl(selection: $viewModel.draft.days, options: options, accessibilityTitle: "When") {
                         MemoryDate.label($0, due: viewModel.draft.kind == "followup")
                     }
                     if let d = viewModel.draft.dateLabel {
@@ -324,7 +325,8 @@ struct AccountMemoryView: View {
                 choice("Who can read it") {
                     CavnarSegmentedControl(selection: $viewModel.draft.audience,
                                            options: isPrincipal ? MemoryAudience.principalOptions
-                                                                : MemoryAudience.teamOptions) {
+                                                                : MemoryAudience.teamOptions,
+                                           accessibilityTitle: "Who sees it") {
                         MemoryAudience.label($0)
                     }
                 }

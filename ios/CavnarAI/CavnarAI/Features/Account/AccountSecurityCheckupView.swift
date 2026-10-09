@@ -158,7 +158,7 @@ struct AccountSecurityCheckupView: View {
                             onFix(fix)
                         } label: {
                             HStack(spacing: 8) {
-                                Text(fixLabel).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber)
+                                Text(fixLabel).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber2)
                                 AccountDisclosureChip()
                             }
                         }

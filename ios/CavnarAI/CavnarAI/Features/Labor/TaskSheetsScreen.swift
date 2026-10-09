@@ -184,8 +184,8 @@ struct TaskSheetsScreen: View {
             VStack(spacing: 0) {
                 VStack(spacing: 0) {
                     CavnarWebLinkRow(title: "Consistency report", subtitle: "Your managers side by side, by person, by job code",
-                                     path: "labor/tasks", actionLabel: "See it on the web")
-                    CavnarWebLinkRow(title: "Edit task sheets", path: "labor/tasks")
+                                     path: "labor/tasks", actionLabel: "Open on the web")
+                    CavnarWebLinkRow(title: "Task sheets", path: "labor/tasks")
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 6)
@@ -636,6 +636,8 @@ private struct TSSheetEditor: View {
     let onChange: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
+    /// The weekday chips grow with Dynamic Type; each still hits at 44pt (W11).
+    @ScaledMetric(relativeTo: .caption) private var dayChip: CGFloat = 32
     @State private var sheet: TSSheet?
     @State private var jobCode = ""
     @State private var confirmingRemove = false
@@ -679,20 +681,29 @@ private struct TSSheetEditor: View {
                             }
                         }
                         Picker("Shift", selection: $kind) { ForEach(kinds, id: \.key) { Text($0.label).tag($0.key) } }
-                        HStack(spacing: 6) {
+                        // Seven equal 44pt-high targets across the row (W11): a
+                        // fixed 44pt width each would overflow a small phone.
+                        HStack(spacing: 0) {
                             ForEach(0..<7, id: \.self) { i in
                                 let on = days.contains(i)
-                                Text(["M", "T", "W", "T", "F", "S", "S"][i])
-                                    .font(.cavnarBody(CavnarType.caption, weight: 700))
-                                    .frame(width: 32, height: 32)
-                                    .background(on ? Color.cavnarEmber.opacity(0.18) : Color.cavnarPaper3, in: Circle())
-                                    .foregroundStyle(on ? Color.cavnarEmber : Color.cavnarInk2)
-                                    .onTapGesture { if on { days.remove(i) } else { days.insert(i) } }
-                                    .accessibilityLabel(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i])
-                                    .accessibilityAddTraits(on ? .isSelected : [])
+                                Button {
+                                    Haptic.selection()
+                                    if on { days.remove(i) } else { days.insert(i) }
+                                } label: {
+                                    Text(["M", "T", "W", "T", "F", "S", "S"][i])
+                                        .font(.cavnarBody(CavnarType.caption, weight: 700))
+                                        .frame(width: dayChip, height: dayChip)
+                                        .background(on ? Color.cavnarEmber.opacity(0.18) : Color.cavnarPaper3, in: Circle())
+                                        .foregroundStyle(on ? Color.cavnarEmber2 : Color.cavnarInk2)
+                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i])
+                                .accessibilityAddTraits(on ? .isSelected : [])
                             }
                         }
-                        Text(days.isEmpty ? "Every day" : "Only the days picked").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
+                        Text(days.isEmpty ? "Every day" : "Only the days picked").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2)
                         Toggle("The manager on duty signs this shift off", isOn: $signoff).tint(Color.cavnarEmber)
                         Button("Save settings") { Task { await saveSettings() } }
                             .disabled(jobCode.trimmingCharacters(in: .whitespaces).isEmpty)

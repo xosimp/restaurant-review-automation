@@ -37,7 +37,7 @@ struct IssueTextContactSheet: View {
                             .onChange(of: phone) { _, v in let f = PhoneFormat.typing(v); if f != v { phone = f } }
                     }
                     AccountSection(kicker: "Send them") {
-                        CavnarSegmentedControl(selection: $role, options: ["manager", "escalation"]) {
+                        CavnarSegmentedControl(selection: $role, options: ["manager", "escalation"], accessibilityTitle: "Texts about") {
                             $0 == "manager" ? "New issues" : "Escalations"
                         }
                         .padding(.vertical, 9)

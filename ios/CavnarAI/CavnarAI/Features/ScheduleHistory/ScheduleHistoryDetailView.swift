@@ -171,7 +171,7 @@ struct ScheduleHistoryDetailView: View {
                             || viewModel.draftVsPublished?.available == true {
                             CavnarWebLinkRow(title: "Versions and what-ifs",
                                              subtitle: "Every change to this week, and what else was tried",
-                                             path: "labor/schedule", actionLabel: "See them on the web")
+                                             path: "labor/schedule", actionLabel: "Open on the web")
                         }
                         if let rows = detail.previewRows, !rows.isEmpty {
                             scheduleByDay(rows)
@@ -447,7 +447,7 @@ struct ScheduleHistoryDetailView: View {
                     // "Version 3", not a developer's "v3" (L11).
                     Text("Version \(version.version)")
                         .font(.cavnarNumber(CavnarType.secondary, weight: 700))
-                        .foregroundStyle(version.isPublished ? Color.cavnarEmber : Color.cavnarInk)
+                        .foregroundStyle(version.isPublished ? Color.cavnarEmber2 : Color.cavnarInk)
                     Text(version.title)
                         .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
@@ -476,10 +476,7 @@ struct ScheduleHistoryDetailView: View {
 
     private func draftVsPublishedBlock(_ diff: DraftVsPublished) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("DRAFT VS PUBLISHED")
-                .font(.cavnar(.kicker))
-                .tracking(1.1)
-                .foregroundStyle(Color.cavnarBlue)
+            CavnarKicker("Draft vs published", tint: .cavnarBlue)
             if let summary = diff.summaryLine {
                 HomeMixedText.make(summary, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
@@ -608,7 +605,7 @@ struct ScheduleHistoryDetailView: View {
                 Text(day.uppercased())
                     .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .tracking(1)
-                    .foregroundStyle(Color.cavnarEmber)
+                    .foregroundStyle(Color.cavnarEmber2)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(Color.cavnarEmber.opacity(0.16))
@@ -638,7 +635,7 @@ struct ScheduleHistoryDetailView: View {
                     .font(.cavnarBody(CavnarType.secondary, weight: 800))
                     .tracking(1.1)
             }
-            .foregroundStyle(Color.cavnarEmber)
+            .foregroundStyle(Color.cavnarEmber2)
             ForEach(Self.groupedByRole(rows)) { row in
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {

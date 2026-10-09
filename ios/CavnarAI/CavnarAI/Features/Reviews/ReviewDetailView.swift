@@ -3,6 +3,7 @@ import SwiftUI
 struct ReviewDetailView: View {
     @State private var viewModel: ReviewDetailViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingTemplates = false
     @State private var showingRetractConfirm = false
     @State private var showingDeleteConfirm = false
@@ -105,7 +106,7 @@ struct ReviewDetailView: View {
                 .background(Color.cavnarPaper2, in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
                 .padding(.bottom, 96)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .animation(.easeOut(duration: 0.2), value: quickCheckLabel)

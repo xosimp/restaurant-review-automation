@@ -37,6 +37,7 @@ struct FoodCostTrendChart: View {
     var showsTarget: Bool = true
 
     @State private var barsVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedWeek: FoodCostTrendWeek?
 
     private static let industryLow = 4.0
@@ -250,7 +251,7 @@ struct FoodCostTrendChart: View {
         // Fades + rises in on the same barsVisible flip that grows the
         // bars, matching LaborPerformanceChart's identical treatment.
         .opacity(barsVisible ? 1 : 0)
-        .offset(y: barsVisible ? 0 : 24)
+        .offset(y: barsVisible || reduceMotion ? 0 : 24)
         .animation(.easeOut(duration: 0.5), value: barsVisible)
         // audit 7.4
         .accessibilityElement(children: .ignore)

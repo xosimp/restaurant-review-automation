@@ -79,7 +79,7 @@ struct AppPasscodeSheet: View {
                             .multilineTextAlignment(.center)
                         Text(errorText ?? caption)
                             .font(.cavnar(.body))
-                            .foregroundStyle(errorText == nil ? Color.cavnarInk3 : Color.cavnarRed)
+                            .foregroundStyle(errorText == nil ? Color.cavnarInk3 : Color.cavnarRedText)
                             .multilineTextAlignment(.center)
                             .lineSpacing(3)
                     }

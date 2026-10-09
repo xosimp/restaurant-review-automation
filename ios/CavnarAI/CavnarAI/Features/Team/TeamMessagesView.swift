@@ -213,7 +213,7 @@ struct TeamMessagesView: View {
                                 .foregroundStyle(Color.white)
                                 .padding(.horizontal, 7)
                                 .frame(minHeight: 20)
-                                .background(Capsule().fill(Color.cavnarEmber))
+                                .background(Capsule().fill(Color.cavnarEmberFill))
                                 .accessibilityLabel("\(t.unread) unread")
                         }
                     }

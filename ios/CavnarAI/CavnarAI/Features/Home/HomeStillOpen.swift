@@ -52,7 +52,7 @@ struct HomeActionProposalSheet: View {
                         Text(viewModel.rowNote[proposal.item.key]?.text
                              ?? "Couldn\u{2019}t open that \u{2014} open the item instead.")
                             .font(.cavnar(.body))
-                            .foregroundStyle(Color.cavnarRed)
+                            .foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

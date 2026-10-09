@@ -121,4 +121,4 @@ def test_i7_recommendation_confidence_is_decoded_never_invented():
 def test_i12_account_sets_the_website_up_on_the_web():
     a = _swift("Features", "Account", "AccountConnectionsDetailView.swift")
     assert "WebsiteConnectSheet(" not in a
-    assert 'path: "account/integrations", actionLabel: "Set up on the web"' in a
+    assert 'path: "account/integrations", actionLabel: "Edit on the web"' in a

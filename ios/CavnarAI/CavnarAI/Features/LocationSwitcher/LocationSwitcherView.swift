@@ -5,6 +5,7 @@ import SwiftUI
 struct LocationSwitcherView: View {
     @State private var viewModel = LocationSwitcherViewModel()
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(SessionStore.self) private var session
     @Environment(DeepLinkRouter.self) private var router
     var onSwitched: () -> Void
@@ -61,7 +62,7 @@ struct LocationSwitcherView: View {
                                     Image(systemName: "checkmark")
                                         .font(.cavnar(.label))
                                         .foregroundStyle(Color.cavnarEmber)
-                                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                                        .transition(reduceMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
                                 }
                                 .frame(width: 24, height: 24)
                             } else if location.active {

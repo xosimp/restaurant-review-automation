@@ -45,10 +45,7 @@ struct MarketingPhotoPicker: View {
     private var libraryStrip: some View {
         if !viewModel.recentMedia.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("YOUR PHOTOS")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+                CavnarKicker("Your photos")
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(viewModel.recentMedia.prefix(12)) { item in

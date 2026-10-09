@@ -587,7 +587,7 @@ struct InvoiceScanSheet: View {
                 Button("Discard changes", role: .destructive) { dismiss() }
                 Button("Keep editing", role: .cancel) {}
             } message: {
-                Text("The lines you ticked and the costs you changed aren\u{2019}t saved. The invoice stays in Waiting on you.")
+                Text("The lines you ticked and the costs you changed aren\u{2019}t saved. The invoice stays on the Needs you list.")
             }
             .onChange(of: pickerItem) { _, item in
                 guard let item else { return }
@@ -687,7 +687,7 @@ struct InvoiceScanSheet: View {
         .cavnarCard()
     }
 
-    /// "Waiting on you" — scanned invoices not yet applied, each one tap
+    /// "Needs you" — scanned invoices not yet applied, each one tap
     /// from its lines (the web's fc2LoadPendingInvoices). The one on screen
     /// is left out.
     @ViewBuilder
@@ -695,7 +695,7 @@ struct InvoiceScanSheet: View {
         let rows = viewModel.pending.filter { $0.id != viewModel.invoice?.id }
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                CavnarKicker("Waiting on you \u{00B7} \(rows.count) scanned invoice\(rows.count == 1 ? "" : "s")")
+                CavnarKicker("Needs you \u{00B7} \(rows.count) scanned invoice\(rows.count == 1 ? "" : "s")")
                 ForEach(rows) { row in
                     HStack(spacing: CavnarSpace.s) {
                         VStack(alignment: .leading, spacing: 2) {

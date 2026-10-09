@@ -628,7 +628,7 @@ struct AccountView: View {
     /// A row that opens the web dashboard at `path` (L3), inset like the
     /// rows around it.
     private func webRow(_ title: String, path: String) -> some View {
-        CavnarWebLinkRow(title: title, path: path, actionLabel: "On the web")
+        CavnarWebLinkRow(title: title, path: path, actionLabel: "Open on the web")
             .padding(.horizontal, CavnarSpace.m)
             .frame(minHeight: 54)
     }

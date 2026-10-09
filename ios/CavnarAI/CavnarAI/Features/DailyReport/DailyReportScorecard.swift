@@ -162,8 +162,7 @@ struct DSRScorecardCard: View {
     @ViewBuilder
     private func component(_ c: DSRScorecard.Component) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-            Text(c.label.uppercased()).font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.2)
-                .foregroundStyle(Color.cavnarInk2)
+            CavnarKicker(c.label, isHeader: false)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             if c.measured, let value = c.value {

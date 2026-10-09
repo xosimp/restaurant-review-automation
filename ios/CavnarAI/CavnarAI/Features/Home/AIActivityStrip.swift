@@ -198,7 +198,7 @@ struct AIActivityFeedSheet: View {
                                     .padding(.vertical, 8)
                                 }
                                 if let undoError {
-                                    Text(undoError).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+                                    Text(undoError).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRedText)
                                 }
                                 if let note = viewModel.undoneNote {
                                     Text(note).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarGreen)
@@ -248,10 +248,7 @@ struct AIActivityFeedSheet: View {
 
     private func section<Content: View>(_ kicker: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(kicker.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker(kicker)
                 .padding(.bottom, 4)
             VStack(alignment: .leading, spacing: 0) { content() }
                 .cavnarCard()

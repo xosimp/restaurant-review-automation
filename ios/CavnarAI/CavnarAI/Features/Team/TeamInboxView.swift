@@ -293,7 +293,7 @@ struct TeamInboxView: View {
                                 .foregroundStyle(Color.white)
                                 .padding(.horizontal, 7)
                                 .frame(minHeight: 20)
-                                .background(Capsule().fill(Color.cavnarEmber))
+                                .background(Capsule().fill(Color.cavnarEmberFill))
                                 .accessibilityLabel("\(t.unread) unread")
                         }
                         Spacer(minLength: 4)
@@ -742,7 +742,8 @@ struct TeamAnnouncementComposer: View {
 
                     AccountSection(kicker: "Who it goes to") {
                         VStack(alignment: .leading, spacing: 12) {
-                            CavnarSegmentedControl(selection: $audience, options: TeamAnnounceBody.Audience.allCases) {
+                            CavnarSegmentedControl(selection: $audience, options: TeamAnnounceBody.Audience.allCases,
+                                                   accessibilityTitle: "Who it reaches") {
                                 $0.label
                             }
                             switch audience {

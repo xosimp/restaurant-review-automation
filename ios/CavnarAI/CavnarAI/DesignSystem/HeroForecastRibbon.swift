@@ -225,9 +225,10 @@ struct CavnarForecastPanel<Body: View>: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .cavnarHitTarget()
                 }
+                .accessibilityLabel("Close \(title)")
             }
             .foregroundStyle(tone)
 

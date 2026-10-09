@@ -164,7 +164,7 @@ struct ScheduleWeekPager<DayContent: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            CavnarSegmentedControl(selection: modeBinding, options: Self.modes(wide: wide)) { $0.rawValue }
+            CavnarSegmentedControl(selection: modeBinding, options: Self.modes(wide: wide), accessibilityTitle: "Schedule view") { $0.rawValue }
             if mode == .week {
                 ScheduleWeekGrid(days: days, rows: rows) { row in
                     if let onEditShift {
@@ -362,10 +362,7 @@ struct ScheduleWeekGrid: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     Grid(alignment: .topLeading, horizontalSpacing: 6, verticalSpacing: 8) {
                         GridRow {
-                            Text("WHO")
-                                .font(.cavnar(.kicker))
-                                .tracking(0.8)
-                                .foregroundStyle(Color.cavnarEmber)
+                            CavnarKicker("Who", isHeader: false)
                                 .frame(width: Self.nameWidth, alignment: .leading)
                             ForEach(days) { page in dayHeader(page) }
                         }
@@ -389,10 +386,7 @@ struct ScheduleWeekGrid: View {
 
     private func dayHeader(_ page: ScheduleDayPage) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(page.short.uppercased())
-                .font(.cavnar(.kicker))
-                .tracking(0.8)
-                .foregroundStyle(Color.cavnarEmber)
+            CavnarKicker(page.short, isHeader: false)
             HStack(spacing: 5) {
                 Text(page.dateLabel)
                     .font(.cavnarNumber(CavnarType.caption, weight: 700))
@@ -708,10 +702,7 @@ struct ScheduleSummarySheet: View {
                             .background(Circle().fill(Color.cavnarEmber.opacity(0.16)))
                             .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.4), lineWidth: 1))
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("SCHEDULE COMPLETE")
-                                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                                .tracking(1.4)
-                                .foregroundStyle(Color.cavnarEmber)
+                            CavnarKicker("Schedule complete")
                             Text("The week is built")
                                 .font(.cavnarHeadline(CavnarText.title.size))
                                 .foregroundStyle(Color.cavnarInk)
@@ -795,10 +786,7 @@ struct ScheduleTileCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(tile.label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker(tile.label, isHeader: false)
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(tile.value ?? "\u{2014}")
                     .font(.cavnarNumber(CavnarText.figureM.size, weight: 700))
@@ -903,7 +891,7 @@ private struct SchedulePDFPage: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Cavnar AI").font(.cavnarBody(11, weight: 700)).foregroundStyle(Color.cavnarInk3)
                 Spacer()
-                Text("SCHEDULE").font(.cavnarBody(10, weight: 700)).tracking(1.4).foregroundStyle(Color.cavnarEmber)
+                Text("SCHEDULE").font(.cavnarBody(10, weight: 700)).tracking(1.4).foregroundStyle(Color.cavnarEmber2)
             }
             Text(page.day + (page.continued ? " (continued)" : ""))
                 .font(.cavnarHeadline(26))

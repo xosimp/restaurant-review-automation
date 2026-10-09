@@ -165,7 +165,7 @@ struct PersonEraseSheet: View {
                 } label: {
                     Group {
                         if erasing { CavnarShimmerText(text: "Erasing\u{2026}", color: .cavnarRed) }
-                        else { Text("Erase for good").foregroundStyle(Color.cavnarRed) }
+                        else { Text("Erase for good").foregroundStyle(Color.cavnarRedText) }
                     }
                     .frame(maxWidth: .infinity)
                 }

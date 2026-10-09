@@ -70,7 +70,7 @@ struct ShiftRequestsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let warning = viewModel.requestWarning {
-                    HomeMixedText.make(warning, size: CavnarType.secondary, color: .cavnarEmber)
+                    HomeMixedText.make(warning, size: CavnarType.secondary, color: .cavnarEmber2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

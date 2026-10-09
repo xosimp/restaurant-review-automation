@@ -68,7 +68,7 @@ struct AccountConnectionsDetailView: View {
                                     ? "\(Self.unconnectedPOS(connections)) connect with keys from your POS account."
                                     : "Only the account owner can connect a POS.",
                                 path: "account/integrations",
-                                actionLabel: "Connect on the web"
+                                actionLabel: "Edit on the web"
                             )
                         }
                         .accountCard()
@@ -410,7 +410,7 @@ struct AccountConnectionsDetailView: View {
                 if isOwner {
                     CavnarWebLinkRow(title: wa.connected ? "Manage the connection" : "Connect my website",
                                      subtitle: "Google Analytics and Search Console",
-                                     path: "account/integrations", actionLabel: "Set up on the web")
+                                     path: "account/integrations", actionLabel: "Edit on the web")
                 }
             }
         }

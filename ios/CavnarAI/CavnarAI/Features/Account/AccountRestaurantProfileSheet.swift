@@ -257,7 +257,7 @@ struct AccountRestaurantProfileSheet: View {
                 AccountValue(text: openedYear.isEmpty ? "Not set" : openedYear, isNumber: !openedYear.isEmpty)
             }
             CavnarWebLinkRow(title: "How you serve", path: "account/restaurant",
-                             actionLabel: canEdit ? "Edit on the web" : "See on the web")
+                             actionLabel: canEdit ? "Edit on the web" : "Open on the web")
         }
     }
 

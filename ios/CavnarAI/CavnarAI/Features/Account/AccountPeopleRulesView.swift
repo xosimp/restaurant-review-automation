@@ -410,7 +410,7 @@ struct AccountPeopleRulesView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(c.employeeName)
                             .cavnarText(.label)
-                            .lineLimit(1)
+                            .lineLimit(2)
                         Text(c.certLabel.capitalized + ((c.note ?? "").isEmpty ? "" : " \u{00B7} \(c.note!)"))
                             .cavnarText(.caption, color: .cavnarInk2)
                             .lineLimit(2)

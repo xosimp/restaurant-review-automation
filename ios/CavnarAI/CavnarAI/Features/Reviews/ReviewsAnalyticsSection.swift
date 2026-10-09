@@ -153,7 +153,7 @@ struct ReviewsAnalyticsSection: View {
     /// One answer card (re-audit 10/8/26 M10/M11): the rating's move (or the
     /// week's line) as the headline, one sentence under it, the cause, and
     /// the one action with its answer row — then the rest of the read behind
-    /// "Show the full read". When the diagnosis card renders, it carries the
+    /// "See the evidence". When the diagnosis card renders, it carries the
     /// cause and the action: the read's 🔍 line and its own action line drop,
     /// so the cause and the action are each said once.
     private func insightCard(_ insight: String) -> some View {
@@ -176,7 +176,7 @@ struct ReviewsAnalyticsSection: View {
             summary: read.summary,
             cause: read.why,
             isHypothesis: viewModel.causesUnverified,
-            detailLabel: "Show the full read"
+            detailLabel: "See the evidence"
         ) {
             if let action = read.action {
                 let text = Self.parseInsightLine(action).text
@@ -242,7 +242,7 @@ struct ReviewsAnalyticsSection: View {
     /// The read split for the answer card: the headline (the rating's move,
     /// else the week's line), one sentence, the cause (the 🔍 line — only
     /// with no diagnosis card), the action line (only with no diagnosis
-    /// card), and everything else for "Show the full read".
+    /// card), and everything else for "See the evidence".
     struct AnswerParts: Equatable {
         var headline: String
         var summary: String?
@@ -427,7 +427,7 @@ struct ReviewsAnalyticsSection: View {
                 confidence: d.trust.map {
                     ConfidenceLine(confidence: $0, recKey: d.recKey, surface: "reviews", module: "reviews")
                 },
-                detailLabel: "Show the reasoning",
+                detailLabel: "See the evidence",
                 surface: nil
             ) {
                 // An action the owner already answered stays answered: the
@@ -738,7 +738,7 @@ struct ReviewsAnalyticsSection: View {
                     guard days != viewModel.windowDays else { return }
                     Haptic.light()
                     Task { await viewModel.setWindow(days) }
-                }), options: [30, 90, 180]) { days in
+                }), options: [30, 90, 180], accessibilityTitle: "Time range") { days in
                     days == 180 ? "6 months" : "\(days) days"
                 }
         }

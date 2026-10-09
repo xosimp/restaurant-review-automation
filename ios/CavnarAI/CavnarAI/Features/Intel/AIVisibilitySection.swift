@@ -227,7 +227,7 @@ struct AIVisibilitySection: View {
     // MARK: - Hero — the score ring, the two figures and one status line
     // (iOS readability round, 10/8/26). The range, the background note,
     // branded recall, who else was named, the setup count and the computed
-    // summary are behind "Details": it used to stack up to seven caveat
+    // summary are behind "See the evidence": it used to stack up to seven caveat
     // lines under the two figures.
 
     private func heroPanel(_ result: AIVisibilityResult) -> some View {
@@ -328,7 +328,7 @@ struct AIVisibilitySection: View {
                     .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarAmber)
                     .accessibilityHidden(true)
-                Text("An estimate, not a measurement \u{2014} why is in Details")
+                Text("An estimate, not a measurement \u{2014} why is in the evidence")
                     .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -345,7 +345,7 @@ struct AIVisibilitySection: View {
                 withAnimation(.easeOut(duration: 0.2)) { showHeroDetails.toggle() }
             } label: {
                 HStack(spacing: CavnarSpace.xxs) {
-                    Text(showHeroDetails ? "Hide details" : "Details")
+                    Text(showHeroDetails ? "Hide the evidence" : "See the evidence")
                     Image(systemName: "chevron.down")
                         .rotationEffect(.degrees(showHeroDetails ? 180 : 0))
                         .accessibilityHidden(true)

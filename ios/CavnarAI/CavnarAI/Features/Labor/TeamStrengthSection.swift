@@ -88,7 +88,7 @@ struct TeamStrengthSection: View {
                 // A score per role (someone can be a 5 behind the bar and
                 // a 3 on the floor) is a wide grid — set on the web.
                 if !viewModel.team.isEmpty {
-                    CavnarWebLinkRow(title: "Ratings by role", path: "labor/team")
+                    CavnarWebLinkRow(title: "Ratings by role", path: "labor/score")
                 }
 
                 // Who changed a rating or a target, and when (memory round).
@@ -186,7 +186,7 @@ struct TeamStrengthSection: View {
                     HStack(spacing: 4) {
                         Text(item.suggestion == nil ? "Pick who this is" : "Someone else")
                             .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                            .foregroundStyle(Color.cavnarEmber)
+                            .foregroundStyle(Color.cavnarEmber2)
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)

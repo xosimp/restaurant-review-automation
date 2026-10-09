@@ -112,7 +112,8 @@ struct AccountAlertsDetailView: View {
                                                            brief.briefingLevel = level
                                                            saveBrief(rollback: before)
                                                        }),
-                                    options: Self.levels
+                                    options: Self.levels,
+                                    accessibilityTitle: "Morning brief detail"
                                 ) { Self.levelLabel($0) }
                                 Text(Self.levelNote(brief.briefingLevel))
                                     .cavnarText(.secondary)
@@ -134,7 +135,7 @@ struct AccountAlertsDetailView: View {
                                 ? "Which alerts fire, text and email, quiet hours, the weekly digest, issue texts and alert contacts."
                                 : "What your restaurant is set to. Only the account owner can change these.",
                             path: "account/notifications",
-                            actionLabel: isOwner ? "Edit on the web" : "See on the web"
+                            actionLabel: isOwner ? "Edit on the web" : "Open on the web"
                         )
                     }
                     .accountCard()

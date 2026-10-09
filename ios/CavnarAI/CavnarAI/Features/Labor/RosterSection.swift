@@ -291,7 +291,7 @@ struct RosterSection: View {
                 if let score = member.score, member.isActive {
                     Text("\(score)")
                         .font(.cavnarNumber(CavnarText.figureS.size, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber)
+                        .foregroundStyle(Color.cavnarEmber2)
                         .frame(width: 26, alignment: .trailing)
                         .accessibilityLabel("Operational Score \(score)")
                 }
@@ -526,7 +526,7 @@ extension RosterSection {
                         if busy { CavnarShimmerText(text: "Saving…") } else { Text(dismissed ? "Use again" : "Stop using this") }
                     }
                     .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                    .foregroundStyle(dismissed ? Color.cavnarEmber : Color.cavnarInk3)
+                    .foregroundStyle(dismissed ? Color.cavnarEmber2 : Color.cavnarInk2)
                 }
                 .buttonStyle(.plain)
                 .disabled(busy)
@@ -1296,11 +1296,9 @@ private struct PairEditorSheet: View {
         }
     }
 
+    /// A field's label — the one kicker (re-audit W9), not a heading.
     private func kicker(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(0.8)
-            .foregroundStyle(Color.cavnarInk3)
+        CavnarKicker(text, isHeader: false)
     }
 
     private func picker(_ label: String, selection: Binding<String>, excluding: String) -> some View {

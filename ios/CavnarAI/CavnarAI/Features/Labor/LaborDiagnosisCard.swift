@@ -6,7 +6,7 @@ import SwiftUI
 /// for us / Track under it (`diag_labor:<driver>`, surface `labor`), ONE
 /// visible "Could also be" line, the measured confidence — and the summary,
 /// what it was cross-checked against and what would tell the two readings
-/// apart behind "Show the reasoning". The web's `renderDiagnosis` carries
+/// apart behind "See the evidence". The web's `renderDiagnosis` carries
 /// the same parts. An answered one keeps its evidence and drops the
 /// controls. Renders nothing when there is no cause (labor at or under
 /// target has nothing to diagnose).
@@ -29,7 +29,7 @@ struct LaborDiagnosisCard: View {
                 confidence: diagnosis.confidence.map {
                     ConfidenceLine(confidence: $0, recKey: diagnosis.recKey, surface: surface, module: surface)
                 },
-                detailLabel: "Show the reasoning"
+                detailLabel: "See the evidence"
             ) {
                 if let confirm = diagnosis.whatWouldConfirm {
                     (Text("Do this: ").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)

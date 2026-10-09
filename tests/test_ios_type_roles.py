@@ -20,8 +20,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "ios", "CavnarAI", "CavnarAI")
 FEATURES = os.path.join(APP, "Features")
 
-# Today's count after phase 1 (10/8/26). It may only go down.
-BASELINE = 86
+# The count after the post-merge sweep (10/8/26; 86 after phase 1). It may
+# only go down.
+BASELINE = 21
 
 _LITERAL_HELPER = re.compile(r"\bcavnar(?:Body|Headline|Number)\(\s*-?\d+(?:\.\d+)?\s*[,)]")
 _MAKE = "HomeMixedText.make("

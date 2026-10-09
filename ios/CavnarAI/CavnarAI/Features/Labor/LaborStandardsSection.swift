@@ -185,10 +185,7 @@ struct LaborStandardsSection: View {
 
     private func field(_ label: String, text: Binding<String>, id: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(0.8)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker(label, isHeader: false)
             TextField("\u{2014}", text: text)
                 .font(.cavnarNumber(CavnarType.body, weight: 700))
                 .foregroundStyle(Color.cavnarInk)

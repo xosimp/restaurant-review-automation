@@ -58,10 +58,7 @@ struct DSRStatTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xxs + 1) {
-            Text(label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.1)
-                .foregroundStyle(Color.cavnarInk2)
+            CavnarKicker(label, isHeader: false)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             if valueIsText {

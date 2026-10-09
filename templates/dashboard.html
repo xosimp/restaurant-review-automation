@@ -12467,7 +12467,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <!-- Operational Score — how strong each person is, 1 to 5, set by the owner.
        The scheduler already knows who is available; this is what tells it not
        to put the two weakest people together on a Saturday. -->
-  <div class="lb2-srow s2">
+  <div class="lb2-srow s2" data-nav="labor/score">
     <div class="lb2-subsection" onclick="lb2RowClick(event,toggleTeamPanel)">
       <div class="lb2-subsection-title">Operational Score <span id="team-coverage-chip" class="lb2-subsection-chip"></span></div>
       <button onclick="toggleTeamPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="team-toggle-btn">Rate your team ↓</button>
@@ -13305,7 +13305,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      Filled by /api/food-cost/cfo; renders nothing when no driver clears
      the dollar floor. #}
   <div id="fc2-cfo" hidden></div>
-  <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend">
+  <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend" data-nav="inventory/waste-trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
        observations come from there; the JS below only lays them out. #}
@@ -13329,7 +13329,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </section>
   <div class="lb2-ai"><div class="tag">Cavnar AI's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
-  <section class="hb-card bm-card" data-bm-module="food_cost" hidden aria-label="How you compare"></section>
+  <section class="hb-card bm-card" data-bm-module="food_cost" hidden aria-label="How you compare" data-nav="inventory/compare"></section>
 
 
   {# This week's work (density round #8): the count sheet, the suppliers
@@ -13414,7 +13414,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {# Biggest waste items and Cash sitting over par sit under the order
      (owner, 9/26/26): what to buy first, then what the shelves hold —
      with room between them and the order above (10/2/26). #}
-  <div class="lb2-sig lb2-sig-2 fc2-stock-sig">
+  <div class="lb2-sig lb2-sig-2 fc2-stock-sig" data-nav="inventory/stock">
     <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
       <div class="cap"><span>sorted by cost, largest first</span></div></div>
@@ -13445,7 +13445,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div id="fc2-inv-body"></div>
   
   {% if inv.price_watch %}
-  <div id="price-watch-detail">
+  <div id="price-watch-detail" data-nav="inventory/prices">
     <div class="fc2-sub-h">What moved<small>a trend has moved more than once</small></div>
     <div class="fc2-pw">
       {% for w in inv.price_watch %}
@@ -14725,7 +14725,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     {% endif %}
     {# Who opened, closed or moved (/api/intel/movement, in2LoadMoves): the
        weekly snapshots were stored and never shown on either platform. #}
-    <div id="in2-moves" hidden></div>
+    <div id="in2-moves" hidden data-nav="intel/history"></div>
     {% endif %}
     <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
   </div>
@@ -15349,7 +15349,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="ac-card-h"><div><h3>Edit profile</h3><p>Contact details and how the AI sounds when it writes for you. Saved together.</p></div></div>
         <div class="ac-form">
           <div class="ac-field"><label for="pe-owner-name">Owner / GM name</label><input class="ac-input" id="pe-owner-name" value="{{restaurant.owner_name or ''}}"{% if is_principal is defined and not is_principal %} readonly title="Only an owner can change the brand voice"{% endif %}></div>
-          <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" type="tel" autocomplete="tel" value="{{ restaurant.owner_phone|format_phone }}"></div>
+          <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" type="tel" autocomplete="tel" value="{{ restaurant.owner_phone|format_phone }}"{% if is_principal is defined and not is_principal %} readonly title="Only an owner can change the owner's phone"{% endif %}></div>
           <div class="ac-field"><label for="pe-tz">Timezone</label><select class="ac-select" id="pe-tz">
             {% for tz, tzl in [('America/New_York','Eastern'),('America/Chicago','Central'),('America/Denver','Mountain'),('America/Phoenix','Arizona'),('America/Los_Angeles','Pacific'),('America/Anchorage','Alaska'),('Pacific/Honolulu','Hawaii')] %}
             <option value="{{tz}}" {% if (restaurant.timezone or 'America/Chicago') == tz %}selected{% endif %}>{{tzl}}</option>{% endfor %}</select></div>
@@ -39563,6 +39563,14 @@ function memRetagBody(was, now) {
     // The schedule is the Schedule tab now (10/1/26).
     if (p.rest[0] === 'schedule') { if (window.studioOpen) { studioOpen(); return true; } }
     if (p.rest[0] === 'notes') { cavNavOpenModule('labor'); setTimeout(openNotes, 60); return true; }
+    // Operational Score (the iPhone's "Ratings by role" and "Shift targets"
+    // rows, iOS re-audit W12): its panel opened, then the router scrolls
+    // to data-nav="labor/score" as for any section.
+    if (p.rest[0] === 'score') {
+      cavNavOpenModule('labor');
+      if (typeof toggleTeamPanel === 'function' && typeof _teamOpen !== 'undefined' && !_teamOpen) toggleTeamPanel();
+      return false;
+    }
     if (p.rest[0] === 'people') {
       cavNavOpenModule('labor');
       if (window.lb2OnOpen) lb2OnOpen();

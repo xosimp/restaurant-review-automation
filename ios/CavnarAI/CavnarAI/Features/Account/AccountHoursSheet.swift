@@ -84,7 +84,7 @@ struct AccountHoursSheet: View {
                             }
                         }
                         CavnarWebLinkRow(title: "Weekly hours", path: "account/restaurant",
-                                         actionLabel: canEdit ? "Edit on the web" : "See on the web")
+                                         actionLabel: canEdit ? "Edit on the web" : "Open on the web")
                     }
 
                     // Closed dates save the moment one is added or removed —

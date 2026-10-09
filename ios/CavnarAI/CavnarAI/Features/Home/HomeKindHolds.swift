@@ -107,10 +107,7 @@ struct HomeKindHoldBars: View {
     private func bar(label: String, figure: String, pct: Int, fill: LinearGradient, glow: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
-                Text(label.uppercased())
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.0)
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarKicker(label, isHeader: false)
                 Spacer(minLength: 8)
                 HomeMixedText.make(figure, size: CavnarType.caption, weight: 700, color: .cavnarInk2,
                                    numberWeight: 700, numberColor: .cavnarInk)

@@ -117,7 +117,7 @@ struct ShiftQualityPanel: View {
                 reasoningBlock
             }
             CavnarWebLinkRow(title: "Every shift, scored", subtitle: "Dimensions, what-ifs and the reasoning",
-                             path: "labor/schedule", actionLabel: "See it on the web")
+                             path: "labor/schedule", actionLabel: "Open on the web")
         }
         .padding(18)
         .background(
@@ -137,14 +137,14 @@ struct ShiftQualityPanel: View {
         }
     }
 
-    /// "Show the full read" — the rest of the scoring behind one tap (M28).
+    /// "See the evidence" — the rest of the scoring behind one tap (M28).
     private var fullReadToggle: some View {
         Button {
             Haptic.light()
             withAnimation(.easeOut(duration: 0.22)) { showingFullRead.toggle() }
         } label: {
             HStack(spacing: CavnarSpace.xxs + 2) {
-                Text(showingFullRead ? "Hide the full read" : "Show the full read")
+                Text(showingFullRead ? "Hide the evidence" : "See the evidence")
                     .cavnarText(.label, color: .cavnarEmber2)
                 Image(systemName: "chevron.down")
                     .font(.cavnar(.caption))
@@ -328,7 +328,7 @@ struct ShiftQualityPanel: View {
                     HStack(spacing: 6) {
                         Text(showingChanges ? "Hide the changes" : "What changed and why")
                             .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber)
+                            .foregroundStyle(Color.cavnarEmber2)
                         Image(systemName: "chevron.down")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
@@ -578,7 +578,7 @@ struct ShiftQualityPanel: View {
                     } label: {
                         Text("Show \(kind) again")
                             .font(.cavnarBody(CavnarType.caption, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber)
+                            .foregroundStyle(Color.cavnarEmber2)
                             .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
@@ -637,7 +637,7 @@ struct ShiftQualityPanel: View {
                         Text(shift.profile.demand == "peak" ? "PEAK" : "BUSY")
                             .font(.cavnar(.tag))
                             .tracking(0.6)
-                            .foregroundStyle(Color.cavnarEmber)
+                            .foregroundStyle(Color.cavnarEmber2)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(Capsule().fill(Color.cavnarEmber.opacity(0.14)))
@@ -863,7 +863,7 @@ struct ShiftQualityPanel: View {
                     } label: {
                         Text("Put \(answer.who) on")
                             .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber)
+                            .foregroundStyle(Color.cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -920,10 +920,7 @@ struct ShiftQualityPanel: View {
     private func group(_ label: String, _ lines: [String]?, limit: Int, color: Color) -> some View {
         if let lines, !lines.isEmpty {
             VStack(alignment: .leading, spacing: 5) {
-                Text(label.uppercased())
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.1)
-                    .foregroundStyle(color)
+                CavnarKicker(label, tint: color)
                 ForEach(lines.prefix(limit), id: \.self) { line in
                     detailLine(line, symbol: "circle.fill", color: color)
                 }
@@ -957,7 +954,7 @@ struct ShiftQualityPanel: View {
                 HStack(spacing: 6) {
                     Text(showingReasoning ? "Hide reasoning" : "Why this schedule?")
                         .font(.cavnar(.label))
-                        .foregroundStyle(Color.cavnarEmber)
+                        .foregroundStyle(Color.cavnarEmber2)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber)

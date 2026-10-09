@@ -56,7 +56,7 @@ struct HomeActionDeck: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Needs attention", title: title,
+            HomeSectionHeader(kicker: "Needs you", title: title,
                               trailing: items.count > 1 ? "\(items.count) open" : nil)
 
             if let lead = items.first {

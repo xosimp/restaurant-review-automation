@@ -116,7 +116,7 @@ struct AccountActivityLogView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             CavnarWebLinkRow(title: "The full history",
                                              subtitle: "Account activity and change history, every entry.",
-                                             path: "account/security", actionLabel: "On the web")
+                                             path: "account/security", actionLabel: "Open on the web")
                         }
                         .accountCard()
                     }

@@ -188,7 +188,7 @@ struct AccountAutomationView: View {
                 CavnarWebLinkRow(title: "Your record",
                                  subtitle: viewModel.earnedCount == 0 ? "Nothing earned yet \u{2014} each line is your own approvals, schedules and orders."
                                     : "\(viewModel.earnedCount) earned \u{2014} each line is your own approvals, schedules and orders.",
-                                 path: "account/automation", actionLabel: "On the web")
+                                 path: "account/automation", actionLabel: "Open on the web")
             } else {
                 Text("The record hasn't loaded.").cavnarText(.body).padding(.vertical, 9)
             }

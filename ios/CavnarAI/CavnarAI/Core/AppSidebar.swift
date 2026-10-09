@@ -119,10 +119,8 @@ struct AppSidebar: View {
         .tag(item)
     }
 
+    /// The one kicker (re-audit W9): role size, Ember2, a heading for VoiceOver.
     private func kicker(_ text: String) -> some View {
-        Text(text)
-            .font(.cavnarBody(11.5, weight: 700))
-            .tracking(1.2)
-            .foregroundStyle(Color.cavnarEmber)
+        CavnarKicker(text)
     }
 }

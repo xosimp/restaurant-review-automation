@@ -60,7 +60,7 @@ struct LaborTeamSection: View {
                         .foregroundStyle(Color.white)
                         .padding(.horizontal, 8)
                         .frame(minHeight: 22)
-                        .background(Capsule().fill(Color.cavnarEmber))
+                        .background(Capsule().fill(Color.cavnarEmberFill))
                 }
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .bold))

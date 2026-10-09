@@ -269,7 +269,7 @@ struct DailyReportView: View {
             }
             if !n.needsAttention.isEmpty {
                 lines.append("")
-                lines.append("Needs attention")
+                lines.append("Needs you")
                 lines += n.needsAttention.map { "• " + $0.text }
             }
         }
@@ -442,7 +442,7 @@ struct DailyReportView: View {
         if report.scorecard == nil {
             if let first = actions.first { DSRDoThisToday(action: first) }
             if let n = report.narrative, !(n.wentWell.isEmpty && n.needsAttention.isEmpty) {
-                DSRWinsRisksCard(riskTitle: "Needs attention", risks: n.needsAttention.map(\.text),
+                DSRWinsRisksCard(riskTitle: "Needs you", risks: n.needsAttention.map(\.text),
                                  winTitle: "Went well", wins: n.wentWell.map(\.text))
             }
         }
@@ -1196,7 +1196,7 @@ struct DSRBlockBody: View {
                 CavnarKicker(title)
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline) {
-                        Text(item.name).cavnarText(.body).lineLimit(1)
+                        Text(item.name).cavnarText(.body).lineLimit(2)
                         Spacer()
                         Text(DSRFormat.count(item.qty)).font(.cavnarNumber(CavnarType.secondary)).foregroundStyle(Color.cavnarInk2)
                         Text(DSRFormat.money(item.net)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)

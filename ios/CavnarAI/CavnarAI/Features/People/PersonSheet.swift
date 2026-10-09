@@ -922,7 +922,7 @@ struct PersonSheet: View {
         AccountSection(kicker: "Pay") {
             kv("Pay rate", person.payRateLine ?? "Not set")
             CavnarWebLinkRow(title: "Pay rates", path: "account/restaurant",
-                             actionLabel: person.mayEdit("pay_rate", fallback: false) ? "Edit on the web" : "On the web")
+                             actionLabel: person.mayEdit("pay_rate", fallback: false) ? "Edit on the web" : "Open on the web")
         }
 
         if person.canEdit == false {

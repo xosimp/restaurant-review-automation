@@ -7,7 +7,7 @@ import SwiftUI
 ///      recoverable run-rate, and Cavnar AI's one-paragraph why;
 ///   2. the decision card — what is driving the cost, the one thing to do
 ///      first, the top driver's dollars and where to act on it, with the
-///      rest of the read behind "Show the full read";
+///      rest of the read behind "See the evidence";
 ///   3. what to order now, sent through the order sheet (pinned when
 ///      something has to be ordered now);
 ///   4. dishes to reprice, one Set button each, asked before it changes
@@ -192,17 +192,17 @@ struct FoodCostAnalyticsSection: View {
                         if !a.wasteItems.isEmpty || !a.overstock.isEmpty {
                             CavnarWebLinkRow(title: "Waste and overstock",
                                              subtitle: "Biggest waste items and cash sitting over par, item by item",
-                                             path: "inventory", actionLabel: "Open on the web")
+                                             path: "inventory/stock", actionLabel: "Open on the web")
                         }
                         if !a.priceWatch.isEmpty {
                             CavnarWebLinkRow(title: "Price watch",
                                              subtitle: "\(a.priceWatch.count) ingredient price\(a.priceWatch.count == 1 ? "" : "s") that moved",
-                                             path: "inventory/invoices", actionLabel: "Open on the web")
+                                             path: "inventory/prices", actionLabel: "Open on the web")
                         }
                         CavnarWebLinkRow(title: "Waste trend", subtitle: "Every week on file, against your target",
-                                         path: "inventory/waste", actionLabel: "Open on the web")
+                                         path: "inventory/waste-trend", actionLabel: "Open on the web")
                         CavnarWebLinkRow(title: "How you compare", subtitle: "Food cost against restaurants like yours",
-                                         path: "inventory", actionLabel: "Open on the web")
+                                         path: "inventory/compare", actionLabel: "Open on the web")
                     }
                 }
                 .transition(.opacity)
@@ -279,7 +279,7 @@ struct FoodCostAnalyticsSection: View {
                 Task { await viewModel.load() }
             } label: {
                 Text("Try again")
-                    .cavnarText(.label, color: .cavnarEmber)
+                    .cavnarText(.label, color: .cavnarEmber2)
                     .padding(.horizontal, CavnarSpace.l)
                     .cavnarHitTarget()
             }
@@ -397,7 +397,7 @@ struct FoodCostAnalyticsSection: View {
     /// server-side precisely so two clients cannot disagree about which
     /// opportunity is the biggest. Driver 1 is on the card; drivers 2–5,
     /// what would confirm the cause, the cross-checks and the prime-cost
-    /// projection are behind "Show the full read".
+    /// projection are behind "See the evidence".
     @ViewBuilder
     private func decisionCard(_ cfo: FoodCostCFO?, heroShowsRecoverable: Bool) -> some View {
         if let cfo {
@@ -435,7 +435,7 @@ struct FoodCostAnalyticsSection: View {
                     confidence: dg?.cause == nil ? nil : dg?.trust.map {
                         ConfidenceLine(confidence: $0, recKey: dg?.recKey, surface: "food", module: "food")
                     },
-                    detailLabel: "Show the full read",
+                    detailLabel: "See the evidence",
                     surface: nil
                 ) {
                     decisionActions(dg, top: drivers.first)
@@ -466,7 +466,7 @@ struct FoodCostAnalyticsSection: View {
             parts.append("\(n) figure\(n == 1 ? "" : "s") unverified")
         }
         guard !parts.isEmpty else { return nil }
-        return parts.joined(separator: " \u{00B7} ") + " \u{00B7} details in the full read"
+        return parts.joined(separator: " \u{00B7} ") + " \u{00B7} details in the evidence"
     }
 
     /// Do this first and its answer row, then the top driver's dollars and

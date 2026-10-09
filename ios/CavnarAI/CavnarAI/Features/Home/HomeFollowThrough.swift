@@ -1780,10 +1780,7 @@ struct HomeFollowThrough: View {
     private func goodNewsRows(leadsCard: Bool) -> some View {
         if !viewModel.goodNews.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                Text(leadsCard ? "WHAT GOT BETTER" : "ALSO GOT BETTER")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.cavnarInk2)
+                CavnarKicker(leadsCard ? "What got better" : "Also got better")
                     .padding(.top, leadsCard ? 0 : 14)
                     .padding(.bottom, 2)
                 ForEach(Array(viewModel.goodNews.prefix(4).enumerated()), id: \.element.id) { index, item in
@@ -2236,16 +2233,13 @@ struct HomeFollowThrough: View {
     /// button that sends past it knowingly (after its own confirm).
     @ViewBuilder
     private func rowNoteView(_ item: ActionItem, _ note: HomeFollowThroughViewModel.RowNote) -> some View {
-        let color: Color = note.tone == .good ? .cavnarGreen : (note.tone == .warn ? .cavnarAmber : .cavnarRed)
+        let color: Color = note.tone == .good ? .cavnarGreen : (note.tone == .warn ? .cavnarAmber : .cavnarRedText)
         VStack(alignment: .leading, spacing: 6) {
             if note.blockers.isEmpty {
                 HomeMixedText.make(note.text, size: CavnarType.secondary, weight: 600, color: color)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(note.text.uppercased())
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+                CavnarKicker(note.text)
                 ForEach(Array(note.blockers.enumerated()), id: \.offset) { _, b in
                     HStack(alignment: .top, spacing: 8) {
                         Circle().fill(Color.cavnarRed).frame(width: 6, height: 6).padding(.top, 6)
@@ -2552,7 +2546,7 @@ struct HomeMissedGoals: View {
             } else if let error = viewModel.missedGoalError {
                 Text(error)
                     .font(.cavnarBody(CavnarType.caption, weight: 600))
-                    .foregroundStyle(Color.cavnarRed)
+                    .foregroundStyle(Color.cavnarRedText)
             }
         }
         .confirmationDialog("Close this goal?", isPresented: Binding(get: { closing != nil },

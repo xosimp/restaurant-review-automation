@@ -38,7 +38,7 @@ struct DailyReportWeekView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                CavnarSegmentedControl(selection: $kind, options: GridKind.allCases) { $0.rawValue }
+                CavnarSegmentedControl(selection: $kind, options: GridKind.allCases, accessibilityTitle: "Week view") { $0.rawValue }
                 header
                 if viewModel.isLoading && viewModel.grid == nil {
                     CavnarSkeletonLines(widths: [1, 1, 1, 1, 1, 0.8]).cavnarCard()
@@ -113,7 +113,7 @@ struct DailyReportWeekView: View {
                         // — a link to this week there (re-audit D23).
                         CavnarWebLinkRow(title: "Import last year",
                                          subtitle: "No last year here yet \u{2014} bring in your old workbooks.",
-                                         path: Self.webPath(grid.start), actionLabel: "On the web")
+                                         path: Self.webPath(grid.start), actionLabel: "Open on the web")
                     }
                     weekActions(grid)
                 }

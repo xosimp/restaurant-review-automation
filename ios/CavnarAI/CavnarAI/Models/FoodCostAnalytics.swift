@@ -237,6 +237,10 @@ struct FoodCostAnalytics: Decodable {
     /// (null = no answer controls for that line). Optional: older servers
     /// don't send it.
     let insightRecKeys: [String?]?
+    /// Each line's MEASURED confidence (K1), index for index with
+    /// `insightRecommendations` (`insight_rec_confidence`); null where the
+    /// server measured none. Optional: older servers don't send it.
+    let insightRecConfidence: [TrustConfidence?]?
     let insightForecast: String?
     let wasteItems: [WasteItem]
     let overstock: [OverstockItem]
@@ -384,6 +388,7 @@ struct FoodCostAnalytics: Decodable {
         case insightIntro = "insight_intro"
         case insightRecommendations = "insight_recommendations"
         case insightRecKeys = "insight_rec_keys"
+        case insightRecConfidence = "insight_rec_confidence"
         case insightForecast = "insight_forecast"
         case wasteItems = "waste_items"
         case criticalLow = "critical_low"
@@ -437,7 +442,7 @@ struct FoodCostAnalytics: Decodable {
     var insight: AIInsight? {
         guard let insightIntro else { return nil }
         return AIInsight(intro: insightIntro, recommendations: insightRecommendations, forecast: insightForecast,
-                         recKeys: insightRecKeys)
+                         recKeys: insightRecKeys, recConfidence: insightRecConfidence)
     }
 
     /// True when the server flagged figures in the narrative that it could not

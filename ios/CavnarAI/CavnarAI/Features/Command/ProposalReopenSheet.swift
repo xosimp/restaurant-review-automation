@@ -2,7 +2,7 @@ import SwiftUI
 import Observation
 
 /// A stored Ask proposal, opened again from where it was left — the command
-/// sheet's "Waiting on you" row for it (F3-2). Read back with
+/// sheet's "Needs you" row for it (F3-2). Read back with
 /// GET /mobile/api/ask-cavnar/proposals/<id> (command_center.reopen: no
 /// model call) and confirmed through Ask's own ProposalCard, so the proposed
 /// row is the one settled. A proposal that has since been confirmed or
@@ -82,10 +82,7 @@ struct ProposalReopenSheet: View {
                     } else if let proposal = viewModel.response?.proposal {
                         ProposalCard(proposal: proposal, viewModel: viewModel.askViewModel)
                     } else if let line = viewModel.response?.settledLine {
-                        Text(line.uppercased())
-                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                            .tracking(1.4)
-                            .foregroundStyle(Color.cavnarInk3)
+                        CavnarKicker(line)
                         if let summary = viewModel.response?.summary {
                             Text(summary)
                                 .font(.cavnar(.headline))
@@ -101,7 +98,7 @@ struct ProposalReopenSheet: View {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .accountSheetChrome("Waiting on you")
+            .accountSheetChrome("Needs you")
         }
         .task { await viewModel.load(id: proposalId) }
     }

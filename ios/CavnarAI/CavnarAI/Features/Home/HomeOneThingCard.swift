@@ -367,10 +367,7 @@ struct HomeLinkEvidenceSheet: View {
                     if let modules = link.modules, !modules.isEmpty {
                         HStack(spacing: 8) {
                             EmberThread(axis: .horizontal, length: 34)
-                            Text(modules.map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + ").uppercased())
-                                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                                .tracking(1.0)
-                                .foregroundStyle(Color.cavnarInk3)
+                            CavnarKicker(modules.map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + "), isHeader: false)
                         }
                     }
                     if let evidence = link.evidence, !evidence.isEmpty {

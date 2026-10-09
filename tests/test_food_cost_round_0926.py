@@ -55,7 +55,7 @@ def test_the_hero_says_less_and_colours_the_weeks_waste_by_its_target():
 
 
 def test_the_waste_trend_shell_is_darker_than_its_card():
-    assert '<section class="lb2-hero fc2-wt-shell" aria-label="Waste trend">' in PANEL
+    assert '<section class="lb2-hero fc2-wt-shell" aria-label="Waste trend" data-nav="inventory/waste-trend">' in PANEL
     assert ".lb2-hero.fc2-wt-shell .fc2-wt{margin-top:0;background:var(--surface)}" in SRC
     assert '[data-theme="dark"] .lb2-hero.fc2-wt-shell{background:#171411}' in SRC
 

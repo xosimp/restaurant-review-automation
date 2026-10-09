@@ -252,10 +252,7 @@ struct RegisterView: View {
     }
 
     private func sectionLabel(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(1.2)
-            .foregroundStyle(Color.cavnarInk3)
+        CavnarKicker(text)
     }
 
     private func submit() async {

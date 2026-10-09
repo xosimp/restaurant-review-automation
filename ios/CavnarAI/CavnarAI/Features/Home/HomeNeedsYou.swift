@@ -376,7 +376,7 @@ struct HomeNeedsYou: View {
             primary: line.action.map { act in HomeNeedsYouPrimary(label: act.label) { onOpenNav(act.nav) } },
             onTap: { openLine = line }
         ) {
-            Button { openLine = line } label: { Label("Details", systemImage: "text.alignleft") }
+            Button { openLine = line } label: { Label("See the evidence", systemImage: "doc.text.magnifyingglass") }
             if let q = line.ask, !q.isEmpty {
                 Button { ask(q) } label: { Label("Ask Cavnar AI", systemImage: "sparkles") }
             }
@@ -505,7 +505,7 @@ struct HomeNeedsYou: View {
             },
             swipe: HomeSwipeAction(label: "Hide", systemImage: "eye.slash", tint: .cavnarInk3) { hideRec(rec) }
         ) {
-            Button { recDetail = rec } label: { Label("Details", systemImage: "text.alignleft") }
+            Button { recDetail = rec } label: { Label("See the evidence", systemImage: "doc.text.magnifyingglass") }
             if primary != .done {
                 Button { submitRec(rec, kind: "done") } label: { Label("Done", systemImage: "checkmark") }
             }

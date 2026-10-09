@@ -121,10 +121,7 @@ struct PendingActionSheet: View {
                 if viewModel.isLoading && viewModel.action == nil {
                     CavnarSkeletonLines(widths: [0.5, 0.9, 0.7], lineHeight: 12, spacing: 10)
                 } else if let action = viewModel.action {
-                    Text(viewModel.undone ? "UNDONE" : "GOING OUT ON ITS OWN")
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(1.4)
-                        .foregroundStyle(viewModel.undone ? Color.cavnarInk3 : Color.cavnarEmber2)
+                    CavnarKicker(viewModel.undone ? "Undone" : "Going out on its own", tint: viewModel.undone ? .cavnarInk2 : .cavnarEmber2)
                     Text(action.label ?? "A queued send")
                         .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
@@ -141,7 +138,7 @@ struct PendingActionSheet: View {
                         HomeMixedText.make(line, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     }
                     Spacer(minLength: 8)
                     HStack(spacing: 12) {

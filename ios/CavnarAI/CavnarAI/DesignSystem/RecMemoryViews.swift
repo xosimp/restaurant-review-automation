@@ -156,8 +156,8 @@ struct RecConflictPanel: View {
                 }
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarRed)
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

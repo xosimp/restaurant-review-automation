@@ -102,7 +102,7 @@ struct AccountProfileDetailView: View {
             // is something to save.
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if isDirty || viewModel.isSavingProfile || viewModel.saveProfileError != nil {
-                    CavnarPinnedBar(note: viewModel.saveProfileError) {
+                    CavnarPinnedBar(note: viewModel.saveProfileError, noteTone: .error) {
                         Button {
                             if isDirty {
                                 Haptic.light()
@@ -402,7 +402,7 @@ struct AccountProfileDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             CavnarWebLinkRow(title: "Voice, time zone & profile", subtitle: webSubtitle,
                              path: "account/restaurant",
-                             actionLabel: isOwner ? "Edit on the web" : "See on the web")
+                             actionLabel: isOwner ? "Edit on the web" : "Open on the web")
         }
         .accountCard()
     }

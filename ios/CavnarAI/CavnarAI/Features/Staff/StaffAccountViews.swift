@@ -407,7 +407,7 @@ struct StaffDeleteAccountView: View {
                     confirming = true
                 } label: {
                     StaffBusyLabel(title: "Delete my account", busy: loading)
-                        .foregroundStyle(Color.cavnarRed)
+                        .foregroundStyle(Color.cavnarRedText)
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: loading))
                 .disabled(loading)

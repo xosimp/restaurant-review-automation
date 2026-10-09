@@ -64,6 +64,7 @@ struct LoginField<Field: Hashable>: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, -LoginMetrics.spaceM)
+                .accessibilityLabel(revealed ? "Hide password" : "Show password")
             }
         }
         .padding(.horizontal, LoginMetrics.spaceL)

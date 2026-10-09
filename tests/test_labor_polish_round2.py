@@ -67,9 +67,9 @@ def test_the_setup_rows_are_one_quiet_team_and_rules_disclosure():
     for marker, cls, fn in (('Operational Score <span id="team-coverage-chip"', "s2", "toggleTeamPanel"),):
         i = team.index(marker)
         around = team[max(0, i - 300):i + 300]
-        assert f'<div class="lb2-srow {cls}">' in around, marker
+        assert f'<div class="lb2-srow {cls}"' in around, marker
         assert f'onclick="lb2RowClick(event,{fn})"' in around, marker
-    roster = team[team.index('<div class="lb2-srow s4" data-nav="labor/team">'):team.index('<div class="lb2-srow s2">')]
+    roster = team[team.index('<div class="lb2-srow s4" data-nav="labor/team">'):team.index('<div class="lb2-srow s2" data-nav="labor/score">')]
     assert 'id="avail-panel"' in roster and 'onclick="toggleAvailPanel()"' in roster
     assert '<div class="lb2-srow s1">' not in s
     m = re.search(r"\.lb2-srow\{([^}]*)\}", s)

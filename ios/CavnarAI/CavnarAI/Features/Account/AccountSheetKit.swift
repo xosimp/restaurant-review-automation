@@ -475,7 +475,7 @@ struct AccountDisplayRow<Trailing: View>: View {
                     AccountCaptionLabel(text: label)
                     Text(value)
                         .cavnarText(.label)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
                 Spacer(minLength: 8)
                 trailing()

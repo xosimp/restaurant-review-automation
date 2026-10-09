@@ -340,7 +340,7 @@ struct MarketingOpportunitySection: View {
                     }
                 } label: {
                     HStack(spacing: CavnarSpace.xxs + 2) {
-                        Text(showingFacts ? "Hide details" : "Details")
+                        Text(showingFacts ? "Hide the evidence" : "See the evidence")
                             .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         Image(systemName: "chevron.down")
                             .font(.cavnar(.caption))

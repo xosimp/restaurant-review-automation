@@ -339,7 +339,7 @@ struct AskVoiceStatus: View {
                         UIApplication.shared.open(url)
                     } label: {
                         Text("Settings")
-                            .cavnarText(.label, color: .cavnarEmber)
+                            .cavnarText(.label, color: .cavnarEmber2)
                             .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
